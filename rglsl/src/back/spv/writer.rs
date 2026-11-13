@@ -1,4 +1,4 @@
-use alloc::{format, string::String, vec, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 
 use arrayvec::ArrayVec;
 use hashbrown::hash_map::Entry;
@@ -13,11 +13,7 @@ use super::{
 };
 use crate::{
     arena::{Handle, HandleVec, UniqueArena},
-    back::spv::{
-        helpers::{is_uniform_matcx2_struct_member_access, BindingDecorations},
-        BindingInfo, Std140CompatTypeInfo, WrappedFunction,
-    },
-    common::ForDebugWithTypes as _,
+    back::spv::{helpers::BindingDecorations, BindingInfo},
     proc::{Alignment, TypeResolution},
     valid::{FunctionInfo, ModuleInfo},
 };
@@ -88,7 +84,6 @@ impl Writer {
             lookup_type: crate::FastHashMap::default(),
             lookup_function: crate::FastHashMap::default(),
             lookup_function_type: crate::FastHashMap::default(),
-            wrapped_functions: crate::FastHashMap::default(),
             constant_ids: HandleVec::new(),
             cached_constants: crate::FastHashMap::default(),
             override_ids: Vec::new(),
@@ -97,7 +92,6 @@ impl Writer {
             spec_composites: crate::FastHashMap::default(),
             cooperative_vector_types: crate::FastHashSet::default(),
             global_variables: HandleVec::new(),
-            std140_compat_uniform_types: crate::FastHashMap::default(),
             laid_out_types: crate::arena::HandleSet::new(),
             composite_types: crate::FastHashMap::default(),
             plain_types: crate::FastHashMap::default(),
@@ -255,7 +249,6 @@ impl Writer {
             lookup_type: take(&mut self.lookup_type).reclaim(),
             lookup_function: take(&mut self.lookup_function).reclaim(),
             lookup_function_type: take(&mut self.lookup_function_type).reclaim(),
-            wrapped_functions: take(&mut self.wrapped_functions).reclaim(),
             constant_ids: take(&mut self.constant_ids).reclaim(),
             cached_constants: take(&mut self.cached_constants).reclaim(),
             override_ids: take(&mut self.override_ids).reclaim(),
@@ -264,7 +257,6 @@ impl Writer {
             spec_composites: take(&mut self.spec_composites).reclaim(),
             cooperative_vector_types: take(&mut self.cooperative_vector_types).reclaim(),
             global_variables: take(&mut self.global_variables).reclaim(),
-            std140_compat_uniform_types: take(&mut self.std140_compat_uniform_types).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
             composite_types: take(&mut self.composite_types).reclaim(),
             plain_types: take(&mut self.plain_types).reclaim(),
@@ -667,446 +659,6 @@ impl Writer {
         }
     }
 
-    /// Emits code for any wrapper functions required by the expressions in ir_function.
-    /// The IDs of any emitted functions will be stored in [`Self::wrapped_functions`].
-    fn write_wrapped_functions(
-        &mut self,
-        ir_function: &crate::Function,
-        info: &FunctionInfo,
-        ir_module: &crate::Module,
-    ) -> Result<(), Error> {
-        log::trace!("Generating wrapped functions for {:?}", ir_function.name);
-
-        for (_, expr) in ir_function.expressions.iter() {
-            match *expr {
-                crate::Expression::Load { pointer } => {
-                    if let crate::TypeInner::Pointer {
-                        base: pointer_type,
-                        space: crate::AddressSpace::Uniform,
-                    } = *info[pointer].ty.inner_with(&ir_module.types)
-                    {
-                        if self.std140_compat_uniform_types.contains_key(&pointer_type) {
-                            // Loading a std140 compat type requires the wrapper function
-                            // to convert to the regular type.
-                            self.write_wrapped_convert_from_std140_compat_type(
-                                ir_module,
-                                pointer_type,
-                            )?;
-                        }
-                    }
-                }
-                crate::Expression::Access { base, .. } => {
-                    if let crate::TypeInner::Pointer {
-                        base: base_type,
-                        space: crate::AddressSpace::Uniform,
-                    } = *info[base].ty.inner_with(&ir_module.types)
-                    {
-                        // Dynamic accesses of a two-row matrix's columns require a
-                        // wrapper function.
-                        if let crate::TypeInner::Matrix {
-                            rows: crate::VectorSize::Bi,
-                            ..
-                        } = ir_module.types[base_type].inner
-                        {
-                            if super::helpers::has_explicit_matrix_layout(
-                                ir_function,
-                                info,
-                                ir_module,
-                                base,
-                            ) {
-                                continue;
-                            }
-                            self.write_wrapped_matcx2_get_column(ir_module, base_type)?;
-                            // If the matrix is *not* directly a member of a struct, then
-                            // we additionally require a wrapper function to convert from
-                            // the std140 compat type to the regular type.
-                            if !is_uniform_matcx2_struct_member_access(
-                                ir_function,
-                                info,
-                                ir_module,
-                                base,
-                            ) {
-                                self.write_wrapped_convert_from_std140_compat_type(
-                                    ir_module, base_type,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Writes a wrapper function to convert from a std140 compat type to its
-    /// corresponding regular type.
-    ///
-    /// See [`Self::write_std140_compat_type_declaration`] for more details.
-    fn write_wrapped_convert_from_std140_compat_type(
-        &mut self,
-        ir_module: &crate::Module,
-        r#type: Handle<crate::Type>,
-    ) -> Result<(), Error> {
-        super::frames::on_heap!(self, |cx| cx.convert_from_std140(ir_module, r#type))
-    }
-
-    fn start_std140_conversion(
-        &mut self,
-        ir_module: &crate::Module,
-        r#type: Handle<crate::Type>,
-    ) -> Result<Option<Std140Conversion>, Error> {
-        if !self.std140_compat_uniform_types.contains_key(&r#type) {
-            return Ok(None);
-        }
-        // Check if we've already emitted this function.
-        let wrapped = WrappedFunction::ConvertFromStd140CompatType { r#type };
-        let function_id = match self.wrapped_functions.entry(wrapped) {
-            Entry::Occupied(_) => return Ok(None),
-            Entry::Vacant(e) => *e.insert(self.id_gen.next()),
-        };
-        if self.flags.contains(WriterFlags::DEBUG) {
-            self.debugs.push(Instruction::name(
-                function_id,
-                &format!("{:?}_from_std140", r#type.for_debug(&ir_module.types)),
-            ));
-        }
-        let param_type_id = self.std140_compat_uniform_types[&r#type].type_id;
-        let return_type_id = self.get_handle_type_id(r#type)?;
-
-        let mut function = Function::default();
-        let function_type_id = self.get_function_type(LookupFunctionType {
-            parameter_type_ids: vec![param_type_id],
-            return_type_id,
-        });
-        function.signature = Some(Instruction::function(
-            return_type_id,
-            function_id,
-            spirv::FunctionControl::empty(),
-            function_type_id,
-        ));
-        let param_id = self.id_gen.next();
-        function.parameters.push(FunctionArgument {
-            instruction: Instruction::function_parameter(param_type_id, param_id),
-            handle_id: 0,
-        });
-
-        let label_id = self.id_gen.next();
-        Ok(Some(Std140Conversion {
-            function,
-            block: Block::new(label_id),
-            param_id,
-            return_type_id,
-        }))
-    }
-
-    fn std140_matrix_conversion(
-        &mut self,
-        conversion: &mut Std140Conversion,
-        columns: crate::VectorSize,
-        rows: crate::VectorSize,
-        scalar: crate::Scalar,
-    ) -> Word {
-        let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
-
-        let mut column_ids: ArrayVec<Word, 4> = ArrayVec::new();
-        for column in 0..columns as u32 {
-            let column_id = self.id_gen.next();
-            conversion.block.body.push(Instruction::composite_extract(
-                column_type_id,
-                column_id,
-                conversion.param_id,
-                &[column],
-            ));
-            column_ids.push(column_id);
-        }
-        let result_id = self.id_gen.next();
-        conversion.block.body.push(Instruction::composite_construct(
-            conversion.return_type_id,
-            result_id,
-            &column_ids,
-        ));
-        result_id
-    }
-
-    fn std140_array_conversion(
-        &mut self,
-        ir_module: &crate::Module,
-        conversion: &mut Std140Conversion,
-        base: Handle<crate::Type>,
-        size: crate::ArraySize,
-    ) -> Result<Word, Error> {
-        let block = &mut conversion.block;
-        let element_type_id = self.get_handle_type_id(base)?;
-        let std140_info = self.std140_compat_uniform_types.get(&base);
-        let mut element_ids = Vec::new();
-        let size = match size.resolve(ir_module.to_ctx())? {
-            crate::proc::IndexableLength::Known(size) => size,
-            crate::proc::IndexableLength::Dynamic => {
-                return Err(Error::Validation(
-                    "Uniform buffers cannot contain dynamic arrays",
-                ))
-            }
-        };
-        for i in 0..size {
-            let std140_element_id = self.id_gen.next();
-            let std140_element_type_id = std140_info.map_or(element_type_id, |info| info.type_id);
-            block.body.push(Instruction::composite_extract(
-                std140_element_type_id,
-                std140_element_id,
-                conversion.param_id,
-                &[i],
-            ));
-
-            // Only call the conversion function if a compatibility mapping actually exists.
-            let final_element_id = if std140_info.is_some() {
-                let conversion_fn_id = self.wrapped_functions
-                    [&WrappedFunction::ConvertFromStd140CompatType { r#type: base }];
-                let id = self.id_gen.next();
-                block.body.push(Instruction::function_call(
-                    element_type_id,
-                    id,
-                    conversion_fn_id,
-                    &[std140_element_id],
-                ));
-                id
-            } else {
-                std140_element_type_id
-            };
-            element_ids.push(final_element_id);
-        }
-        let result_id = self.id_gen.next();
-        block.body.push(Instruction::composite_construct(
-            conversion.return_type_id,
-            result_id,
-            &element_ids,
-        ));
-        Ok(result_id)
-    }
-
-    fn std140_member_start(
-        &mut self,
-        ir_module: &crate::Module,
-        conversion: &mut Std140Conversion,
-        member: &crate::StructMember,
-        next_index: &mut u32,
-    ) -> Result<(Word, Word, bool), Error> {
-        let member_id = self.id_gen.next();
-        let member_type_id = self.get_handle_type_id(member.ty)?;
-        let crate::TypeInner::Matrix {
-            columns,
-            rows: rows @ crate::VectorSize::Bi,
-            scalar,
-        } = ir_module.types[member.ty].inner
-        else {
-            return Ok((member_id, member_type_id, false));
-        };
-        let mut column_ids: ArrayVec<Word, 4> = ArrayVec::new();
-        let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
-        for _ in 0..columns as u32 {
-            let column_id = self.id_gen.next();
-            conversion.block.body.push(Instruction::composite_extract(
-                column_type_id,
-                column_id,
-                conversion.param_id,
-                &[*next_index],
-            ));
-            column_ids.push(column_id);
-            *next_index += 1;
-        }
-        conversion.block.body.push(Instruction::composite_construct(
-            member_type_id,
-            member_id,
-            &column_ids,
-        ));
-        Ok((member_id, member_type_id, true))
-    }
-
-    fn std140_member_conversion(
-        &mut self,
-        conversion: &mut Std140Conversion,
-        member: &crate::StructMember,
-        (member_id, member_type_id): (Word, Word),
-        next_index: &mut u32,
-    ) {
-        let block = &mut conversion.block;
-        match self.std140_compat_uniform_types.get(&member.ty) {
-            Some(std140_type_info) => {
-                let std140_member_id = self.id_gen.next();
-                block.body.push(Instruction::composite_extract(
-                    std140_type_info.type_id,
-                    std140_member_id,
-                    conversion.param_id,
-                    &[*next_index],
-                ));
-                let function_id = self.wrapped_functions
-                    [&WrappedFunction::ConvertFromStd140CompatType { r#type: member.ty }];
-                block.body.push(Instruction::function_call(
-                    member_type_id,
-                    member_id,
-                    function_id,
-                    &[std140_member_id],
-                ));
-                *next_index += 1;
-            }
-            None => {
-                block.body.push(Instruction::composite_extract(
-                    member_type_id,
-                    member_id,
-                    conversion.param_id,
-                    &[*next_index],
-                ));
-                *next_index += 1;
-            }
-        }
-    }
-
-    fn finish_std140_conversion(
-        &mut self,
-        conversion: Std140Conversion,
-        result_id: Word,
-    ) -> Result<(), Error> {
-        let Std140Conversion {
-            mut function,
-            block,
-            ..
-        } = conversion;
-        function.consume(block, Instruction::return_value(result_id));
-        function.to_words(&mut self.logical_layout.function_definitions)?;
-        Ok(())
-    }
-
-    /// Writes a wrapper function to get an `OpTypeVector` column from an
-    /// `OpTypeMatrix` with a dynamic index.
-    ///
-    /// This is used when accessing a column of a [`TypeInner::Matrix`] through
-    /// a [`Uniform`] address space pointer. In such cases, the matrix will have
-    /// been declared in SPIR-V using an alternative type where each column is a
-    /// member of a containing struct. SPIR-V is unable to dynamically access
-    /// struct members, so instead we load the matrix then call this function to
-    /// access a column from the loaded value.
-    ///
-    /// [`TypeInner::Matrix`]: crate::TypeInner::Matrix
-    /// [`Uniform`]: crate::AddressSpace::Uniform
-    fn write_wrapped_matcx2_get_column(
-        &mut self,
-        ir_module: &crate::Module,
-        r#type: Handle<crate::Type>,
-    ) -> Result<(), Error> {
-        let wrapped = WrappedFunction::MatCx2GetColumn { r#type };
-        let function_id = match self.wrapped_functions.entry(wrapped) {
-            Entry::Occupied(_) => return Ok(()),
-            Entry::Vacant(e) => *e.insert(self.id_gen.next()),
-        };
-        if self.flags.contains(WriterFlags::DEBUG) {
-            self.debugs.push(Instruction::name(
-                function_id,
-                &format!("{:?}_get_column", r#type.for_debug(&ir_module.types)),
-            ));
-        }
-
-        let crate::TypeInner::Matrix {
-            columns,
-            rows: rows @ crate::VectorSize::Bi,
-            scalar,
-        } = ir_module.types[r#type].inner
-        else {
-            return Err(Error::Validation(
-                "column access wrapper of a non-mat2 type",
-            ));
-        };
-
-        let mut function = Function::default();
-        let matrix_type_id = self.get_handle_type_id(r#type)?;
-        let column_index_type_id = self.get_u32_type_id();
-        let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
-        let matrix_param_id = self.id_gen.next();
-        let column_index_param_id = self.id_gen.next();
-        function.parameters.push(FunctionArgument {
-            instruction: Instruction::function_parameter(matrix_type_id, matrix_param_id),
-            handle_id: 0,
-        });
-        function.parameters.push(FunctionArgument {
-            instruction: Instruction::function_parameter(
-                column_index_type_id,
-                column_index_param_id,
-            ),
-            handle_id: 0,
-        });
-        let function_type_id = self.get_function_type(LookupFunctionType {
-            parameter_type_ids: vec![matrix_type_id, column_index_type_id],
-            return_type_id: column_type_id,
-        });
-        function.signature = Some(Instruction::function(
-            column_type_id,
-            function_id,
-            spirv::FunctionControl::empty(),
-            function_type_id,
-        ));
-
-        let label_id = self.id_gen.next();
-        let mut block = Block::new(label_id);
-
-        // Create a switch case for each column in the matrix, where each case
-        // extracts its column from the matrix. Finally we use OpPhi to return
-        // the correct column.
-        let merge_id = self.id_gen.next();
-        block.body.push(Instruction::selection_merge(
-            merge_id,
-            spirv::SelectionControl::NONE,
-        ));
-        let cases = (0..columns as u32)
-            .map(|i| super::instructions::Case {
-                value: i,
-                label_id: self.id_gen.next(),
-            })
-            .collect::<ArrayVec<_, 4>>();
-
-        let default_id = self.id_gen.next();
-        function.consume(
-            block,
-            Instruction::switch(column_index_param_id, default_id, &cases),
-        );
-
-        // Emit a block for each case, and produce a list of variable and parent
-        // block IDs that will be used in an `OpPhi` below to select the right
-        // value.
-        let var_parent_pairs = cases
-            .into_iter()
-            .map(|case| {
-                let mut block = Block::new(case.label_id);
-                let column_id = self.id_gen.next();
-                block.body.push(Instruction::composite_extract(
-                    column_type_id,
-                    column_id,
-                    matrix_param_id,
-                    &[case.value],
-                ));
-                function.consume(block, Instruction::branch(merge_id));
-                (column_id, case.label_id)
-            })
-            // Need capacity for up to 4 columns plus possibly a default case.
-            .collect::<ArrayVec<_, 5>>();
-
-        function.consume(
-            Block::new(default_id),
-            Instruction::new(spirv::Op::Unreachable),
-        );
-
-        let mut block = Block::new(merge_id);
-        let result_id = self.id_gen.next();
-        block.body.push(Instruction::phi(
-            column_type_id,
-            result_id,
-            &var_parent_pairs,
-        ));
-
-        function.consume(block, Instruction::return_value(result_id));
-        function.to_words(&mut self.logical_layout.function_definitions)?;
-        Ok(())
-    }
-
     fn write_function(
         &mut self,
         ir_function: &crate::Function,
@@ -1115,8 +667,6 @@ impl Writer {
         mut interface: Option<FunctionInterface>,
         debug_start: Option<u32>,
     ) -> Result<Word, Error> {
-        self.write_wrapped_functions(ir_function, info, ir_module)?;
-
         log::trace!("Generating code for {:?}", ir_function.name);
         let mut function = Function::default();
 
@@ -1421,12 +971,7 @@ impl Writer {
                         gv.handle_id = id;
                     } else if global_needs_wrapper(ir_module, var) {
                         let class = self.storage_class(var.space);
-                        let pointer_type_id = match self.std140_compat_uniform_types.get(&var.ty) {
-                            Some(std140_type_info) if var.space == crate::AddressSpace::Uniform => {
-                                self.get_pointer_type_id(std140_type_info.type_id, class)
-                            }
-                            _ => self.get_handle_pointer_type_id(var.ty, class)?,
-                        };
+                        let pointer_type_id = self.get_handle_pointer_type_id(var.ty, class)?;
                         let index_id = self.get_index_constant(0);
                         let id = self.id_gen.next();
                         prelude.body.push(Instruction::access_chain(
@@ -2684,292 +2229,6 @@ impl Writer {
         }
 
         Ok(id)
-    }
-
-    /// Writes a std140 layout compatible type declaration for a type. Returns
-    /// the ID of the declared type, or None if no declaration is required.
-    ///
-    /// This should be called for any type for which there exists a
-    /// [`GlobalVariable`] in the [`Uniform`] address space. If the type already
-    /// adheres to std140 layout rules it will return without declaring any
-    /// types. If the type contains another type which requires a std140
-    /// compatible type declaration, it will recursively call itself.
-    ///
-    /// When `handle` refers to a [`TypeInner::Matrix`] with 2 rows, the
-    /// declared type will be an `OpTypeStruct` containing an `OpVector` for
-    /// each of the matrix's columns.
-    ///
-    /// When `handle` refers to a [`TypeInner::Array`] whose base type is a
-    /// matrix with 2 rows, this will declare an `OpTypeArray` whose element
-    /// type is the matrix's corresponding std140 compatible type.
-    ///
-    /// When `handle` refers to a [`TypeInner::Struct`] and any of its members
-    /// require a std140 compatible type declaration, this will declare a new
-    /// struct with the following rules:
-    /// * Struct or array members will be declared with their std140 compatible
-    ///   type declaration, if one is required.
-    /// * Two-row matrix members will have each of their columns hoisted
-    ///   directly into the struct as 2-component vector members.
-    /// * All other members will be declared with their normal type.
-    ///
-    /// Note that this means the rglsl IR index of a struct member may not match
-    /// the index in the generated SPIR-V. The mapping can be obtained via
-    /// `Std140TypeInfo::member_indices`.
-    ///
-    /// [`GlobalVariable`]: crate::GlobalVariable
-    /// [`Uniform`]: crate::AddressSpace::Uniform
-    /// [`TypeInner::Matrix`]: crate::TypeInner::Matrix
-    /// [`TypeInner::Array`]: crate::TypeInner::Array
-    /// [`TypeInner::Struct`]: crate::TypeInner::Struct
-    fn write_std140_compat_type_declaration(
-        &mut self,
-        module: &crate::Module,
-        handle: Handle<crate::Type>,
-    ) -> Result<Option<Word>, Error> {
-        let mut results = crate::FastHashMap::default();
-        crate::proc::post_order(
-            &mut (&mut *self, &mut results),
-            handle,
-            |&mut (ref writer, ref mut results), ty, children| {
-                if results.contains_key(&ty) {
-                    return false;
-                }
-                if let Some(info) = writer.std140_compat_uniform_types.get(&ty) {
-                    results.insert(ty, Some(info.type_id));
-                    return false;
-                }
-                match module.types[ty].inner {
-                    crate::TypeInner::Array { base, .. } => children.push(base),
-                    crate::TypeInner::Struct { ref members, .. } => children.extend(
-                        members
-                            .iter()
-                            .filter(|member| {
-                                member.matrix_layout.is_none()
-                                    && matches!(
-                                        module.types[member.ty].inner,
-                                        crate::TypeInner::Array { .. }
-                                    )
-                            })
-                            .map(|member| member.ty),
-                    ),
-                    _ => {}
-                }
-                true
-            },
-            |&mut (ref mut writer, ref mut results), ty| {
-                let id = writer.std140_compat_type(module, ty, results)?;
-                results.insert(ty, id);
-                Ok::<(), Error>(())
-            },
-        )?;
-        Ok(results.get(&handle).copied().flatten())
-    }
-
-    fn std140_compat_type(
-        &mut self,
-        module: &crate::Module,
-        handle: Handle<crate::Type>,
-        results: &crate::FastHashMap<Handle<crate::Type>, Option<Word>>,
-    ) -> Result<Option<Word>, Error> {
-        let type_inner = &module.types[handle].inner;
-        let std140_type_id = match *type_inner {
-            crate::TypeInner::Matrix {
-                columns,
-                rows: rows @ crate::VectorSize::Bi,
-                scalar,
-            } => {
-                let std140_type_id = self.id_gen.next();
-                let mut member_type_ids: ArrayVec<Word, 4> = ArrayVec::new();
-                let column_type_id =
-                    self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
-                for column in 0..columns as u32 {
-                    member_type_ids.push(column_type_id);
-                    self.annotations.push(Instruction::member_decorate(
-                        std140_type_id,
-                        column,
-                        spirv::Decoration::Offset,
-                        &[column * rows as u32 * scalar.width as u32],
-                    ));
-                    if self.flags.contains(WriterFlags::DEBUG) {
-                        self.debugs.push(Instruction::member_name(
-                            std140_type_id,
-                            column,
-                            &format!("col{column}"),
-                        ));
-                    }
-                }
-                Instruction::type_struct(std140_type_id, &member_type_ids)
-                    .to_words(&mut self.logical_layout.declarations);
-                self.std140_compat_uniform_types.insert(
-                    handle,
-                    Std140CompatTypeInfo {
-                        type_id: std140_type_id,
-                        member_indices: Vec::new(),
-                    },
-                );
-                Some(std140_type_id)
-            }
-            crate::TypeInner::Array { base, size, stride } => {
-                match results.get(&base).copied().flatten() {
-                    Some(std140_base_type_id) => {
-                        let std140_type_id = self.id_gen.next();
-                        self.decorate(std140_type_id, spirv::Decoration::ArrayStride, &[stride]);
-                        let instruction = match size.resolve(module.to_ctx())? {
-                            crate::proc::IndexableLength::Known(length) => {
-                                let length_id = self.get_index_constant(length);
-                                Instruction::type_array(
-                                    std140_type_id,
-                                    std140_base_type_id,
-                                    length_id,
-                                )
-                            }
-                            crate::proc::IndexableLength::Dynamic => {
-                                return Err(Error::Validation(
-                                    "a uniform buffer contains a runtime-sized array",
-                                ))
-                            }
-                        };
-                        instruction.to_words(&mut self.logical_layout.declarations);
-                        self.std140_compat_uniform_types.insert(
-                            handle,
-                            Std140CompatTypeInfo {
-                                type_id: std140_type_id,
-                                member_indices: Vec::new(),
-                            },
-                        );
-                        Some(std140_type_id)
-                    }
-                    None => None,
-                }
-            }
-            crate::TypeInner::Struct { ref members, .. } => {
-                let mut needs_std140_type = false;
-                // A member whose matrix layout the front end chose is emitted
-                // as it is: the front end is responsible for the layout being
-                // valid in a uniform buffer.
-                for member in members.iter().filter(|m| m.matrix_layout.is_none()) {
-                    match module.types[member.ty].inner {
-                        // We don't need to write a std140 type for the matrix itself as
-                        // it will be decomposed into the parent struct. As a result, the
-                        // struct does need a std140 type, however.
-                        crate::TypeInner::Matrix {
-                            rows: crate::VectorSize::Bi,
-                            ..
-                        } => needs_std140_type = true,
-                        // If an array member needs a std140 type, because it is an array
-                        // (of an array, etc) of `matCx2`s, then the struct also needs
-                        // a std140 type which uses the std140 type for this member.
-                        crate::TypeInner::Array { .. }
-                            if results.get(&member.ty).copied().flatten().is_some() =>
-                        {
-                            needs_std140_type = true;
-                        }
-                        _ => {}
-                    }
-                }
-
-                if needs_std140_type {
-                    let std140_type_id = self.id_gen.next();
-                    let mut member_ids = Vec::new();
-                    let mut member_indices = Vec::new();
-                    let mut next_index = 0;
-
-                    for member in members {
-                        member_indices.push(next_index);
-                        match module.types[member.ty].inner {
-                            crate::TypeInner::Matrix {
-                                columns,
-                                rows: rows @ crate::VectorSize::Bi,
-                                scalar,
-                            } => {
-                                let vector_type_id =
-                                    self.get_numeric_type_id(NumericType::Vector {
-                                        size: rows,
-                                        scalar,
-                                    });
-                                for column in 0..columns as u32 {
-                                    self.annotations.push(Instruction::member_decorate(
-                                        std140_type_id,
-                                        next_index,
-                                        spirv::Decoration::Offset,
-                                        &[member.offset
-                                            + column * rows as u32 * scalar.width as u32],
-                                    ));
-                                    if self.flags.contains(WriterFlags::DEBUG) {
-                                        if let Some(ref name) = member.name {
-                                            self.debugs.push(Instruction::member_name(
-                                                std140_type_id,
-                                                next_index,
-                                                &format!("{name}_col{column}"),
-                                            ));
-                                        }
-                                    }
-                                    member_ids.push(vector_type_id);
-                                    next_index += 1;
-                                }
-                            }
-                            _ => {
-                                let member_id =
-                                    match self.std140_compat_uniform_types.get(&member.ty) {
-                                        Some(std140_member_type_info) => {
-                                            self.annotations.push(Instruction::member_decorate(
-                                                std140_type_id,
-                                                next_index,
-                                                spirv::Decoration::Offset,
-                                                &[member.offset],
-                                            ));
-                                            if self.flags.contains(WriterFlags::DEBUG) {
-                                                if let Some(ref name) = member.name {
-                                                    self.debugs.push(Instruction::member_name(
-                                                        std140_type_id,
-                                                        next_index,
-                                                        name,
-                                                    ));
-                                                }
-                                            }
-                                            std140_member_type_info.type_id
-                                        }
-                                        None => {
-                                            self.decorate_struct_member(
-                                                std140_type_id,
-                                                next_index as usize,
-                                                member,
-                                                &module.types,
-                                                true,
-                                            )?;
-                                            self.get_handle_type_id(member.ty)?
-                                        }
-                                    };
-                                member_ids.push(member_id);
-                                next_index += 1;
-                            }
-                        }
-                    }
-
-                    Instruction::type_struct(std140_type_id, &member_ids)
-                        .to_words(&mut self.logical_layout.declarations);
-                    self.std140_compat_uniform_types.insert(
-                        handle,
-                        Std140CompatTypeInfo {
-                            type_id: std140_type_id,
-                            member_indices,
-                        },
-                    );
-                    Some(std140_type_id)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(std140_type_id) = std140_type_id {
-            if self.flags.contains(WriterFlags::DEBUG) {
-                let name = format!("std140_{:?}", handle.for_debug(&module.types));
-                self.debugs.push(Instruction::name(std140_type_id, &name));
-            }
-        }
-        Ok(std140_type_id)
     }
 
     fn request_image_format_capabilities(
@@ -4343,40 +3602,22 @@ impl Writer {
 
             self.decorate_buffer_block(wrapper_type_id, global_variable)?;
 
-            match self.std140_compat_uniform_types.get(&global_variable.ty) {
-                Some(std140_type_info) if global_variable.space == crate::AddressSpace::Uniform => {
-                    self.annotations.push(Instruction::member_decorate(
-                        wrapper_type_id,
-                        0,
-                        Decoration::Offset,
-                        &[0],
-                    ));
-                    Instruction::type_struct(wrapper_type_id, &[std140_type_info.type_id])
-                        .to_words(&mut self.logical_layout.declarations);
-                }
-                _ => {
-                    let member = crate::StructMember {
-                        name: None,
-                        ty: global_variable.ty,
-                        binding: None,
-                        offset: 0,
-                        matrix_layout: None,
-                        xfb_offset: None,
-                        heap: None,
-                        memory_decorations: crate::MemoryDecorations::empty(),
-                        relaxed_precision: false,
-                    };
-                    self.decorate_struct_member(
-                        wrapper_type_id,
-                        0,
-                        &member,
-                        &ir_module.types,
-                        true,
-                    )?;
+            {
+                let member = crate::StructMember {
+                    name: None,
+                    ty: global_variable.ty,
+                    binding: None,
+                    offset: 0,
+                    matrix_layout: None,
+                    xfb_offset: None,
+                    heap: None,
+                    memory_decorations: crate::MemoryDecorations::empty(),
+                    relaxed_precision: false,
+                };
+                self.decorate_struct_member(wrapper_type_id, 0, &member, &ir_module.types, true)?;
 
-                    Instruction::type_struct(wrapper_type_id, &[inner_type_id])
-                        .to_words(&mut self.logical_layout.declarations);
-                }
+                Instruction::type_struct(wrapper_type_id, &[inner_type_id])
+                    .to_words(&mut self.logical_layout.declarations);
             }
 
             let pointer_type_id = self.id_gen.next();
@@ -4393,13 +3634,6 @@ impl Writer {
                 },
                 _ => None,
             };
-            let std140_struct = match global_variable.space {
-                crate::AddressSpace::Uniform => self
-                    .std140_compat_uniform_types
-                    .get(&global_variable.ty)
-                    .map(|info| info.type_id),
-                _ => None,
-            };
             if let (Some(structure), Some(crate::BlockDeclaration::RayTracing)) =
                 (block_struct, global_variable.block)
             {
@@ -4413,10 +3647,7 @@ impl Writer {
                 | crate::AddressSpace::ShaderRecord
                 | crate::AddressSpace::Immediate = global_variable.space
                 {
-                    let block_id = match std140_struct {
-                        Some(id) => id,
-                        None => self.get_handle_type_id(structure)?,
-                    };
+                    let block_id = self.get_handle_type_id(structure)?;
                     if self.decorate_buffer_block(block_id, global_variable)? {
                         if let Some(bank) =
                             global_variable.immediate_bank.and_then(|bank| bank.bank)
@@ -4428,8 +3659,6 @@ impl Writer {
             }
             if substitute_inner_type_lookup.is_some() {
                 inner_type_id
-            } else if let Some(std140_id) = std140_struct {
-                self.get_pointer_type_id(std140_id, class)
             } else {
                 self.get_handle_pointer_type_id(global_variable.ty, class)?
             }
@@ -4876,13 +4105,6 @@ impl Writer {
             }
         }
         self.physical_types.clear();
-
-        // write std140 layout compatible types required by uniforms
-        for (_, var) in ir_module.global_variables.iter() {
-            if var.space == crate::AddressSpace::Uniform {
-                self.write_std140_compat_type_declaration(ir_module, var.ty)?;
-            }
-        }
 
         // write all const-expressions as constants
         for (handle, _) in ir_module.global_expressions.iter() {
@@ -5354,85 +4576,6 @@ const fn subgroup_mask(mask: crate::SubgroupMask) -> spirv::BuiltIn {
 }
 
 /// Adds `ty` and every type it contains to `laid_out`.
-pub(super) struct Std140Conversion {
-    function: Function,
-    block: Block,
-    param_id: Word,
-    return_type_id: Word,
-}
-
-impl<'b> super::frames::Cx<'b, Writer> {
-    async fn convert_from_std140(
-        self,
-        ir_module: &'b crate::Module,
-        r#type: Handle<crate::Type>,
-    ) -> Result<(), Error> {
-        let Some(mut conversion) =
-            self.try_with(|writer| writer.start_std140_conversion(ir_module, r#type))?
-        else {
-            return Ok(());
-        };
-        let result_id = match ir_module.types[r#type].inner {
-            crate::TypeInner::Matrix {
-                columns,
-                rows: rows @ crate::VectorSize::Bi,
-                scalar,
-            } => self.with(|writer| {
-                writer.std140_matrix_conversion(&mut conversion, columns, rows, scalar)
-            })?,
-            crate::TypeInner::Array { base, size, .. } => {
-                self.call(self.clone().convert_from_std140(ir_module, base))
-                    .await?;
-                self.try_with(|writer| {
-                    writer.std140_array_conversion(ir_module, &mut conversion, base, size)
-                })?
-            }
-            crate::TypeInner::Struct { ref members, .. } => {
-                let mut member_ids = Vec::new();
-                let mut next_index = 0;
-                for member in members {
-                    let (member_id, member_type_id, matrix) = self.try_with(|writer| {
-                        writer.std140_member_start(
-                            ir_module,
-                            &mut conversion,
-                            member,
-                            &mut next_index,
-                        )
-                    })?;
-                    if !matrix {
-                        self.call(self.clone().convert_from_std140(ir_module, member.ty))
-                            .await?;
-                        self.with(|writer| {
-                            writer.std140_member_conversion(
-                                &mut conversion,
-                                member,
-                                (member_id, member_type_id),
-                                &mut next_index,
-                            )
-                        })?;
-                    }
-                    member_ids.push(member_id);
-                }
-                self.with(|writer| {
-                    let result_id = writer.id_gen.next();
-                    conversion.block.body.push(Instruction::composite_construct(
-                        conversion.return_type_id,
-                        result_id,
-                        &member_ids,
-                    ));
-                    result_id
-                })?
-            }
-            _ => {
-                return Err(Error::Validation(
-                    "std140 conversion of a type without a compatible layout",
-                ))
-            }
-        };
-        self.try_with(|writer| writer.finish_std140_conversion(conversion, result_id))
-    }
-}
-
 pub(super) fn mark_laid_out(
     types: &UniqueArena<crate::Type>,
     laid_out: &mut crate::arena::HandleSet<crate::Type>,

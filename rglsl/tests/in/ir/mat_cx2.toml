@@ -1,4 +1,0 @@
-targets = "SPIRV"
-
-[spv]
-debug = true
