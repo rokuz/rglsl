@@ -111,7 +111,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             nontemporal,
                         },
                         at,
-                    )
+                    );
                 })?;
                 Ok(None)
             }

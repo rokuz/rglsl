@@ -158,14 +158,13 @@ impl BlockContext<'_> {
         let Some(sampler) = sampler else {
             return Ok(image_id);
         };
-        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
-        {
-            crate::TypeInner::Image {
-                dim,
-                arrayed,
-                class,
-            } => (dim, arrayed, class),
-            _ => return Err(Error::Validation("image processing operand")),
+        let crate::TypeInner::Image {
+            dim,
+            arrayed,
+            class,
+        } = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("image processing operand"));
         };
         let image_type_id = self.get_localtype_id(LocalType::Image(LocalImageType::from_inner(
             dim, arrayed, class,
@@ -272,13 +271,11 @@ impl BlockContext<'_> {
                 instruction.add_operand(self.cached.get(size.ok_or(missing)?)?);
             }
             ImageProcessingOperation::BlockMatch { .. } => {
-                let (reference, reference_coordinate, size) =
-                    match (reference, reference_coordinate, size) {
-                        (Some(reference), Some(reference_coordinate), Some(size)) => {
-                            (reference, reference_coordinate, size)
-                        }
-                        _ => return Err(missing),
-                    };
+                let (Some(reference), Some(reference_coordinate), Some(size)) =
+                    (reference, reference_coordinate, size)
+                else {
+                    return Err(missing);
+                };
                 if let Some((marking, _)) = marking {
                     self.mark_operand(image, sampler, marking);
                     self.mark_operand(reference, reference_sampler, marking);

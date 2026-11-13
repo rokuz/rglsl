@@ -224,7 +224,7 @@ impl Function {
         self.blocks.push(TerminatedBlock {
             label_id: block.label_id,
             body: block.body,
-        })
+        });
     }
 
     fn parameter_id(&self, index: u32) -> Result<Word, Error> {

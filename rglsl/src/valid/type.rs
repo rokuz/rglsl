@@ -82,7 +82,7 @@ bitflags::bitflags! {
 }
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum Disalignment {
     #[error("The struct member[{index}] is not statically sized")]
     UnsizedMember { index: u32 },
@@ -91,7 +91,7 @@ pub enum Disalignment {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TypeError {
     #[error("A tensor rank must be from 1 to 15")]
     InvalidTensorRank,
@@ -160,7 +160,7 @@ pub enum TypeError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum WidthError {
     #[error("The {0:?} scalar width {1} is not supported")]
     Invalid(crate::ScalarKind, crate::Bytes),
@@ -172,7 +172,7 @@ pub enum WidthError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ImmediateError {
     #[error("The scalar type {0:?} is not supported in immediates")]
     InvalidScalar(crate::Scalar),

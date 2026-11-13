@@ -834,12 +834,14 @@ impl BlockContext<'_> {
                                 (Dimension::Vector, Dimension::Matrix) => {
                                     spirv::Op::VectorTimesMatrix
                                 }
-                                (Dimension::Matrix, Dimension::Scalar)
-                                | (Dimension::CooperativeMatrix, Dimension::Scalar) => {
-                                    spirv::Op::MatrixTimesScalar
-                                }
-                                (Dimension::Scalar, Dimension::Matrix)
-                                | (Dimension::Scalar, Dimension::CooperativeMatrix) => {
+                                (
+                                    Dimension::Matrix | Dimension::CooperativeMatrix,
+                                    Dimension::Scalar,
+                                ) => spirv::Op::MatrixTimesScalar,
+                                (
+                                    Dimension::Scalar,
+                                    Dimension::Matrix | Dimension::CooperativeMatrix,
+                                ) => {
                                     reverse_operands = true;
                                     spirv::Op::MatrixTimesScalar
                                 }
@@ -1822,7 +1824,7 @@ impl BlockContext<'_> {
                         id,
                         &self.temp_list,
                     ));
-                    condition_id = id
+                    condition_id = id;
                 }
 
                 let instruction =
@@ -1889,7 +1891,7 @@ impl BlockContext<'_> {
                     {
                         let pointer_id =
                             self.write_access_chain(value, block, AccessTypeAdjustment::None)?;
-                        self.cached.set(value, pointer_id)?
+                        self.cached.set(value, pointer_id)?;
                     }
                 }
                 self.write_physical_pointer(value, result_type_id, block)?
@@ -2070,9 +2072,8 @@ impl BlockContext<'_> {
         if let crate::TypeInner::Pointer { base, .. } = *ty {
             ty = &self.ir_module.types[base].inner;
         }
-        let element = match *ty {
-            crate::TypeInner::BindingArray { base, .. } => base,
-            _ => return Ok(()),
+        let crate::TypeInner::BindingArray { base: element, .. } = *ty else {
+            return Ok(());
         };
         if !matches!(
             self.ir_module.types[element].inner,
@@ -3159,7 +3160,7 @@ impl BlockContext<'_> {
                     extracted,
                     offset,
                     eight,
-                )
+                );
             } else {
                 let new_preresult = self.gen_id();
                 block.body.push(Instruction::quaternary(
@@ -4373,15 +4374,12 @@ impl BlockContext<'_> {
             Statement::ReorderThread { kind, hint, bits } => {
                 self.write_reorder_thread(kind, hint, bits, &mut block)?;
             }
-            Statement::SubgroupBallot {
-                result,
-                ref predicate,
-            } => {
+            Statement::SubgroupBallot { result, predicate } => {
                 self.write_subgroup_ballot(predicate, result, &mut block)?;
             }
             Statement::SubgroupCollectiveOperation {
-                ref op,
-                ref collective_op,
+                op,
+                collective_op,
                 argument,
                 result,
             } => {

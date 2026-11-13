@@ -292,7 +292,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             semantics,
                         },
                         at,
-                    )
+                    );
                 })?;
                 Ok(None)
             }

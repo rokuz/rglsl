@@ -677,7 +677,7 @@ impl GlobalCtx<'_> {
     }
 }
 
-#[derive(Error, Debug, Clone, Copy, PartialEq)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolveArraySizeError {
     #[error("array element count must be positive (> 0)")]
     ExpectedPositiveArrayLength,
@@ -768,12 +768,12 @@ pub fn flatten_compose<'arenas>(
     }
 
     /// Flatten `Splat` expressions if `is_vector` is true.
-    fn flatten_splat<'c>(
-        component: &'c crate::Handle<crate::Expression>,
+    fn flatten_splat(
+        component: crate::Handle<crate::Expression>,
         is_vector: bool,
-        expressions: &'c crate::Arena<crate::Expression>,
+        expressions: &crate::Arena<crate::Expression>,
     ) -> impl Iterator<Item = crate::Handle<crate::Expression>> {
-        let mut expr = *component;
+        let mut expr = component;
         let mut count = 1;
         if is_vector {
             if let crate::Expression::Splat { size, value } = expressions[expr] {
@@ -794,7 +794,7 @@ pub fn flatten_compose<'arenas>(
         .iter()
         .flat_map(move |component| flatten_compose(component, is_vector, expressions))
         .flat_map(move |component| flatten_compose(component, is_vector, expressions))
-        .flat_map(move |component| flatten_splat(component, is_vector, expressions))
+        .flat_map(move |component| flatten_splat(*component, is_vector, expressions))
         .take(size)
 }
 
@@ -929,10 +929,12 @@ pub fn is_patch_variable(
         crate::TypeInner::Struct { ref members, .. } => members.iter().any(|member| {
             matches!(
                 member.binding,
-                Some(crate::Binding::Location { patch: true, .. })
-                    | Some(crate::Binding::BuiltIn(
-                        crate::BuiltIn::TessLevelOuter | crate::BuiltIn::TessLevelInner
-                    ))
+                Some(
+                    crate::Binding::Location { patch: true, .. }
+                        | crate::Binding::BuiltIn(
+                            crate::BuiltIn::TessLevelOuter | crate::BuiltIn::TessLevelInner
+                        )
+                )
             )
         }),
         _ => false,

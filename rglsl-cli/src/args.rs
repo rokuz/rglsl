@@ -112,7 +112,7 @@ impl Options {
             (Some(version), _) => version,
             (None, Some((1, 1))) => (1, 3),
             (None, Some((1, 2))) => (1, 5),
-            (None, Some((1, 3) | (1, 4))) => (1, 6),
+            (None, Some((1, 3 | 4))) => (1, 6),
             (None, _) => (1, 0),
         }
     }

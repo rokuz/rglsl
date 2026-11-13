@@ -325,8 +325,8 @@ impl UnitCx<'_, '_, '_> {
         let mut steps = Vec::with_capacity(keys.len());
         for (key, op) in keys.into_iter().rev() {
             let (op, result) = match op {
-                Op::Direct(index) => (StepOp::Direct(index), self.index_type(&left)),
-                Op::Indirect => (StepOp::Indirect, self.index_type(&left)),
+                Op::Direct(index) => (StepOp::Direct(index), Self::index_type(&left)),
+                Op::Indirect => (StepOp::Indirect, Self::index_type(&left)),
                 Op::Field(ref name) => {
                     let index = self.layouts.member_index(&left, name)?;
                     (StepOp::Member(index), self.layouts.member(&left, index)?)
@@ -344,7 +344,7 @@ impl UnitCx<'_, '_, '_> {
         Some((symbol, base_key, steps))
     }
 
-    pub(super) fn index_type(&self, left: &RType) -> RType {
+    pub(super) fn index_type(left: &RType) -> RType {
         let mut element = left.clone();
         element.storage = Storage::None;
         if left.is_array() {

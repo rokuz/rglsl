@@ -504,9 +504,8 @@ impl<'a> Lowerer<'a> {
         ty: &GlslType,
         span: Span,
     ) -> Result<Option<Handle<crate::Type>>> {
-        let size = match *ty.dimensions() {
-            [size @ rglsl_sema::types::ArraySize::Sized(_)] => size,
-            _ => return Ok(None),
+        let [size @ rglsl_sema::types::ArraySize::Sized(_)] = *ty.dimensions() else {
+            return Ok(None);
         };
         let Some(element) = ty
             .element_type()
@@ -850,7 +849,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub(super) const fn global_expression(&mut self, global: GlobalRef) -> Expression {
+    pub(super) const fn global_expression(global: GlobalRef) -> Expression {
         match global {
             GlobalRef::Variable(handle) => Expression::GlobalVariable(handle),
             GlobalRef::Constant(handle) => Expression::Constant(handle),

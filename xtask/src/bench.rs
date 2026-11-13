@@ -553,9 +553,8 @@ impl Environment {
         machine.push(("OS".into(), os_description()));
 
         let mut glslang = Vec::new();
-        let pinned = oracles::load_pins(root)
-            .map(|pins| pins.glslang.commit)
-            .unwrap_or_else(|_| "unknown".into());
+        let pinned =
+            oracles::load_pins(root).map_or_else(|_| "unknown".into(), |pins| pins.glslang.commit);
         glslang.push(("pinned commit (oracles.toml)".into(), pinned));
         if tools.glslang.pinned {
             let cache = oracles::oracles_dir(root)

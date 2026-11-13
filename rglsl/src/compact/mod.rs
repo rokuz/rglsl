@@ -52,7 +52,7 @@ pub(crate) fn live_global_variables(module: &crate::Module) -> HandleSet<crate::
     tracer.global_variables_used
 }
 
-#[derive(Clone, Debug, thiserror::Error, PartialEq)]
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CompactError {
     #[error("Compaction found a handle it did not trace: {0}")]
     UntracedHandle(#[from] BadHandle),

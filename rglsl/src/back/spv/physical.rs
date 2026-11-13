@@ -240,14 +240,17 @@ impl BlockContext<'_> {
                 _ => break,
             }
         }
-        let (mut ty, mut accumulated) =
-            match *self.fun_info[current].ty.inner_with(&self.ir_module.types) {
-                TypeInner::Pointer {
-                    base,
-                    space: AddressSpace::PhysicalStorage { alignment, .. },
-                } => (base, alignment),
-                _ => return None,
-            };
+        let TypeInner::Pointer {
+            base: mut ty,
+            space:
+                AddressSpace::PhysicalStorage {
+                    alignment: mut accumulated,
+                    ..
+                },
+        } = *self.fun_info[current].ty.inner_with(&self.ir_module.types)
+        else {
+            return None;
+        };
         let types = &self.ir_module.types;
         let mut scalar_component = None;
         let mut first_member = false;
@@ -362,9 +365,9 @@ impl BlockContext<'_> {
 
     fn member_qualifiers(&self, base: Handle<Expression>, index: u32) -> PointerQualifiers {
         let types = &self.ir_module.types;
-        let pointee = match *self.fun_info[base].ty.inner_with(types) {
-            TypeInner::Pointer { base, .. } => base,
-            _ => return PointerQualifiers::empty(),
+        let TypeInner::Pointer { base: pointee, .. } = *self.fun_info[base].ty.inner_with(types)
+        else {
+            return PointerQualifiers::empty();
         };
         match types[pointee].inner {
             TypeInner::Struct { ref members, .. } => usize::try_from(index)

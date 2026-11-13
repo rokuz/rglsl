@@ -1099,7 +1099,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 adjust(index);
             }
             adjust(argument);
-            adjust(result)
+            adjust(result);
         }
         Statement::SubgroupFunction {
             ref mut fun,

@@ -90,9 +90,8 @@ impl<'a> Lowerer<'a> {
                     return None;
                 };
                 let variable = self.variable(instance)?;
-                let id = match variable.ty.kind {
-                    TypeKind::Block(id) => id,
-                    _ => return None,
+                let TypeKind::Block(id) = variable.ty.kind else {
+                    return None;
                 };
                 Some((id, index))
             }

@@ -65,7 +65,7 @@ impl super::Instruction {
         instruction.add_operand(target_id);
         instruction.add_operand(decoration as u32);
         for operand in operands {
-            instruction.add_operand(*operand)
+            instruction.add_operand(*operand);
         }
         instruction
     }
@@ -81,7 +81,7 @@ impl super::Instruction {
         instruction.add_operand(member_index);
         instruction.add_operand(decoration as u32);
         for operand in operands {
-            instruction.add_operand(*operand)
+            instruction.add_operand(*operand);
         }
         instruction
     }
@@ -126,7 +126,7 @@ impl super::Instruction {
         instruction.add_operand(set_id);
         instruction.add_operand(op);
         for operand in operands {
-            instruction.add_operand(*operand)
+            instruction.add_operand(*operand);
         }
         instruction
     }
@@ -324,7 +324,7 @@ impl super::Instruction {
         instruction.set_result(id);
 
         for member_id in member_ids {
-            instruction.add_operand(*member_id)
+            instruction.add_operand(*member_id);
         }
 
         instruction

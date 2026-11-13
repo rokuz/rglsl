@@ -859,7 +859,7 @@ impl ExpressionKindTracker {
             Expression::Compose { ref components, .. } => {
                 let mut expr_type = ExpressionKind::Const;
                 for component in components {
-                    expr_type = expr_type.max(self.type_of(*component))
+                    expr_type = expr_type.max(self.type_of(*component));
                 }
                 expr_type
             }
@@ -879,18 +879,9 @@ impl ExpressionKindTracker {
                 ..
             } => self
                 .type_of(arg)
-                .max(
-                    arg1.map(|arg| self.type_of(arg))
-                        .unwrap_or(ExpressionKind::Const),
-                )
-                .max(
-                    arg2.map(|arg| self.type_of(arg))
-                        .unwrap_or(ExpressionKind::Const),
-                )
-                .max(
-                    arg3.map(|arg| self.type_of(arg))
-                        .unwrap_or(ExpressionKind::Const),
-                ),
+                .max(arg1.map_or(ExpressionKind::Const, |arg| self.type_of(arg)))
+                .max(arg2.map_or(ExpressionKind::Const, |arg| self.type_of(arg)))
+                .max(arg3.map_or(ExpressionKind::Const, |arg| self.type_of(arg))),
             Expression::As { expr, .. } => self.type_of(expr),
             Expression::Select {
                 condition,
@@ -908,7 +899,7 @@ impl ExpressionKindTracker {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ConstantEvaluatorError {
     #[error("internal error: a constant evaluation did not finish")]
     Unfinished,
@@ -1632,11 +1623,10 @@ impl<'a> ConstantEvaluator<'a> {
                 if e1.len() != e2.len() {
                     return None;
                 }
-                let result = match match_literal_vector!(match (e1, e2) => Literal {
+                let Ok(result) = match_literal_vector!(match (e1, e2) => Literal {
                     Float => |e1, e2| { sum_of_products(e1, e2) },
-                }) {
-                    Ok(result) => result,
-                    Err(_) => return None,
+                }) else {
+                    return None;
                 };
                 self.register_evaluated_expr(Expression::Literal(result), span)
             }
@@ -1645,11 +1635,10 @@ impl<'a> ConstantEvaluator<'a> {
                     Ok(e1) => e1,
                     Err(error) => return Some(Err(error)),
                 };
-                let result = match match_literal_vector!(match e1 => Literal {
+                let Ok(result) = match_literal_vector!(match e1 => Literal {
                     Float => |e1| { sum_of_products(e1, e1).sqrt() },
-                }) {
-                    Ok(result) => result,
-                    Err(_) => return None,
+                }) else {
+                    return None;
                 };
                 self.register_evaluated_expr(Expression::Literal(result), span)
             }
@@ -3728,7 +3717,7 @@ impl<'a> ConstantEvaluator<'a> {
                     return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
                 };
                 self.dot_exprs(
-                    vec_components.iter().cloned(),
+                    vec_components.iter().copied(),
                     components.clone().into_iter(),
                     span,
                 )
@@ -3760,8 +3749,8 @@ impl<'a> ConstantEvaluator<'a> {
         let nr = mat_rows as usize;
         let components = (0..nr)
             .map(|r| {
-                let row = flatten.iter().skip(r).step_by(nr).cloned();
-                self.dot_exprs(row, vec_components.iter().cloned(), span)
+                let row = flatten.iter().skip(r).step_by(nr).copied();
+                self.dot_exprs(row, vec_components.iter().copied(), span)
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Expression::Compose { ty, components })
@@ -3811,7 +3800,7 @@ impl<'a> ConstantEvaluator<'a> {
                 .map(|r| {
                     let row = left_flattened.iter().skip(r).step_by(left_nr);
                     let column = right_flattened.iter().skip(c * right_nr).take(right_nr);
-                    self.dot_exprs(row.cloned(), column.cloned(), span)
+                    self.dot_exprs(row.copied(), column.copied(), span)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let expr = Expression::Compose {
@@ -3924,7 +3913,7 @@ impl<'a> ConstantEvaluator<'a> {
                         ref expr @ (Expression::Literal(_)
                         | Expression::Constant(_)
                         | Expression::ZeroValue(_)) => {
-                            results.push(self.register_evaluated_expr(expr.clone(), span)?)
+                            results.push(self.register_evaluated_expr(expr.clone(), span)?);
                         }
                         Expression::Compose { ty, ref components } => {
                             tasks.push(CopyTask::Compose {
@@ -4244,7 +4233,7 @@ fn first_trailing_bit_smoke() {
         assert_eq!(
             first_trailing_bit(ConcreteInt::I32([1 << idx])),
             ConcreteInt::I32([idx])
-        )
+        );
     }
 
     assert_eq!(
@@ -4271,7 +4260,7 @@ fn first_trailing_bit_smoke() {
         assert_eq!(
             first_trailing_bit(ConcreteInt::U32([1 << idx])),
             ConcreteInt::U32([idx])
-        )
+        );
     }
 }
 
@@ -4358,7 +4347,7 @@ fn first_leading_bit_smoke() {
         assert_eq!(
             first_leading_bit(ConcreteInt::U32([1 << idx])),
             ConcreteInt::U32([idx])
-        )
+        );
     }
 }
 
@@ -4877,7 +4866,7 @@ mod tests {
                 Default::default(),
             );
 
-            vec1_components.push(h)
+            vec1_components.push(h);
         }
 
         for i in 3..6 {
@@ -4886,7 +4875,7 @@ mod tests {
                 Default::default(),
             );
 
-            vec2_components.push(h)
+            vec2_components.push(h);
         }
 
         let vec1 = constants.append(

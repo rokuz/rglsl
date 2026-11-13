@@ -40,7 +40,7 @@ impl Block {
 
     pub fn extend(&mut self, item: Option<(Statement, Span)>) {
         if let Some((end, span)) = item {
-            self.push(end, span)
+            self.push(end, span);
         }
     }
 

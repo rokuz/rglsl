@@ -300,7 +300,6 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn opaque_inner(
-        &self,
         opaque: Opaque,
         depth: bool,
         comparison: bool,
@@ -666,9 +665,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     result
                 }
             }
-            TypeKind::Opaque(opaque) => {
-                self.with(|this| this.opaque_inner(opaque, depth, comparison, span))??
-            }
+            TypeKind::Opaque(opaque) => Lowerer::opaque_inner(opaque, depth, comparison, span)?,
             TypeKind::CooperativeMatrix(matrix) => TypeInner::CooperativeMatrix {
                 columns: {
                     let frame = self.clone().cooperative_size(matrix.columns, span);

@@ -43,12 +43,11 @@ fn object(source: &str, options: &Options) -> TestResult<ObjectModule> {
 
 #[test]
 fn an_implicit_stride_over_the_limit_is_a_link_error_of_a_program() -> TestResult {
-    let errors = match Frontend::default().parse(
+    let Err(errors) = Frontend::default().parse(
         &options(ShaderStage::Vertex, ResourceLimits::default()),
         CAPTURE_PROGRAM,
-    ) {
-        Ok(_) => return Err("the stride of 396 bytes passed the default limit".into()),
-        Err(errors) => errors,
+    ) else {
+        return Err("the stride of 396 bytes passed the default limit".into());
     };
     assert!(errors.errors.iter().any(|error| matches!(
         error.kind,
@@ -73,9 +72,8 @@ fn the_linker_checks_the_merged_stride_against_its_limits() -> TestResult {
         ])
     };
     let objects = compile(ResourceLimits::default())?;
-    let errors = match rglsl_link::link_objects(&objects, &rglsl_link::Options::default()) {
-        Ok(_) => return Err("the merged stride passed the default limit".into()),
-        Err(errors) => errors,
+    let Err(errors) = rglsl_link::link_objects(&objects, &rglsl_link::Options::default()) else {
+        return Err("the merged stride passed the default limit".into());
     };
     assert!(errors.iter().any(|error| *error
         == LinkError::XfbStride {

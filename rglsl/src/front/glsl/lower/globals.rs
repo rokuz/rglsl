@@ -1252,7 +1252,7 @@ impl<'a> Lowerer<'a> {
                 },
             }
         } else {
-            self.opaque_inner(
+            Self::opaque_inner(
                 opaque,
                 self.depth.contains(&symbol),
                 self.comparison.contains(&symbol),
@@ -2499,7 +2499,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let init = {
                     let frame = self
                         .clone()
-                        .global_constant(ty.clone(), value.values.to_vec(), at);
+                        .global_constant(ty.clone(), value.values.clone(), at);
                     let result = self.nest(frame).await;
                     result
                 }?;
@@ -2584,9 +2584,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             }?
         } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
             {
-                let frame = self
-                    .clone()
-                    .ir_type((GlslType::vector(Scalar::Uint, 4)).clone(), at);
+                let frame = self.clone().ir_type(GlslType::vector(Scalar::Uint, 4), at);
                 let result = self.nest(frame).await;
                 result
             }?

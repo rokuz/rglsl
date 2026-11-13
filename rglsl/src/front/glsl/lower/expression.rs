@@ -1919,7 +1919,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.with(|this| this.lw.module.global_variables[handle].space)? == AddressSpace::Handle);
-        let expression = self.with(|this| this.lw.global_expression(global))?;
+        let expression = super::Lowerer::global_expression(global);
         let mut value = self.with(|this| this.add(expression, at))??;
         if let GlobalRef::Variable(handle) = global {
             if let Some(offset) = self.with(|this| this.lw.heap_offset_value(handle))? {
@@ -2323,7 +2323,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control: crate::SelectionControl::None,
                 },
                 at,
-            )
+            );
         })?;
         Ok(None)
     }
@@ -2359,7 +2359,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control: crate::SelectionControl::None,
                 },
                 at,
-            )
+            );
         })?;
         let pointer = self.with(|this| this.local_pointer(local, at))??;
         self.with(|this| this.add(Expression::Load { pointer }, at).map(Some))?
@@ -2397,7 +2397,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     value: left,
                 },
                 at,
-            )
+            );
         })?;
         let rest = {
             let result = self
@@ -2420,7 +2420,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control: crate::SelectionControl::None,
                 },
                 at,
-            )
+            );
         })?;
         let pointer = self.with(|this| this.local_pointer(local, at))??;
         self.with(|this| this.add(Expression::Load { pointer }, at))?

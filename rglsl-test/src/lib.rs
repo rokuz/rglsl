@@ -320,7 +320,7 @@ impl Input {
                 .and_then(|extension| extension.to_str())
             {
                 Some("ron" | "vert" | "frag" | "comp") => {
-                    params.targets = Some(Targets::default_targets())
+                    params.targets = Some(Targets::default_targets());
                 }
                 _ => return Err(format!("Unknown extension: {}", input_path.display()).into()),
             }

@@ -447,7 +447,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             } else if generates_code(statement) && !labelled {
                 labelled = true;
                 self.with(|analyzer| {
-                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase)
+                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase);
                 });
             }
             self.call(self.clone().statement(statement)).await;

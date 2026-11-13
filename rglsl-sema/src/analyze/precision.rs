@@ -588,7 +588,7 @@ impl<'a> Pass<'a> {
             match initializer {
                 Initializer::Expression(expression) => self.expression(expression),
                 Initializer::List(items) => {
-                    pending.extend(items.iter().rev().map(|item| &item.node))
+                    pending.extend(items.iter().rev().map(|item| &item.node));
                 }
             }
         }

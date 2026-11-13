@@ -43,7 +43,7 @@ impl GuardedIndex {
     }
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq)]
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum IndexableLengthError {
     #[error("Type is not indexable, and has no length (validation error)")]
     TypeNotIndexable,

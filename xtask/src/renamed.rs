@@ -298,7 +298,7 @@ mod tests {
         let renamings = Renamings::load(&dir)?;
         let case = Case {
             name: "a.comp".into(),
-            path: original.clone(),
+            path: original,
             stage: "comp",
             target: crate::corpus::Target::VULKAN_DEFAULT,
             suite: None,

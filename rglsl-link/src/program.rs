@@ -451,7 +451,7 @@ pub fn link_program_staged(
         match finish(stage) {
             Ok(result) => linked.push(result),
             Err(failure) => {
-                errors.extend(failure.errors.into_iter().map(|error| (Some(name), error)))
+                errors.extend(failure.errors.into_iter().map(|error| (Some(name), error)));
             }
         }
     }

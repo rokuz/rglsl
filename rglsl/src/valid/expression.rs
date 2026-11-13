@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ExpressionError {
     #[error("Used by a statement before it was introduced into the scope by any of the dominating blocks")]
     NotInScope,
@@ -211,7 +211,7 @@ pub(super) fn tensor_shape(
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ConstExpressionError {
     #[error("The expression is not a constant or override expression")]
     NonConstOrOverride,
@@ -230,7 +230,7 @@ pub enum ConstExpressionError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum LiteralError {
     #[error("Float literal is NaN")]
     NaN,
@@ -1149,9 +1149,9 @@ impl super::Validator {
                         };
                         let types_match = match (left_inner, right_inner) {
                             // Straight scalar and mixed scalar/vector.
-                            (&Ti::Scalar(scalar1), &Ti::Scalar(scalar2))
-                            | (
-                                &Ti::Vector {
+                            (
+                                &Ti::Scalar(scalar1)
+                                | &Ti::Vector {
                                     scalar: scalar1, ..
                                 },
                                 &Ti::Scalar(scalar2),
@@ -1761,13 +1761,13 @@ impl super::Validator {
                 min_lod,
                 ty,
             } => {
-                let dim = match *resolver.resolve(image)? {
-                    Ti::SampledImage {
-                        dim,
-                        class: crate::ImageClass::Sampled { multi: false, .. },
-                        arrayed: false,
-                    } => dim,
-                    _ => return Err(ExpressionError::ExpectedGlobalVariable),
+                let Ti::SampledImage {
+                    dim,
+                    class: crate::ImageClass::Sampled { multi: false, .. },
+                    arrayed: false,
+                } = *resolver.resolve(image)?
+                else {
+                    return Err(ExpressionError::ExpectedGlobalVariable);
                 };
                 if !resolver.resolve(coordinate)?.addresses_image(dim)
                     && !matches!(
@@ -1911,24 +1911,24 @@ impl super::Validator {
                     |reason| Err(ExpressionError::InvalidImageProcessing(operation, reason));
                 let sampled = |image, sampler: Option<Handle<crate::Expression>>| {
                     let image_ty = Self::global_var_ty(module, function, info, image)?;
-                    let (dim, arrayed, class) = match (sampler, &module.types[image_ty].inner) {
-                        (
-                            Some(_),
-                            &Ti::Image {
-                                dim,
-                                arrayed,
-                                class,
-                            },
-                        )
-                        | (
-                            None,
-                            &Ti::SampledImage {
-                                dim,
-                                arrayed,
-                                class,
-                            },
-                        ) => (dim, arrayed, class),
-                        _ => return Err(ExpressionError::ExpectedImageType(image_ty)),
+                    let ((
+                        Some(_),
+                        &Ti::Image {
+                            dim,
+                            arrayed,
+                            class,
+                        },
+                    )
+                    | (
+                        None,
+                        &Ti::SampledImage {
+                            dim,
+                            arrayed,
+                            class,
+                        },
+                    )) = (sampler, &module.types[image_ty].inner)
+                    else {
+                        return Err(ExpressionError::ExpectedImageType(image_ty));
                     };
                     if let Some(sampler) = sampler {
                         let sampler_ty = Self::global_var_ty(module, function, info, sampler)?;
@@ -2144,9 +2144,8 @@ impl super::Validator {
                 out_of_bounds,
                 ..
             } => {
-                let (scalar, rank) = match *resolver.resolve(tensor)? {
-                    Ti::Tensor { scalar, rank } => (scalar, rank),
-                    _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
+                let Ti::Tensor { scalar, rank } = *resolver.resolve(tensor)? else {
+                    return Err(ExpressionError::InvalidTensorOperand(tensor));
                 };
                 match tensor_shape(resolver.resolve(coordinates)?, &module.types) {
                     Some((index, shape))
@@ -2181,11 +2180,11 @@ impl super::Validator {
                 ShaderStages::all()
             }
             E::Replicate { ty, value } => {
-                let scalar = match module.types[ty].inner {
-                    Ti::CooperativeMatrix { scalar, .. }
-                    | Ti::LongVector { scalar, .. }
-                    | Ti::Vector { scalar, .. } => scalar,
-                    _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
+                let (Ti::CooperativeMatrix { scalar, .. }
+                | Ti::LongVector { scalar, .. }
+                | Ti::Vector { scalar, .. }) = module.types[ty].inner
+                else {
+                    return Err(ExpressionError::InvalidCooperativeOperand(root));
                 };
                 if *resolver.resolve(value)? != Ti::Scalar(scalar) {
                     return Err(ExpressionError::InvalidCooperativeOperand(value));

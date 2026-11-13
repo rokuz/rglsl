@@ -26,6 +26,16 @@ panic = "deny"
 unreachable = "deny"
 unimplemented = "deny"
 todo = "deny"
+cloned_instead_of_copied = "warn"
+derive_partial_eq_without_eq = "warn"
+implicit_clone = "warn"
+manual_let_else = "warn"
+map_unwrap_or = "warn"
+redundant_clone = "warn"
+semicolon_if_nothing_returned = "warn"
+trivially_copy_pass_by_ref = "warn"
+unnested_or_patterns = "warn"
+unused_self = "warn"
 # NOTE: clippy configuration values (disallowed-types and
 # large-error-threshold) are in clippy.toml.
 

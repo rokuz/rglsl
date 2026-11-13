@@ -53,17 +53,17 @@ impl super::reclaimable::Reclaimable for PhysicalLayout {
 
 impl LogicalLayout {
     pub(super) fn in_words(&self, sink: &mut impl Extend<Word>) {
-        sink.extend(self.capabilities.iter().cloned());
-        sink.extend(self.extensions.iter().cloned());
-        sink.extend(self.ext_inst_imports.iter().cloned());
-        sink.extend(self.memory_model.iter().cloned());
-        sink.extend(self.entry_points.iter().cloned());
-        sink.extend(self.execution_modes.iter().cloned());
-        sink.extend(self.debugs.iter().cloned());
-        sink.extend(self.annotations.iter().cloned());
-        sink.extend(self.declarations.iter().cloned());
-        sink.extend(self.function_declarations.iter().cloned());
-        sink.extend(self.function_definitions.iter().cloned());
+        sink.extend(self.capabilities.iter().copied());
+        sink.extend(self.extensions.iter().copied());
+        sink.extend(self.ext_inst_imports.iter().copied());
+        sink.extend(self.memory_model.iter().copied());
+        sink.extend(self.entry_points.iter().copied());
+        sink.extend(self.execution_modes.iter().copied());
+        sink.extend(self.debugs.iter().copied());
+        sink.extend(self.annotations.iter().copied());
+        sink.extend(self.declarations.iter().copied());
+        sink.extend(self.function_declarations.iter().copied());
+        sink.extend(self.function_definitions.iter().copied());
     }
 }
 
@@ -119,7 +119,7 @@ impl Instruction {
 
     pub(super) fn add_operands(&mut self, operands: Vec<Word>) {
         for operand in operands.into_iter() {
-            self.add_operand(operand)
+            self.add_operand(operand);
         }
     }
 
@@ -127,7 +127,7 @@ impl Instruction {
         sink.extend(Some((self.wc << 16) | self.op));
         sink.extend(self.type_id);
         sink.extend(self.result_id);
-        sink.extend(self.operands.iter().cloned());
+        sink.extend(self.operands.iter().copied());
     }
 }
 

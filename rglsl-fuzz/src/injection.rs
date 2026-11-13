@@ -206,7 +206,7 @@ impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
                 .await;
             }
             StatementKind::Declaration(declaration) => {
-                self.with(|state| state.declaration(declaration))
+                self.with(|state| state.declaration(declaration));
             }
             StatementKind::Selection {
                 then_branch,
@@ -570,7 +570,7 @@ impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
                             else_branch: false,
                         },
                         then_branch,
-                    )
+                    );
                 });
                 if let Some(else_branch) = else_branch {
                     self.statement_in(else_branch).await;
@@ -581,7 +581,7 @@ impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
                                 else_branch: true,
                             },
                             else_branch,
-                        )
+                        );
                     });
                 }
             }
@@ -595,7 +595,7 @@ impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
             StatementKind::For(for_statement) => {
                 self.statement_in(&mut for_statement.body).await;
                 self.with(|state| {
-                    state.branch(Location::Body { statement: id }, &mut for_statement.body)
+                    state.branch(Location::Body { statement: id }, &mut for_statement.body);
                 });
             }
             StatementKind::Attributed { statement, .. } => self.statement_in(statement).await,

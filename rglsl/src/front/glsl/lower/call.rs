@@ -205,7 +205,7 @@ impl FunctionLowerer<'_, '_> {
         &mut self,
         ty: &GlslType,
         at: Span,
-        values: Vec<(Handle<Expression>, GlslType)>,
+        values: &[(Handle<Expression>, GlslType)],
     ) -> Result<Handle<Expression>> {
         let target = ty.base_scalar().ok_or_else(|| internal(at))?;
         if matches!(
@@ -214,9 +214,9 @@ impl FunctionLowerer<'_, '_> {
                 | TypeKind::CooperativeVector { .. }
                 | TypeKind::CooperativeMatrix(_)
         ) {
-            return self.construct_cooperative(ty, target, &values, at);
+            return self.construct_cooperative(ty, target, values, at);
         }
-        match (ty.kind, values.as_slice()) {
+        match (ty.kind, values) {
             (TypeKind::Scalar(_), &[(value, ref from), ..]) => {
                 let source = from.base_scalar().ok_or_else(|| internal(at))?;
                 let mut first = value;
@@ -239,7 +239,7 @@ impl FunctionLowerer<'_, '_> {
                 self.convert(value, from, ty, at)
             }
             (TypeKind::Vector { size, .. }, _) => {
-                let mut components = self.flatten(&values, target, at)?;
+                let mut components = self.flatten(values, target, at)?;
                 components.truncate(usize::from(size));
                 let ir = self.lw.ir_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)
@@ -311,7 +311,7 @@ impl FunctionLowerer<'_, '_> {
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
             (TypeKind::Matrix { columns, rows, .. }, _) => {
-                let flattened = self.flatten(&values, target, at)?;
+                let flattened = self.flatten(values, target, at)?;
                 let column_ty = self.lw.ir_type(&GlslType::vector(target, rows), at)?;
                 let mut components = Vec::with_capacity(usize::from(columns));
                 for chunk in flattened
@@ -927,7 +927,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }?);
         }
-        self.with(|this| this.construct_values(ty, at, values))?
+        self.with(|this| this.construct_values(ty, at, &values))?
     }
 
     async fn construct_composite(

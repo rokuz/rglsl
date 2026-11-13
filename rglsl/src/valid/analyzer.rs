@@ -38,7 +38,7 @@ bitflags::bitflags! {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Uniformity {
     /// A child expression with non-uniform result.
     ///
@@ -395,7 +395,7 @@ impl ops::Index<Handle<crate::Expression>> for FunctionInfo {
 
 /// Disruptor of the uniform control flow.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum UniformityDisruptor {
     #[error("Expression {0:?} produced non-uniform result, and control flow depends on it")]
     Expression(Handle<crate::Expression>),
@@ -526,7 +526,7 @@ impl FunctionInfo {
             let image_storage = match sampling.image {
                 GlobalOrArgument::Global(var) => GlobalOrArgument::Global(var),
                 GlobalOrArgument::Argument(i) => {
-                    let Some(handle) = arguments.get(i as usize).cloned() else {
+                    let Some(handle) = arguments.get(i as usize).copied() else {
                         // Argument count mismatch, will be reported later by validate_call
                         break;
                     };
@@ -542,7 +542,7 @@ impl FunctionInfo {
             let sampler_storage = match sampling.sampler {
                 GlobalOrArgument::Global(var) => GlobalOrArgument::Global(var),
                 GlobalOrArgument::Argument(i) => {
-                    let Some(handle) = arguments.get(i as usize).cloned() else {
+                    let Some(handle) = arguments.get(i as usize).copied() else {
                         // Argument count mismatch, will be reported later by validate_call
                         break;
                     };
@@ -2064,7 +2064,7 @@ fn uniform_control_flow() -> crate::TestResult {
     };
     {
         let block_info = info.process_block(
-            &vec![stmt_emit2.clone(), stmt_if_non_uniform.clone()].into(),
+            &vec![stmt_emit2, stmt_if_non_uniform].into(),
             &[],
             None,
             &expressions,

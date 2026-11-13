@@ -72,7 +72,7 @@ impl<T, U> HandleVec<T, U> {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.inner.clear()
+        self.inner.clear();
     }
 
     pub(crate) fn resize(&mut self, len: usize, fill: U)

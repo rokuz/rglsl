@@ -990,7 +990,7 @@ impl<'a> Analyzer<'a> {
                 match tables.variable(stage, name) {
                     None => self.stage_error(stage, span, undeclared()),
                     Some(description) if Some(description) != described => {
-                        keep &= !crate::builtins::stage_bit(stage)
+                        keep &= !crate::builtins::stage_bit(stage);
                     }
                     Some(_) => {}
                 }

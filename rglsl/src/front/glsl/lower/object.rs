@@ -33,12 +33,11 @@ impl Lowerer<'_> {
             let mut ty = ty;
             let mut sized = true;
             for size in declared.dimensions() {
-                let base = match self.module.types[ty].inner {
-                    TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } => base,
-                    _ => {
-                        sized = false;
-                        break;
-                    }
+                let (TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. }) =
+                    self.module.types[ty].inner
+                else {
+                    sized = false;
+                    break;
                 };
                 if *size == GlslArraySize::Unsized {
                     found.push(path.clone());

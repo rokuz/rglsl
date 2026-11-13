@@ -12,7 +12,7 @@ use crate::span::{AddSpan as _, MapErrWithSpan as _, SpanProvider as _, WithSpan
 const MAX_WORKGROUP_SIZE: u32 = 0x4000;
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum GlobalVariableError {
     #[error("Usage isn't compatible with address space {0:?}")]
     InvalidUsage(crate::AddressSpace),
@@ -58,7 +58,7 @@ pub enum GlobalVariableError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum VaryingError {
     #[error("The type {0:?} does not match the varying")]
     InvalidType(Handle<crate::Type>),
@@ -149,7 +149,7 @@ pub enum VaryingError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum EntryPointError {
     #[error("Multiple conflicting entry points")]
     Conflict,
@@ -746,10 +746,9 @@ impl VaryingContext<'_> {
                     ),
                     Bi::SubgroupSize
                     | Bi::SubgroupInvocationId
-                    | Bi::ShaderBallot(crate::ShaderBallot::Size)
-                    | Bi::ShaderBallot(crate::ShaderBallot::InvocationId) => {
-                        (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32))
-                    }
+                    | Bi::ShaderBallot(
+                        crate::ShaderBallot::Size | crate::ShaderBallot::InvocationId,
+                    ) => (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32)),
                     Bi::SubgroupMask(_) | Bi::ShaderBallot(crate::ShaderBallot::Mask(_)) => (
                         !self.output,
                         *ty_inner

@@ -228,14 +228,14 @@ impl RayPipeline {
         out
     }
 
-    pub fn run(&self) -> String {
+    pub fn run() -> String {
         format!(
             "RUN main RAYGEN sbt_raygen MISS sbt_miss HIT sbt_hit CALL sbt_call {LAUNCH_SIZE} {LAUNCH_SIZE} 1\n"
         )
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RayHarness {
     pub pipeline: RayPipeline,
     pub shaders: Vec<(ShaderKind, String)>,
@@ -637,7 +637,7 @@ mod tests {
             .contains("callableDataEXT uint rglsl_payload;"));
         assert!(harness.shaders[0].1.contains("executeCallableEXT(0, 0);"));
         assert_eq!(harness.output, Some(DataType::Scalar(U32)));
-        assert!(harness.pipeline.run().contains("CALL sbt_call 4 4 1"));
+        assert!(RayPipeline::run().contains("CALL sbt_call 4 4 1"));
         Ok(())
     }
     #[test]

@@ -186,9 +186,9 @@ fn make_rule(
     conclusion_rule: ConclusionRule,
 ) -> Option<Rule> {
     let inner = size.to_inner(scalar);
-    let arg = TypeResolution::Value(inner.clone());
+    let arg = TypeResolution::Value(inner);
     Some(Rule {
-        arguments: core::iter::repeat_n(arg.clone(), arity).collect(),
+        arguments: core::iter::repeat_n(arg, arity).collect(),
         conclusion: conclusion_rule.conclude(size, scalar)?,
     })
 }

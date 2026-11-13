@@ -80,7 +80,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     arguments: values,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -210,7 +210,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     arguments: values,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }

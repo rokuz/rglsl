@@ -151,9 +151,9 @@ impl<'a> Lowerer<'a> {
             .module
             .global_expressions
             .append(Expression::Override(handle), at);
-        let scalar = match self.module.types[self.module.overrides[handle].ty].inner {
-            TypeInner::Scalar(scalar) => scalar,
-            _ => return Err(internal(at)),
+        let TypeInner::Scalar(scalar) = self.module.types[self.module.overrides[handle].ty].inner
+        else {
+            return Err(internal(at));
         };
         if scalar.width >= 4 {
             return Ok(HeapOffset::Fixed(value));
@@ -249,7 +249,7 @@ impl<'a> Lowerer<'a> {
             | OpaqueKind::HitObjectNv
             | OpaqueKind::HitObjectExt => Err(internal(at)),
             OpaqueKind::Sampler | OpaqueKind::Texture | OpaqueKind::AccelerationStructure => {
-                self.opaque_inner(opaque, false, false, at)
+                Self::opaque_inner(opaque, false, false, at)
             }
         }
     }

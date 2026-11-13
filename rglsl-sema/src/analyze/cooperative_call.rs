@@ -127,19 +127,19 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        operands: Vec<Operand>,
+        operands: &[Operand],
     ) -> Operand {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }
         if let Some(conversion) = super::qcom::conversion(name) {
-            return self.qcom_conversion(expression, span, name, conversion, arguments, &operands);
+            return self.qcom_conversion(expression, span, name, conversion, arguments, operands);
         }
         if name == "saturatedConvertEXT" {
-            return self.saturated_convert(expression, span, arguments, &operands);
+            return self.saturated_convert(expression, span, arguments, operands);
         }
         if name.starts_with("coopVec") {
-            return self.cooperative_vector_call(expression, span, name, arguments, &operands);
+            return self.cooperative_vector_call(expression, span, name, arguments, operands);
         }
         let nv = name.ends_with("NV");
         let extension = if nv {
@@ -150,9 +150,9 @@ impl Analyzer<'_> {
         let result = match name {
             "coopMatLoad" | "coopMatLoadNV" | "coopMatStore" | "coopMatStoreNV" => {
                 let load = name.starts_with("coopMatLoad");
-                self.cooperative_memory(span, name, nv, load, arguments, &operands)
+                self.cooperative_memory(span, name, nv, load, arguments, operands)
             }
-            _ => self.cooperative_mul_add(span, name, nv, &operands),
+            _ => self.cooperative_mul_add(span, name, nv, operands),
         };
         let Some((call, result)) = result else {
             return Operand::error();

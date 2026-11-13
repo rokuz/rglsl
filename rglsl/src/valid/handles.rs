@@ -1311,7 +1311,7 @@ impl From<BadRangeError> for ValidationError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum InvalidHandleError {
     #[error(transparent)]
     BadHandle(#[from] BadHandle),
@@ -1322,7 +1322,7 @@ pub enum InvalidHandleError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[error(
     "{subject:?} of kind {subject_kind:?} depends on {depends_on:?} of kind {depends_on_kind}, \
     which has not been processed yet"

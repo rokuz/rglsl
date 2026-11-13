@@ -197,7 +197,7 @@ pub fn vector_sizes() -> impl Iterator<Item = ir::VectorSize> + Clone {
         ir::VectorSize::Quad,
     ];
 
-    SIZES.iter().cloned()
+    SIZES.iter().copied()
 }
 
 const POINTER_SPAN: u32 = 4;

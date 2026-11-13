@@ -11,7 +11,7 @@ use crate::span::WithSpan;
 use crate::span::{AddSpan as _, MapErrWithSpan as _};
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum CallError {
     #[error("Argument {index} expression is invalid")]
     Argument {
@@ -35,7 +35,7 @@ pub enum CallError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum AtomicError {
     #[error("Pointer {0:?} to atomic is invalid.")]
     InvalidPointer(Handle<crate::Expression>),
@@ -62,7 +62,7 @@ pub enum AtomicError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum SubgroupError {
     #[error("Operand {0:?} has invalid type.")]
     InvalidOperand(Handle<crate::Expression>),
@@ -116,7 +116,7 @@ const fn is_numeric(inner: &crate::TypeInner) -> bool {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum LocalVariableError {
     #[error("Local variable has a type {0:?} that can't be stored in a local variable.")]
     InvalidType(Handle<crate::Type>),
@@ -127,7 +127,7 @@ pub enum LocalVariableError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum FunctionError {
     #[error("internal error: the analysis of a block did not finish")]
     Unfinished,
@@ -768,7 +768,7 @@ impl super::Validator {
     fn validate_atomic(
         &mut self,
         pointer: Handle<crate::Expression>,
-        fun: &crate::AtomicFunction,
+        fun: crate::AtomicFunction,
         value: Handle<crate::Expression>,
         result: Option<Handle<crate::Expression>>,
         span: crate::Span,
@@ -859,13 +859,13 @@ impl super::Validator {
         match pointer_scalar {
             _ if plain_float => {
                 if !matches!(
-                    *fun,
+                    fun,
                     crate::AtomicFunction::Add
                         | crate::AtomicFunction::Min
                         | crate::AtomicFunction::Max
                         | crate::AtomicFunction::Exchange { compare: None }
                 ) {
-                    return Err(AtomicError::InvalidOperator(*fun)
+                    return Err(AtomicError::InvalidOperator(fun)
                         .with_span_handle(value, context.expressions)
                         .into_other());
                 }
@@ -886,10 +886,8 @@ impl super::Validator {
                 } else {
                     // `Capabilities::SHADER_INT64_ATOMIC_MIN_MAX` allows `Min` and
                     // `Max` on operations in `Storage`, without a return value.
-                    if matches!(
-                        *fun,
-                        crate::AtomicFunction::Min | crate::AtomicFunction::Max
-                    ) && matches!(pointer_space, crate::AddressSpace::Storage { .. })
+                    if matches!(fun, crate::AtomicFunction::Min | crate::AtomicFunction::Max)
+                        && matches!(pointer_space, crate::AddressSpace::Storage { .. })
                         && result.is_none()
                     {
                         if !self
@@ -931,13 +929,13 @@ impl super::Validator {
                     .into_other());
                 }
                 if !matches!(
-                    *fun,
+                    fun,
                     crate::AtomicFunction::Add
                         | crate::AtomicFunction::Subtract
                         | crate::AtomicFunction::Exchange { compare: None }
                 ) {
                     log::error!("Float32 atomic operation {fun:?} is not supported");
-                    return Err(AtomicError::InvalidOperator(*fun)
+                    return Err(AtomicError::InvalidOperator(fun)
                         .with_span_handle(value, context.expressions)
                         .into_other());
                 }
@@ -978,7 +976,7 @@ impl super::Validator {
                 // The constraints on the result type depend on the atomic function.
                 if let crate::AtomicFunction::Exchange {
                     compare: Some(compare),
-                } = *fun
+                } = fun
                 {
                     // The comparison value must be a scalar of the same type as the
                     // atomic we're operating on.
@@ -1041,7 +1039,7 @@ impl super::Validator {
 
             None => {
                 // Exchange operations must always produce a value.
-                if let crate::AtomicFunction::Exchange { compare: None } = *fun {
+                if let crate::AtomicFunction::Exchange { compare: None } = fun {
                     log::error!("Atomic exchange's value is unused");
                     return Err(AtomicError::MissingReturnValue
                         .with_span_static(span, "atomic exchange operation")
@@ -1090,11 +1088,11 @@ impl super::Validator {
 
     fn validate_collective_operation(
         &self,
-        collective_op: &crate::CollectiveOperation,
+        collective_op: crate::CollectiveOperation,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         use crate::CollectiveOperation as co;
-        match *collective_op {
+        match collective_op {
             co::Reduce | co::InclusiveScan | co::ExclusiveScan => Ok(()),
             co::ClusteredReduce(size) if size.is_power_of_two() => Ok(()),
             co::ClusteredReduce(_) => Err(SubgroupError::UnknownOperation.with_span().into_other()),
@@ -1108,8 +1106,8 @@ impl super::Validator {
 
     fn validate_subgroup_operation(
         &mut self,
-        op: &crate::SubgroupOperation,
-        collective_op: &crate::CollectiveOperation,
+        op: crate::SubgroupOperation,
+        collective_op: crate::CollectiveOperation,
         argument: Handle<crate::Expression>,
         result: Handle<crate::Expression>,
         context: &BlockContext,
@@ -1130,7 +1128,7 @@ impl super::Validator {
 
         use crate::ScalarKind as sk;
         use crate::SubgroupOperation as sg;
-        match (scalar.kind, *op) {
+        match (scalar.kind, op) {
             (sk::Bool, sg::All | sg::Any) if is_scalar => {}
             (sk::Sint | sk::Uint | sk::Float, sg::Add | sg::Mul | sg::Min | sg::Max) => {}
             (sk::Sint | sk::Uint | sk::Bool, sg::And | sg::Or | sg::Xor) => {}
@@ -1143,8 +1141,7 @@ impl super::Validator {
             }
         };
 
-        if matches!(*op, sg::All | sg::Any) && *collective_op != crate::CollectiveOperation::Reduce
-        {
+        if matches!(op, sg::All | sg::Any) && collective_op != crate::CollectiveOperation::Reduce {
             return Err(SubgroupError::UnknownOperation.with_span().into_other());
         }
         self.validate_collective_operation(collective_op, context)?;
@@ -1648,11 +1645,11 @@ impl super::Validator {
                     FunctionError::InvalidTensorWrite(handle)
                         .with_span_handle(handle, context.expressions)
                 };
-                let (scalar, rank) =
-                    match *context.resolve_type_inner(tensor, &self.valid_expression_set)? {
-                        Ti::Tensor { scalar, rank } => (scalar, rank),
-                        _ => return Err(invalid(tensor)),
-                    };
+                let Ti::Tensor { scalar, rank } =
+                    *context.resolve_type_inner(tensor, &self.valid_expression_set)?
+                else {
+                    return Err(invalid(tensor));
+                };
                 let coordinates_inner =
                     context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
                 match super::expression::tensor_shape(coordinates_inner, context.types) {
@@ -1976,7 +1973,7 @@ impl super::Validator {
                 result,
                 order: _,
             } => {
-                self.validate_atomic(pointer, fun, value, result, span, context)?;
+                self.validate_atomic(pointer, *fun, value, result, span, context)?;
             }
             S::ImageAtomic {
                 image,
@@ -2174,8 +2171,8 @@ impl super::Validator {
                 self.emit_expression(result, context)?;
             }
             S::SubgroupCollectiveOperation {
-                ref op,
-                ref collective_op,
+                op,
+                collective_op,
                 argument,
                 result,
             } => {

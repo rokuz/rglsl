@@ -186,7 +186,7 @@ const LOCAL_GPU_JOBS: usize = 2;
 const RECOVERY_ROUNDS: usize = 2;
 const RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetDifference {
     pub target: String,
     pub difference: compare::Difference,
@@ -671,7 +671,6 @@ impl Executor {
     }
 
     pub fn stage(
-        &self,
         plan: &Plan,
         dir: &Path,
         harness: &[(ShaderKind, PathBuf)],
@@ -780,11 +779,9 @@ impl Executor {
         let harness = self
             .prepare(&plan, &dir)
             .map_err(|error| Outcome::skip(SkipReason::Binding, format!("harness: {error}")))?;
-        let theirs_job = self
-            .stage(&plan, &dir, &harness, &case.reference, "glslang")
+        let theirs_job = Self::stage(&plan, &dir, &harness, &case.reference, "glslang")
             .map_err(|error| Outcome::skip(SkipReason::Binding, error))?;
-        let ours_job = self
-            .stage(&our_plan, &dir, &harness, &case.ours, "rglsl")
+        let ours_job = Self::stage(&our_plan, &dir, &harness, &case.ours, "rglsl")
             .map_err(|error| Outcome::skip(SkipReason::Binding, error))?;
         Ok(Ready {
             plan,

@@ -51,7 +51,7 @@ impl ImmediateSlots {
                 } => slots |= Self::from_range(offset, u32::MAX - offset),
                 _ => {
                     slots |=
-                        Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset))
+                        Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset));
                 }
             }
         }

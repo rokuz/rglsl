@@ -2,7 +2,7 @@ use crate::arena::Handle;
 use crate::proc::TypeResolution;
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ComposeError {
     #[error("Composing of type {0:?} can't be done")]
     Type(Handle<crate::Type>),

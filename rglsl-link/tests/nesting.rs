@@ -993,7 +993,7 @@ fn deep_object_files_link_on_a_small_stack(depth: usize) -> TestResult {
             if let Err(error) = rglsl_link::validate_object(&object) {
                 return Outcome::Failed(format!("{error}"));
             }
-            let copy = object.clone();
+            let copy = object;
             let linked = match link(&[copy], &LinkOptions::default()) {
                 Ok(linked) => linked,
                 Err(errors) => return Outcome::Failed(format!("link: {errors}")),

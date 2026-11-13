@@ -224,9 +224,10 @@ impl BlockContext<'_> {
         data: &CooperativeData,
         block: &mut Block,
     ) -> Result<(), Error> {
-        let class = match *self.fun_info[target].ty.inner_with(&self.ir_module.types) {
-            TypeInner::CooperativeMatrix { class, .. } => class,
-            _ => return Err(Error::Validation("not a cooperative matrix")),
+        let TypeInner::CooperativeMatrix { class, .. } =
+            *self.fun_info[target].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("not a cooperative matrix"));
         };
         let target_id = self.cached.get(target)?;
         self.note_matrix_layout(data.layout)?;
@@ -276,9 +277,10 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let class = match *self.fun_info[c].ty.inner_with(&self.ir_module.types) {
-            TypeInner::CooperativeMatrix { class, .. } => class,
-            _ => return Err(Error::Validation("not a cooperative matrix")),
+        let TypeInner::CooperativeMatrix { class, .. } =
+            *self.fun_info[c].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("not a cooperative matrix"));
         };
         let a_id = self.cached.get(a)?;
         let b_id = self.cached.get(b)?;
@@ -777,7 +779,7 @@ impl BlockContext<'_> {
                 .writer
                 .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1),
             CooperativeFamily::Khr | CooperativeFamily::Nv => {
-                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2)
+                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
             }
         }
         Ok(())

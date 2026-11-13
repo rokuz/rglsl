@@ -648,16 +648,16 @@ impl Writer {
     /// return an error, unless [`Writer::fake_missing_bindings`] is set.
     pub(super) fn resolve_resource_binding(
         &self,
-        res_binding: &crate::ResourceBinding,
+        res_binding: crate::ResourceBinding,
     ) -> Result<BindingInfo, Error> {
-        match self.binding_map.get(res_binding) {
+        match self.binding_map.get(&res_binding) {
             Some(target) => Ok(*target),
             None if self.fake_missing_bindings => Ok(BindingInfo {
                 descriptor_set: res_binding.group,
                 binding: res_binding.binding,
                 binding_array_size: None,
             }),
-            None => Err(Error::MissingBinding(*res_binding)),
+            None => Err(Error::MissingBinding(res_binding)),
         }
     }
 
@@ -3538,7 +3538,7 @@ impl Writer {
         // and it is failing on 0.
         let mut substitute_inner_type_lookup = None;
         if let Some(ref res_binding) = global_variable.binding {
-            let bind_target = self.resolve_resource_binding(res_binding)?;
+            let bind_target = self.resolve_resource_binding(*res_binding)?;
             self.decorate(id, Decoration::DescriptorSet, &[bind_target.descriptor_set]);
             self.decorate(id, Decoration::Binding, &[bind_target.binding]);
 
@@ -4584,7 +4584,7 @@ pub(super) fn mark_laid_out(
         }
         match types[ty].inner {
             crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
-                pending.push(base)
+                pending.push(base);
             }
             crate::TypeInner::Struct { ref members, .. } => {
                 pending.extend(members.iter().map(|member| member.ty));

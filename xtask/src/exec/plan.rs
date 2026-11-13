@@ -1838,8 +1838,8 @@ impl Plan {
                 );
             }
             Draw::Rays => {
-                if let Some(rays) = &self.rays {
-                    out.push_str(&rays.run());
+                if self.rays.is_some() {
+                    out.push_str(&RayPipeline::run());
                 }
             }
             Draw::Mesh => {

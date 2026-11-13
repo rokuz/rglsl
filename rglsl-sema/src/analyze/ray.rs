@@ -332,7 +332,7 @@ impl Analyzer<'_> {
         true
     }
 
-    pub(crate) fn is_ray_query(&self, ty: &Type) -> bool {
+    pub(crate) fn is_ray_query(ty: &Type) -> bool {
         matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.kind == OpaqueKind::RayQuery)
     }
 

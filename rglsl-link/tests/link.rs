@@ -1079,7 +1079,7 @@ void fill() { blk.a = vec4(1.0); blk.b = vec4(2.0); more = vec2(3.0); again = ve
         auto_map_bindings: false,
         ..Default::default()
     };
-    let result = link(&[main.clone(), fill.clone()], &options)?;
+    let result = link(&[main.clone(), fill], &options)?;
     assert_eq!(block_locations(&result, "blk")?, (1, vec![1, 2]));
     let explicit = auto_located(
         ShaderStage::Vertex,

@@ -499,7 +499,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.with(|this| this.lw.module.generate_vertex_return_type())?;
                 }
                 Iv::LssPositions => {
-                    self.with(|this| this.generate_lss_array(Some(crate::VectorSize::Tri)))?
+                    self.with(|this| this.generate_lss_array(Some(crate::VectorSize::Tri)))?;
                 }
                 Iv::LssRadii => self.with(|this| this.generate_lss_array(None))?,
                 _ => {}
@@ -579,7 +579,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             },
                         },
                         at,
-                    )
+                    );
                 })?;
                 Ok(Some(None))
             }
@@ -638,7 +638,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             fun: RayQueryFunction::GenerateIntersection { hit_t },
                         },
                         at,
-                    )
+                    );
                 })?;
                 Ok(Some(None))
             }
@@ -680,7 +680,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             payload,
                         }),
                         at,
-                    )
+                    );
                 })?;
                 Ok(Some(None))
             }
@@ -702,7 +702,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             data,
                         }),
                         at,
-                    )
+                    );
                 })?;
                 Ok(Some(None))
             }
@@ -744,7 +744,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             nv: true,
                         }),
                         at,
-                    )
+                    );
                 })?;
                 Ok(Some(None))
             }
@@ -755,7 +755,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             nv: true,
                         }),
                         at,
-                    )
+                    );
                 })?;
                 Ok(Some(None))
             }
@@ -840,7 +840,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let init = {
             let frame = self
                 .clone()
-                .global_constant(variable.ty.clone(), values.to_vec(), at);
+                .global_constant(variable.ty.clone(), values.clone(), at);
             let result = self.nest(frame).await;
             result
         }?;

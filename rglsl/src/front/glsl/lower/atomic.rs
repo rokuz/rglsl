@@ -297,7 +297,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             order,
                         },
                         at,
-                    )
+                    );
                 })?;
                 return Ok(None);
             }
@@ -445,7 +445,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             order,
                         },
                         at,
-                    )
+                    );
                 })?;
                 Ok(None)
             }

@@ -173,7 +173,7 @@ impl Analyzer<'_> {
                             DiagnosticKind::UndeclaredIdentifier(identifier.node.clone()),
                         ),
                         Some(Some(id)) if qualifiers.flags.contains(QualifierFlags::PRECISE) => {
-                            self.make_precise(id)
+                            self.make_precise(id);
                         }
                         Some(_) => {}
                     }
@@ -628,7 +628,7 @@ impl Analyzer<'_> {
                 }
             }
             SingleTypeQualifier::SpirvByReference => {
-                result.flags.insert(QualifierFlags::SPIRV_BY_REFERENCE)
+                result.flags.insert(QualifierFlags::SPIRV_BY_REFERENCE);
             }
             SingleTypeQualifier::SpirvLiteral => result.flags.insert(QualifierFlags::SPIRV_LITERAL),
             SingleTypeQualifier::Layout(_) | SingleTypeQualifier::SpirvDecorate(_) => {}
@@ -1594,7 +1594,7 @@ impl Analyzer<'_> {
             self.shader_record_checks(name.span, &qualifiers, false);
             self.ray_variable_checks(name.span, &qualifiers);
         }
-        if self.is_ray_query(&ty) && initializer.is_some() {
+        if Self::is_ray_query(&ty) && initializer.is_some() {
             self.error(
                 name.span,
                 DiagnosticKind::RayQueryInitializer(name.node.clone()),
@@ -1609,7 +1609,7 @@ impl Analyzer<'_> {
         );
         if hit_object {
             qualifiers.storage = Storage::None;
-        } else if qualifiers.storage == Storage::TileImage || self.is_tile_image(&ty) {
+        } else if qualifiers.storage == Storage::TileImage || Self::is_tile_image(&ty) {
             self.tile_image_declaration(name.span, &qualifiers, &ty);
         } else if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));

@@ -648,10 +648,10 @@ fn reword(
     own: ShaderStage,
 ) -> Option<String> {
     use rglsl_sema::DiagnosticKind;
-    let name = match *kind {
-        DiagnosticKind::UndeclaredIdentifier(ref name)
-        | DiagnosticKind::NoMatchingFunction(ref name) => name,
-        _ => return None,
+    let (DiagnosticKind::UndeclaredIdentifier(ref name)
+    | DiagnosticKind::NoMatchingFunction(ref name)) = *kind
+    else {
+        return None;
     };
     let declared = !tables.declares(own, name)
         && ShaderStage::ALL

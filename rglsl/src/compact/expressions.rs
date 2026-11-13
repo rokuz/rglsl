@@ -121,7 +121,7 @@ impl ExpressionTracer<'_> {
             Ex::Compose { ty, ref components } => {
                 self.types_used.insert(ty);
                 self.expressions_used
-                    .insert_iter(components.iter().cloned());
+                    .insert_iter(components.iter().copied());
             }
             Ex::Access { base, index } => self.expressions_used.insert_iter([base, index]),
             Ex::AccessIndex { base, index: _ } => {
@@ -532,7 +532,7 @@ impl ModuleMap {
                 adjust(coordinate)?;
                 operand_map.adjust_option(array_index)?;
                 operand_map.adjust_option(offset)?;
-                self.adjust_sample_level(level, operand_map)?;
+                Self::adjust_sample_level(level, operand_map)?;
                 operand_map.adjust_option(depth_ref)?;
             }
             Ex::ImageLoad {
@@ -621,7 +621,7 @@ impl ModuleMap {
                 ref mut query,
             } => {
                 adjust(image)?;
-                self.adjust_image_query(query, operand_map)?;
+                Self::adjust_image_query(query, operand_map)?;
             }
             Ex::Unary {
                 op: _,
@@ -852,7 +852,6 @@ impl ModuleMap {
     }
 
     fn adjust_sample_level(
-        &self,
         level: &mut crate::SampleLevel,
         operand_map: &HandleMap<crate::Expression>,
     ) -> Result<(), BadHandle> {
@@ -875,7 +874,6 @@ impl ModuleMap {
     }
 
     fn adjust_image_query(
-        &self,
         query: &mut crate::ImageQuery,
         operand_map: &HandleMap<crate::Expression>,
     ) -> Result<(), BadHandle> {

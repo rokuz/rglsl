@@ -550,7 +550,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -625,7 +625,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -667,7 +667,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         control,
                     },
                     at,
-                )
+                );
             })?;
             return Ok(());
         }
@@ -705,7 +705,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -762,7 +762,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -815,7 +815,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     };
                     match groups.last_mut() {
                         Some(&mut (ref mut labels, ref body)) if body.is_empty() => {
-                            labels.push(case)
+                            labels.push(case);
                         }
                         _ => groups.push((alloc::vec![case], Vec::new())),
                     }
@@ -898,7 +898,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -978,7 +978,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }

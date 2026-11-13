@@ -191,7 +191,7 @@ impl<T: Eq + hash::Hash> UniqueArena<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq)]
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ReplaceError {
     #[error(transparent)]
     BadHandle(#[from] BadHandle),

@@ -296,13 +296,15 @@ fn parameter_copies(function: &crate::Function) -> FastHashMap<u32, Handle<crate
         match *statement {
             crate::Statement::Emit(_) => {}
             crate::Statement::Store { pointer, value } => {
-                let local = match function.expressions.try_get(pointer) {
-                    Ok(&crate::Expression::LocalVariable(local)) => local,
-                    _ => break,
+                let Ok(&crate::Expression::LocalVariable(local)) =
+                    function.expressions.try_get(pointer)
+                else {
+                    break;
                 };
-                let index = match function.expressions.try_get(value) {
-                    Ok(&crate::Expression::FunctionArgument(index)) => index,
-                    _ => break,
+                let Ok(&crate::Expression::FunctionArgument(index)) =
+                    function.expressions.try_get(value)
+                else {
+                    break;
                 };
                 copies.entry(index).or_insert(local);
             }

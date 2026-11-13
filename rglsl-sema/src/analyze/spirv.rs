@@ -277,7 +277,6 @@ impl Analyzer<'_> {
     }
 
     fn spirv_decorate_with(
-        &mut self,
         decorate: &SpirvDecorate,
         decoration: u32,
         ids: Vec<SpirvIdOperand>,
@@ -422,7 +421,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 }
             }
         }
-        Some(self.with(|analyzer| analyzer.spirv_decorate_with(decorate, decoration, ids)))
+        Some(Analyzer::spirv_decorate_with(decorate, decoration, ids))
     }
 
     pub(crate) async fn spirv_type_specifier(self, specifier: &'b SpirvTypeSpecifier) -> Type {

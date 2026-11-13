@@ -56,8 +56,8 @@ impl BlockContext<'_> {
             .map_err(|missing| Error::MissingCapabilities(what, vec![missing]))
     }
 
-    fn require_collective(&mut self, collective_op: &CollectiveOperation) -> Result<(), Error> {
-        match *collective_op {
+    fn require_collective(&mut self, collective_op: CollectiveOperation) -> Result<(), Error> {
+        match collective_op {
             CollectiveOperation::Reduce
             | CollectiveOperation::InclusiveScan
             | CollectiveOperation::ExclusiveScan => self.require_subgroup(
@@ -89,9 +89,9 @@ impl BlockContext<'_> {
 
     fn group_operation(
         &mut self,
-        collective_op: &CollectiveOperation,
+        collective_op: CollectiveOperation,
     ) -> Result<(GroupOperation, Option<Word>), Error> {
-        Ok(match *collective_op {
+        Ok(match collective_op {
             CollectiveOperation::Reduce => (GroupOperation::Reduce, None),
             CollectiveOperation::InclusiveScan => (GroupOperation::InclusiveScan, None),
             CollectiveOperation::ExclusiveScan => (GroupOperation::ExclusiveScan, None),
@@ -143,7 +143,7 @@ impl BlockContext<'_> {
 
     pub(super) fn write_subgroup_ballot(
         &mut self,
-        predicate: &Option<Handle<Expression>>,
+        predicate: Option<Handle<Expression>>,
         result: Handle<Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
@@ -158,7 +158,7 @@ impl BlockContext<'_> {
             size: crate::VectorSize::Quad,
             scalar: crate::Scalar::U32,
         });
-        let predicate = if let Some(predicate) = *predicate {
+        let predicate = if let Some(predicate) = predicate {
             self.cached.get(predicate)?
         } else {
             self.writer.get_constant_scalar(crate::Literal::Bool(true))
@@ -176,14 +176,14 @@ impl BlockContext<'_> {
 
     pub(super) fn write_subgroup_operation(
         &mut self,
-        op: &crate::SubgroupOperation,
-        collective_op: &CollectiveOperation,
+        op: crate::SubgroupOperation,
+        collective_op: CollectiveOperation,
         argument: Handle<Expression>,
         result: Handle<Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
         use crate::SubgroupOperation as sg;
-        match *op {
+        match op {
             sg::All | sg::Any => self.require_subgroup(
                 "subgroup vote",
                 &[Capability::GroupNonUniform, Capability::GroupNonUniformVote],
@@ -210,7 +210,7 @@ impl BlockContext<'_> {
         };
 
         use crate::ScalarKind as sk;
-        let spirv_op = match (scalar.kind, *op) {
+        let spirv_op = match (scalar.kind, op) {
             (sk::Bool, sg::All) if is_scalar => Op::GroupNonUniformAll,
             (sk::Bool, sg::Any) if is_scalar => Op::GroupNonUniformAny,
             (_, sg::All | sg::Any) => {
@@ -250,7 +250,7 @@ impl BlockContext<'_> {
 
         let arg_id = self.cached.get(argument)?;
         let mut operands = Vec::with_capacity(3);
-        if !matches!(*op, sg::All | sg::Any) {
+        if !matches!(op, sg::All | sg::Any) {
             let (group_op, extra) = self.group_operation(collective_op)?;
             operands.push(group_op as u32);
             operands.push(arg_id);
@@ -517,16 +517,15 @@ impl BlockContext<'_> {
                 argument,
                 non_uniform,
             } => {
-                let scalar = match *self.fun_info[result].ty.inner_with(&self.ir_module.types) {
-                    TypeInner::Scalar(scalar) | TypeInner::Vector { scalar, .. } => scalar,
-                    _ => {
-                        return Err(Error::Validation(
-                            "group operation result is not a scalar or vector",
-                        ))
-                    }
+                let (TypeInner::Scalar(scalar) | TypeInner::Vector { scalar, .. }) =
+                    *self.fun_info[result].ty.inner_with(&self.ir_module.types)
+                else {
+                    return Err(Error::Validation(
+                        "group operation result is not a scalar or vector",
+                    ));
                 };
                 let spirv_op = group_op(op, scalar.kind, non_uniform)?;
-                let (group_operation, _) = self.group_operation(collective_op)?;
+                let (group_operation, _) = self.group_operation(*collective_op)?;
                 let scope = self.get_index_constant(spirv::Scope::Subgroup as u32);
                 self.per_component_after(
                     spirv_op,
@@ -569,7 +568,7 @@ impl BlockContext<'_> {
                         ballot,
                         ref collective_op,
                     } => {
-                        let (group_op, _) = self.group_operation(collective_op)?;
+                        let (group_op, _) = self.group_operation(*collective_op)?;
                         (
                             Op::GroupNonUniformBallotBitCount,
                             Scope::Subgroup,

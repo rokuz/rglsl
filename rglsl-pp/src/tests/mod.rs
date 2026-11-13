@@ -103,9 +103,8 @@ pub(crate) fn first_error(source: &str) -> (DiagnosticKind, u32) {
 }
 
 pub(crate) fn line_of(result: &Preprocessed, needle: &str) -> u32 {
-    let offset = match result.text.find(needle) {
-        Some(offset) => offset,
-        None => panic!("`{needle}` not in output:\n{}", result.text),
+    let Some(offset) = result.text.find(needle) else {
+        panic!("`{needle}` not in output:\n{}", result.text)
     };
     result.source_map.line(offset).1
 }

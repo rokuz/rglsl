@@ -264,9 +264,9 @@ bitflags::bitflags! {
 }
 
 impl super::SubgroupOperation {
-    const fn required_operations(&self) -> SubgroupOperationSet {
+    const fn required_operations(self) -> SubgroupOperationSet {
         use SubgroupOperationSet as S;
-        match *self {
+        match self {
             Self::All | Self::Any => S::VOTE,
             Self::Add | Self::Mul | Self::Min | Self::Max | Self::And | Self::Or | Self::Xor => {
                 S::ARITHMETIC
@@ -276,9 +276,9 @@ impl super::SubgroupOperation {
 }
 
 impl super::CollectiveOperation {
-    const fn required_operations(&self) -> SubgroupOperationSet {
+    const fn required_operations(self) -> SubgroupOperationSet {
         use SubgroupOperationSet as S;
-        match *self {
+        match self {
             Self::Reduce | Self::InclusiveScan | Self::ExclusiveScan => S::empty(),
             Self::ClusteredReduce(_) => S::CLUSTERED,
             Self::PartitionedReduce(_)
@@ -424,7 +424,7 @@ pub struct Validator {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ConstantError {
     #[error("Initializer must be a const-expression")]
     InitializerExprType,
@@ -435,7 +435,7 @@ pub enum ConstantError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum OverrideError {
     #[error("Override name and ID are missing")]
     MissingNameAndID,
@@ -459,7 +459,7 @@ pub enum OverrideError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ValidationError {
     #[error(transparent)]
     InvalidHandle(#[from] InvalidHandleError),
@@ -904,7 +904,7 @@ impl Validator {
                     .map_err(|source| {
                         ValidationError::ConstExpression { handle, source }
                             .with_span_handle(handle, &module.global_expressions)
-                    })?
+                    })?;
             }
         }
 
@@ -919,7 +919,7 @@ impl Validator {
                 .map_err(|source| {
                     ValidationError::ConstExpression { handle, source }
                         .with_span_handle(handle, &module.global_expressions)
-                })?
+                })?;
             }
 
             for (handle, constant) in module.constants.iter() {
@@ -931,7 +931,7 @@ impl Validator {
                             source,
                         }
                         .with_span_handle(handle, &module.constants)
-                    })?
+                    })?;
             }
 
             for (handle, r#override) in module.overrides.iter() {

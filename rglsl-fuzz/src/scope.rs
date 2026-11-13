@@ -240,7 +240,7 @@ impl Finder<'_> {
             match initializer {
                 Initializer::Expression(expression) => self.expression(expression),
                 Initializer::List(items) => {
-                    pending.extend(items.iter().map(|item| &item.node).rev())
+                    pending.extend(items.iter().map(|item| &item.node).rev());
                 }
             }
         }
@@ -412,7 +412,7 @@ impl<'b, 'a: 'b> Cx<'b, Finder<'a>> {
                 self.with(|state| state.pop());
             }
             StatementKind::Declaration(declaration) => {
-                self.with(|state| state.declaration(declaration))
+                self.with(|state| state.declaration(declaration));
             }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {

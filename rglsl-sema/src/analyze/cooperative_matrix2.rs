@@ -187,7 +187,14 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             });
         }
         self.with(|analyzer| {
-            analyzer.matrix2_function_with(expression, span, name, arguments, references, operands)
+            analyzer.matrix2_function_with(
+                expression,
+                span,
+                name,
+                arguments,
+                &references,
+                &operands,
+            )
         })
     }
 }
@@ -520,8 +527,8 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        references: Vec<Option<FunctionId>>,
-        operands: Vec<Operand>,
+        references: &[Option<FunctionId>],
+        operands: &[Operand],
     ) -> Operand {
         let ext = name.ends_with("EXT");
         let tensor_memory = matches!(name, "coopMatLoadTensorNV" | "coopMatStoreTensorNV");
@@ -888,7 +895,7 @@ impl Analyzer<'_> {
                             "third parameter must match cooperative matrix component type",
                         );
                     }
-                    for (parameter, operand) in parameters.iter().zip(&operands).skip(3) {
+                    for (parameter, operand) in parameters.iter().zip(operands).skip(3) {
                         if operand.ty.as_cooperative_matrix().is_some() {
                             if operand.ty != *source_type {
                                 fail_function(

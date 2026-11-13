@@ -9,7 +9,7 @@ use core::{error::Error, fmt, ops::Range};
 use crate::{error::replace_control_chars, Arena, Handle, UniqueArena};
 
 /// A source code span, used for error reporting.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Span {
     start: u32,
@@ -84,7 +84,7 @@ impl Span {
         }
         let prefix = source.get(..start).unwrap_or_default();
         let line_number = prefix.matches('\n').count() as u32 + 1;
-        let line_start = prefix.rfind('\n').map(|pos| pos + 1).unwrap_or(0) as u32;
+        let line_start = prefix.rfind('\n').map_or(0, |pos| pos + 1) as u32;
         let line_position = (start as u32).saturating_sub(line_start) + 1;
 
         SourceLocation {

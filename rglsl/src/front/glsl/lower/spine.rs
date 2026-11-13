@@ -254,7 +254,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             control: SelectionControl::None,
                         },
                         at,
-                    )
+                    );
                 })?;
             }
         }
@@ -289,7 +289,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         control: SelectionControl::None,
                     },
                     at,
-                )
+                );
             })?;
         }
         let result = results

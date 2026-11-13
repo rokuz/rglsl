@@ -540,8 +540,9 @@ impl Writer {
                     (BinaryOperator::Modulo, ScalarKind::Sint) => Op::SMod,
                     (BinaryOperator::Modulo, ScalarKind::Uint) => Op::UMod,
                     (BinaryOperator::Equal, ScalarKind::Bool) => Op::LogicalEqual,
-                    (BinaryOperator::NotEqual, ScalarKind::Bool)
-                    | (BinaryOperator::ExclusiveOr, ScalarKind::Bool) => Op::LogicalNotEqual,
+                    (BinaryOperator::NotEqual | BinaryOperator::ExclusiveOr, ScalarKind::Bool) => {
+                        Op::LogicalNotEqual
+                    }
                     (BinaryOperator::Equal, _) => Op::IEqual,
                     (BinaryOperator::NotEqual, _) => Op::INotEqual,
                     (BinaryOperator::Less, _) if signed => Op::SLessThan,

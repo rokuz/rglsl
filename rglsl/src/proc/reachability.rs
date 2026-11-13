@@ -100,20 +100,20 @@ enum Frame<'a> {
 fn mark_target(frames: &mut [Frame], jump: Jump) {
     for frame in frames.iter_mut().rev() {
         match (frame, jump) {
-            (&mut Frame::Loop { ref mut broken, .. }, Jump::Break)
+            (
+                &mut (Frame::Loop { ref mut broken, .. }
+                | Frame::Switch {
+                    completes: ref mut broken,
+                    ..
+                }),
+                Jump::Break,
+            )
             | (
                 &mut Frame::Loop {
                     continued: ref mut broken,
                     ..
                 },
                 Jump::Continue,
-            )
-            | (
-                &mut Frame::Switch {
-                    completes: ref mut broken,
-                    ..
-                },
-                Jump::Break,
             ) => {
                 *broken = true;
                 return;

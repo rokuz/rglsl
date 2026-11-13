@@ -102,7 +102,7 @@ pub fn stage_module(
         Ok(harness) => harness,
         Err(error) => return Staged::Refused(format!("harness: {error}")),
     };
-    match executor.stage(&plan, dir, &harness, spirv, tag) {
+    match Executor::stage(&plan, dir, &harness, spirv, tag) {
         Ok(job) => Staged::Ready {
             plan: Box::new(plan),
             job,

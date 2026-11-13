@@ -68,7 +68,7 @@ impl Writer {
                 {
                     Some(&CompositeShape::Array { element, .. }) => children.push(element),
                     Some(&CompositeShape::Struct { ref members, .. }) => {
-                        children.extend(members.iter().copied())
+                        children.extend(members.iter().copied());
                     }
                     None => return false,
                 }

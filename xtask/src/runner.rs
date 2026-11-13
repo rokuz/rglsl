@@ -406,7 +406,7 @@ fn run_case(
             )?),
             None => Some(ExecInput {
                 invalid_reference: validate(env, case, &reference, timeout)?,
-                ours: out.clone(),
+                ours: out,
                 reference,
                 twin: None,
                 script: None,

@@ -16,7 +16,7 @@ use crate::{proc::ConstantEvaluatorError, Span};
 
 /// Information about the cause of an error.
 #[derive(Clone, Debug, Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ErrorKind {
     #[error("Not implemented: {0}")]
     Unsupported(String),
@@ -43,7 +43,7 @@ impl From<ConstantEvaluatorError> for ErrorKind {
 /// Error returned during shader parsing.
 #[derive(Clone, Debug, Error)]
 #[error("{kind}")]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Error {
     /// Holds the information about the error itself.
     pub kind: ErrorKind,
@@ -66,7 +66,7 @@ pub struct IncludeLocation {
 
 /// A collection of errors returned during shader parsing.
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct ParseErrors {
     pub errors: Vec<Error>,
     pub included: Vec<Option<IncludeLocation>>,

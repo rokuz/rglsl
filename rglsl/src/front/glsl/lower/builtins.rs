@@ -321,7 +321,7 @@ impl FunctionLowerer<'_, '_> {
             .find(|ty| ty.sized_vector_length().is_some())
             .cloned();
         if let Some(ref shape) = long_shape {
-            return self.long_generic(name, call_type, shape, values, types, at);
+            return self.long_generic(name, call_type, shape, values, &types, at);
         }
         let result = &function.return_type;
         let first_ty = types.first().cloned().unwrap_or(GlslType::VOID);
@@ -1517,8 +1517,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 (&constructed.kind, analysis.calls.get(&constructed.id)),
                 (
                     &ExpressionKind::FunctionCall(_),
-                    Some(&Callee::Constructor(_))
-                ) | (&ExpressionKind::FunctionCall(_), Some(&Callee::NonUniform))
+                    Some(&Callee::Constructor(_) | &Callee::NonUniform)
+                )
             );
             if !is_constructor {
                 break;
@@ -2550,7 +2550,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     value,
                 },
                 at,
-            )
+            );
         })?;
         Ok(None)
     }

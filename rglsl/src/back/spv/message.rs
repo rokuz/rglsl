@@ -83,16 +83,15 @@ impl Writer {
                 let element = results
                     .pop()
                     .ok_or(Error::Internal("a laid out copy lost its element"))?;
-                let length = match self
+                let Some(&CompositeShape::Array {
+                    length: Some(length),
+                    ..
+                }) = self
                     .composite_types
                     .get(&normal)
                     .map(|composite| &composite.shape)
-                {
-                    Some(&CompositeShape::Array {
-                        length: Some(length),
-                        ..
-                    }) => length,
-                    _ => return Err(Error::Validation("abort message array")),
+                else {
+                    return Err(Error::Validation("abort message array"));
                 };
                 let id = self.id_gen.next();
                 Instruction::type_array(id, element, length)

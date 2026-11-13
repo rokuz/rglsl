@@ -37,7 +37,7 @@ impl FunctionLowerer<'_, '_> {
         result: &GlslType,
         shape: &GlslType,
         mut values: Vec<Handle<Expression>>,
-        types: Vec<GlslType>,
+        types: &[GlslType],
         at: Span,
     ) -> Result<Handle<Expression>> {
         let arg = |values: &[Handle<Expression>], index: usize| {
@@ -121,7 +121,7 @@ impl FunctionLowerer<'_, '_> {
             }
         }
         if REPLICATED.contains(&name) && !(name == "mix" && types.get(2).is_some_and(is_bool)) {
-            for (value, ty) in values.iter_mut().zip(&types) {
+            for (value, ty) in values.iter_mut().zip(types) {
                 *value = self.spread(*value, ty, shape, at)?;
             }
         }
@@ -531,7 +531,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             },
                         ),
                         at,
-                    )
+                    );
                 })?;
                 Ok(None)
             }
@@ -808,7 +808,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                                 result: None,
                             },
                             at,
-                        )
+                        );
                     })?;
                     return Ok(None);
                 }

@@ -232,14 +232,11 @@ impl BlockContext<'_> {
 
         // If there's no array index, the image coordinates are exactly the
         // `coordinate` field of the `Expression::ImageLoad`. No work is needed.
-        let array_index = match array_index {
-            None => {
-                return match *inner_ty {
-                    Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
-                    _ => Err(Error::Validation("coordinate type")),
-                };
-            }
-            Some(ix) => ix,
+        let Some(array_index) = array_index else {
+            return match *inner_ty {
+                Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
+                _ => Err(Error::Validation("coordinate type")),
+            };
         };
 
         // Find the component type of `coordinates`, and figure out the size the
@@ -267,14 +264,14 @@ impl BlockContext<'_> {
         let array_index_id = self.cached.get(array_index)?;
         let ty = &self.fun_info[array_index].ty;
         let inner_ty = ty.inner_with(&self.ir_module.types);
-        let array_index_scalar = match *inner_ty {
-            Ti::Scalar(
-                scalar @ crate::Scalar {
-                    kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                    width: 4,
-                },
-            ) => scalar,
-            _ => return Err(Error::Validation("image array index must be i32 or u32")),
+        let Ti::Scalar(
+            array_index_scalar @ crate::Scalar {
+                kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                width: 4,
+            },
+        ) = *inner_ty
+        else {
+            return Err(Error::Validation("image array index must be i32 or u32"));
         };
         let cast = match (component_scalar.kind, array_index_scalar.kind) {
             (crate::ScalarKind::Sint, crate::ScalarKind::Sint)
@@ -426,10 +423,18 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         let image_id = self.get_image_id(image, block)?;
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
-        let (image_class, dim) = match *image_type {
-            crate::TypeInner::Image { class, dim, .. }
-            | crate::TypeInner::SampledImage { class, dim, .. } => (class, dim),
-            _ => return Err(Error::Validation("image type")),
+        let (crate::TypeInner::Image {
+            class: image_class,
+            dim,
+            ..
+        }
+        | crate::TypeInner::SampledImage {
+            class: image_class,
+            dim,
+            ..
+        }) = *image_type
+        else {
+            return Err(Error::Validation("image type"));
         };
         let subpass = dim == crate::ImageDimension::Subpass;
 
@@ -525,19 +530,18 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use super::instructions::SampleLod;
         let handle_id = self.get_non_uniform_handle_id(image, block)?;
-        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
-        {
-            crate::TypeInner::Image {
-                dim,
-                arrayed,
-                class,
-            }
-            | crate::TypeInner::SampledImage {
-                dim,
-                arrayed,
-                class,
-            } => (dim, arrayed, class),
-            _ => return Err(Error::Validation("image type")),
+        let (crate::TypeInner::Image {
+            dim,
+            arrayed,
+            class,
+        }
+        | crate::TypeInner::SampledImage {
+            dim,
+            arrayed,
+            class,
+        }) = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("image type"));
         };
         // SPIR-V doesn't know about our `Depth` class, and it returns
         // `vec4<f32>`, so we need to grab the first component out of it.
@@ -897,21 +901,18 @@ impl BlockContext<'_> {
             return self.write_image_query_lod(result_type_id, image, sampler, coordinate, block);
         }
         let image_id = self.get_image_id(image, block)?;
-        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
-        {
-            crate::TypeInner::Image {
-                dim,
-                arrayed,
-                class,
-            }
-            | crate::TypeInner::SampledImage {
-                dim,
-                arrayed,
-                class,
-            } => (dim, arrayed, class),
-            _ => {
-                return Err(Error::Validation("image type"));
-            }
+        let (crate::TypeInner::Image {
+            dim,
+            arrayed,
+            class,
+        }
+        | crate::TypeInner::SampledImage {
+            dim,
+            arrayed,
+            class,
+        }) = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("image type"));
         };
 
         self.writer
@@ -1087,15 +1088,14 @@ impl BlockContext<'_> {
         let handle_id = self.get_non_uniform_handle_id(image, block)?;
         let sampled_image_id = match sampler {
             Some(sampler) => {
-                let (dim, arrayed, class) =
-                    match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
-                        crate::TypeInner::Image {
-                            dim,
-                            arrayed,
-                            class,
-                        } => (dim, arrayed, class),
-                        _ => return Err(Error::Validation("image type")),
-                    };
+                let crate::TypeInner::Image {
+                    dim,
+                    arrayed,
+                    class,
+                } = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+                else {
+                    return Err(Error::Validation("image type"));
+                };
                 let image_type_id = self.get_localtype_id(LocalType::Image(
                     LocalImageType::from_inner(dim, arrayed, class)?,
                 ));
