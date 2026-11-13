@@ -62,16 +62,12 @@ thiserror.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 
 [dev-dependencies]
-diff.workspace = true
 env_logger.workspace = true
 hashbrown = { workspace = true, features = ["serde"] }
-itertools.workspace = true
 rglsl-test.workspace = true
 ron.workspace = true
 rspirv.workspace = true
 serde = { workspace = true, features = ["default", "derive"] }
-strum = { workspace = true }
-walkdir.workspace = true
 
 [lints.rust]
 missing_debug_implementations = "warn"

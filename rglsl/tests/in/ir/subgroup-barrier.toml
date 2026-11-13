@@ -1,5 +1,0 @@
-capabilities = "SUBGROUP | SUBGROUP_BARRIER"
-targets = "SPIRV"
-
-[spv]
-version = [1, 3]

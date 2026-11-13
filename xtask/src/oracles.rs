@@ -1,4 +1,4 @@
-//! The pinned reference tools: glslang and spirv-val.
+//! The pinned reference tools: glslang, spirv-val and spirv-as.
 //!
 //! Pins live in `oracles.toml`. `cargo xtask oracles` builds them into
 //! `target/oracles/bin/`, which is where `cargo xtask test` looks first.
@@ -346,7 +346,7 @@ fn build_reference(
     )?;
     copy_binary(&glslang_build.join("StandAlone"), "glslang", &bin)?;
 
-    // SPIRV-Tools (spirv-val only)
+    // SPIRV-Tools (spirv-val and spirv-as)
     let tools_src = src.join("spirv-tools");
     checkout(&pins.spirv_tools, &tools_src)?;
     checkout(
@@ -372,10 +372,11 @@ fn build_reference(
         Command::new("cmake")
             .arg("--build")
             .arg(&tools_build)
-            .args(["--target", "spirv-val", "--parallel"]),
-        "build spirv-val",
+            .args(["--target", "spirv-val", "spirv-as", "--parallel"]),
+        "build spirv-val and spirv-as",
     )?;
-    copy_binary(&tools_build.join("tools"), "spirv-val", &bin)
+    copy_binary(&tools_build.join("tools"), "spirv-val", &bin)?;
+    copy_binary(&tools_build.join("tools"), "spirv-as", &bin)
 }
 
 fn build_exec(root: &Path, pins: &ExecPins, generator: &[String]) -> Result<()> {

@@ -21,6 +21,7 @@ mod process;
 mod renamed;
 mod report;
 mod runner;
+mod snapshots;
 mod worker;
 
 use std::path::{Path, PathBuf};
@@ -31,8 +32,8 @@ const USAGE: &str = "\
 usage: cargo xtask <command> [options]
 
 commands:
-  oracles             fetch and build the pinned oracles into target/oracles: glslang and
-                      spirv-val, and on macOS arm64 the exec oracles (KosmicKrisp, Amber,
+  oracles             fetch and build the pinned oracles into target/oracles: glslang,
+                      spirv-val and spirv-as, and on macOS arm64 the exec oracles (KosmicKrisp, Amber,
                       the ML emulation layer's tensor library)
       --glslang-dir DIR   use an existing glslang checkout instead of cloning it
                           (its HEAD must be the pinned commit)
@@ -53,6 +54,8 @@ commands:
                           exec results of the last run that had them
       --no-local-exec     do not run shaders on KosmicKrisp on this Mac
       --no-remote-exec    do not run shaders on the remote Windows targets
+  snapshots           assemble the SPIR-V snapshots in rglsl/tests/out/spv with spirv-as and
+                      validate them with spirv-val for the Vulkan version of their SPIR-V
   cli                 run glslangValidator command lines with glslang and with the rglsl
                       command-line tool and compare exit codes, messages and outputs
                       (docs/design/cli.md); report in target/xtask/cli/report.tsv
@@ -112,6 +115,7 @@ commands:
 
 environment:
   RGLSL_GLSLANG, RGLSL_SPIRV_VAL   override the oracle binaries
+  RGLSL_SPIRV_AS
   RGLSL_AMBER, RGLSL_VK_ICD        override Amber and the Vulkan driver manifest
   RGLSL_EXEC_REMOTE                remote exec targets: comma-separated SSH host aliases of Windows
                                    machines with Vulkan, each optionally followed by @DEVICE, a
@@ -182,6 +186,10 @@ fn run(args: Vec<String>) -> Result<i32> {
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
             Ok(0)
+        }
+        "snapshots" => {
+            args.finish()?;
+            snapshots::run(&workspace_root()?)
         }
         "cli" => {
             let options = cli::Options {
