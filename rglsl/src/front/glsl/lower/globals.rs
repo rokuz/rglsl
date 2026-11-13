@@ -40,7 +40,7 @@ fn tile_shading_rate_index(name: &str) -> Option<usize> {
         "shading_rate_zqcom",
     ]
     .iter()
-    .position(|rate| name.eq_ignore_ascii_case(rate))
+    .position(|rate| name == *rate)
 }
 
 fn has_qualifier(
@@ -662,7 +662,7 @@ impl<'a> Lowerer<'a> {
                                 *slot = value;
                             }
                         }
-                        _ if name.eq_ignore_ascii_case("non_coherent_attachment_readQCOM") => {
+                        "non_coherent_attachment_readqcom" => {
                             self.non_coherent_tile_read = true;
                         }
                         _ if tile_shading_rate_index(name).is_some() => {
@@ -1322,7 +1322,7 @@ impl<'a> Lowerer<'a> {
                 tile_attachment: qualifiers
                     .layout
                     .iter()
-                    .any(|entry| entry.name.eq_ignore_ascii_case("tile_attachmentQCOM")),
+                    .any(|entry| entry.name == "tile_attachmentqcom"),
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,

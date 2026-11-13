@@ -122,8 +122,8 @@ fn layout_extension(name: &str) -> Option<LayoutExtension> {
 impl Analyzer<'_> {
     pub(crate) fn layout_extension_check(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
-            let name = entry.name.to_ascii_lowercase();
-            if name.starts_with("blend_support") && !BLEND_EQUATIONS.contains(&name.as_str()) {
+            let name = entry.name.as_str();
+            if name.starts_with("blend_support") && !BLEND_EQUATIONS.contains(&name) {
                 self.stage_check(entry.span, |stage| {
                     fragment(stage).then_some(DiagnosticKind::InvalidQualifier {
                         qualifier: "blend_support",
@@ -131,7 +131,7 @@ impl Analyzer<'_> {
                     })
                 });
             }
-            let Some(required) = layout_extension(&name) else {
+            let Some(required) = layout_extension(name) else {
                 continue;
             };
             match required.stages {
@@ -166,7 +166,7 @@ impl Analyzer<'_> {
             return;
         }
         for entry in &qualifiers.layout {
-            let qualifier = match entry.name.to_ascii_lowercase().as_str() {
+            let qualifier = match entry.name.as_str() {
                 "shared" => "shared",
                 "packed" => "packed",
                 _ => continue,

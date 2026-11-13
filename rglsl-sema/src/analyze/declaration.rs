@@ -337,12 +337,10 @@ impl Analyzer<'_> {
     }
 
     fn derivative_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
-        let relevant = qualifiers.layout.iter().any(|entry| {
-            entry
-                .name
-                .to_ascii_lowercase()
-                .starts_with("derivative_group_")
-        });
+        let relevant = qualifiers
+            .layout
+            .iter()
+            .any(|entry| entry.name.starts_with("derivative_group_"));
         if !relevant
             || !self.stage_map(|stage| {
                 matches!(
@@ -357,7 +355,7 @@ impl Analyzer<'_> {
         let mut linear = false;
         let mut khr = false;
         for entry in &qualifiers.layout {
-            match entry.name.to_ascii_lowercase().as_str() {
+            match entry.name.as_str() {
                 "derivative_group_quadskhr" => {
                     quads = true;
                     khr = true;

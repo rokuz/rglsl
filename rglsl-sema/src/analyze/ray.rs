@@ -120,10 +120,10 @@ fn hit_object_location(name: &str, count: usize) -> Option<(usize, usize)> {
 }
 
 pub fn is_shader_record(qualifiers: &Qualifiers) -> bool {
-    qualifiers.layout.iter().any(|entry| {
-        entry.name.eq_ignore_ascii_case("shaderRecordNV")
-            || entry.name.eq_ignore_ascii_case("shaderRecordEXT")
-    })
+    qualifiers
+        .layout
+        .iter()
+        .any(|entry| entry.name == "shaderrecordnv" || entry.name == "shaderrecordext")
 }
 
 pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
@@ -484,7 +484,7 @@ impl Analyzer<'_> {
         if !qualifiers
             .layout
             .iter()
-            .any(|entry| entry.name.eq_ignore_ascii_case("primitive_culling"))
+            .any(|entry| entry.name == "primitive_culling")
         {
             return;
         }

@@ -87,8 +87,8 @@ fn scalar_array(ty: &Type, allowed: &[Scalar]) -> Option<(Scalar, ArraySize)> {
 impl Analyzer<'_> {
     pub(crate) fn qcom_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
-            let name = entry.name.to_ascii_lowercase();
-            match name.as_str() {
+            let name = entry.name.as_str();
+            match name {
                 "tile_attachmentqcom" | "non_coherent_attachment_readqcom" => {
                     self.require_extension(span, TILE_SHADING, "tile shading QCOM");
                 }

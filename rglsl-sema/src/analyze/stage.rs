@@ -102,7 +102,7 @@ fn shader_layouts(
     qualifiers.layout.iter().filter_map(move |entry| {
         table(stage)
             .iter()
-            .find(|&&(name, _)| entry.name.eq_ignore_ascii_case(name))
+            .find(|&&(name, _)| entry.name == name)
             .map(|&(name, kind)| (name, kind, entry))
     })
 }
@@ -205,8 +205,8 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 impl Analyzer<'_> {
     pub(crate) fn stage_layout_identifiers(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
-            let name = entry.name.to_ascii_lowercase();
-            if let Some(stages) = layout_stages(&name) {
+            let name = entry.name.as_str();
+            if let Some(stages) = layout_stages(name) {
                 self.stage_check(entry.span, |stage| {
                     (!stages.contains(&stage)).then(|| DiagnosticKind::NotSupportedInStage {
                         feature: alloc::format!("layout({name})"),
@@ -221,7 +221,7 @@ impl Analyzer<'_> {
         let span = qualifiers
             .layout
             .iter()
-            .find(|entry| entry.name.eq_ignore_ascii_case("passthrough"))
+            .find(|entry| entry.name == "passthrough")
             .map(|entry| entry.span);
         if let Some(span) = span.filter(|_| self.stage_is(ShaderStage::Geometry)) {
             self.require_extension(
@@ -238,9 +238,8 @@ impl Analyzer<'_> {
                 .layout
                 .iter()
                 .filter_map(|entry| {
-                    let name = entry.name.to_ascii_lowercase();
                     let (extension, what, fragment): (&'static [&'static str], _, _) =
-                        match name.as_str() {
+                        match entry.name.as_str() {
                             "viewport_relative" => {
                                 (&["GL_NV_viewport_array2"], "viewport_relative", false)
                             }
@@ -288,7 +287,7 @@ impl Analyzer<'_> {
                     "buffer_reference_align",
                 ]
                 .iter()
-                .any(|name| entry.name.eq_ignore_ascii_case(name))
+                .any(|name| entry.name == *name)
             })
             .map(|entry| entry.span)
     }
