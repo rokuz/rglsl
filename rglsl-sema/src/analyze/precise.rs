@@ -10,6 +10,7 @@ use rglsl_ast::ast::{
 };
 use rglsl_ast::{Spine, TranslationUnit};
 use rglsl_types::stack::{run, Stalled};
+use rglsl_types::FastHashSet;
 
 use super::frames::Cx;
 use super::{Analysis, Callee};
@@ -46,7 +47,7 @@ enum Definition<'a> {
 pub(crate) fn no_contraction(
     unit: &TranslationUnit,
     analysis: &Analysis,
-) -> Result<BTreeSet<NodeId>, Stalled> {
+) -> Result<FastHashSet<NodeId>, Stalled> {
     let mut pass = Precise {
         analysis,
         chains: BTreeMap::new(),
@@ -55,12 +56,12 @@ pub(crate) fn no_contraction(
         added: BTreeSet::new(),
         marked: BTreeSet::new(),
         returns: Vec::new(),
-        result: BTreeSet::new(),
+        result: FastHashSet::default(),
         precise_return: false,
         remained: Vec::new(),
     };
     if !pass.any_precise() {
-        return Ok(BTreeSet::new());
+        return Ok(FastHashSet::default());
     }
     let finished = {
         let context = RefCell::new(&mut pass);
@@ -78,7 +79,7 @@ struct Precise<'a> {
     added: BTreeSet<AccessPath>,
     marked: BTreeSet<NodeId>,
     returns: Vec<&'a Expression>,
-    result: BTreeSet<NodeId>,
+    result: FastHashSet<NodeId>,
     precise_return: bool,
     remained: Vec<u32>,
 }

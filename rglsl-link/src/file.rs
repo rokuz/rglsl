@@ -68,20 +68,18 @@ pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
 
 pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     check_structure_depth(text)?;
-    let header: Header =
-        ron::de::from_str(text).map_err(|error| FileError::Decode(error.to_string()))?;
-    if header.format_version != FORMAT_VERSION {
-        return Err(FileError::Version {
-            found: header.format_version,
-            expected: FORMAT_VERSION,
-        });
-    }
     let File {
+        format_version,
         mut object,
         bodies,
         spans,
-        ..
-    } = ron::de::from_str(text).map_err(|error| FileError::Decode(error.to_string()))?;
+    } = ron::de::from_str(text).map_err(|error| undecodable(text, &error))?;
+    if format_version != FORMAT_VERSION {
+        return Err(FileError::Version {
+            found: format_version,
+            expected: FORMAT_VERSION,
+        });
+    }
     let slots = body_slots(&mut object);
     if slots.len() != bodies.len() {
         return Err(decode_error("the number of function bodies does not match"));
@@ -102,6 +100,17 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     }
     validate(&object)?;
     Ok(object)
+}
+
+fn undecodable(text: &str, error: &ron::error::SpannedError) -> FileError {
+    match ron::de::from_str::<Header>(text) {
+        Err(header) => FileError::Decode(header.to_string()),
+        Ok(header) if header.format_version != FORMAT_VERSION => FileError::Version {
+            found: header.format_version,
+            expected: FORMAT_VERSION,
+        },
+        Ok(_) => FileError::Decode(error.to_string()),
+    }
 }
 
 fn validate(object: &ObjectModule) -> Result<(), FileError> {

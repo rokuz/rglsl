@@ -3289,9 +3289,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         expected: Type,
     ) -> Operand {
         match &initializer.node {
-            Initializer::Expression(expression) => {
-                self.call(self.clone().value_expression(expression)).await
-            }
+            Initializer::Expression(expression) => self.clone().value_expression(expression).await,
             Initializer::List(items) => {
                 self.call(self.clone().initializer_list(span, items, expected))
                     .await

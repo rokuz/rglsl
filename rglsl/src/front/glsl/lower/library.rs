@@ -252,7 +252,7 @@ fn per_class(
             }
         }
         let options = stage_options(options, stage);
-        let class = StageClass::new(stage);
+        let class = StageClass::collecting_identifiers(stage);
         let result = lower_object(
             &options,
             source,

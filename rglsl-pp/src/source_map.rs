@@ -1,6 +1,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cell::Cell;
 
 use crate::diagnostic::Location;
 use crate::include::FileId;
@@ -47,6 +48,72 @@ pub struct LineEntry {
     pub column: u32,
 }
 
+#[derive(Debug)]
+pub struct Locator<'a> {
+    map: &'a SourceMap,
+    last: Cell<usize>,
+}
+
+impl<'a> Locator<'a> {
+    pub const fn new(map: &'a SourceMap) -> Self {
+        Self {
+            map,
+            last: Cell::new(0),
+        }
+    }
+
+    pub fn locate(&self, offset: usize) -> Location {
+        self.map.located(self.segment(offset), offset)
+    }
+
+    fn segment(&self, offset: usize) -> Option<&'a Segment> {
+        let segments = self.map.segments.as_slice();
+        let target = u32::try_from(offset).unwrap_or(u32::MAX);
+        let before = |segment: &Segment| segment.start <= target;
+        let hint = self.last.get().min(segments.len().saturating_sub(1));
+        let (low, high) = match segments.get(hint) {
+            None => return None,
+            Some(segment) if before(segment) => {
+                let mut low = hint;
+                let mut step = 1_usize;
+                loop {
+                    let probe = low.saturating_add(step);
+                    match segments.get(probe) {
+                        Some(segment) if before(segment) => {
+                            low = probe;
+                            step = step.saturating_mul(2);
+                        }
+                        Some(_) => break (low, probe),
+                        None => break (low, segments.len()),
+                    }
+                }
+            }
+            Some(_) => {
+                let mut high = hint;
+                let mut step = 1_usize;
+                loop {
+                    let Some(probe) = high.checked_sub(step) else {
+                        break (0, high);
+                    };
+                    match segments.get(probe) {
+                        Some(segment) if before(segment) => break (probe, high),
+                        _ => {
+                            high = probe;
+                            step = step.saturating_mul(2);
+                        }
+                    }
+                }
+            }
+        };
+        let within = segments
+            .get(low..high)
+            .map_or(0, |range| range.partition_point(before));
+        let index = low.saturating_add(within).saturating_sub(1);
+        self.last.set(index);
+        segments.get(index)
+    }
+}
+
 pub(crate) fn clamp_line(line: i64) -> u32 {
     u32::try_from(line.max(0)).unwrap_or(u32::MAX)
 }
@@ -64,7 +131,11 @@ impl SourceMap {
     }
 
     pub fn locate(&self, offset: usize) -> Location {
-        let Some(segment) = self.segment(offset) else {
+        self.located(self.segment(offset), offset)
+    }
+
+    fn located(&self, segment: Option<&Segment>, offset: usize) -> Location {
+        let Some(segment) = segment else {
             return Location {
                 file: self.root,
                 offset: 0,

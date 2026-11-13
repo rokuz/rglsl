@@ -27,6 +27,7 @@ mod tensor;
 mod texture;
 mod xfb;
 
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
@@ -35,6 +36,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use rglsl_types::probe::StageProbe;
+use rglsl_types::{FastHashMap, FastHashSet};
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
 use rglsl_ast::extensions::ExtensionState;
@@ -106,8 +108,8 @@ pub struct ExpressionInfo {
     pub is_specialization: bool,
     pub non_uniform: bool,
     pub value: Option<Constant>,
-    pub conversion: Option<Type>,
-    pub output_conversion: Option<Type>,
+    pub conversion: Option<Box<Type>>,
+    pub output_conversion: Option<Box<Type>>,
 }
 
 #[derive(Debug, Clone)]
@@ -118,11 +120,11 @@ pub struct Analysis {
     pub types: TypeRegistry,
     pub symbols: Vec<Symbol>,
     pub functions: Vec<Function>,
-    pub expressions: BTreeMap<NodeId, ExpressionInfo>,
-    pub references: BTreeMap<NodeId, SymbolId>,
-    pub calls: BTreeMap<NodeId, Callee>,
-    pub declarations: BTreeMap<NodeId, SymbolId>,
-    pub function_declarations: BTreeMap<NodeId, FunctionId>,
+    pub expressions: FastHashMap<NodeId, ExpressionInfo>,
+    pub references: FastHashMap<NodeId, SymbolId>,
+    pub calls: FastHashMap<NodeId, Callee>,
+    pub declarations: FastHashMap<NodeId, SymbolId>,
+    pub function_declarations: FastHashMap<NodeId, FunctionId>,
     pub extensions: BTreeSet<String>,
     pub requested_extensions: Vec<String>,
     pub diagnostics: Vec<Diagnostic>,
@@ -140,7 +142,7 @@ pub struct Analysis {
     pub fragment: FragmentLayout,
     pub spirv_requirements: SpirvRequirements,
     pub spirv_execution_modes: SpirvExecutionModes,
-    pub no_contraction: BTreeSet<NodeId>,
+    pub no_contraction: FastHashSet<NodeId>,
     pub relaxed_precision: precision::RelaxedPrecision,
     pub work_group_size_read: bool,
     pub stages: u16,
@@ -382,11 +384,11 @@ pub(crate) struct Analyzer<'a> {
     pub symbols: Vec<Symbol>,
     pub functions: Vec<Function>,
     pub scopes: Scopes,
-    pub expressions: BTreeMap<NodeId, ExpressionInfo>,
-    pub references: BTreeMap<NodeId, SymbolId>,
-    pub calls: BTreeMap<NodeId, Callee>,
-    pub declarations: BTreeMap<NodeId, SymbolId>,
-    pub function_declarations: BTreeMap<NodeId, FunctionId>,
+    pub expressions: FastHashMap<NodeId, ExpressionInfo>,
+    pub references: FastHashMap<NodeId, SymbolId>,
+    pub calls: FastHashMap<NodeId, Callee>,
+    pub declarations: FastHashMap<NodeId, SymbolId>,
+    pub function_declarations: FastHashMap<NodeId, FunctionId>,
     pub extensions: ExtensionState,
     pub diagnostics: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
@@ -467,11 +469,11 @@ impl<'a> Analyzer<'a> {
             builtins,
             functions: Vec::new(),
             scopes,
-            expressions: BTreeMap::new(),
-            references: BTreeMap::new(),
-            calls: BTreeMap::new(),
-            declarations: BTreeMap::new(),
-            function_declarations: BTreeMap::new(),
+            expressions: FastHashMap::default(),
+            references: FastHashMap::default(),
+            calls: FastHashMap::default(),
+            declarations: FastHashMap::default(),
+            function_declarations: FastHashMap::default(),
             extensions: ExtensionState::new(),
             diagnostics,
             warnings: Vec::new(),
@@ -885,7 +887,7 @@ impl<'a> Analyzer<'a> {
             fragment: self.fragment_layout,
             spirv_requirements: self.spirv_requirements,
             spirv_execution_modes: self.spirv_execution_modes,
-            no_contraction: BTreeSet::new(),
+            no_contraction: FastHashSet::default(),
             relaxed_precision: precision::RelaxedPrecision::default(),
             work_group_size_read: self.work_group_size_read,
         }

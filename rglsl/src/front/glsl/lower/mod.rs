@@ -130,12 +130,11 @@ fn compile_sharing(
             Span::UNDEFINED,
         )]
         .into()),
-        Some(true) => lower_object(
+        Some(true) => lower_parsed_object(
             options,
             source,
             Mode::Object,
-            root,
-            includer,
+            &parsed,
             names,
             &StageClass::new(options.stage),
         ),
@@ -224,7 +223,7 @@ fn preprocess(
 pub(super) struct Parsed {
     stage: Option<ShaderStage>,
     preprocessed: rglsl_pp::Preprocessed,
-    unit: Option<(TranslationUnit, bool)>,
+    unit: Option<(TranslationUnit, Option<rglsl_ast::ParseError>)>,
 }
 
 impl Parsed {
@@ -236,10 +235,8 @@ impl Parsed {
         includer: &mut dyn rglsl_pp::Includer,
     ) -> Self {
         let preprocessed = preprocess(options, stage, source, root, includer);
-        let unit = (!preprocessed.has_errors()).then(|| {
-            let (unit, failure) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
-            (unit, failure.is_some())
-        });
+        let unit = (!preprocessed.has_errors())
+            .then(|| rglsl_ast::parse_prefix(preprocessed.text.as_str()));
         Self {
             stage,
             preprocessed,
@@ -265,14 +262,15 @@ impl Parsed {
         if self.stage.is_some_and(|own| own != stage) {
             return None;
         }
-        let (unit, failed) = self.unit?;
-        Some((self.preprocessed, unit, failed))
+        let (unit, failure) = self.unit?;
+        Some((self.preprocessed, unit, failure.is_some()))
     }
 }
 
 pub(super) struct StageClass {
     probe: StageProbe<ShaderStage>,
     names: RefCell<BTreeSet<String>>,
+    collects_identifiers: bool,
     version: core::cell::Cell<Option<u32>>,
 }
 
@@ -281,7 +279,15 @@ impl StageClass {
         Self {
             probe: StageProbe::new(stage, &ShaderStage::ALL),
             names: RefCell::new(BTreeSet::new()),
+            collects_identifiers: false,
             version: core::cell::Cell::new(None),
+        }
+    }
+
+    pub(super) fn collecting_identifiers(stage: ShaderStage) -> Self {
+        Self {
+            collects_identifiers: true,
+            ..Self::new(stage)
         }
     }
 
@@ -298,6 +304,9 @@ impl StageClass {
     }
 
     fn identifiers(&self, text: &str) {
+        if !self.collects_identifiers {
+            return;
+        }
         let mut names = self.names.borrow_mut();
         let mut start = None;
         for (index, character) in text
@@ -335,9 +344,21 @@ fn lower_object(
     names: &mut library::StageNames,
     class: &StageClass,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
-    let mut object = lower(options, source, mode, root, includer, names, false, class)?;
+    let parsed = Parsed::new(options, Some(options.stage), source, root, includer);
+    lower_parsed_object(options, source, mode, &parsed, names, class)
+}
+
+fn lower_parsed_object(
+    options: &Options,
+    source: &str,
+    mode: Mode,
+    parsed: &Parsed,
+    names: &mut library::StageNames,
+    class: &StageClass,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let mut object = lower_parsed(options, source, mode, parsed, names, false, class)?;
     if object.unit.work_group_size_constant {
-        object.unit.specialized = lower(options, source, mode, root, includer, names, true, class)
+        object.unit.specialized = lower_parsed(options, source, mode, parsed, names, true, class)
             .ok()
             .map(|specialized| alloc::boxed::Box::new(specialized.unit));
     }
@@ -355,8 +376,21 @@ fn lower(
     specialize: bool,
     class: &StageClass,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
+    let parsed = Parsed::new(options, Some(options.stage), source, root, includer);
+    lower_parsed(options, source, mode, &parsed, names, specialize, class)
+}
+
+fn lower_parsed(
+    options: &Options,
+    source: &str,
+    mode: Mode,
+    parsed: &Parsed,
+    names: &mut library::StageNames,
+    specialize: bool,
+    class: &StageClass,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let object = mode != Mode::Program;
-    let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
+    let preprocessed = &parsed.preprocessed;
     let map = &preprocessed.source_map;
     if preprocessed.same_for_stage(options.stage) {
         class
@@ -393,10 +427,10 @@ fn lower(
             .map(|range| range.start)
             .min()
             .or_else(|| {
-                (mode != Mode::Library && only_version_errors(&preprocessed)).then_some(usize::MAX)
+                (mode != Mode::Library && only_version_errors(preprocessed)).then_some(usize::MAX)
             });
         let mut earlier: Vec<(Error, Option<IncludeLocation>)> = first
-            .map(|first| semantic_errors_before(options, &preprocessed, first, class))
+            .map(|first| semantic_errors_before(options, preprocessed, first, class))
             .unwrap_or_default()
             .into_iter()
             .map(|error| (error, None))
@@ -407,9 +441,11 @@ fn lower(
     }
     let text = preprocessed.text.as_str();
     class.identifiers(text);
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let Some((ref unit, ref failure)) = parsed.unit else {
+        return Err(Vec::from([internal(Span::UNDEFINED)]).into());
+    };
     let analysis = rglsl_sema::analyze(
-        &unit,
+        unit,
         &rglsl_sema::Options {
             specialize_work_group_size: specialize,
             ..sema_options(options, text)
@@ -421,7 +457,7 @@ fn lower(
         .names
         .borrow_mut()
         .extend(analysis.stage_names.iter().cloned());
-    if let Some(error) = failure {
+    if let Some(ref error) = *failure {
         let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
             diagnostic.offset(text) < error.span.start
                 && !matches!(
@@ -469,7 +505,7 @@ fn lower(
         .collect::<Vec<_>>();
     let mut errors = errors;
     if options.export_functions {
-        errors.extend(exported_main(map, &unit));
+        errors.extend(exported_main(map, unit));
     }
     let reported = analysis
         .diagnostics
@@ -486,8 +522,8 @@ fn lower(
     let object = run_lowerer(
         options,
         source,
-        &preprocessed,
-        &unit,
+        preprocessed,
+        unit,
         &analysis,
         mode,
         &class.probe,
@@ -908,9 +944,17 @@ fn included(map: &rglsl_pp::SourceMap, offset: u32) -> Option<IncludeLocation> {
 }
 
 fn original(map: &rglsl_pp::SourceMap, span: rglsl_ast::Span) -> Span {
+    original_located(map.root(), |offset| map.locate(offset), span)
+}
+
+fn original_located(
+    root: rglsl_pp::FileId,
+    locate: impl Fn(usize) -> rglsl_pp::Location,
+    span: rglsl_ast::Span,
+) -> Span {
     let locate = |offset: u32| {
-        let location = map.locate(usize::try_from(offset).unwrap_or(usize::MAX));
-        (location.file == map.root()).then_some(location.offset)
+        let location = locate(usize::try_from(offset).unwrap_or(usize::MAX));
+        (location.file == root).then_some(location.offset)
     };
     match (locate(span.start), locate(span.end)) {
         (Some(start), Some(end)) => Span::new(start, end.max(start)),
@@ -986,6 +1030,7 @@ pub(super) struct Initialization<'a> {
 #[derive(Debug)]
 pub(super) struct Lowerer<'a> {
     pub(super) source_map: &'a rglsl_pp::SourceMap,
+    locator: rglsl_pp::Locator<'a>,
     pub(super) unit: &'a TranslationUnit,
     pub(super) analysis: &'a Analysis,
     pub(super) options: &'a Options,
@@ -1074,6 +1119,7 @@ impl<'a> Lowerer<'a> {
     ) -> Self {
         Self {
             source_map,
+            locator: rglsl_pp::Locator::new(source_map),
             unit,
             analysis,
             options,
@@ -1163,7 +1209,11 @@ impl<'a> Lowerer<'a> {
         if self.debug.is_some() {
             return Span::new(span.start, span.end);
         }
-        original(self.source_map, span)
+        original_located(
+            self.source_map.root(),
+            |offset| self.locator.locate(offset),
+            span,
+        )
     }
 
     pub(super) fn debug_scope(&mut self, start: u32, end: u32, at: u32) {

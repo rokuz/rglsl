@@ -22,7 +22,7 @@ use rglsl_types::ShaderStage;
 
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn value_expression(self, expression: &'b Expression) -> Operand {
-        self.call(self.clone().expression(expression)).await
+        self.clone().expression(expression).await
     }
 
     pub(crate) async fn expression(self, expression: &'b Expression) -> Operand {
@@ -36,7 +36,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             }
             None => {
                 let uses = self.with(|analyzer| analyzer.specialization_uses);
-                let operand = self.call(self.clone().expression_kind(expression)).await;
+                let operand = self.clone().expression_kind(expression).await;
                 self.with(|analyzer| analyzer.recorded(expression, uses, operand))
             }
         }
@@ -45,7 +45,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     async fn binary_chain(self, expression: &'b Expression) -> Operand {
         let uses = self.with(|analyzer| analyzer.specialization_uses);
         let spine = Spine::of(expression);
-        let mut operand = self.call(self.clone().value_expression(spine.head)).await;
+        let mut operand = self.clone().value_expression(spine.head).await;
         for node in spine.links.into_iter().rev() {
             if let ExpressionKind::Binary {
                 operator,
@@ -54,7 +54,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             } = &node.kind
             {
                 let span = Span::new(left.span.end, right.span.start);
-                let right_operand = self.call(self.clone().value_expression(right)).await;
+                let right_operand = self.clone().value_expression(right).await;
                 operand = self.with(|analyzer| {
                     analyzer.binary_checked(*operator, left, right, span, operand, right_operand)
                 });
@@ -67,9 +67,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     async fn operand_chain(self, expression: &'b Expression) -> Operand {
         let uses = self.with(|analyzer| analyzer.specialization_uses);
         let spine = Spine::of(expression);
-        let mut operand = self.call(self.clone().expression(spine.head)).await;
+        let mut operand = self.clone().expression(spine.head).await;
         for node in spine.links.into_iter().rev() {
-            operand = self.call(self.clone().operand_link(node, operand)).await;
+            operand = self.clone().operand_link(node, operand).await;
             operand = self.with(|analyzer| analyzer.recorded(node, uses, operand));
         }
         operand
@@ -89,7 +89,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             }
             ExpressionKind::Subscript { base, index } => {
                 let span = Span::new(base.span.end, index.span.start);
-                let index_operand = self.call(self.clone().value_expression(index)).await;
+                let index_operand = self.clone().value_expression(index).await;
                 self.with(|analyzer| {
                     analyzer.subscript_checked(base, index, span, operand, index_operand)
                 })
@@ -118,17 +118,14 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         for node in spine.links {
             let uses = self.with(|analyzer| analyzer.specialization_uses);
             let first = match &node.kind {
-                ExpressionKind::Assignment { target, .. } => {
-                    self.call(self.clone().expression(target)).await
-                }
+                ExpressionKind::Assignment { target, .. } => self.clone().expression(target).await,
                 ExpressionKind::Conditional {
                     condition,
                     then_expression,
                     ..
                 } => {
-                    let condition_operand =
-                        self.call(self.clone().value_expression(condition)).await;
-                    let then_operand = self.call(self.clone().expression(then_expression)).await;
+                    let condition_operand = self.clone().value_expression(condition).await;
+                    let then_operand = self.clone().expression(then_expression).await;
                     pending.push((node, uses, condition_operand));
                     then_operand
                 }
@@ -136,7 +133,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             };
             pending.push((node, uses, first));
         }
-        let mut operand = self.call(self.clone().expression(spine.head)).await;
+        let mut operand = self.clone().expression(spine.head).await;
         while let Some((node, uses, first)) = pending.pop() {
             operand = match &node.kind {
                 ExpressionKind::Assignment {

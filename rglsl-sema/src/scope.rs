@@ -1,6 +1,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use rglsl_types::FastHashMap;
 
 use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 use rglsl_ast::Span;
@@ -359,8 +360,8 @@ pub enum Lookup<'a> {
 
 #[derive(Debug, Clone, Default)]
 struct Level {
-    symbols: BTreeMap<String, SymbolId>,
-    functions: BTreeMap<String, Vec<FunctionId>>,
+    symbols: FastHashMap<String, SymbolId>,
+    functions: FastHashMap<String, Vec<FunctionId>>,
     precisions: BTreeMap<PrecisionKey, PrecisionQualifier>,
 }
 
@@ -379,15 +380,15 @@ pub enum DeclareError {
 #[derive(Debug, Clone, Default)]
 pub struct Scopes {
     levels: Vec<Level>,
-    bound: BTreeMap<String, Vec<usize>>,
+    bound: FastHashMap<String, Vec<usize>>,
     precise_levels: Vec<usize>,
 }
 
 impl Scopes {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             levels: Vec::new(),
-            bound: BTreeMap::new(),
+            bound: FastHashMap::default(),
             precise_levels: Vec::new(),
         }
     }
@@ -415,9 +416,15 @@ impl Scopes {
     }
 
     fn bind(&mut self, name: &str, index: usize) {
-        let levels = self.bound.entry(String::from(name)).or_default();
-        if levels.last() != Some(&index) {
-            levels.push(index);
+        match self.bound.get_mut(name) {
+            Some(levels) => {
+                if levels.last() != Some(&index) {
+                    levels.push(index);
+                }
+            }
+            None => {
+                self.bound.insert(String::from(name), Vec::from([index]));
+            }
         }
     }
 
@@ -509,11 +516,12 @@ impl Scopes {
         if level.symbols.contains_key(name) {
             return Err(DeclareError::Redeclaration);
         }
-        level
-            .functions
-            .entry(String::from(name))
-            .or_default()
-            .push(id);
+        match level.functions.get_mut(name) {
+            Some(functions) => functions.push(id),
+            None => {
+                level.functions.insert(String::from(name), Vec::from([id]));
+            }
+        }
         let index = self.levels.len().saturating_sub(1);
         self.bind(name, index);
         Ok(())
