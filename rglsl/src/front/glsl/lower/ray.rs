@@ -207,7 +207,7 @@ impl Lowerer<'_> {
         let (space, set) = ray_space(qualifiers.storage).ok_or_else(|| internal(at))?;
         let location = qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok());
         let ir = self.ir_type(&ty, at)?;
         self.ray_global(symbol, name, space, set, location, ir, at);
@@ -229,7 +229,7 @@ impl Lowerer<'_> {
             .qualifiers
             .layout_entry("location")
             .or_else(|| variable.qualifiers.layout_entry("location"))
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok());
         if !variable.ty.dimensions().is_empty() {
             return Err(super::unsupported("arrays of ray tracing blocks", at));
@@ -817,7 +817,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let Some(id) = variable
             .qualifiers
             .layout_entry("constant_id")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
         else {
             return Ok(None);
         };

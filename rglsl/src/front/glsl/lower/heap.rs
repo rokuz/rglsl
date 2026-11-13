@@ -55,7 +55,10 @@ fn explicit_packing(qualifiers: &Qualifiers) -> Option<Packing> {
 }
 
 fn layout_u32(qualifiers: &Qualifiers, name: &str, at: Span) -> Result<Option<u32>> {
-    match qualifiers.layout_entry(name).and_then(|entry| entry.value) {
+    match qualifiers
+        .layout_entry(name)
+        .and_then(|entry| entry.value.constant())
+    {
         Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
         None => Ok(None),
     }

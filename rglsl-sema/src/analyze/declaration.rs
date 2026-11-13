@@ -19,8 +19,8 @@ use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
-    Direction, Function, FunctionControl, FunctionId, LayoutEntry, Lookup, Origin, Parameter,
-    PrecisionKey, Qualifiers, Storage, SymbolId, SymbolKind,
+    Direction, Function, FunctionControl, FunctionId, LayoutEntry, LayoutValue, Lookup, Origin,
+    Parameter, PrecisionKey, Qualifiers, Storage, SymbolId, SymbolKind,
 };
 use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, OpaqueKind, Scalar, SpecializedSize, Type,
@@ -228,7 +228,7 @@ impl Analyzer<'_> {
         if qualifiers.storage == Storage::Out {
             if let Some(vertices) = qualifiers
                 .layout_entry("vertices")
-                .and_then(|entry| entry.value)
+                .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
             {
                 if self.stage_is(ShaderStage::TessControl) && self.output_array_size.is_none() {
@@ -247,7 +247,7 @@ impl Analyzer<'_> {
         for index in 0..3 {
             if let (Some(name), Some(identifier)) = (names.get(index), identifiers.get(index)) {
                 if let Some(entry) = qualifiers.layout_entry(name) {
-                    if entry.value == Some(0) {
+                    if entry.value == LayoutValue::Constant(0) {
                         self.error(
                             entry.span,
                             DiagnosticKind::InvalidQualifier {
@@ -256,7 +256,10 @@ impl Analyzer<'_> {
                             },
                         );
                     }
-                    let value = entry.value.and_then(|value| u32::try_from(value).ok());
+                    let value = entry
+                        .value
+                        .constant()
+                        .and_then(|value| u32::try_from(value).ok());
                     let changed = self
                         .local_size
                         .get(index)
@@ -278,11 +281,16 @@ impl Analyzer<'_> {
                         .get(index)
                         .copied()
                         .flatten()
-                        .is_some_and(|previous| entry.value.is_some_and(|value| value != previous));
+                        .is_some_and(|previous| {
+                            entry
+                                .value
+                                .constant()
+                                .is_some_and(|value| value != previous)
+                        });
                     if changed {
                         self.local_size_changed(entry.span);
                     } else if let Some(slot) = self.local_size_ids.get_mut(index) {
-                        *slot = entry.value;
+                        *slot = entry.value.constant();
                     }
                     if let Some(slot) = self.local_size_specialized.get_mut(index) {
                         *slot = true;
@@ -305,7 +313,7 @@ impl Analyzer<'_> {
         for (index, name) in names.iter().enumerate() {
             let Some(value) = qualifiers
                 .layout_entry(name)
-                .and_then(|entry| entry.value)
+                .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
             else {
                 continue;
@@ -3021,12 +3029,12 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                                 self.with(|analyzer| {
                                     analyzer.layout_value(&id.name.node, expression, &operand)
                                 })
+                                .map_or(LayoutValue::Invalid, LayoutValue::Constant)
                             }
-                            None => None,
+                            None => LayoutValue::Flag,
                         };
                         result.layout.push(LayoutEntry {
                             name: id.name.node.clone(),
-                            has_value: id.value.is_some(),
                             value,
                             span: id.span,
                         });

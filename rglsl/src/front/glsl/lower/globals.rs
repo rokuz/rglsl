@@ -461,7 +461,7 @@ impl<'a> Lowerer<'a> {
         let location_of = |qualifiers: &Qualifiers| {
             qualifiers
                 .layout_entry("location")
-                .and_then(|entry| entry.value)
+                .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
         };
         let mut ranges = Vec::new();
@@ -707,6 +707,7 @@ impl<'a> Lowerer<'a> {
             if let Some(entry) = qualifiers.layout_entry("constant_id") {
                 let id = entry
                     .value
+                    .constant()
                     .and_then(|value| u32::try_from(value).ok())
                     .filter(|value| *value != u32::MAX)
                     .ok_or_else(|| semantic("the `constant_id` is out of range", at))?;
@@ -815,7 +816,7 @@ impl<'a> Lowerer<'a> {
         let location = variable
             .qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| internal(at))?;
         let ty = self.ir_type(&variable.ty, at)?;
@@ -1015,7 +1016,10 @@ impl<'a> Lowerer<'a> {
             return Ok(());
         }
         let automatic_location = qualifiers.layout_entry("location").is_none();
-        let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
+        let location = match qualifiers
+            .layout_entry("location")
+            .and_then(|e| e.value.constant())
+        {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
                 let count = location_count(&self.module, element);
@@ -1046,11 +1050,17 @@ impl<'a> Lowerer<'a> {
             interpolation = Some(Interpolation::Perspective);
             sampling.get_or_insert(Sampling::Center);
         }
-        let component = match qualifiers.layout_entry("component").and_then(|e| e.value) {
+        let component = match qualifiers
+            .layout_entry("component")
+            .and_then(|e| e.value.constant())
+        {
             Some(component) => Some(u32::try_from(component).map_err(|_| internal(at))?),
             None => None,
         };
-        let blend_src = match qualifiers.layout_entry("index").and_then(|e| e.value) {
+        let blend_src = match qualifiers
+            .layout_entry("index")
+            .and_then(|e| e.value.constant())
+        {
             Some(index) => Some(u32::try_from(index).map_err(|_| internal(at))?),
             None => None,
         };
@@ -1129,7 +1139,10 @@ impl<'a> Lowerer<'a> {
         at: Span,
     ) -> Result<(Option<ResourceBinding>, Option<Option<u32>>)> {
         let value = |name: &str| -> Result<Option<u32>> {
-            match qualifiers.layout_entry(name).and_then(|e| e.value) {
+            match qualifiers
+                .layout_entry(name)
+                .and_then(|e| e.value.constant())
+            {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
                 None => Ok(None),
             }
@@ -1254,7 +1267,7 @@ impl<'a> Lowerer<'a> {
         let (binding, unbound) = self.binding(qualifiers, at)?;
         let input_attachment_index = match qualifiers
             .layout_entry("input_attachment_index")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
         {
             Some(index) if opaque.is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput) => {
                 Some(u32::try_from(index).map_err(|_| internal(at))?)
@@ -1438,7 +1451,7 @@ impl<'a> Lowerer<'a> {
         let layout_value = |name| {
             qualifiers
                 .layout_entry(name)
-                .and_then(|entry| entry.value)
+                .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
         };
         let immediate_bank = push_constant
@@ -1532,7 +1545,10 @@ impl<'a> Lowerer<'a> {
             ));
         }
         let explicit = |qualifiers: &Qualifiers, name: &str| -> Result<Option<u32>> {
-            match qualifiers.layout_entry(name).and_then(|entry| entry.value) {
+            match qualifiers
+                .layout_entry(name)
+                .and_then(|entry| entry.value.constant())
+            {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
                 None => Ok(None),
             }

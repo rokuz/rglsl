@@ -94,7 +94,7 @@ impl Analyzer<'_> {
                 }
                 "shading_rate_xqcom" | "shading_rate_yqcom" | "shading_rate_zqcom" => {
                     self.require_extension(span, TILE_SHADING, "tile shading QCOM");
-                    let Some(value) = entry.value else {
+                    let Some(value) = entry.value.constant() else {
                         continue;
                     };
                     let reason = if name != "shading_rate_zqcom" && value == 0 {

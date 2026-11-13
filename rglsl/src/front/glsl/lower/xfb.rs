@@ -213,7 +213,7 @@ pub(super) fn ast_layout_signed<'q>(
 pub(super) fn layout_value(qualifiers: &Qualifiers, name: &str) -> Option<u32> {
     qualifiers
         .layout_entry(name)
-        .and_then(|entry| entry.value)
+        .and_then(|entry| entry.value.constant())
         .and_then(|value| u32::try_from(value).ok())
 }
 

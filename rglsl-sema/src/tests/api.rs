@@ -216,7 +216,7 @@ void main() {
         block
             .qualifiers
             .layout_entry("binding")
-            .and_then(|entry| entry.value),
+            .and_then(|entry| entry.value.constant()),
         Some(0)
     );
     assert!(matches!(
@@ -424,7 +424,7 @@ void main() {
         normal
             .qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value),
+            .and_then(|entry| entry.value.constant()),
         Some(2)
     );
     let cell = variable("cell")?;
@@ -436,7 +436,7 @@ void main() {
         scene
             .qualifiers
             .layout_entry("set")
-            .and_then(|entry| entry.value),
+            .and_then(|entry| entry.value.constant()),
         Some(1)
     );
     let TypeKind::Block(block) = scene.ty.kind else {

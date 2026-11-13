@@ -89,7 +89,7 @@ impl Analyzer<'_> {
                     names::BUFFER_REFERENCE,
                     "buffer_reference_align",
                 );
-                if let Some(value) = entry.value {
+                if let Some(value) = entry.value.constant() {
                     if value <= 0 || (value & (value - 1)) != 0 {
                         self.error(
                             entry.span,
@@ -120,7 +120,7 @@ impl Analyzer<'_> {
     pub(crate) fn reference_alignment(qualifiers: &Qualifiers) -> u32 {
         qualifiers
             .layout_entry("buffer_reference_align")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
             .filter(|value| value.is_power_of_two())
             .unwrap_or(DEFAULT_REFERENCE_ALIGNMENT)

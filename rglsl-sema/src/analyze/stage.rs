@@ -314,7 +314,7 @@ impl Analyzer<'_> {
         let stage = self.stage();
         let found: alloc::vec::Vec<(&'static str, Kind, Span, Option<i64>)> =
             shader_layouts(stage, qualifiers)
-                .map(|(name, kind, entry)| (name, kind, entry.span, entry.value))
+                .map(|(name, kind, entry)| (name, kind, entry.span, entry.value.constant()))
                 .collect();
         let input = qualifiers.storage == Storage::In;
         let output = qualifiers.storage == Storage::Out;

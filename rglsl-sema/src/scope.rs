@@ -50,9 +50,24 @@ impl Storage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutEntry {
     pub name: String,
-    pub has_value: bool,
-    pub value: Option<i64>,
+    pub value: LayoutValue,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutValue {
+    Flag,
+    Constant(i64),
+    Invalid,
+}
+
+impl LayoutValue {
+    pub const fn constant(self) -> Option<i64> {
+        match self {
+            Self::Constant(value) => Some(value),
+            Self::Flag | Self::Invalid => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

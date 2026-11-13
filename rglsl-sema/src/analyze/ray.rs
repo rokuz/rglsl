@@ -252,7 +252,7 @@ impl Analyzer<'_> {
         };
         let Some(location) = qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {
             return;
