@@ -1632,7 +1632,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             TokenKind::Punctuator("[") if self.at_attribute_list() => {
                 self.call(self.clone().parse_attributed()).await
             }
-            _ => self.call(self.clone().parse_simple_statement()).await,
+            _ => self.clone().parse_simple_statement().await,
         }
     }
 
@@ -1702,7 +1702,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         } else if self.starts_declaration() {
             StatementKind::Declaration(Box::new(self.call(self.clone().parse_declaration()).await?))
         } else {
-            let expression = self.call(self.clone().parse_expression()).await?.expression;
+            let expression = self.clone().parse_expression().await?.expression;
             self.expect(";")?;
             StatementKind::Expression(Some(expression))
         };
@@ -1872,7 +1872,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_expression(self) -> Result<Parsed> {
         let start = self.start();
-        let first = self.call(self.clone().parse_assignment()).await?;
+        let first = self.clone().parse_assignment().await?;
         if self.at(",") {
             self.call(self.clone().parse_sequence(start, first)).await
         } else {
@@ -1890,18 +1890,18 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_assignment(self) -> Result<Parsed> {
-        self.call(self.clone().parse_right_chain(true)).await
+        self.clone().parse_right_chain(true).await
     }
 
     async fn parse_conditional(self) -> Result<Parsed> {
-        self.call(self.clone().parse_right_chain(false)).await
+        self.clone().parse_right_chain(false).await
     }
 
     async fn parse_right_chain(self, assigning: bool) -> Result<Parsed> {
         let mut pending = Vec::new();
         let innermost = loop {
             let start = self.start();
-            let operand = self.call(self.clone().parse_binary()).await?;
+            let operand = self.clone().parse_binary().await?;
             if self.eat("?") {
                 let then_expression = self.call(self.clone().parse_expression()).await?;
                 self.expect(":")?;
@@ -1940,10 +1940,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_binary(self) -> Result<Parsed> {
         let start = self.start();
-        let first = self.call(self.clone().parse_unary()).await?;
+        let first = self.clone().parse_unary().await?;
         if self.peek_binary_operator().is_some() {
-            self.call(self.clone().parse_binary_operands(start, first))
-                .await
+            self.clone().parse_binary_operands(start, first).await
         } else {
             Ok(first)
         }
@@ -1965,7 +1964,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             self.advance();
             pending.operators.push(operator);
             let operand_start = self.start();
-            let operand = self.call(self.clone().parse_unary()).await?;
+            let operand = self.clone().parse_unary().await?;
             pending.operands.push((operand_start, operand));
         }
         while !pending.operators.is_empty() {
@@ -1978,7 +1977,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_unary(self) -> Result<Parsed> {
-        self.call(self.clone().parse_unary_chain()).await
+        self.clone().parse_unary_chain().await
     }
 
     async fn parse_unary_chain(self) -> Result<Parsed> {
@@ -1993,7 +1992,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut result = if self.starts_cast() {
             self.call(self.clone().parse_cast()).await?
         } else {
-            self.call(self.clone().parse_postfix()).await?
+            self.clone().parse_postfix().await?
         };
         while let Some((start, operator)) = operators.pop() {
             let kind = ExpressionKind::Unary {
@@ -2040,28 +2039,18 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_postfix(self) -> Result<Parsed> {
         let start = self.start();
-        let mut base = self.call(self.clone().parse_primary()).await?;
+        let mut base = self.clone().parse_primary().await?;
         while self.at_postfix() {
-            base = self
-                .call(self.clone().parse_postfix_step(start, base))
-                .await?;
+            base = self.clone().parse_postfix_step(start, base).await?;
         }
         Ok(base)
     }
 
     async fn parse_postfix_step(self, start: u32, base: Parsed) -> Result<Parsed> {
         match self.peek().kind {
-            TokenKind::Punctuator("[") => {
-                self.call(self.clone().parse_subscript(start, base)).await
-            }
-            TokenKind::Punctuator(".") => {
-                self.call(self.clone().parse_field_selection(start, base))
-                    .await
-            }
-            TokenKind::Punctuator("(") => {
-                self.call(self.clone().parse_expression_call(start, base))
-                    .await
-            }
+            TokenKind::Punctuator("[") => self.clone().parse_subscript(start, base).await,
+            TokenKind::Punctuator(".") => self.clone().parse_field_selection(start, base).await,
+            TokenKind::Punctuator("(") => self.clone().parse_expression_call(start, base).await,
             TokenKind::Punctuator("++") => {
                 self.parse_postfix_operator(start, base, PostfixOperator::Increment)
             }
@@ -2072,7 +2061,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_expression_call(self, start: u32, base: Parsed) -> Result<Parsed> {
         let callee = FunctionIdentifier::Expression(Box::new(base.expression));
         let function = self.spanned(start, callee);
-        self.call(self.clone().parse_call(start, function)).await
+        self.clone().parse_call(start, function).await
     }
 
     async fn parse_subscript(self, start: u32, base: Parsed) -> Result<Parsed> {
@@ -2095,7 +2084,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 name: field,
             };
             let function = self.spanned(start, method);
-            return self.call(self.clone().parse_call(start, function)).await;
+            return self.clone().parse_call(start, function).await;
         }
         let kind = ExpressionKind::FieldSelection {
             base: Box::new(base.expression),
@@ -2133,15 +2122,15 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             TokenKind::Number { .. } | TokenKind::String(_) | TokenKind::Word("true" | "false") => {
                 self.parse_literal(token)
             }
-            TokenKind::Punctuator("(") => self.call(self.clone().parse_parenthesized()).await,
+            TokenKind::Punctuator("(") => self.clone().parse_parenthesized().await,
             TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => {
-                self.call(self.clone().parse_non_uniform(token)).await
+                self.clone().parse_non_uniform(token).await
             }
             TokenKind::Word(word) if self.starts_constructor(word) => {
                 self.call(self.clone().parse_constructor()).await
             }
             TokenKind::Word(word) if !is_reserved_word(word) => {
-                self.call(self.clone().parse_name(token, word)).await
+                self.clone().parse_name(token, word).await
             }
             TokenKind::Word(word) if is_unavailable_word(word) => {
                 Err(self.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span))
@@ -2157,8 +2146,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             token.span,
             FunctionIdentifier::Function(NON_UNIFORM.to_owned()),
         );
-        self.call(self.clone().parse_call(token.span.start, function))
-            .await
+        self.clone().parse_call(token.span.start, function).await
     }
 
     async fn parse_name(self, token: Token<'a>, word: &str) -> Result<Parsed> {
@@ -2166,7 +2154,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         self.advance();
         if self.at("(") {
             let function = Spanned::new(token.span, FunctionIdentifier::Function(word.to_owned()));
-            self.call(self.clone().parse_call(start, function)).await
+            self.clone().parse_call(start, function).await
         } else {
             self.parsed(start, ExpressionKind::Variable(word.to_owned()))
         }
