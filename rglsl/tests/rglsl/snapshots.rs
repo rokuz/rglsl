@@ -83,8 +83,6 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
     };
 
     let shared_info = WriterSharedOptions {
-        mesh_output_validation: params.mesh_output_validation,
-        task_limits: params.task_limits,
         bounds_checks_policies: params.bounds_check_policies,
     };
 

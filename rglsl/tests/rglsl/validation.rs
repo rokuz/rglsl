@@ -995,7 +995,6 @@ fn unexpected_task_payload() -> crate::TestResult {
         workgroup_size_overrides: None,
         workgroup_size_builtin: false,
         function: ir::Function::default(),
-        mesh_info: None,
         task_payload: Some(payload_handle), // invalid for compute stage
         incoming_ray_payload: None,
         interface: Vec::new(),

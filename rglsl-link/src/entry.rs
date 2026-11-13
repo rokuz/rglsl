@@ -226,7 +226,6 @@ impl Builder<'_> {
         let global = |handle: Handle<GlobalVariable>| remap.global(handle).map_err(internal);
         let expression =
             |handle: Handle<Expression>| remap.global_expression(handle).map_err(internal);
-        let ty = |handle: Handle<Type>| remap.ty(handle).map_err(internal);
         let EntryPoint {
             name,
             stage,
@@ -235,7 +234,6 @@ impl Builder<'_> {
             workgroup_size_overrides,
             workgroup_size_builtin,
             mut function,
-            mesh_info,
             task_payload,
             incoming_ray_payload,
             interface: _,
@@ -261,20 +259,6 @@ impl Builder<'_> {
                 }
                 Some(mapped)
             }
-            None => None,
-        };
-        let mesh_info = match mesh_info {
-            Some(info) => Some(rglsl::MeshStageInfo {
-                max_vertices_override: info.max_vertices_override.map(expression).transpose()?,
-                max_primitives_override: info
-                    .max_primitives_override
-                    .map(expression)
-                    .transpose()?,
-                vertex_output_type: ty(info.vertex_output_type)?,
-                primitive_output_type: ty(info.primitive_output_type)?,
-                output_variable: global(info.output_variable)?,
-                ..info
-            }),
             None => None,
         };
         let geometry = match geometry {
@@ -331,7 +315,6 @@ impl Builder<'_> {
             workgroup_size_overrides,
             workgroup_size_builtin,
             function,
-            mesh_info,
             task_payload: task_payload.map(global).transpose()?,
             incoming_ray_payload: incoming_ray_payload.map(global).transpose()?,
             interface,

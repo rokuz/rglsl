@@ -3917,10 +3917,6 @@ pub struct EntryPoint {
     pub workgroup_size_builtin: bool,
     /// The entrance function.
     pub function: Function,
-    /// Information for [`Mesh`] shaders.
-    ///
-    /// [`Mesh`]: ShaderStage::Mesh
-    pub mesh_info: Option<MeshStageInfo>,
     /// The unique global variable used as a task payload from task shader to mesh shader
     pub task_payload: Option<Handle<GlobalVariable>>,
     /// The unique global variable used as an incoming ray payload going into any hit, closest hit and miss shaders.
@@ -4346,31 +4342,6 @@ pub enum MeshOutputTopology {
     Lines,
     /// Outputs groups of 3 vertices to be rendered as triangles.
     Triangles,
-}
-
-/// Information specific to mesh shader entry points.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-#[allow(dead_code)]
-pub struct MeshStageInfo {
-    /// The type of primitive outputted.
-    pub topology: MeshOutputTopology,
-    /// The maximum number of vertices a mesh shader may output.
-    pub max_vertices: u32,
-    /// If pipeline constants are used, the expressions that override `max_vertices`
-    pub max_vertices_override: Option<Handle<Expression>>,
-    /// The maximum number of primitives a mesh shader may output.
-    pub max_primitives: u32,
-    /// If pipeline constants are used, the expressions that override `max_primitives`
-    pub max_primitives_override: Option<Handle<Expression>>,
-    /// The type used by vertex outputs, i.e. what is passed to `setVertex`.
-    pub vertex_output_type: Handle<Type>,
-    /// The type used by primitive outputs, i.e. what is passed to `setPrimitive`.
-    pub primitive_output_type: Handle<Type>,
-    /// The global variable holding the outputted vertices, primitives, and counts
-    pub output_variable: Handle<GlobalVariable>,
 }
 
 /// Ray tracing pipeline intrinsics

@@ -123,8 +123,6 @@ pub enum VaryingError {
     InvalidMultiDimensionalSubgroupBuiltIn,
     #[error("The `@per_primitive` attribute can only be used in fragment shader inputs or mesh shader primitive outputs")]
     InvalidPerPrimitive,
-    #[error("Non-builtin members of a mesh primitive output struct must be decorated with `@per_primitive`")]
-    MissingPerPrimitive,
     #[error("Per vertex fragment inputs must be an array of length 3.")]
     PerVertexNotArrayOfThree,
     #[error("A per-view output must be an array with one element per view")]
@@ -218,22 +216,10 @@ pub enum EntryPointError {
     WrongTaskShaderEntryResult,
     #[error("Task shaders must declare a task payload output")]
     ExpectedTaskPayload,
-    #[error(
-        "Mesh shader output variable must be a struct with fields that are all allowed builtins"
-    )]
-    BadMeshOutputVariableType,
     #[error("Mesh shader output variable fields must have types that are in accordance with the mesh shader spec")]
     BadMeshOutputVariableField,
     #[error("Mesh shader entry point cannot have a return type")]
     UnexpectedMeshShaderEntryResult,
-    #[error(
-        "Mesh output type must be a user-defined struct with fields in alignment with the mesh shader spec"
-    )]
-    InvalidMeshOutputType,
-    #[error("Mesh primitive outputs must have exactly one of `@builtin(triangle_indices)`, `@builtin(line_indices)`, or `@builtin(point_index)`")]
-    InvalidMeshPrimitiveOutputType,
-    #[error("Mesh output global variable must live in the workgroup address space")]
-    WrongMeshOutputAddressSpace,
     #[error("Task payload must be at least 4 bytes, but is {0} bytes")]
     TaskPayloadTooSmall(u32),
     #[error("Only the `ray_generation`, `closest_hit`, and `any_hit` shader stages can access a global variable in the `ray_payload` address space")]
@@ -258,13 +244,6 @@ fn storage_usage(access: crate::StorageAccess) -> GlobalUse {
     storage_usage
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MeshOutputType {
-    None,
-    VertexOutput,
-    PrimitiveOutput,
-}
-
 struct VaryingContext<'a> {
     stage: crate::ShaderStage,
     output: bool,
@@ -275,7 +254,6 @@ struct VaryingContext<'a> {
     built_ins: &'a mut crate::FastHashSet<crate::BuiltIn>,
     capabilities: Capabilities,
     flags: super::ValidationFlags,
-    mesh_output_type: MeshOutputType,
     has_task_payload: bool,
     /// The binding belongs to a global variable in the `Input` or `Output`
     /// address space rather than to an argument or a result. Such a variable
@@ -686,9 +664,6 @@ impl VaryingContext<'_> {
                                 | St::Geometry
                         ) && !self.output)
                             || (self.stage == St::Geometry && self.output)
-                            || (self.stage == St::Mesh
-                                && self.output
-                                && self.mesh_output_type == MeshOutputType::PrimitiveOutput)
                             || mesh_interface,
                         is_index_type(ty_inner),
                     ),
@@ -785,10 +760,9 @@ impl VaryingContext<'_> {
                                 scalar: crate::Scalar::U32,
                             },
                     ),
-                    Bi::CullPrimitive => (
-                        self.mesh_output_type == MeshOutputType::PrimitiveOutput || mesh_interface,
-                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
-                    ),
+                    Bi::CullPrimitive => {
+                        (mesh_interface, *ty_inner == Ti::Scalar(crate::Scalar::BOOL))
+                    }
                     Bi::PointIndex | Bi::LineIndices | Bi::TriangleIndices => {
                         let element = match built_in {
                             Bi::PointIndex => Ti::Scalar(crate::Scalar::U32),
@@ -804,10 +778,7 @@ impl VaryingContext<'_> {
                         if mesh_interface {
                             (true, array_of(element))
                         } else {
-                            (
-                                self.mesh_output_type == MeshOutputType::PrimitiveOutput,
-                                *ty_inner == element,
-                            )
+                            (false, *ty_inner == element)
                         }
                     }
                     Bi::SamplePosition => (
@@ -1142,12 +1113,7 @@ impl VaryingContext<'_> {
                 let _ = ty_inner;
 
                 // Check whether `per_primitive` is appropriate for this stage and direction.
-                if self.mesh_output_type == MeshOutputType::PrimitiveOutput {
-                    // All mesh shader `Location` outputs must be `per_primitive`.
-                    if !per_primitive {
-                        return Err(VaryingError::MissingPerPrimitive);
-                    }
-                } else if (self.stage == crate::ShaderStage::Fragment && !self.output)
+                if (self.stage == crate::ShaderStage::Fragment && !self.output)
                     || (self.stage == crate::ShaderStage::Mesh && self.output && self.interface)
                 {
                     // Fragment stage inputs may be `per_primitive`. We'll only
@@ -1954,60 +1920,6 @@ impl super::Validator {
         Ok(())
     }
 
-    /// Validate the mesh shader output type `ty`, used as `mesh_output_type`.
-    fn validate_mesh_output_type(
-        &mut self,
-        ep: &crate::EntryPoint,
-        module: &crate::Module,
-        ty: Handle<crate::Type>,
-        mesh_output_type: MeshOutputType,
-    ) -> Result<(), WithSpan<EntryPointError>> {
-        if !matches!(module.types[ty].inner, crate::TypeInner::Struct { .. }) {
-            return Err(EntryPointError::InvalidMeshOutputType.with_span_handle(ty, &module.types));
-        }
-        let mut result_built_ins = crate::FastHashSet::default();
-        let mut ctx = VaryingContext {
-            stage: ep.stage,
-            output: true,
-            types: &module.types,
-            type_info: &self.types,
-            location_mask: &mut self.location_mask,
-            dual_source_blending: None,
-            built_ins: &mut result_built_ins,
-            capabilities: self.capabilities,
-            flags: self.flags,
-            mesh_output_type,
-            has_task_payload: ep.task_payload.is_some(),
-            interface: false,
-        };
-        ctx.validate(ep, ty, None)
-            .map_err_inner(|e| EntryPointError::Result(e).with_span())?;
-        if mesh_output_type == MeshOutputType::PrimitiveOutput {
-            let mut num_indices_builtins = 0;
-            if result_built_ins.contains(&crate::BuiltIn::PointIndex) {
-                num_indices_builtins += 1;
-            }
-            if result_built_ins.contains(&crate::BuiltIn::LineIndices) {
-                num_indices_builtins += 1;
-            }
-            if result_built_ins.contains(&crate::BuiltIn::TriangleIndices) {
-                num_indices_builtins += 1;
-            }
-            if num_indices_builtins != 1 {
-                return Err(EntryPointError::InvalidMeshPrimitiveOutputType
-                    .with_span_handle(ty, &module.types));
-            }
-        } else if mesh_output_type == MeshOutputType::VertexOutput
-            && !result_built_ins.contains(&crate::BuiltIn::Position { invariant: false })
-        {
-            return Err(
-                EntryPointError::MissingVertexOutputPosition.with_span_handle(ty, &module.types)
-            );
-        }
-
-        Ok(())
-    }
-
     fn validate_stage_info(
         ep: &crate::EntryPoint,
         module: &crate::Module,
@@ -2144,16 +2056,8 @@ impl super::Validator {
                 return Err(EntryPointError::UnexpectedMeshShaderAttributes.with_span());
             }
         }
-        match (ep.stage, &ep.mesh_info) {
-            (crate::ShaderStage::Mesh, &None) if glsl_mesh => {}
-            (crate::ShaderStage::Mesh, &None) => {
-                return Err(EntryPointError::ExpectedMeshShaderAttributes.with_span());
-            }
-            (crate::ShaderStage::Mesh, &Some(..)) => {}
-            (_, &Some(_)) => {
-                return Err(EntryPointError::UnexpectedMeshShaderAttributes.with_span());
-            }
-            (_, _) => {}
+        if ep.stage == crate::ShaderStage::Mesh && !glsl_mesh {
+            return Err(EntryPointError::ExpectedMeshShaderAttributes.with_span());
         }
 
         let mut info = self
@@ -2183,9 +2087,6 @@ impl super::Validator {
                             .with_span_handle(handle, &module.global_variables));
                     }
                     info.insert_global_use(GlobalUse::READ, handle);
-                }
-                if let Some(ref mesh_info) = ep.mesh_info {
-                    info.insert_global_use(GlobalUse::READ, mesh_info.output_variable);
                 }
             }
 
@@ -2237,7 +2138,6 @@ impl super::Validator {
                 built_ins: &mut argument_built_ins,
                 capabilities: self.capabilities,
                 flags: self.flags,
-                mesh_output_type: MeshOutputType::None,
                 has_task_payload: ep.task_payload.is_some(),
                 interface: false,
             };
@@ -2258,7 +2158,6 @@ impl super::Validator {
                 built_ins: &mut result_built_ins,
                 capabilities: self.capabilities,
                 flags: self.flags,
-                mesh_output_type: MeshOutputType::None,
                 has_task_payload: ep.task_payload.is_some(),
                 interface: false,
             };
@@ -2358,7 +2257,6 @@ impl super::Validator {
                     },
                     capabilities: self.capabilities,
                     flags: self.flags,
-                    mesh_output_type: MeshOutputType::None,
                     has_task_payload: ep.task_payload.is_some(),
                     interface: true,
                 };
@@ -2545,65 +2443,6 @@ impl super::Validator {
                 return Err(EntryPointError::InvalidGlobalUsage(var_handle, usage)
                     .with_span_handle(var_handle, &module.global_variables));
             }
-        }
-
-        // If this is a `Mesh` entry point, check its vertex and primitive output types.
-        // We verified previously that only mesh shaders can have `mesh_info`.
-        if let &Some(ref mesh_info) = &ep.mesh_info {
-            if module.global_variables[mesh_info.output_variable].space
-                != crate::AddressSpace::WorkGroup
-            {
-                return Err(EntryPointError::WrongMeshOutputAddressSpace.with_span());
-            }
-
-            let mut implied = module.analyze_mesh_shader_info(mesh_info.output_variable);
-            if let Some(e) = implied.2 {
-                return Err(e);
-            }
-
-            if let Some(e) = mesh_info.max_vertices_override {
-                if let crate::Expression::Override(o) = module.global_expressions[e] {
-                    if implied.1[0] != Some(o) {
-                        return Err(EntryPointError::BadMeshOutputVariableType.with_span());
-                    }
-                }
-            }
-            if let Some(e) = mesh_info.max_primitives_override {
-                if let crate::Expression::Override(o) = module.global_expressions[e] {
-                    if implied.1[1] != Some(o) {
-                        return Err(EntryPointError::BadMeshOutputVariableType.with_span());
-                    }
-                }
-            }
-
-            implied.0.max_vertices_override = mesh_info.max_vertices_override;
-            implied.0.max_primitives_override = mesh_info.max_primitives_override;
-            if implied.0 != *mesh_info {
-                return Err(EntryPointError::BadMeshOutputVariableType.with_span());
-            }
-            if mesh_info.topology == crate::MeshOutputTopology::Points
-                && !self
-                    .capabilities
-                    .contains(Capabilities::MESH_SHADER_POINT_TOPOLOGY)
-            {
-                return Err(EntryPointError::UnsupportedCapability(
-                    Capabilities::MESH_SHADER_POINT_TOPOLOGY,
-                )
-                .with_span());
-            }
-
-            self.validate_mesh_output_type(
-                ep,
-                module,
-                mesh_info.vertex_output_type,
-                MeshOutputType::VertexOutput,
-            )?;
-            self.validate_mesh_output_type(
-                ep,
-                module,
-                mesh_info.primitive_output_type,
-                MeshOutputType::PrimitiveOutput,
-            )?;
         }
 
         Ok(info)

@@ -73,8 +73,6 @@ where
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct WriterSharedOptions {
-    pub mesh_output_validation: bool,
-    pub task_limits: Option<rglsl::back::TaskDispatchLimits>,
     pub bounds_checks_policies: rglsl::proc::BoundsCheckPolicies,
 }
 
@@ -135,8 +133,6 @@ impl SpirvOutParameters {
             binding_map: self.binding_map.clone(),
             debug_info,
             use_storage_input_output_16: self.use_storage_input_output_16,
-            task_dispatch_limits: shared_info.task_limits,
-            mesh_shader_primitive_indices_clamp: shared_info.mesh_output_validation,
         }
     }
 }
@@ -159,18 +155,7 @@ pub struct Parameters {
     pub bounds_check_policies: rglsl::proc::BoundsCheckPolicies,
     pub pipeline_constants: rglsl::back::PipelineConstants,
 
-    pub mesh_output_validation: bool,
-    #[serde(default = "default_task_limits")]
-    pub task_limits: Option<rglsl::back::TaskDispatchLimits>,
-
     pub expected_error: Option<String>,
-}
-
-fn default_task_limits() -> Option<rglsl::back::TaskDispatchLimits> {
-    Some(rglsl::back::TaskDispatchLimits {
-        max_mesh_workgroups_per_dim: 256,
-        max_mesh_workgroups_total: 1024,
-    })
 }
 
 /// Information about a shader input file.

@@ -148,14 +148,6 @@ impl Writer {
             for size in entry.workgroup_size_overrides.iter().flatten().flatten() {
                 mark(*size);
             }
-            if let Some(ref info) = entry.mesh_info {
-                for handle in [info.max_vertices_override, info.max_primitives_override]
-                    .into_iter()
-                    .flatten()
-                {
-                    mark(handle);
-                }
-            }
         }
         for (_, item) in module.overrides.iter() {
             if let (None, Some(init)) = (item.id, item.init) {

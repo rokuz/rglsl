@@ -347,7 +347,6 @@ fn ours(source: &str, target: Target, debug: Debug) -> Result<Vec<u32>, Vec<(u32
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        mesh_shader_primitive_indices_clamp: false,
         ..spv::Options::default()
     };
     spv::write_vec(&module, &info, &options, None)

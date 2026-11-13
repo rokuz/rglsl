@@ -3154,7 +3154,6 @@ fn default_writer_options_keep_vulkan_glsl_semantics() {
             | spv::WriterFlags::CLAMP_FRAG_DEPTH
             | spv::WriterFlags::FORCE_POINT_SIZE
     ));
-    assert!(!options.mesh_shader_primitive_indices_clamp);
 }
 
 #[test]

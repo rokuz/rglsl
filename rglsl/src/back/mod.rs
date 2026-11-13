@@ -9,8 +9,6 @@ pub mod pipeline_constants;
 #[cfg(spv_out)]
 pub mod spv;
 
-pub use nt::TaskDispatchLimits;
-
 /// Specifies the values of pipeline-overridable constants in the shader module.
 ///
 /// If an `@id` attribute was specified on the declaration,

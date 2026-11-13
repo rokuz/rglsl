@@ -205,7 +205,6 @@ impl Builder {
             workgroup_size_overrides: None,
             workgroup_size_builtin: false,
             function: self.function,
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
             interface: self.interface,

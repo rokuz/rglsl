@@ -109,7 +109,6 @@ mod index;
 mod instructions;
 mod intrinsics;
 mod layout;
-mod mesh_shader;
 mod message;
 mod microscaling;
 mod physical;
@@ -129,7 +128,6 @@ mod writer;
 pub use nt::spv::*;
 
 pub use debug::{DebugEntryPoint, DebugInfo, DebugLevel};
-pub use mesh_shader::{MeshReturnInfo, MeshReturnMember};
 pub use spirv::{Capability, SourceLanguage};
 
 use alloc::{string::String, vec::Vec};
@@ -138,7 +136,6 @@ use spirv::Word;
 use thiserror::Error;
 
 use crate::arena::{Handle, HandleVec};
-use crate::back::TaskDispatchLimits;
 use crate::proc::{BoundsCheckPolicies, TypeResolution};
 
 #[derive(Clone)]
@@ -259,8 +256,6 @@ struct ResultMember {
 struct EntryPointContext {
     argument_ids: Vec<Word>,
     results: Vec<ResultMember>,
-    task_payload_variable_id: Option<Word>,
-    mesh_state: Option<MeshReturnInfo>,
 }
 
 #[derive(Default)]
@@ -916,7 +911,6 @@ pub struct Writer {
     device_scope_used: bool,
     use_storage_input_output_16: bool,
     void_type: Word,
-    tuple_of_u32s_ty_id: Option<Word>,
     //TODO: convert most of these into vectors, addressable by handle indices
     lookup_type: crate::FastHashMap<LookupType, Word>,
     lookup_function: crate::FastHashMap<Handle<crate::Function>, Word>,
@@ -986,10 +980,6 @@ pub struct Writer {
     qcom_decorations: crate::FastHashSet<(Word, spirv::Decoration)>,
     laid_out_copies: crate::FastHashMap<Handle<crate::Type>, Word>,
 
-    /// See docs in [`Options`]
-    task_dispatch_limits: Option<TaskDispatchLimits>,
-    /// See docs in [`Options`]
-    mesh_shader_primitive_indices_clamp: bool,
     heap: heap::HeapState,
     descriptor_heap: bool,
     debug: debug::DebugState,
@@ -1061,17 +1051,6 @@ pub struct Options<'a> {
     pub use_storage_input_output_16: bool,
 
     pub debug_info: Option<DebugInfo<'a>>,
-
-    /// Limits to the mesh shader dispatch group a task workgroup can dispatch.
-    ///
-    /// Metal for example limits to 1024 workgroups per task shader dispatch. Dispatching more is
-    /// undefined behavior, so this would validate that to dispatch zero workgroups.
-    pub task_dispatch_limits: Option<TaskDispatchLimits>,
-
-    /// If true, rglsl may generate checks that the primitive indices are valid in the output.
-    ///
-    /// Currently this validation is unimplemented.
-    pub mesh_shader_primitive_indices_clamp: bool,
 }
 
 impl Default for Options<'_> {
@@ -1089,8 +1068,6 @@ impl Default for Options<'_> {
             bounds_check_policies: BoundsCheckPolicies::default(),
             use_storage_input_output_16: true,
             debug_info: None,
-            task_dispatch_limits: None,
-            mesh_shader_primitive_indices_clamp: false,
         }
     }
 }

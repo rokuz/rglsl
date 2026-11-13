@@ -343,18 +343,6 @@ impl super::Validator {
             {
                 Self::validate_global_variable_handle(variable, global_variables)?;
             }
-            if let Some(ref mesh_info) = entry_point.mesh_info {
-                Self::validate_global_variable_handle(mesh_info.output_variable, global_variables)?;
-                validate_type(mesh_info.vertex_output_type)?;
-                validate_type(mesh_info.primitive_output_type)?;
-                for ov in mesh_info
-                    .max_vertices_override
-                    .iter()
-                    .chain(mesh_info.max_primitives_override.iter())
-                {
-                    validate_const_expr(*ov)?;
-                }
-            }
         }
 
         for (function_handle, function) in functions.iter() {

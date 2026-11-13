@@ -1,6 +1,0 @@
-capabilities = "MESH_SHADER"
-targets = "SPIRV"
-
-[spv]
-version = [1, 4]
-capabilities = ["MeshShadingEXT"]

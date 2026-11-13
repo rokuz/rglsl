@@ -185,27 +185,6 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
             for &variable in &e.interface {
                 module_tracer.global_variables_used.insert(variable);
             }
-            if let Some(ref mesh_info) = e.mesh_info {
-                module_tracer
-                    .global_variables_used
-                    .insert(mesh_info.output_variable);
-                module_tracer
-                    .types_used
-                    .insert(mesh_info.vertex_output_type);
-                module_tracer
-                    .types_used
-                    .insert(mesh_info.primitive_output_type);
-                if let Some(max_vertices_override) = mesh_info.max_vertices_override {
-                    module_tracer
-                        .global_expressions_used
-                        .insert(max_vertices_override);
-                }
-                if let Some(max_primitives_override) = mesh_info.max_primitives_override {
-                    module_tracer
-                        .global_expressions_used
-                        .insert(max_primitives_override);
-                }
-            }
             if e.stage == crate::ShaderStage::Task || e.stage == crate::ShaderStage::Mesh {
                 // Mesh shaders always need a u32 type, as it is e.g. the type of some
                 // expressions. We tolerate its absence here because compaction is
@@ -506,23 +485,6 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
             .flat_map(|mesh| &mut mesh.task_memory)
         {
             module_map.globals.adjust(variable)?;
-        }
-        if let Some(ref mut mesh_info) = entry.mesh_info {
-            module_map.globals.adjust(&mut mesh_info.output_variable)?;
-            module_map.types.adjust(&mut mesh_info.vertex_output_type)?;
-            module_map
-                .types
-                .adjust(&mut mesh_info.primitive_output_type)?;
-            if let Some(ref mut max_vertices_override) = mesh_info.max_vertices_override {
-                module_map
-                    .global_expressions
-                    .adjust(max_vertices_override)?;
-            }
-            if let Some(ref mut max_primitives_override) = mesh_info.max_primitives_override {
-                module_map
-                    .global_expressions
-                    .adjust(max_primitives_override)?;
-            }
         }
     }
     Ok(())

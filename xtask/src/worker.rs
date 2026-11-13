@@ -184,7 +184,6 @@ fn spirv_options(lang_version: (u8, u8), debug: Option<&str>) -> spv::Options<'s
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
             | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
-        mesh_shader_primitive_indices_clamp: false,
         ..spv::Options::default()
     }
 }

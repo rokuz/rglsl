@@ -984,18 +984,6 @@ impl super::Instruction {
         instruction
     }
 
-    pub(super) fn loop_merge(
-        merge_id: Word,
-        continuing_id: Word,
-        selection_control: spirv::SelectionControl,
-    ) -> Self {
-        let mut instruction = Self::new(Op::LoopMerge);
-        instruction.add_operand(merge_id);
-        instruction.add_operand(continuing_id);
-        instruction.add_operand(selection_control.bits());
-        instruction
-    }
-
     pub(super) const fn label(id: Word) -> Self {
         let mut instruction = Self::new(Op::Label);
         instruction.set_result(id);

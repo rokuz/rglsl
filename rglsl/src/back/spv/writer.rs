@@ -25,9 +25,6 @@ use crate::{
 pub struct FunctionInterface<'a> {
     pub varying_ids: &'a mut Vec<Word>,
     pub stage: crate::ShaderStage,
-    pub task_payload: Option<Handle<crate::GlobalVariable>>,
-    pub mesh_info: Option<crate::MeshStageInfo>,
-    pub workgroup_size: [u32; 3],
 }
 
 impl Function {
@@ -90,7 +87,6 @@ impl Writer {
             device_scope_used: false,
             use_storage_input_output_16: options.use_storage_input_output_16,
             void_type,
-            tuple_of_u32s_ty_id: None,
             lookup_type: crate::FastHashMap::default(),
             lookup_function: crate::FastHashMap::default(),
             lookup_function_type: crate::FastHashMap::default(),
@@ -138,8 +134,6 @@ impl Writer {
             utf_encoded: crate::FastHashSet::default(),
             qcom_decorations: crate::FastHashSet::default(),
             laid_out_copies: crate::FastHashMap::default(),
-            task_dispatch_limits: options.task_dispatch_limits,
-            mesh_shader_primitive_indices_clamp: options.mesh_shader_primitive_indices_clamp,
             heap: super::heap::HeapState::default(),
             descriptor_heap: false,
             debug: super::debug::DebugState::new(options.debug_info.as_ref()),
@@ -159,8 +153,6 @@ impl Writer {
         self.binding_map = options.binding_map.clone();
         self.io_f16_polyfills =
             super::f16_polyfill::F16IoPolyfill::new(options.use_storage_input_output_16);
-        self.task_dispatch_limits = options.task_dispatch_limits;
-        self.mesh_shader_primitive_indices_clamp = options.mesh_shader_primitive_indices_clamp;
         self.debug = super::debug::DebugState::new(options.debug_info.as_ref());
         Ok(())
     }
@@ -257,13 +249,10 @@ impl Writer {
             capabilities_available: take(&mut self.capabilities_available),
             fake_missing_bindings: self.fake_missing_bindings,
             binding_map: take(&mut self.binding_map),
-            task_dispatch_limits: self.task_dispatch_limits,
-            mesh_shader_primitive_indices_clamp: self.mesh_shader_primitive_indices_clamp,
 
             // Initialized afresh:
             id_gen,
             void_type,
-            tuple_of_u32s_ty_id: None,
             gl450_ext_inst_id,
 
             // Reclaimed:
@@ -536,13 +525,6 @@ impl Writer {
         self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::F32))
     }
 
-    pub(super) fn get_vec3u_type_id(&mut self) -> Word {
-        self.get_numeric_type_id(NumericType::Vector {
-            size: crate::VectorSize::Tri,
-            scalar: crate::Scalar::U32,
-        })
-    }
-
     pub(super) fn get_f32_pointer_type_id(&mut self, class: spirv::StorageClass) -> Word {
         let f32_id = self.get_f32_type_id();
         self.get_pointer_type_id(f32_id, class)
@@ -550,23 +532,6 @@ impl Writer {
 
     pub(super) fn get_bool_type_id(&mut self) -> Word {
         self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::BOOL))
-    }
-
-    /// Used for "mulhi" to get the upper bits of multiplication.
-    ///
-    /// More specifically, `OpUMulExtended` multiplies 2 numbers and returns the lower and upper bits of the result
-    /// as a user-defined struct type with 2 u32s. This defines that struct.
-    pub(super) fn get_tuple_of_u32s_ty_id(&mut self) -> Word {
-        if let Some(val) = self.tuple_of_u32s_ty_id {
-            val
-        } else {
-            let id = self.id_gen.next();
-            let u32_id = self.get_u32_type_id();
-            let ins = Instruction::type_struct(id, &[u32_id, u32_id]);
-            ins.to_words(&mut self.logical_layout.declarations);
-            self.tuple_of_u32s_ty_id = Some(id);
-            id
-        }
     }
 
     pub(super) fn decorate(&mut self, id: Word, decoration: spirv::Decoration, operands: &[Word]) {
@@ -1203,17 +1168,9 @@ impl Writer {
         let mut ep_context = EntryPointContext {
             argument_ids: Vec::new(),
             results: Vec::new(),
-            task_payload_variable_id: if let Some(ref i) = interface {
-                i.task_payload.map(|a| self.global_variables[a].var_id)
-            } else {
-                None
-            },
-            mesh_state: None,
         };
 
         let mut parameter_type_ids = Vec::with_capacity(ir_function.arguments.len());
-
-        let mut local_invocation_index_var_id = None;
 
         for argument in ir_function.arguments.iter() {
             let class = spirv::StorageClass::Input;
@@ -1246,10 +1203,6 @@ impl Writer {
                         varying_id,
                         argument_type_id,
                     );
-                    if binding == &crate::Binding::BuiltIn(crate::BuiltIn::LocalInvocationIndex) {
-                        local_invocation_index_var_id = Some(varying_id);
-                    }
-
                     id
                 } else if let crate::TypeInner::Struct { ref members, .. } =
                     ir_module.types[argument.ty].inner
@@ -1276,10 +1229,6 @@ impl Writer {
                         let id =
                             self.load_io_with_f16_polyfill(&mut prelude.body, varying_id, type_id);
                         constituent_ids.push(id);
-                        if binding == &crate::Binding::BuiltIn(crate::BuiltIn::LocalInvocationIndex)
-                        {
-                            local_invocation_index_var_id = Some(varying_id);
-                        }
                     }
                     prelude.body.push(Instruction::composite_construct(
                         argument_type_id,
@@ -1415,31 +1364,13 @@ impl Writer {
                             .body
                             .push(Instruction::store(varying_id, default_value_id, None));
                     }
-                    if iface.stage == crate::ShaderStage::Task {
-                        self.get_vec3u_type_id()
-                    } else {
-                        self.void_type
-                    }
+                    self.void_type
                 } else {
                     self.get_handle_type_id(result.ty)?
                 }
             }
             None => self.void_type,
         };
-
-        if let Some(ref mut iface) = interface {
-            if let Some(task_payload) = iface.task_payload {
-                iface
-                    .varying_ids
-                    .push(self.global_variables[task_payload].var_id);
-            }
-            self.write_entry_point_mesh_shader_info(
-                iface,
-                local_invocation_index_var_id,
-                ir_module,
-                &mut ep_context,
-            )?;
-        }
 
         let lookup_function_type = LookupFunctionType {
             parameter_type_ids,
@@ -1513,7 +1444,7 @@ impl Writer {
             let mut gv = self.global_variables[handle].clone();
             if let Some(ref mut iface) = interface {
                 // Have to include global variables in the interface
-                if self.physical_layout.version >= 0x10400 && iface.task_payload != Some(handle) {
+                if self.physical_layout.version >= 0x10400 {
                     iface.varying_ids.push(gv.var_id);
                 }
             }
@@ -1696,21 +1627,7 @@ impl Writer {
         self.debug_function_finish(ir_module, &mut function);
         function.to_words(&mut self.logical_layout.function_definitions)?;
 
-        if let Some(EntryPointContext {
-            mesh_state: Some(ref mesh_state),
-            ..
-        }) = function.entry_point_context
-        {
-            self.write_mesh_shader_wrapper(mesh_state, function_id)
-        } else if let Some(EntryPointContext {
-            task_payload_variable_id: Some(tp),
-            ..
-        }) = function.entry_point_context
-        {
-            self.write_task_shader_wrapper(tp, function_id)
-        } else {
-            Ok(function_id)
-        }
+        Ok(function_id)
     }
 
     fn write_execution_mode(
@@ -1740,11 +1657,6 @@ impl Writer {
             Some(FunctionInterface {
                 varying_ids: &mut interface_ids,
                 stage: entry_point.stage,
-                task_payload: entry_point
-                    .task_payload
-                    .filter(|_| entry_point.mesh_shader.is_none()),
-                mesh_info: entry_point.mesh_info.clone(),
-                workgroup_size: entry_point.workgroup_size,
             }),
             ir_module
                 .debug_info
@@ -2017,57 +1929,13 @@ impl Writer {
                 self.debug_workgroup_size(ir_module, entry_point);
                 spirv::ExecutionModel::GLCompute
             }
-            crate::ShaderStage::Task | crate::ShaderStage::Mesh
-                if entry_point.mesh_shader.is_some() =>
-            {
+            crate::ShaderStage::Task | crate::ShaderStage::Mesh => {
+                if entry_point.mesh_shader.is_none() {
+                    return Err(Error::Validation(
+                        "task or mesh entry point has no mesh shader information",
+                    ));
+                }
                 self.write_mesh_shader_modes(function_id, entry_point)?
-            }
-            crate::ShaderStage::Task => {
-                let execution_mode = spirv::ExecutionMode::LocalSize;
-                Instruction::execution_mode(
-                    function_id,
-                    execution_mode,
-                    &entry_point.workgroup_size,
-                )
-                .to_words(&mut self.logical_layout.execution_modes);
-                spirv::ExecutionModel::TaskEXT
-            }
-            crate::ShaderStage::Mesh => {
-                let execution_mode = spirv::ExecutionMode::LocalSize;
-                Instruction::execution_mode(
-                    function_id,
-                    execution_mode,
-                    &entry_point.workgroup_size,
-                )
-                .to_words(&mut self.logical_layout.execution_modes);
-                let Some(mesh_info) = entry_point.mesh_info.as_ref() else {
-                    return Err(Error::Validation("mesh entry point has no mesh info"));
-                };
-                Instruction::execution_mode(
-                    function_id,
-                    match mesh_info.topology {
-                        crate::MeshOutputTopology::Points => spirv::ExecutionMode::OutputPoints,
-                        crate::MeshOutputTopology::Lines => spirv::ExecutionMode::OutputLinesEXT,
-                        crate::MeshOutputTopology::Triangles => {
-                            spirv::ExecutionMode::OutputTrianglesEXT
-                        }
-                    },
-                    &[],
-                )
-                .to_words(&mut self.logical_layout.execution_modes);
-                Instruction::execution_mode(
-                    function_id,
-                    spirv::ExecutionMode::OutputVertices,
-                    core::slice::from_ref(&mesh_info.max_vertices),
-                )
-                .to_words(&mut self.logical_layout.execution_modes);
-                Instruction::execution_mode(
-                    function_id,
-                    spirv::ExecutionMode::OutputPrimitivesEXT,
-                    core::slice::from_ref(&mesh_info.max_primitives),
-                )
-                .to_words(&mut self.logical_layout.execution_modes);
-                spirv::ExecutionModel::MeshEXT
             }
             crate::ShaderStage::RayGeneration => {
                 self.require_ray_tracing()?;
