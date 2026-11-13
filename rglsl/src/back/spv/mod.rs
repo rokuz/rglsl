@@ -100,7 +100,6 @@ mod atomic;
 mod block;
 mod cooperative;
 mod debug;
-mod f16_polyfill;
 mod frames;
 mod heap;
 mod helpers;
@@ -909,7 +908,6 @@ pub struct Writer {
     bounds_check_policies: BoundsCheckPolicies,
     vulkan_memory_model: bool,
     device_scope_used: bool,
-    use_storage_input_output_16: bool,
     void_type: Word,
     //TODO: convert most of these into vectors, addressable by handle indices
     lookup_type: crate::FastHashMap<LookupType, Word>,
@@ -964,10 +962,6 @@ pub struct Writer {
     task_memory_strides: crate::FastHashSet<Handle<crate::Type>>,
 
     ray_tracing_features: crate::RayTracingFeatures,
-
-    /// F16 I/O polyfill manager for handling `f16` input/output variables
-    /// when `StorageInputOutput16` capability is not available.
-    io_f16_polyfills: f16_polyfill::F16IoPolyfill,
 
     /// Non semantic debug printf extension `OpExtInstImport`
     debug_printf: Option<Word>,
@@ -1046,10 +1040,6 @@ pub struct Options<'a> {
     /// indices that are out of range?
     pub bounds_check_policies: BoundsCheckPolicies,
 
-    /// Whether to use the `StorageInputOutput16` capability for `f16` shader I/O.
-    /// When false, `f16` I/O is polyfilled using `f32` types with conversions.
-    pub use_storage_input_output_16: bool,
-
     pub debug_info: Option<DebugInfo<'a>>,
 }
 
@@ -1066,7 +1056,6 @@ impl Default for Options<'_> {
             binding_map: BindingMap::default(),
             capabilities: None,
             bounds_check_policies: BoundsCheckPolicies::default(),
-            use_storage_input_output_16: true,
             debug_info: None,
         }
     }

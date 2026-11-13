@@ -88,7 +88,6 @@ pub struct SpirvOutParameters {
     pub separate_entry_points: bool,
     #[serde(deserialize_with = "deserialize_binding_map")]
     pub binding_map: rglsl::back::spv::BindingMap,
-    pub use_storage_input_output_16: bool,
 }
 impl Default for SpirvOutParameters {
     fn default() -> Self {
@@ -100,7 +99,6 @@ impl Default for SpirvOutParameters {
             force_point_size: false,
             clamp_frag_depth: false,
             separate_entry_points: false,
-            use_storage_input_output_16: true,
             binding_map: rglsl::back::spv::BindingMap::default(),
         }
     }
@@ -132,7 +130,6 @@ impl SpirvOutParameters {
             fake_missing_bindings: true,
             binding_map: self.binding_map.clone(),
             debug_info,
-            use_storage_input_output_16: self.use_storage_input_output_16,
         }
     }
 }
