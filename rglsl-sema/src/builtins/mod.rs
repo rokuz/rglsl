@@ -461,7 +461,7 @@ impl Builtins {
     ) -> Self {
         let (mut symbols, mut scope) = table;
         for (name, id) in footprints {
-            let Ok(index) = u32::try_from(symbols.len()) else {
+            let Some(symbol) = u32::try_from(symbols.len()).ok().and_then(SymbolId::new) else {
                 break;
             };
             symbols.push(Symbol {
@@ -469,7 +469,7 @@ impl Builtins {
                 span: Span::default(),
                 kind: crate::scope::SymbolKind::Struct(id),
             });
-            scope.push((String::from(name), SymbolId(index)));
+            scope.push((String::from(name), symbol));
         }
         Self {
             version,

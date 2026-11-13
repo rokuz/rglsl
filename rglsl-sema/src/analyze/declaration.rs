@@ -2476,7 +2476,11 @@ impl Analyzer<'_> {
             };
             let matches = variable.origin == Origin::BuiltIn && symbol.name == instance_name;
             let index = u32::try_from(index).ok()?;
-            matches.then_some((id, SymbolId(index)))
+            if matches {
+                SymbolId::new(index).map(|symbol| (id, symbol))
+            } else {
+                None
+            }
         });
         let invalid = |reason| DiagnosticKind::InvalidBlock {
             name: String::from(name),
@@ -2548,7 +2552,11 @@ impl Analyzer<'_> {
                 && block.storage == storage
                 && symbol.name == instance;
             let index = u32::try_from(index).ok()?;
-            matches.then_some((id, SymbolId(index)))
+            if matches {
+                SymbolId::new(index).map(|symbol| (id, symbol))
+            } else {
+                None
+            }
         })
     }
 
@@ -2859,7 +2867,7 @@ impl Analyzer<'_> {
             self.function_declarations.insert(node, id);
             return Some(id);
         }
-        let id = FunctionId(u32::try_from(self.functions.len()).ok()?);
+        let id = FunctionId::new(u32::try_from(self.functions.len()).ok()?)?;
         self.functions.push(Function {
             name: name.node.clone(),
             return_type,

@@ -905,7 +905,7 @@ impl<'a> Analyzer<'a> {
     }
 
     pub(crate) fn add_symbol(&mut self, name: &str, span: Span, kind: SymbolKind) -> SymbolId {
-        let id = SymbolId(u32::try_from(self.symbols.len()).unwrap_or(u32::MAX));
+        let id = SymbolId::saturating(u32::try_from(self.symbols.len()).unwrap_or(u32::MAX));
         self.symbols.push(Symbol {
             name: String::from(name),
             span,

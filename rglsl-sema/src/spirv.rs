@@ -60,14 +60,7 @@ pub enum SpirvTypeParameter {
     Type(Type),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SpirvTypeId(pub(crate) u32);
-
-impl SpirvTypeId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
+index_id!(SpirvTypeId);
 
 pub fn string_words(text: &str) -> Vec<u32> {
     let mut bytes: Vec<u8> = text.bytes().collect();

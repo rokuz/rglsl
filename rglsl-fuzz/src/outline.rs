@@ -89,7 +89,7 @@ fn parameters(
         _ => {}
     };
     let mut holder = Node::new(
-        NodeId::new(0),
+        NodeId::FIRST,
         Span::new(0, 0),
         StatementKind::Expression(Some(value.clone())),
     );

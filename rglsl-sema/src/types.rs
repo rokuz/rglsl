@@ -379,23 +379,9 @@ impl Scalar {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StructId(pub(crate) u32);
+index_id!(StructId);
 
-impl StructId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BlockId(pub(crate) u32);
-
-impl BlockId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
+index_id!(BlockId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OpaqueKind {
@@ -1793,19 +1779,19 @@ impl TypeRegistry {
 
     pub fn add_spirv(&mut self, ty: SpirvType) -> Option<SpirvTypeId> {
         if let Some(index) = self.spirv.iter().position(|known| *known == ty) {
-            return Some(SpirvTypeId(u32::try_from(index).ok()?));
+            return SpirvTypeId::new(u32::try_from(index).ok()?);
         }
-        let id = SpirvTypeId(u32::try_from(self.spirv.len()).ok()?);
+        let id = SpirvTypeId::new(u32::try_from(self.spirv.len()).ok()?)?;
         self.spirv.push(ty);
         Some(id)
     }
 
     pub fn spirv(&self, id: SpirvTypeId) -> Option<&SpirvType> {
-        self.spirv.get(usize::try_from(id.0).ok()?)
+        self.spirv.get(usize::try_from(id.index()).ok()?)
     }
 
     pub fn add_struct(&mut self, name: Option<String>, members: Vec<Member>) -> Option<StructId> {
-        let id = StructId(u32::try_from(self.structs.len()).ok()?);
+        let id = StructId::new(u32::try_from(self.structs.len()).ok()?)?;
         let mut contains_opaque = false;
         let mut contains_unsized_array = false;
         let mut contains_reference = false;
@@ -1838,21 +1824,21 @@ impl TypeRegistry {
     }
 
     pub fn add_block(&mut self, block: BlockType) -> Option<BlockId> {
-        let id = BlockId(u32::try_from(self.blocks.len()).ok()?);
+        let id = BlockId::new(u32::try_from(self.blocks.len()).ok()?)?;
         self.blocks.push(block);
         Some(id)
     }
 
     pub fn structure(&self, id: StructId) -> Option<&StructType> {
-        self.structs.get(usize::try_from(id.0).ok()?)
+        self.structs.get(usize::try_from(id.index()).ok()?)
     }
 
     pub fn block(&self, id: BlockId) -> Option<&BlockType> {
-        self.blocks.get(usize::try_from(id.0).ok()?)
+        self.blocks.get(usize::try_from(id.index()).ok()?)
     }
 
     pub fn block_mut(&mut self, id: BlockId) -> Option<&mut BlockType> {
-        self.blocks.get_mut(usize::try_from(id.0).ok()?)
+        self.blocks.get_mut(usize::try_from(id.index()).ok()?)
     }
 
     pub fn structs(&self) -> &[StructType] {

@@ -47,10 +47,10 @@ fn node_ids_are_unique_and_below_the_next_id() {
     assert!(ids.len() > 150, "{}", ids.len());
     assert_eq!(ids.len(), distinct.len());
     let next = parsed.next_id();
-    assert_eq!(u32::try_from(ids.len()).ok(), Some(next.index()));
-    assert!(distinct.iter().all(|id| *id < next.index()));
-    assert_eq!(parsed.allocate_id(), Some(next));
-    assert_eq!(parsed.next_id(), NodeId::new(next.index() + 1));
+    assert_eq!(u32::try_from(ids.len()).ok(), Some(next));
+    assert!(distinct.iter().all(|id| *id < next));
+    assert_eq!(parsed.allocate_id(), NodeId::new(next));
+    assert_eq!(parsed.next_id(), next + 1);
 }
 
 #[test]

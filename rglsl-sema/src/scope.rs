@@ -212,23 +212,18 @@ impl Qualifiers {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SymbolId(pub(crate) u32);
+index_id!(SymbolId);
 
 impl SymbolId {
-    pub const fn index(self) -> u32 {
-        self.0
+    pub(crate) const fn saturating(index: u32) -> Self {
+        match Self::new(index) {
+            Some(id) => id,
+            None => Self(core::num::NonZeroU32::MAX),
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FunctionId(pub(crate) u32);
-
-impl FunctionId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
+index_id!(FunctionId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Origin {

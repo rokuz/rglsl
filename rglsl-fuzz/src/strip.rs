@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::cell::RefCell;
 
 use rglsl_ast::ast::{
-    DeclarationKind, ExternalDeclaration, NodeId, TranslationUnit, TypeSpecifierNonArray,
+    DeclarationKind, ExternalDeclaration, TranslationUnit, TypeSpecifierNonArray,
 };
 
 use crate::constants::{is_donated_name, STRUCTIFICATION_STRUCT_PREFIX};
@@ -12,7 +12,7 @@ use crate::rename::{rename_all, NameKind};
 
 pub fn referenced_names(external: &ExternalDeclaration) -> Result<BTreeSet<String>, Stalled> {
     let names = RefCell::new(BTreeSet::new());
-    let mut unit = TranslationUnit::new(vec![external.clone()], NodeId::new(0));
+    let mut unit = TranslationUnit::new(vec![external.clone()], 0);
     let record = |_: NameKind, name: &str| {
         names.borrow_mut().insert(name.to_owned());
         None

@@ -9,7 +9,7 @@ use rglsl_ast::Span;
 use crate::reduce::finders::is_splice;
 use crate::rewrite::{rewrite_expressions, rewrite_statements};
 
-const REMOVED: NodeId = NodeId::new(u32::MAX);
+const REMOVED: NodeId = NodeId::saturating(u32::MAX);
 
 #[derive(Debug, Clone)]
 pub enum Change {

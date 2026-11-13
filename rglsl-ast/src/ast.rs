@@ -2,25 +2,50 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
+use core::num::NonZeroU32;
 
 use crate::span::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NodeId(u32);
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(NonZeroU32);
 
 impl NodeId {
-    pub const fn new(index: u32) -> Self {
-        Self(index)
+    pub const FIRST: Self = Self(NonZeroU32::MIN);
+
+    pub const fn new(index: u32) -> Option<Self> {
+        match index.checked_add(1) {
+            Some(raw) => match NonZeroU32::new(raw) {
+                Some(raw) => Some(Self(raw)),
+                None => None,
+            },
+            None => None,
+        }
+    }
+
+    pub const fn saturating(index: u32) -> Self {
+        match Self::new(index) {
+            Some(id) => id,
+            None => Self(NonZeroU32::MAX),
+        }
     }
 
     pub const fn index(self) -> u32 {
-        self.0
+        self.0.get() - 1
+    }
+}
+
+impl fmt::Debug for NodeId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("NodeId")
+            .field(&self.index())
+            .finish()
     }
 }
 
 impl fmt::Display for NodeId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "#{}", self.0)
+        write!(formatter, "#{}", self.index())
     }
 }
 
@@ -77,19 +102,19 @@ pub struct TranslationUnit {
 }
 
 impl TranslationUnit {
-    pub const fn new(external_declarations: Vec<ExternalDeclaration>, next_id: NodeId) -> Self {
+    pub const fn new(external_declarations: Vec<ExternalDeclaration>, next_id: u32) -> Self {
         Self {
             external_declarations,
-            next_id: next_id.index(),
+            next_id,
         }
     }
 
-    pub const fn next_id(&self) -> NodeId {
-        NodeId(self.next_id)
+    pub const fn next_id(&self) -> u32 {
+        self.next_id
     }
 
     pub fn allocate_id(&mut self) -> Option<NodeId> {
-        let id = NodeId(self.next_id);
+        let id = NodeId::new(self.next_id)?;
         self.next_id = self.next_id.checked_add(1)?;
         Some(id)
     }

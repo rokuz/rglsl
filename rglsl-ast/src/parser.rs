@@ -204,12 +204,7 @@ pub fn parse(source: &str) -> core::result::Result<TranslationUnit, ParseError> 
 pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
     let lexed = match tokenize(source) {
         Ok(lexed) => lexed,
-        Err(error) => {
-            return (
-                TranslationUnit::new(Vec::new(), NodeId::new(0)),
-                Some(error),
-            )
-        }
+        Err(error) => return (TranslationUnit::new(Vec::new(), 0), Some(error)),
     };
     let parser = Parser {
         source,
@@ -242,7 +237,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
             Some(Err(error)) => {
                 if let Some(partial) = parser.partial_function.borrow_mut().take() {
                     let end = partial.definition.body.span.end;
-                    let id = NodeId::new(parser.next_id.get());
+                    let id = NodeId::saturating(parser.next_id.get());
                     external_declarations.push(ExternalDeclaration::FunctionDefinition(Node::new(
                         id,
                         Span::new(partial.start, end),
@@ -259,7 +254,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
             }
         }
     }
-    let unit = TranslationUnit::new(external_declarations, NodeId::new(parser.next_id.get()));
+    let unit = TranslationUnit::new(external_declarations, parser.next_id.get());
     (unit, failure)
 }
 
@@ -373,12 +368,10 @@ impl<'a> Parser<'a> {
 
     fn node<K>(&self, start: u32, kind: K) -> Result<Node<K>> {
         let span = self.span_from(start);
-        let id = NodeId::new(self.next_id.get());
-        let next = self
-            .next_id
-            .get()
-            .checked_add(1)
-            .ok_or_else(|| self.error(ParseErrorKind::TooManyNodes, span))?;
+        let current = self.next_id.get();
+        let (Some(id), Some(next)) = (NodeId::new(current), current.checked_add(1)) else {
+            return Err(self.error(ParseErrorKind::TooManyNodes, span));
+        };
         self.next_id.set(next);
         Ok(Node::new(id, span, kind))
     }

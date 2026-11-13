@@ -250,7 +250,7 @@ fn member_text(list: &InitDeclaratorList, index: usize) -> String {
         }
     }
     let declaration = Declaration::new(
-        rglsl_ast::ast::NodeId::new(0),
+        rglsl_ast::ast::NodeId::FIRST,
         Span::new(0, 0),
         DeclarationKind::InitDeclaratorList(single),
     );

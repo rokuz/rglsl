@@ -105,7 +105,7 @@ pub(crate) const fn empty_type() -> TypeSpecifier {
 
 pub(crate) fn empty_statement() -> Statement {
     Statement::new(
-        NodeId::new(0),
+        NodeId::FIRST,
         Span::default(),
         StatementKind::Expression(None),
     )

@@ -522,7 +522,7 @@ struct Builder {
 
 impl Builder {
     fn add(&mut self, name: &str, kind: SymbolKind, visible: bool) -> Option<SymbolId> {
-        let id = SymbolId(u32::try_from(self.symbols.len()).ok()?);
+        let id = SymbolId::new(u32::try_from(self.symbols.len()).ok()?)?;
         self.symbols.push(Symbol {
             name: String::from(name),
             span: Span::default(),
