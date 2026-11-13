@@ -15,6 +15,7 @@ use crate::source_map::{SourceInfo, SourceMap, clamp_line};
 use crate::token::{At, Kind, Token};
 use crate::version::{self, Profile, Version};
 use rglsl_types::ShaderStage;
+use rglsl_types::extension::{Extension, ExtensionSet};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Macro {
@@ -71,29 +72,13 @@ pub(crate) enum Input {
     Zero(bool),
 }
 
-pub(crate) const TRACKED_EXTENSIONS: [&str; 7] = [
-    "GL_EXT_spirv_intrinsics",
-    "GL_ARB_shading_language_420pack",
-    "GL_GOOGLE_cpp_style_line_directive",
-    "GL_GOOGLE_include_directive",
-    "GL_ARB_shading_language_include",
-    "GL_EXT_debug_printf",
-    "GL_EXT_abort",
-];
-
-pub(crate) const SPIRV_INTRINSICS: usize = 0;
-pub(crate) const PACK_420: usize = 1;
-pub(crate) const CPP_STYLE_LINE: usize = 2;
-const DEBUG_PRINTF: usize = 5;
-const ABORT: usize = 6;
-
 #[derive(Debug)]
 pub(crate) enum Change {
     Macro {
         name: String,
         previous: Option<Macro>,
     },
-    Extensions([bool; TRACKED_EXTENSIONS.len()]),
+    Extensions(ExtensionSet),
 }
 
 fn same_definition(left: Option<&Macro>, right: Option<&Macro>) -> bool {
@@ -178,7 +163,7 @@ pub(crate) struct Preprocessor<'a> {
     pub(crate) else_seen: Vec<bool>,
     pub(crate) previous_newline: bool,
     pub(crate) disable_escapes: bool,
-    pub(crate) extensions: [bool; TRACKED_EXTENSIONS.len()],
+    pub(crate) extensions: ExtensionSet,
     pub(crate) include_stack: Vec<FileId>,
     pub(crate) line_markers: Vec<LineMarker>,
     pub(crate) active_includes: BTreeMap<FileId, Vec<usize>>,
@@ -334,7 +319,7 @@ pub fn preprocess(
         else_seen: Vec::new(),
         previous_newline: true,
         disable_escapes: false,
-        extensions: [false; TRACKED_EXTENSIONS.len()],
+        extensions: ExtensionSet::EMPTY,
         include_stack: Vec::new(),
         line_markers: Vec::new(),
         active_includes: BTreeMap::new(),
@@ -481,15 +466,15 @@ impl Preprocessor<'_> {
         self.is_es() || self.version.number >= 330
     }
 
-    pub(crate) fn extension_on(&self, index: usize) -> bool {
-        self.extensions.get(index).copied().unwrap_or(false)
+    pub(crate) const fn extension_on(&self, extension: Extension) -> bool {
+        self.extensions.contains(extension)
     }
 
     fn continuation_allowed(&self) -> bool {
         if self.is_es() {
             self.version.number >= 300
         } else {
-            self.version.number >= 420 || self.extension_on(PACK_420)
+            self.version.number >= 420 || self.extension_on(Extension::ArbShadingLanguage420pack)
         }
     }
 
@@ -629,9 +614,13 @@ impl Preprocessor<'_> {
             }
             if self.if_depth == 0
                 && (token.kind == Kind::String || stringify_depth > 0)
-                && ![SPIRV_INTRINSICS, DEBUG_PRINTF, ABORT]
-                    .iter()
-                    .any(|&index| self.extension_on(index))
+                && ![
+                    Extension::ExtSpirvIntrinsics,
+                    Extension::ExtDebugPrintf,
+                    Extension::ExtAbort,
+                ]
+                .into_iter()
+                .any(|extension| self.extension_on(extension))
             {
                 self.report(
                     DiagnosticKind::ExtensionRequired {
