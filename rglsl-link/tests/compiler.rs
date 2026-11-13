@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use rglsl_link::{
-    CompileOptions, IncludeKind, IncludeRequest, ProgramOptions, ResolvedInclude, Severity,
-    ShaderStage, compile, compile_and_link, compile_with_includer, link_spirv, read_object,
-    write_object,
+    BuiltinCache, CompileOptions, Compiler, IncludeKind, IncludeRequest, ProgramOptions,
+    ResolvedInclude, Severity, ShaderStage, compile, compile_and_link, compile_with_includer,
+    link_spirv, read_object, write_object,
 };
+use rglsl_sema::{BuiltinTables, ResourceLimits};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -160,4 +163,45 @@ fn unresolved_includes_are_errors() {
     };
     assert!(diagnostics.to_string().contains("main.comp:2"));
     assert_eq!(calls, 1);
+}
+
+#[test]
+fn a_cache_builds_each_table_once() {
+    let cache = BuiltinCache::new();
+    let limits = ResourceLimits::default();
+    let first = cache.builtins(450, ShaderStage::Fragment, &limits);
+    let again = cache.builtins(450, ShaderStage::Fragment, &limits);
+    let other = cache.builtins(460, ShaderStage::Fragment, &limits);
+    assert!(Arc::ptr_eq(&first, &again));
+    assert!(!Arc::ptr_eq(&first, &other));
+    assert!(other.is_for(460, ShaderStage::Fragment, &limits));
+    let tables = cache.stage_tables(450, &limits);
+    assert!(Arc::ptr_eq(&tables, &cache.stage_tables(450, &limits)));
+}
+
+#[test]
+fn a_shared_compiler_compiles_like_the_free_functions_on_several_threads() -> TestResult {
+    let compiler = Compiler::new();
+    let sources = [(PROGRAM, program_options()), (LIBRARY, library_options())];
+    let expected = compile_and_link(&sources, &ProgramOptions::default())?;
+    let expected_library = write_object(&compile(LIBRARY, &library_options())?)?;
+    std::thread::scope(|scope| -> TestResult {
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    let program = compiler.compile_and_link(&sources, &ProgramOptions::default());
+                    let library = compiler
+                        .compile(LIBRARY, &library_options())
+                        .and_then(|object| write_object(&object));
+                    (program, library)
+                })
+            })
+            .collect();
+        for thread in threads {
+            let (program, library) = thread.join().map_err(|_| "a thread panicked")?;
+            assert_eq!(program?, expected);
+            assert_eq!(library?, expected_library);
+        }
+        Ok(())
+    })
 }

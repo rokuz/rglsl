@@ -12,6 +12,12 @@ diagnostics:
 | `compile_and_link(&[(source, CompileOptions)], &ProgramOptions)` | GLSL texts | `Program` |
 | `write_object(&ObjectModule)` / `read_object(&[u8])` | object module / `.rglo` bytes | `.rglo` bytes / object module |
 
+`Compiler` has `compile`, `compile_with_includer` and `compile_and_link` as methods. It keeps the
+built-in tables (the built-in functions and variables of a GLSL version, stage and resource
+limits) it has built and reuses them in every later compilation; the free functions build them
+again for every call. A `Compiler` is `Send` and `Sync`, and clones share their tables, so one
+compiler serves every thread of a process.
+
 Every function returns `Diagnostics` on failure: a list of `Diagnostic` (severity, file, line,
 column, stage, message) that renders as glslang-style lines (`ERROR: main.frag:4:18: ...`).
 

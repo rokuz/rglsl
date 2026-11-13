@@ -59,6 +59,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_compile_options_set_includer(options, callback, user_data)` | the include callback, `NULL` to remove it |
 | `rglsl_include_result_set(result, name, source)` | called by the callback to resolve the include |
 | `rglsl_compile(source, options, &object, &diagnostics)` | GLSL text to an object |
+| `rglsl_compiler_create(&compiler)`, `rglsl_compiler_compile(compiler, source, options, &object, &diagnostics)` | like `rglsl_compile`, but the compiler keeps the built-in tables of every GLSL version and stage it has compiled and reuses them; one compiler can be shared by all threads |
 | `rglsl_object_write(object, &blob, &diagnostics)`, `rglsl_blob_data`, `rglsl_blob_size` | object to `.rglo` bytes |
 | `rglsl_object_read(data, size, &object, &diagnostics)` | `.rglo` bytes to an object |
 | `rglsl_program_options_create` and its setters | options of the link: auto mapping, debug info, SPIR-V version |
@@ -97,7 +98,8 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 
 The library has no global state. Different handles can be used from different threads at the
 same time. A handle can be read from several threads at once by the functions that take it as
-`const` (`rglsl_compile`, `rglsl_link`, `rglsl_object_write` and every getter), but not while
+`const` (`rglsl_compile`, `rglsl_compiler_compile`, `rglsl_link`, `rglsl_object_write` and every
+getter), but not while
 another thread changes or destroys it. All handles can be moved between threads. The include
 callback runs on the thread that called `rglsl_compile`, before `rglsl_compile` returns; its
 `user_data` must allow that.

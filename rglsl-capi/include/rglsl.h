@@ -11,6 +11,8 @@ typedef struct rglsl_blob rglsl_blob;
 
 typedef struct rglsl_compile_options rglsl_compile_options;
 
+typedef struct rglsl_compiler rglsl_compiler;
+
 typedef struct rglsl_diagnostics rglsl_diagnostics;
 
 typedef struct rglsl_include_result rglsl_include_result;
@@ -129,6 +131,16 @@ rglsl_result rglsl_compile(const char *source,
                            const rglsl_compile_options *options,
                            rglsl_object **object,
                            rglsl_diagnostics **diagnostics);
+
+rglsl_result rglsl_compiler_create(rglsl_compiler **compiler);
+
+void rglsl_compiler_destroy(rglsl_compiler *compiler);
+
+rglsl_result rglsl_compiler_compile(const rglsl_compiler *compiler,
+                                    const char *source,
+                                    const rglsl_compile_options *options,
+                                    rglsl_object **object,
+                                    rglsl_diagnostics **diagnostics);
 
 void rglsl_object_destroy(rglsl_object *object);
 

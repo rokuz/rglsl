@@ -7,7 +7,7 @@ use alloc::{
 };
 use core::cell::RefCell;
 
-use rglsl_sema::{ResourceLimits, StageTables};
+use rglsl_sema::{BuiltinTables, ResourceLimits, StageTables};
 use rglsl_types::probe::StageProbe;
 
 use super::{
@@ -26,6 +26,7 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
         source_name: options.source_name.clone(),
         binding_shifts: options.binding_shifts.clone(),
         preamble: options.preamble.clone(),
+        builtin_tables: Arc::clone(&options.builtin_tables),
         ..*options
     }
 }
@@ -689,15 +690,17 @@ fn identifiers(text: &str) -> BTreeSet<String> {
 #[derive(Debug)]
 pub(super) struct StageNames {
     tables: Vec<Arc<StageTables>>,
+    source: Arc<dyn BuiltinTables + Send + Sync>,
     limits: ResourceLimits,
     pub lowerings: usize,
 }
 
 impl StageNames {
-    pub(super) const fn new(limits: ResourceLimits) -> Self {
+    pub(super) fn new(options: &Options) -> Self {
         Self {
             tables: Vec::new(),
-            limits,
+            source: Arc::clone(&options.builtin_tables),
+            limits: options.limits,
             lowerings: 0,
         }
     }
@@ -710,7 +713,7 @@ impl StageNames {
         {
             return Arc::clone(found);
         }
-        let tables = Arc::new(StageTables::new(version, &self.limits));
+        let tables = self.source.stage_tables(version, &self.limits);
         self.tables.push(Arc::clone(&tables));
         tables
     }
