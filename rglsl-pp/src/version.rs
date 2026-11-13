@@ -359,7 +359,7 @@ pub(crate) fn deduce(
     if es(profile) && number >= 300 && scanned.not_first {
         errors.push("#version: statement must appear first in es-profile shader; before comments or newlines");
     }
-    let spirv = options.vulkan_client_version.is_some() || options.gl_spirv;
+    let spirv = options.vulkan_client_version.is_some();
     if spirv {
         match profile {
             Some(Profile::Es) => {
@@ -379,12 +379,6 @@ pub(crate) fn deduce(
                         "#version: Desktop shaders for Vulkan SPIR-V require version 140 or higher",
                     );
                     number = 140;
-                }
-                if options.gl_spirv && number < 330 {
-                    errors.push(
-                        "#version: Desktop shaders for OpenGL SPIR-V require version 330 or higher",
-                    );
-                    number = 330;
                 }
             }
         }

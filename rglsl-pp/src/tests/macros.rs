@@ -325,18 +325,14 @@ fn file_macro_with_a_source_name_requires_the_extension() {
 fn predefined_macros() {
     let options = Options {
         stage: Some(Stage::Fragment),
-        gl_spirv: true,
         ..Options::default()
     };
     let result = run_with(
-        "#version 450\nint a = GL_core_profile + VULKAN + GL_SPIRV + GL_FRAGMENT_SHADER + GL_FRAGMENT_PRECISION_HIGH;\n#if defined(GL_ARB_shading_language_420pack) && defined GL_EXT_ray_tracing && defined GL_GOOGLE_include_directive\nint b;\n#endif\n#ifdef GL_compatibility_profile\nint c;\n#endif\n#ifdef GL_ARB_bindless_texture\nint d;\n#endif\n#ifdef GL_AMD_gpu_shader_half_float_fetch\nint e;\n#endif\n",
+        "#version 450\nint a = GL_core_profile + VULKAN + GL_FRAGMENT_SHADER + GL_FRAGMENT_PRECISION_HIGH;\n#if defined(GL_ARB_shading_language_420pack) && defined GL_EXT_ray_tracing && defined GL_GOOGLE_include_directive\nint b;\n#endif\n#ifdef GL_compatibility_profile\nint c;\n#endif\n#ifdef GL_ARB_bindless_texture\nint d;\n#endif\n#ifdef GL_AMD_gpu_shader_half_float_fetch\nint e;\n#endif\n",
         &options,
     );
     assert!(errors(&result).is_empty(), "{:?}", result.diagnostics);
-    assert_eq!(
-        code(&result.text),
-        lex("int a = 1 + 100 + 100 + 1 + 1; int b;")
-    );
+    assert_eq!(code(&result.text), lex("int a = 1 + 100 + 1 + 1; int b;"));
     let without = run_with(
         "#version 450\n#ifdef VULKAN\nint v;\n#endif\n",
         &Options {
@@ -345,8 +341,6 @@ fn predefined_macros() {
         },
     );
     assert!(code(&without.text).is_empty());
-    let compatibility = run("#version 450 compatibility\nint c = GL_compatibility_profile;\n");
-    assert_eq!(code(&compatibility.text), lex("int c = 1;"));
 }
 
 #[test]

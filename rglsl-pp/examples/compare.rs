@@ -317,7 +317,6 @@ fn compare_file(arguments: &Arguments, name: &str) -> Outcome {
     let reference = command.output();
     let mut options = Options {
         vulkan_client_version: None,
-        gl_spirv: false,
         stage,
         source_name: Some(name.to_owned()),
         ..Options::default()

@@ -115,7 +115,6 @@ impl Default for Limits {
 pub struct Options {
     pub defines: Vec<Define>,
     pub vulkan_client_version: Option<u32>,
-    pub gl_spirv: bool,
     pub stage: Option<Stage>,
     pub source_name: Option<String>,
     pub default_version: u32,
@@ -129,7 +128,6 @@ impl Default for Options {
         Self {
             defines: Vec::new(),
             vulkan_client_version: Some(100),
-            gl_spirv: false,
             stage: None,
             source_name: None,
             default_version: 100,
