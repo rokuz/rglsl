@@ -72,10 +72,10 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
         assert!(function_statements(&unit)
             .iter()
             .any(|(_, statement)| contains_top_level_break(statement)));
-        let deepest = function_statements(&unit)
-            .last()
-            .map(|(_, statement)| statement_expression_ids(statement).len());
-        assert!(deepest.is_some());
+        let (_, deepest) = function_statements(&unit)
+            .pop()
+            .ok_or("the shader has no statements")?;
+        statement_expression_ids(deepest)?;
         let mut visited = 0;
         rewrite_expressions(&mut unit, &mut |expression| {
             visited += 1;
@@ -84,11 +84,11 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
                     *name = String::from("c");
                 }
             }
-        });
+        })?;
         assert!(visited > DEPTH);
         rename_all(&mut unit, &|kind: NameKind, name: &str| {
             (kind == NameKind::Variable && name == "c").then(|| String::from("b"))
-        });
+        })?;
         let mut blocks = 0;
         rewrite_statements(&mut unit, &mut |statement| {
             if matches!(statement.kind, StatementKind::Compound(_)) {
@@ -98,7 +98,7 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
         assert!(blocks > 0);
         add_braces(&mut unit);
         let mut builder = Builder::new(unit.next_id());
-        apply_edits(&mut unit, Vec::new(), &mut builder);
+        apply_edits(&mut unit, Vec::new(), &mut builder)?;
         assert!(function_statements(&unit).len() > statements);
         drop(unit);
         Ok(())
@@ -113,9 +113,9 @@ fn scope_walks_handle_deep_nesting_on_a_small_stack() -> TestResult {
         let analysis = analyze(&unit, &Options::new(Stage::Fragment));
         Ok((unit, analysis))
     })??;
-    on_stack(SMALL_STACK, move || {
-        assert!(find_points(&unit, &analysis).len() > DEPTH);
-        let points = injection_points(&unit, &analysis);
+    on_stack(SMALL_STACK, move || -> TestResult {
+        assert!(find_points(&unit, &analysis)?.len() > DEPTH);
+        let points = injection_points(&unit, &analysis)?;
         assert!(points.len() > DEPTH);
         let mut locations = BTreeMap::new();
         for point in &points {
@@ -125,5 +125,6 @@ fn scope_walks_handle_deep_nesting_on_a_small_stack() -> TestResult {
         drop(points);
         drop(unit);
         drop(analysis);
-    })
+        Ok(())
+    })?
 }

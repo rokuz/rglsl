@@ -1,3 +1,4 @@
+use rglsl_ast::Stalled;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::TranslationUnit;
@@ -26,15 +27,15 @@ pub fn apply(
     probability: u32,
     params: GenerationParams,
     random: &mut Random,
-) -> Option<TranslationUnit> {
-    let points = find_points(unit, analysis);
+) -> Result<Option<TranslationUnit>, Stalled> {
+    let points = find_points(unit, analysis)?;
     let chosen: BTreeMap<_, Point> = points
         .into_iter()
         .filter(|_| random.next_int(100) < probability)
         .map(|point| (point.id, point))
         .collect();
     if chosen.is_empty() {
-        return None;
+        return Ok(None);
     }
     let hidden = hidden_names(unit, analysis);
     let templates = Templates::new(&analysis.builtins, &hidden);
@@ -65,9 +66,9 @@ pub fn apply(
         };
         *expression =
             generator.apply_identity_function(original, point.ty, point.constant_context, 0);
-    });
-    Some(TranslationUnit::new(
+    })?;
+    Ok(Some(TranslationUnit::new(
         result.external_declarations,
         builder.next_id(),
-    ))
+    )))
 }

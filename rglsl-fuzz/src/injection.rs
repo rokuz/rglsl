@@ -8,7 +8,7 @@ use rglsl_ast::ast::{
 };
 use rglsl_sema::Analysis;
 
-use rglsl_types::stack::run;
+use rglsl_types::stack::{run, Stalled};
 
 use crate::basic;
 use crate::build::Builder;
@@ -50,7 +50,7 @@ pub struct InjectionPoint<'a> {
 pub fn injection_points<'a>(
     unit: &'a TranslationUnit,
     analysis: &Analysis,
-) -> Vec<InjectionPoint<'a>> {
+) -> Result<Vec<InjectionPoint<'a>>, Stalled> {
     let mut walker = Walker {
         analysis,
         scopes: vec![Vec::new()],
@@ -72,10 +72,11 @@ pub fn injection_points<'a>(
                     }
                 }
                 let state = RefCell::new(walker);
-                let _ = run(|stack| {
+                run(|stack| {
                     Cx::new(&state, stack)
                         .block(BlockId::Function(index), &definition.body.statements)
-                });
+                })
+                .ok_or(Stalled)?;
                 walker = state.into_inner();
                 walker.pop();
                 walker.function = None;
@@ -84,7 +85,7 @@ pub fn injection_points<'a>(
             ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
         }
     }
-    walker.points
+    Ok(walker.points)
 }
 
 pub fn choose<T>(items: Vec<T>, probability: u32, random: &mut Random) -> Vec<T> {
@@ -422,7 +423,7 @@ pub fn contains_case_label(statement: &Statement) -> bool {
     )
 }
 
-pub type Replacement = Box<dyn FnOnce(Statement) -> Statement>;
+pub type Replacement = Box<dyn FnOnce(Statement) -> Result<Statement, Stalled>>;
 
 pub enum Edit {
     Inject(Statement),
@@ -448,7 +449,7 @@ pub fn apply_edits(
     unit: &mut TranslationUnit,
     edits: Vec<(Location, Edit)>,
     builder: &mut Builder,
-) {
+) -> Result<(), Stalled> {
     let mut grouped = Edits::default();
     for (location, edit) in edits {
         match location {
@@ -467,29 +468,41 @@ pub fn apply_edits(
     let state = RefCell::new(Applier {
         edits: grouped,
         builder,
+        stalled: false,
     });
     for (index, external) in unit.external_declarations.iter_mut().enumerate() {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
             let statements = &mut definition.body.statements;
-            let _ = run(|stack| Cx::new(&state, stack).block(BlockId::Function(index), statements));
+            run(|stack| Cx::new(&state, stack).block(BlockId::Function(index), statements))
+                .ok_or(Stalled)?;
         }
     }
+    if state.into_inner().stalled {
+        return Err(Stalled);
+    }
+    Ok(())
 }
 
-fn apply_at(statements: &mut Vec<Statement>, current: Option<Statement>, edits: Vec<Edit>) {
+fn apply_at(
+    statements: &mut Vec<Statement>,
+    current: Option<Statement>,
+    edits: Vec<Edit>,
+) -> Result<(), Stalled> {
     let mut current = current;
     for edit in edits {
         match edit {
             Edit::Inject(statement) => statements.push(statement),
-            Edit::Replace(replace) => current = current.map(replace),
+            Edit::Replace(replace) => current = current.map(replace).transpose()?,
         }
     }
     statements.extend(current);
+    Ok(())
 }
 
 struct Applier<'b> {
     edits: Edits,
     builder: &'b mut Builder,
+    stalled: bool,
 }
 
 impl Applier<'_> {
@@ -503,7 +516,7 @@ impl Applier<'_> {
         for index in 0..=length {
             let current = old.next();
             let at = edits.remove(&index).unwrap_or_default();
-            apply_at(statements, current, at);
+            self.stalled |= apply_at(statements, current, at).is_err();
         }
     }
 
@@ -514,7 +527,7 @@ impl Applier<'_> {
         let placeholder = self.builder.block(Vec::new());
         let original = core::mem::replace(slot, placeholder);
         let mut statements = Vec::new();
-        apply_at(&mut statements, Some(original), edits);
+        self.stalled |= apply_at(&mut statements, Some(original), edits).is_err();
         *slot = self.builder.block(statements);
     }
 }

@@ -1030,6 +1030,30 @@ impl super::Validator {
                         class,
                     });
                 }
+                if let crate::ImageClass::Storage {
+                    format: crate::StorageFormat::Unknown(scalar),
+                    ..
+                } = class
+                {
+                    if !matches!(
+                        scalar,
+                        crate::Scalar {
+                            kind: crate::ScalarKind::Float
+                                | crate::ScalarKind::Sint
+                                | crate::ScalarKind::Uint,
+                            width: 4,
+                        } | crate::Scalar {
+                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                            width: 8,
+                        }
+                    ) {
+                        return Err(TypeError::UnsupportedImageType {
+                            dim,
+                            arrayed,
+                            class,
+                        });
+                    }
+                }
                 if arrayed && matches!(dim, crate::ImageDimension::D3) {
                     return Err(TypeError::UnsupportedImageType {
                         dim,

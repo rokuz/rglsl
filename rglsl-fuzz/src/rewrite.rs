@@ -5,16 +5,19 @@ use rglsl_ast::ast::{
     StructSpecifier, TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 use rglsl_ast::Span;
-use rglsl_types::stack::run;
+use rglsl_types::stack::{run, Stalled};
 
 use crate::stack::{
     child_statements, child_statements_mut, take_initializer, take_statement, take_type, Cx,
 };
 use std::cell::RefCell;
 
-pub fn rewrite_expressions(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut Expression)) {
+pub fn rewrite_expressions(
+    unit: &mut TranslationUnit,
+    visit: &mut dyn FnMut(&mut Expression),
+) -> Result<(), Stalled> {
     let state = RefCell::new(Rewriter { visit });
-    let _ = run(|stack| Cx::new(&state, stack).unit(unit));
+    run(|stack| Cx::new(&state, stack).unit(unit)).ok_or(Stalled)
 }
 
 pub fn visit_statements<'a>(statement: &'a Statement, visit: &mut dyn FnMut(&'a Statement)) {
@@ -37,11 +40,13 @@ pub fn function_statements(unit: &TranslationUnit) -> Vec<(usize, &Statement)> {
     result
 }
 
-pub fn statement_expression_ids(statement: &Statement) -> Vec<rglsl_ast::ast::NodeId> {
+pub fn statement_expression_ids(
+    statement: &Statement,
+) -> Result<Vec<rglsl_ast::ast::NodeId>, Stalled> {
     let mut probe = statement.clone();
     let mut ids = Vec::new();
-    rewrite_statement_expressions(&mut probe, &mut |expression| ids.push(expression.id));
-    ids
+    rewrite_statement_expressions(&mut probe, &mut |expression| ids.push(expression.id))?;
+    Ok(ids)
 }
 
 pub fn replace_statements(
@@ -58,12 +63,11 @@ pub fn replace_statements(
 pub fn rewrite_statement_expressions(
     statement: &mut Statement,
     visit: &mut dyn FnMut(&mut Expression),
-) {
+) -> Result<(), Stalled> {
     let state = RefCell::new(Rewriter { visit });
     let original = take_statement(statement);
-    if let Some(rewritten) = run(|stack| Cx::new(&state, stack).statement(original)) {
-        *statement = rewritten;
-    }
+    *statement = run(|stack| Cx::new(&state, stack).statement(original)).ok_or(Stalled)?;
+    Ok(())
 }
 
 pub fn rewrite_statements(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut Statement)) {

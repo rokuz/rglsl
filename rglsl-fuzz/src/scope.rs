@@ -12,7 +12,7 @@ use rglsl_sema::analyze::Callee;
 use rglsl_sema::scope::{Direction, Origin, Storage, SymbolKind};
 use rglsl_sema::Analysis;
 
-use rglsl_types::stack::run;
+use rglsl_types::stack::{run, Stalled};
 
 use crate::basic;
 use crate::stack::Cx;
@@ -48,7 +48,7 @@ pub struct Point {
     pub scope: Rc<[Variable]>,
 }
 
-pub fn find_points(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Point> {
+pub fn find_points(unit: &TranslationUnit, analysis: &Analysis) -> Result<Vec<Point>, Stalled> {
     let mut finder = Finder {
         analysis,
         scopes: vec![Vec::new()],
@@ -67,7 +67,8 @@ pub fn find_points(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Point> {
                     }
                 }
                 let state = RefCell::new(finder);
-                let _ = run(|stack| Cx::new(&state, stack).statements(&definition.body.statements));
+                run(|stack| Cx::new(&state, stack).statements(&definition.body.statements))
+                    .ok_or(Stalled)?;
                 finder = state.into_inner();
                 finder.pop();
             }
@@ -75,7 +76,7 @@ pub fn find_points(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Point> {
             ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
         }
     }
-    finder.points
+    Ok(finder.points)
 }
 
 pub fn function_names(unit: &TranslationUnit) -> BTreeSet<String> {

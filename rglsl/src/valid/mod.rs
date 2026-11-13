@@ -6,6 +6,8 @@ mod analyzer;
 mod compose;
 mod expression;
 mod function;
+#[cfg(all(test, feature = "arbitrary"))]
+mod fuzzed;
 mod handles;
 pub(crate) mod immediates;
 mod interface;

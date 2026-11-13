@@ -44,7 +44,7 @@ fn check(
             .ok_or_else(|| format!("{name}: the variant has no shaders"))?;
         markers += text.matches(marker).count();
         let unit = parse_shader(&text).map_err(|error| format!("{name}: {error}\n{text}"))?;
-        let analysis = analyze_shader(&unit, Stage::Fragment, false, None);
+        let analysis = analyze_shader(&unit, Stage::Fragment, false, None)?;
         assert!(
             analysis.diagnostics.is_empty(),
             "{} on {name}: {:?}\n{text}",

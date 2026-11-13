@@ -1,3 +1,4 @@
+use rglsl_ast::Stalled;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{
@@ -21,10 +22,10 @@ use crate::transformation::PassInput;
 
 pub const NAME: &str = "outline_statement";
 
-pub fn next_id_with_prefix(unit: &TranslationUnit, prefix: &str) -> u32 {
+pub fn next_id_with_prefix(unit: &TranslationUnit, prefix: &str) -> Result<u32, Stalled> {
     let mut next = 0;
     for external in &unit.external_declarations {
-        for name in crate::strip::referenced_names(external) {
+        for name in crate::strip::referenced_names(external)? {
             if let Some(rest) = name.strip_prefix(prefix) {
                 let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 if let Ok(id) = digits.parse::<u32>() {
@@ -33,7 +34,7 @@ pub fn next_id_with_prefix(unit: &TranslationUnit, prefix: &str) -> u32 {
             }
         }
     }
-    next
+    Ok(next)
 }
 
 struct Candidate<'a> {
@@ -61,7 +62,10 @@ fn variable_type(analysis: &Analysis, expression: &Expression) -> Option<Option<
     }
 }
 
-fn parameters(analysis: &Analysis, value: &Expression) -> Option<Vec<(String, BasicType)>> {
+fn parameters(
+    analysis: &Analysis,
+    value: &Expression,
+) -> Result<Option<Vec<(String, BasicType)>>, Stalled> {
     let mut result: Vec<(String, BasicType)> = Vec::new();
     let mut ok = true;
     let mut seen = BTreeSet::new();
@@ -89,11 +93,14 @@ fn parameters(analysis: &Analysis, value: &Expression) -> Option<Vec<(String, Ba
         Span::new(0, 0),
         StatementKind::Expression(Some(value.clone())),
     );
-    rewrite_statement_expressions(&mut holder, &mut visit);
-    ok.then_some(result)
+    rewrite_statement_expressions(&mut holder, &mut visit)?;
+    Ok(ok.then_some(result))
 }
 
-fn candidates<'a>(unit: &'a TranslationUnit, analysis: &Analysis) -> Vec<Candidate<'a>> {
+fn candidates<'a>(
+    unit: &'a TranslationUnit,
+    analysis: &Analysis,
+) -> Result<Vec<Candidate<'a>>, Stalled> {
     let mut result = Vec::new();
     for (function, statement) in function_statements(unit) {
         let StatementKind::Expression(Some(expression)) = &statement.kind else {
@@ -116,7 +123,7 @@ fn candidates<'a>(unit: &'a TranslationUnit, analysis: &Analysis) -> Vec<Candida
         if !side_effect_free(value, &analysis.builtins) {
             continue;
         }
-        let Some(parameters) = parameters(analysis, value) else {
+        let Some(parameters) = parameters(analysis, value)? else {
             continue;
         };
         result.push(Candidate {
@@ -128,19 +135,22 @@ fn candidates<'a>(unit: &'a TranslationUnit, analysis: &Analysis) -> Vec<Candida
             parameters,
         });
     }
-    result
+    Ok(result)
 }
 
-pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
+pub fn apply(
+    input: &PassInput<'_>,
+    random: &mut Random,
+) -> Result<Option<TranslationUnit>, Stalled> {
     let chosen = choose(
-        candidates(input.unit, input.analysis),
+        candidates(input.unit, input.analysis)?,
         input.probabilities.outline,
         random,
     );
     if chosen.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let mut next_id = next_id_with_prefix(input.unit, OUTLINED_FUNCTION_PREFIX);
+    let mut next_id = next_id_with_prefix(input.unit, OUTLINED_FUNCTION_PREFIX)?;
     let mut builder = Builder::new(input.unit.next_id());
     let mut replacements = BTreeMap::new();
     let mut functions: BTreeMap<usize, Vec<ExternalDeclaration>> = BTreeMap::new();
@@ -213,5 +223,5 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUn
         }
         externals.push(external);
     }
-    Some(TranslationUnit::new(externals, builder.next_id()))
+    Ok(Some(TranslationUnit::new(externals, builder.next_id())))
 }

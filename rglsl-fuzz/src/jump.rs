@@ -1,4 +1,5 @@
 use rglsl_ast::ast::{JumpStatement, Statement, TranslationUnit, TypeSpecifierNonArray};
+use rglsl_ast::Stalled;
 
 use crate::build::Builder;
 use crate::context::Context;
@@ -9,14 +10,17 @@ use crate::transformation::PassInput;
 
 pub const NAME: &str = "add_jump";
 
-pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
+pub fn apply(
+    input: &PassInput<'_>,
+    random: &mut Random,
+) -> Result<Option<TranslationUnit>, Stalled> {
     let points = choose(
-        injection_points(input.unit, input.analysis),
+        injection_points(input.unit, input.analysis)?,
         input.probabilities.inject_jump_at_statement,
         random,
     );
     if points.is_empty() {
-        return None;
+        return Ok(None);
     }
     let structs = global_structs(input.unit);
     let mut context = Context::new(input.unit, input.analysis, input.params);
@@ -37,8 +41,8 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUn
         edits.push((point.location, Edit::Inject(statement)));
     }
     let mut result = input.unit.clone();
-    apply_edits(&mut result, edits, &mut context.builder);
-    Some(result)
+    apply_edits(&mut result, edits, &mut context.builder)?;
+    Ok(Some(result))
 }
 
 pub fn dead_conditional(

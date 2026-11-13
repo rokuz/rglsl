@@ -2121,7 +2121,7 @@ impl Writer {
     fn make_scalar(&mut self, id: Word, scalar: crate::Scalar) -> Option<Instruction> {
         use crate::ScalarKind as Sk;
 
-        let bits = (scalar.width * BITS_PER_BYTE) as u32;
+        let bits = u32::from(scalar.width) * u32::from(BITS_PER_BYTE);
         match scalar.kind {
             Sk::Sint | Sk::Uint => {
                 let signedness = if scalar.kind == Sk::Sint {

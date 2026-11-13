@@ -1,3 +1,4 @@
+use rglsl_ast::Stalled;
 use std::collections::BTreeSet;
 
 use rglsl_ast::ast::{
@@ -71,11 +72,11 @@ fn statements_of(statement: &Statement) -> &[Statement] {
     }
 }
 
-fn next_switch_id(unit: &TranslationUnit) -> u32 {
+fn next_switch_id(unit: &TranslationUnit) -> Result<u32, Stalled> {
     let prefix = format!("{GLF_SWITCH}_");
     let mut next = 0;
     for external in &unit.external_declarations {
-        for name in crate::strip::referenced_names(external) {
+        for name in crate::strip::referenced_names(external)? {
             if let Some(rest) = name.strip_prefix(&prefix) {
                 let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 if let Ok(id) = digits.parse::<u32>() {
@@ -84,7 +85,7 @@ fn next_switch_id(unit: &TranslationUnit) -> u32 {
             }
         }
     }
-    next
+    Ok(next)
 }
 
 fn return_type(point: &InjectionPoint<'_>) -> ReturnType {
@@ -110,17 +111,20 @@ fn case_label(used: &mut BTreeSet<u32>, random: &mut Random) -> u32 {
     }
 }
 
-pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
-    let points: Vec<_> = injection_points(input.unit, input.analysis)
+pub fn apply(
+    input: &PassInput<'_>,
+    random: &mut Random,
+) -> Result<Option<TranslationUnit>, Stalled> {
+    let points: Vec<_> = injection_points(input.unit, input.analysis)?
         .into_iter()
         .filter(suitable)
         .collect();
     let points = choose(points, input.probabilities.switchify, random);
     if points.is_empty() {
-        return None;
+        return Ok(None);
     }
     let mut context = Context::new(input.unit, input.analysis, input.params);
-    let mut next_id = next_switch_id(input.unit);
+    let mut next_id = next_switch_id(input.unit)?;
     let mut edits = Vec::new();
     for point in &points {
         let Some(next) = point.next else {
@@ -198,16 +202,16 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUn
                 for content in contents {
                     statement = switchify(statement, content);
                 }
-                statement
+                Ok(statement)
             })),
         ));
     }
     if edits.is_empty() {
-        return None;
+        return Ok(None);
     }
     let mut result = input.unit.clone();
-    apply_edits(&mut result, edits, &mut context.builder);
-    Some(result)
+    apply_edits(&mut result, edits, &mut context.builder)?;
+    Ok(Some(result))
 }
 
 fn switch_content(
@@ -340,7 +344,7 @@ mod tests {
             "frag",
             "#version 450\nvoid main() { uint _GLF_SWITCH_0_0v[91]; int _GLF_SWITCH_2_1v; }\n",
         )?;
-        assert_eq!(next_switch_id(&unit), 3);
+        assert_eq!(next_switch_id(&unit)?, 3);
         Ok(())
     }
 }

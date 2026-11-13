@@ -40,7 +40,7 @@ fn valid_with_marker(job: &ShaderJob) -> TestResult<bool> {
     let Ok(unit) = parse_shader(&text) else {
         return Ok(false);
     };
-    Ok(analyze_shader(&unit, Stage::Fragment, false, None)
+    Ok(analyze_shader(&unit, Stage::Fragment, false, None)?
         .diagnostics
         .is_empty()
         && text.contains(MARKER))

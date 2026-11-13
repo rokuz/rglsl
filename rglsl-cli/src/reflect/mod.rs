@@ -215,14 +215,17 @@ impl Program<'_> {
             .iter()
             .map(|function| {
                 let analysis = units.get(function.unit).map(|unit| &unit.analysis);
-                analysis.map_or_else(Walked::default, |analysis| match function.item {
-                    Item::Function(definition) => {
-                        walk::function_body(analysis, &definition.body.node.statements)
-                    }
-                    Item::Globals(list) => walk::global_initializers(analysis, list),
-                })
+                analysis.map_or_else(
+                    || Ok(Walked::default()),
+                    |analysis| match function.item {
+                        Item::Function(definition) => {
+                            walk::function_body(analysis, &definition.body.node.statements)
+                        }
+                        Item::Globals(list) => walk::global_initializers(analysis, list),
+                    },
+                )
             })
-            .collect();
+            .collect::<Result<_, Stalled>>()?;
         let reachable = self.reachable(input, &functions, &walked);
         let processed = RefCell::new(BTreeSet::new());
         let defaults: Vec<_> = units.iter().map(|unit| block_defaults(unit)).collect();
@@ -268,7 +271,7 @@ impl Program<'_> {
             cx.derefs.replace(walked.derefs.clone());
             cx.update_stage_masks.set(true);
             for event in &walked.events {
-                cx.event(*event);
+                cx.event(*event)?;
             }
         }
         if self.settings.options.shared_std140_ubo
@@ -289,7 +292,7 @@ impl Program<'_> {
                         continue;
                     }
                     linker += 1;
-                    cx.linker_object(symbol, Key::Linker(linker));
+                    cx.linker_object(symbol, Key::Linker(linker))?;
                 }
             }
             if self.settings.options.all_io_variables

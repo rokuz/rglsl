@@ -1,3 +1,4 @@
+use rglsl_ast::Stalled;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -74,7 +75,7 @@ fn extension_of(stage: Stage) -> &'static str {
     }
 }
 
-fn next_donor_index(unit: &TranslationUnit) -> u32 {
+fn next_donor_index(unit: &TranslationUnit) -> Result<u32, Stalled> {
     let mut next = 0;
     let mut consider = |name: &str| {
         for prefix in [LIVE_PREFIX, DEAD_PREFIX] {
@@ -87,14 +88,18 @@ fn next_donor_index(unit: &TranslationUnit) -> u32 {
         }
     };
     for external in &unit.external_declarations {
-        for name in crate::strip::referenced_names(external) {
+        for name in crate::strip::referenced_names(external)? {
             consider(&name);
         }
     }
-    next
+    Ok(next)
 }
 
-pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<TranslationUnit> {
+pub fn apply(
+    input: &PassInput<'_>,
+    random: &mut Random,
+    live: bool,
+) -> Result<Option<TranslationUnit>, Stalled> {
     let extension = extension_of(input.params.stage);
     let donors: Vec<&Donor> = input
         .donors
@@ -102,7 +107,7 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
         .filter(|donor| donor.extension == extension)
         .collect();
     if donors.is_empty() {
-        return None;
+        return Ok(None);
     }
     let probability = if live {
         input.probabilities.donate_live_code_at_statement
@@ -110,15 +115,15 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
         input.probabilities.donate_dead_code_at_statement
     };
     let points = choose(
-        injection_points(input.unit, input.analysis),
+        injection_points(input.unit, input.analysis)?,
         probability,
         random,
     );
     if points.is_empty() {
-        return None;
+        return Ok(None);
     }
     let mut context = Context::new(input.unit, input.analysis, input.params);
-    let mut next_index = next_donor_index(input.unit);
+    let mut next_index = next_donor_index(input.unit)?;
     let mut prepared: BTreeMap<usize, Prepared> = BTreeMap::new();
     let mut used: BTreeSet<usize> = BTreeSet::new();
     let mut failed: BTreeSet<usize> = BTreeSet::new();
@@ -152,10 +157,11 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
                     Ok(ready) => {
                         slot.insert(ready);
                     }
-                    Err(_) => {
+                    Err(Unprepared::Rejected) => {
                         failed.insert(donor_index);
                         continue;
                     }
+                    Err(Unprepared::Stalled) => return Err(Stalled),
                 }
             }
             let Some(donor) = prepared.get(&donor_index) else {
@@ -172,7 +178,7 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
                 continue;
             };
             let statement = if live {
-                live_statement(&mut context, random, donor, function, fragment_id)
+                live_statement(&mut context, random, donor, function, fragment_id)?
             } else {
                 dead_statement(
                     &mut context,
@@ -182,7 +188,7 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
                     donor,
                     function,
                     fragment_id,
-                )
+                )?
             };
             if let Some(statement) = statement {
                 used.insert(donor_index);
@@ -192,10 +198,10 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
         }
     }
     if edits.is_empty() {
-        return None;
+        return Ok(None);
     }
     let mut result = input.unit.clone();
-    apply_edits(&mut result, edits, &mut context.builder);
+    apply_edits(&mut result, edits, &mut context.builder)?;
     let mut donated = Vec::new();
     for index in &used {
         if let Some(donor) = prepared.get(index) {
@@ -213,7 +219,7 @@ pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<T
     let tail = result.external_declarations.split_off(position);
     result.external_declarations.extend(donated);
     result.external_declarations.extend(tail);
-    Some(result)
+    Ok(Some(result))
 }
 
 fn donation_position(unit: &TranslationUnit) -> usize {
@@ -275,9 +281,9 @@ fn collect_names(unit: &TranslationUnit, analysis: &Analysis) -> Names {
 fn builtin_variables(
     unit: &TranslationUnit,
     analysis: &Analysis,
-) -> Result<BTreeMap<String, BasicType>, String> {
+) -> Result<BTreeMap<String, BasicType>, Unprepared> {
     let mut result = BTreeMap::new();
-    for expression in rglsl_ast::expressions(unit).map_err(|error| error.to_string())? {
+    for expression in rglsl_ast::expressions(unit)? {
         let ExpressionKind::Variable(name) = &expression.kind else {
             continue;
         };
@@ -290,8 +296,7 @@ fn builtin_variables(
         };
         if let SymbolKind::Variable(variable) = &symbol.kind {
             if variable.origin == Origin::BuiltIn {
-                let ty = basic::from_sema(&variable.ty)
-                    .ok_or_else(|| String::from("a built-in variable of a non-basic type"))?;
+                let ty = basic::from_sema(&variable.ty).ok_or(Unprepared::Rejected)?;
                 result.insert(name.clone(), ty);
             }
         }
@@ -323,24 +328,44 @@ fn usable(unit: &TranslationUnit) -> bool {
         })
 }
 
+enum Unprepared {
+    Rejected,
+    Stalled,
+}
+
+impl From<Stalled> for Unprepared {
+    fn from(_: Stalled) -> Self {
+        Self::Stalled
+    }
+}
+
+impl From<crate::error::Error> for Unprepared {
+    fn from(error: crate::error::Error) -> Self {
+        match error {
+            crate::error::Error::Stalled => Self::Stalled,
+            _ => Self::Rejected,
+        }
+    }
+}
+
 fn prepare(
     donor: &Donor,
     prefix: &str,
     live: bool,
     params: GenerationParams,
     random: &mut Random,
-) -> Result<Prepared, String> {
+) -> Result<Prepared, Unprepared> {
     if !usable(&donor.unit) {
-        return Err(String::from("unsupported declarations"));
+        return Err(Unprepared::Rejected);
     }
     let stage = donor.stage();
-    let analysis = analyze_shader(&donor.unit, stage, true, None);
-    if let Some(diagnostic) = analysis.diagnostics.first() {
-        return Err(format!("{diagnostic:?}"));
+    let analysis = analyze_shader(&donor.unit, stage, true, None)?;
+    if !analysis.diagnostics.is_empty() {
+        return Err(Unprepared::Rejected);
     }
     let names = collect_names(&donor.unit, &analysis);
     let builtins = builtin_variables(&donor.unit, &analysis)?;
-    let mut unit = in_bounds(&donor.unit, &analysis);
+    let mut unit = in_bounds(&donor.unit, &analysis)?;
     let mut builder = Builder::new(unit.next_id());
     flatten_interface(&mut unit, &mut builder);
     for (name, ty) in &builtins {
@@ -367,7 +392,7 @@ fn prepare(
         };
         rename.then(|| format!("{prefix}{name}"))
     };
-    rename_all(&mut unit, &renamer);
+    rename_all(&mut unit, &renamer)?;
     if live {
         let limit = 3 + random.next_int(5);
         truncate_loops(&mut unit, prefix, limit, &mut builder);
@@ -376,15 +401,15 @@ fn prepare(
         });
     }
     let unit = TranslationUnit::new(unit.external_declarations, builder.next_id());
-    let text = emit(&unit).map_err(|error| error.to_string())?;
-    let unit = parse_unit("donor", &text).map_err(|error| format!("{error}\n{text}"))?;
-    let analysis = analyze_shader(&unit, stage, true, None);
-    if let Some(diagnostic) = analysis
+    let text = emit(&unit)?;
+    let unit = parse_unit("donor", &text).map_err(|_| Unprepared::Rejected)?;
+    let analysis = analyze_shader(&unit, stage, true, None)?;
+    if analysis
         .diagnostics
         .iter()
-        .find(|diagnostic| diagnostic.kind != rglsl_sema::DiagnosticKind::MissingEntryPoint)
+        .any(|diagnostic| diagnostic.kind != rglsl_sema::DiagnosticKind::MissingEntryPoint)
     {
-        return Err(format!("{diagnostic:?}\n{text}"));
+        return Err(Unprepared::Rejected);
     }
     let fragments = fragments(&unit);
     Ok(Prepared {
@@ -395,7 +420,7 @@ fn prepare(
     })
 }
 
-pub fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> TranslationUnit {
+pub fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> Result<TranslationUnit, Stalled> {
     let mut result = unit.clone();
     let mut builder = Builder::new(unit.next_id());
     rewrite_expressions(&mut result, &mut |expression| {
@@ -435,8 +460,11 @@ pub fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> TranslationUnit
             GLF_MAKE_IN_BOUNDS_INT
         };
         **index = builder.call(name, vec![original, size]);
-    });
-    TranslationUnit::new(result.external_declarations, builder.next_id())
+    })?;
+    Ok(TranslationUnit::new(
+        result.external_declarations,
+        builder.next_id(),
+    ))
 }
 
 fn strip_interface_qualifiers(ty: &mut Spanned<FullySpecifiedType>) -> bool {
@@ -823,19 +851,22 @@ fn declared_inside(statement: &Statement) -> BTreeSet<NodeId> {
     ids
 }
 
-fn statement_expressions(statement: &Statement) -> Vec<Expression> {
+fn statement_expressions(statement: &Statement) -> Result<Vec<Expression>, Stalled> {
     let mut collected = Vec::new();
     let mut probe = statement.clone();
     crate::rewrite::rewrite_statement_expressions(&mut probe, &mut |expression| {
         collected.push(expression.clone());
-    });
-    collected
+    })?;
+    Ok(collected)
 }
 
-fn free_variables(fragment: &Statement, analysis: &Analysis) -> Option<Vec<FreeVariable>> {
+fn free_variables(
+    fragment: &Statement,
+    analysis: &Analysis,
+) -> Result<Option<Vec<FreeVariable>>, Stalled> {
     let inside = declared_inside(fragment);
     let mut result: BTreeMap<String, BasicType> = BTreeMap::new();
-    for expression in statement_expressions(fragment) {
+    for expression in statement_expressions(fragment)? {
         if !matches!(expression.kind, ExpressionKind::Variable(_)) {
             continue;
         }
@@ -855,25 +886,30 @@ fn free_variables(fragment: &Statement, analysis: &Analysis) -> Option<Vec<FreeV
         if variable.declaration.is_some_and(|id| inside.contains(&id)) {
             continue;
         }
-        let ty = basic::from_sema(&variable.ty)?;
+        let Some(ty) = basic::from_sema(&variable.ty) else {
+            return Ok(None);
+        };
         result.insert(symbol.name.clone(), ty);
     }
-    Some(
+    Ok(Some(
         result
             .into_iter()
             .map(|(name, ty)| FreeVariable { name, ty })
             .collect(),
-    )
+    ))
 }
 
-fn rename_in_statement(statement: &mut Statement, renames: &BTreeMap<String, String>) {
+fn rename_in_statement(
+    statement: &mut Statement,
+    renames: &BTreeMap<String, String>,
+) -> Result<(), Stalled> {
     crate::rewrite::rewrite_statement_expressions(statement, &mut |expression| {
         if let ExpressionKind::Variable(name) = &mut expression.kind {
             if let Some(new) = renames.get(name) {
                 name.clone_from(new);
             }
         }
-    });
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -958,9 +994,13 @@ fn dead_statement(
     donor: &Prepared,
     function: usize,
     fragment_id: NodeId,
-) -> Option<Statement> {
-    let (fragment, definition) = find_statement(&donor.unit, function, fragment_id)?;
-    let free = free_variables(fragment, &donor.analysis)?;
+) -> Result<Option<Statement>, Stalled> {
+    let Some((fragment, definition)) = find_statement(&donor.unit, function, fragment_id) else {
+        return Ok(None);
+    };
+    let Some(free) = free_variables(fragment, &donor.analysis)? else {
+        return Ok(None);
+    };
     let mut fragment = fragment.clone();
     let mut renames = BTreeMap::new();
     let mut statements = Vec::new();
@@ -993,7 +1033,7 @@ fn dead_statement(
         ));
         renames.insert(variable.name.clone(), replacement);
     }
-    rename_in_statement(&mut fragment, &renames);
+    rename_in_statement(&mut fragment, &renames)?;
     let same_return = definition.prototype.return_type.specifier.node
         == point.function.prototype.return_type.specifier.node;
     let removal = Removal {
@@ -1007,7 +1047,7 @@ fn dead_statement(
     statements.push(fragment);
     let body = context.builder.block(statements);
     let condition = context.opaque(random, &point.scope).make_dead_condition();
-    Some(context.builder.if_statement(condition, body, None))
+    Ok(Some(context.builder.if_statement(condition, body, None)))
 }
 
 fn live_statement(
@@ -1016,9 +1056,13 @@ fn live_statement(
     donor: &Prepared,
     function: usize,
     fragment_id: NodeId,
-) -> Option<Statement> {
-    let (fragment, _) = find_statement(&donor.unit, function, fragment_id)?;
-    let free = free_variables(fragment, &donor.analysis)?;
+) -> Result<Option<Statement>, Stalled> {
+    let Some((fragment, _)) = find_statement(&donor.unit, function, fragment_id) else {
+        return Ok(None);
+    };
+    let Some(free) = free_variables(fragment, &donor.analysis)? else {
+        return Ok(None);
+    };
     let mut fragment = fragment.clone();
     let mut statements = Vec::new();
     for variable in &free {
@@ -1042,5 +1086,5 @@ fn live_statement(
     };
     remove_jumps(&mut fragment, removal, &mut context.builder, false, false);
     statements.push(fragment);
-    Some(context.builder.block(statements))
+    Ok(Some(context.builder.block(statements)))
 }

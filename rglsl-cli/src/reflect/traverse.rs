@@ -10,7 +10,7 @@ use rglsl_ast::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration};
 use rglsl_sema::analyze::is_shader_record;
 use rglsl_sema::scope::{Origin, Storage, SymbolKind};
 use rglsl_sema::{Analysis, SymbolId};
-use rglsl_types::stack::{run, Call, Stack};
+use rglsl_types::stack::{run, Call, Stack, Stalled};
 
 use super::database::Object;
 use super::source::{declared_globals, io_name, BlockDefaults};
@@ -95,27 +95,25 @@ impl UnitCx<'_, '_, '_> {
         self.processed.borrow_mut().insert((self.unit, key));
     }
 
-    pub(super) fn event(&self, event: Event) {
+    pub(super) fn event(&self, event: Event) -> Result<(), Stalled> {
         match event {
-            Event::Deref(key) => {
-                let _ = run(|stack| {
-                    let cx = Cx { unit: self, stack };
-                    cx.dereferenced_uniform(key)
-                });
-            }
-            Event::Symbol(symbol, key) => {
-                let _ = run(|stack| {
-                    let cx = Cx { unit: self, stack };
-                    cx.visit_symbol(symbol, key)
-                });
-            }
-            Event::Call(_) => {}
+            Event::Deref(key) => run(|stack| {
+                let cx = Cx { unit: self, stack };
+                cx.dereferenced_uniform(key)
+            })
+            .ok_or(Stalled),
+            Event::Symbol(symbol, key) => run(|stack| {
+                let cx = Cx { unit: self, stack };
+                cx.visit_symbol(symbol, key)
+            })
+            .ok_or(Stalled),
+            Event::Call(_) => Ok(()),
         }
     }
 
-    pub(super) fn linker_object(&self, symbol: SymbolId, key: Key) {
+    pub(super) fn linker_object(&self, symbol: SymbolId, key: Key) -> Result<(), Stalled> {
         let Some(variable) = self.analysis.symbol(symbol).and_then(|s| s.variable()) else {
-            return;
+            return Ok(());
         };
         let options = self.options();
         let storage = variable.qualifiers.storage;
@@ -126,11 +124,12 @@ impl UnitCx<'_, '_, '_> {
             if ty.as_ref().is_some_and(|ty| {
                 ty.is_block() && matches!(ty.packing, Pack::Std140 | Pack::Shared)
             }) {
-                self.event(Event::Symbol(symbol, key));
+                return self.event(Event::Symbol(symbol, key));
             }
         } else if options.all_io_variables && matches!(storage, Storage::In | Storage::Out) {
-            self.event(Event::Symbol(symbol, key));
+            return self.event(Event::Symbol(symbol, key));
         }
+        Ok(())
     }
 
     pub(super) fn anonymous_index(&self, symbol: SymbolId) -> usize {
