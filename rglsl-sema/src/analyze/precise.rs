@@ -551,7 +551,7 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
                                     .contains(QualifierFlags::PRECISE)
                             });
                     });
-                    for statement in &definition.body.statements {
+                    for statement in &definition.kind.body.node.statements {
                         self.call(self.clone().collect_statement(statement)).await;
                     }
                     self.with(|pass| pass.precise_return = false);
@@ -571,11 +571,11 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
             return;
         };
         for declarator in &list.declarators {
-            let Some(ref initializer) = declarator.initializer else {
+            let Some(ref initializer) = declarator.kind.initializer else {
                 continue;
             };
             let symbol = self.with(|pass| pass.analysis.declarations.get(&declarator.id).copied());
-            self.call(self.clone().initialized(symbol, initializer))
+            self.call(self.clone().initialized(symbol, &initializer.node))
                 .await;
         }
     }
@@ -593,7 +593,8 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
             }
             Initializer::List(items) => {
                 for item in items {
-                    self.call(self.clone().collect_initializer(item)).await;
+                    self.call(self.clone().collect_initializer(&item.node))
+                        .await;
                 }
             }
         }
@@ -684,8 +685,11 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
             Condition::Declaration(declaration) => {
                 let symbol =
                     self.with(|pass| pass.analysis.declarations.get(&declaration.id).copied());
-                self.call(self.clone().initialized(symbol, &declaration.initializer))
-                    .await;
+                self.call(
+                    self.clone()
+                        .initialized(symbol, &declaration.kind.initializer.node),
+                )
+                .await;
             }
         }
     }
@@ -863,13 +867,13 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
                     };
                     let rest = rest.to_vec();
                     let outer = self.with(|pass| core::mem::replace(&mut pass.remained, rest));
-                    self.call(self.clone().propagate_initializer(item, None))
+                    self.call(self.clone().propagate_initializer(&item.node, None))
                         .await;
                     self.with(|pass| pass.remained = outer);
                     return;
                 }
                 for item in items {
-                    self.call(self.clone().propagate_initializer(item, None))
+                    self.call(self.clone().propagate_initializer(&item.node, None))
                         .await;
                 }
             }

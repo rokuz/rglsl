@@ -251,9 +251,9 @@ impl FunctionLowerer<'_, '_> {
                     .variable(symbol)
                     .map(|variable| variable.ty.clone())
                     .ok_or_else(|| internal(at))?;
-                let local = self.local(&ty, Some(declaration.name.node.clone()), at)?;
+                let local = self.local(&ty, Some(declaration.kind.name.node.clone()), at)?;
                 self.bind_variable(symbol, Local::Variable(local));
-                let value = self.initializer(&declaration.initializer, &ty)?;
+                let value = self.initializer(&declaration.kind.initializer, &ty)?;
                 let pointer = self.local_pointer(local, at)?;
                 self.push(IrStatement::Store { pointer, value }, at);
                 let pointer = self.local_pointer(local, at)?;
@@ -277,8 +277,8 @@ impl FunctionLowerer<'_, '_> {
                         .flags
                         .contains(QualifierFlags::SPECIALIZATION)
                     {
-                        if let Some(initializer) = declarator.initializer.as_ref() {
-                            let name = Some(declarator.name.node.clone());
+                        if let Some(initializer) = declarator.kind.initializer.as_ref() {
+                            let name = Some(declarator.kind.name.node.clone());
                             let ty = variable.ty.clone();
                             let handle =
                                 self.lw
@@ -300,7 +300,7 @@ impl FunctionLowerer<'_, '_> {
                                     self.lw.global_constant(&variable.ty, &value.values, at)?;
                                 self.lw.module.constants.append(
                                     crate::Constant {
-                                        name: Some(declarator.name.node.clone()),
+                                        name: Some(declarator.kind.name.node.clone()),
                                         ty: ir,
                                         init,
                                     },
@@ -321,13 +321,14 @@ impl FunctionLowerer<'_, '_> {
                     {
                         self.lw
                             .deferred_private
-                            .insert(symbol, (declarator.name.node.clone(), at));
+                            .insert(symbol, (declarator.kind.name.node.clone(), at));
                         continue;
                     }
                     let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
-                    let local = self.local_typed(ir, Some(declarator.name.node.clone()), at);
+                    let local = self.local_typed(ir, Some(declarator.kind.name.node.clone()), at);
                     self.bind_variable(symbol, Local::Variable(local));
-                    if let Some(initializer) = declarator.initializer.as_ref().filter(|_| reachable)
+                    if let Some(initializer) =
+                        declarator.kind.initializer.as_ref().filter(|_| reachable)
                     {
                         let value = self.initializer(initializer, &ty)?;
                         let value = self.requalify_to(value, ir, at)?;
@@ -342,7 +343,7 @@ impl FunctionLowerer<'_, '_> {
             | DeclarationKind::SpirvInstruction { .. }
             | DeclarationKind::SpirvExecutionMode(_) => Ok(()),
             DeclarationKind::QualifiedIdentifiers { ref qualifier, .. }
-                if qualifier.qualifiers.iter().all(|single| {
+                if qualifier.node.qualifiers.iter().all(|single| {
                     matches!(single.node, rglsl_ast::ast::SingleTypeQualifier::Precise)
                 }) =>
             {
@@ -996,7 +997,7 @@ fn statement_anchor(statement: &Statement) -> u32 {
                 .declarators
                 .first()
                 .map_or(statement.span.start, |declarator| {
-                    declarator.name.span.start
+                    declarator.kind.name.span.start
                 }),
             _ => statement.span.start,
         },

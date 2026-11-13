@@ -89,15 +89,21 @@ fn next_switch_id(unit: &TranslationUnit) -> Result<u32, Stalled> {
 }
 
 fn return_type(point: &InjectionPoint<'_>) -> ReturnType {
-    let specifier = &point.function.prototype.return_type.specifier;
-    if specifier.array.is_some() {
+    let specifier = &point
+        .function
+        .kind
+        .prototype
+        .node
+        .return_type
+        .node
+        .specifier;
+    if specifier.node.array.is_some() {
         return ReturnType::Other;
     }
-    match &specifier.non_array {
+    match &specifier.node.non_array {
         TypeSpecifierNonArray::Void => ReturnType::Void,
-        TypeSpecifierNonArray::Basic(_) => {
-            crate::basic::from_specifier(specifier).map_or(ReturnType::Other, ReturnType::Basic)
-        }
+        TypeSpecifierNonArray::Basic(_) => crate::basic::from_specifier(&specifier.node)
+            .map_or(ReturnType::Other, ReturnType::Basic),
         _ => ReturnType::Other,
     }
 }

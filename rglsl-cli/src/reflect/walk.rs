@@ -68,7 +68,7 @@ pub fn global_initializers(
         };
         async move {
             for declarator in &list.declarators {
-                if let Some(ref initializer) = declarator.initializer {
+                if let Some(ref initializer) = declarator.kind.initializer {
                     cx.call(cx.clone().initializer(initializer)).await;
                 }
             }
@@ -188,7 +188,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             StatementKind::Declaration(ref declaration) => {
                 if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
                     for declarator in &list.declarators {
-                        if let Some(ref initializer) = declarator.initializer {
+                        if let Some(ref initializer) = declarator.kind.initializer {
                             self.call(self.clone().initializer(initializer)).await;
                         }
                     }
@@ -267,7 +267,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 self.call(self.clone().expression(expression)).await;
             }
             Condition::Declaration(ref declaration) => {
-                self.call(self.clone().initializer(&declaration.initializer))
+                self.call(self.clone().initializer(&declaration.kind.initializer))
                     .await;
             }
         }

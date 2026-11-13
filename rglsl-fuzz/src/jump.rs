@@ -64,11 +64,18 @@ fn return_statement(
     structs: &Structs,
     builder: &mut Builder,
 ) -> Statement {
-    let specifier = &point.function.prototype.return_type.specifier;
-    if specifier.non_array == TypeSpecifierNonArray::Void && specifier.array.is_none() {
+    let specifier = &point
+        .function
+        .kind
+        .prototype
+        .node
+        .return_type
+        .node
+        .specifier;
+    if specifier.node.non_array == TypeSpecifierNonArray::Void && specifier.node.array.is_none() {
         return builder.jump(JumpStatement::Return(None));
     }
-    match canonical_constant(specifier, structs, builder) {
+    match canonical_constant(&specifier.node, structs, builder) {
         Some(value) => builder.jump(JumpStatement::Return(Some(value))),
         None => builder.block(Vec::new()),
     }

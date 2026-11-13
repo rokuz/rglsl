@@ -117,15 +117,16 @@ fn split_candidate<'s>(
     let [declarator] = list.declarators.as_slice() else {
         return None;
     };
-    if declarator.array.is_some() || list.ty.specifier.array.is_some() {
+    if declarator.kind.array.is_some() || list.ty.node.specifier.node.array.is_some() {
         return None;
     }
-    let ty = crate::basic::from_specifier(&list.ty.specifier)?;
+    let ty = crate::basic::from_specifier(&list.ty.node.specifier.node)?;
     if ty != INT && ty != UINT {
         return None;
     }
-    let counter = declarator.name.node.clone();
-    let Some(Initializer::Expression(initial)) = declarator.initializer.as_ref().map(|i| &i.node)
+    let counter = declarator.kind.name.node.clone();
+    let Some(Initializer::Expression(initial)) =
+        declarator.kind.initializer.as_ref().map(|i| &i.node)
     else {
         return None;
     };
@@ -239,8 +240,8 @@ fn renamed(statement: &Statement, info: &LoopSplitInfo, name: &str) -> Result<St
         if let StatementKind::Declaration(declaration) = &mut for_statement.init.kind {
             if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
                 for declarator in &mut list.declarators {
-                    if declarator.name.node == info.counter {
-                        name.clone_into(&mut declarator.name.node);
+                    if declarator.kind.name.node == info.counter {
+                        name.clone_into(&mut declarator.kind.name.node);
                     }
                 }
             }
@@ -276,7 +277,7 @@ fn split(
             if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
                 for declarator in &mut list.declarators {
                     let start = literal(&mut builder, middle, info.unsigned);
-                    declarator.initializer = Some(rglsl_ast::ast::Spanned::new(
+                    declarator.kind.initializer = Some(rglsl_ast::ast::Spanned::new(
                         rglsl_ast::Span::new(0, 0),
                         Initializer::Expression(start),
                     ));

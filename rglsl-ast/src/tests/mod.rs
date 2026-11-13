@@ -60,7 +60,7 @@ fn body_of(source: &str) -> Vec<Statement> {
     let parsed = unit(source);
     match parsed.external_declarations.last() {
         Some(ExternalDeclaration::FunctionDefinition(definition)) => {
-            definition.body.statements.clone()
+            definition.kind.body.node.statements.clone()
         }
         other => panic!("expected a function definition, found {other:?}"),
     }

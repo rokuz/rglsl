@@ -100,7 +100,7 @@ pub fn apply(
         });
         for external in &mut result.external_declarations {
             if let ExternalDeclaration::FunctionDefinition(definition) = external {
-                tidy(&mut definition.body.statements);
+                tidy(&mut definition.kind.body.node.statements);
             }
         }
     }

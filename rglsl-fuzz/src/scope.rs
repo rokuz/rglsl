@@ -61,15 +61,17 @@ pub fn find_points(unit: &TranslationUnit, analysis: &Analysis) -> Result<Vec<Po
         match declaration {
             ExternalDeclaration::FunctionDefinition(definition) => {
                 finder.scopes.push(Vec::new());
-                for parameter in &definition.prototype.parameters {
-                    if let Some(name) = &parameter.name {
+                for parameter in &definition.kind.prototype.node.parameters {
+                    if let Some(name) = &parameter.kind.name {
                         let variable = finder.declared(parameter.id, &name.node);
                         finder.add(variable);
                     }
                 }
                 let state = RefCell::new(finder);
-                run(|stack| Cx::new(&state, stack).statements(&definition.body.statements))
-                    .ok_or(Stalled)?;
+                run(|stack| {
+                    Cx::new(&state, stack).statements(&definition.kind.body.node.statements)
+                })
+                .ok_or(Stalled)?;
                 finder = state.into_inner();
                 finder.pop();
             }
@@ -85,11 +87,11 @@ pub fn function_names(unit: &TranslationUnit) -> BTreeSet<String> {
     for declaration in &unit.external_declarations {
         match declaration {
             ExternalDeclaration::FunctionDefinition(definition) => {
-                names.insert(definition.prototype.name.node.clone());
+                names.insert(definition.kind.prototype.node.name.node.clone());
             }
             ExternalDeclaration::Declaration(declaration) => {
                 if let DeclarationKind::FunctionPrototype(prototype) = &declaration.kind {
-                    names.insert(prototype.name.node.clone());
+                    names.insert(prototype.node.name.node.clone());
                 }
             }
             ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
@@ -180,6 +182,7 @@ pub fn output_parameters(analysis: &Analysis, call: NodeId, count: usize) -> Vec
 pub fn has_storage(qualifier: Option<&Spanned<TypeQualifier>>, storage: StorageQualifier) -> bool {
     qualifier.is_some_and(|qualifier| {
         qualifier
+            .node
             .qualifiers
             .iter()
             .any(|single| single.node == SingleTypeQualifier::Storage(storage))
@@ -246,16 +249,17 @@ impl Finder<'_> {
     fn declaration(&mut self, declaration: &Declaration) {
         match &declaration.kind {
             DeclarationKind::InitDeclaratorList(list) => {
-                let constant = has_storage(list.ty.qualifier.as_ref(), StorageQualifier::Const)
-                    || self.scopes.len() == 1;
+                let constant =
+                    has_storage(list.ty.node.qualifier.as_ref(), StorageQualifier::Const)
+                        || self.scopes.len() == 1;
                 for declarator in &list.declarators {
-                    if let Some(initializer) = &declarator.initializer {
+                    if let Some(initializer) = &declarator.kind.initializer {
                         let saved = self.constant_context;
                         self.constant_context = constant;
-                        self.initializer(initializer);
+                        self.initializer(&initializer.node);
                         self.constant_context = saved;
                     }
-                    let variable = self.declared(declarator.id, &declarator.name.node);
+                    let variable = self.declared(declarator.id, &declarator.kind.name.node);
                     self.add(variable);
                 }
             }
@@ -263,14 +267,14 @@ impl Finder<'_> {
                 structure,
                 instance,
             } => match instance {
-                Some(instance) => self.add(Variable::new(&instance.name.node, None)),
+                Some(instance) => self.add(Variable::new(&instance.node.name.node, None)),
                 None => {
                     for member in &structure.members {
-                        let ty = basic::from_specifier(&member.ty.specifier);
-                        for declarator in &member.declarators {
+                        let ty = basic::from_specifier(&member.node.ty.node.specifier.node);
+                        for declarator in &member.node.declarators {
                             self.add(Variable::new(
-                                &declarator.name.node,
-                                ty.filter(|_| declarator.array.is_none()),
+                                &declarator.node.name.node,
+                                ty.filter(|_| declarator.node.array.is_none()),
                             ));
                         }
                     }
@@ -289,8 +293,8 @@ impl Finder<'_> {
         match condition {
             Condition::Expression(expression) => self.expression(expression),
             Condition::Declaration(declaration) => {
-                self.initializer(&declaration.initializer);
-                let variable = self.declared(declaration.id, &declaration.name.node);
+                self.initializer(&declaration.kind.initializer.node);
+                let variable = self.declared(declaration.id, &declaration.kind.name.node);
                 self.add(variable);
             }
         }

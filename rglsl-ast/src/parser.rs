@@ -1023,8 +1023,8 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             return Ok(AfterQualifier::Type(qualifier));
         };
         if self.at_nth(1, "{") && word != "struct" {
-            let reference =
-                qualifier.has_layout("buffer_reference") || qualifier.has_layout("buffer_type");
+            let reference = qualifier.node.has_layout("buffer_reference")
+                || qualifier.node.has_layout("buffer_type");
             let kind = self.call(self.clone().parse_block(qualifier)).await?;
             if reference {
                 self.declare_struct(word);
@@ -1040,7 +1040,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 identifiers.push(self.identifier()?);
             }
             self.expect(";")?;
-            if qualifier.has_layout("buffer_reference") {
+            if qualifier.node.has_layout("buffer_reference") {
                 for identifier in &identifiers {
                     if let Some(name) = identifier.span.text(self.source) {
                         self.declare_struct(name);
@@ -1094,9 +1094,10 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut prototype = self
             .call(self.clone().parse_prototype(start, return_type, name))
             .await?;
-        prototype.attributes = attributes;
+        prototype.node.attributes = attributes;
         if self.at_attribute_list() {
-            prototype.trailing_attributes = self.call(self.clone().parse_attribute_list()).await?;
+            prototype.node.trailing_attributes =
+                self.call(self.clone().parse_attribute_list()).await?;
         }
         if self.eat(";") {
             return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));

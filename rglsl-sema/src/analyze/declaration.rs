@@ -116,14 +116,14 @@ impl Analyzer<'_> {
                 instruction,
                 prototype,
             } => {
-                self.spirv_requirements(&instruction.requirements);
-                let spirv = self.spirv_instruction(&instruction.qualifiers);
+                self.spirv_requirements(&instruction.node.requirements);
+                let spirv = self.spirv_instruction(&instruction.node.qualifiers);
                 self.function_prototype(declaration.id, prototype, false, Some(spirv));
             }
             DeclarationKind::SpirvExecutionMode(mode) => self.spirv_execution_mode(mode),
             DeclarationKind::InitDeclaratorList(list) => self.init_declarator_list(list),
             DeclarationKind::Precision { qualifier, ty } => {
-                if let Some(key) = precision_key(ty) {
+                if let Some(key) = precision_key(&ty.node) {
                     self.scopes.set_default_precision(key, qualifier.node);
                 }
             }
@@ -851,6 +851,7 @@ impl Analyzer<'_> {
     ) {
         let span = qualifier.and_then(|qualifier| {
             qualifier
+                .node
                 .qualifiers
                 .iter()
                 .find(|single| single.node == SingleTypeQualifier::NonUniform)
@@ -878,7 +879,7 @@ impl Analyzer<'_> {
     fn default_precision_of(&mut self, ty: &FullySpecifiedType, qualifiers: &mut Qualifiers) {
         if qualifiers.precision.is_none() {
             qualifiers.precision =
-                precision_key(&ty.specifier).map(|key| self.scopes.default_precision(&key));
+                precision_key(&ty.specifier.node).map(|key| self.scopes.default_precision(&key));
         }
     }
 
@@ -1019,12 +1020,12 @@ impl Analyzer<'_> {
         in_heap: bool,
         qualifiers: &mut Qualifiers,
     ) {
-        if let Some(qualifier) = &declaration.ty.node.qualifier {
+        if let Some(qualifier) = &declaration.node.ty.node.qualifier {
             self.heap_member_checks(qualifier.span, qualifiers, in_heap);
         }
         if qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_error(
-                declaration.ty.qualifier.as_ref(),
+                declaration.node.ty.node.qualifier.as_ref(),
                 "not allowed on block or structure members",
             );
             qualifiers.flags.remove(QualifierFlags::NONUNIFORM);
@@ -1046,11 +1047,11 @@ impl Analyzer<'_> {
             } else if qualifiers.storage != block.storage
                 || qualifiers.flags.contains(QualifierFlags::CONSTANT)
             {
-                for declarator in &declaration.declarators {
+                for declarator in &declaration.node.declarators {
                     self.error(
-                        declarator.name.span,
+                        declarator.node.name.span,
                         DiagnosticKind::InvalidStructMember {
-                            name: declarator.name.node.clone(),
+                            name: declarator.node.name.node.clone(),
                             reason: "the storage qualifier contradicts the block's",
                         },
                     );
@@ -1077,7 +1078,7 @@ impl Analyzer<'_> {
             in_heap,
             last,
         } = place;
-        let name = &declarator.name;
+        let name = &declarator.node.name;
         let ty = base.clone().with_dimensions(dimensions);
         let mut ty = ty;
         if in_block.is_some() {
@@ -1142,12 +1143,12 @@ impl Analyzer<'_> {
 
     fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
         let qualifiers = self.optional_qualifiers(&list.ty.node);
-        if let Some(qualifier) = list.ty.qualifier.as_ref() {
+        if let Some(qualifier) = list.ty.node.qualifier.as_ref() {
             self.primitive_culling(qualifier.span, &qualifiers, false);
             self.qcom_layout(qualifier.span, &qualifiers);
         }
         if qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
-            self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
+            self.non_uniform_storage_check(list.ty.node.qualifier.as_ref(), &qualifiers);
         }
         if qualifiers
             .flags
@@ -1170,22 +1171,22 @@ impl Analyzer<'_> {
                 },
             );
         }
-        let base = self.type_specifier(&list.ty.specifier);
+        let base = self.type_specifier(&list.ty.node.specifier);
         if list.declarators.is_empty() {
-            self.task_payload_type_only(list.ty.specifier.span, &qualifiers);
-            self.global_storage_checks(&qualifiers, &base, list.ty.specifier.span, true);
+            self.task_payload_type_only(list.ty.node.specifier.span, &qualifiers);
+            self.global_storage_checks(&qualifiers, &base, list.ty.node.specifier.span, true);
             return;
         }
-        if list.ty.specifier.node.parameters.is_some()
+        if list.ty.node.specifier.node.parameters.is_some()
             && !matches!(
-                list.ty.specifier.node.non_array,
+                list.ty.node.specifier.node.non_array,
                 TypeSpecifierNonArray::Parameterized(_)
             )
         {
             for declarator in &list.declarators {
                 self.error(
-                    declarator.name.span,
-                    DiagnosticKind::UnexpectedTypeParameters(declarator.name.node.clone()),
+                    declarator.kind.name.span,
+                    DiagnosticKind::UnexpectedTypeParameters(declarator.kind.name.node.clone()),
                 );
             }
         }
@@ -1494,8 +1495,8 @@ impl Analyzer<'_> {
         qualifiers: &Qualifiers,
         base: &Type,
     ) {
-        let name = &declarator.name;
-        let dimensions = self.array_sizes(declarator.array.as_ref());
+        let name = &declarator.kind.name;
+        let dimensions = self.array_sizes(declarator.kind.array.as_ref());
         let ty = base.clone().with_dimensions(&dimensions);
         let mut ty = ty;
         let is_global = self.scopes.is_global();
@@ -1506,13 +1507,14 @@ impl Analyzer<'_> {
             ty = Type::ERROR;
             broken = true;
         }
-        let initializer = declarator.initializer.as_ref().map(|initializer| {
+        let initializer = declarator.kind.initializer.as_ref().map(|initializer| {
             (
                 name.span,
                 self.declaration_initializer(name.span, initializer, &ty),
             )
         });
         let null_initializer = declarator
+            .kind
             .initializer
             .as_ref()
             .is_some_and(|initializer| is_null_initializer(&initializer.node));
@@ -1689,6 +1691,7 @@ impl Analyzer<'_> {
             } else if !operand.ty.is_error() && self.readable(span, &operand) {
                 let converted = self.initialize(span, &mut ty, &operand);
                 if let Some(Initializer::Expression(expression)) = declarator
+                    .kind
                     .initializer
                     .as_ref()
                     .map(|initializer| &initializer.node)
@@ -1881,7 +1884,7 @@ impl Analyzer<'_> {
         if matches!(ty.kind, TypeKind::CooperativeVector { .. }) {
             self.vulkan_memory_model = true;
         }
-        let name = &declarator.name;
+        let name = &declarator.kind.name;
         if let Some(builtin) = self.redeclared_builtin(&name.node) {
             self.builtin_array_limit_check(name.span, &name.node, &ty);
             self.declarations.insert(declarator.id, builtin);
@@ -2189,7 +2192,7 @@ impl Analyzer<'_> {
         let declarators = structure
             .members
             .iter()
-            .flat_map(|declaration| &declaration.declarators);
+            .flat_map(|declaration| &declaration.node.declarators);
         for (declarator, member) in declarators.zip(&members) {
             if self
                 .types
@@ -2199,7 +2202,7 @@ impl Analyzer<'_> {
                 .is_some()
             {
                 self.error(
-                    declarator.name.span,
+                    declarator.node.name.span,
                     DiagnosticKind::InvalidBlock {
                         name: member.name.clone(),
                         reason: "member of block cannot be or contain a cooperative vector type",
@@ -2211,7 +2214,7 @@ impl Analyzer<'_> {
                 .contains_scalar_where(&self.types, Scalar::is_sub_byte)
             {
                 self.error(
-                    declarator.name.span,
+                    declarator.node.name.span,
                     DiagnosticKind::InvalidBlock {
                         name: member.name.clone(),
                         reason: "member of block cannot be or contain a sub-byte type",
@@ -2220,7 +2223,7 @@ impl Analyzer<'_> {
             }
             if member.ty.contains_tensor_nv(&self.types) {
                 self.error(
-                    declarator.name.span,
+                    declarator.node.name.span,
                     DiagnosticKind::InvalidBlock {
                         name: member.name.clone(),
                         reason: "member of block cannot be or contain a tensor layout or tensor view type",
@@ -2231,8 +2234,8 @@ impl Analyzer<'_> {
         let spans: Vec<Span> = structure
             .members
             .iter()
-            .flat_map(|declaration| &declaration.declarators)
-            .map(|declarator| declarator.name.span)
+            .flat_map(|declaration| &declaration.node.declarators)
+            .map(|declarator| declarator.node.name.span)
             .collect();
         self.xfb_block_check(
             structure.name.span,
@@ -2240,15 +2243,15 @@ impl Analyzer<'_> {
             spans.into_iter().zip(&members),
         );
         let dimensions = instance
-            .map(|instance| self.array_sizes(instance.array.as_ref()))
+            .map(|instance| self.array_sizes(instance.node.array.as_ref()))
             .unwrap_or_default();
         if structure.name.node.starts_with("gl_") {
             let declarators = structure
                 .members
                 .iter()
-                .flat_map(|declaration| &declaration.declarators);
+                .flat_map(|declaration| &declaration.node.declarators);
             for (declarator, member) in declarators.zip(&members) {
-                self.builtin_array_limit_check(declarator.name.span, &member.name, &member.ty);
+                self.builtin_array_limit_check(declarator.node.name.span, &member.name, &member.ty);
             }
         }
         if self.redeclare_mesh_block(
@@ -2267,7 +2270,7 @@ impl Analyzer<'_> {
                 name: structure.name.node.clone(),
                 reason,
             };
-            let given = instance.map_or("", |instance| instance.name.node.as_str());
+            let given = instance.map_or("", |instance| instance.node.name.node.as_str());
             if qualifiers.has_layout("passthrough") {
                 return;
             }
@@ -2319,12 +2322,12 @@ impl Analyzer<'_> {
             );
         }
         for declaration in &structure.members {
-            for declarator in &declaration.declarators {
-                self.reserved_check(&declarator.name);
+            for declarator in &declaration.node.declarators {
+                self.reserved_check(&declarator.node.name);
             }
         }
         if let Some(instance) = instance {
-            self.reserved_check(&instance.name);
+            self.reserved_check(&instance.node.name);
         } else if storage == BlockStorage::In && !qualifiers.has_layout("passthrough") {
             let name = block_name.node.clone();
             self.stage_check(block_name.span, |stage| {
@@ -2400,7 +2403,7 @@ impl Analyzer<'_> {
         self.heap_declaration_check(structure.name.span, &ty, &qualifiers, instance.is_none());
         match instance {
             Some(instance) => {
-                let name = &instance.name;
+                let name = &instance.node.name;
                 let located = Spanned::new(structure.name.span, name.node.clone());
                 self.interface_array(&located, &qualifiers, &mut ty);
                 self.mesh_interface_array(&located, &qualifiers, &mut ty);
@@ -2465,7 +2468,7 @@ impl Analyzer<'_> {
         if !self.stage_is(ShaderStage::Mesh) {
             return false;
         }
-        let given = instance.map_or("", |instance| instance.name.node.as_str());
+        let given = instance.map_or("", |instance| instance.node.name.node.as_str());
         let found = self.symbols.iter().enumerate().find_map(|(index, symbol)| {
             let variable = symbol.variable()?;
             let TypeKind::Block(id) = variable.ty.kind else {
@@ -2505,7 +2508,7 @@ impl Analyzer<'_> {
         if let (Some(mut ty), Some(instance)) = (sized, instance) {
             let mut qualifiers = qualifiers.clone();
             qualifiers.storage = Storage::Out;
-            let located = Spanned::new(structure.name.span, instance.name.node.clone());
+            let located = Spanned::new(structure.name.span, instance.node.name.node.clone());
             self.mesh_interface_array(&located, &qualifiers, &mut ty);
             if let Some(SymbolKind::Variable(variable)) =
                 self.symbol_mut(variable).map(|symbol| &mut symbol.kind)
@@ -2636,12 +2639,12 @@ impl Analyzer<'_> {
     }
 
     fn parameter(&mut self, parameter: &Node<ParameterDeclaration>) -> Option<Parameter> {
-        let qualifiers = self.optional_qualifiers(&parameter.ty.node);
-        let base = self.type_specifier(&parameter.ty.specifier);
-        let dimensions = self.array_sizes(parameter.array.as_ref());
+        let qualifiers = self.optional_qualifiers(&parameter.kind.ty.node);
+        let base = self.type_specifier(&parameter.kind.ty.node.specifier);
+        let dimensions = self.array_sizes(parameter.kind.array.as_ref());
         let ty = base.with_dimensions(&dimensions);
-        let name = parameter.name.as_ref().map(|name| name.node.clone());
-        if ty.is_void() && name.is_none() && parameter.ty.qualifier.is_none() {
+        let name = parameter.kind.name.as_ref().map(|name| name.node.clone());
+        if ty.is_void() && name.is_none() && parameter.kind.ty.node.qualifier.is_none() {
             return None;
         }
         let direction = match qualifiers.storage {
@@ -2649,7 +2652,7 @@ impl Analyzer<'_> {
             Storage::Inout => Direction::Inout,
             _ => Direction::In,
         };
-        if let Some(identifier) = &parameter.name {
+        if let Some(identifier) = &parameter.kind.name {
             self.reserved_check(identifier);
         }
         let shown = name.clone().unwrap_or_default();
@@ -2714,8 +2717,8 @@ impl Analyzer<'_> {
         definition: bool,
         spirv_instruction: Option<crate::spirv::SpirvInstruction>,
     ) -> Option<FunctionId> {
-        let name = &prototype.name;
-        let return_qualifiers = self.optional_qualifiers(&prototype.return_type.node);
+        let name = &prototype.node.name;
+        let return_qualifiers = self.optional_qualifiers(&prototype.node.return_type.node);
         if return_qualifiers.flags.contains(QualifierFlags::CONSTANT)
             || return_qualifiers.storage != Storage::None
         {
@@ -2729,27 +2732,28 @@ impl Analyzer<'_> {
         }
         if return_qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_storage_check(
-                prototype.return_type.qualifier.as_ref(),
+                prototype.node.return_type.node.qualifier.as_ref(),
                 &return_qualifiers,
             );
         }
-        let return_type = self.type_specifier(&prototype.return_type.specifier);
+        let return_type = self.type_specifier(&prototype.node.return_type.node.specifier);
         let close = Span::new(prototype.span.end.saturating_sub(1), prototype.span.end);
-        let control = self.function_attributes(prototype, close);
+        let control = self.function_attributes(&prototype.node, close);
         if return_type.dimensions().contains(&ArraySize::Unsized) {
             self.error(
-                prototype.return_type.span,
+                prototype.node.return_type.span,
                 DiagnosticKind::UnsizedArrayNotAllowed,
             );
         }
         let tensor = matches!(return_type.kind, TypeKind::Tensor { .. });
         if return_type.contains_opaque(&self.types) && !tensor {
             self.error(
-                prototype.return_type.span,
+                prototype.node.return_type.span,
                 DiagnosticKind::OpaqueNotAllowed(self.show(&return_type)),
             );
         }
         let parameters: Vec<Parameter> = prototype
+            .node
             .parameters
             .iter()
             .filter_map(|parameter| self.parameter(parameter))
@@ -2940,9 +2944,9 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn function_definition(&mut self, definition: &Node<FunctionDefinition>) {
-        let prototype = &definition.prototype;
+        let prototype = &definition.kind.prototype;
         let id = self.function_prototype(definition.id, prototype, true, None);
-        if prototype.name.node == "main" {
+        if prototype.node.name.node == "main" {
             self.main_defined = true;
             self.main = self.main.or(id);
         }
@@ -2950,9 +2954,10 @@ impl Analyzer<'_> {
             return;
         };
         let named: Vec<(&Node<ParameterDeclaration>, &Identifier)> = prototype
+            .node
             .parameters
             .iter()
-            .filter_map(|parameter| parameter.name.as_ref().map(|name| (parameter, name)))
+            .filter_map(|parameter| parameter.kind.name.as_ref().map(|name| (parameter, name)))
             .collect();
         self.scopes.push();
         for (parameter, name) in named {
@@ -2985,7 +2990,7 @@ impl Analyzer<'_> {
         });
         let outer_loops = core::mem::take(&mut self.loop_depth);
         let outer_switches = core::mem::take(&mut self.switches);
-        for statement in &definition.body.statements {
+        for statement in &definition.kind.body.node.statements {
             self.statement(statement);
         }
         let context = core::mem::replace(&mut self.function, outer_function);
@@ -3034,22 +3039,22 @@ pub const fn is_null_initializer(initializer: &Initializer) -> bool {
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn qualifiers(self, qualifier: &'b Spanned<TypeQualifier>) -> Qualifiers {
         let mut result = Qualifiers::default();
-        for single in &qualifier.qualifiers {
+        for single in &qualifier.node.qualifiers {
             match &single.node {
                 SingleTypeQualifier::Layout(layout) => {
                     for id in &layout.ids {
-                        let value = match &id.value {
+                        let value = match &id.node.value {
                             Some(expression) => {
                                 let operand = self.call(self.clone().expression(expression)).await;
                                 self.with(|analyzer| {
-                                    analyzer.layout_value(&id.name.node, expression, &operand)
+                                    analyzer.layout_value(&id.node.name.node, expression, &operand)
                                 })
                                 .map_or(LayoutValue::Invalid, LayoutValue::Constant)
                             }
                             None => LayoutValue::Flag,
                         };
                         result.layout.push(LayoutEntry {
-                            name: id.name.node.clone(),
+                            name: id.node.name.node.clone(),
                             value,
                             span: id.span,
                         });
@@ -3084,8 +3089,8 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let Some(specifier) = specifier else {
             return Vec::new();
         };
-        let mut sizes = Vec::with_capacity(specifier.dimensions.len());
-        for dimension in &specifier.dimensions {
+        let mut sizes = Vec::with_capacity(specifier.node.dimensions.len());
+        for dimension in &specifier.node.dimensions {
             sizes.push(match &dimension.node {
                 ArrayDimension::Unsized => ArraySize::Unsized,
                 ArrayDimension::Sized(expression) => {
@@ -3156,7 +3161,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 last: position + 1 == count,
             };
             if let TypeSpecifierNonArray::InlineBlock(ref inner) =
-                declaration.ty.specifier.node.non_array
+                declaration.node.ty.node.specifier.node.non_array
             {
                 members = self
                     .call(
@@ -3181,11 +3186,11 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         mut members: Vec<Member>,
     ) -> Vec<Member> {
         let qualifiers = self
-            .call(self.clone().optional_qualifiers(&declaration.ty.node))
+            .call(self.clone().optional_qualifiers(&declaration.node.ty.node))
             .await;
         let base = self
             .call(self.clone().inline_reference(
-                declaration.ty.span,
+                declaration.node.ty.span,
                 qualifiers,
                 inner,
                 placement.in_heap,
@@ -3195,13 +3200,13 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         if let Some(block) = &placement.in_block {
             member_qualifiers.storage = block.storage;
         }
-        for declarator in &declaration.declarators {
+        for declarator in &declaration.node.declarators {
             let dimensions = self
-                .call(self.clone().array_sizes(declarator.array.as_ref()))
+                .call(self.clone().array_sizes(declarator.node.array.as_ref()))
                 .await;
             let ty = base.clone().with_dimensions(&dimensions);
             members.push(Member {
-                name: declarator.name.node.clone(),
+                name: declarator.node.name.node.clone(),
                 ty,
                 qualifiers: member_qualifiers.clone(),
             });
@@ -3216,29 +3221,32 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         mut members: Vec<Member>,
     ) -> Vec<Member> {
         let mut qualifiers = self
-            .call(self.clone().optional_qualifiers(&declaration.ty.node))
+            .call(self.clone().optional_qualifiers(&declaration.node.ty.node))
             .await;
         self.with(|analyzer| {
             analyzer.member_qualifier_checks(declaration, placement.in_heap, &mut qualifiers);
             if matches!(
-                declaration.ty.specifier.non_array,
+                declaration.node.ty.node.specifier.node.non_array,
                 TypeSpecifierNonArray::Struct(_)
             ) {
                 analyzer.error(
-                    declaration.ty.specifier.span,
+                    declaration.node.ty.node.specifier.span,
                     DiagnosticKind::NestedStructDefinition,
                 );
             }
         });
         let base = self
-            .call(self.clone().type_specifier(&declaration.ty.specifier))
+            .call(
+                self.clone()
+                    .type_specifier(&declaration.node.ty.node.specifier),
+            )
             .await;
         let qualifiers = self.with(|analyzer| {
             analyzer.member_storage(declaration, qualifiers, placement.in_block.as_ref())
         });
-        for declarator in &declaration.declarators {
+        for declarator in &declaration.node.declarators {
             let dimensions = self
-                .call(self.clone().array_sizes(declarator.array.as_ref()))
+                .call(self.clone().array_sizes(declarator.node.array.as_ref()))
                 .await;
             self.with(|analyzer| {
                 analyzer.typed_member(

@@ -18,7 +18,9 @@ fn first_string(source: &str) -> String {
         panic!("expected a function definition in {source}");
     };
     let Some(StatementKind::Expression(Some(expression))) = definition
+        .kind
         .body
+        .node
         .statements
         .first()
         .map(|statement| &statement.kind)

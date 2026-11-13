@@ -66,19 +66,20 @@ fn spans_point_at_the_source_text() {
         panic!("{first:?}");
     };
     assert_eq!(text(list.ty.span), "uniform  float[2]");
-    assert_eq!(text(list.ty.specifier.span), "float[2]");
+    assert_eq!(text(list.ty.node.specifier.span), "float[2]");
     let qualifier_spans: Vec<&str> = list
         .ty
+        .node
         .qualifier
         .iter()
-        .flat_map(|qualifier| qualifier.qualifiers.iter())
+        .flat_map(|qualifier| qualifier.node.qualifiers.iter())
         .map(|single| text(single.span))
         .collect();
     assert_eq!(qualifier_spans, ["uniform"]);
     let declarator_spans: Vec<(&str, &str)> = list
         .declarators
         .iter()
-        .map(|declarator| (text(declarator.span), text(declarator.name.span)))
+        .map(|declarator| (text(declarator.span), text(declarator.kind.name.span)))
         .collect();
     assert_eq!(declarator_spans, [("scale [3] = X", "scale")]);
     let body = body_of(source);

@@ -25,9 +25,9 @@ use crate::{
 
 fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
     let mut names = Vec::new();
-    for single in qualifier.iter().flat_map(|q| &q.qualifiers) {
+    for single in qualifier.iter().flat_map(|q| &q.node.qualifiers) {
         if let SingleTypeQualifier::Layout(ref layout) = single.node {
-            names.extend(layout.ids.iter().map(|id| id.name.node.as_str()));
+            names.extend(layout.ids.iter().map(|id| id.node.name.node.as_str()));
         }
     }
     names
@@ -49,14 +49,14 @@ fn has_qualifier(
 ) -> bool {
     qualifier
         .iter()
-        .flat_map(|q| &q.qualifiers)
+        .flat_map(|q| &q.node.qualifiers)
         .any(|single| test(&single.node))
 }
 
 fn storage_of(qualifier: Option<&Spanned<TypeQualifier>>) -> Option<StorageQualifier> {
     qualifier
         .iter()
-        .flat_map(|q| &q.qualifiers)
+        .flat_map(|q| &q.node.qualifiers)
         .find_map(|single| match single.node {
             SingleTypeQualifier::Storage(
                 storage @ (StorageQualifier::In
@@ -556,13 +556,15 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn global_declaration(&mut self, declaration: &'a Declaration) -> Result<()> {
         let qualifiers: Vec<&Spanned<TypeQualifier>> = match declaration.kind {
-            DeclarationKind::InitDeclaratorList(ref list) => list.ty.qualifier.iter().collect(),
+            DeclarationKind::InitDeclaratorList(ref list) => {
+                list.ty.node.qualifier.iter().collect()
+            }
             DeclarationKind::Block { ref structure, .. } => core::iter::once(&structure.qualifier)
                 .chain(
                     structure
                         .members
                         .iter()
-                        .filter_map(|member| member.ty.qualifier.as_ref()),
+                        .filter_map(|member| member.node.ty.node.qualifier.as_ref()),
                 )
                 .collect(),
             DeclarationKind::Qualifier(ref qualifier)
@@ -727,7 +729,7 @@ impl<'a> Lowerer<'a> {
         if variable.origin == Origin::BuiltIn {
             return self.builtin_redeclaration(symbol, list, declarator, at);
         }
-        let name = declarator.name.node.clone();
+        let name = declarator.kind.name.node.clone();
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
         if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
@@ -756,7 +758,7 @@ impl<'a> Lowerer<'a> {
                 return Ok(());
             }
             if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION) {
-                if let Some(initializer) = declarator.initializer.as_ref() {
+                if let Some(initializer) = declarator.kind.initializer.as_ref() {
                     let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
                     self.globals.insert(symbol, GlobalRef::Override(handle));
                     return Ok(());
@@ -780,7 +782,7 @@ impl<'a> Lowerer<'a> {
         match qualifiers.storage {
             Storage::In | Storage::Out => self.interface_variable(symbol, name, at),
             Storage::Uniform if self.is_heap_view(qualifiers) => {
-                self.heap_resource(symbol, name, list.ty.qualifier.as_ref(), at)
+                self.heap_resource(symbol, name, list.ty.node.qualifier.as_ref(), at)
             }
             Storage::Uniform => self.resource(symbol, name, at),
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
@@ -788,6 +790,7 @@ impl<'a> Lowerer<'a> {
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
                 let init = declarator
+                    .kind
                     .initializer
                     .as_ref()
                     .filter(|initializer| {
@@ -906,7 +909,7 @@ impl<'a> Lowerer<'a> {
         };
         let mut init = None;
         let mut runtime = None;
-        if let Some(ref initializer) = declarator.initializer {
+        if let Some(ref initializer) = declarator.kind.initializer {
             if rglsl_sema::analyze::is_null_initializer(&initializer.node) {
                 init = Some(
                     self.module
@@ -1377,12 +1380,12 @@ impl<'a> Lowerer<'a> {
         let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
         let qualifiers = &block.qualifiers;
         let instance_name =
-            instance.map_or_else(String::new, |instance| instance.name.node.clone());
+            instance.map_or_else(String::new, |instance| instance.node.name.node.clone());
         let buffer = match block.storage {
             BlockStorage::Uniform => false,
             BlockStorage::Buffer => true,
             BlockStorage::In | BlockStorage::Out => {
-                let name = instance.map(|instance| instance.name.node.clone());
+                let name = instance.map(|instance| instance.node.name.node.clone());
                 return self.interface_block(symbol, id, name, at);
             }
             BlockStorage::ResourceHeap | BlockStorage::SamplerHeap => {
@@ -1937,7 +1940,7 @@ impl<'a> Lowerer<'a> {
     ) -> Option<u32> {
         array
             .iter()
-            .flat_map(|array| &array.dimensions)
+            .flat_map(|array| &array.node.dimensions)
             .find_map(|dimension| match dimension.node {
                 rglsl_ast::ast::ArrayDimension::Sized(ref size) => self
                     .analysis
@@ -1961,7 +1964,7 @@ impl<'a> Lowerer<'a> {
             .ok_or_else(|| internal(Span::UNDEFINED))?;
         let mut declared = Vec::new();
         for member in &structure.members {
-            let qualifier = member.ty.qualifier.as_ref();
+            let qualifier = member.node.ty.node.qualifier.as_ref();
             let offset = xfb::ast_layout_value(self, qualifier, "xfb_offset");
             let stride = xfb::ast_layout_value(self, qualifier, "xfb_stride");
             if xfb::ast_layout_value(self, qualifier, "xfb_buffer")
@@ -1972,14 +1975,14 @@ impl<'a> Lowerer<'a> {
                     at,
                 ));
             }
-            for declarator in &member.declarators {
-                let name = declarator.name.node.clone();
+            for declarator in &member.node.declarators {
+                let name = declarator.node.name.node.clone();
                 let Some((_, builtin)) = block.member(&name) else {
                     continue;
                 };
                 let mut glsl = builtin.ty.clone();
                 if glsl.outer_size() == Some(GlslArraySize::Unsized) {
-                    if let Some(size) = self.declarator_size(declarator.array.as_ref()) {
+                    if let Some(size) = self.declarator_size(declarator.node.array.as_ref()) {
                         glsl.set_outer_size(GlslArraySize::Sized(size));
                     }
                 }
@@ -2169,11 +2172,11 @@ impl<'a> Lowerer<'a> {
             .symbol(symbol)
             .map(|symbol| symbol.name.clone())
             .ok_or_else(|| internal(at))?;
-        let size = self.declarator_size(declarator.array.as_ref());
+        let size = self.declarator_size(declarator.kind.array.as_ref());
         if let Some(size) = size {
             self.builtin_sizes.insert(name.clone(), size);
         }
-        let qualifier = list.ty.qualifier.as_ref();
+        let qualifier = list.ty.node.qualifier.as_ref();
         if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
             self.invariant.push((name.clone(), at));
         }

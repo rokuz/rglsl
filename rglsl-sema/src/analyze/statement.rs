@@ -105,28 +105,31 @@ impl Analyzer<'_> {
                 self.boolean_condition(expression.span, expression);
             }
             Condition::Declaration(declaration) => {
-                let qualifiers = match &declaration.ty.qualifier {
+                let qualifiers = match &declaration.kind.ty.node.qualifier {
                     Some(qualifier) => self.qualifiers(qualifier),
                     None => Qualifiers::default(),
                 };
-                let ty = self.type_specifier(&declaration.ty.specifier);
-                let operand =
-                    self.initializer(declaration.name.span, &declaration.initializer, &ty);
+                let ty = self.type_specifier(&declaration.kind.ty.node.specifier);
+                let operand = self.initializer(
+                    declaration.kind.name.span,
+                    &declaration.kind.initializer,
+                    &ty,
+                );
                 if !ty.is_error() && !ty.is_bool() {
                     self.error(
-                        declaration.name.span,
+                        declaration.kind.name.span,
                         DiagnosticKind::ConditionNotBool(self.show(&ty)),
                     );
                 } else if !operand.ty.is_error() && !self.converts(&operand.ty, &ty) {
                     self.error(
-                        declaration.name.span,
+                        declaration.kind.name.span,
                         DiagnosticKind::CannotConvert {
                             from: self.show(&operand.ty),
                             to: self.show(&ty),
                         },
                     );
                 }
-                let name = &declaration.name;
+                let name = &declaration.kind.name;
                 let id =
                     self.add_variable(&name.node, name.span, ty, qualifiers, Origin::Local, None);
                 self.declarations.insert(declaration.id, id);
@@ -267,7 +270,7 @@ fn generates_code(statement: &Statement) -> bool {
             DeclarationKind::InitDeclaratorList(list) => list
                 .declarators
                 .iter()
-                .any(|declarator| declarator.initializer.is_some()),
+                .any(|declarator| declarator.kind.initializer.is_some()),
             _ => false,
         },
         _ => true,

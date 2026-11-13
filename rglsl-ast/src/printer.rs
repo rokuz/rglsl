@@ -195,16 +195,20 @@ impl<'b> Cx<'b> {
 
     async fn external_declaration(self, external: &'b ExternalDeclaration) {
         match external {
-            ExternalDeclaration::Directive(directive) => self.write(&directive.raw),
+            ExternalDeclaration::Directive(directive) => self.write(&directive.node.raw),
             ExternalDeclaration::Semicolon(_) => self.write(";"),
             ExternalDeclaration::Declaration(declaration) => {
                 self.call(self.clone().declaration(declaration)).await
             }
             ExternalDeclaration::FunctionDefinition(definition) => {
-                self.call(self.clone().function_prototype(&definition.prototype))
-                    .await;
+                self.call(
+                    self.clone()
+                        .function_prototype(&definition.kind.prototype.node),
+                )
+                .await;
                 self.write(" ");
-                self.call(self.clone().compound(&definition.body)).await;
+                self.call(self.clone().compound(&definition.kind.body.node))
+                    .await;
             }
         }
     }
@@ -212,50 +216,52 @@ impl<'b> Cx<'b> {
     async fn declaration(self, declaration: &'b Declaration) {
         match &declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
-                self.call(self.clone().function_prototype(prototype)).await
+                self.call(self.clone().function_prototype(&prototype.node))
+                    .await
             }
             DeclarationKind::InitDeclaratorList(list) => {
                 self.call(self.clone().init_declarator_list(list)).await
             }
             DeclarationKind::Precision { qualifier, ty } => {
                 self.write("precision ");
-                self.write(qualifier.keyword());
+                self.write(qualifier.node.keyword());
                 self.write(" ");
-                self.call(self.clone().type_specifier(ty)).await;
+                self.call(self.clone().type_specifier(&ty.node)).await;
             }
             DeclarationKind::Block {
                 structure,
                 instance,
             } => {
-                self.call(self.clone().type_qualifier(&structure.qualifier))
+                self.call(self.clone().type_qualifier(&structure.qualifier.node))
                     .await;
                 self.write(" ");
-                self.write(&structure.name);
+                self.write(&structure.name.node);
                 self.write(" ");
                 self.call(self.clone().struct_declaration_list(&structure.members))
                     .await;
                 if let Some(instance) = instance {
                     self.write(" ");
-                    self.write(&instance.name);
-                    self.call(
-                        self.clone()
-                            .optional_array_specifier(instance.array.as_deref()),
-                    )
+                    self.write(&instance.node.name.node);
+                    self.call(self.clone().optional_array_specifier(
+                        instance.node.array.as_ref().map(|inner| &inner.node),
+                    ))
                     .await;
                 }
             }
             DeclarationKind::Qualifier(qualifier) => {
-                self.call(self.clone().type_qualifier(qualifier)).await
+                self.call(self.clone().type_qualifier(&qualifier.node))
+                    .await
             }
             DeclarationKind::QualifiedIdentifiers {
                 qualifier,
                 identifiers,
             } => {
-                self.call(self.clone().type_qualifier(qualifier)).await;
+                self.call(self.clone().type_qualifier(&qualifier.node))
+                    .await;
                 self.write(" ");
                 for (index, identifier) in identifiers.iter().enumerate() {
                     self.comma(index);
-                    self.write(identifier);
+                    self.write(&identifier.node);
                 }
             }
             DeclarationKind::SpirvInstruction {
@@ -263,29 +269,33 @@ impl<'b> Cx<'b> {
                 prototype,
             } => {
                 self.write("spirv_instruction(");
-                self.call(self.clone().spirv_requirements(&instruction.requirements))
-                    .await;
-                if !instruction.requirements.is_empty() {
+                self.call(
+                    self.clone()
+                        .spirv_requirements(&instruction.node.requirements),
+                )
+                .await;
+                if !instruction.node.requirements.is_empty() {
                     self.write(", ");
                 }
                 self.call(
                     self.clone()
-                        .spirv_instruction_qualifiers(&instruction.qualifiers),
+                        .spirv_instruction_qualifiers(&instruction.node.qualifiers),
                 )
                 .await;
                 self.write(") ");
-                self.call(self.clone().function_prototype(prototype)).await;
+                self.call(self.clone().function_prototype(&prototype.node))
+                    .await;
             }
             DeclarationKind::SpirvExecutionMode(mode) => {
-                self.write(mode.kind.keyword());
+                self.write(mode.node.kind.keyword());
                 self.write("(");
-                self.call(self.clone().spirv_requirements(&mode.requirements))
+                self.call(self.clone().spirv_requirements(&mode.node.requirements))
                     .await;
-                if !mode.requirements.is_empty() {
+                if !mode.node.requirements.is_empty() {
                     self.write(", ");
                 }
-                self.call(self.clone().expression(&mode.mode)).await;
-                for operand in &mode.operands {
+                self.call(self.clone().expression(&mode.node.mode)).await;
+                for operand in &mode.node.operands {
                     self.write(", ");
                     self.call(self.clone().expression(operand)).await;
                 }
@@ -298,9 +308,9 @@ impl<'b> Cx<'b> {
     async fn spirv_requirements(self, requirements: &'b [Spanned<SpirvRequirement>]) {
         for (index, requirement) in requirements.iter().enumerate() {
             self.comma(index);
-            self.write(&requirement.name);
+            self.write(&requirement.node.name.node);
             self.write(" = [");
-            for (index, value) in requirement.values.iter().enumerate() {
+            for (index, value) in requirement.node.values.iter().enumerate() {
                 self.comma(index);
                 self.call(self.clone().expression(value)).await;
             }
@@ -314,9 +324,10 @@ impl<'b> Cx<'b> {
     ) {
         for (index, qualifier) in qualifiers.iter().enumerate() {
             self.comma(index);
-            self.write(&qualifier.name);
+            self.write(&qualifier.node.name.node);
             self.write(" = ");
-            self.call(self.clone().expression(&qualifier.value)).await;
+            self.call(self.clone().expression(&qualifier.node.value))
+                .await;
         }
     }
 
@@ -355,7 +366,9 @@ impl<'b> Cx<'b> {
                 SpirvTypeParameter::Constant(value) => {
                     self.call(self.clone().expression(value)).await
                 }
-                SpirvTypeParameter::Type(ty) => self.call(self.clone().type_specifier(ty)).await,
+                SpirvTypeParameter::Type(ty) => {
+                    self.call(self.clone().type_specifier(&ty.node)).await
+                }
             }
         }
         self.write(")");
@@ -383,22 +396,26 @@ impl<'b> Cx<'b> {
                 .await;
             self.write(" ");
         }
-        self.call(self.clone().fully_specified_type(&prototype.return_type))
-            .await;
+        self.call(
+            self.clone()
+                .fully_specified_type(&prototype.return_type.node),
+        )
+        .await;
         self.write(" ");
-        self.write(&prototype.name);
+        self.write(&prototype.name.node);
         self.write("(");
         for (index, parameter) in prototype.parameters.iter().enumerate() {
             self.comma(index);
-            self.call(self.clone().fully_specified_type(&parameter.ty))
+            self.call(self.clone().fully_specified_type(&parameter.kind.ty.node))
                 .await;
-            if let Some(name) = &parameter.name {
+            if let Some(name) = &parameter.kind.name {
                 self.write(" ");
-                self.write(name);
+                self.write(&name.node);
             }
             self.call(
-                self.clone()
-                    .optional_array_specifier(parameter.array.as_deref()),
+                self.clone().optional_array_specifier(
+                    parameter.kind.array.as_ref().map(|inner| &inner.node),
+                ),
             )
             .await;
         }
@@ -411,21 +428,23 @@ impl<'b> Cx<'b> {
     }
 
     async fn init_declarator_list(self, list: &'b InitDeclaratorList) {
-        self.call(self.clone().fully_specified_type(&list.ty)).await;
+        self.call(self.clone().fully_specified_type(&list.ty.node))
+            .await;
         if !list.declarators.is_empty() {
             self.write(" ");
         }
         for (index, declarator) in list.declarators.iter().enumerate() {
             self.comma(index);
-            self.write(&declarator.name);
+            self.write(&declarator.kind.name.node);
             self.call(
-                self.clone()
-                    .optional_array_specifier(declarator.array.as_deref()),
+                self.clone().optional_array_specifier(
+                    declarator.kind.array.as_ref().map(|inner| &inner.node),
+                ),
             )
             .await;
-            if let Some(initializer) = &declarator.initializer {
+            if let Some(initializer) = &declarator.kind.initializer {
                 self.write(" = ");
-                self.call(self.clone().initializer(initializer)).await;
+                self.call(self.clone().initializer(&initializer.node)).await;
             }
         }
     }
@@ -439,7 +458,7 @@ impl<'b> Cx<'b> {
                 self.write("{");
                 for (index, element) in elements.iter().enumerate() {
                     self.comma(index);
-                    self.call(self.clone().initializer(element)).await;
+                    self.call(self.clone().initializer(&element.node)).await;
                 }
                 self.write("}");
             }
@@ -452,16 +471,15 @@ impl<'b> Cx<'b> {
         self.deeper();
         for declaration in declarations {
             self.indent();
-            self.call(self.clone().fully_specified_type(&declaration.ty))
+            self.call(self.clone().fully_specified_type(&declaration.node.ty.node))
                 .await;
             self.write(" ");
-            for (index, declarator) in declaration.declarators.iter().enumerate() {
+            for (index, declarator) in declaration.node.declarators.iter().enumerate() {
                 self.comma(index);
-                self.write(&declarator.name);
-                self.call(
-                    self.clone()
-                        .optional_array_specifier(declarator.array.as_deref()),
-                )
+                self.write(&declarator.node.name.node);
+                self.call(self.clone().optional_array_specifier(
+                    declarator.node.array.as_ref().map(|inner| &inner.node),
+                ))
                 .await;
             }
             self.write(";");
@@ -474,10 +492,12 @@ impl<'b> Cx<'b> {
 
     async fn fully_specified_type(self, ty: &'b FullySpecifiedType) {
         if let Some(qualifier) = &ty.qualifier {
-            self.call(self.clone().type_qualifier(qualifier)).await;
+            self.call(self.clone().type_qualifier(&qualifier.node))
+                .await;
             self.write(" ");
         }
-        self.call(self.clone().type_specifier(&ty.specifier)).await;
+        self.call(self.clone().type_specifier(&ty.specifier.node))
+            .await;
     }
 
     async fn type_qualifier(self, qualifier: &'b TypeQualifier) {
@@ -497,7 +517,7 @@ impl<'b> Cx<'b> {
                         self.write("(");
                         for (index, name) in type_names.iter().enumerate() {
                             self.comma(index);
-                            self.write(name);
+                            self.write(&name.node);
                         }
                         self.write(")");
                     }
@@ -524,8 +544,8 @@ impl<'b> Cx<'b> {
                     self.write("layout(");
                     for (index, id) in layout.ids.iter().enumerate() {
                         self.comma(index);
-                        self.write(&id.name);
-                        if let Some(value) = &id.value {
+                        self.write(&id.node.name.node);
+                        if let Some(value) = &id.node.value {
                             self.write(" = ");
                             self.call(self.clone().expression(value)).await;
                         }
@@ -552,7 +572,7 @@ impl<'b> Cx<'b> {
             TypeSpecifierNonArray::Struct(specifier) => {
                 self.write("struct ");
                 if let Some(name) = &specifier.name {
-                    self.write(name);
+                    self.write(&name.node);
                     self.write(" ");
                 }
                 self.call(
@@ -572,11 +592,11 @@ impl<'b> Cx<'b> {
         if let Some(parameters) = &specifier.parameters {
             self.write("<");
             let mut first = true;
-            if let Some(element) = &parameters.element {
-                self.call(self.clone().type_specifier(element)).await;
+            if let Some(element) = &parameters.node.element {
+                self.call(self.clone().type_specifier(&element.node)).await;
                 first = false;
             }
-            for value in &parameters.values {
+            for value in &parameters.node.values {
                 if !first {
                     self.write(", ");
                 }
@@ -587,7 +607,7 @@ impl<'b> Cx<'b> {
         }
         self.call(
             self.clone()
-                .optional_array_specifier(specifier.array.as_deref()),
+                .optional_array_specifier(specifier.array.as_ref().map(|inner| &inner.node)),
         )
         .await;
     }
@@ -776,12 +796,12 @@ impl<'b> Cx<'b> {
                 self.call(self.clone().expression(expression)).await
             }
             Condition::Declaration(declaration) => {
-                self.call(self.clone().fully_specified_type(&declaration.ty))
+                self.call(self.clone().fully_specified_type(&declaration.kind.ty.node))
                     .await;
                 self.write(" ");
-                self.write(&declaration.name);
+                self.write(&declaration.kind.name.node);
                 self.write(" = ");
-                self.call(self.clone().initializer(&declaration.initializer))
+                self.call(self.clone().initializer(&declaration.kind.initializer.node))
                     .await;
             }
         }
@@ -869,7 +889,7 @@ fn expression_pieces<'a>(expression: &'a Expression, pieces: &mut Vec<Piece<'a>>
                 FunctionIdentifier::Method { object, name } => {
                     pieces.push(Piece::Expression(object));
                     pieces.push(Piece::Text("."));
-                    pieces.push(Piece::Text(name));
+                    pieces.push(Piece::Text(&name.node));
                 }
             }
             pieces.push(Piece::Text("("));
@@ -879,7 +899,7 @@ fn expression_pieces<'a>(expression: &'a Expression, pieces: &mut Vec<Piece<'a>>
         ExpressionKind::FieldSelection { base, field } => {
             pieces.push(Piece::Expression(base));
             pieces.push(Piece::Text("."));
-            pieces.push(Piece::Text(field));
+            pieces.push(Piece::Text(&field.node));
         }
         ExpressionKind::Postfix { operand, operator } => {
             pieces.push(Piece::Expression(operand));

@@ -146,7 +146,9 @@ fn check_in_shader(
         })
         .ok_or("no main")?;
     let last = main
+        .kind
         .body
+        .node
         .statements
         .last()
         .ok_or("main has no statements")?;

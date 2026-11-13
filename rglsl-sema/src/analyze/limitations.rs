@@ -82,7 +82,7 @@ impl Analyzer<'_> {
         let [declarator] = list.declarators.as_slice() else {
             return Err(BAD_INIT);
         };
-        let Some(initializer) = &declarator.initializer else {
+        let Some(initializer) = &declarator.kind.initializer else {
             return Err(BAD_INIT);
         };
         let Some(&id) = self.declarations.get(&declarator.id) else {

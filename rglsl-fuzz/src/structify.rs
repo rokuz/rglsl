@@ -57,20 +57,21 @@ fn candidates(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Candidate> {
         let [declarator] = list.declarators.as_slice() else {
             continue;
         };
-        if declarator.array.is_some() || list.ty.qualifier.is_some() {
+        if declarator.kind.array.is_some() || list.ty.node.qualifier.is_some() {
             continue;
         }
-        let Some(ty) = basic::from_specifier(&list.ty.specifier) else {
+        let Some(ty) = basic::from_specifier(&list.ty.node.specifier.node) else {
             continue;
         };
         if declarator
+            .kind
             .name
             .node
             .starts_with(STRUCTIFICATION_FIELD_PREFIX)
         {
             continue;
         }
-        let initializer = match declarator.initializer.as_ref().map(|i| &i.node) {
+        let initializer = match declarator.kind.initializer.as_ref().map(|i| &i.node) {
             Some(Initializer::Expression(expression)) => Some(expression.clone()),
             Some(Initializer::List(_)) => continue,
             None => None,
@@ -81,7 +82,7 @@ fn candidates(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Candidate> {
         by_symbol.insert(*symbol, result.len());
         result.push(Candidate {
             statement: statement.id,
-            name: declarator.name.node.clone(),
+            name: declarator.kind.name.node.clone(),
             ty,
             initializer,
             references: BTreeSet::new(),

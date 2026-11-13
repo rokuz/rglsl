@@ -324,8 +324,8 @@ impl<'a> Lowerer<'a> {
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
         for declaration in &structure.members {
-            for declarator in &declaration.declarators {
-                let name = &declarator.name.node;
+            for declarator in &declaration.node.declarators {
+                let name = &declarator.node.name.node;
                 let (_, member) = block
                     .member(name)
                     .ok_or_else(|| unsupported(format_member(name), at))?;

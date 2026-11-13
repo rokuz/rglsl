@@ -305,7 +305,7 @@ fn a_prefix_is_returned_with_the_first_syntax_error() -> TestResult {
     else {
         panic!("the partial function is missing");
     };
-    assert_eq!(definition.body.node.statements.len(), 2);
+    assert_eq!(definition.kind.body.node.statements.len(), 2);
     Ok(())
 }
 
@@ -350,7 +350,7 @@ fn nonuniform_is_a_qualifier_and_a_constructor() {
             ExternalDeclaration::Declaration(Declaration {
                 kind: DeclarationKind::InitDeclaratorList(list),
                 ..
-            }) => list.ty.qualifier.clone(),
+            }) => list.ty.node.qualifier.clone(),
             _ => None,
         })
         .flat_map(|qualifier| qualifier.node.qualifiers)

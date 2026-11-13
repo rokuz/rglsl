@@ -261,7 +261,7 @@ pub(super) fn block_defaults(
                             kind @ (StorageQualifier::Uniform | StorageQualifier::Buffer),
                         ) => storage = Some(kind),
                         SingleTypeQualifier::Layout(ref layout) => {
-                            names.extend(layout.ids.iter().map(|id| id.name.node.as_str()));
+                            names.extend(layout.ids.iter().map(|id| id.node.name.node.as_str()));
                         }
                         _ => {}
                     }

@@ -183,7 +183,7 @@ fn declares_name(statement: &Statement, predicate: &dyn Fn(&str) -> bool) -> boo
         && list
             .declarators
             .iter()
-            .all(|declarator| predicate(&declarator.name.node))
+            .all(|declarator| predicate(&declarator.kind.name.node))
 }
 
 fn root_name(expression: &Expression) -> Option<&str> {
@@ -207,7 +207,7 @@ fn locally_declared(statement: &Statement) -> BTreeSet<String> {
         }
         if let StatementKind::For(for_statement) = &inner.kind {
             if let Some(Condition::Declaration(declaration)) = &for_statement.condition {
-                names.insert(declaration.name.node.clone());
+                names.insert(declaration.kind.name.node.clone());
             }
         }
     });
@@ -393,21 +393,23 @@ fn outlined_functions(unit: &TranslationUnit) -> BTreeMap<String, (Vec<String>, 
         let ExternalDeclaration::FunctionDefinition(definition) = external else {
             continue;
         };
-        let name = &definition.prototype.name.node;
+        let name = &definition.kind.prototype.node.name.node;
         if !name.starts_with(OUTLINED_FUNCTION_PREFIX) {
             continue;
         }
-        let [statement] = definition.body.statements.as_slice() else {
+        let [statement] = definition.kind.body.node.statements.as_slice() else {
             continue;
         };
         let StatementKind::Jump(JumpStatement::Return(Some(value))) = &statement.kind else {
             continue;
         };
         let parameters: Option<Vec<String>> = definition
+            .kind
             .prototype
+            .node
             .parameters
             .iter()
-            .map(|parameter| parameter.name.as_ref().map(|name| name.node.clone()))
+            .map(|parameter| parameter.kind.name.as_ref().map(|name| name.node.clone()))
             .collect();
         if let Some(parameters) = parameters {
             functions.insert(name.clone(), (parameters, value.clone()));
@@ -474,7 +476,7 @@ fn split_counter(statement: &Statement) -> Option<(String, String)> {
     let [declarator] = list.declarators.as_slice() else {
         return None;
     };
-    let name = &declarator.name.node;
+    let name = &declarator.kind.name.node;
     let original = name.strip_prefix(SPLIT_LOOP_COUNTER_PREFIX)?;
     Some((name.clone(), original.to_owned()))
 }
@@ -506,7 +508,7 @@ fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
                     DeclarationKind::InitDeclaratorList(list) => list
                         .declarators
                         .first()
-                        .and_then(|declarator| declarator.initializer.clone()),
+                        .and_then(|declarator| declarator.kind.initializer.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -515,8 +517,8 @@ fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
                 if let StatementKind::Declaration(declaration) = &mut merged_for.init.kind {
                     if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
                         for declarator in &mut list.declarators {
-                            declarator.initializer.clone_from(&initial);
-                            original.clone_into(&mut declarator.name.node);
+                            declarator.kind.initializer.clone_from(&initial);
+                            original.clone_into(&mut declarator.kind.name.node);
                         }
                     }
                 }
@@ -634,11 +636,11 @@ fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Oppo
         let [declarator] = list.declarators.as_slice() else {
             continue;
         };
-        let variable = &declarator.name.node;
+        let variable = &declarator.kind.name.node;
         if !variable.starts_with(GLF_STRUCT_REPLACEMENT) {
             continue;
         }
-        let TypeSpecifierNonArray::TypeName(top) = &list.ty.specifier.non_array else {
+        let TypeSpecifierNonArray::TypeName(top) = &list.ty.node.specifier.node.non_array else {
             continue;
         };
         let mut path = Vec::new();
@@ -648,7 +650,7 @@ fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Oppo
         let Some(names) = field_names(&structs, top, &path) else {
             continue;
         };
-        let initializer = match declarator.initializer.as_ref().map(|i| &i.node) {
+        let initializer = match declarator.kind.initializer.as_ref().map(|i| &i.node) {
             Some(Initializer::Expression(expression)) => constructor_argument(expression, &path),
             _ => None,
         };
@@ -790,7 +792,7 @@ fn remove_external(unit: &TranslationUnit) -> Vec<Opportunity> {
         .enumerate()
         .filter(|(_, external)| match external {
             ExternalDeclaration::FunctionDefinition(definition) => {
-                definition.prototype.name.node != "main"
+                definition.kind.prototype.node.name.node != "main"
             }
             ExternalDeclaration::Declaration(declaration) => {
                 !matches!(declaration.kind, DeclarationKind::Precision { .. })
@@ -891,7 +893,7 @@ fn body_expression_ids(unit: &TranslationUnit) -> Result<BTreeSet<NodeId>, Stall
     let mut ids = BTreeSet::new();
     for external in &unit.external_declarations {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
-            for statement in &definition.body.statements {
+            for statement in &definition.kind.body.node.statements {
                 ids.extend(statement_expression_ids(statement)?);
             }
         }

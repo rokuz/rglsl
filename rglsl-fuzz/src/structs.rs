@@ -21,11 +21,12 @@ pub type Structs = BTreeMap<String, Vec<Field>>;
 pub fn struct_fields(structure: &StructSpecifier) -> Vec<Field> {
     let mut fields = Vec::new();
     for member in &structure.declarations {
-        for declarator in &member.declarators {
+        for declarator in &member.node.declarators {
             fields.push(Field {
-                name: declarator.name.node.clone(),
-                ty: member.ty.specifier.node.clone(),
-                array: declarator.array.is_some() || member.ty.specifier.array.is_some(),
+                name: declarator.node.name.node.clone(),
+                ty: member.node.ty.node.specifier.node.clone(),
+                array: declarator.node.array.is_some()
+                    || member.node.ty.node.specifier.node.array.is_some(),
             });
         }
     }
@@ -41,7 +42,7 @@ pub fn global_structs(unit: &TranslationUnit) -> Structs {
         let DeclarationKind::InitDeclaratorList(list) = &declaration.kind else {
             continue;
         };
-        if let TypeSpecifierNonArray::Struct(structure) = &list.ty.specifier.non_array {
+        if let TypeSpecifierNonArray::Struct(structure) = &list.ty.node.specifier.node.non_array {
             if let Some(name) = &structure.name {
                 structs.insert(name.node.clone(), struct_fields(structure));
             }

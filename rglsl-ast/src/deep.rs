@@ -127,7 +127,7 @@ fn take_qualifier(qualifier: &mut Option<Spanned<TypeQualifier>>, into: &mut Vec
     let Some(qualifier) = qualifier else {
         return;
     };
-    for single in &mut qualifier.qualifiers {
+    for single in &mut qualifier.node.qualifiers {
         match &mut single.node {
             SingleTypeQualifier::Layout(layout) => {
                 for LayoutQualifierId { value, .. } in layout.ids.iter_mut().map(|id| &mut id.node)
@@ -151,7 +151,7 @@ fn take_array(array: &mut Option<Spanned<crate::ast::ArraySpecifier>>, into: &mu
     let Some(array) = array else {
         return;
     };
-    for dimension in &mut array.dimensions {
+    for dimension in &mut array.node.dimensions {
         if let ArrayDimension::Sized(size) = &mut dimension.node {
             take_expression(size, into);
         }
@@ -160,10 +160,10 @@ fn take_array(array: &mut Option<Spanned<crate::ast::ArraySpecifier>>, into: &mu
 
 fn take_members(members: &mut [Spanned<StructDeclaration>], into: &mut Vec<Owned>) {
     for member in members {
-        take_qualifier(&mut member.ty.qualifier, into);
-        take_type(&mut member.ty.specifier.node, into);
-        for declarator in &mut member.declarators {
-            take_array(&mut declarator.array, into);
+        take_qualifier(&mut member.node.ty.node.qualifier, into);
+        take_type(&mut member.node.ty.node.specifier.node, into);
+        for declarator in &mut member.node.declarators {
+            take_array(&mut declarator.node.array, into);
         }
     }
 }
@@ -201,10 +201,10 @@ impl TypeSpecifier {
             | TypeSpecifierNonArray::TypeName(_) => {}
         }
         if let Some(parameters) = &mut self.parameters {
-            if let Some(element) = &mut parameters.element {
+            if let Some(element) = &mut parameters.node.element {
                 take_type(&mut element.node, into);
             }
-            for value in &mut parameters.values {
+            for value in &mut parameters.node.values {
                 take_expression(value, into);
             }
         }
@@ -557,13 +557,13 @@ fn member_shell(member: &Spanned<StructDeclaration>) -> Spanned<StructDeclaratio
         member.span,
         StructDeclaration {
             ty: Spanned::new(
-                member.ty.span,
+                member.node.ty.span,
                 FullySpecifiedType {
-                    qualifier: member.ty.qualifier.clone(),
-                    specifier: Spanned::new(member.ty.specifier.span, empty_type()),
+                    qualifier: member.node.ty.node.qualifier.clone(),
+                    specifier: Spanned::new(member.node.ty.node.specifier.span, empty_type()),
                 },
             ),
-            declarators: member.declarators.clone(),
+            declarators: member.node.declarators.clone(),
         },
     )
 }
@@ -571,7 +571,8 @@ fn member_shell(member: &Spanned<StructDeclaration>) -> Spanned<StructDeclaratio
 fn same_members(left: &[Spanned<StructDeclaration>], right: &[Spanned<StructDeclaration>]) -> bool {
     left.len() == right.len()
         && left.iter().zip(right).all(|(left, right)| {
-            left.ty.qualifier == right.ty.qualifier && left.declarators == right.declarators
+            left.node.ty.node.qualifier == right.node.ty.node.qualifier
+                && left.node.declarators == right.node.declarators
         })
 }
 
@@ -591,7 +592,11 @@ impl Nested for TypeSpecifier {
         match &self.non_array {
             TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
             | TypeSpecifierNonArray::InlineBlock(declarations) => {
-                children.extend(declarations.iter().map(|member| &member.ty.specifier));
+                children.extend(
+                    declarations
+                        .iter()
+                        .map(|member| &member.node.ty.node.specifier),
+                );
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 for parameter in &spirv.parameters {
@@ -609,7 +614,7 @@ impl Nested for TypeSpecifier {
         if let Some(element) = self
             .parameters
             .as_ref()
-            .and_then(|parameters| parameters.element.as_deref())
+            .and_then(|parameters| parameters.node.element.as_deref())
         {
             children.push(element);
         }
@@ -624,7 +629,7 @@ impl Nested for TypeSpecifier {
                 children.extend(
                     declarations
                         .iter_mut()
-                        .map(|member| &mut member.ty.specifier),
+                        .map(|member| &mut member.node.ty.node.specifier),
                 );
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
@@ -643,7 +648,7 @@ impl Nested for TypeSpecifier {
         if let Some(element) = self
             .parameters
             .as_mut()
-            .and_then(|parameters| parameters.element.as_deref_mut())
+            .and_then(|parameters| parameters.node.element.as_deref_mut())
         {
             children.push(element);
         }
@@ -692,10 +697,11 @@ impl Nested for TypeSpecifier {
                 parameters.span,
                 TypeParameters {
                     element: parameters
+                        .node
                         .element
                         .as_ref()
                         .map(|element| Box::new(Spanned::new(element.span, empty_type()))),
-                    values: parameters.values.clone(),
+                    values: parameters.node.values.clone(),
                 },
             )
         });
@@ -749,7 +755,8 @@ impl Nested for TypeSpecifier {
         let same_parameters = match (&self.parameters, &other.parameters) {
             (None, None) => true,
             (Some(left), Some(right)) => {
-                left.element.is_some() == right.element.is_some() && left.values == right.values
+                left.node.element.is_some() == right.node.element.is_some()
+                    && left.node.values == right.node.values
             }
             _ => false,
         };

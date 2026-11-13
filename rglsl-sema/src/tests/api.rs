@@ -859,7 +859,9 @@ fn statement_expressions(checked: &Checked) -> Vec<Expression> {
         panic!("the shader ends with a function");
     };
     definition
+        .kind
         .body
+        .node
         .statements
         .iter()
         .filter_map(|statement| match &statement.kind {

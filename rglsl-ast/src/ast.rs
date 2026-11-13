@@ -2,7 +2,6 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-use core::ops::{Deref, DerefMut};
 
 use crate::span::Span;
 
@@ -46,20 +45,6 @@ impl<K: PartialEq> PartialEq for Node<K> {
 
 impl<K: Eq> Eq for Node<K> {}
 
-impl<K> Deref for Node<K> {
-    type Target = K;
-
-    fn deref(&self) -> &K {
-        &self.kind
-    }
-}
-
-impl<K> DerefMut for Node<K> {
-    fn deref_mut(&mut self) -> &mut K {
-        &mut self.kind
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Spanned<T> {
     pub span: Span,
@@ -79,20 +64,6 @@ impl<T: PartialEq> PartialEq for Spanned<T> {
 }
 
 impl<T: Eq> Eq for Spanned<T> {}
-
-impl<T> Deref for Spanned<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.node
-    }
-}
-
-impl<T> DerefMut for Spanned<T> {
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.node
-    }
-}
 
 pub type Identifier = Spanned<String>;
 pub type Expression = Node<ExpressionKind>;
@@ -370,7 +341,7 @@ impl TypeQualifier {
             SingleTypeQualifier::Layout(ref layout) => layout
                 .ids
                 .iter()
-                .any(|id| id.name.node.eq_ignore_ascii_case(name)),
+                .any(|id| id.node.name.node.eq_ignore_ascii_case(name)),
             _ => false,
         })
     }

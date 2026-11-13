@@ -65,16 +65,18 @@ pub fn injection_points<'a>(
             ExternalDeclaration::FunctionDefinition(definition) => {
                 walker.function = Some(definition);
                 walker.scopes.push(Vec::new());
-                for parameter in &definition.prototype.parameters {
-                    if let Some(name) = &parameter.name {
+                for parameter in &definition.kind.prototype.node.parameters {
+                    if let Some(name) = &parameter.kind.name {
                         let variable = declared_variable(analysis, parameter.id, &name.node);
                         walker.add(variable);
                     }
                 }
                 let state = RefCell::new(walker);
                 run(|stack| {
-                    Cx::new(&state, stack)
-                        .block(BlockId::Function(index), &definition.body.statements)
+                    Cx::new(&state, stack).block(
+                        BlockId::Function(index),
+                        &definition.kind.body.node.statements,
+                    )
                 })
                 .ok_or(Stalled)?;
                 walker = state.into_inner();
@@ -262,7 +264,7 @@ impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
                             let variable = declared_variable(
                                 state.analysis,
                                 declaration.id,
-                                &declaration.name.node,
+                                &declaration.kind.name.node,
                             );
                             state.add(variable);
                         }
@@ -298,7 +300,7 @@ impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
                         let variable = declared_variable(
                             state.analysis,
                             declaration.id,
-                            &declaration.name.node,
+                            &declaration.kind.name.node,
                         );
                         state.add(variable);
                     });
@@ -337,22 +339,24 @@ pub fn declared_variables(analysis: &Analysis, declaration: &Declaration) -> Vec
         DeclarationKind::InitDeclaratorList(list) => list
             .declarators
             .iter()
-            .map(|declarator| declared_variable(analysis, declarator.id, &declarator.name.node))
+            .map(|declarator| {
+                declared_variable(analysis, declarator.id, &declarator.kind.name.node)
+            })
             .collect(),
         DeclarationKind::Block {
             structure,
             instance,
         } => match instance {
-            Some(instance) => vec![Variable::new(&instance.name.node, None)],
+            Some(instance) => vec![Variable::new(&instance.node.name.node, None)],
             None => structure
                 .members
                 .iter()
                 .flat_map(|member| {
-                    let ty = basic::from_specifier(&member.ty.specifier);
-                    member.declarators.iter().map(move |declarator| {
+                    let ty = basic::from_specifier(&member.node.ty.node.specifier.node);
+                    member.node.declarators.iter().map(move |declarator| {
                         Variable::new(
-                            &declarator.name.node,
-                            ty.filter(|_| declarator.array.is_none()),
+                            &declarator.node.name.node,
+                            ty.filter(|_| declarator.node.array.is_none()),
                         )
                     })
                 })
@@ -367,7 +371,7 @@ pub fn declared_names(declaration: &Declaration) -> Vec<String> {
         DeclarationKind::InitDeclaratorList(list) => list
             .declarators
             .iter()
-            .map(|declarator| declarator.name.node.clone())
+            .map(|declarator| declarator.kind.name.node.clone())
             .collect(),
         _ => Vec::new(),
     }
@@ -472,7 +476,7 @@ pub fn apply_edits(
     });
     for (index, external) in unit.external_declarations.iter_mut().enumerate() {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
-            let statements = &mut definition.body.statements;
+            let statements = &mut definition.kind.body.node.statements;
             run(|stack| Cx::new(&state, stack).block(BlockId::Function(index), statements))
                 .ok_or(Stalled)?;
         }

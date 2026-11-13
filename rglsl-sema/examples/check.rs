@@ -18,7 +18,7 @@ fn extensions(unit: &rglsl_ast::TranslationUnit) -> Vec<String> {
     unit.external_declarations
         .iter()
         .filter_map(|declaration| match declaration {
-            ExternalDeclaration::Directive(directive) => match &directive.kind {
+            ExternalDeclaration::Directive(directive) => match &directive.node.kind {
                 DirectiveKind::Extension { name, .. } => Some(name.clone()),
                 _ => None,
             },

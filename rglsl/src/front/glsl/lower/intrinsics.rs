@@ -119,8 +119,8 @@ impl Lowerer<'_> {
                 continue;
             };
             if let DeclarationKind::SpirvExecutionMode(ref mode) = declaration.kind {
-                if mode.kind == SpirvExecutionModeKind::Id {
-                    for operand in &mode.operands {
+                if mode.node.kind == SpirvExecutionModeKind::Id {
+                    for operand in &mode.node.operands {
                         operands_by_node.insert(operand.id, operand);
                     }
                 }

@@ -733,7 +733,7 @@ impl<'a> Lowerer<'a> {
                 crate::FunctionControl::None
             }
         };
-        lowerer.statements(&definition.body.statements)?;
+        lowerer.statements(&definition.kind.body.node.statements)?;
         let mut lowered = lowerer.finish(result, arguments, name);
         lowered.control = control;
         Ok(lowered)

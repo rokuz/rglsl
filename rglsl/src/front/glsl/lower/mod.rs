@@ -253,7 +253,7 @@ impl Parsed {
             matches!(
                 *declaration,
                 ExternalDeclaration::FunctionDefinition(ref definition)
-                    if definition.prototype.name.node == "main"
+                    if definition.kind.prototype.node.name.node == "main"
             )
         }))
     }
@@ -506,9 +506,9 @@ fn exported_main(
         .iter()
         .find_map(|declaration| match *declaration {
             ExternalDeclaration::FunctionDefinition(ref definition)
-                if definition.prototype.node.name.node == "main" =>
+                if definition.kind.prototype.node.name.node == "main" =>
             {
-                let end = definition.prototype.span.end.saturating_sub(1);
+                let end = definition.kind.prototype.span.end.saturating_sub(1);
                 Some((
                     Error {
                         kind: ErrorKind::SemanticError(Cow::Borrowed(
@@ -1168,7 +1168,7 @@ impl<'a> Lowerer<'a> {
         let definition = &node.kind;
         let start = node.span.start;
         let at = self.debug_position(definition.prototype.span.end.saturating_sub(1));
-        let end = (!definition.body.statements.is_empty())
+        let end = (!definition.body.node.statements.is_empty())
             .then(|| self.debug_position(definition.body.span.end.saturating_sub(1)));
         if let Some(ref mut debug) = self.debug {
             debug.functions.push(crate::DebugFunction {
@@ -1427,7 +1427,9 @@ impl<'a> Lowerer<'a> {
             return;
         };
         let symbols = definition
+            .kind
             .prototype
+            .node
             .parameters
             .iter()
             .map(|parameter| self.analysis.declarations.get(&parameter.id).copied())

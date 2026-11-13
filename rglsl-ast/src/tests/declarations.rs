@@ -12,7 +12,7 @@ use crate::keywords::{is_keyword, is_opaque_type_keyword, is_reserved_word, is_u
 fn qualifiers(ty: &FullySpecifiedType) -> Vec<SingleTypeQualifier> {
     ty.qualifier
         .iter()
-        .flat_map(|qualifier| qualifier.qualifiers.iter())
+        .flat_map(|qualifier| qualifier.node.qualifiers.iter())
         .map(|single| single.node.clone())
         .collect()
 }
@@ -27,7 +27,7 @@ fn variables(source: &str) -> crate::ast::InitDeclaratorList {
 #[test]
 fn qualifier_lists_keep_source_order() {
     let list = variables("layout(location = 0) flat centroid in highp ivec2 a;\n");
-    let found = qualifiers(&list.ty);
+    let found = qualifiers(&list.ty.node);
     assert!(matches!(
         found.first(),
         Some(SingleTypeQualifier::Layout(_))
@@ -52,7 +52,7 @@ fn every_simple_qualifier_round_trips() {
         let source = alloc::format!("{} float a;\n", storage.keyword());
         let list = variables(&source);
         assert_eq!(
-            qualifiers(&list.ty),
+            qualifiers(&list.ty.node),
             [SingleTypeQualifier::Storage(storage)],
             "{source}"
         );
@@ -80,16 +80,16 @@ fn layout_qualifier_ids_keep_their_expressions() {
     let list = variables(
         "layout(set = 1, binding = 2 * N + 1, rgba8, shared, offset = (4)) uniform readonly image2D a;\n",
     );
-    let found = qualifiers(&list.ty);
+    let found = qualifiers(&list.ty.node);
     let Some(SingleTypeQualifier::Layout(layout)) = found.first() else {
         panic!("{found:?}");
     };
     let rendered: Vec<String> = layout
         .ids
         .iter()
-        .map(|id| match &id.value {
-            Some(value) => alloc::format!("{}={value}", id.name.node),
-            None => id.name.node.clone(),
+        .map(|id| match &id.node.value {
+            Some(value) => alloc::format!("{}={value}", id.node.name.node),
+            None => id.node.name.node.clone(),
         })
         .collect();
     assert_eq!(
@@ -133,7 +133,7 @@ fn precision_declaration() {
     };
     assert_eq!(qualifier.node, PrecisionQualifier::Medium);
     assert_eq!(
-        ty.non_array,
+        ty.node.non_array,
         TypeSpecifierNonArray::Opaque(String::from("sampler2D"))
     );
 }
@@ -143,16 +143,16 @@ fn array_specifiers_on_types_and_on_declarators_are_distinct() {
     let on_type = variables("int[3] a;\n");
     let on_name = variables("int a[3];\n");
     assert_ne!(on_type, on_name);
-    assert!(on_type.ty.specifier.array.is_some());
+    assert!(on_type.ty.node.specifier.node.array.is_some());
     assert!(on_type
         .declarators
         .iter()
-        .all(|declarator| declarator.array.is_none()));
-    assert!(on_name.ty.specifier.array.is_none());
+        .all(|declarator| declarator.kind.array.is_none()));
+    assert!(on_name.ty.node.specifier.node.array.is_none());
     assert!(on_name
         .declarators
         .iter()
-        .all(|declarator| declarator.array.is_some()));
+        .all(|declarator| declarator.kind.array.is_some()));
     assert_eq!(
         round_trip("int[3] a;\nint b[3];\n"),
         "int[3] a;\nint b[3];\n"
@@ -166,15 +166,15 @@ fn arrays_of_arrays_and_unsized_arrays() {
         |array: &Option<crate::ast::Spanned<crate::ast::ArraySpecifier>>| -> Vec<bool> {
             array
                 .iter()
-                .flat_map(|specifier| specifier.dimensions.iter())
+                .flat_map(|specifier| specifier.node.dimensions.iter())
                 .map(|dimension| matches!(dimension.node, ArrayDimension::Sized(_)))
                 .collect()
         };
-    assert_eq!(dimensions(&list.ty.specifier.array), [true, true]);
+    assert_eq!(dimensions(&list.ty.node.specifier.node.array), [true, true]);
     let per_declarator: Vec<Vec<bool>> = list
         .declarators
         .iter()
-        .map(|declarator| dimensions(&declarator.array))
+        .map(|declarator| dimensions(&declarator.kind.array))
         .collect();
     assert_eq!(
         per_declarator,
@@ -196,13 +196,18 @@ fn initializer_lists() {
     let shapes: Vec<String> = list
         .declarators
         .iter()
-        .map(
-            |declarator| match declarator.initializer.as_ref().map(|found| &found.node) {
+        .map(|declarator| {
+            match declarator
+                .kind
+                .initializer
+                .as_ref()
+                .map(|found| &found.node)
+            {
                 Some(Initializer::List(elements)) => alloc::format!("list of {}", elements.len()),
                 Some(Initializer::Expression(_)) => String::from("expression"),
                 None => String::from("none"),
-            },
-        )
+            }
+        })
         .collect();
     assert_eq!(shapes, ["list of 2", "expression", "list of 0"]);
     assert_eq!(
@@ -222,7 +227,7 @@ fn struct_declarations() {
     let DeclarationKind::InitDeclaratorList(list) = &first.kind else {
         panic!("{first:?}");
     };
-    let TypeSpecifierNonArray::Struct(specifier) = &list.ty.specifier.non_array else {
+    let TypeSpecifierNonArray::Struct(specifier) = &list.ty.node.specifier.node.non_array else {
         panic!("{list:?}");
     };
     assert_eq!(
@@ -251,10 +256,11 @@ fn interface_blocks() {
             ExternalDeclaration::Declaration(found) => match &found.kind {
                 DeclarationKind::Block { instance, .. } => instance.as_ref().map(|instance| {
                     let dimensions = instance
+                        .node
                         .array
                         .as_ref()
-                        .map_or(0, |array| array.dimensions.len());
-                    (instance.name.node.clone(), dimensions)
+                        .map_or(0, |array| array.node.dimensions.len());
+                    (instance.node.name.node.clone(), dimensions)
                 }),
                 other => panic!("{other:?}"),
             },
@@ -284,9 +290,10 @@ fn function_prototypes_and_definitions() {
         panic!("expected a prototype");
     };
     let names: Vec<Option<&str>> = prototype
+        .node
         .parameters
         .iter()
-        .map(|parameter| parameter.name.as_ref().map(|name| name.node.as_str()))
+        .map(|parameter| parameter.kind.name.as_ref().map(|name| name.node.as_str()))
         .collect();
     assert_eq!(names, [Some("a"), None]);
 }
@@ -417,7 +424,7 @@ fn directives_are_parsed_and_kept_verbatim() {
         .external_declarations
         .iter()
         .filter_map(|external| match external {
-            ExternalDeclaration::Directive(directive) => Some(directive.kind.clone()),
+            ExternalDeclaration::Directive(directive) => Some(directive.node.kind.clone()),
             _ => None,
         })
         .collect();
@@ -484,15 +491,16 @@ fn heap_blocks_and_inline_reference_members() {
     let heap = blocks[1];
     assert!(heap
         .qualifier
+        .node
         .qualifiers
         .iter()
         .any(|single| single.node == SingleTypeQualifier::Storage(StorageQualifier::ResourceHeap)));
     assert!(matches!(
-        heap.members[0].ty.node.specifier.node.non_array,
+        heap.members[0].node.ty.node.specifier.node.non_array,
         TypeSpecifierNonArray::TypeName(ref name) if name == "Data"
     ));
     assert!(matches!(
-        heap.members[1].ty.node.specifier.node.non_array,
+        heap.members[1].node.ty.node.specifier.node.non_array,
         TypeSpecifierNonArray::InlineBlock(ref members) if members.len() == 1
     ));
     assert!(is_keyword("resourceheap"));
@@ -517,11 +525,12 @@ fn function_attributes_lead_and_trail_prototypes() {
         panic!("{declaration:?}");
     };
     let names: Vec<&str> = prototype
+        .node
         .attributes
         .iter()
         .map(|attribute| attribute.name.node.as_str())
         .collect();
     assert_eq!(names, ["inline", "noinline"]);
-    assert!(prototype.trailing_attributes.is_empty());
+    assert!(prototype.node.trailing_attributes.is_empty());
     assert!(crate::parse("[[inline]] int x;").is_err());
 }

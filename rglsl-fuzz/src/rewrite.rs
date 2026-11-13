@@ -32,7 +32,7 @@ pub fn function_statements(unit: &TranslationUnit) -> Vec<(usize, &Statement)> {
     let mut result = Vec::new();
     for (index, external) in unit.external_declarations.iter().enumerate() {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
-            for statement in &definition.body.statements {
+            for statement in &definition.kind.body.node.statements {
                 visit_statements(statement, &mut |inner| result.push((index, inner)));
             }
         }
@@ -73,7 +73,7 @@ pub fn rewrite_statement_expressions(
 pub fn rewrite_statements(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut Statement)) {
     for declaration in &mut unit.external_declarations {
         if let ExternalDeclaration::FunctionDefinition(definition) = declaration {
-            for statement in &mut definition.body.statements {
+            for statement in &mut definition.kind.body.node.statements {
                 statement_post_order(statement, visit);
             }
         }
@@ -132,8 +132,10 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
         for declaration in &mut unit.external_declarations {
             match declaration {
                 ExternalDeclaration::FunctionDefinition(definition) => {
-                    self.clone().prototype(&mut definition.prototype).await;
-                    for statement in &mut definition.body.statements {
+                    self.clone()
+                        .prototype(&mut definition.kind.prototype.node)
+                        .await;
+                    for statement in &mut definition.kind.body.node.statements {
                         self.statement_in(statement).await;
                     }
                 }
@@ -166,10 +168,10 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
     }
 
     async fn qualifier(self, qualifier: &mut Spanned<TypeQualifier>) {
-        for single in &mut qualifier.qualifiers {
+        for single in &mut qualifier.node.qualifiers {
             if let SingleTypeQualifier::Layout(layout) = &mut single.node {
                 for id in &mut layout.ids {
-                    if let Some(value) = &mut id.value {
+                    if let Some(value) = &mut id.node.value {
                         self.expression_in(value).await;
                     }
                 }
@@ -181,7 +183,7 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
         let Some(specifier) = specifier else {
             return;
         };
-        for dimension in &mut specifier.dimensions {
+        for dimension in &mut specifier.node.dimensions {
             if let ArrayDimension::Sized(size) = &mut dimension.node {
                 self.expression_in(size).await;
             }
@@ -189,10 +191,10 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
     }
 
     async fn fully_specified(self, ty: &mut Spanned<FullySpecifiedType>) {
-        if let Some(qualifier) = &mut ty.qualifier {
+        if let Some(qualifier) = &mut ty.node.qualifier {
             self.clone().qualifier(qualifier).await;
         }
-        self.specifier_in(&mut ty.specifier).await;
+        self.specifier_in(&mut ty.node.specifier.node).await;
     }
 
     async fn specifier(self, mut specifier: TypeSpecifier) -> TypeSpecifier {
@@ -203,9 +205,9 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
         | TypeSpecifierNonArray::InlineBlock(members) = &mut specifier.non_array
         {
             for member in members {
-                self.clone().fully_specified(&mut member.ty).await;
-                for declarator in &mut member.declarators {
-                    self.clone().array(declarator.array.as_mut()).await;
+                self.clone().fully_specified(&mut member.node.ty).await;
+                for declarator in &mut member.node.declarators {
+                    self.clone().array(declarator.node.array.as_mut()).await;
                 }
             }
         }
@@ -218,8 +220,8 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
             .fully_specified(&mut prototype.return_type)
             .await;
         for parameter in &mut prototype.parameters {
-            self.clone().fully_specified(&mut parameter.ty).await;
-            self.clone().array(parameter.array.as_mut()).await;
+            self.clone().fully_specified(&mut parameter.kind.ty).await;
+            self.clone().array(parameter.kind.array.as_mut()).await;
         }
     }
 
@@ -228,7 +230,7 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
             Initializer::Expression(expression) => self.expression_in(expression).await,
             Initializer::List(items) => {
                 for item in items {
-                    self.initializer_in(item).await;
+                    self.initializer_in(&mut item.node).await;
                 }
             }
         }
@@ -238,14 +240,14 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
     async fn declaration(self, declaration: &mut Declaration) {
         match &mut declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
-                self.clone().prototype(prototype).await;
+                self.clone().prototype(&mut prototype.node).await;
             }
             DeclarationKind::InitDeclaratorList(list) => {
                 self.clone().fully_specified(&mut list.ty).await;
                 for declarator in &mut list.declarators {
-                    self.clone().array(declarator.array.as_mut()).await;
-                    if let Some(initializer) = &mut declarator.initializer {
-                        self.initializer_in(initializer).await;
+                    self.clone().array(declarator.kind.array.as_mut()).await;
+                    if let Some(initializer) = &mut declarator.kind.initializer {
+                        self.initializer_in(&mut initializer.node).await;
                     }
                 }
             }
@@ -256,13 +258,13 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
             } => {
                 self.clone().qualifier(&mut structure.qualifier).await;
                 for member in &mut structure.members {
-                    self.clone().fully_specified(&mut member.ty).await;
-                    for declarator in &mut member.declarators {
-                        self.clone().array(declarator.array.as_mut()).await;
+                    self.clone().fully_specified(&mut member.node.ty).await;
+                    for declarator in &mut member.node.declarators {
+                        self.clone().array(declarator.node.array.as_mut()).await;
                     }
                 }
                 if let Some(instance) = instance {
-                    self.clone().array(instance.array.as_mut()).await;
+                    self.clone().array(instance.node.array.as_mut()).await;
                 }
             }
             DeclarationKind::Qualifier(qualifier)
@@ -270,7 +272,7 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
                 self.clone().qualifier(qualifier).await;
             }
             DeclarationKind::SpirvInstruction { prototype, .. } => {
-                self.clone().prototype(prototype).await;
+                self.clone().prototype(&mut prototype.node).await;
             }
             DeclarationKind::SpirvExecutionMode(_) => {}
         }
@@ -280,8 +282,9 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
         match condition {
             Condition::Expression(expression) => self.expression_in(expression).await,
             Condition::Declaration(declaration) => {
-                self.clone().fully_specified(&mut declaration.ty).await;
-                self.initializer_in(&mut declaration.initializer).await;
+                self.clone().fully_specified(&mut declaration.kind.ty).await;
+                self.initializer_in(&mut declaration.kind.initializer.node)
+                    .await;
             }
         }
     }
