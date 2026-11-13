@@ -13,12 +13,12 @@ use core::iter;
 
 use arrayvec::ArrayVec;
 use half::f16;
-use num_traits::{real::Real, One, Zero};
+use num_traits::{One, Zero, real::Real};
 
 use crate::{
-    arena::{Arena, Handle, HandleVec, UniqueArena},
     ArraySize, BinaryOperator, Constant, Expression, Literal, Override, RelationalFunction,
     ScalarKind, Span, Type, TypeInner, UnaryOperator,
+    arena::{Arena, Handle, HandleVec, UniqueArena},
 };
 
 /// A macro that allows dollar signs (`$`) to be emitted by other macros. Useful for generating
@@ -449,7 +449,7 @@ impl LiteralVector {
                                             expected: crate::VectorSize::MAX,
                                             actual,
                                         },
-                                    )
+                                    );
                                 }
                             },
                             scalar: lit_vec[0].scalar(),
@@ -1001,11 +1001,11 @@ pub enum ConstantEvaluatorError {
     #[error("Expected boolean vector for condition arg., got something else")]
     SelectConditionNotAVecBool,
     #[error(
-        "Expected same number of vector components between condition, accept, and reject args., got something else",
+        "Expected same number of vector components between condition, accept, and reject args., got something else"
     )]
     SelectConditionVecSizeMismatch,
     #[error(
-        "Expected reject and accept args. to be scalars of vectors of the same type, got something else",
+        "Expected reject and accept args. to be scalars of vectors of the same type, got something else"
     )]
     SelectAcceptRejectTypeMismatch,
     #[error("Cooperative operations can't be constant")]
@@ -4048,8 +4048,8 @@ impl<'a> ConstantEvaluator<'a> {
         &self,
         expr: Handle<Expression>,
     ) -> Result<crate::proc::TypeResolution, ConstantEvaluatorError> {
-        use crate::proc::TypeResolution as Tr;
         use crate::Expression as Ex;
+        use crate::proc::TypeResolution as Tr;
         let resolution = match self.expressions[expr] {
             Ex::Literal(ref literal) => Tr::Value(literal.ty_inner()),
             Ex::Constant(c) => Tr::Handle(self.constants[c].ty),
@@ -4085,11 +4085,7 @@ impl<'a> ConstantEvaluator<'a> {
         let select_single_component =
             |this: &mut Self, reject_scalar, reject, accept, condition| {
                 let accept = this.cast(accept, reject_scalar, span)?;
-                if condition {
-                    Ok(accept)
-                } else {
-                    Ok(reject)
-                }
+                if condition { Ok(accept) } else { Ok(reject) }
             };
 
         match (&self.expressions[reject], &self.expressions[accept]) {
@@ -4171,7 +4167,7 @@ impl<'a> ConstantEvaluator<'a> {
                                 _ => {
                                     return Err(
                                         ConstantEvaluatorError::SelectAcceptRejectTypeMismatch,
-                                    )
+                                    );
                                 }
                             };
                             select_single_component(self, reject_scalar, reject, accept, condition)

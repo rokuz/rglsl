@@ -11,7 +11,7 @@ mod program;
 mod unify;
 mod workgroup;
 
-use rglsl::compact::{compact, KeepUnused};
+use rglsl::compact::{KeepUnused, compact};
 use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, ValidationMode, Validator};
 use rglsl::{
     AddressSpace, ArraySize, Binding, Expression, Function, GeometryInputPrimitive, Handle, Module,
@@ -19,10 +19,10 @@ use rglsl::{
 };
 
 pub use error::{LinkError, LinkErrors};
-pub use file::{decode, encode, FileError};
+pub use file::{FileError, decode, encode};
 pub use program::{
-    group_by_stage, link_objects, link_objects_staged, link_program, link_program_staged,
-    StagedErrors,
+    StagedErrors, group_by_stage, link_objects, link_objects_staged, link_program,
+    link_program_staged,
 };
 pub use rglsl::object::ObjectModule;
 

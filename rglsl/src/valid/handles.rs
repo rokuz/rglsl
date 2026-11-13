@@ -3,11 +3,11 @@
 use core::hash::Hash;
 
 use super::ValidationError;
-use crate::{
-    arena::{BadHandle, BadRangeError},
-    Handle,
-};
 use crate::{Arena, UniqueArena};
+use crate::{
+    Handle,
+    arena::{BadHandle, BadRangeError},
+};
 
 #[cfg(test)]
 use alloc::string::ToString;
@@ -1437,14 +1437,16 @@ fn constant_deps() {
         const_exprs.append(Expression::Constant(self_referential_const), nowhere);
 
     for handle_and_expr in const_exprs.iter() {
-        assert!(super::Validator::validate_const_expression_handles(
-            handle_and_expr,
-            &constants,
-            &overrides,
-            &UniqueArena::new(),
-            &Arena::new(),
-        )
-        .is_err());
+        assert!(
+            super::Validator::validate_const_expression_handles(
+                handle_and_expr,
+                &constants,
+                &overrides,
+                &UniqueArena::new(),
+                &Arena::new(),
+            )
+            .is_err()
+        );
     }
 }
 

@@ -1,8 +1,8 @@
 use rglsl::{
+    ShaderStage,
     back::spv,
     front::glsl,
     valid::{Capabilities, ValidationFlags, Validator},
-    ShaderStage,
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, GlslStd450Op as GLOp, Op};

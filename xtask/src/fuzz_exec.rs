@@ -8,7 +8,7 @@ use crate::exec::batch::{Job, JobResult};
 use crate::exec::data::Value;
 use crate::exec::plan::{Inputs, Plan};
 use crate::exec::reflect::{ScalarKind, Slot};
-use crate::exec::{reflect, refusal_text, Executor, Outputs, TargetDifference};
+use crate::exec::{Executor, Outputs, TargetDifference, reflect, refusal_text};
 
 pub const FRAMEBUFFER: u32 = 256;
 const SEED: &str = "graphicsfuzz";
@@ -150,7 +150,7 @@ pub fn compare_runs(
                     target: target.name.clone(),
                     difference,
                 }
-                .to_string())
+                .to_string());
             }
         }
     }

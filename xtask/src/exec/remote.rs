@@ -5,9 +5,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
-use super::amber::{first_line, parse_device, Device, VULKAN_VERSION};
+use super::amber::{Device, VULKAN_VERSION, first_line, parse_device};
 use super::batch::{self, Job, JobResult};
 use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
@@ -644,9 +644,11 @@ mod tests {
             specs.get(1).map(RemoteSpec::work_name).as_deref(),
             Some("remote-second-nvidia")
         );
-        assert!(specs
-            .get(2)
-            .is_some_and(|s| s.matches("THIRD") && s.matches("third@radeon rx")));
+        assert!(
+            specs
+                .get(2)
+                .is_some_and(|s| s.matches("THIRD") && s.matches("third@radeon rx"))
+        );
         assert!(parse_specs("").map_err(|e| anyhow!(e))?.is_empty());
         assert!(parse_specs("a@").is_err());
         assert!(parse_specs("@x").is_err());

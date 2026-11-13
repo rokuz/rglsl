@@ -1,7 +1,7 @@
 use rspirv::dr;
 use spirv::Op;
 
-use super::{compile_with, Compiled, Debug, Glslang, VULKAN_1_3};
+use super::{Compiled, Debug, Glslang, VULKAN_1_3, compile_with};
 use crate::TestResult;
 
 const DEBUG_TYPE_COOPERATIVE_MATRIX: u32 = 110;
@@ -73,9 +73,11 @@ void main()
             })
             .count();
         assert_eq!(converted, 1);
-        assert!(import_names(&compiled)
-            .iter()
-            .any(|name| name.starts_with("NonSemantic.Shader.DebugInfo.10")));
+        assert!(
+            import_names(&compiled)
+                .iter()
+                .any(|name| name.starts_with("NonSemantic.Shader.DebugInfo.10"))
+        );
     }
     Ok(())
 }

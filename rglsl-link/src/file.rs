@@ -1,4 +1,4 @@
-use rglsl::object::{CompiledUnit, ObjectModule, ObjectTarget, FORMAT_VERSION};
+use rglsl::object::{CompiledUnit, FORMAT_VERSION, ObjectModule, ObjectTarget};
 use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
 use rglsl::{Block, Span, Statement};
 
@@ -322,7 +322,7 @@ fn settle(open: &mut Vec<Open>) -> Result<Option<Block>, FileError> {
                 children.len() == statement.child_blocks().len()
             }
             Some(&mut Open::Block { .. }) => {
-                return Err(decode_error("a block is outside of a statement"))
+                return Err(decode_error("a block is outside of a statement"));
             }
         };
         if complete {

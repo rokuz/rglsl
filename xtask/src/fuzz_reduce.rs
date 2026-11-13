@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rglsl_fuzz::amber::amber_script;
-use rglsl_fuzz::reduce::{finalise, reduce, ReduceOptions};
-use rglsl_fuzz::{ShaderJob, STAGE_EXTENSIONS};
+use rglsl_fuzz::reduce::{ReduceOptions, finalise, reduce};
+use rglsl_fuzz::{STAGE_EXTENSIONS, ShaderJob};
 
 use crate::exec::{Executor, TargetSpec};
-use crate::fuzz::{compare, Verdict};
+use crate::fuzz::{Verdict, compare};
 use crate::fuzz_exec::{self, Run};
 use crate::oracles;
 use crate::process::{self, Exit};

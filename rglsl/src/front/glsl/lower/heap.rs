@@ -1,17 +1,17 @@
 use alloc::{string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, SingleTypeQualifier, Spanned, TypeQualifier};
+use rglsl_sema::SymbolId;
 use rglsl_sema::layout::{block_layout, member_row_major};
 use rglsl_sema::scope::{Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, Member, OpaqueKind, Packing, StructId,
     Type as GlslType, TypeKind,
 };
-use rglsl_sema::SymbolId;
 
 use super::globals::{image_access, image_format, storage_access};
 use super::types::{image_dimension, matrix_layout};
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, DescriptorHeap, Expression, GlobalVariable, Handle, HeapMember, ImageClass,
@@ -220,7 +220,7 @@ impl<'a> Lowerer<'a> {
                 return Ok(TypeInner::Tensor {
                     scalar: super::types::scalar(scalar),
                     rank: self.tensor_rank(rank, at)?,
-                })
+                });
             }
             _ => return Err(internal(at)),
         };

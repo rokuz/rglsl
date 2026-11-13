@@ -904,9 +904,11 @@ Exec remote: Amber `c9f1e287` on GPU, driver (Vulkan 1.4.349), Windows over SSH.
             carried.details[&("glslang Vulkan tests".to_string(), TargetId::Local)],
             "`exec local` in detail:\n\n| | shaders |\n|---|---:|\n| executed | 210 |"
         );
-        assert!(!carried
-            .details
-            .contains_key(&("Modes".to_string(), TargetId::Local)));
+        assert!(
+            !carried
+                .details
+                .contains_key(&("Modes".to_string(), TargetId::Local))
+        );
     }
 
     #[test]
@@ -962,9 +964,11 @@ Exec nvidia: Amber `c9f1e287` on NVIDIA GeForce RTX 4090, NVIDIA 617.14 (Vulkan 
             "20 / 21 (95.2 %)"
         );
         assert!(carried.oracle_lines[&nvidia].starts_with("Exec nvidia: Amber"));
-        assert!(carried
-            .details
-            .contains_key(&("glslang Vulkan tests".to_string(), nvidia.clone())));
+        assert!(
+            carried
+                .details
+                .contains_key(&("glslang Vulkan tests".to_string(), nvidia.clone()))
+        );
         assert_eq!(
             labels(&exec_sources(&[], Some(&carried))),
             ["local:carried", "amd:carried", "nvidia:carried"]

@@ -1,14 +1,14 @@
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
     ExpressionKind, ExternalDeclaration, FullySpecifiedType, FunctionIdentifier, FunctionPrototype,
     Initializer, JumpStatement, Node, SingleTypeQualifier, Spanned, Statement, StatementKind,
     StructSpecifier, TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Span;
-use rglsl_types::stack::{run, Stalled};
+use rglsl_types::stack::{Stalled, run};
 
 use crate::stack::{
-    child_statements, child_statements_mut, take_initializer, take_statement, take_type, Cx,
+    Cx, child_statements, child_statements_mut, take_initializer, take_statement, take_type,
 };
 use std::cell::RefCell;
 

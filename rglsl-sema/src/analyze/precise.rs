@@ -9,8 +9,8 @@ use rglsl_ast::ast::{
     Statement, StatementKind, UnaryOperator,
 };
 use rglsl_ast::{Spine, TranslationUnit};
-use rglsl_types::stack::{run, Stalled};
 use rglsl_types::FastHashSet;
+use rglsl_types::stack::{Stalled, run};
 
 use super::frames::Cx;
 use super::{Analysis, Callee};

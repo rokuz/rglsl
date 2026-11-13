@@ -1,8 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{Expression, ExpressionKind};
 
 use super::qcom::QcomConversion;
 use super::{Analyzer, Callee, Operand};

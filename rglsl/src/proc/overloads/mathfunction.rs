@@ -1,10 +1,10 @@
 //! Overload sets for [`ir::MathFunction`].
 
+use crate::proc::overloads::OverloadSet;
 use crate::proc::overloads::any_overload_set::AnyOverloadSet;
 use crate::proc::overloads::list::List;
 use crate::proc::overloads::regular::regular;
 use crate::proc::overloads::utils::{float_scalars, list, pairs, rule, scalar_or_vecn, triples};
-use crate::proc::overloads::OverloadSet;
 use crate::proc::type_methods::{concrete_int_scalars, vector_sizes};
 
 use crate::ir;

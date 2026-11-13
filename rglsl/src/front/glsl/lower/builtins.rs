@@ -10,7 +10,7 @@ use rglsl_sema::{BuiltinFunctionId, Callee};
 use super::function::FunctionLowerer;
 use super::prepass::strip;
 use super::types::{scalar, vector_size};
-use super::{internal, unsupported, Result};
+use super::{Result, internal, unsupported};
 use crate::{
     BinaryOperator, BlockMatchMetric, BlockMatchSearch, DerivativeAxis, DerivativeControl,
     Expression, Handle, ImageGatherPattern, ImageProcessingOperation, ImageQuery, Literal,
@@ -1770,7 +1770,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                                 return Err(unsupported(
                                     "a gather component that is not a constant",
                                     at,
-                                ))
+                                ));
                             }
                         }
                     }

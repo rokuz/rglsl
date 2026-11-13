@@ -11,8 +11,8 @@ use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term;
 use thiserror::Error;
 
-use crate::{error::replace_control_chars, SourceLocation};
-use crate::{proc::ConstantEvaluatorError, Span};
+use crate::{SourceLocation, error::replace_control_chars};
+use crate::{Span, proc::ConstantEvaluatorError};
 
 /// Information about the cause of an error.
 #[derive(Clone, Debug, Error)]

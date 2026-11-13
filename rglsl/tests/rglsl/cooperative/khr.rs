@@ -1,8 +1,8 @@
 use spirv::Op;
 
 use super::{
-    assert_errors, assert_rejected_like_glslang, compile, same_literal_operands, VULKAN_1_3,
-    VULKAN_1_4,
+    VULKAN_1_3, VULKAN_1_4, assert_errors, assert_rejected_like_glslang, compile,
+    same_literal_operands,
 };
 use crate::TestResult;
 
@@ -377,9 +377,11 @@ fn multiply_add_scopes_must_match() -> TestResult {
 ",
     );
     let errors = super::errors(&source, VULKAN_1_3)?;
-    assert!(errors
-        .iter()
-        .any(|(line, message)| *line == 15 && message.contains("scopes must match")));
+    assert!(
+        errors
+            .iter()
+            .any(|(line, message)| *line == 15 && message.contains("scopes must match"))
+    );
     Ok(())
 }
 
@@ -596,12 +598,16 @@ fn arm_layouts() -> TestResult {
 ",
     );
     let compiled = compile(&source, VULKAN_1_3)?;
-    assert!(compiled
-        .extensions()
-        .contains("SPV_ARM_cooperative_matrix_layouts"));
-    assert!(compiled
-        .capabilities()
-        .contains("CooperativeMatrixLayoutsARM"));
+    assert!(
+        compiled
+            .extensions()
+            .contains("SPV_ARM_cooperative_matrix_layouts")
+    );
+    assert!(
+        compiled
+            .capabilities()
+            .contains("CooperativeMatrixLayoutsARM")
+    );
     Ok(())
 }
 

@@ -11,7 +11,7 @@ use crate::fuzzer::{Fuzzer, GenerationParams, Templates};
 use crate::opaque::OpaqueGenerator;
 use crate::random::Random;
 use crate::rewrite::{rewrite_expressions, take_expression};
-use crate::scope::{find_points, function_names, Point};
+use crate::scope::{Point, find_points, function_names};
 
 pub const NAME: &str = "identity";
 

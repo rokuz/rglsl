@@ -1,5 +1,5 @@
-use rglsl::proc::ResourceClass;
 use rglsl::ShaderStage;
+use rglsl::proc::ResourceClass;
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_USAGE: i32 = 1;
@@ -434,7 +434,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             return Err(Exit::unsupported(
                 &argument,
                 "a binding space per resource type",
-            ))
+            ));
         }
         "invert-y" | "iy" => return Err(Exit::unsupported(&argument, "inverting position.y")),
         "nan-clamp" => return Err(Exit::unsupported(&argument, "NaN clamping")),
@@ -442,23 +442,23 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             return Err(Exit::unsupported(
                 &argument,
                 "converting textures to sampled textures",
-            ))
+            ));
         }
         "no-storage-format" | "nsf" => {
-            return Err(Exit::unsupported(&argument, "the Unknown image format"))
+            return Err(Exit::unsupported(&argument, "the Unknown image format"));
         }
         "discard-is-terminate" => {
             return Err(Exit::unsupported(
                 &argument,
                 "discard as OpTerminateInvocation",
-            ))
+            ));
         }
         "enhanced-msgs" => return Err(Exit::unsupported(&argument, "enhanced messages")),
         "dump-builtin-symbols" => {
             return Err(Exit::unsupported(
                 &argument,
                 "dumping the built-in symbol table",
-            ))
+            ));
         }
         "reflect-strict-array-suffix" => options.reflect_options.strict_array_suffix = true,
         "reflect-basic-array-suffix" => options.reflect_options.basic_array_suffix = true,
@@ -554,7 +554,7 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
                     return Err(Exit::unsupported(
                         &argument,
                         "debug information with the source file name only",
-                    ))
+                    ));
                 }
                 Some('V') if rest.chars().nth(1) == Some('S') => Some(Debug::NonSemanticSource),
                 Some('V') => Some(Debug::NonSemantic),

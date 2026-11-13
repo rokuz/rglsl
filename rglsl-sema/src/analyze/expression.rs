@@ -13,7 +13,7 @@ use rglsl_ast::{Chain, Span, Spine};
 
 use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
-use crate::constant::{fold_binary, fold_linear, fold_unary, Constant, Linear, Value};
+use crate::constant::{Constant, Linear, Value, fold_binary, fold_linear, fold_unary};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
 use crate::types::CooperativeUse;

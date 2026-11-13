@@ -10,12 +10,12 @@ use rglsl_sema::scope::Direction;
 use rglsl_sema::types::Type as GlslType;
 use rglsl_sema::{FunctionId, SymbolId};
 
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::front::glsl::Error;
 use crate::{
-    proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
     AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, Function, FunctionArgument,
     FunctionResult, Handle, LocalVariable, NonUniform, Span, Statement, TypeInner,
+    proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
 };
 
 #[derive(Clone, Copy, Debug)]

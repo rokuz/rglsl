@@ -377,7 +377,7 @@ fn binary(operator: BinaryOperator, left: &Value, right: &Value) -> TestResult<V
         BinaryOperator::LessEqual => return Ok(boolean(left.data[0] <= right.data[0])),
         BinaryOperator::GreaterEqual => return Ok(boolean(left.data[0] >= right.data[0])),
         BinaryOperator::LogicalXor => {
-            return Ok(boolean((left.data[0] != 0.0) != (right.data[0] != 0.0)))
+            return Ok(boolean((left.data[0] != 0.0) != (right.data[0] != 0.0)));
         }
         _ => {}
     }
@@ -553,11 +553,7 @@ fn builtin(name: &str, values: &[Value]) -> Value {
                 .map(|index| {
                     let (x, y, a) = (first.get(index), values[1].get(index), values[2].get(index));
                     if values[2].scalar == ScalarType::Bool {
-                        if a != 0.0 {
-                            y
-                        } else {
-                            x
-                        }
+                        if a != 0.0 { y } else { x }
                     } else {
                         x * (1.0 - a) + y * a
                     }

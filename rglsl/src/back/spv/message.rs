@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 use spirv::{Capability, Decoration, Op, Word};
 
 use super::plain_types::CompositeShape;
-use super::{helpers, Block, BlockContext, Error, Instruction, Writer, WriterFlags};
-use crate::{arena::Handle, DebugPrintfArgument, Expression, Type, TypeInner};
+use super::{Block, BlockContext, Error, Instruction, Writer, WriterFlags, helpers};
+use crate::{DebugPrintfArgument, Expression, Type, TypeInner, arena::Handle};
 
 const CAPABILITY_ABORT: Word = 5120;
 const CAPABILITY_CONSTANT_DATA: Word = 5146;

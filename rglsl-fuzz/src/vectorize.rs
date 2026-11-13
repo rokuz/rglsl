@@ -5,12 +5,12 @@ use rglsl_ast::ast::{
     BasicType, DeclarationKind, ExpressionKind, ExternalDeclaration, NodeId, ScalarType, Statement,
     StatementKind, TranslationUnit,
 };
-use rglsl_sema::scope::SymbolId;
 use rglsl_sema::Analysis;
+use rglsl_sema::scope::SymbolId;
 
 use crate::basic;
 use crate::build::Builder;
-use crate::injection::{apply_edits, choose, BlockId, Edit, Location};
+use crate::injection::{BlockId, Edit, Location, apply_edits, choose};
 use crate::random::Random;
 use crate::rewrite::{rewrite_expressions, statement_expression_ids, visit_statements};
 use crate::transformation::PassInput;

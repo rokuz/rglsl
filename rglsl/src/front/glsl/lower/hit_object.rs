@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use rglsl_ast::ast::Expression as AstExpression;
 
 use super::function::FunctionLowerer;
-use super::{internal, Result};
+use super::{Result, internal};
 use crate::{
     Expression, Handle, HitObjectFunction, HitObjectKind, HitObjectSbtRecord, HitObjectTrace,
     HitObjectValue, MicroTriangleVertexValue, PredeclaredType, ReorderHint, Span, Statement,
@@ -108,8 +108,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             self.nest(frame).await
         }?;
         let (fixed, rest) = operands.split_at_checked(10).ok_or_else(|| internal(at))?;
-        let &[acceleration_structure, flags, cull_mask, sbt_offset, sbt_stride, miss_index, origin, tmin, direction, tmax] =
-            fixed
+        let &[
+            acceleration_structure,
+            flags,
+            cull_mask,
+            sbt_offset,
+            sbt_stride,
+            miss_index,
+            origin,
+            tmin,
+            direction,
+            tmax,
+        ] = fixed
         else {
             return Err(internal(at));
         };
@@ -168,12 +178,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             "fetchMicroTriangleVertexBarycentricNV" => Some(MicroTriangleVertexValue::Barycentric),
             _ => None,
         } {
-            let [acceleration_structure, instance_id, geometry_index, primitive_index, barycentric] =
-                *{
-                    let frame = self.clone().ray_operands(arguments);
-                    self.nest(frame).await
-                }?
-                .as_slice()
+            let [
+                acceleration_structure,
+                instance_id,
+                geometry_index,
+                primitive_index,
+                barycentric,
+            ] = *{
+                let frame = self.clone().ray_operands(arguments);
+                self.nest(frame).await
+            }?
+            .as_slice()
             else {
                 return Err(internal(at));
             };
@@ -277,26 +292,37 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     hit_kind,
                     sbt_record,
                 ) = match *head {
-                    [acceleration_structure, instance_id, primitive_id, geometry_index, hit_kind, index] => {
-                        (
-                            acceleration_structure,
-                            instance_id,
-                            primitive_id,
-                            geometry_index,
-                            hit_kind,
-                            HitObjectSbtRecord::Index(index),
-                        )
-                    }
-                    [acceleration_structure, instance_id, primitive_id, geometry_index, hit_kind, offset, stride] => {
-                        (
-                            acceleration_structure,
-                            instance_id,
-                            primitive_id,
-                            geometry_index,
-                            hit_kind,
-                            HitObjectSbtRecord::OffsetStride { offset, stride },
-                        )
-                    }
+                    [
+                        acceleration_structure,
+                        instance_id,
+                        primitive_id,
+                        geometry_index,
+                        hit_kind,
+                        index,
+                    ] => (
+                        acceleration_structure,
+                        instance_id,
+                        primitive_id,
+                        geometry_index,
+                        hit_kind,
+                        HitObjectSbtRecord::Index(index),
+                    ),
+                    [
+                        acceleration_structure,
+                        instance_id,
+                        primitive_id,
+                        geometry_index,
+                        hit_kind,
+                        offset,
+                        stride,
+                    ] => (
+                        acceleration_structure,
+                        instance_id,
+                        primitive_id,
+                        geometry_index,
+                        hit_kind,
+                        HitObjectSbtRecord::OffsetStride { offset, stride },
+                    ),
                     _ => return Err(internal(at)),
                 };
                 let (origin, tmin, direction, tmax, time) = match (tail, motion) {
@@ -358,7 +384,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             "hitObjectRecordEmpty" => HitObjectFunction::RecordEmpty,
             "hitObjectRecordFromQuery" => {
-                let [ref query, ref sbt_record_index, ref attributes, ref hit_kind @ ..] = *rest
+                let [
+                    ref query,
+                    ref sbt_record_index,
+                    ref attributes,
+                    ref hit_kind @ ..,
+                ] = *rest
                 else {
                     return Err(internal(at));
                 };

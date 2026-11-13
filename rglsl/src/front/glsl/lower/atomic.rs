@@ -3,7 +3,7 @@ use rglsl_sema::types::Opaque;
 
 use super::function::FunctionLowerer;
 use super::types::scalar;
-use super::{internal, unsupported, Result};
+use super::{Result, internal, unsupported};
 use crate::{
     AtomicFunction, AtomicLocation, Expression, Handle, MemoryDecorations, MemoryOrder,
     MemoryScope, MemorySemantics, NonUniform, PredeclaredType, Span, Statement, Texel, TypeInner,
@@ -85,13 +85,17 @@ impl FunctionLowerer<'_, '_> {
                     unequal: semantics,
                 })
             }
-            [ref scope, ref storage, ref semantics, ref storage_unequal, ref semantics_unequal] => {
-                Ok(MemoryOrder {
-                    scope: self.scope_argument(scope, at)?,
-                    semantics: self.semantics_arguments(storage, semantics, at)?,
-                    unequal: self.semantics_arguments(storage_unequal, semantics_unequal, at)?,
-                })
-            }
+            [
+                ref scope,
+                ref storage,
+                ref semantics,
+                ref storage_unequal,
+                ref semantics_unequal,
+            ] => Ok(MemoryOrder {
+                scope: self.scope_argument(scope, at)?,
+                semantics: self.semantics_arguments(storage, semantics, at)?,
+                unequal: self.semantics_arguments(storage_unequal, semantics_unequal, at)?,
+            }),
             _ => Err(internal(at)),
         }
     }

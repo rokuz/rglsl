@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use rglsl::{
+    ShaderStage,
     back::spv,
     front::glsl,
     valid::{Capabilities, ValidationFlags, Validator},
-    ShaderStage,
 };
 use rspirv::binary::Disassemble;
 use rspirv::dr;
@@ -452,7 +452,7 @@ pub fn compile_with(
     let glslang_words = match glslang(source, target, debug)? {
         None => None,
         Some(GlslangResult::Rejected(errors)) => {
-            return Err(format!("glslang rejects the shader: {errors:?}").into())
+            return Err(format!("glslang rejects the shader: {errors:?}").into());
         }
         Some(GlslangResult::Accepted(words)) => Some(words),
     };
@@ -683,7 +683,7 @@ pub fn compile_raw_with(
     let reference = match glslang(source, target, Debug::None)? {
         None => None,
         Some(GlslangResult::Rejected(errors)) => {
-            return Err(format!("glslang rejects the shader: {errors:?}").into())
+            return Err(format!("glslang rejects the shader: {errors:?}").into());
         }
         Some(GlslangResult::Accepted(reference)) => Some(reference),
     };

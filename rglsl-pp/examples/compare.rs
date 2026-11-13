@@ -4,8 +4,8 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use rglsl_pp::{
-    find_version, preprocess, Define, FileSystemIncluder, Options, Phase, Preprocessed, Profile,
-    Severity,
+    Define, FileSystemIncluder, Options, Phase, Preprocessed, Profile, Severity, find_version,
+    preprocess,
 };
 
 use rglsl_types::ShaderStage;
@@ -508,23 +508,25 @@ fn main() {
     let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                let index = {
-                    let mut next = next
+            scope.spawn(|| {
+                loop {
+                    let index = {
+                        let mut next = next
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let index = *next;
+                        *next += 1;
+                        index
+                    };
+                    let Some(name) = names.get(index) else {
+                        break;
+                    };
+                    let outcome = compare_file(&arguments, name);
+                    outcomes
                         .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let index = *next;
-                    *next += 1;
-                    index
-                };
-                let Some(name) = names.get(index) else {
-                    break;
-                };
-                let outcome = compare_file(&arguments, name);
-                outcomes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(outcome);
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(outcome);
+                }
             });
         }
     });

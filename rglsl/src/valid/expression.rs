@@ -1,4 +1,4 @@
-use super::{compose::validate_compose, FunctionInfo, ModuleInfo, ShaderStages, TypeFlags};
+use super::{FunctionInfo, ModuleInfo, ShaderStages, TypeFlags, compose::validate_compose};
 use crate::arena::UniqueArena;
 use crate::{
     arena::Handle,
@@ -9,7 +9,9 @@ use crate::{
 #[derive(Clone, Debug, thiserror::Error)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ExpressionError {
-    #[error("Used by a statement before it was introduced into the scope by any of the dominating blocks")]
+    #[error(
+        "Used by a statement before it was introduced into the scope by any of the dominating blocks"
+    )]
     NotInScope,
     #[error("Depends on {0:?}, which has not been processed yet")]
     NotYetProcessed(Handle<crate::Expression>),
@@ -66,7 +68,9 @@ pub enum ExpressionError {
         rhs_expr: Handle<crate::Expression>,
         rhs_type: crate::TypeInner,
     },
-    #[error("Expected selection argument types to match, but reject value of type {reject:?} does not match accept value of value {accept:?}")]
+    #[error(
+        "Expected selection argument types to match, but reject value of type {reject:?} does not match accept value of value {accept:?}"
+    )]
     SelectValuesTypeMismatch {
         accept: crate::TypeInner,
         reject: crate::TypeInner,
@@ -115,7 +119,9 @@ pub enum ExpressionError {
     InvalidImageOtherIndexType(Handle<crate::Expression>),
     #[error("Image coordinate type of {1:?} does not match dimension {0:?}")]
     InvalidImageCoordinateType(crate::ImageDimension, Handle<crate::Expression>),
-    #[error("Comparison sampling mismatch: image has class {image:?}, but the sampler is comparison={sampler}, and the reference was provided={has_ref}")]
+    #[error(
+        "Comparison sampling mismatch: image has class {image:?}, but the sampler is comparison={sampler}, and the reference was provided={has_ref}"
+    )]
     ComparisonSamplingMismatch {
         image: crate::ImageClass,
         sampler: bool,
@@ -165,7 +171,9 @@ pub enum ExpressionError {
     MissingCapabilities(super::Capabilities),
     #[error(transparent)]
     Literal(#[from] LiteralError),
-    #[error("{0:?} is not supported for Width {2} {1:?} arguments yet, see https://github.com/gfx-rs/wgpu/issues/5276")]
+    #[error(
+        "{0:?} is not supported for Width {2} {1:?} arguments yet, see https://github.com/gfx-rs/wgpu/issues/5276"
+    )]
     UnsupportedWidth(crate::MathFunction, crate::ScalarKind, crate::Bytes),
     #[error("Invalid operand for cooperative op")]
     InvalidCooperativeOperand(Handle<crate::Expression>),
@@ -369,7 +377,7 @@ impl super::Validator {
                 _ => return Err(ConstExpressionError::InvalidSplatType(value)),
             },
             _ if global_expr_kind.is_const(handle) || self.overrides_resolved => {
-                return Err(ConstExpressionError::NonFullyEvaluatedConst)
+                return Err(ConstExpressionError::NonFullyEvaluatedConst);
             }
             // the constant evaluator will report errors about override-expressions
             _ => {}
@@ -456,13 +464,13 @@ impl super::Validator {
                         }
                     }
                     Err(crate::proc::ConstValueError::Negative) => {
-                        return Err(ExpressionError::NegativeIndex(base))
+                        return Err(ExpressionError::NegativeIndex(base));
                     }
                     Err(crate::proc::ConstValueError::NonConst) => {}
                     Err(crate::proc::ConstValueError::InvalidType) => {
                         match function.expressions[index] {
                             crate::Expression::Literal(crate::Literal::I64(value)) if value < 0 => {
-                                return Err(ExpressionError::NegativeIndex(base))
+                                return Err(ExpressionError::NegativeIndex(base));
                             }
                             crate::Expression::Literal(
                                 crate::Literal::I64(_) | crate::Literal::U64(_),
@@ -690,7 +698,7 @@ impl super::Validator {
                     crate::ImageDimension::Buffer
                     | crate::ImageDimension::Subpass
                     | crate::ImageDimension::TileImageData => {
-                        return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
+                        return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
                     }
                 };
                 match *resolver.resolve(coordinate)? {
@@ -757,7 +765,7 @@ impl super::Validator {
                         | crate::ImageDimension::Buffer
                         | crate::ImageDimension::Subpass
                         | crate::ImageDimension::TileImageData => {
-                            return Err(ExpressionError::InvalidGatherDimension(dim))
+                            return Err(ExpressionError::InvalidGatherDimension(dim));
                         }
                     };
                     let max_component = match class {
@@ -835,7 +843,7 @@ impl super::Validator {
                                     ..
                                 }) => {}
                                 _ => {
-                                    return Err(ExpressionError::InvalidSampleLevelExactType(expr))
+                                    return Err(ExpressionError::InvalidSampleLevelExactType(expr));
                                 }
                             },
                             _ => match *resolver.resolve(expr)? {
@@ -843,7 +851,7 @@ impl super::Validator {
                                     kind: Sk::Float, ..
                                 }) => {}
                                 _ => {
-                                    return Err(ExpressionError::InvalidSampleLevelExactType(expr))
+                                    return Err(ExpressionError::InvalidSampleLevelExactType(expr));
                                 }
                             },
                         }
@@ -879,7 +887,9 @@ impl super::Validator {
                                     },
                             } if size as u32 == num_components => {}
                             _ => {
-                                return Err(ExpressionError::InvalidSampleLevelGradientType(dim, x))
+                                return Err(ExpressionError::InvalidSampleLevelGradientType(
+                                    dim, x,
+                                ));
                             }
                         }
                         match *resolver.resolve(y)? {
@@ -894,7 +904,9 @@ impl super::Validator {
                                     },
                             } if size as u32 == num_components => {}
                             _ => {
-                                return Err(ExpressionError::InvalidSampleLevelGradientType(dim, y))
+                                return Err(ExpressionError::InvalidSampleLevelGradientType(
+                                    dim, y,
+                                ));
                             }
                         }
                         ShaderStages::all()
@@ -1011,7 +1023,7 @@ impl super::Validator {
                                     _ => {
                                         return Err(ExpressionError::InvalidImageOtherIndexType(
                                             level,
-                                        ))
+                                        ));
                                     }
                                 }
                                 class.has_levels(dim)
@@ -1713,7 +1725,7 @@ impl super::Validator {
                 _ => {
                     return Err(ExpressionError::InvalidAccelerationStructureAddress(
                         address,
-                    ))
+                    ));
                 }
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,

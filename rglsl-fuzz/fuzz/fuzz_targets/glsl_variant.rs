@@ -6,12 +6,12 @@ mod fuzz {
     use std::sync::{Mutex, PoisonError};
 
     use libfuzzer_sys::fuzz_target;
+    use rglsl::ShaderStage;
     use rglsl::back::spv;
     use rglsl::front::glsl::{Frontend, Options};
     use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-    use rglsl::ShaderStage;
-    use rglsl_fuzz::decisions::{decode, Seed};
     use rglsl_fuzz::ShaderJob;
+    use rglsl_fuzz::decisions::{Seed, decode};
 
     fn options() -> Options {
         Options {

@@ -1,9 +1,9 @@
+use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-use rglsl::ShaderStage;
-use rglsl_link::{decode, encode, link_objects, Options as LinkOptions};
+use rglsl_link::{Options as LinkOptions, decode, encode, link_objects};
 use rglsl_pp::MemoryIncluder;
 use std::collections::BTreeMap;
 
@@ -183,10 +183,11 @@ fn the_frontend_records_sources_lines_and_scopes() -> TestResult {
     assert_eq!(info.units.len(), 1);
     assert!(info.units.first().is_some_and(|unit| unit.entry.is_some()));
     assert_eq!(info.scopes.len(), 1);
-    assert!(info
-        .scopes
-        .first()
-        .is_some_and(|scope| scope.at.line == 11 && scope.at.source == 0));
+    assert!(
+        info.scopes
+            .first()
+            .is_some_and(|scope| scope.at.line == 11 && scope.at.source == 0)
+    );
     let header = info
         .lines
         .iter()
@@ -300,22 +301,24 @@ fn object_files_and_linking_keep_debug_information_per_unit() -> TestResult {
     let program = object(ShaderStage::Fragment, "program.frag", PROGRAM, false)?;
     let library = object(ShaderStage::Fragment, "library.glsl", LIBRARY, true)?;
     assert!(program.unit.module.debug_info.is_some());
-    assert!(program
-        .unit
-        .module
-        .functions
-        .iter()
-        .chain(library.unit.module.functions.iter())
-        .all(
-            |(handle, _)| program.unit.module.functions.try_get(handle).is_err()
-                || program
-                    .unit
-                    .module
-                    .functions
-                    .get_span(handle)
-                    .to_range()
-                    .is_some()
-        ));
+    assert!(
+        program
+            .unit
+            .module
+            .functions
+            .iter()
+            .chain(library.unit.module.functions.iter())
+            .all(
+                |(handle, _)| program.unit.module.functions.try_get(handle).is_err()
+                    || program
+                        .unit
+                        .module
+                        .functions
+                        .get_span(handle)
+                        .to_range()
+                        .is_some()
+            )
+    );
     let linked = link_objects(&[program, library], &LinkOptions::default())
         .map_err(|errors| errors.to_string())?;
     let stage = linked.first().ok_or("nothing linked")?;
@@ -374,17 +377,21 @@ fn global_initializers_are_stored_in_main_under_the_unit_scope() -> TestResult {
         .first()
         .and_then(|operands| operands.get(1).copied())
         .ok_or("no private variable")?;
-    assert!(instructions
-        .iter()
-        .any(|(opcode, operands)| *opcode == 62 && operands.first() == Some(&scale)));
+    assert!(
+        instructions
+            .iter()
+            .any(|(opcode, operands)| *opcode == 62 && operands.first() == Some(&scale))
+    );
     let units: Vec<u32> = debug_operands(&words, 1)
         .iter()
         .filter_map(|operands| operands.get(1).copied())
         .collect();
     assert_eq!(units.len(), 1);
-    assert!(debug_operands(&words, 23)
-        .iter()
-        .any(|operands| operands.get(4).is_some_and(|scope| units.contains(scope))));
+    assert!(
+        debug_operands(&words, 23)
+            .iter()
+            .any(|operands| operands.get(4).is_some_and(|scope| units.contains(scope)))
+    );
     let constants = constant_values(&words);
     let lines: Vec<u32> = debug_operands(&words, 103)
         .iter()

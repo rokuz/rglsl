@@ -8,14 +8,14 @@ simple and efficient.
 
 */
 
+use crate::UniqueArena;
 use crate::common::{DiagnosticDebug, ForDebugWithTypes};
 use crate::ir;
+use crate::proc::overloads::OverloadSet;
 use crate::proc::overloads::constructor_set::{ConstructorSet, ConstructorSize};
 use crate::proc::overloads::rule::{Conclusion, Rule};
 use crate::proc::overloads::scalar_set::ScalarSet;
-use crate::proc::overloads::OverloadSet;
 use crate::proc::{GlobalCtx, TypeResolution};
-use crate::UniqueArena;
 
 use alloc::vec::Vec;
 use core::fmt;

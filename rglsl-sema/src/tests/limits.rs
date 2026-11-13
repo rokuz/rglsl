@@ -1,8 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{reported, TestResult};
-use crate::{analyze, Options, ResourceLimits};
+use super::{TestResult, reported};
+use crate::{Options, ResourceLimits, analyze};
 use rglsl_types::ShaderStage;
 
 fn diagnostics(
@@ -39,9 +39,11 @@ fn configuration_names_cover_every_limit() {
     }
     assert_eq!(copy, limits);
     assert!(!copy.set("MaxWidgets", 1));
-    assert!(limits
-        .configuration()
-        .starts_with("MaxLights 32\nMaxClipPlanes 6\n"));
+    assert!(
+        limits
+            .configuration()
+            .starts_with("MaxLights 32\nMaxClipPlanes 6\n")
+    );
     assert_eq!(limits.max_task_work_group_size_ext(), [128, 128, 128]);
     assert!(!limits.index_limits());
     assert!(ResourceLimits::zeroed().index_limits());

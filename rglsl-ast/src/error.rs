@@ -1,6 +1,6 @@
 use alloc::string::String;
 
-use crate::span::{line_column, LineColumn, Span};
+use crate::span::{LineColumn, Span, line_column};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{position}: {kind}")]

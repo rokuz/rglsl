@@ -1,8 +1,8 @@
+use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, TranslationUnit,
 };
-use rglsl_ast::Stalled;
-use rglsl_ast::{expressions, parse, print, ParseError};
+use rglsl_ast::{ParseError, expressions, parse, print};
 
 use crate::build::Builder;
 use crate::constants::{

@@ -2,8 +2,8 @@ use alloc::{format, string::String, vec::Vec};
 
 use spirv::Word;
 
-use super::{helpers, Block, Function, Instruction, Writer};
-use crate::{arena::Handle, FastHashMap};
+use super::{Block, Function, Instruction, Writer, helpers};
+use crate::{FastHashMap, arena::Handle};
 
 const MARKER: u32 = u32::MAX;
 const MARK_LOCATION: Word = 0;
@@ -744,11 +744,7 @@ impl Writer {
                     .and_then(|line| usize::try_from(line).ok())
                     .and_then(|line| lengths.get(line))
                     .is_some_and(|&length| position.column <= length);
-                if fits {
-                    position.column
-                } else {
-                    0
-                }
+                if fits { position.column } else { 0 }
             }
             None => position.column,
         };
@@ -1008,8 +1004,9 @@ impl Writer {
         let column = self.debug_uint(0);
         let size = self.debug_uint(0);
         let flags = self.debug_uint(FLAG_IS_PUBLIC);
-        let mut operands =
-            alloc::vec![name_id, tag, source, line, column, unit_id, name_id, size, flags];
+        let mut operands = alloc::vec![
+            name_id, tag, source, line, column, unit_id, name_id, size, flags
+        ];
         operands.extend(member_ids);
         Ok(match reserved {
             Some(id) => {

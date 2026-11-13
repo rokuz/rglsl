@@ -4,7 +4,7 @@ use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
 use super::function::FunctionLowerer;
-use super::{internal, unsupported, Result};
+use super::{Result, internal, unsupported};
 use crate::{
     CollectiveOperation, Direction, Expression, GatherMode, Handle, MemoryScope, MemorySemantics,
     Scalar, Span, Statement, SubgroupFunction, SubgroupOperation, TypeInner, VectorSize,

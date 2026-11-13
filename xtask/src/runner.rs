@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::corpus::{self, Case, Kind};
 use crate::exec::known::{self, Known};
@@ -241,22 +241,24 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let errors: Mutex<Vec<anyhow::Error>> = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(case) = cases.get(index) else { break };
-                match run_case(&env, &self_exe, &work_dir, case, timeout) {
-                    Ok(result) => results
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push((index, result)),
-                    Err(err) => errors
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push(err.context(case.name.clone())),
-                }
-                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
-                if finished.is_multiple_of(200) {
-                    eprintln!("[xtask] {finished} / {}", cases.len());
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(case) = cases.get(index) else { break };
+                    match run_case(&env, &self_exe, &work_dir, case, timeout) {
+                        Ok(result) => results
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push((index, result)),
+                        Err(err) => errors
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push(err.context(case.name.clone())),
+                    }
+                    let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    if finished.is_multiple_of(200) {
+                        eprintln!("[xtask] {finished} / {}", cases.len());
+                    }
                 }
             });
         }

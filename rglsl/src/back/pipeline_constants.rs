@@ -10,13 +10,13 @@ use thiserror::Error;
 
 use super::PipelineConstants;
 use crate::{
+    Arena, Block, Constant, Expression, Function, Handle, Literal, Module, Override, Range, Scalar,
+    Span, Statement, TypeInner, WithSpan,
     arena::HandleVec,
-    compact::{compact, CompactError, KeepUnused},
+    compact::{CompactError, KeepUnused, compact},
     ir,
     proc::{ConstantEvaluator, ConstantEvaluatorError, Emitter},
     valid::{Capabilities, ModuleInfo, ValidationError, ValidationFlags, Validator},
-    Arena, Block, Constant, Expression, Function, Handle, Literal, Module, Override, Range, Scalar,
-    Span, Statement, TypeInner, WithSpan,
 };
 
 #[derive(Error, Debug, Clone)]

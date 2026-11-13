@@ -1,8 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
 
 use super::frames::Cx;
 use super::{Analyzer, Operand};
@@ -204,7 +204,7 @@ impl Analyzer<'_> {
                             span,
                             keyword,
                             "invalid number of bits for the first type parameter",
-                        )
+                        );
                     }
                 };
                 self.cooperative_matrix_type(
@@ -335,7 +335,7 @@ impl Analyzer<'_> {
                                 span,
                                 keyword,
                                 "invalid dimension permutation",
-                            )
+                            );
                         }
                     }
                 }

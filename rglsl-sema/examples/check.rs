@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration};
-use rglsl_sema::{analyze, DiagnosticKind, Options};
+use rglsl_sema::{DiagnosticKind, Options, analyze};
 use rglsl_types::ShaderStage;
 
 struct Outcome {

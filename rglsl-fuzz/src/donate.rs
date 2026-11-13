@@ -8,28 +8,28 @@ use rglsl_ast::ast::{
     SingleTypeQualifier, Spanned, Statement, StatementKind, StorageQualifier, TranslationUnit,
     TypeSpecifierNonArray,
 };
-use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::Analysis;
+use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_types::ShaderStage;
 
 use crate::basic::{self, INT};
-use crate::build::{unqualified, Builder};
+use crate::build::{Builder, unqualified};
 use crate::constants::{
     DEAD_PREFIX, GLF_FUZZED, GLF_MAKE_IN_BOUNDS_INT, GLF_MAKE_IN_BOUNDS_UINT, INJECTION_SWITCH,
     LIVE_PREFIX,
 };
 use crate::context::Context;
 use crate::error::Error;
-use crate::fuzzer::{random_constant, Fuzzer, GenerationParams, Templates};
+use crate::fuzzer::{Fuzzer, GenerationParams, Templates, random_constant};
 use crate::generate::analyze_shader;
 use crate::identity::hidden_names;
-use crate::injection::{apply_edits, choose, injection_points, Edit, InjectionPoint};
+use crate::injection::{Edit, InjectionPoint, apply_edits, choose, injection_points};
 use crate::job::parse_unit;
 use crate::macros::emit;
 use crate::random::Random;
-use crate::rename::{rename_all, NameKind};
+use crate::rename::{NameKind, rename_all};
 use crate::rewrite::{rewrite_expressions, rewrite_statements, take_expression};
-use crate::scope::{has_storage, Variable};
+use crate::scope::{Variable, has_storage};
 use crate::stack::child_statements;
 use crate::transformation::PassInput;
 

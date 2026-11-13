@@ -7,7 +7,7 @@ use rglsl_sema::types::{BlockId, Scalar as GlslScalar, Type as GlslType};
 
 use super::expression::{Chain, Place};
 use super::function::FunctionLowerer;
-use super::{internal, Lowerer, Result};
+use super::{Lowerer, Result, internal};
 use crate::{
     AddressSpace, BinaryOperator, Expression, Handle, Literal, PointerQualifiers, ScalarKind, Span,
     StorageAccess, Type, TypeInner,

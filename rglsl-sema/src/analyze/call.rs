@@ -3,15 +3,15 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExpressionKind, FunctionCall, FunctionIdentifier, Identifier, TypeSpecifier,
 };
-use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::subgroup;
-use crate::constant::{fold_builtin, Constant, Value};
+use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
 use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
@@ -1643,7 +1643,7 @@ impl Analyzer<'_> {
                             self,
                             &ty,
                             "the arguments are not arrays of the element type",
-                        )
+                        );
                     }
                 }
             }

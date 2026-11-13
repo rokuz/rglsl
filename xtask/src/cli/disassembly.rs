@@ -2,13 +2,13 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rglsl_cli::disassemble::{disassemble, disassemble_bytes};
 
-use super::{spirv_words, Case, Environment, Run};
+use super::{Case, Environment, Run, spirv_words};
 use crate::corpus::{self, Corpus};
 use crate::process::{self, Exit};
 
@@ -61,7 +61,7 @@ fn first_line_difference(reference: &str, ours: &str) -> String {
         match ours_lines.next() {
             Some(our_line) if our_line == line => {}
             Some(our_line) => {
-                return format!("line {}: glslang `{line}`, rglsl `{our_line}`", number + 1)
+                return format!("line {}: glslang `{line}`, rglsl `{our_line}`", number + 1);
             }
             None => return format!("line {}: rglsl ends before glslang's `{line}`", number + 1),
         }
@@ -204,33 +204,35 @@ pub(super) fn sweep(env: &Environment, filter: Option<&str>, report: &mut String
     let jobs = std::thread::available_parallelism().map_or(4, |count| count.get());
     std::thread::scope(|scope| {
         for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(case) = cases.get(index) else {
-                    break;
-                };
-                let outcome = sweep_one(env, case, &work);
-                let Ok(mut tally) = tally.lock() else {
-                    break;
-                };
-                match outcome {
-                    Ok(Outcome::GlslangRejected) => tally.glslang_rejected += 1,
-                    Ok(Outcome::Compared { mismatch, rglsl }) => {
-                        match mismatch {
-                            Some(problem) => tally.failures.push((case.name.clone(), problem)),
-                            None => tally.identical += 1,
-                        }
-                        match rglsl {
-                            Some(Ok(())) => tally.round_trips += 1,
-                            Some(Err(problem)) => {
-                                tally.failures.push((case.name.clone(), problem));
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(case) = cases.get(index) else {
+                        break;
+                    };
+                    let outcome = sweep_one(env, case, &work);
+                    let Ok(mut tally) = tally.lock() else {
+                        break;
+                    };
+                    match outcome {
+                        Ok(Outcome::GlslangRejected) => tally.glslang_rejected += 1,
+                        Ok(Outcome::Compared { mismatch, rglsl }) => {
+                            match mismatch {
+                                Some(problem) => tally.failures.push((case.name.clone(), problem)),
+                                None => tally.identical += 1,
                             }
-                            None => tally.rglsl_rejected += 1,
+                            match rglsl {
+                                Some(Ok(())) => tally.round_trips += 1,
+                                Some(Err(problem)) => {
+                                    tally.failures.push((case.name.clone(), problem));
+                                }
+                                None => tally.rglsl_rejected += 1,
+                            }
                         }
-                    }
-                    Err(error) => {
-                        if let Ok(mut errors) = errors.lock() {
-                            errors.push(format!("{}: {error:#}", case.name));
+                        Err(error) => {
+                            if let Ok(mut errors) = errors.lock() {
+                                errors.push(format!("{}: {error:#}", case.name));
+                            }
                         }
                     }
                 }

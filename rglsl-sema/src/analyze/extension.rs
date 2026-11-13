@@ -1,8 +1,8 @@
 use alloc::string::String;
 
-use rglsl_ast::ast::ExtensionBehavior;
-use rglsl_ast::extensions::{self, names, Extension, ExtensionIssue, Feature, Request};
 use rglsl_ast::Span;
+use rglsl_ast::ast::ExtensionBehavior;
+use rglsl_ast::extensions::{self, Extension, ExtensionIssue, Feature, Request, names};
 
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};

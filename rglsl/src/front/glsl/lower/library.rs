@@ -11,8 +11,8 @@ use rglsl_sema::{ResourceLimits, StageTables};
 use rglsl_types::probe::StageProbe;
 
 use super::{
-    link_time, lower_object, preprocess, preprocessor_options, run_lowerer, sema_error,
-    sema_options, Mode, Parsed, StageClass,
+    Mode, Parsed, StageClass, link_time, lower_object, preprocess, preprocessor_options,
+    run_lowerer, sema_error, sema_options,
 };
 use crate::front::glsl::{Error, ErrorKind, Options, ParseErrors};
 use crate::object::{LibraryVariant, ObjectModule, StageRejection};

@@ -150,8 +150,10 @@ fn generic_prototypes_expand_to_every_size() {
     assert!(
         signatures(&table, "atomicAdd").contains(&"uint atomicAdd(inout uint, uint)".to_string())
     );
-    assert!(signatures(&table, "umulExtended")
-        .contains(&"void umulExtended(uvec2, uvec2, out uvec2, out uvec2)".to_string()));
+    assert!(
+        signatures(&table, "umulExtended")
+            .contains(&"void umulExtended(uvec2, uvec2, out uvec2, out uvec2)".to_string())
+    );
     assert_eq!(signatures(&table, "any").len(), 3);
     assert_eq!(signatures(&table, "equal").len(), 36);
     assert_eq!(signatures(&table, "lessThan").len(), 33);
@@ -203,9 +205,11 @@ fn texture_functions_follow_the_sampler_type() {
         assert!(fetch.contains(&expected.to_string()), "{expected}");
     }
     assert!(!fetch.iter().any(|signature| signature.contains("Cube")));
-    assert!(!signatures(&table, "texture")
-        .iter()
-        .any(|signature| signature.contains("(texture")));
+    assert!(
+        !signatures(&table, "texture")
+            .iter()
+            .any(|signature| signature.contains("(texture"))
+    );
     let size = signatures(&table, "textureSize");
     for expected in [
         "ivec2 textureSize(sampler2D, int)",
@@ -222,10 +226,15 @@ fn texture_functions_follow_the_sampler_type() {
     assert!(gather.contains(
         &"vec4 textureGatherOffsets(sampler2DShadow, vec2, float, ivec2[4])".to_string()
     ));
-    assert!(signatures(&table, "textureProjGradOffset")
-        .contains(&"vec4 textureProjGradOffset(sampler2D, vec4, vec2, vec2, ivec2)".to_string()));
-    assert!(signatures(&table, "textureQueryLevels")
-        .contains(&"int textureQueryLevels(samplerCubeShadow)".to_string()));
+    assert!(
+        signatures(&table, "textureProjGradOffset").contains(
+            &"vec4 textureProjGradOffset(sampler2D, vec4, vec2, vec2, ivec2)".to_string()
+        )
+    );
+    assert!(
+        signatures(&table, "textureQueryLevels")
+            .contains(&"int textureQueryLevels(samplerCubeShadow)".to_string())
+    );
 }
 
 #[test]
@@ -255,11 +264,15 @@ fn image_functions_follow_the_image_type() {
             "{expected}"
         );
     }
-    assert!(signatures(&table, "imageAtomicAdd")
-        .contains(&"float imageAtomicAdd(image2D, ivec2, float)".to_string()));
-    assert!(signatures(&table, "imageAtomicAnd")
-        .iter()
-        .all(|signature| !signature.starts_with("float")));
+    assert!(
+        signatures(&table, "imageAtomicAdd")
+            .contains(&"float imageAtomicAdd(image2D, ivec2, float)".to_string())
+    );
+    assert!(
+        signatures(&table, "imageAtomicAnd")
+            .iter()
+            .all(|signature| !signature.starts_with("float"))
+    );
 }
 
 #[test]
@@ -354,9 +367,11 @@ fn stage_specific_functions_are_gated() {
 #[test]
 fn version_specific_functions_are_gated() {
     for name in ["anyInvocation", "allInvocations", "allInvocationsEqual"] {
-        assert!(builtins(450, ShaderStage::Fragment)
-            .overloads(name)
-            .is_empty());
+        assert!(
+            builtins(450, ShaderStage::Fragment)
+                .overloads(name)
+                .is_empty()
+        );
         assert_eq!(
             builtins(460, ShaderStage::Fragment).overloads(name).len(),
             1

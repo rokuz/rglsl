@@ -5,15 +5,15 @@ use hashbrown::hash_map::Entry;
 use spirv::Word;
 
 use super::{
+    BITS_PER_BYTE, Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType,
+    EntryPointContext, Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction,
+    LocalImageType, LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType,
+    NumericType, Options, PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags,
     helpers::{contains_builtin, global_needs_wrapper, map_storage_class},
-    Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType, EntryPointContext,
-    Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction, LocalImageType,
-    LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType, NumericType, Options,
-    PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags, BITS_PER_BYTE,
 };
 use crate::{
     arena::{Handle, HandleVec, UniqueArena},
-    back::spv::{helpers::BindingDecorations, BindingInfo},
+    back::spv::{BindingInfo, helpers::BindingDecorations},
     proc::{Alignment, TypeResolution},
     valid::{FunctionInfo, ModuleInfo},
 };
@@ -331,7 +331,10 @@ impl Writer {
                         {
                             Some(&cap) => cap,
                             None => {
-                                return Err(Error::MissingCapabilities(what, capabilities.to_vec()))
+                                return Err(Error::MissingCapabilities(
+                                    what,
+                                    capabilities.to_vec(),
+                                ));
                             }
                         }
                     }
@@ -2198,7 +2201,7 @@ impl Writer {
                 | crate::TypeInner::RayQuery { .. }
                 | crate::TypeInner::HitObject { .. }
                 | crate::TypeInner::BufferDescriptor { .. } => {
-                    return Err(Error::Validation("a non-aggregate type has no local type"))
+                    return Err(Error::Validation("a non-aggregate type has no local type"));
                 }
             };
 
@@ -2382,7 +2385,7 @@ impl Writer {
     ) -> Result<Word, Error> {
         let handle = match ty {
             LookupType::Local(local) => {
-                return Ok(self.get_local_constant_composite(local, constituent_ids))
+                return Ok(self.get_local_constant_composite(local, constituent_ids));
             }
             LookupType::Handle(handle) => handle,
         };
@@ -3240,7 +3243,7 @@ impl Writer {
                     Bi::VertexCount | Bi::Vertices | Bi::PrimitiveCount | Bi::Primitives => {
                         return Err(Error::Validation(
                             "a mesh output built-in is used as a varying",
-                        ))
+                        ));
                     }
                     // ray tracing pipeline
                     Bi::RayInvocationId => BuiltIn::LaunchIdKHR,

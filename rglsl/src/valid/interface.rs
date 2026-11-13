@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 use bit_set::BitSet;
 
 use super::{
-    analyzer::{FunctionInfo, GlobalUse},
     Capabilities, Disalignment, FunctionError, ImmediateError, ModuleInfo,
+    analyzer::{FunctionInfo, GlobalUse},
 };
 use crate::arena::{Handle, UniqueArena};
 use crate::span::{AddSpan as _, MapErrWithSpan as _, SpanProvider as _, WithSpan};
@@ -45,7 +45,9 @@ pub enum GlobalVariableError {
     InvalidImmediateType(#[source] ImmediateError),
     #[error("Task payload must not be zero-sized")]
     ZeroSizedTaskPayload,
-    #[error("Memory decorations (`@coherent`, `@volatile`) are only valid for variables in the `storage` address space")]
+    #[error(
+        "Memory decorations (`@coherent`, `@volatile`) are only valid for variables in the `storage` address space"
+    )]
     InvalidMemoryDecorationsAddressSpace,
     #[error("`@coherent` requires the MEMORY_DECORATION_COHERENT capability")]
     CoherentNotSupported,
@@ -102,7 +104,9 @@ pub enum VaryingError {
     InvalidInputAttributeInStage(&'static str, crate::ShaderStage),
     #[error("The attribute {0:?} is not valid for stage {1:?}")]
     InvalidAttributeInStage(&'static str, crate::ShaderStage),
-    #[error("`@blend_src` can only be used at location 0, indices 0 and 1. Found `@location({location}) @blend_src({blend_src})`.")]
+    #[error(
+        "`@blend_src` can only be used at location 0, indices 0 and 1. Found `@location({location}) @blend_src({blend_src})`."
+    )]
     InvalidBlendSrcIndex { location: u32, blend_src: u32 },
     #[error(
         "`@blend_src` structure must specify two sources. \
@@ -110,18 +114,26 @@ pub enum VaryingError {
         absent_blend_src = if *present_blend_src == 0 { 1 } else { 0 },
     )]
     IncompleteBlendSrcUsage { present_blend_src: u32 },
-    #[error("Structure using `@blend_src` may not specify `@location` on any other members. Found a binding at `@location({location})`.")]
+    #[error(
+        "Structure using `@blend_src` may not specify `@location` on any other members. Found a binding at `@location({location})`."
+    )]
     InvalidBlendSrcWithOtherBindings { location: u32 },
-    #[error("Both `@blend_src` structure members must have the same type. `blend_src(0)` has type {blend_src_0_type:?} and `blend_src(1)` has type {blend_src_1_type:?}.")]
+    #[error(
+        "Both `@blend_src` structure members must have the same type. `blend_src(0)` has type {blend_src_0_type:?} and `blend_src(1)` has type {blend_src_1_type:?}."
+    )]
     BlendSrcOutputTypeMismatch {
         blend_src_0_type: Handle<crate::Type>,
         blend_src_1_type: Handle<crate::Type>,
     },
     #[error("`@blend_src` can only be used on struct members, not directly on entry point I/O")]
     BlendSrcNotOnStructMember,
-    #[error("Workgroup size is multi dimensional, `@builtin(subgroup_id)` and `@builtin(subgroup_invocation_id)` are not supported.")]
+    #[error(
+        "Workgroup size is multi dimensional, `@builtin(subgroup_id)` and `@builtin(subgroup_invocation_id)` are not supported."
+    )]
     InvalidMultiDimensionalSubgroupBuiltIn,
-    #[error("The `@per_primitive` attribute can only be used in fragment shader inputs or mesh shader primitive outputs")]
+    #[error(
+        "The `@per_primitive` attribute can only be used in fragment shader inputs or mesh shader primitive outputs"
+    )]
     InvalidPerPrimitive,
     #[error("Per vertex fragment inputs must be an array of length 3.")]
     PerVertexNotArrayOfThree,
@@ -216,15 +228,21 @@ pub enum EntryPointError {
     WrongTaskShaderEntryResult,
     #[error("Task shaders must declare a task payload output")]
     ExpectedTaskPayload,
-    #[error("Mesh shader output variable fields must have types that are in accordance with the mesh shader spec")]
+    #[error(
+        "Mesh shader output variable fields must have types that are in accordance with the mesh shader spec"
+    )]
     BadMeshOutputVariableField,
     #[error("Mesh shader entry point cannot have a return type")]
     UnexpectedMeshShaderEntryResult,
     #[error("Task payload must be at least 4 bytes, but is {0} bytes")]
     TaskPayloadTooSmall(u32),
-    #[error("Only the `ray_generation`, `closest_hit`, and `any_hit` shader stages can access a global variable in the `ray_payload` address space")]
+    #[error(
+        "Only the `ray_generation`, `closest_hit`, and `any_hit` shader stages can access a global variable in the `ray_payload` address space"
+    )]
     RayPayloadInInvalidStage(crate::ShaderStage),
-    #[error("Only the `closest_hit`, `any_hit`, and `miss` shader stages can access a global variable in the `incoming_ray_payload` address space")]
+    #[error(
+        "Only the `closest_hit`, `any_hit`, and `miss` shader stages can access a global variable in the `incoming_ray_payload` address space"
+    )]
     IncomingRayPayloadInInvalidStage(crate::ShaderStage),
     #[error("A global variable in the {0:?} address space cannot be used in the {1:?} stage")]
     RayDataInInvalidStage(crate::AddressSpace, crate::ShaderStage),
@@ -1128,7 +1146,7 @@ impl VaryingContext<'_> {
                 let index = match blend_src {
                     None => 0,
                     Some(_) if !self.interface => {
-                        return Err(VaryingError::BlendSrcNotOnStructMember)
+                        return Err(VaryingError::BlendSrcNotOnStructMember);
                     }
                     Some(index) => {
                         if self.stage != crate::ShaderStage::Fragment {
@@ -1425,7 +1443,7 @@ impl VaryingContext<'_> {
                 None => {
                     return Err(fail(VaryingError::MemberMissingBinding(
                         u32::try_from(index).unwrap_or(u32::MAX),
-                    )))
+                    )));
                 }
                 Some(crate::Binding::BuiltIn(_)) => built_in = true,
                 Some(crate::Binding::Location { .. }) => located = true,
@@ -1640,7 +1658,7 @@ impl super::Validator {
         }
         let (required_type_flags, is_resource) = match var.space {
             crate::AddressSpace::Function | crate::AddressSpace::PhysicalStorage { .. } => {
-                return Err(GlobalVariableError::InvalidUsage(var.space))
+                return Err(GlobalVariableError::InvalidUsage(var.space));
             }
             crate::AddressSpace::DescriptorHeap(_) => {
                 if !type_info.flags.contains(TypeFlags::HEAP_LAYOUT)
@@ -2201,7 +2219,7 @@ impl super::Validator {
                     crate::AddressSpace::Output => true,
                     _ => {
                         return Err(EntryPointError::InterfaceNotInputOrOutput(handle)
-                            .with_span_handle(handle, &module.global_variables))
+                            .with_span_handle(handle, &module.global_variables));
                     }
                 };
                 if !seen.insert(handle) {
@@ -2230,7 +2248,7 @@ impl super::Validator {
                                 handle,
                                 VaryingError::ArrayedInterfaceNotArray,
                             )
-                            .with_span_handle(handle, &module.global_variables))
+                            .with_span_handle(handle, &module.global_variables));
                         }
                     }
                 } else {
@@ -2384,7 +2402,7 @@ impl super::Validator {
                         crate::ShaderStage::AnyHit | crate::ShaderStage::ClosestHit => false,
                         stage => {
                             return Err(EntryPointError::RayDataInInvalidStage(var.space, stage)
-                                .with_span_handle(var_handle, &module.global_variables))
+                                .with_span_handle(var_handle, &module.global_variables));
                         }
                     };
                     GlobalUse::READ

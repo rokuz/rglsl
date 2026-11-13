@@ -7,7 +7,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::{analyze, Analysis, DiagnosticKind, Options};
+use crate::{Analysis, DiagnosticKind, Options, analyze};
 
 use rglsl_types::ShaderStage;
 
@@ -168,7 +168,7 @@ fn mutated_shaders_are_analysed_without_panicking() -> TestResult {
     use alloc::collections::BTreeMap;
     use alloc::sync::Arc;
 
-    use crate::{analyze_with_builtins, Builtins, ResourceLimits};
+    use crate::{Builtins, ResourceLimits, analyze_with_builtins};
 
     let mut cache: BTreeMap<(u32, ShaderStage), Arc<Builtins>> = BTreeMap::new();
     let mut state = 0x2545_f491_4f6c_dd1d_u64;

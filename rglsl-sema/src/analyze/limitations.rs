@@ -1,11 +1,11 @@
 use crate::scope::QualifierFlags;
 use alloc::vec::Vec;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Condition, DeclarationKind, Expression, ExpressionKind,
     ForStatement, Initializer, PostfixOperator, Statement, StatementKind, UnaryOperator,
 };
-use rglsl_ast::Span;
 
 use super::{Analyzer, Callee, Operand};
 use crate::diagnostic::DiagnosticKind;

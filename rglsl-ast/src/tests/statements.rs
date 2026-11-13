@@ -88,9 +88,11 @@ fn switch_with_labels_and_fallthrough() {
         statements.last().map(|last| &last.kind),
         Some(StatementKind::Expression(Some(_)))
     ));
-    assert!(statements
-        .iter()
-        .any(|inner| matches!(inner.kind, StatementKind::CaseLabel(CaseLabel::Default))));
+    assert!(
+        statements
+            .iter()
+            .any(|inner| matches!(inner.kind, StatementKind::CaseLabel(CaseLabel::Default)))
+    );
     assert_eq!(
         parsed.to_string(),
         "switch (a + 1) {\n    case 0:\n    case 1:\n        b = 1;\n        break;\n    case 2:\n        {\n            c;\n        }\n    default:\n        d;\n}\n"

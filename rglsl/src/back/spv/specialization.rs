@@ -4,8 +4,8 @@ use spirv::{Op, Word};
 
 use super::{Error, Instruction, LookupType, NumericType, Writer, WriterFlags};
 use crate::{
-    arena::Handle, proc::TypeResolution, valid::ModuleInfo, BinaryOperator, Expression, Literal,
-    Module, Scalar, ScalarKind, TypeInner, UnaryOperator, VectorSize,
+    BinaryOperator, Expression, Literal, Module, Scalar, ScalarKind, TypeInner, UnaryOperator,
+    VectorSize, arena::Handle, proc::TypeResolution, valid::ModuleInfo,
 };
 
 fn literal_words(literal: Literal) -> Vec<Word> {
@@ -247,7 +247,7 @@ impl Writer {
                     Some(_) => {
                         return Err(Error::SpecializationConstant(
                             "a default value that is not a literal",
-                        ))
+                        ));
                     }
                 };
                 let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));

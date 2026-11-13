@@ -1,8 +1,8 @@
 use crate::scope::QualifierFlags;
 use alloc::string::String;
 
-use rglsl_ast::ast::StorageQualifier;
 use rglsl_ast::Span;
+use rglsl_ast::ast::StorageQualifier;
 
 use super::{Analyzer, Operand};
 use crate::constant::Constant;

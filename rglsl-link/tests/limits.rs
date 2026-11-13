@@ -1,7 +1,7 @@
+use rglsl::ShaderStage;
 use rglsl::front::glsl::{ErrorKind, Frontend, Options, ResourceLimits};
 use rglsl::object::ObjectModule;
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-use rglsl::ShaderStage;
 use rglsl_link::LinkError;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -102,9 +102,11 @@ fn libraries_see_the_configured_constants() -> TestResult {
         library: true,
         ..options(ShaderStage::Vertex, limits)
     };
-    assert!(Frontend::default()
-        .compile(&library_options(ResourceLimits::default()), library)
-        .is_err());
+    assert!(
+        Frontend::default()
+            .compile(&library_options(ResourceLimits::default()), library)
+            .is_err()
+    );
     let limits = ResourceLimits {
         max_clip_distances: 10,
         ..ResourceLimits::default()
@@ -116,12 +118,14 @@ fn libraries_see_the_configured_constants() -> TestResult {
 #[test]
 fn clip_distances_follow_the_limits() -> TestResult {
     let source = "#version 450\nout float gl_ClipDistance[10];\nvoid main() { gl_ClipDistance[9] = 1.0; gl_Position = vec4(0.0); }\n";
-    assert!(Frontend::default()
-        .parse(
-            &options(ShaderStage::Vertex, ResourceLimits::default()),
-            source
-        )
-        .is_err());
+    assert!(
+        Frontend::default()
+            .parse(
+                &options(ShaderStage::Vertex, ResourceLimits::default()),
+                source
+            )
+            .is_err()
+    );
     let limits = ResourceLimits {
         max_clip_distances: 10,
         ..ResourceLimits::default()

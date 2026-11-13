@@ -1,16 +1,16 @@
 use alloc::vec::Vec;
 
+use rglsl_ast::Spine;
 use rglsl_ast::ast::{
     BinaryOperator as AstBinary, Expression as AstExpression, ExpressionKind,
     UnaryOperator as AstUnary,
 };
-use rglsl_ast::Spine;
 use rglsl_sema::types::Type as GlslType;
 
 use super::expression::{Chain, Place};
 use super::function::FunctionLowerer;
 use super::specialization::is_direct;
-use super::{internal, Result};
+use super::{Result, internal};
 use crate::{
     BinaryOperator, Block, Expression, Handle, Literal, LocalVariable, SelectionControl, Span,
     Statement,

@@ -1,5 +1,5 @@
 use rglsl_ast::parse;
-use rglsl_sema::{analyze, Options};
+use rglsl_sema::{Options, analyze};
 use rglsl_types::ShaderStage;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

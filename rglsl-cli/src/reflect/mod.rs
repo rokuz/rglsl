@@ -11,16 +11,16 @@ use std::fmt::Write as _;
 
 use rglsl::front::glsl::Analyzed;
 use rglsl::{Module, ShaderStage};
+use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     DeclarationKind, ExternalDeclaration, FunctionDefinition, InitDeclaratorList, Node,
 };
-use rglsl_ast::Stalled;
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
 
 use database::Database;
 use source::{block_defaults, compute_layout, declared_globals, implicit_sizes};
 use traverse::UnitCx;
-use types::{layout_value, Layouts};
+use types::{Layouts, layout_value};
 use walk::{Event, Key, Walked};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

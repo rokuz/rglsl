@@ -1,12 +1,12 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExpressionKind, NumericKind, Spanned, SpirvDecorate, SpirvDecorateKind,
     SpirvExecutionMode, SpirvExecutionModeKind, SpirvInstructionQualifier, SpirvRequirement,
     SpirvStorageClass, SpirvTypeParameter, SpirvTypeSpecifier,
 };
-use rglsl_ast::Span;
 
 use super::expression::literal;
 use super::frames::Cx;
@@ -15,8 +15,8 @@ use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Storage, SymbolKind};
 use crate::spirv::{
-    string_words, value_word, SpirvDecoration, SpirvDecorationOperands, SpirvExecutionModeOperands,
-    SpirvIdOperand, SpirvInstruction, SpirvType, SpirvTypeParameter as TypeParameter,
+    SpirvDecoration, SpirvDecorationOperands, SpirvExecutionModeOperands, SpirvIdOperand,
+    SpirvInstruction, SpirvType, SpirvTypeParameter as TypeParameter, string_words, value_word,
 };
 use crate::types::{Type, TypeKind};
 

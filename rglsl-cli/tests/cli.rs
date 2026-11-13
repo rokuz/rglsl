@@ -67,11 +67,11 @@ fn decorations(module: &rspirv::dr::Module, decoration: spirv::Decoration) -> Ve
         .iter()
         .filter(|instruction| instruction.class.opcode == spirv::Op::Decorate)
         .filter_map(|instruction| match instruction.operands.as_slice() {
-            [_, rspirv::dr::Operand::Decoration(found), rspirv::dr::Operand::LiteralBit32(value)]
-                if *found == decoration =>
-            {
-                Some(*value)
-            }
+            [
+                _,
+                rspirv::dr::Operand::Decoration(found),
+                rspirv::dr::Operand::LiteralBit32(value),
+            ] if *found == decoration => Some(*value),
             _ => None,
         })
         .collect();
@@ -114,12 +114,15 @@ fn reports_compile_errors_as_glslang() -> TestResult {
     assert_eq!(run.code, Some(2));
     let lines: Vec<&str> = run.stderr.lines().collect();
     assert_eq!(lines.first().copied(), Some("bad.frag"));
-    assert!(lines
-        .get(1)
-        .is_some_and(|line| line.starts_with("ERROR: bad.frag:3:19: ")));
-    assert!(run
-        .stderr
-        .contains("ERROR: 1 compilation errors.  No code generated.\n\n\n"));
+    assert!(
+        lines
+            .get(1)
+            .is_some_and(|line| line.starts_with("ERROR: bad.frag:3:19: "))
+    );
+    assert!(
+        run.stderr
+            .contains("ERROR: 1 compilation errors.  No code generated.\n\n\n")
+    );
     assert_eq!(
         run.stdout,
         "SPIR-V is not generated for failed compile or link\n"
@@ -179,9 +182,11 @@ fn hexadecimal_output_and_variable_names() -> TestResult {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.get(1).copied(), Some("\t #pragma once"));
     assert_eq!(lines.get(2).copied(), Some("const uint32_t words[] = {"));
-    assert!(lines
-        .get(3)
-        .is_some_and(|line| line.starts_with("\t0x07230203,")));
+    assert!(
+        lines
+            .get(3)
+            .is_some_and(|line| line.starts_with("\t0x07230203,"))
+    );
     assert_eq!(lines.last().copied(), Some("};"));
     Ok(())
 }
@@ -293,9 +298,10 @@ fn links_libraries_and_object_modules() -> TestResult {
     assert!(directory.join("frag.spv").is_file());
     let run = rglsl(&directory, &["-V", "main.frag"])?;
     assert_eq!(run.code, Some(3));
-    assert!(run
-        .stderr
-        .contains("ERROR: Linking fragment stage: No function definition (body) found: "));
+    assert!(
+        run.stderr
+            .contains("ERROR: Linking fragment stage: No function definition (body) found: ")
+    );
     Ok(())
 }
 
@@ -358,9 +364,10 @@ fn disassembles_with_h() -> TestResult {
     ] {
         assert!(lines.contains(&expected), "missing `{expected}`");
     }
-    assert!(run
-        .stdout
-        .ends_with("                              FunctionEnd\n"));
+    assert!(
+        run.stdout
+            .ends_with("                              FunctionEnd\n")
+    );
     assert_eq!(fs::read(directory.join("frag.spv"))?.len() % 4, 0);
     let run = rglsl(
         &directory,
@@ -475,9 +482,12 @@ fn compiles_without_linking() -> TestResult {
         .annotations
         .iter()
         .filter_map(|instruction| match instruction.operands.as_slice() {
-            [_, rspirv::dr::Operand::Decoration(spirv::Decoration::LinkageAttributes), rspirv::dr::Operand::LiteralString(name), rspirv::dr::Operand::LinkageType(kind)] => {
-                Some(format!("{name} {kind:?}"))
-            }
+            [
+                _,
+                rspirv::dr::Operand::Decoration(spirv::Decoration::LinkageAttributes),
+                rspirv::dr::Operand::LiteralString(name),
+                rspirv::dr::Operand::LinkageType(kind),
+            ] => Some(format!("{name} {kind:?}")),
             _ => None,
         })
         .collect();
@@ -523,9 +533,10 @@ fn dumps_the_default_configuration() -> TestResult {
     assert_eq!(run.stderr, "");
     assert_eq!(run.stdout.lines().count(), 111);
     assert!(run.stdout.starts_with("MaxLights 32\nMaxClipPlanes 6\n"));
-    assert!(run
-        .stdout
-        .ends_with("generalConstantMatrixVectorIndexing 1\n"));
+    assert!(
+        run.stdout
+            .ends_with("generalConstantMatrixVectorIndexing 1\n")
+    );
     fs::write(directory.join("defaults.conf"), &run.stdout)?;
     fs::write(directory.join("wide.comp"), WIDE_COMPUTE)?;
     let run = rglsl(&directory, &["-V", "wide.comp", "defaults.conf"])?;
@@ -557,14 +568,17 @@ fn configuration_files_set_the_limits() -> TestResult {
     )?;
     let run = rglsl(&directory, &["-V", "wide.comp", "bad.conf"])?;
     assert_eq!(run.code, Some(2));
-    assert!(run
-        .stdout
-        .starts_with("Error: 'lots' bad .conf file.  Each name must be followed by one number.\n"));
+    assert!(
+        run.stdout.starts_with(
+            "Error: 'lots' bad .conf file.  Each name must be followed by one number.\n"
+        )
+    );
     let run = rglsl(&directory, &["-V", "wide.comp", "absent.conf"])?;
     assert_eq!(run.code, Some(1));
-    assert!(run
-        .stderr
-        .ends_with(": Error: unable to open input file (use -h for usage)\n"));
+    assert!(
+        run.stderr
+            .ends_with(": Error: unable to open input file (use -h for usage)\n")
+    );
     fs::write(
         directory.join("library.glsl"),
         "#version 450\nfloat clip[gl_MaxClipDistances - 9];\nfloat first() { return clip[0]; }\n",
@@ -668,9 +682,10 @@ fn reflects_linked_stages_and_options() -> TestResult {
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
     let run = rglsl(&directory, &["-l", "-q", "shader.vert", "shader.frag"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
-    assert!(run
-        .stdout
-        .contains("tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 17\n"));
+    assert!(
+        run.stdout
+            .contains("tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 17\n")
+    );
     assert!(run.stdout.contains(
         "Block: offset -1, type ffffffff, size 16, index 0, binding 1, stages 17, numMembers 1\n"
     ));
@@ -709,9 +724,10 @@ fn reflects_deeply_nested_code() -> TestResult {
     fs::write(directory.join("deep.frag"), source)?;
     let run = rglsl(&directory, &["-l", "-q", "deep.frag"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
-    assert!(run
-        .stdout
-        .contains("tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 16\n"));
+    assert!(
+        run.stdout
+            .contains("tint: offset 0, type 8b52, size 1, index 0, binding -1, stages 16\n")
+    );
     Ok(())
 }
 
@@ -721,9 +737,10 @@ fn reflection_needs_linking_and_survives_errors() -> TestResult {
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
     let run = rglsl(&directory, &["-q", "shader.frag"])?;
     assert_eq!(run.code, Some(1));
-    assert!(run
-        .stderr
-        .ends_with("Error: reflection requires -l for linking (use -h for usage)\n"));
+    assert!(
+        run.stderr
+            .ends_with("Error: reflection requires -l for linking (use -h for usage)\n")
+    );
     fs::write(
         directory.join("bad.frag"),
         "#version 450\nlayout(location = 0) out vec4 c;\nvoid main() { c = x; }\n",

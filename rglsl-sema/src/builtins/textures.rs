@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{Prototype, COMPUTE, FRAGMENT, MESH, TASK};
+use super::{COMPUTE, FRAGMENT, MESH, Prototype, TASK};
 use crate::scope::Direction;
 use crate::types::{ArraySize, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type};
 

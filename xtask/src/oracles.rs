@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::exec::amber::Amber;
 use crate::process::{capture, checked, which};
@@ -189,9 +189,9 @@ pub fn build(root: &Path, glslang_dir: Option<&Path>, selection: Selection) -> R
 }
 
 pub fn build_remote(root: &Path) -> Result<()> {
+    use crate::exec::TargetId;
     use crate::exec::amber::Device;
     use crate::exec::remote::{self, Remote, RemoteSpec};
-    use crate::exec::TargetId;
     let pins = load_pins(root)?;
     let specs = RemoteSpec::from_env()?;
     if specs.is_empty() {

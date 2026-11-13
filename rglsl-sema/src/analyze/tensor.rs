@@ -1,8 +1,8 @@
 use crate::scope::QualifierFlags;
 use alloc::string::String;
 
-use rglsl_ast::ast::Expression;
 use rglsl_ast::Span;
+use rglsl_ast::ast::Expression;
 
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};

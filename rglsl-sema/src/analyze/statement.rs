@@ -3,11 +3,11 @@ use core::cell::RefCell;
 
 use rglsl_types::stack::run;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Attribute, CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ForStatement,
     JumpStatement, Statement, StatementKind,
 };
-use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::{Analyzer, Operand, SwitchContext};

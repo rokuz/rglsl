@@ -1,9 +1,9 @@
+use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     Condition, Declaration, DeclarationKind, ExpressionKind, ExternalDeclaration,
     FullySpecifiedType, FunctionIdentifier, FunctionPrototype, Identifier, Statement,
     StatementKind, StructDeclaration, TranslationUnit, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Stalled;
 
 use crate::rewrite::{rewrite_expressions, rewrite_statements};
 

@@ -3,11 +3,11 @@ use alloc::{string::String, vec::Vec};
 use spirv::Word;
 
 use super::{
-    block::AccessTypeAdjustment, helpers, Block, BlockContext, Error, Instruction, Writer,
+    Block, BlockContext, Error, Instruction, Writer, block::AccessTypeAdjustment, helpers,
 };
 use crate::{
-    arena::Handle, Expression, GlobalVariable, Module, SpirvDecoration, SpirvDecorationOperands,
-    SpirvExecutionModeOperands, SpirvId, SpirvInstruction, SpirvOperand,
+    Expression, GlobalVariable, Module, SpirvDecoration, SpirvDecorationOperands,
+    SpirvExecutionModeOperands, SpirvId, SpirvInstruction, SpirvOperand, arena::Handle,
 };
 
 const GLSL_STD_450: &str = "GLSL.std.450";
@@ -140,7 +140,7 @@ impl Writer {
                             0 => {
                                 return Err(Error::Validation(
                                     "a decoration names an unwritten variable",
-                                ))
+                                ));
                             }
                             var_id => var_id,
                         },

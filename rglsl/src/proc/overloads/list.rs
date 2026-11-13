@@ -4,8 +4,8 @@
 
 use crate::common::{DiagnosticDebug, ForDebugWithTypes};
 use crate::ir;
-use crate::proc::overloads::one_bits_iter::OneBitsIter;
 use crate::proc::overloads::Rule;
+use crate::proc::overloads::one_bits_iter::OneBitsIter;
 use crate::proc::{GlobalCtx, TypeResolution};
 
 use alloc::rc::Rc;

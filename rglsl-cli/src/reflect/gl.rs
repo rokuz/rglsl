@@ -138,9 +138,5 @@ pub const fn sampler(sampler: Sampler) -> i64 {
 }
 
 const fn pick(condition: bool, yes: i64, no: i64) -> i64 {
-    if condition {
-        yes
-    } else {
-        no
-    }
+    if condition { yes } else { no }
 }

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use rglsl_fuzz::{parse, print, ParseErrorKind};
+use rglsl_fuzz::{ParseErrorKind, parse, print};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -85,9 +85,11 @@ fn a_sample_that_needs_the_preprocessor_is_rejected() -> TestResult {
             ParseErrorKind::UnsupportedDirective(String::from("define")),
             "{name}"
         );
-        assert!(error
-            .to_string()
-            .contains("preprocessor directives are not supported"));
+        assert!(
+            error
+                .to_string()
+                .contains("preprocessor directives are not supported")
+        );
         assert_eq!((error.position.line, error.position.column), (27, 1));
     }
     Ok(())
@@ -179,7 +181,9 @@ fn glslang_accepts(glslang: &Path, shader: &Path) -> TestResult<bool> {
 #[test]
 fn glslang_accepts_every_printed_sample_it_accepts_in_original_form() -> TestResult {
     let Some(glslang) = glslang() else {
-        eprintln!("skipped: no glslang at target/oracles/bin/glslang (run `cargo xtask oracles`) or in RGLSL_GLSLANG");
+        eprintln!(
+            "skipped: no glslang at target/oracles/bin/glslang (run `cargo xtask oracles`) or in RGLSL_GLSLANG"
+        );
         return Ok(());
     };
     let printed_directory = Path::new(env!("CARGO_TARGET_TMPDIR")).join("printed-450");

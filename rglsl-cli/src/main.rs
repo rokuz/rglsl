@@ -4,7 +4,7 @@ mod output;
 mod reflect;
 mod usage;
 
-use args::{Exit, EXIT_USAGE};
+use args::{EXIT_USAGE, Exit};
 
 fn main() {
     let mut arguments = std::env::args();

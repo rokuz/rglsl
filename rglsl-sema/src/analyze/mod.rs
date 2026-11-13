@@ -48,7 +48,7 @@ pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
-use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, StageTables, ALL_STAGE_BITS};
+use crate::builtins::{ALL_STAGE_BITS, BuiltinFunctionId, Builtins, ResourceLimits, StageTables};
 
 use crate::constant::Constant;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};

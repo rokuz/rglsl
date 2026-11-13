@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 
-use super::functions::FunctionTracer;
 use super::FunctionMap;
+use super::functions::FunctionTracer;
 use crate::arena::{BadHandle, Handle};
 use crate::compact::handle_set_map::HandleMap;
 

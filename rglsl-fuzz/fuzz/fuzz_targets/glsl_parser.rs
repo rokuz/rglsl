@@ -7,8 +7,8 @@ mod fuzz {
     use arbitrary::Arbitrary;
     use libfuzzer_sys::fuzz_target;
     use rglsl::{
-        front::glsl::{Frontend, Options},
         FastHashMap, ShaderStage,
+        front::glsl::{Frontend, Options},
     };
 
     #[derive(Debug, Arbitrary)]

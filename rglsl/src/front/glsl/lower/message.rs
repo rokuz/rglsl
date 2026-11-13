@@ -6,7 +6,7 @@ use rglsl_sema::types::Scalar as GlslScalar;
 
 use super::function::FunctionLowerer;
 use super::types::matrix_layout;
-use super::{internal, unsupported, Packing, Result};
+use super::{Packing, Result, internal, unsupported};
 use crate::proc::Alignment;
 use crate::{
     ArraySize, DebugPrintfArgument, Expression, Literal, Scalar, Span, Statement, StructMember,

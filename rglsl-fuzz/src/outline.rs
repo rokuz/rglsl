@@ -1,18 +1,18 @@
 use rglsl_ast::Stalled;
 use std::collections::{BTreeMap, BTreeSet};
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     AssignmentOperator, BasicType, CompoundStatement, Expression, ExpressionKind,
     ExternalDeclaration, FunctionDefinition, FunctionIdentifier, FunctionPrototype, JumpStatement,
     Node, NodeId, ParameterDeclaration, Spanned, Statement, StatementKind, TranslationUnit,
     TypeSpecifierNonArray,
 };
-use rglsl_ast::Span;
-use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::Analysis;
+use rglsl_sema::scope::{Origin, SymbolKind};
 
 use crate::basic;
-use crate::build::{unqualified, Builder};
+use crate::build::{Builder, unqualified};
 use crate::constants::OUTLINED_FUNCTION_PREFIX;
 use crate::injection::choose;
 use crate::opaque::side_effect_free;

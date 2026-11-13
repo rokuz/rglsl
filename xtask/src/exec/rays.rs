@@ -596,10 +596,12 @@ mod tests {
         assert!(hit.contains("rglsl_payload.m3 = rglsl_attributes;"));
         let script = harness.pipeline.script(&names);
         assert!(script.contains("  SHADER_GROUP g_hit harness4 tested\n"));
-        assert!(harness
-            .geometry
-            .declarations(Api::Khr, false)
-            .contains("GEOMETRY AABBS"));
+        assert!(
+            harness
+                .geometry
+                .declarations(Api::Khr, false)
+                .contains("GEOMETRY AABBS")
+        );
         Ok(())
     }
 
@@ -632,9 +634,11 @@ mod tests {
         let module = Reflection::new(ExecutionModel::CallableKHR);
         let harness = harness(ShaderKind::Callable, &module, 0, None, &mut Rng::new(3))
             .map_err(anyhow::Error::msg)?;
-        assert!(harness.shaders[0]
-            .1
-            .contains("callableDataEXT uint rglsl_payload;"));
+        assert!(
+            harness.shaders[0]
+                .1
+                .contains("callableDataEXT uint rglsl_payload;")
+        );
         assert!(harness.shaders[0].1.contains("executeCallableEXT(0, 0);"));
         assert_eq!(harness.output, Some(DataType::Scalar(U32)));
         assert!(RayPipeline::run().contains("CALL sbt_call 4 4 1"));
@@ -661,15 +665,20 @@ mod tests {
         assert!(rgen.contains("layout(location = 0) rayPayloadNV vec4 rglsl_payload;"));
         assert!(rgen.contains("gl_LaunchIDNV.x + gl_LaunchIDNV.y * gl_LaunchSizeNV.x"));
         assert!(rgen.contains("traceNV(rglsl_tlas, gl_RayFlagsNoneNV, 0xff, 0, 0, 0,"));
-        assert!(harness
-            .shaders
-            .iter()
-            .skip(1)
-            .all(|(_, source)| source.contains("GL_NV_ray_tracing")));
+        assert!(
+            harness
+                .shaders
+                .iter()
+                .skip(1)
+                .all(|(_, source)| source.contains("GL_NV_ray_tracing"))
+        );
         assert!(harness.pipeline.script(&names).starts_with("  API NV\n"));
         let scene = harness.geometry.declarations(Api::Nv, false);
-        assert!(scene
-            .contains("ACCELERATION_STRUCTURE TOP_LEVEL tlas\n  API NV\n  BOTTOM_LEVEL_INSTANCE"));
+        assert!(
+            scene.contains(
+                "ACCELERATION_STRUCTURE TOP_LEVEL tlas\n  API NV\n  BOTTOM_LEVEL_INSTANCE"
+            )
+        );
         Ok(())
     }
 
@@ -690,10 +699,12 @@ mod tests {
         .map_err(anyhow::Error::msg)?;
         assert_eq!(harness.pipeline.api, Api::Khr);
         assert!(motion(&module));
-        assert!(harness
-            .pipeline
-            .script(&names)
-            .starts_with("  FLAGS ALLOW_MOTION\n  SHADER_GROUP g_raygen tested\n"));
+        assert!(
+            harness
+                .pipeline
+                .script(&names)
+                .starts_with("  FLAGS ALLOW_MOTION\n  SHADER_GROUP g_raygen tested\n")
+        );
         let scene = harness.geometry.declarations(Api::Khr, true);
         assert!(scene.contains("TOP_LEVEL tlas\n  MOTION\n  BOTTOM_LEVEL_INSTANCE blas\n"));
         Ok(())
@@ -708,9 +719,11 @@ mod tests {
         let harness = harness(ShaderKind::Miss, &module, 0, None, &mut Rng::new(3))
             .map_err(anyhow::Error::msg)?;
         assert_eq!(harness.pipeline.slots.miss, 2);
-        assert!(harness.shaders[0]
-            .1
-            .contains("traceRayEXT(rglsl_tlas, gl_RayFlagsNoneEXT, 0xff, 0, 0, 2,"));
+        assert!(
+            harness.shaders[0]
+                .1
+                .contains("traceRayEXT(rglsl_tlas, gl_RayFlagsNoneEXT, 0xff, 0, 0, 2,")
+        );
         let script = harness.pipeline.script(&names);
         assert!(script.contains(
             "  SHADER_BINDING_TABLE sbt_miss\n    g_miss_empty\n    g_miss_empty\n    g_miss\n    g_miss_empty\n"

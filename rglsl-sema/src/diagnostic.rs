@@ -180,7 +180,9 @@ pub enum DiagnosticKind {
     InvalidStructMember { name: String, reason: &'static str },
     #[error("non-opaque uniforms outside a block are not allowed when targeting Vulkan")]
     UniformOutsideBlock,
-    #[error("structures with opaque members are not supported: Vulkan forbids opaque types in structures")]
+    #[error(
+        "structures with opaque members are not supported: Vulkan forbids opaque types in structures"
+    )]
     OpaqueInStructure,
     #[error("invalid attribute `{attribute}`: {reason}")]
     InvalidAttribute {
@@ -210,13 +212,17 @@ pub enum DiagnosticKind {
         limit: &'static str,
         value: i32,
     },
-    #[error("the built-in array `{0}` cannot be declared: its size gl_MaxPatchVertices must be a positive integer")]
+    #[error(
+        "the built-in array `{0}` cannot be declared: its size gl_MaxPatchVertices must be a positive integer"
+    )]
     BuiltinArraySize(&'static str),
     #[error("{0} loops are not available: the resource limits disable them")]
     LoopNotAvailable(&'static str),
     #[error("the resource limits require an inductive loop: {0}")]
     InductiveLoop(&'static str),
-    #[error("the resource limits require a constant-index-expression: an index can only use constants and loop indices")]
+    #[error(
+        "the resource limits require a constant-index-expression: an index can only use constants and loop indices"
+    )]
     NonConstantIndex,
     #[error("`gl_WorkGroupSize` cannot be read before the local size is declared")]
     WorkGroupSizeNotDeclared,
@@ -226,7 +232,9 @@ pub enum DiagnosticKind {
     LayoutValueBelowOne(String),
     #[error("the value of layout qualifier `{0}` needs a literal integer")]
     LayoutValueNotLiteral(String),
-    #[error("unrecognized layout identifier `{0}`, or qualifier requires assignment (e.g., binding = 4)")]
+    #[error(
+        "unrecognized layout identifier `{0}`, or qualifier requires assignment (e.g., binding = 4)"
+    )]
     UnrecognizedLayout(String),
     #[error("there is no such layout identifier `{0}` for this stage taking an assigned value")]
     UnknownLayoutWithValue(String),
@@ -244,7 +252,9 @@ pub enum DiagnosticKind {
     ReservedIdentifier(String),
     #[error("invalid block `{name}`: {reason}")]
     InvalidBlock { name: String, reason: &'static str },
-    #[error("a per-vertex output of a tessellation control shader must be indexed with `gl_InvocationID` when written")]
+    #[error(
+        "a per-vertex output of a tessellation control shader must be indexed with `gl_InvocationID` when written"
+    )]
     PerVertexOutputIndex,
     #[error("invalid interface array `{name}`: {reason}")]
     InvalidInterfaceArray { name: String, reason: &'static str },

@@ -1,8 +1,8 @@
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     BinaryOperator, Condition, DeclarationKind, Expression, ExpressionKind, ExternalDeclaration,
     Initializer, PostfixOperator, Spanned, Statement, StatementKind, TranslationUnit,
 };
-use rglsl_ast::Span;
 use rglsl_types::ShaderStage;
 
 use crate::basic;

@@ -3,7 +3,7 @@ use alloc::{string::String, vec::Vec};
 use spirv::{Op, StorageClass, Word};
 
 use super::{Block, Error, Instruction, Writer, WriterFlags};
-use crate::{arena::Handle, Expression, Module};
+use crate::{Expression, Module, arena::Handle};
 
 pub(super) enum CompositeShape {
     Array {
@@ -228,7 +228,11 @@ impl Writer {
             block.body.push(instruction);
             return Ok(Ok(id));
         }
-        let parts: Vec<Word> = match self.composite_types.get(&type_id).map(|laid_out| &laid_out.shape) {
+        let parts: Vec<Word> = match self
+            .composite_types
+            .get(&type_id)
+            .map(|laid_out| &laid_out.shape)
+        {
             Some(&CompositeShape::Array {
                 element,
                 count: Some(count),
@@ -238,7 +242,7 @@ impl Writer {
             _ => {
                 return Err(Error::FeatureNotImplemented(
                     "copying an array of specialization-constant length between storage classes before SPIR-V 1.4",
-                ))
+                ));
             }
         };
         Ok(Err(Conversion {
@@ -307,7 +311,7 @@ impl Writer {
         let id = self.constant_ids[expr];
         let ty = match module.global_expressions[expr] {
             Expression::Constant(constant) => {
-                return Ok(PlainConstant::Constant(module.constants[constant].init))
+                return Ok(PlainConstant::Constant(module.constants[constant].init));
             }
             Expression::ZeroValue(ty) | Expression::Compose { ty, .. } => ty,
             _ => return Ok(PlainConstant::Done(id)),

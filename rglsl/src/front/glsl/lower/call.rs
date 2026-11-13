@@ -10,7 +10,7 @@ use rglsl_sema::{Callee, FunctionId};
 use super::expression::Place;
 use super::function::FunctionLowerer;
 use super::types::scalar;
-use super::{internal, semantic, unsupported, Result};
+use super::{Result, internal, semantic, unsupported};
 use crate::{Expression, Handle, Literal, NonUniform, Span, Statement};
 
 #[derive(Debug)]

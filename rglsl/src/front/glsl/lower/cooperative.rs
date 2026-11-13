@@ -7,7 +7,7 @@ use rglsl_sema::{Callee, CooperativeCall, MatrixCall, QcomConversion, TensorCall
 use super::builtins::{derivative, math};
 use super::function::FunctionLowerer;
 use super::types::scalar;
-use super::{internal, unsupported, Result};
+use super::{Result, internal, unsupported};
 use crate::{
     ArrayConversion, BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
     CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Handle,

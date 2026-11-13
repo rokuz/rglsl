@@ -24,14 +24,14 @@ pub use index::{IndexableLength, IndexableLengthError};
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
-pub use resource::{free_binding, BindingShifts, ResourceClass};
+pub use resource::{BindingShifts, ResourceClass, free_binding};
 pub use terminator::ensure_block_returns;
 use thiserror::Error;
 pub use type_methods::{
     concrete_int_scalars, min_max_float_representable_by, vector_size_str, vector_sizes,
 };
 pub use type_walk::{any_type, array_element, contains, contains_type, post_order};
-pub use typifier::{compare_types, ResolveContext, ResolveError, TypeResolution, LSS_ARRAY_LENGTH};
+pub use typifier::{LSS_ARRAY_LENGTH, ResolveContext, ResolveError, TypeResolution, compare_types};
 
 impl From<super::StorageFormat> for super::Scalar {
     fn from(format: super::StorageFormat) -> Self {

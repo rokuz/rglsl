@@ -829,7 +829,7 @@ impl ScalarType {
             _ => {
                 return Self::ALL
                     .into_iter()
-                    .find(|scalar| scalar.keyword() == word)
+                    .find(|scalar| scalar.keyword() == word);
             }
         })
     }

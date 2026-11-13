@@ -11,7 +11,7 @@ use crate::basic::{INT, UINT};
 use crate::build::Builder;
 use crate::constants::SPLIT_LOOP_COUNTER_PREFIX;
 use crate::injection::{
-    apply_edits, choose, contains_top_level_break, injection_points, Edit, InjectionPoint,
+    Edit, InjectionPoint, apply_edits, choose, contains_top_level_break, injection_points,
 };
 use crate::random::Random;
 use crate::rewrite::rewrite_statement_expressions;

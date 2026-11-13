@@ -268,7 +268,7 @@ impl GlobalOrArgument {
                         | crate::Expression::AccessIndex { base, .. }
                         | crate::Expression::HeapOffset { pointer: base, .. } => current = base,
                         crate::Expression::GlobalVariable(var) => {
-                            break GlobalOrArgument::Global(var)
+                            break GlobalOrArgument::Global(var);
                         }
                         _ => return Err(ExpressionError::ExpectedGlobalOrArgument),
                     }
@@ -1395,7 +1395,7 @@ impl FunctionInfo {
             _ => {
                 return self
                     .process_statement(statement, other_functions, disruptor, expression_arena)
-                    .map(Some)
+                    .map(Some);
             }
         }
         Ok(None)

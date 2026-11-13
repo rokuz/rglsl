@@ -9,10 +9,10 @@ use rglsl_sema::Builtins;
 use crate::basic::{self, BOOL, FLOAT};
 use crate::build::Builder;
 use crate::constants::{
-    GLF_DEAD, GLF_FALSE, GLF_FUZZED, GLF_IDENTITY, GLF_ONE, GLF_TRUE, GLF_ZERO, GL_FRAG_COORD,
+    GL_FRAG_COORD, GLF_DEAD, GLF_FALSE, GLF_FUZZED, GLF_IDENTITY, GLF_ONE, GLF_TRUE, GLF_ZERO,
     INJECTION_SWITCH,
 };
-use crate::fuzzer::{is_too_deep, literal_zero_or_one, random_constant, Fuzzer};
+use crate::fuzzer::{Fuzzer, is_too_deep, literal_zero_or_one, random_constant};
 use crate::macros::is_macro;
 use crate::random::Random;
 

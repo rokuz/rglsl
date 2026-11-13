@@ -1,6 +1,6 @@
 use super::{
-    Section, ALL_STAGES, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE, INTERSECTION, MESH, MISS,
-    RAY_GENERATION,
+    ALL_STAGES, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE, INTERSECTION, MESH, MISS, RAY_GENERATION,
+    Section,
 };
 use rglsl_types::ShaderStage;
 
@@ -346,7 +346,7 @@ pub(crate) fn variable_extensions(
             || name.starts_with("gl_HitKind") && name.ends_with("TriangleEXT")
             || name.starts_with("gl_RayQuery") =>
         {
-            return None
+            return None;
         }
         _ if name.ends_with("NV") => NV,
         _ if name.ends_with("EXT") => EXT,

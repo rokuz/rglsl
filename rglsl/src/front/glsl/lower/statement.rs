@@ -9,8 +9,8 @@ use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
 use super::constant::shape;
-use super::function::{ends_in_jump, FunctionLowerer, Local};
-use super::{internal, semantic, unsupported, GlobalRef, Result};
+use super::function::{FunctionLowerer, Local, ends_in_jump};
+use super::{GlobalRef, Result, internal, semantic, unsupported};
 use crate::{
     Block, Expression, Literal, LoopControl, LoopDependency, SelectionControl,
     Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator,
@@ -513,15 +513,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             self.nest(frame).await
         }?;
         let accept = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().statement(then_branch)))
                 .await
         }?;
         let reject = match else_branch {
             Some(branch) => {
-                self
-                    .clone()
+                self.clone()
                     .block(self.nest(self.clone().statement(branch)))
                     .await
             }?,
@@ -594,9 +592,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             cx.nest(cx.clone().loop_body(body)).await
         };
-        let body = {
-            self.clone().block(self.nest(frame)).await
-        }?;
+        let body = { self.clone().block(self.nest(frame)).await }?;
         self.with(|this| this.leave_jump_target(at))??;
         self.with(|this| {
             this.push(
@@ -622,8 +618,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let constant = self.with(|this| this.constant_condition(condition))?;
         self.with(|this| this.enter_jump_target(true))?;
         let mut body = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().statement(body)))
                 .await
         }?;
@@ -673,9 +668,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     .map(Some)
             })
         };
-        let (continuing, break_if) = {
-            self.clone().block_with(self.nest(frame)).await
-        }?;
+        let (continuing, break_if) = { self.clone().block_with(self.nest(frame)).await }?;
         self.with(|this| {
             this.push(
                 IrStatement::Loop {
@@ -716,9 +709,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             cx.nest(cx.clone().loop_body(&statement.body)).await
         };
-        let body = {
-            self.clone().block(self.nest(frame)).await
-        }?;
+        let body = { self.clone().block(self.nest(frame)).await }?;
         self.with(|this| this.leave_jump_target(at))??;
         let cx = self.clone();
         let frame = async move {
@@ -727,9 +718,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 None => Ok(()),
             }
         };
-        let continuing = {
-            self.clone().block(self.nest(frame)).await
-        }?;
+        let continuing = { self.clone().block(self.nest(frame)).await }?;
         self.with(|this| {
             this.push(
                 IrStatement::Loop {

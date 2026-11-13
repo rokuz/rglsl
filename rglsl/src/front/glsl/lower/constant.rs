@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use rglsl_sema::constant::Value;
 use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
 
-use super::{internal, Lowerer, Result};
+use super::{Lowerer, Result, internal};
 use crate::{Expression, Handle, Literal, Span};
 
 fn half_toward_zero(value: f64) -> half::f16 {

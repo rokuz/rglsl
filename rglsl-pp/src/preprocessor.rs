@@ -10,7 +10,7 @@ use crate::lexer::{Events, FileInput, Role, ScanContext};
 use crate::options::Options;
 use crate::output::Output;
 use crate::predefined;
-use crate::source_map::{clamp_line, SourceInfo, SourceMap};
+use crate::source_map::{SourceInfo, SourceMap, clamp_line};
 use crate::token::{At, Kind, Token};
 use crate::version::{self, Profile, Version};
 use rglsl_types::ShaderStage;

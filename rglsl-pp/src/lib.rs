@@ -51,6 +51,6 @@ pub use include::{
     FileId, IncludeError, IncludeKind, IncludedFile, Includer, MemoryIncluder, NoIncluder,
 };
 pub use options::{Define, Limits, Options};
-pub use preprocessor::{preprocess, Preprocessed};
+pub use preprocessor::{Preprocessed, preprocess};
 pub use source_map::{LineEntry, Locator, PresumedSource, SourceMap};
-pub use version::{find_version, version_check, Profile, Version, VersionDirective};
+pub use version::{Profile, Version, VersionDirective, find_version, version_check};

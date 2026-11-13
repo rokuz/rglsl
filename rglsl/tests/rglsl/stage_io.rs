@@ -4,10 +4,10 @@
 //! the SPIR-V backend, independently of any front end.
 
 use rglsl::{
-    back::spv,
-    valid::{Capabilities, ValidationFlags, Validator},
     AddressSpace, Binding, BuiltIn, EntryPoint, Expression, Function, GlobalVariable, Handle,
     Module, Scalar, ShaderStage, Span, Statement, StructMember, Type, TypeInner, VectorSize,
+    back::spv,
+    valid::{Capabilities, ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op, StorageClass};

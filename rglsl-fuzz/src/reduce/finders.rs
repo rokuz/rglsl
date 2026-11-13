@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ExternalDeclaration,
     FunctionIdentifier, Initializer, JumpStatement, NodeId, Statement, StatementKind,
     TranslationUnit, TypeSpecifierNonArray, UnaryOperator,
 };
-use rglsl_ast::Stalled;
 use rglsl_sema::Analysis;
 
 use crate::basic;
@@ -25,7 +25,7 @@ use crate::rewrite::{
 use crate::scope::output_parameters;
 use crate::strip::strip_unused_generated;
 use crate::structs::global_structs;
-use crate::vectorize::{component_data, MERGED_PREFIX};
+use crate::vectorize::{MERGED_PREFIX, component_data};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Pass {

@@ -8,7 +8,7 @@ use rglsl::{
 
 use crate::calls::Node;
 use crate::entry::Candidate;
-use crate::error::{internal, LinkError};
+use crate::error::{LinkError, internal};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SpaceClass {

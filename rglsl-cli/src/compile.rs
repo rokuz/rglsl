@@ -11,7 +11,7 @@ use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 use rglsl::{Module, ShaderStage};
 
 use crate::args::{
-    Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE,
+    Debug, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Macro, Options, VersionDump,
 };
 use crate::output;
 use crate::reflect;
@@ -698,11 +698,7 @@ impl<'a> Session<'a> {
                 }
             }
         }
-        if failed {
-            EXIT_COMPILE
-        } else {
-            EXIT_SUCCESS
-        }
+        if failed { EXIT_COMPILE } else { EXIT_SUCCESS }
     }
 
     fn compile_and_link(&mut self) -> Result<i32, Exit> {
@@ -717,7 +713,7 @@ impl<'a> Session<'a> {
                 return Err(Exit::detailed(
                     "a library (a .glsl file without a stage) has no entry point; link it with a program, or compile it with --object",
                     unit.name.clone(),
-                ))
+                ));
             }
             _ => self.link(&units)?,
         };

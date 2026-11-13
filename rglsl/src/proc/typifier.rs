@@ -623,7 +623,7 @@ impl<'a> ResolveContext<'a> {
                         (tl, tr) => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{tl:?} * {tr:?}"
-                            )))
+                            )));
                         }
                     }
                 }
@@ -646,7 +646,7 @@ impl<'a> ResolveContext<'a> {
                         ref other => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{op:?}({other:?}, _)"
-                            )))
+                            )));
                         }
                     };
                     TypeResolution::Value(inner)
@@ -696,7 +696,7 @@ impl<'a> ResolveContext<'a> {
                         ref other => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{fun:?}({other:?})"
-                            )))
+                            )));
                         }
                     }
                 }
@@ -845,7 +845,7 @@ impl<'a> ResolveContext<'a> {
                 ref other => {
                     return Err(ResolveError::IncompatibleOperands(format!(
                         "{other:?} as {kind:?}"
-                    )))
+                    )));
                 }
             },
             crate::Expression::CallResult(function) => {

@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use core::{fmt, hash, ops};
 
 use super::{
-    handle::{BadHandle, Handle},
     Range,
+    handle::{BadHandle, Handle},
 };
 use crate::{FastIndexSet, Span};
 

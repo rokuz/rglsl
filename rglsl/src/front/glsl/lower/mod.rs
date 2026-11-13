@@ -35,8 +35,8 @@ use alloc::{
 };
 use core::cell::RefCell;
 
-use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node, Spanned};
 use rglsl_ast::TranslationUnit;
+use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node, Spanned};
 use rglsl_sema::scope::{Symbol, SymbolKind, Variable};
 use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
@@ -44,7 +44,7 @@ use rglsl_types::probe::StageProbe;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
-    proc::Layouter, ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, Span, Type,
+    ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, Span, Type, proc::Layouter,
 };
 
 pub(super) type Result<T> = core::result::Result<T, Error>;

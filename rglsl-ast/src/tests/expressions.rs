@@ -6,7 +6,7 @@ use crate::ast::{
     AssignmentOperator, BinaryOperator, ExpressionKind, FunctionIdentifier, NumericKind,
     StatementKind, TypeSpecifierNonArray,
 };
-use crate::{parse, ParseErrorKind};
+use crate::{ParseErrorKind, parse};
 
 #[test]
 fn multiplicative_binds_tighter_than_additive() {

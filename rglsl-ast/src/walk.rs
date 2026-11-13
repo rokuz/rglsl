@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::future::Future;
 
-use rglsl_types::stack::{run, Call, Stack, Stalled};
+use rglsl_types::stack::{Call, Stack, Stalled, run};
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,

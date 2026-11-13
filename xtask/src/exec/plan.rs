@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use spirv::{BuiltIn, Capability, Dim, ExecutionMode, ExecutionModel, ImageFormat};
 
-use super::data::{fill_random, fill_values, write_scalar, Rng, Value};
+use super::data::{Rng, Value, fill_random, fill_values, write_scalar};
 use super::glsl;
-use super::harness::{self, Attachment, ShaderKind, MAX_ATTACHMENTS, PATCH_VERTICES};
+use super::harness::{self, Attachment, MAX_ATTACHMENTS, PATCH_VERTICES, ShaderKind};
 use super::mesh;
 use super::rays::{self, Geometry, RayPipeline, ShaderRef};
 use super::references::{self, Root, Table};
@@ -2071,9 +2071,11 @@ mod tests {
         }];
         let plan = planned(&module, &Inputs::default())?;
         assert_eq!(plan.harness.len(), 1);
-        assert!(plan.harness[0]
-            .1
-            .contains("layout(location = 1) out vec2 v1;"));
+        assert!(
+            plan.harness[0]
+                .1
+                .contains("layout(location = 1) out vec2 v1;")
+        );
         assert_eq!(plan.targets.len(), 1);
         assert_eq!(
             plan.targets[0].slots.len(),
@@ -2184,9 +2186,10 @@ mod tests {
         assert!(plan.bindings.contains(
             "  BIND BUFFER r0_0 AS combined_image_sampler SAMPLER smp DESCRIPTOR_SET 0 BINDING 0\n"
         ));
-        assert!(plan
-            .bindings
-            .contains("  BIND BUFFER r0_1 AS storage DESCRIPTOR_SET 0 BINDING 1\n"));
+        assert!(
+            plan.bindings
+                .contains("  BIND BUFFER r0_1 AS storage DESCRIPTOR_SET 0 BINDING 1\n")
+        );
         assert_eq!(plan.bindings.matches("BINDING 1").count(), 1);
         assert!(plan.targets.is_empty());
         module.resources.push(Resource {
@@ -2241,9 +2244,10 @@ mod tests {
         ];
         let plan = planned(&module, &Inputs::default())?;
         assert_eq!(plan.declarations.matches("IMAGE ia").count(), 2);
-        assert!(plan
-            .declarations
-            .contains("IMAGE ia1 FORMAT R32G32B32A32_SFLOAT DIM_2D WIDTH 32 HEIGHT 32 DATA\n"));
+        assert!(
+            plan.declarations
+                .contains("IMAGE ia1 FORMAT R32G32B32A32_SFLOAT DIM_2D WIDTH 32 HEIGHT 32 DATA\n")
+        );
         assert!(plan.bindings.contains(
             "  BIND BUFFER_ARRAY ia0 ia1 AS input_attachment INPUT_ATTACHMENT_INDEX 0 DESCRIPTOR_SET 0 BINDING 0\n"
         ));
@@ -2294,9 +2298,11 @@ mod tests {
         ));
         let mut module = reflection(ExecutionModel::GLCompute);
         module.capabilities.insert(spirv::Capability::Float64);
-        assert!(planned(&module, &Inputs::default())?
-            .needs
-            .contains(&Need::Feature("shaderFloat64")));
+        assert!(
+            planned(&module, &Inputs::default())?
+                .needs
+                .contains(&Need::Feature("shaderFloat64"))
+        );
         Ok(())
     }
 
@@ -2321,9 +2327,11 @@ mod tests {
             plan.targets[1].name,
             "storage buffer set 0 binding 3 element 1"
         );
-        assert!(plan
-            .bindings
-            .contains("  BIND BUFFER_ARRAY r0_3_0 r0_3_1 AS storage DESCRIPTOR_SET 0 BINDING 3\n"));
+        assert!(
+            plan.bindings.contains(
+                "  BIND BUFFER_ARRAY r0_3_0 r0_3_1 AS storage DESCRIPTOR_SET 0 BINDING 3\n"
+            )
+        );
         assert_ne!(plan.files[0].1, plan.files[1].1);
         Ok(())
     }
@@ -2512,8 +2520,11 @@ mod tests {
             data: &data,
         });
         assert!(script.contains("    g_raygen SHADER_RECORD rglsl_record\n"));
-        assert!(script
-            .contains("END\nACCELERATION_STRUCTURE ADDRESS tlas BUFFER rglsl_record OFFSET 8\n"));
+        assert!(
+            script.contains(
+                "END\nACCELERATION_STRUCTURE ADDRESS tlas BUFFER rglsl_record OFFSET 8\n"
+            )
+        );
         Ok(())
     }
 
@@ -2552,9 +2563,10 @@ mod tests {
         assert!(plan.needs.contains(&Need::Feature(
             "BufferDeviceAddressFeatures.bufferDeviceAddress"
         )));
-        assert!(plan
-            .needs
-            .contains(&Need::Feature("fragmentStoresAndAtomics")));
+        assert!(
+            plan.needs
+                .contains(&Need::Feature("fragmentStoresAndAtomics"))
+        );
         let buffers: Vec<&str> = plan.targets.iter().map(|t| t.buffer.as_str()).collect();
         assert_eq!(buffers, ["rglsl_ref0", "rglsl_ref1", "rglsl_refs"]);
         let table = plan.reference_table.clone().context("no reference table")?;
@@ -2688,9 +2700,11 @@ mod tests {
         let plan = planned(&module, &Inputs::default())?;
         assert_eq!(plan.harness_env, Some("vulkan1.2"));
         assert_eq!(plan.harness[0].0, ShaderKind::RayGeneration);
-        assert!(plan.harness[0]
-            .1
-            .contains("layout(set = 1, binding = 1, std430) buffer RglslOut"));
+        assert!(
+            plan.harness[0]
+                .1
+                .contains("layout(set = 1, binding = 1, std430) buffer RglslOut")
+        );
         assert_eq!(plan.targets.len(), 1);
         assert_eq!(plan.targets[0].buffer, "rglsl_out");
         assert_eq!(plan.targets[0].slots.len(), 64);
@@ -2723,15 +2737,18 @@ mod tests {
             kind: ResourceKind::AccelerationStructure,
         });
         let plan = planned(&module, &Inputs::default())?;
-        assert!(plan
-            .needs
-            .contains(&Need::Feature("RayQueryFeaturesKHR.rayQuery")));
-        assert!(plan
-            .declarations
-            .contains("ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n  GEOMETRY TRIANGLES\n"));
-        assert!(plan
-            .bindings
-            .contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 0 BINDING 2\n"));
+        assert!(
+            plan.needs
+                .contains(&Need::Feature("RayQueryFeaturesKHR.rayQuery"))
+        );
+        assert!(
+            plan.declarations
+                .contains("ACCELERATION_STRUCTURE BOTTOM_LEVEL blas\n  GEOMETRY TRIANGLES\n")
+        );
+        assert!(
+            plan.bindings
+                .contains("  BIND ACCELERATION_STRUCTURE tlas DESCRIPTOR_SET 0 BINDING 2\n")
+        );
         assert_eq!(plan.draw, Draw::Rect);
         Ok(())
     }
@@ -2759,9 +2776,11 @@ mod tests {
         module.task_payload = Some(Ok(DataType::Scalar(U32)));
         let plan = planned(&module, &Inputs::default())?;
         assert_eq!(shaders(&plan), [ShaderKind::Task, ShaderKind::Fragment]);
-        assert!(plan.harness[1]
-            .1
-            .contains("layout(location = 0) perprimitiveEXT in vec4 v0;"));
+        assert!(
+            plan.harness[1]
+                .1
+                .contains("layout(location = 0) perprimitiveEXT in vec4 v0;")
+        );
         assert!(plan.needs.contains(&requirements::TASK_SHADER));
         assert!(plan.needs.contains(&requirements::MESH_SHADER));
         let (tested, dump, data) = paths();
@@ -2807,9 +2826,11 @@ mod tests {
         }];
         let plan = planned(&module, &Inputs::default())?;
         assert_eq!(shaders(&plan), [ShaderKind::Fragment]);
-        assert!(plan.harness[0]
-            .1
-            .contains("layout(location = 2) flat perprimitiveNV in uint v2;"));
+        assert!(
+            plan.harness[0]
+                .1
+                .contains("layout(location = 2) flat perprimitiveNV in uint v2;")
+        );
         assert!(plan.needs.contains(&requirements::MESH_SHADER_NV));
         assert!(!plan.needs.contains(&requirements::MESH_SHADER));
         assert_eq!(plan.draw, Draw::Mesh);
@@ -2852,18 +2873,24 @@ mod tests {
             kind: ResourceKind::StorageTexelBuffer(image),
         });
         let plan = planned(&module, &Inputs::default())?;
-        assert!(plan
-            .declarations
-            .contains("BUFFER r0_0 DATA_TYPE R32G32B32A32_UINT DATA\n"));
-        assert!(plan
-            .declarations
-            .contains("BUFFER r0_1 DATA_TYPE R32_UINT DATA\n"));
-        assert!(plan
-            .bindings
-            .contains("  BIND BUFFER r0_0 AS uniform_texel_buffer DESCRIPTOR_SET 0 BINDING 0\n"));
-        assert!(plan
-            .bindings
-            .contains("  BIND BUFFER r0_1 AS storage_texel_buffer DESCRIPTOR_SET 0 BINDING 1\n"));
+        assert!(
+            plan.declarations
+                .contains("BUFFER r0_0 DATA_TYPE R32G32B32A32_UINT DATA\n")
+        );
+        assert!(
+            plan.declarations
+                .contains("BUFFER r0_1 DATA_TYPE R32_UINT DATA\n")
+        );
+        assert!(
+            plan.bindings.contains(
+                "  BIND BUFFER r0_0 AS uniform_texel_buffer DESCRIPTOR_SET 0 BINDING 0\n"
+            )
+        );
+        assert!(
+            plan.bindings.contains(
+                "  BIND BUFFER r0_1 AS storage_texel_buffer DESCRIPTOR_SET 0 BINDING 1\n"
+            )
+        );
         assert_eq!(plan.targets.len(), 1);
         assert_eq!(plan.targets[0].slots.len(), 64);
 
@@ -2883,9 +2910,10 @@ mod tests {
         assert!(plan.declarations.contains(
             "IMAGE r0_0 FORMAT R32G32B32A32_UINT DIM_2D WIDTH 8 HEIGHT 8 SAMPLES 4 DATA\n"
         ));
-        assert!(plan
-            .needs
-            .contains(&Need::Feature("shaderStorageImageMultisample")));
+        assert!(
+            plan.needs
+                .contains(&Need::Feature("shaderStorageImageMultisample"))
+        );
         module.resources[0].kind = ResourceKind::SampledImage(ImageType {
             dim: Dim::Dim3D,
             multisampled: true,
@@ -2943,18 +2971,20 @@ mod tests {
             },
         ];
         let plan = planned(&module, &Inputs::default())?;
-        assert!(plan
-            .declarations
-            .contains("IMAGE r0_0 FORMAT R32G32B32A32_SFLOAT DIM_CUBE WIDTH 4 HEIGHT 4 DATA\n"));
+        assert!(
+            plan.declarations
+                .contains("IMAGE r0_0 FORMAT R32G32B32A32_SFLOAT DIM_CUBE WIDTH 4 HEIGHT 4 DATA\n")
+        );
         assert!(plan.declarations.contains(
             "IMAGE r0_1 FORMAT D32_SFLOAT DIM_2D_ARRAY WIDTH 8 HEIGHT 8 LAYERS 3 DATA\n"
         ));
         assert!(plan.declarations.contains(
             "IMAGE r0_2 FORMAT R32_SFLOAT DIM_CUBE_ARRAY WIDTH 4 HEIGHT 4 LAYERS 12 DATA\n"
         ));
-        assert!(plan
-            .declarations
-            .contains("SAMPLER smpc COMPARE on COMPARE_OP less_or_equal\n"));
+        assert!(
+            plan.declarations
+                .contains("SAMPLER smpc COMPARE on COMPARE_OP less_or_equal\n")
+        );
         assert!(plan.bindings.contains(
             "  BIND BUFFER r0_1 AS combined_image_sampler SAMPLER smpc DESCRIPTOR_SET 0 BINDING 1\n"
         ));

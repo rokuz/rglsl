@@ -2,8 +2,8 @@ use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{Expression, ExpressionKind};
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
@@ -347,7 +347,7 @@ impl Analyzer<'_> {
                                     span,
                                     name,
                                     "the dimension permutation is not a permutation",
-                                )
+                                );
                             }
                         }
                     }

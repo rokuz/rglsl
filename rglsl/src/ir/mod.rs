@@ -237,9 +237,9 @@ use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpr
 
 pub use block::{Block, Walk};
 pub use debug::{
-    apply_spans, collect_spans, shift_module_spans, shift_span, DebugAnchor, DebugFunction,
-    DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope, DebugSource, DebugStruct,
-    DebugUnit, ModuleSpans, ScopeIndex,
+    DebugAnchor, DebugFunction, DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope,
+    DebugSource, DebugStruct, DebugUnit, ModuleSpans, ScopeIndex, apply_spans, collect_spans,
+    shift_module_spans, shift_span,
 };
 pub use rglsl_types::{ResourceBinding, ShaderStage, ShaderStageMask};
 

@@ -76,7 +76,7 @@ impl TypeLayout {
         loop {
             match layout.shape {
                 Shape::Matrix { stride, row_major } => {
-                    return Some(MatrixLayout { stride, row_major })
+                    return Some(MatrixLayout { stride, row_major });
                 }
                 Shape::Array { ref element, .. } => layout = element,
                 Shape::Plain | Shape::Struct(_) => return None,

@@ -5,11 +5,11 @@ Generating SPIR-V for image operations.
 use spirv::Word;
 
 use super::{
+    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
     qcom::{
         CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, CAPABILITY_IMAGE_GATHER_LINEAR_QCOM,
         OP_IMAGE_GATHER_QCOM,
     },
-    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
 };
 use crate::arena::Handle;
 
@@ -925,7 +925,7 @@ impl BlockContext<'_> {
                     Id::D2 | Id::Cube => 2,
                     Id::D3 => 3,
                     Id::Subpass | Id::TileImageData => {
-                        return Err(Error::Validation("subpass input query"))
+                        return Err(Error::Validation("subpass input query"));
                     }
                 };
                 let array_coords = usize::from(arrayed);
@@ -1019,7 +1019,7 @@ impl BlockContext<'_> {
                     Id::D2 | Id::Cube => crate::VectorSize::Tri,
                     Id::D3 => crate::VectorSize::Quad,
                     Id::Subpass | Id::TileImageData => {
-                        return Err(Error::Validation("subpass input query"))
+                        return Err(Error::Validation("subpass input query"));
                     }
                 };
                 let extended_size_type_id = self.get_numeric_type_id(NumericType::Vector {
@@ -1355,7 +1355,7 @@ impl BlockContext<'_> {
             crate::AtomicFunction::Max if signed => spirv::Op::AtomicSMax,
             crate::AtomicFunction::Max => spirv::Op::AtomicUMax,
             crate::AtomicFunction::Exchange { .. } => {
-                return Err(Error::Validation("Exchange atomics are not supported yet"))
+                return Err(Error::Validation("Exchange atomics are not supported yet"));
             }
         };
         let result_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;

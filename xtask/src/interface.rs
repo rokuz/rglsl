@@ -1162,9 +1162,11 @@ mod tests {
     fn the_expected_differences_file_parses() -> anyhow::Result<()> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let expected = Expected::load(&root)?;
-        assert!(expected
-            .reason("spv.noLocation.vert", "Output location 3")
-            .is_some());
+        assert!(
+            expected
+                .reason("spv.noLocation.vert", "Output location 3")
+                .is_some()
+        );
         Ok(())
     }
 

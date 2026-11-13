@@ -8,13 +8,13 @@ use rglsl_ast::ast::{
 };
 use rglsl_sema::Analysis;
 
-use rglsl_types::stack::{run, Stalled};
+use rglsl_types::stack::{Stalled, run};
 
 use crate::basic;
 use crate::build::Builder;
 use crate::random::Random;
-use crate::scope::{declared_variable, Variable};
-use crate::stack::{take_statement, Cx};
+use crate::scope::{Variable, declared_variable};
+use crate::stack::{Cx, take_statement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BlockId {

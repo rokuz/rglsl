@@ -21,9 +21,9 @@ use core::ops;
 use bit_set::BitSet;
 
 use crate::{
+    FastHashSet,
     arena::{Handle, HandleSet},
     proc::{ExpressionKindTracker, LayoutError, Layouter, TypeResolution},
-    FastHashSet,
 };
 
 //TODO: analyze the model at the same time as we validate it,
@@ -32,8 +32,8 @@ use crate::{
 use crate::span::{AddSpan as _, WithSpan};
 pub use analyzer::{ExpressionInfo, FunctionInfo, GlobalUse, Uniformity, UniformityRequirements};
 pub use compose::ComposeError;
-pub use expression::{check_literal_value, LiteralError};
 pub use expression::{ConstExpressionError, ExpressionError};
+pub use expression::{LiteralError, check_literal_value};
 pub(crate) use function::abort_message_length;
 pub use function::{CallError, FunctionError, LocalVariableError, SubgroupError};
 pub use immediates::ImmediateSlots;
@@ -984,7 +984,7 @@ impl Validator {
                             source,
                         }
                         .with_span_handle(handle, &module.functions)
-                    }))
+                    }));
                 }
             }
         }

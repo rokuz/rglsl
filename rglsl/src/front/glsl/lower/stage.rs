@@ -2,14 +2,14 @@ use alloc::{string::String, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
+use rglsl_sema::SymbolId;
 use rglsl_sema::scope::{Origin, Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockStorage, Scalar, Type as GlslType, TypeKind,
 };
-use rglsl_sema::SymbolId;
 
 use super::function::FunctionLowerer;
-use super::{internal, semantic, unsupported, xfb, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, semantic, unsupported, xfb};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, GeometryInfo, GeometryInputPrimitive, GeometryOutputPrimitive,
@@ -545,7 +545,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 return Err(semantic(
                     format_size_error(&record.name, self.with(|this| this.stage())?),
                     at,
-                ))
+                ));
             }
         };
         let mut members = Vec::with_capacity(block.members.len());

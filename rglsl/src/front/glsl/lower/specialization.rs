@@ -4,7 +4,7 @@ use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind, Initializer, S
 use rglsl_sema::types::{SpecializedSize, Type as GlslType};
 
 use super::function::FunctionLowerer;
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{Arena, Expression, Handle, Literal, Override, Scalar, Span, Statement, TypeInner};
 
 const LOCAL_SIZE_IDS: [&str; 3] = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];

@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 
 use crate::diagnostic::DiagnosticKind;
 use crate::include::FileId;
-use crate::preprocessor::{Input, MacroInput, Preprocessor, Scanned, TokenInput, CPP_STYLE_LINE};
-use crate::token::{operator, At, Kind, Token, MAX_TOKEN_LENGTH};
+use crate::preprocessor::{CPP_STYLE_LINE, Input, MacroInput, Preprocessor, Scanned, TokenInput};
+use crate::token::{At, Kind, MAX_TOKEN_LENGTH, Token, operator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Expand {

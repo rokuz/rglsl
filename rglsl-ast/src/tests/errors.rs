@@ -1,6 +1,6 @@
 use alloc::string::String;
 
-use crate::{line_column, parse, LineColumn, ParseError, ParseErrorKind, Span};
+use crate::{LineColumn, ParseError, ParseErrorKind, Span, line_column, parse};
 
 fn error(source: &str) -> ParseError {
     match parse(source) {
@@ -57,7 +57,9 @@ fn unsupported_directives() {
             found.kind,
             ParseErrorKind::UnsupportedDirective(String::from(name))
         );
-        assert!(alloc::format!("{found}").contains("preprocessor directives are not supported yet"));
+        assert!(
+            alloc::format!("{found}").contains("preprocessor directives are not supported yet")
+        );
     }
     assert_eq!(
         error("#version 450\n#define A 1\n").position,

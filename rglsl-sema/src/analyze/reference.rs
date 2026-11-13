@@ -1,9 +1,9 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{BlockStructure, Identifier, Spanned, TypeQualifier};
 use rglsl_ast::extensions::names;
-use rglsl_ast::Span;
 
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -244,8 +244,14 @@ impl Analyzer<'_> {
                 continue;
             }
             for (layout, what) in [
-                ("buffer_reference_align", "the buffer_reference_align layout is ignored when defined in forward declaration"),
-                ("std140", "the packing layout (scalar, std430, etc) is ignored when defined in forward declaration"),
+                (
+                    "buffer_reference_align",
+                    "the buffer_reference_align layout is ignored when defined in forward declaration",
+                ),
+                (
+                    "std140",
+                    "the packing layout (scalar, std430, etc) is ignored when defined in forward declaration",
+                ),
             ] {
                 let present = if layout == "std140" {
                     packing_of(qualifiers).is_some()

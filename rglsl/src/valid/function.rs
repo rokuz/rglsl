@@ -1,8 +1,8 @@
 use alloc::{format, string::String, vec::Vec};
 
 use super::{
-    analyzer::{UniformityDisruptor, UniformityRequirements},
     ExpressionError, FunctionInfo, ModuleInfo,
+    analyzer::{UniformityDisruptor, UniformityRequirements},
 };
 use crate::arena::{Arena, UniqueArena};
 use crate::arena::{Handle, HandleSet};
@@ -148,7 +148,9 @@ pub enum FunctionError {
     InvalidArgumentType { index: usize, name: String },
     #[error("The function's given return type cannot be returned from functions")]
     NonConstructibleReturnType,
-    #[error("Argument '{name}' at index {index} is a pointer of space {space:?}, which can't be passed into functions.")]
+    #[error(
+        "Argument '{name}' at index {index} is a pointer of space {space:?}, which can't be passed into functions."
+    )]
     InvalidArgumentPointerSpace {
         index: usize,
         name: String,
@@ -160,7 +162,9 @@ pub enum FunctionError {
     ContinueOutsideOfLoop,
     #[error("The `return` is called within a `continuing` block")]
     InvalidReturnSpot,
-    #[error("The `return` expression {expression:?} does not match the declared return type {expected_ty:?}")]
+    #[error(
+        "The `return` expression {expression:?} does not match the declared return type {expected_ty:?}"
+    )]
     InvalidReturnType {
         expression: Option<Handle<crate::Expression>>,
         expected_ty: Option<Handle<crate::Type>>,
@@ -239,9 +243,13 @@ pub enum FunctionError {
         Handle<crate::Expression>,
         UniformityDisruptor,
     ),
-    #[error("Functions that are not entry points cannot have `@location` or `@builtin` attributes on their arguments: \"{name}\" has attributes")]
+    #[error(
+        "Functions that are not entry points cannot have `@location` or `@builtin` attributes on their arguments: \"{name}\" has attributes"
+    )]
     PipelineInputRegularFunction { name: String },
-    #[error("Functions that are not entry points cannot have `@location` or `@builtin` attributes on their return value types")]
+    #[error(
+        "Functions that are not entry points cannot have `@location` or `@builtin` attributes on their return value types"
+    )]
     PipelineOutputRegularFunction,
     #[error("Subgroup operation is invalid")]
     InvalidSubgroup(#[from] SubgroupError),
@@ -253,7 +261,9 @@ pub enum FunctionError {
     EmitResult(Handle<crate::Expression>),
     #[error("Expression not visited by the appropriate statement")]
     UnvisitedExpression(Handle<crate::Expression>),
-    #[error("Expression {0:?} in mesh shader intrinsic call should be `u32` (is the expression a signed integer?)")]
+    #[error(
+        "Expression {0:?} in mesh shader intrinsic call should be `u32` (is the expression a signed integer?)"
+    )]
     InvalidMeshFunctionCall(Handle<crate::Expression>),
 
     #[error("Task payload variables differ from {0:?} to {1:?}")]
@@ -262,7 +272,9 @@ pub enum FunctionError {
     InvalidMeshShaderOutputType(Handle<crate::Expression>),
     #[error("The payload type passed to `traceRay` must be a pointer")]
     InvalidPayloadType,
-    #[error("The payload type passed to `traceRay` must be a pointer with an address space of `ray_payload` or `incoming_ray_payload`, instead got {0:?}")]
+    #[error(
+        "The payload type passed to `traceRay` must be a pointer with an address space of `ray_payload` or `incoming_ray_payload`, instead got {0:?}"
+    )]
     InvalidPayloadAddressSpace(crate::AddressSpace),
     #[error("The ray tracing operand {0:?} has the wrong type")]
     InvalidRayOperand(Handle<crate::Expression>),
@@ -567,7 +579,7 @@ impl super::Validator {
                 }
                 _ => {
                     return Err(CallError::ExpressionMismatch(result)
-                        .with_span_handle(expr, context.expressions))
+                        .with_span_handle(expr, context.expressions));
                 }
             }
         } else if fun.result.is_some() {
@@ -1305,7 +1317,7 @@ impl super::Validator {
             Some(crate::ScalarKind::Sint) => false,
             _ => {
                 return Err(FunctionError::InvalidSwitchType(selector)
-                    .with_span_handle(selector, context.expressions))
+                    .with_span_handle(selector, context.expressions));
             }
         };
         self.switch_values.clear();
@@ -1704,11 +1716,11 @@ impl super::Validator {
                             Some(AddressSpace::PhysicalStorage { .. })
                         ) =>
                         {
-                            break
+                            break;
                         }
                         _ => {
                             return Err(FunctionError::InvalidStorePointer(current)
-                                .with_span_handle(pointer, context.expressions))
+                                .with_span_handle(pointer, context.expressions));
                         }
                     }
                 }
@@ -1963,7 +1975,7 @@ impl super::Validator {
                     return Err(error.and_then(|error| {
                         FunctionError::InvalidCall { function, error }
                             .with_span_static(span, "invalid function call")
-                    }))
+                    }));
                 }
             },
             S::Atomic {
@@ -2128,7 +2140,7 @@ impl super::Validator {
                             }) => {}
                             _ => {
                                 return Err(FunctionError::InvalidHitDistanceType(hit_t)
-                                    .with_span_static(span, "invalid hit_t"))
+                                    .with_span_static(span, "invalid hit_t"));
                             }
                         }
                     }
@@ -2568,7 +2580,7 @@ impl super::Validator {
                         name: argument.name.clone().unwrap_or_default(),
                         space: other,
                     }
-                    .with_span_handle(argument.ty, &module.types))
+                    .with_span_handle(argument.ty, &module.types));
                 }
             }
             // Check for the least informative error last.
@@ -2635,7 +2647,7 @@ impl super::Validator {
                     Ok(stages) => info.available_stages &= stages,
                     Err(source) => {
                         return Err(FunctionError::Expression { handle, source }
-                            .with_span_handle(handle, &fun.expressions))
+                            .with_span_handle(handle, &fun.expressions));
                     }
                 }
             }
@@ -2909,11 +2921,11 @@ impl super::Validator {
             crate::TypeInner::Pointer { space, .. } if spaces.contains(&space) => {}
             crate::TypeInner::Pointer { space, .. } => {
                 return Err(FunctionError::InvalidPayloadAddressSpace(space)
-                    .with_span_handle(pointer, context.expressions))
+                    .with_span_handle(pointer, context.expressions));
             }
             _ => {
                 return Err(FunctionError::InvalidPayloadType
-                    .with_span_handle(pointer, context.expressions))
+                    .with_span_handle(pointer, context.expressions));
             }
         }
         match context.expressions[pointer] {

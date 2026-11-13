@@ -2725,9 +2725,11 @@ mod tests {
         assert_eq!(reflection.local_size, [8, 2, 1]);
         assert!(reflection.capabilities.contains(&Capability::Shader));
         assert!(reflection.unknown_capabilities.contains(&60_000));
-        assert!(reflection
-            .extensions
-            .contains("SPV_KHR_storage_buffer_storage_class"));
+        assert!(
+            reflection
+                .extensions
+                .contains("SPV_KHR_storage_buffer_storage_class")
+        );
         assert_eq!(reflection.resources.len(), 1);
         let resource = &reflection.resources[0];
         assert_eq!((resource.set, resource.binding), (1, 3));
@@ -2867,9 +2869,10 @@ mod tests {
         assert!(plan.bindings.contains(
             "BIND BUFFER_ARRAY r0_1_0 r0_1_1 r0_1_2 AS tensor DESCRIPTOR_SET 0 BINDING 1"
         ));
-        assert!(plan
-            .bindings
-            .contains("BIND BUFFER r2_0 AS tensor DESCRIPTOR_SET 2 BINDING 0"));
+        assert!(
+            plan.bindings
+                .contains("BIND BUFFER r2_0 AS tensor DESCRIPTOR_SET 2 BINDING 0")
+        );
         let ranks: Vec<u32> = plan.tensors.iter().map(|tensor| tensor.rank).collect();
         assert_eq!(ranks, [2, 5, 5]);
         assert!(plan.tensors.first().is_some_and(

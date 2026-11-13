@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use spirv::Op;
 
 use super::{Block, BlockContext, Error, Instruction};
-use crate::{arena::Handle, AddressSpace, Expression, PointerQualifiers, TypeInner};
+use crate::{AddressSpace, Expression, PointerQualifiers, TypeInner, arena::Handle};
 
 fn physical_qualifiers(
     types: &crate::UniqueArena<crate::Type>,

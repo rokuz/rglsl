@@ -6,7 +6,7 @@ use rglsl_ast::ast::{
 };
 
 use crate::basic;
-use crate::build::{named_type, Builder};
+use crate::build::{Builder, named_type};
 use crate::fuzzer::literal_zero_or_one;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

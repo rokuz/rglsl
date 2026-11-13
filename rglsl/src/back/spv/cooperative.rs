@@ -5,9 +5,9 @@ use spirv::{Op, Word};
 use super::block::AccessTypeAdjustment;
 use super::{Block, BlockContext, Error, Instruction, LookupType, Writer};
 use crate::{
-    arena::Handle, CooperativeData, CooperativeFamily, CooperativeMatrixClass,
-    CooperativeMatrixFunction, CooperativeSize, Expression, LongVectorClass, ScalarKind,
-    TensorOperation, TypeInner,
+    CooperativeData, CooperativeFamily, CooperativeMatrixClass, CooperativeMatrixFunction,
+    CooperativeSize, Expression, LongVectorClass, ScalarKind, TensorOperation, TypeInner,
+    arena::Handle,
 };
 
 const SPV_EXT_REPLICATED_COMPOSITES: &str = "SPV_EXT_replicated_composites";

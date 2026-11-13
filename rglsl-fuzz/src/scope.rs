@@ -9,11 +9,11 @@ use rglsl_ast::ast::{
     SingleTypeQualifier, Spanned, Statement, StatementKind, StorageQualifier, TranslationUnit,
     TypeQualifier,
 };
+use rglsl_sema::Analysis;
 use rglsl_sema::analyze::Callee;
 use rglsl_sema::scope::{Direction, Origin, Storage, SymbolKind};
-use rglsl_sema::Analysis;
 
-use rglsl_types::stack::{run, Stalled};
+use rglsl_types::stack::{Stalled, run};
 
 use crate::basic;
 use crate::stack::Cx;

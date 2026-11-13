@@ -1,4 +1,4 @@
-use super::{assert_errors, compile, VULKAN_1_3};
+use super::{VULKAN_1_3, assert_errors, compile};
 use spirv::Op;
 
 #[test]

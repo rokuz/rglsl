@@ -14,9 +14,13 @@ pub enum LinkError {
     StageMismatch(ShaderStage, ShaderStage),
     #[error("No function definition (body) found: {0}")]
     MissingDefinition(String),
-    #[error("Multiple function bodies in multiple compilation units for the same signature in the same stage: {0}")]
+    #[error(
+        "Multiple function bodies in multiple compilation units for the same signature in the same stage: {0}"
+    )]
     DuplicateDefinition(String),
-    #[error("function `{0}` is declared with a different return type or parameter qualifiers than its definition")]
+    #[error(
+        "function `{0}` is declared with a different return type or parameter qualifiers than its definition"
+    )]
     SignatureMismatch(String),
     #[error("Recursion detected: {0}")]
     Recursion(String),
@@ -34,7 +38,9 @@ pub enum LinkError {
     SpecializationConstant(u32),
     #[error("structure `{0}` is defined differently in two modules")]
     StructMismatch(String),
-    #[error("`gl_WorkGroupSize` is read as a constant in {0}, but another unit declares local_size_x_id, local_size_y_id or local_size_z_id for a component it does not specialize")]
+    #[error(
+        "`gl_WorkGroupSize` is read as a constant in {0}, but another unit declares local_size_x_id, local_size_y_id or local_size_z_id for a component it does not specialize"
+    )]
     WorkGroupSize(String),
     #[error("Contradictory {0}")]
     Contradictory(&'static str),
@@ -42,7 +48,9 @@ pub enum LinkError {
     MissingLayout(&'static str),
     #[error("{0}")]
     Mode(&'static str),
-    #[error("xfb_stride is too large:\n    xfb_buffer {buffer}, components (1/4 stride) needed are {components}, gl_MaxTransformFeedbackInterleavedComponents is {limit}")]
+    #[error(
+        "xfb_stride is too large:\n    xfb_buffer {buffer}, components (1/4 stride) needed are {components}, gl_MaxTransformFeedbackInterleavedComponents is {limit}"
+    )]
     XfbStride {
         buffer: u32,
         components: u32,

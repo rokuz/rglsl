@@ -1,12 +1,12 @@
 #[path = "support/samples.rs"]
 mod samples;
 
-use rglsl_fuzz::reduce::{finalise, reduce, ReduceOptions};
+use rglsl_fuzz::reduce::{ReduceOptions, finalise, reduce};
 use rglsl_fuzz::{
-    analyze_shader, generate_variant_with_donors, parse_shader, GeneratorOptions, Random, ShaderJob,
+    GeneratorOptions, Random, ShaderJob, analyze_shader, generate_variant_with_donors, parse_shader,
 };
 use rglsl_types::ShaderStage;
-use samples::{sample_donors, sample_jobs, TestResult};
+use samples::{TestResult, sample_donors, sample_jobs};
 
 const MARKER: &str = "800";
 

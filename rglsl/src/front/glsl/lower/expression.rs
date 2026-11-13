@@ -8,11 +8,11 @@ use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType, TypeKind};
 use rglsl_sema::{Callee, ExpressionInfo};
 
-use super::constant::{literal, shape, Shape};
+use super::constant::{Shape, literal, shape};
 use super::function::{FunctionLowerer, Local};
 use super::specialization::is_direct;
 use super::types::{scalar, vector_size};
-use super::{internal, semantic, unsupported, GlobalRef, Result};
+use super::{GlobalRef, Result, internal, semantic, unsupported};
 use crate::{
     AddressSpace, BinaryOperator, Expression, Handle, Literal, NonUniform, RelationalFunction,
     Span, Statement, SwizzleComponent, UnaryOperator,
@@ -1334,10 +1334,10 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     (right, &right_ty),
                     operator == AstBinary::Subtract,
                     at,
-                )
+                );
             }
             (false, true) => {
-                return self.reference_offset((right, &right_ty), (left, &left_ty), false, at)
+                return self.reference_offset((right, &right_ty), (left, &left_ty), false, at);
             }
             (false, false) => {}
         }
@@ -2266,14 +2266,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let accept = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().effect(accept)))
                 .await
         }?;
         let reject = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().effect(reject)))
                 .await
         }?;
@@ -2300,14 +2298,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         let local = self.with(|this| this.local(ty, None, at))??;
         let accept = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().stored(accept, local, at)))
                 .await
         }?;
         let reject = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().stored(reject, local, at)))
                 .await
         }?;
@@ -2360,8 +2356,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             );
         })?;
         let rest = {
-            self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().stored(right, local, at)))
                 .await
         }?;

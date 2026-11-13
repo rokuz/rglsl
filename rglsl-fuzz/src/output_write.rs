@@ -7,7 +7,7 @@ use crate::basic::{self, BOOL, FLOAT};
 use crate::constants::{GLF_OUT_VAR_BACKUP_PREFIX, GLF_WRAPPED_IF_TRUE};
 use crate::context::Context;
 use crate::fuzzer::random_constant;
-use crate::injection::{apply_edits, choose, injection_points, Edit, InjectionPoint};
+use crate::injection::{Edit, InjectionPoint, apply_edits, choose, injection_points};
 use crate::jump::dead_conditional;
 use crate::random::Random;
 use crate::transformation::PassInput;

@@ -25,12 +25,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
 use self::amber::{Amber, Device};
 pub use self::batch::Outputs;
 use self::batch::{Job, JobResult};
-use self::compare::{compare, Comparison};
+use self::compare::{Comparison, compare};
 use self::harness::ShaderKind;
 use self::plan::{Inputs, Plan, PlannedTensor, Refusal, ScriptPaths};
 use self::reflect::Reflection;
@@ -230,7 +230,7 @@ pub fn compare_outputs(
                 return Err(TargetDifference {
                     target: target.name.clone(),
                     difference,
-                })
+                });
             }
         }
     }
@@ -279,7 +279,9 @@ pub fn select_targets(local: bool, remote: bool) -> Result<Vec<TargetSpec>> {
         if oracles::EXEC_PLATFORM {
             targets.push(TargetSpec::Local);
         } else {
-            eprintln!("[xtask] warning: the local exec target was skipped: KosmicKrisp runs on macOS on arm64 only");
+            eprintln!(
+                "[xtask] warning: the local exec target was skipped: KosmicKrisp runs on macOS on arm64 only"
+            );
         }
     }
     if remote {
@@ -312,7 +314,11 @@ pub fn named_targets(name: &str) -> Result<Vec<TargetSpec>> {
         bail!(
             "unknown exec target `{name}`: use local, remote (every entry of {}) or one of its entries ({})",
             remote::HOST_VAR,
-            if listed.is_empty() { "none set".to_string() } else { listed.join(", ") }
+            if listed.is_empty() {
+                "none set".to_string()
+            } else {
+                listed.join(", ")
+            }
         );
     }
     Ok(chosen)
@@ -409,14 +415,16 @@ pub fn parallel_map<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync)
     let results: Mutex<Vec<(usize, R)>> = Mutex::new(Vec::with_capacity(items.len()));
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(item) = items.get(index) else { break };
-                let result = run(item);
-                results
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push((index, result));
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else { break };
+                    let result = run(item);
+                    results
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push((index, result));
+                }
             });
         }
     });
@@ -436,7 +444,9 @@ impl Executor {
         let backend = match spec {
             TargetSpec::Local => {
                 let (Some(binary), Some(icd)) = (amber_tool(root), icd_manifest(root)) else {
-                    bail!("the local exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec");
+                    bail!(
+                        "the local exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec"
+                    );
                 };
                 Backend::Local(Amber {
                     binary,
@@ -545,7 +555,11 @@ impl Executor {
             self.target.label(),
             self.support.len() - missing.len(),
             self.support.len(),
-            if missing.is_empty() { "none".to_string() } else { missing.join(", ") }
+            if missing.is_empty() {
+                "none".to_string()
+            } else {
+                missing.join(", ")
+            }
         );
         Ok(())
     }
@@ -1102,7 +1116,7 @@ fn confirm(
         Err(error) => {
             return Outcome::Fail(format!(
                 "our module fails on the driver (confirmed alone): {error}"
-            ))
+            ));
         }
     };
     if let Some(first) = expected_first {
@@ -1145,13 +1159,13 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
                     resource.set,
                     resource.binding,
                     resource.kind.describe()
-                ))
+                ));
             }
             Some(other) if other.kind != resource.kind => {
                 return Some(format!(
                     "set {} binding {}: {:?} vs {:?}",
                     resource.set, resource.binding, resource.kind, other.kind
-                ))
+                ));
             }
             Some(_) => {}
         }

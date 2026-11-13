@@ -1,11 +1,11 @@
-use rglsl_ast::ast::{JumpStatement, Statement, TranslationUnit, TypeSpecifierNonArray};
 use rglsl_ast::Stalled;
+use rglsl_ast::ast::{JumpStatement, Statement, TranslationUnit, TypeSpecifierNonArray};
 
 use crate::build::Builder;
 use crate::context::Context;
-use crate::injection::{apply_edits, choose, injection_points, Edit, InjectionPoint};
+use crate::injection::{Edit, InjectionPoint, apply_edits, choose, injection_points};
 use crate::random::Random;
-use crate::structs::{canonical_constant, global_structs, Structs};
+use crate::structs::{Structs, canonical_constant, global_structs};
 use crate::transformation::PassInput;
 
 pub const NAME: &str = "add_jump";

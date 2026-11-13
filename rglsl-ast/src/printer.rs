@@ -6,7 +6,7 @@ use core::fmt;
 use core::future::Future;
 use core::ops::Deref;
 
-use rglsl_types::stack::{run, Call, Stack};
+use rglsl_types::stack::{Call, Stack, run};
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, Attribute, CaseLabel, CompoundStatement, Condition,

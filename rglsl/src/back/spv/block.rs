@@ -8,10 +8,10 @@ use arrayvec::ArrayVec;
 use spirv::Word;
 
 use super::{
-    index::BoundsCheckResult, Block, BlockContext, Dimension, Error, Instruction, LocalType,
-    LookupType, NumericType, ResultMember, Writer, WriterFlags,
+    Block, BlockContext, Dimension, Error, Instruction, LocalType, LookupType, NumericType,
+    ResultMember, Writer, WriterFlags, index::BoundsCheckResult,
 };
-use crate::{arena::Handle, proc::index::GuardedIndex, Statement};
+use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
@@ -763,7 +763,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Subtract => match *left_ty_inner {
@@ -800,7 +800,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Multiply => {
@@ -868,7 +868,7 @@ impl BlockContext<'_> {
                                 | (_, Dimension::CooperativeMatrix) => {
                                     return Err(Error::FeatureNotImplemented(
                                         "component-wise multiplication of cooperative matrices",
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -879,7 +879,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Modulo => match left_ty_inner.scalar_kind() {
@@ -889,7 +889,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Equal => match left_ty_inner.scalar_kind() {
@@ -901,7 +901,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::NotEqual => match left_ty_inner.scalar_kind() {
@@ -913,7 +913,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Less => match left_ty_inner.scalar_kind() {
@@ -923,7 +923,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::LessEqual => match left_ty_inner.scalar_kind() {
@@ -933,7 +933,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Greater => match left_ty_inner.scalar_kind() {
@@ -943,7 +943,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::GreaterEqual => match left_ty_inner.scalar_kind() {
@@ -953,7 +953,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::And => match left_ty_inner.scalar_kind() {
@@ -974,7 +974,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                     };
@@ -1148,7 +1148,9 @@ impl BlockContext<'_> {
                             return Ok(());
                         }
                         _ => {
-                            return Err(Error::Validation("dot product of an invalid operand type"))
+                            return Err(Error::Validation(
+                                "dot product of an invalid operand type",
+                            ));
                         }
                     },
                     fun @ (Mf::IntegerDot
@@ -1407,7 +1409,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "countTrailingZeros of a non-integer value",
-                                ))
+                                ));
                             }
                         };
 
@@ -1456,7 +1458,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "countLeadingZeros of a non-integer value",
-                                ))
+                                ));
                             }
                         };
 
@@ -1500,7 +1502,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "bitfieldExtract of a non-integer value",
-                                ))
+                                ));
                             }
                         };
                         MathOp::Custom(Instruction::ternary(
@@ -2334,7 +2336,7 @@ impl BlockContext<'_> {
                     | Sk::FloatMXINT8 => {
                         return Err(Error::Validation(
                             "conversion to bool from a non-numeric value",
-                        ))
+                        ));
                     }
                 };
                 let zero_scalar_id = self.writer.get_constant_scalar_with(0, src_scalar)?;
@@ -2908,7 +2910,7 @@ impl BlockContext<'_> {
             _ => {
                 return Err(Error::Validation(
                     "vector-scalar multiplication of a non-vector",
-                ))
+                ));
             }
         };
 
@@ -4108,7 +4110,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4141,7 +4143,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4162,7 +4164,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4183,7 +4185,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4204,7 +4206,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4225,7 +4227,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4246,7 +4248,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4282,7 +4284,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
 

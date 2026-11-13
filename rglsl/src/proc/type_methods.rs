@@ -269,7 +269,7 @@ impl crate::TypeInner {
         loop {
             match *inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } | Ti::Matrix { scalar, .. } => {
-                    return Some(scalar)
+                    return Some(scalar);
                 }
                 Ti::Array { base, .. } => inner = &types[base].inner,
                 _ => return None,

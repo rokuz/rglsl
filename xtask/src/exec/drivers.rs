@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 pub const DIR: &str = "xtask/exec-drivers";
 
@@ -61,21 +61,25 @@ mod tests {
     fn lists_apply_to_the_matching_driver_only() -> Result<()> {
         let shader = "spv.subgroupExtendedTypesArithmetic.comp";
         let kk = DriverBugs::load(&root(), "KosmicKrisp Mesa 26.3.0 (git-0a6fa60abb)")?;
-        assert!(kk
-            .get(shader)
-            .is_some_and(|why| why.starts_with("kosmickrisp: ")));
+        assert!(
+            kk.get(shader)
+                .is_some_and(|why| why.starts_with("kosmickrisp: "))
+        );
         let amd = DriverBugs::load(&root(), "AMD proprietary driver 26.10.1 (LLPC)")?;
         assert!(amd.get(shader).is_none());
-        assert!(amd
-            .get("spv.subgroupArithmetic.comp")
-            .is_some_and(|why| why.starts_with("amd: ")));
+        assert!(
+            amd.get("spv.subgroupArithmetic.comp")
+                .is_some_and(|why| why.starts_with("amd: "))
+        );
         let nvidia = DriverBugs::load(&root(), "NVIDIA 617.14")?;
         assert!(nvidia.get("spv.subgroupArithmetic.comp").is_none());
         assert!(nvidia.get(shader).is_none());
         let barycentric = "exec/barycentric_pervertex_block_noperspective";
-        assert!(nvidia
-            .get(barycentric)
-            .is_some_and(|why| why.starts_with("nvidia: ")));
+        assert!(
+            nvidia
+                .get(barycentric)
+                .is_some_and(|why| why.starts_with("nvidia: "))
+        );
         assert!(amd.get(barycentric).is_none());
         Ok(())
     }

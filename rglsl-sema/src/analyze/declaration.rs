@@ -5,6 +5,7 @@ use core::cell::RefCell;
 
 use rglsl_types::stack::run;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, BlockInstance, BlockStructure, Declaration, DeclarationKind,
     Expression, FullySpecifiedType, FunctionDefinition, FunctionPrototype, Identifier,
@@ -12,7 +13,6 @@ use rglsl_ast::ast::{
     ParameterDeclaration, SingleTypeQualifier, Spanned, StorageQualifier, StructDeclaration,
     StructSpecifier, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::heap::is_heap_storage;

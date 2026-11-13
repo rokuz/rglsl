@@ -8,8 +8,8 @@
 use core::{fmt, marker::PhantomData, ops};
 
 use super::{
-    handle::{Handle, Index},
     Arena,
+    handle::{Handle, Index},
 };
 
 /// A strongly typed range of handles.

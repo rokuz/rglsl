@@ -1,3 +1,4 @@
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, AssignmentOperator, BasicType, BinaryOperator, CaseLabel,
     CompoundStatement, Condition, Declaration, DeclarationKind, Expression, ExpressionKind,
@@ -6,7 +7,6 @@ use rglsl_ast::ast::{
     PostfixOperator, Spanned, Statement, StatementKind, TypeSpecifier, TypeSpecifierNonArray,
     UnaryOperator,
 };
-use rglsl_ast::Span;
 
 use crate::basic;
 

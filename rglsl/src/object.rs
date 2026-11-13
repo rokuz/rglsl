@@ -167,7 +167,7 @@ impl ObjectModule {
                     file: None,
                     line: None,
                     message: alloc::format!("the module is a {} shader", own.name()),
-                })
+                });
             }
             ObjectTarget::Library(ref library) => library,
         };

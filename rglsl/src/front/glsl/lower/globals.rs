@@ -6,15 +6,15 @@ use rglsl_ast::ast::{
     InitDeclarator, InitDeclaratorList, Initializer, InterpolationQualifier, Node,
     SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
 };
+use rglsl_sema::SymbolId;
 use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind, Variable};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
     TypeKind,
 };
-use rglsl_sema::SymbolId;
 
 use super::types::image_dimension;
-use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
+use super::{GlobalRef, Initialization, Lowerer, Packing, Result, internal, semantic, unsupported};
 use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
@@ -1062,7 +1062,7 @@ impl<'a> Lowerer<'a> {
                 return Err(semantic(
                     "SPIR-V requires a location for user inputs and outputs",
                     at,
-                ))
+                ));
             }
         };
         let mut interpolation = match qualifiers.per_vertex {
@@ -1226,13 +1226,13 @@ impl<'a> Lowerer<'a> {
                 return self.handle_global(symbol, name, inner, None, at);
             }
             TypeKind::Struct(_) if ty.contains_opaque(&self.analysis.types) => {
-                return Err(internal(at))
+                return Err(internal(at));
             }
             _ => {
                 return Err(semantic(
                     "non-opaque uniforms outside a block are not allowed when targeting Vulkan",
                     at,
-                ))
+                ));
             }
         };
         let inner = if opaque.kind == OpaqueKind::Image {
@@ -1294,7 +1294,7 @@ impl<'a> Lowerer<'a> {
                 return Err(unsupported(
                     "runtime-sized arrays and arrays of arrays of opaque types",
                     at,
-                ))
+                ));
             }
         }
         let (binding, unbound) = self.binding(qualifiers, at)?;
@@ -1774,7 +1774,7 @@ impl<'a> Lowerer<'a> {
                     return Err(semantic(
                         "SPIR-V requires a location for user inputs and outputs",
                         at,
-                    ))
+                    ));
                 }
             };
             if members.iter().any(|member| {
@@ -2203,7 +2203,7 @@ impl<'a> Lowerer<'a> {
                     return Err(semantic(
                         "`pixel_center_integer` is not allowed in Vulkan: the PixelCenterInteger execution mode must not be used",
                         at,
-                    ))
+                    ));
                 }
                 _ => {}
             }
@@ -2216,7 +2216,7 @@ impl<'a> Lowerer<'a> {
                     return Err(unsupported(
                         format!("the layout qualifier `{other}` on `{name}`"),
                         at,
-                    ))
+                    ));
                 }
             };
             if name != "gl_FragDepth" {

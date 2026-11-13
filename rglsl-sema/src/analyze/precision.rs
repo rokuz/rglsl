@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
 use rglsl_types::{FastHashMap, FastHashSet};
 
+use rglsl_ast::TranslationUnit;
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Condition, Declaration, DeclarationKind, Expression,
     ExpressionKind, ExternalDeclaration, FunctionIdentifier, Initializer, JumpStatement, NodeId,
     PrecisionQualifier, Statement, StatementKind, UnaryOperator,
 };
-use rglsl_ast::TranslationUnit;
 
 use super::{Analysis, Callee};
 use crate::scope::{SymbolId, SymbolKind};

@@ -3,10 +3,10 @@ use alloc::{format, vec::Vec};
 use spirv::{Op, Word};
 
 use super::{
-    frames::on_heap, Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType,
-    Writer, WriterFlags,
+    Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType, Writer,
+    WriterFlags, frames::on_heap,
 };
-use crate::{arena::Handle, DescriptorHeap, Module, StorageAccess, TypeInner};
+use crate::{DescriptorHeap, Module, StorageAccess, TypeInner, arena::Handle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Value {
@@ -163,7 +163,7 @@ fn scalar_layout_step(
             ));
         }
         TypeInner::Struct { ref members, .. } => {
-            return Err((LayoutTask::Struct(members), LayoutChildren::Struct(members)))
+            return Err((LayoutTask::Struct(members), LayoutChildren::Struct(members)));
         }
         _ => (0, 1),
     })

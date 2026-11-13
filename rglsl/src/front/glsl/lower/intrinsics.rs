@@ -5,16 +5,16 @@ use rglsl_ast::ast::NodeId;
 use rglsl_ast::ast::{
     DeclarationKind, Expression as AstExpression, ExternalDeclaration, SpirvExecutionModeKind,
 };
+use rglsl_sema::FunctionId;
 use rglsl_sema::spirv::{
-    value_word, SpirvDecorationOperands as SemaDecorationOperands,
+    SpirvDecorationOperands as SemaDecorationOperands,
     SpirvExecutionModeOperands as SemaModeOperands, SpirvIdOperand, SpirvTypeId,
-    SpirvTypeParameter,
+    SpirvTypeParameter, value_word,
 };
 use rglsl_sema::types::{Type as GlslType, TypeKind};
-use rglsl_sema::FunctionId;
 
 use super::function::FunctionLowerer;
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{
     Expression, Handle, Span, SpirvDecoration, SpirvDecorationOperands, SpirvExecutionMode,
     SpirvExecutionModeOperands, SpirvId, SpirvInstruction, SpirvOperand, SpirvRequirements,
@@ -202,7 +202,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     return Err(unsupported(
                         "`spirv_type` parameters that are named constants",
                         span,
-                    ))
+                    ));
                 }
                 SpirvTypeParameter::Type(ref parameter) => {
                     let handle = {
@@ -214,7 +214,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             }
         }
         if opcode == OP_TYPE_VECTOR {
-            if let [SpirvTypeOperand::Type(base), SpirvTypeOperand::Literal(count)] = operands[..] {
+            if let [
+                SpirvTypeOperand::Type(base),
+                SpirvTypeOperand::Literal(count),
+            ] = operands[..]
+            {
                 let size = match count {
                     2 => Some(VectorSize::Bi),
                     3 => Some(VectorSize::Tri),
@@ -312,7 +316,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             return Err(unsupported(
                                 "a swizzle as the argument of a `spirv_by_reference` parameter",
                                 at,
-                            ))
+                            ));
                         }
                     },
                 };

@@ -198,13 +198,13 @@ impl OpaqueKeyword {
                     return Some(Self::SubpassInput {
                         prefix,
                         multisample: false,
-                    })
+                    });
                 }
                 "subpassInputMS" => {
                     return Some(Self::SubpassInput {
                         prefix,
                         multisample: true,
-                    })
+                    });
                 }
                 _ => {}
             }

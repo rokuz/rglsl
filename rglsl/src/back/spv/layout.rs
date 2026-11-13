@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 use core::iter;
 
-use spirv::{Op, Word, MAGIC_NUMBER};
+use spirv::{MAGIC_NUMBER, Op, Word};
 
 use super::{Instruction, LogicalLayout, PhysicalLayout};
 

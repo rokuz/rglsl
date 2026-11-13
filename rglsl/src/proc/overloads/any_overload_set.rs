@@ -2,7 +2,7 @@
 
 use crate::common::DiagnosticDebug;
 use crate::ir;
-use crate::proc::overloads::{list, regular, OverloadSet, Rule};
+use crate::proc::overloads::{OverloadSet, Rule, list, regular};
 use crate::proc::{GlobalCtx, TypeResolution};
 
 use alloc::vec::Vec;

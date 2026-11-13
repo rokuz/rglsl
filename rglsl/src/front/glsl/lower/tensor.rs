@@ -1,10 +1,10 @@
 use core::num::NonZeroU32;
 
 use rglsl_ast::ast::Expression as AstExpression;
-use rglsl_sema::types::ArraySize as GlslArraySize;
 use rglsl_sema::TensorArmCall;
+use rglsl_sema::types::ArraySize as GlslArraySize;
 
-use super::{internal, Lowerer, Result};
+use super::{Lowerer, Result, internal};
 use crate::{CooperativeSize, Expression, Handle, Span, Statement};
 
 impl Lowerer<'_> {

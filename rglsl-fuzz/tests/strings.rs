@@ -1,4 +1,4 @@
-use rglsl_fuzz::{analyze_shader, generate_family, parse_shader, FamilyOptions, Random, ShaderJob};
+use rglsl_fuzz::{FamilyOptions, Random, ShaderJob, analyze_shader, generate_family, parse_shader};
 use rglsl_types::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;

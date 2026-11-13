@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rspirv::dr::Operand;
-use rspirv::grammar::{ext_inst_table, OperandKind, INSTRUCTION_TABLE};
+use rspirv::grammar::{INSTRUCTION_TABLE, OperandKind, ext_inst_table};
 use rspirv::spirv::{
     AccessQualifier, BuiltIn, Capability, Decoration, ExecutionMode, StorageClass,
 };

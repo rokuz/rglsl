@@ -26,7 +26,7 @@ mod worker;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 const USAGE: &str = "\
 usage: cargo xtask <command> [options]

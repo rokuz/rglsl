@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rglsl_sema::{analyze, Options};
+use rglsl_sema::{Options, analyze};
 
 use rglsl_types::ShaderStage;
 

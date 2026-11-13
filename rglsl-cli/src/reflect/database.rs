@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use super::{gl, Options};
+use super::{Options, gl};
 
 #[derive(Debug, Clone)]
 pub(super) struct Object {

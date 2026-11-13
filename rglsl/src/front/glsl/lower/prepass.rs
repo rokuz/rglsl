@@ -8,7 +8,7 @@ use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::{BlockId, OpaqueKind, TypeKind};
 use rglsl_sema::{Callee, FunctionId, SymbolId};
 
-use super::{semantic, Lowerer, Result};
+use super::{Lowerer, Result, semantic};
 
 pub(super) fn strip(expression: &Expression) -> &Expression {
     let mut current = expression;

@@ -2,12 +2,12 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Result;
 
-use super::{exit_code, Case, Environment};
+use super::{Case, Environment, exit_code};
 use crate::corpus::{self, Corpus};
 use crate::process;
 
@@ -292,16 +292,18 @@ pub fn sweep(env: &Environment, glslang_dir: &Path, filter: Option<&str>) -> Res
     let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some((name, case, options)) = jobs.get(index) else {
-                    break;
-                };
-                let work = env.work.join("reflection").join(name.replace(':', "-"));
-                let outcome = sweep_one(env, case, *options, &work)
-                    .unwrap_or_else(|error| Outcome::Different(format!("{error:#}")));
-                if let Ok(mut results) = results.lock() {
-                    results.push((index, outcome));
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some((name, case, options)) = jobs.get(index) else {
+                        break;
+                    };
+                    let work = env.work.join("reflection").join(name.replace(':', "-"));
+                    let outcome = sweep_one(env, case, *options, &work)
+                        .unwrap_or_else(|error| Outcome::Different(format!("{error:#}")));
+                    if let Ok(mut results) = results.lock() {
+                        results.push((index, outcome));
+                    }
                 }
             });
         }

@@ -78,7 +78,7 @@ impl crate::TypeInner {
                 ..
             } => size.get(),
             Ti::LongVector { .. } | Ti::CooperativeMatrix { .. } => {
-                return Ok(IndexableLength::Dynamic)
+                return Ok(IndexableLength::Dynamic);
             }
             Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
                 return size.to_indexable_length(module);
@@ -99,10 +99,10 @@ impl crate::TypeInner {
                         ..
                     } => size.get(),
                     Ti::LongVector { .. } | Ti::CooperativeMatrix { .. } => {
-                        return Ok(IndexableLength::Dynamic)
+                        return Ok(IndexableLength::Dynamic);
                     }
                     Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
-                        return size.to_indexable_length(module)
+                        return size.to_indexable_length(module);
                     }
                     _ => return Err(IndexableLengthError::TypeNotIndexable),
                 }

@@ -1,10 +1,10 @@
 use rglsl::back::spv;
-use rglsl::compact::{compact, KeepUnused};
+use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
 use rglsl::{AddressSpace, ArraySize, Linkage, ShaderStage, TypeInner};
-use rglsl_link::{decode, encode, link, link_objects, LinkError, Linked, Options as LinkOptions};
+use rglsl_link::{LinkError, Linked, Options as LinkOptions, decode, encode, link, link_objects};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -91,12 +91,14 @@ fn modules_without_main_and_prototype_only_modules_compile() -> TestResult {
         "#version 450\nfloat a(float x);\nint b(ivec2 v);\n",
     )?;
     assert_eq!(prototypes.unit.module.functions.len(), 2);
-    assert!(prototypes
-        .unit
-        .module
-        .functions
-        .iter()
-        .all(|(_, function)| function.linkage.is_import()));
+    assert!(
+        prototypes
+            .unit
+            .module
+            .functions
+            .iter()
+            .all(|(_, function)| function.linkage.is_import())
+    );
     let lib = library(HELPER)?;
     assert!(lib.is_library());
     rglsl_link::validate_object(&prototypes)?;
@@ -136,11 +138,13 @@ fn links_functions_across_modules() -> TestResult {
         object(ShaderStage::Fragment, HELPER)?,
     ])?;
     assert_eq!(result.stage, ShaderStage::Fragment);
-    assert!(result
-        .module
-        .functions
-        .iter()
-        .all(|(_, function)| function.linkage.is_definition()));
+    assert!(
+        result
+            .module
+            .functions
+            .iter()
+            .all(|(_, function)| function.linkage.is_definition())
+    );
     assert!(!spirv(&result)?.is_empty());
     Ok(())
 }
@@ -544,9 +548,11 @@ vec4 f(vec2 uv) { return texture(tex, uv) * block.v * float(N); }
     ] {
         assert!(neutral.supports(stage), "{stage:?}");
     }
-    assert!(neutral
-        .library()
-        .is_some_and(|library| library.variants.is_empty()));
+    assert!(
+        neutral
+            .library()
+            .is_some_and(|library| library.variants.is_empty())
+    );
     let interface = object(
         ShaderStage::Vertex,
         "#version 450\nlayout(location = 0) in vec4 value;\nvec4 f() { return value; }\n",
@@ -555,9 +561,11 @@ vec4 f(vec2 uv) { return texture(tex, uv) * block.v * float(N); }
     assert!(interface.supports(ShaderStage::Vertex));
     assert!(interface.supports(ShaderStage::Fragment));
     assert!(!interface.supports(ShaderStage::Compute));
-    assert!(library_errors("#version 450\nvoid main() {}\n")
-        .join("\n")
-        .contains("cannot define `main`"));
+    assert!(
+        library_errors("#version 450\nvoid main() {}\n")
+            .join("\n")
+            .contains("cannot define `main`")
+    );
     let text = library_errors(
         "#version 450
 shared float cache;
@@ -992,10 +1000,11 @@ void forward() {}
         .as_ref()
         .ok_or("no geometry info")?;
     assert_eq!(info.passthrough.len(), 2);
-    assert!(info
-        .passthrough
-        .iter()
-        .any(|&handle| module.global_variables[handle].name.as_deref() == Some("color")));
+    assert!(
+        info.passthrough
+            .iter()
+            .any(|&handle| module.global_variables[handle].name.as_deref() == Some("color"))
+    );
     Ok(())
 }
 
@@ -1014,9 +1023,11 @@ layout(pixel_center_integer) in vec4 gl_FragCoord;
 vec4 shade() { return gl_FragCoord; }
 ",
     );
-    assert!(rejected
-        .iter()
-        .any(|error| error.contains("`pixel_center_integer` is not allowed in Vulkan")));
+    assert!(
+        rejected
+            .iter()
+            .any(|error| error.contains("`pixel_center_integer` is not allowed in Vulkan"))
+    );
     Ok(())
 }
 
@@ -1138,9 +1149,11 @@ fn work_group_size_is_specialized_by_a_library() -> TestResult {
     );
     let entry = &module.entry_points[0];
     assert_eq!(entry.workgroup_size, [4, 1, 1]);
-    assert!(entry
-        .workgroup_size_overrides
-        .is_some_and(|slots| slots[0].is_some() && slots[1].is_none() && slots[2].is_none()));
+    assert!(
+        entry
+            .workgroup_size_overrides
+            .is_some_and(|slots| slots[0].is_some() && slots[1].is_none() && slots[2].is_none())
+    );
     assert!(!spirv(&result)?.is_empty());
     let round_trip = decode(&encode(&main)?)?;
     let result = linked(&[round_trip, lib])?;

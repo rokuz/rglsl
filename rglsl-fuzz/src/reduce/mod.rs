@@ -9,7 +9,7 @@ use rglsl_ast::TranslationUnit;
 use crate::constants::GLOBAL_LOOP_BOUNDS;
 use crate::error::Error;
 use crate::generate::analyze_shader;
-use crate::job::{parse_unit, ShaderJob};
+use crate::job::{ShaderJob, parse_unit};
 use crate::macros::{emit, expand_macros};
 
 pub use finders::Pass;

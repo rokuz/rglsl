@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use spirv::{Capability, GroupOperation, Op, Word};
 
 use super::{Block, BlockContext, Error, Instruction, NumericType};
-use crate::{arena::Handle, CollectiveOperation, Expression, SubgroupFunction, TypeInner};
+use crate::{CollectiveOperation, Expression, SubgroupFunction, TypeInner, arena::Handle};
 
 const SPV_KHR_SHADER_BALLOT: &str = "SPV_KHR_shader_ballot";
 const SPV_KHR_SUBGROUP_VOTE: &str = "SPV_KHR_subgroup_vote";
@@ -205,7 +205,7 @@ impl BlockContext<'_> {
             _ => {
                 return Err(Error::Validation(
                     "subgroup operation result is not a scalar or vector",
-                ))
+                ));
             }
         };
 
@@ -216,7 +216,7 @@ impl BlockContext<'_> {
             (_, sg::All | sg::Any) => {
                 return Err(Error::Validation(
                     "subgroup vote operand is not a scalar bool",
-                ))
+                ));
             }
 
             (sk::Sint | sk::Uint, sg::Add) => Op::GroupNonUniformIAdd,
@@ -232,7 +232,7 @@ impl BlockContext<'_> {
             (_, sg::Add | sg::Mul | sg::Min | sg::Max) => {
                 return Err(Error::Validation(
                     "subgroup arithmetic operand is not numeric",
-                ))
+                ));
             }
 
             (sk::Sint | sk::Uint, sg::And) => Op::GroupNonUniformBitwiseAnd,
@@ -244,7 +244,7 @@ impl BlockContext<'_> {
             (_, sg::And | sg::Or | sg::Xor) => {
                 return Err(Error::Validation(
                     "subgroup bitwise operand is not an integer or bool",
-                ))
+                ));
             }
         };
 
@@ -415,7 +415,7 @@ impl BlockContext<'_> {
             _ => {
                 return Err(Error::Validation(
                     "subgroup invocation operand is not a scalar or vector",
-                ))
+                ));
             }
         };
         let scalar_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
@@ -615,7 +615,7 @@ impl BlockContext<'_> {
                     | Sf::Group { .. } => {
                         return Err(Error::Validation(
                             "subgroup invocation function handled above",
-                        ))
+                        ));
                     }
                 };
                 self.push_group_instruction(op, result_type_id, scope, &operands, block)

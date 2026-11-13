@@ -6,7 +6,7 @@ use alloc::{
 };
 use core::{error::Error, fmt, ops::Range};
 
-use crate::{error::replace_control_chars, Arena, Handle, UniqueArena};
+use crate::{Arena, Handle, UniqueArena, error::replace_control_chars};
 
 /// A source code span, used for error reporting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

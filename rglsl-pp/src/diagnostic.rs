@@ -196,7 +196,9 @@ impl DiagnosticKind {
 
     fn parts(&self) -> (&str, &str, &str) {
         match self {
-            Self::MissingMacroName { directive } => (directive, "must be followed by macro name", ""),
+            Self::MissingMacroName { directive } => {
+                (directive, "must be followed by macro name", "")
+            }
             Self::BadMacroParameter => ("#define", "bad argument", ""),
             Self::DuplicateMacroParameter => ("#define", "duplicate macro parameter", ""),
             Self::MissingParenthesis => ("#define", "missing parenthesis", ""),
@@ -204,11 +206,9 @@ impl DiagnosticKind {
             Self::StringifyWithoutParameter => {
                 ("#", "'#' is not followed by a macro parameter.", "")
             }
-            Self::PasteStringifyMix => (
-                "#",
-                "Illegal sequence of paste (##) and stringify (#).",
-                "",
-            ),
+            Self::PasteStringifyMix => {
+                ("#", "Illegal sequence of paste (##) and stringify (#).", "")
+            }
             Self::IncompletePaste => (
                 "#",
                 "Macro ended with incomplete '#' paste/stringify operators",
@@ -328,9 +328,11 @@ impl DiagnosticKind {
                 "",
             ),
             Self::MacroEndOfInput { name } => ("macro expansion", "End of input in macro", name),
-            Self::MacroEndOfLine { name } => {
-                ("macro expansion", "End of line in macro substitution:", name)
-            }
+            Self::MacroEndOfLine { name } => (
+                "macro expansion",
+                "End of line in macro substitution:",
+                name,
+            ),
             Self::MacroUnexpectedHash { name } => ("macro expansion", "unexpected '#'", name),
             Self::TooFewArguments { name } => ("macro expansion", "Too few args in Macro", name),
             Self::TooManyArguments { name } => ("macro expansion", "Too many args in macro", name),

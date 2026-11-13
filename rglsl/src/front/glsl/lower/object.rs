@@ -6,9 +6,9 @@ use alloc::{
 };
 use rglsl_sema::scope::QualifierFlags;
 
+use rglsl_sema::FunctionId;
 use rglsl_sema::scope::Direction;
 use rglsl_sema::types::{ArraySize as GlslArraySize, Type as GlslType, TypeKind};
-use rglsl_sema::FunctionId;
 
 use super::{GlobalRef, Lowerer, Result};
 use crate::object::{

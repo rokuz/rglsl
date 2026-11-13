@@ -1,7 +1,7 @@
 use alloc::string::String;
 
-use rglsl_ast::ast::Expression;
 use rglsl_ast::Span;
+use rglsl_ast::ast::Expression;
 
 use super::cooperative_call::CooperativeCall;
 use super::{Analyzer, Callee, Operand};

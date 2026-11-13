@@ -7,7 +7,7 @@ use crate::diagnostic::{DiagnosticKind, Redefinition};
 use crate::include::{IncludeKind, IncludedFile};
 use crate::lexer::{FileInput, Role};
 use crate::preprocessor::{
-    Input, LineMarker, Macro, Preprocessor, CPP_STYLE_LINE, SPIRV_INTRINSICS, TRACKED_EXTENSIONS,
+    CPP_STYLE_LINE, Input, LineMarker, Macro, Preprocessor, SPIRV_INTRINSICS, TRACKED_EXTENSIONS,
 };
 use crate::source_map::SourceInfo;
 use crate::token::{At, Kind, Token};

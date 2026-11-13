@@ -1,13 +1,13 @@
 use alloc::{string::String, vec::Vec};
 
 use rglsl_ast::ast::Expression as AstExpression;
+use rglsl_sema::SymbolId;
 use rglsl_sema::scope::Storage;
 use rglsl_sema::types::{BlockId, BlockStorage, Scalar as GlslScalar, Type as GlslType};
-use rglsl_sema::SymbolId;
 
 use super::expression::Chain;
 use super::function::FunctionLowerer;
-use super::{internal, semantic, GlobalRef, Lowerer, Packing, Result};
+use super::{GlobalRef, Lowerer, Packing, Result, internal, semantic};
 use crate::{
     AddressSpace, Binding, BuiltIn, Expression, GlobalVariable, Handle, HitObjectKind,
     MathFunction, MemoryDecorations, RayPipelineFunction, RayQueryFunction,
@@ -549,11 +549,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().ray_query_pointer(query);
                     self.nest(frame).await
                 }?;
-                let [acceleration_structure, flags, cull_mask, origin, tmin, direction, tmax] = *{
+                let [
+                    acceleration_structure,
+                    flags,
+                    cull_mask,
+                    origin,
+                    tmin,
+                    direction,
+                    tmax,
+                ] = *{
                     let frame = self.clone().ray_operands(rest);
                     self.nest(frame).await
                 }?
-                .as_slice() else {
+                .as_slice()
+                else {
                     return Err(internal(at));
                 };
                 self.with(|this| {
@@ -643,8 +652,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 } else {
                     (None, operands.as_slice())
                 };
-                let [acceleration_structure, flags, cull_mask, sbt_offset, sbt_stride, miss_index, origin, tmin, direction, tmax] =
-                    *operands
+                let [
+                    acceleration_structure,
+                    flags,
+                    cull_mask,
+                    sbt_offset,
+                    sbt_stride,
+                    miss_index,
+                    origin,
+                    tmin,
+                    direction,
+                    tmax,
+                ] = *operands
                 else {
                     return Err(internal(at));
                 };

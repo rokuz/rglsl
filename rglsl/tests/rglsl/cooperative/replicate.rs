@@ -1,6 +1,6 @@
 use spirv::Op;
 
-use super::{assert_errors, compile, VULKAN_1_0, VULKAN_1_1, VULKAN_1_3};
+use super::{VULKAN_1_0, VULKAN_1_1, VULKAN_1_3, assert_errors, compile};
 use crate::TestResult;
 
 const DECLARATIONS: &str = "const int csix = 6;

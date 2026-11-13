@@ -5,15 +5,15 @@ use rglsl_ast::ast::{
     InitDeclaratorList, Node, SingleTypeQualifier, Statement, StatementKind, StorageQualifier,
     TranslationUnit, TypeQualifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::{expressions, print, Span};
+use rglsl_ast::{Span, expressions, print};
 use rglsl_types::ShaderStage;
 
 use crate::basic;
 use crate::build::Builder;
-use crate::constants::{is_donated_name, INJECTION_SWITCH};
+use crate::constants::{INJECTION_SWITCH, is_donated_name};
 use crate::error::Error;
 use crate::macros::{emit, parse_shader};
-use crate::pipeline::{array_count, PipelineInfo};
+use crate::pipeline::{PipelineInfo, array_count};
 use crate::rewrite::{rewrite_expressions, rewrite_statements};
 use crate::scope::has_storage;
 

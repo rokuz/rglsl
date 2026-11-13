@@ -2,8 +2,8 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 
-use super::declaration::IMAGE_FORMATS;
 use super::Analyzer;
+use super::declaration::IMAGE_FORMATS;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{LayoutEntry, LayoutValue, Qualifiers};
 use rglsl_types::ShaderStage;

@@ -31,12 +31,14 @@ fn atomic_compare_exchange_writes_spirv() -> crate::TestResult {
     let spirv = dr::load_words(&words)?;
 
     assert_eq!(spirv.entry_points.len(), 1);
-    assert!(spirv
-        .entry_points
-        .iter()
-        .any(|entry| entry.operands.contains(&Operand::LiteralString(
-            "test_atomic_compare_exchange_u32".to_string()
-        ))));
+    assert!(
+        spirv
+            .entry_points
+            .iter()
+            .any(|entry| entry.operands.contains(&Operand::LiteralString(
+                "test_atomic_compare_exchange_u32".to_string()
+            )))
+    );
 
     let instructions: Vec<&dr::Instruction> = spirv
         .functions

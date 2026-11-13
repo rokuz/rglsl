@@ -2,7 +2,7 @@
 Indexing for SPIR-V output.
 */
 
-use super::{helpers::global_needs_wrapper, Block, BlockContext, Error, Instruction, Word};
+use super::{Block, BlockContext, Error, Instruction, Word, helpers::global_needs_wrapper};
 use crate::{arena::Handle, proc::index::GuardedIndex};
 
 /// The results of performing a bounds check.
@@ -106,7 +106,7 @@ impl BlockContext<'_> {
                         _ => {
                             return Err(Error::Validation(
                                 "array length expression: AccessIndex(AccessIndex(Global))",
-                            ))
+                            ));
                         }
                     },
                     crate::Expression::Access {
@@ -125,7 +125,7 @@ impl BlockContext<'_> {
                         _ => {
                             return Err(Error::Validation(
                                 "array length expression: AccessIndex(Access(Global))",
-                            ))
+                            ));
                         }
                     },
                     crate::Expression::GlobalVariable(handle) => {
@@ -140,7 +140,7 @@ impl BlockContext<'_> {
                     _ => {
                         return Err(Error::Validation(
                             "array length expression: AccessIndex(<unexpected>)",
-                        ))
+                        ));
                     }
                 }
             }
@@ -170,7 +170,7 @@ impl BlockContext<'_> {
             _ => {
                 return Err(Error::Validation(
                     "array length expression: bad binding array inference",
-                ))
+                ));
             }
         }
 

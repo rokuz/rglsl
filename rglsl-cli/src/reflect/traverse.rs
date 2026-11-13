@@ -10,12 +10,12 @@ use rglsl_ast::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration};
 use rglsl_sema::analyze::is_shader_record;
 use rglsl_sema::scope::{Origin, Storage, SymbolKind};
 use rglsl_sema::{Analysis, SymbolId};
-use rglsl_types::stack::{run, Call, Stack, Stalled};
+use rglsl_types::stack::{Call, Stack, Stalled, run};
 
 use super::database::Object;
-use super::source::{declared_globals, io_name, BlockDefaults};
+use super::source::{BlockDefaults, declared_globals, io_name};
 use super::types::{
-    self, explicit_packing, explicit_row_major, layout_value, Kind, Layouts, Pack, RType,
+    self, Kind, Layouts, Pack, RType, explicit_packing, explicit_row_major, layout_value,
 };
 use super::walk::{self, Event, Key, Op, Operand};
 use super::{Options, Program};

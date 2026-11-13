@@ -8,23 +8,23 @@ use rglsl_sema::types::{
 
 use alloc::collections::BTreeMap;
 use rglsl_ast::ast::NodeId;
+use rglsl_sema::SymbolId;
 use rglsl_sema::layout::{
-    member_row_major, type_layout, ArrayLengths, MemberPlacer, Shape, TypeLayout,
+    ArrayLengths, MemberPlacer, Shape, TypeLayout, member_row_major, type_layout,
 };
 use rglsl_sema::types::SpecializedSize;
-use rglsl_sema::SymbolId;
 
-use super::globals::member_memory;
 use super::GlobalRef;
+use super::globals::member_memory;
 use crate::front::glsl::{Error, ErrorKind};
 use crate::{MatrixLayout, MemoryDecorations, Override};
 use rglsl_ast::extensions::Feature;
 
-use super::{internal, unsupported, Lowerer, Packing, Result};
+use super::{Lowerer, Packing, Result, internal, unsupported};
 use crate::{
-    proc::Alignment, ArraySize, CooperativeMatrixClass, CooperativeRole, CooperativeSize, Handle,
-    ImageClass, ImageDimension, LongVectorClass, Scalar, ScalarKind, Span, StructMember, Type,
-    TypeInner, VectorSize,
+    ArraySize, CooperativeMatrixClass, CooperativeRole, CooperativeSize, Handle, ImageClass,
+    ImageDimension, LongVectorClass, Scalar, ScalarKind, Span, StructMember, Type, TypeInner,
+    VectorSize, proc::Alignment,
 };
 
 pub(super) const fn scalar(scalar: GlslScalar) -> Scalar {
@@ -645,7 +645,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 return {
                     let frame = self.clone().struct_type(id, span);
                     self.nest(frame).await
-                }
+                };
             }
             TypeKind::Block(_) => {
                 return Err(unsupported("blocks used as values", span));
@@ -654,7 +654,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 return {
                     let frame = self.clone().reference_type(block, span);
                     self.nest(frame).await
-                }
+                };
             }
             TypeKind::Opaque(opaque) => Lowerer::opaque_inner(opaque, depth, comparison, span)?,
             TypeKind::CooperativeMatrix(matrix) => TypeInner::CooperativeMatrix {
@@ -838,7 +838,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 }
             }
             (&TypeInner::Array { .. } | &TypeInner::Struct { .. }, _) => {
-                return Err(internal(span))
+                return Err(internal(span));
             }
             (&TypeInner::Scalar(Scalar::BOOL), &Shape::Plain) => TypeInner::Scalar(Scalar::U32),
             (

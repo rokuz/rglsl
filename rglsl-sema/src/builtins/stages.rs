@@ -4,8 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{
-    add_name, available, expand_prototypes, footprint, variables, BuiltinFunctionId, Builtins,
-    Footprints, ResourceLimits, Signature,
+    BuiltinFunctionId, Builtins, Footprints, ResourceLimits, Signature, add_name, available,
+    expand_prototypes, footprint, variables,
 };
 
 use crate::scope::{Function, Symbol, SymbolId, SymbolKind, Variable};
