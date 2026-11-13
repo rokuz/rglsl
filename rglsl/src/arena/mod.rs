@@ -357,6 +357,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn handle_sets_pop_the_largest_handle_first() {
+        let mut arena: Arena<u8> = Arena::new();
+        let handles: Vec<Handle<u8>> = (0..100u8)
+            .map(|value| arena.append(value, Span::UNDEFINED))
+            .collect();
+        let mut set = HandleSet::for_arena(&arena);
+        set.add_all();
+        let mut popped = Vec::new();
+        while let Some(handle) = set.pop() {
+            if handle.index() % 10 == 5
+                && let Some(&lower) = handles.get(handle.index() / 2)
+            {
+                set.insert(lower);
+            }
+            popped.push(handle.index());
+        }
+        assert_eq!(popped.len(), handles.len());
+        assert!(popped.windows(2).all(|pair| pair[0] > pair[1]));
+        assert!(!set.contains(handles[0]));
+        set.insert(handles[99]);
+        assert_eq!(set.pop(), Some(handles[99]));
+        assert_eq!(set.pop(), None);
+    }
+
+    #[test]
     fn clear_drops_the_spans_with_the_values() {
         let mut arena: Arena<u8> = Arena::new();
         arena.append(0, Span::new(1, 2));

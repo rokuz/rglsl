@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rglsl::object::ObjectModule;
-use rglsl::{Block, Function, Handle, Statement};
+use rglsl::object::{FunctionSymbol, ObjectModule};
+use rglsl::{Block, FastHashMap, Function, Handle, Statement};
 
 use crate::error::LinkError;
 
@@ -71,11 +71,34 @@ type Frame = (Option<Node>, Vec<Result<Node, String>>);
 #[derive(Debug, Default)]
 pub(crate) struct SymbolTable {
     pub definitions: BTreeMap<String, Node>,
+    symbols: Vec<FastHashMap<Handle<Function>, usize>>,
 }
 
 impl SymbolTable {
+    pub fn symbol<'o>(
+        &self,
+        objects: &'o [ObjectModule],
+        node: Node,
+    ) -> Option<&'o FunctionSymbol> {
+        let (index, handle) = node;
+        let position = *self.symbols.get(index)?.get(&handle)?;
+        objects.get(index)?.unit.functions.get(position)
+    }
+
     pub fn build(objects: &[ObjectModule], errors: &mut Vec<LinkError>) -> Self {
-        let mut table = Self::default();
+        let mut table = Self {
+            definitions: BTreeMap::new(),
+            symbols: objects
+                .iter()
+                .map(|object| {
+                    let mut positions = FastHashMap::default();
+                    for (position, symbol) in object.unit.functions.iter().enumerate() {
+                        positions.entry(symbol.function).or_insert(position);
+                    }
+                    positions
+                })
+                .collect(),
+        };
         let mut duplicates = BTreeSet::new();
         for (index, object) in objects.iter().enumerate() {
             for symbol in &object.unit.functions {
@@ -106,10 +129,7 @@ impl SymbolTable {
                 let Some(&(defining, handle)) = table.definitions.get(&symbol.signature) else {
                     continue;
                 };
-                let Some(definition) = objects
-                    .get(defining)
-                    .and_then(|object| object.unit.function_symbol(handle))
-                else {
+                let Some(definition) = table.symbol(objects, (defining, handle)) else {
                     continue;
                 };
                 if (definition.result != symbol.result
@@ -134,7 +154,7 @@ impl SymbolTable {
         if function.linkage.is_definition() {
             return Ok(node);
         }
-        let signature = object.unit.function_symbol(handle).map_or_else(
+        let signature = self.symbol(objects, node).map_or_else(
             || function.name.clone().unwrap_or_default(),
             |symbol| symbol.signature.clone(),
         );
@@ -172,22 +192,14 @@ pub(crate) fn order(
     };
     let name = |node: Node| -> String {
         let (index, handle) = node;
-        objects
-            .get(index)
-            .and_then(|object| {
-                object
-                    .unit
-                    .function_symbol(handle)
-                    .map(|symbol| symbol.signature.clone())
-                    .or_else(|| {
-                        object
-                            .unit
-                            .module
-                            .functions
-                            .try_get(handle)
-                            .ok()
-                            .and_then(|function| function.name.clone())
-                    })
+        table
+            .symbol(objects, node)
+            .map(|symbol| symbol.signature.clone())
+            .or_else(|| {
+                objects
+                    .get(index)
+                    .and_then(|object| object.unit.module.functions.try_get(handle).ok())
+                    .and_then(|function| function.name.clone())
             })
             .unwrap_or_default()
     };
