@@ -16,6 +16,7 @@ name = "rglsl_pp"
 std = []
 
 [dependencies]
+rglsl-types.workspace = true
 
 [[example]]
 name = "compare"

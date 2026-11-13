@@ -45,8 +45,6 @@ pub enum PipelineConstantError {
     CompactError(#[from] CompactError),
     #[error("workgroup_size override isn't strictly positive")]
     NegativeWorkgroupSize,
-    #[error("max vertices or max primitives is negative")]
-    NegativeMeshOutputMax,
     #[error("override expression refers to an override that is not in the module")]
     UnresolvedOverride,
     #[error("{0:?} is not a valid override type")]
@@ -272,7 +270,6 @@ pub fn process_overrides<'a>(
     for ep in entry_points.iter_mut() {
         process_function(&mut module, &override_map, &mut layouter, &mut ep.function)?;
         process_workgroup_size_override(&mut module, &adjusted_global_expressions, ep)?;
-        process_mesh_shader_overrides(&mut module, &adjusted_global_expressions, ep)?;
     }
     module.entry_points = entry_points;
     module.overrides = overrides;
@@ -324,28 +321,6 @@ fn process_workgroup_size_override(
                 },
             )?;
             ep.workgroup_size_overrides = None;
-        }
-    }
-    Ok(())
-}
-
-fn process_mesh_shader_overrides(
-    module: &mut Module,
-    adjusted_global_expressions: &HandleVec<Expression, Handle<Expression>>,
-    ep: &mut crate::EntryPoint,
-) -> Result<(), PipelineConstantError> {
-    if let Some(ref mut mesh_info) = ep.mesh_info {
-        if let Some(r#override) = mesh_info.max_vertices_override {
-            mesh_info.max_vertices = module
-                .to_ctx()
-                .get_const_val(adjusted_global_expressions[r#override])
-                .map_err(|_| PipelineConstantError::NegativeMeshOutputMax)?;
-        }
-        if let Some(r#override) = mesh_info.max_primitives_override {
-            mesh_info.max_primitives = module
-                .to_ctx()
-                .get_const_val(adjusted_global_expressions[r#override])
-                .map_err(|_| PipelineConstantError::NegativeMeshOutputMax)?;
         }
     }
     Ok(())
@@ -551,7 +526,6 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ref mut min_lod,
             gather: _,
             gather_pattern: _,
-            clamp_to_edge: _,
             sparse: _,
         } => {
             adjust(image);
@@ -827,7 +801,6 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ty: _,
             comparison: _,
         }
-        | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
         | Expression::IsHelperInvocation
         | Expression::SubgroupOperationResult { .. }
@@ -1099,13 +1072,6 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         } => {
             adjust_location(location, &adjust);
             adjust(value);
-        }
-        Statement::WorkGroupUniformLoad {
-            ref mut pointer,
-            ref mut result,
-        } => {
-            adjust(pointer);
-            adjust(result);
         }
         Statement::SubgroupBallot {
             ref mut result,

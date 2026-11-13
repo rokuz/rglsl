@@ -180,20 +180,13 @@ impl BlockContext<'_> {
         match self.ir_function.expressions[image] {
             Expression::GlobalVariable(handle) => Ok(self.writer.global_variables[handle].var_id),
             Expression::FunctionArgument(index) => self.function.parameter_id(index),
-            Expression::Access { .. } | Expression::AccessIndex { .. } => {
-                match self.write_access_chain(
-                    image,
-                    block,
-                    super::block::AccessTypeAdjustment::IntroducePointer(
-                        spirv::StorageClass::UniformConstant,
-                    ),
-                )? {
-                    super::block::ExpressionPointer::Ready { pointer_id } => Ok(pointer_id),
-                    super::block::ExpressionPointer::Conditional { .. } => Err(
-                        Error::FeatureNotImplemented("Texture array out-of-bounds handling"),
-                    ),
-                }
-            }
+            Expression::Access { .. } | Expression::AccessIndex { .. } => self.write_access_chain(
+                image,
+                block,
+                super::block::AccessTypeAdjustment::IntroducePointer(
+                    spirv::StorageClass::UniformConstant,
+                ),
+            ),
             _ => Err(Error::Validation("Unexpected image expression")),
         }
     }
@@ -231,7 +224,7 @@ impl BlockContext<'_> {
             pointer_type_id,
             pointer_id,
             image_id,
-            coordinates.value_id,
+            coordinates,
             sample_id,
         ));
         if self
@@ -265,18 +258,11 @@ impl BlockContext<'_> {
                     _ => return Err(Error::Validation("Invalid atomic pointer")),
                 };
                 self.atomic_scalar(scalar);
-                let pointer_id = match self.write_access_chain(
+                let pointer_id = self.write_access_chain(
                     pointer,
                     block,
                     super::block::AccessTypeAdjustment::None,
-                )? {
-                    super::block::ExpressionPointer::Ready { pointer_id } => pointer_id,
-                    super::block::ExpressionPointer::Conditional { .. } => {
-                        return Err(Error::FeatureNotImplemented(
-                            "Atomics out-of-bounds handling",
-                        ));
-                    }
-                };
+                )?;
                 Ok((pointer_id, scalar))
             }
             AtomicLocation::Texel(ref texel) => self.write_texel_pointer(texel, block),

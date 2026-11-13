@@ -6,11 +6,6 @@ capabilities = """
 """
 targets = "SPIRV"
 
-[bounds_check_policies]
-index = "ReadZeroSkipWrite"
-buffer = "ReadZeroSkipWrite"
-image_load = "ReadZeroSkipWrite"
-
 [spv]
 version = [1, 1]
 

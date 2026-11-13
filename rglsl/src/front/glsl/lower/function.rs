@@ -489,7 +489,6 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             non_uniform: self.non_uniform,
             precision: self.precision,
             body,
-            diagnostic_filter_leaf: None,
             linkage: crate::Linkage::Definition,
             control: crate::FunctionControl::None,
         }
@@ -769,7 +768,6 @@ impl<'a> Lowerer<'a> {
             workgroup_size_overrides,
             workgroup_size_builtin,
             function,
-            mesh_info: None,
             task_payload: self.task_payload,
             incoming_ray_payload: self.incoming_ray_payload,
             interface: self.interface.clone(),

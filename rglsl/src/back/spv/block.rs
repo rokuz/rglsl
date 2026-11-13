@@ -8,14 +8,10 @@ use arrayvec::ArrayVec;
 use spirv::Word;
 
 use super::{
-    index::BoundsCheckResult, selection::Selection, Block, BlockContext, Dimension, Error,
-    IdGenerator, Instruction, LocalType, LookupType, NumericType, ResultMember, WrappedFunction,
-    Writer, WriterFlags,
+    index::BoundsCheckResult, Block, BlockContext, Dimension, Error, Instruction, LocalType,
+    LookupType, NumericType, ResultMember, Writer, WriterFlags,
 };
-use crate::{
-    arena::Handle, back::spv::helpers::is_uniform_matcx2_struct_member_access,
-    proc::index::GuardedIndex, Statement,
-};
+use crate::{arena::Handle, proc::index::GuardedIndex, Statement};
 
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
@@ -78,37 +74,6 @@ pub(super) enum AccessTypeAdjustment {
     /// [`Access`]: crate::Expression::Access
     /// [`AccessIndex`]: crate::Expression::AccessIndex
     IntroducePointer(spirv::StorageClass),
-
-    /// The SPIR-V type should be an `OpPointer` to the std140 layout
-    /// compatible variant of the rglsl IR expression's base type.
-    ///
-    /// This is used when accessing a type through an [`AddressSpace::Uniform`]
-    /// pointer in cases where the original type is incompatible with std140
-    /// layout requirements and we have therefore declared the uniform to be of
-    /// an alternative std140 compliant type.
-    ///
-    /// [`AddressSpace::Uniform`]: crate::AddressSpace::Uniform
-    UseStd140CompatType,
-}
-
-/// The results of emitting code for a left-hand-side expression.
-///
-/// On success, `write_access_chain` returns one of these.
-pub(super) enum ExpressionPointer {
-    /// The pointer to the expression's value is available, as the value of the
-    /// expression with the given id.
-    Ready { pointer_id: Word },
-
-    /// The access expression must be conditional on the value of `condition`, a boolean
-    /// expression that is true if all indices are in bounds. If `condition` is true, then
-    /// `access` is an `OpAccessChain` instruction that will compute a pointer to the
-    /// expression's value. If `condition` is false, then executing `access` would be
-    /// undefined behavior.
-    Conditional {
-        condition: Word,
-        pointer_id: Word,
-        access: Instruction,
-    },
 }
 
 /// The termination statement to be added to the end of the block
@@ -303,7 +268,7 @@ impl Writer {
                 }
             };
 
-            self.store_io_with_f16_polyfill(body, res_member.id, member_value_id);
+            body.push(Instruction::store(res_member.id, member_value_id, None));
 
             match res_member.built_in {
                 Some(crate::BuiltIn::Position { .. })
@@ -324,293 +289,6 @@ impl Writer {
 }
 
 impl BlockContext<'_> {
-    /// If `pointer` refers to an access chain that contains a dynamic indexing
-    /// of a two-row matrix in the [`Uniform`] address space, write code to
-    /// access the value returning the ID of the result. Else return None.
-    ///
-    /// Two-row matrices in the uniform address space will have been declared
-    /// using a alternative std140 layout compatible type, where each column is
-    /// a member of a containing struct. As a result, SPIR-V is unable to access
-    /// its columns with a non-constant index. To work around this limitation
-    /// this function will call [`Self::write_checked_load()`] to load the
-    /// matrix itself, which handles conversion from the std140 compatible type
-    /// to the real matrix type. It then calls a [`wrapper function`] to obtain
-    /// the correct column from the matrix, and possibly extracts a component
-    /// from the vector too.
-    ///
-    /// [`Uniform`]: crate::AddressSpace::Uniform
-    /// [`wrapper function`]: super::Writer::write_wrapped_matcx2_get_column
-    fn maybe_write_uniform_matcx2_dynamic_access(
-        &mut self,
-        pointer: Handle<crate::Expression>,
-        block: &mut Block,
-    ) -> Result<Option<Word>, Error> {
-        // If this access chain contains a dynamic matrix access, `pointer` is
-        // either a pointer to a vector (the column) or a scalar (a component
-        // within the column). In either case grab the pointer to the column,
-        // and remember the component index if there is one. If `pointer`
-        // points to any other type we're not interested.
-        let (column_pointer, component_index) = match self.fun_info[pointer]
-            .ty
-            .inner_with(&self.ir_module.types)
-            .pointer_base_type()
-        {
-            Some(resolution) => match *resolution.inner_with(&self.ir_module.types) {
-                crate::TypeInner::Scalar(_) => match self.ir_function.expressions[pointer] {
-                    crate::Expression::Access { base, index } => {
-                        (base, Some(GuardedIndex::Expression(index)))
-                    }
-                    crate::Expression::AccessIndex { base, index } => {
-                        (base, Some(GuardedIndex::Known(index)))
-                    }
-                    _ => return Ok(None),
-                },
-                crate::TypeInner::Vector { .. } => (pointer, None),
-                _ => return Ok(None),
-            },
-            None => return Ok(None),
-        };
-
-        // Ensure the column is accessed with a dynamic index (i.e.
-        // `Expression::Access`), and grab the pointer to the matrix.
-        let crate::Expression::Access {
-            base: matrix_pointer,
-            index: column_index,
-        } = self.ir_function.expressions[column_pointer]
-        else {
-            return Ok(None);
-        };
-
-        // Ensure the matrix pointer is in the uniform address space.
-        let crate::TypeInner::Pointer {
-            base: matrix_pointer_base_type,
-            space: crate::AddressSpace::Uniform,
-        } = *self.fun_info[matrix_pointer]
-            .ty
-            .inner_with(&self.ir_module.types)
-        else {
-            return Ok(None);
-        };
-
-        // Ensure the matrix pointer actually points to a Cx2 matrix.
-        let crate::TypeInner::Matrix {
-            columns,
-            rows: rows @ crate::VectorSize::Bi,
-            scalar,
-        } = self.ir_module.types[matrix_pointer_base_type].inner
-        else {
-            return Ok(None);
-        };
-
-        // A matrix with a layout from the front end is a real matrix in
-        // SPIR-V and can be indexed dynamically like any other.
-        if super::helpers::has_explicit_matrix_layout(
-            self.ir_function,
-            self.fun_info,
-            self.ir_module,
-            matrix_pointer,
-        ) {
-            return Ok(None);
-        }
-
-        let matrix_type_id = self.get_numeric_type_id(NumericType::Matrix {
-            columns,
-            rows,
-            scalar,
-        });
-        let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
-        let component_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
-        let get_column_function_id = self.writer.wrapped_functions
-            [&WrappedFunction::MatCx2GetColumn {
-                r#type: matrix_pointer_base_type,
-            }];
-
-        let matrix_load_id = self.write_checked_load(
-            matrix_pointer,
-            block,
-            AccessTypeAdjustment::None,
-            matrix_type_id,
-        )?;
-
-        // rglsl IR allows the index to be either an I32 or U32 but our wrapper
-        // function expects a U32 argument, so convert it if required.
-        let column_index_id = match *self.fun_info[column_index]
-            .ty
-            .inner_with(&self.ir_module.types)
-        {
-            crate::TypeInner::Scalar(crate::Scalar {
-                kind: crate::ScalarKind::Uint,
-                ..
-            }) => self.cached.get(column_index)?,
-            crate::TypeInner::Scalar(crate::Scalar {
-                kind: crate::ScalarKind::Sint,
-                ..
-            }) => {
-                let cast_id = self.gen_id();
-                let u32_type_id = self.writer.get_u32_type_id();
-                block.body.push(Instruction::unary(
-                    spirv::Op::Bitcast,
-                    u32_type_id,
-                    cast_id,
-                    self.cached.get(column_index)?,
-                ));
-                cast_id
-            }
-            _ => return Err(Error::Validation("Matrix access index must be u32 or i32")),
-        };
-        let column_id = self.gen_id();
-        block.body.push(Instruction::function_call(
-            column_type_id,
-            column_id,
-            get_column_function_id,
-            &[matrix_load_id, column_index_id],
-        ));
-        let result_id = match component_index {
-            Some(index) => self.write_vector_access(
-                component_type_id,
-                column_pointer,
-                Some(column_id),
-                index,
-                block,
-            )?,
-            None => column_id,
-        };
-
-        Ok(Some(result_id))
-    }
-
-    /// If `pointer` refers to two-row matrix that is a member of a struct in
-    /// the [`Uniform`] address space, write code to load the matrix returning
-    /// the ID of the result. Else return None.
-    ///
-    /// Two-row matrices that are struct members in the uniform address space
-    /// will have been decomposed such that the struct contains a separate
-    /// vector member for each column of the matrix. This function will load
-    /// each column separately from the containing struct, then composite them
-    /// into the real matrix type.
-    ///
-    /// [`Uniform`]: crate::AddressSpace::Uniform
-    fn maybe_write_load_uniform_matcx2_struct_member(
-        &mut self,
-        pointer: Handle<crate::Expression>,
-        block: &mut Block,
-    ) -> Result<Option<Word>, Error> {
-        // Check this is a uniform address space pointer to a two-row matrix.
-        let crate::TypeInner::Pointer {
-            base: matrix_type,
-            space: space @ crate::AddressSpace::Uniform,
-        } = *self.fun_info[pointer].ty.inner_with(&self.ir_module.types)
-        else {
-            return Ok(None);
-        };
-
-        let crate::TypeInner::Matrix {
-            columns,
-            rows: rows @ crate::VectorSize::Bi,
-            scalar,
-        } = self.ir_module.types[matrix_type].inner
-        else {
-            return Ok(None);
-        };
-
-        // Check this is a struct member. Note struct members can only be
-        // accessed with `AccessIndex`.
-        let crate::Expression::AccessIndex {
-            base: struct_pointer,
-            index: member_index,
-        } = self.ir_function.expressions[pointer]
-        else {
-            return Ok(None);
-        };
-
-        let crate::TypeInner::Pointer {
-            base: struct_type, ..
-        } = *self.fun_info[struct_pointer]
-            .ty
-            .inner_with(&self.ir_module.types)
-        else {
-            return Ok(None);
-        };
-
-        let crate::TypeInner::Struct { ref members, .. } = self.ir_module.types[struct_type].inner
-        else {
-            return Ok(None);
-        };
-        if members[member_index as usize].matrix_layout.is_some() {
-            return Ok(None);
-        }
-
-        let matrix_type_id = self.get_numeric_type_id(NumericType::Matrix {
-            columns,
-            rows,
-            scalar,
-        });
-        let column_type_id = self.get_numeric_type_id(NumericType::Vector { size: rows, scalar });
-        let column_pointer_type_id =
-            self.get_pointer_type_id(column_type_id, self.writer.storage_class(space));
-        let column0_index = self.writer.std140_compat_uniform_types[&struct_type].member_indices
-            [member_index as usize];
-        let column_indices = (0..columns as u32)
-            .map(|c| self.get_index_constant(column0_index + c))
-            .collect::<ArrayVec<_, 4>>();
-
-        // Load each column from the struct, then composite into the real
-        // matrix type.
-        let load_mat_from_struct =
-            |struct_pointer_id: Word, id_gen: &mut IdGenerator, block: &mut Block| -> Word {
-                let mut column_ids: ArrayVec<Word, 4> = ArrayVec::new();
-                for index in &column_indices {
-                    let column_pointer_id = id_gen.next();
-                    block.body.push(Instruction::access_chain(
-                        column_pointer_type_id,
-                        column_pointer_id,
-                        struct_pointer_id,
-                        &[*index],
-                    ));
-                    let column_id = id_gen.next();
-                    block.body.push(Instruction::load(
-                        column_type_id,
-                        column_id,
-                        column_pointer_id,
-                        None,
-                    ));
-                    column_ids.push(column_id);
-                }
-                let result_id = id_gen.next();
-                block.body.push(Instruction::composite_construct(
-                    matrix_type_id,
-                    result_id,
-                    &column_ids,
-                ));
-                result_id
-            };
-
-        let result_id = match self.write_access_chain(
-            struct_pointer,
-            block,
-            AccessTypeAdjustment::UseStd140CompatType,
-        )? {
-            ExpressionPointer::Ready { pointer_id } => {
-                load_mat_from_struct(pointer_id, &mut self.writer.id_gen, block)
-            }
-            ExpressionPointer::Conditional {
-                condition,
-                pointer_id,
-                access,
-            } => self.write_conditional_indexed_load(
-                matrix_type_id,
-                condition,
-                block,
-                |id_gen, block| {
-                    block.body.push(access);
-                    load_mat_from_struct(pointer_id, id_gen, block)
-                },
-            ),
-        };
-
-        Ok(Some(result_id))
-    }
-
     pub(super) fn cache_expression_value(
         &mut self,
         expr_handle: Handle<crate::Expression>,
@@ -885,18 +563,11 @@ impl BlockContext<'_> {
                     } => {
                         // Only binding arrays in the `Handle` address space will take
                         // this path, since we handled the `Pointer` case above.
-                        let result_id = match self.write_access_chain(
+                        let result_id = self.write_access_chain(
                             expr_handle,
                             block,
                             AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
-                        )? {
-                            ExpressionPointer::Ready { pointer_id } => pointer_id,
-                            ExpressionPointer::Conditional { .. } => {
-                                return Err(Error::FeatureNotImplemented(
-                                    "Texture array out-of-bounds handling",
-                                ));
-                            }
-                        };
+                        )?;
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
                         self.function.handle_pointers.insert(expr_handle, result_id);
@@ -974,18 +645,11 @@ impl BlockContext<'_> {
                     } => {
                         // Only binding arrays in the `Handle` address space will take
                         // this path, since we handled the `Pointer` case above.
-                        let result_id = match self.write_access_chain(
+                        let result_id = self.write_access_chain(
                             expr_handle,
                             block,
                             AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
-                        )? {
-                            ExpressionPointer::Ready { pointer_id } => pointer_id,
-                            ExpressionPointer::Conditional { .. } => {
-                                return Err(Error::FeatureNotImplemented(
-                                    "Texture array out-of-bounds handling",
-                                ));
-                            }
-                        };
+                        )?;
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
                         self.function.handle_pointers.insert(expr_handle, result_id);
@@ -1402,42 +1066,6 @@ impl BlockContext<'_> {
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UClamp,
                         _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     }),
-                    Mf::Saturate => {
-                        let (maybe_size, scalar) = match *arg_ty {
-                            crate::TypeInner::Vector { size, scalar } => (Some(size), scalar),
-                            crate::TypeInner::Scalar(scalar) => (None, scalar),
-                            _ => {
-                                return Err(Error::Validation(
-                                    "saturate of a non-scalar, non-vector value",
-                                ))
-                            }
-                        };
-                        let scalar = crate::Scalar::float(scalar.width);
-                        let mut arg1_id = self.writer.get_constant_scalar_with(0, scalar)?;
-                        let mut arg2_id = self.writer.get_constant_scalar_with(1, scalar)?;
-
-                        if let Some(size) = maybe_size {
-                            let ty =
-                                LocalType::Numeric(NumericType::Vector { size, scalar }).into();
-
-                            self.temp_list.clear();
-                            self.temp_list.resize(size as _, arg1_id);
-
-                            arg1_id = self.writer.get_constant_composite(ty, &self.temp_list)?;
-
-                            self.temp_list.fill(arg2_id);
-
-                            arg2_id = self.writer.get_constant_composite(ty, &self.temp_list)?;
-                        }
-
-                        MathOp::Custom(Instruction::ext_inst_gl_op(
-                            self.writer.gl450_ext_inst_id,
-                            spirv::GlslStd450Op::FClamp,
-                            result_type_id,
-                            id,
-                            &[arg0_id, arg1_id, arg2_id],
-                        ))
-                    }
                     // trigonometry
                     Mf::Sin => MathOp::Ext(spirv::GlslStd450Op::Sin),
                     Mf::Sinh => MathOp::Ext(spirv::GlslStd450Op::Sinh),
@@ -1750,12 +1378,6 @@ impl BlockContext<'_> {
                         arg0_id,
                     )),
                     Mf::Determinant => MathOp::Ext(spirv::GlslStd450Op::Determinant),
-                    Mf::QuantizeToF16 => MathOp::Custom(Instruction::unary(
-                        spirv::Op::QuantizeToF16,
-                        result_type_id,
-                        id,
-                        arg0_id,
-                    )),
                     Mf::ReverseBits => MathOp::Custom(Instruction::unary(
                         spirv::Op::BitReverse,
                         result_type_id,
@@ -2008,7 +1630,6 @@ impl BlockContext<'_> {
             crate::Expression::FunctionArgument(index) => self.function.parameter_id(index)?,
             crate::Expression::CallResult(_)
             | crate::Expression::AtomicResult { .. }
-            | crate::Expression::WorkGroupUniformLoadResult { .. }
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
@@ -2020,12 +1641,7 @@ impl BlockContext<'_> {
                     &[spirv::Capability::InterpolationFunction],
                 )?;
                 let pointer_id =
-                    match self.write_access_chain(pointer, block, AccessTypeAdjustment::None)? {
-                        ExpressionPointer::Ready { pointer_id } => pointer_id,
-                        ExpressionPointer::Conditional { .. } => {
-                            return Err(Error::FeatureNotImplemented("bounds-checked interpolants"))
-                        }
-                    };
+                    self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?;
                 let (op, operand) = match location {
                     crate::InterpolationLocation::Centroid => {
                         (spirv::GlslStd450Op::InterpolateAtCentroid, None)
@@ -2136,7 +1752,6 @@ impl BlockContext<'_> {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge,
                 min_lod,
                 sparse,
             } => self.write_image_sample(
@@ -2150,7 +1765,6 @@ impl BlockContext<'_> {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge,
                 min_lod,
                 sparse.is_some(),
                 block,
@@ -2272,15 +1886,10 @@ impl BlockContext<'_> {
                     self.ir_function.expressions[value],
                     crate::Expression::Access { .. } | crate::Expression::AccessIndex { .. }
                 ) {
-                    match self.write_access_chain(value, block, AccessTypeAdjustment::None)? {
-                        ExpressionPointer::Ready { pointer_id } => {
-                            self.cached.set(value, pointer_id)?
-                        }
-                        ExpressionPointer::Conditional { .. } => {
-                            return Err(Error::Validation(
-                                "a checked access cannot be converted to a physical pointer",
-                            ))
-                        }
+                    {
+                        let pointer_id =
+                            self.write_access_chain(value, block, AccessTypeAdjustment::None)?;
+                        self.cached.set(value, pointer_id)?
                     }
                 }
                 self.write_physical_pointer(value, result_type_id, block)?
@@ -2714,8 +2323,6 @@ impl BlockContext<'_> {
                     Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
                     Sk::Float => spirv::Op::FUnordNotEqual,
                     Sk::Bool
-                    | Sk::AbstractInt
-                    | Sk::AbstractFloat
                     | Sk::BFloat
                     | Sk::FloatE4M3
                     | Sk::FloatE5M2
@@ -2861,15 +2468,12 @@ impl BlockContext<'_> {
     /// Give the `OpAccessChain` a result type based on `expr_handle`, adjusted
     /// according to `type_adjustment`; see the documentation for
     /// [`AccessTypeAdjustment`] for details.
-    ///
-    /// On success, the return value is an [`ExpressionPointer`] value; see the
-    /// documentation for that type.
     pub(super) fn write_access_chain(
         &mut self,
         mut expr_handle: Handle<crate::Expression>,
         block: &mut Block,
         type_adjustment: AccessTypeAdjustment,
-    ) -> Result<ExpressionPointer, Error> {
+    ) -> Result<Word, Error> {
         let non_uniform_access = self
             .non_uniform(expr_handle)
             .contains(crate::NonUniform::ACCESS);
@@ -2880,38 +2484,8 @@ impl BlockContext<'_> {
                 AccessTypeAdjustment::IntroducePointer(class) => {
                     self.writer.get_resolution_pointer_id(resolution, class)?
                 }
-                AccessTypeAdjustment::UseStd140CompatType => {
-                    match *resolution.inner_with(&self.ir_module.types) {
-                        crate::TypeInner::Pointer {
-                            base,
-                            space: space @ crate::AddressSpace::Uniform,
-                        } => self.writer.get_pointer_type_id(
-                            self.writer.std140_compat_uniform_types[&base].type_id,
-                            self.writer.storage_class(space),
-                        ),
-                        _ => {
-                            return Err(Error::Validation(
-                                "std140 access type adjustment of a non-uniform pointer",
-                            ))
-                        }
-                    }
-                }
             }
         };
-
-        // The id of the boolean `and` of all dynamic bounds checks up to this point.
-        //
-        // See `extend_bounds_check_condition_chain` for a full explanation.
-        let mut accumulated_checks = None;
-
-        // Is true if we are accessing into a binding array with a non-uniform index.
-
-        // The index value if the previously encountered expression was an
-        // `AccessIndex` of a matrix which has been decomposed into individual
-        // column vectors directly in the containing struct. The subsequent
-        // iteration will append the correct index to the list for accessing
-        // said column from the containing struct.
-        let mut prev_decomposed_matrix_index = None;
 
         self.temp_list.clear();
         let mut heap_root = None;
@@ -2933,8 +2507,7 @@ impl BlockContext<'_> {
                     self.binding_array_capability(base, non_uniform_index)?;
                     self.tensor_array_capability(base, index, non_uniform_index)?;
                     let index = GuardedIndex::Expression(index);
-                    let index_id =
-                        self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
+                    let index_id = self.write_access_chain_index(index)?;
                     self.temp_list.push(index_id);
 
                     base
@@ -2943,65 +2516,20 @@ impl BlockContext<'_> {
                     // Decide whether we're indexing a struct (bounds checks
                     // forbidden) or anything else (bounds checks required).
                     let mut base_ty = self.fun_info[base].ty.inner_with(&self.ir_module.types);
-                    let mut base_ty_handle = self.fun_info[base].ty.handle();
-                    let mut pointer_space = None;
-                    if let crate::TypeInner::Pointer { base, space } = *base_ty {
+                    if let crate::TypeInner::Pointer { base, .. } = *base_ty {
                         base_ty = &self.ir_module.types[base].inner;
-                        base_ty_handle = Some(base);
-                        pointer_space = Some(space);
                     }
                     match *base_ty {
-                        // When indexing a struct bounds checks are forbidden. If accessing the
-                        // struct through a uniform address space pointer, where the struct has
-                        // been declared with an alternative std140 compatible layout, we must use
-                        // the remapped member index. Additionally if the previous iteration was
-                        // accessing a column of a matrix member which has been decomposed directly
-                        // into the struct, we must ensure we access the correct column.
                         crate::TypeInner::Struct { .. } => {
-                            let index = match base_ty_handle.and_then(|handle| {
-                                self.writer.std140_compat_uniform_types.get(&handle)
-                            }) {
-                                Some(std140_type_info)
-                                    if pointer_space == Some(crate::AddressSpace::Uniform) =>
-                                {
-                                    std140_type_info.member_indices[index as usize]
-                                        + prev_decomposed_matrix_index.take().unwrap_or(0)
-                                }
-                                _ => index,
-                            };
                             let index_id = self.get_index_constant(index);
                             self.temp_list.push(index_id);
-                        }
-                        // Bounds checks are not required when indexing a matrix. If indexing a
-                        // two-row matrix contained within a struct through a uniform address space
-                        // pointer then the matrix' columns will have been decomposed directly into
-                        // the containing struct. We skip adding an index to the list on this
-                        // iteration and instead adjust the index on the next iteration when
-                        // accessing the struct member.
-                        _ if is_uniform_matcx2_struct_member_access(
-                            self.ir_function,
-                            self.fun_info,
-                            self.ir_module,
-                            base,
-                        ) =>
-                        {
-                            if prev_decomposed_matrix_index.is_some() {
-                                return Err(Error::Validation(
-                                    "nested decomposed matrix column access",
-                                ));
-                            }
-                            prev_decomposed_matrix_index = Some(index);
                         }
                         _ => {
                             // Even though the index value is statically known, `base`
                             // may be a runtime-sized array, so we still need to go
                             // through the bounds check process.
-                            let index_id = self.write_access_chain_index(
-                                base,
-                                GuardedIndex::Known(index),
-                                &mut accumulated_checks,
-                                block,
-                            )?;
+                            let index_id =
+                                self.write_access_chain_index(GuardedIndex::Known(index))?;
                             self.temp_list.push(index_id);
                         }
                     }
@@ -3056,12 +2584,10 @@ impl BlockContext<'_> {
             if non_uniform_access {
                 self.writer.decorate_non_uniform(pointer_id)?;
             }
-            return Ok(ExpressionPointer::Ready { pointer_id });
+            return Ok(pointer_id);
         }
         let expr_pointer = if self.temp_list.is_empty() {
-            ExpressionPointer::Ready {
-                pointer_id: root_id,
-            }
+            root_id
         } else {
             self.temp_list.reverse();
             let pointer_id = self.gen_id();
@@ -3070,102 +2596,19 @@ impl BlockContext<'_> {
             if non_uniform_access {
                 self.writer.decorate_non_uniform(pointer_id)?;
             }
-
-            // If we generated some bounds checks, we need to leave it to our
-            // caller to generate the branch, the access, the load or store, and
-            // the zero value (for loads). Otherwise, we can emit the access
-            // ourselves, and just hand them the id of the pointer.
-            match accumulated_checks {
-                Some(condition) => ExpressionPointer::Conditional {
-                    condition,
-                    pointer_id,
-                    access,
-                },
-                None => {
-                    block.body.push(access);
-                    ExpressionPointer::Ready { pointer_id }
-                }
-            }
+            block.body.push(access);
+            pointer_id
         };
         Ok(expr_pointer)
     }
 
-    /// Compute a single index operand to an `OpAccessChain` instruction.
-    ///
-    /// Given that we are indexing `base` with `index`, apply the appropriate
-    /// bounds check policies, emitting code to `block` to clamp `index` or
-    /// determine whether it's in bounds. Return the SPIR-V instruction id of
-    /// the index value we should actually use.
-    ///
-    /// Extend `accumulated_checks` to include the results of any needed bounds
-    /// checks. See [`BlockContext::extend_bounds_check_condition_chain`].
-    fn write_access_chain_index(
-        &mut self,
-        base: Handle<crate::Expression>,
-        index: GuardedIndex,
-        accumulated_checks: &mut Option<Word>,
-        block: &mut Block,
-    ) -> Result<Word, Error> {
-        match self.write_bounds_check(base, index, block)? {
+    fn write_access_chain_index(&mut self, index: GuardedIndex) -> Result<Word, Error> {
+        match self.write_bounds_check(index)? {
             BoundsCheckResult::KnownInBounds(known_index) => {
-                // Even if the index is known, `OpAccessChain`
-                // requires expression operands, not literals.
                 let scalar = crate::Literal::U32(known_index);
                 Ok(self.writer.get_constant_scalar(scalar))
             }
             BoundsCheckResult::Computed(computed_index_id) => Ok(computed_index_id),
-            BoundsCheckResult::Conditional {
-                condition_id: condition,
-                index_id: index,
-            } => {
-                self.extend_bounds_check_condition_chain(accumulated_checks, condition, block);
-
-                // Use the index from the `Access` expression unchanged.
-                Ok(index)
-            }
-        }
-    }
-
-    /// Add a condition to a chain of bounds checks.
-    ///
-    /// As we build an `OpAccessChain` instruction govered by
-    /// [`BoundsCheckPolicy::ReadZeroSkipWrite`], we accumulate a chain of
-    /// dynamic bounds checks, one for each index in the chain, which must all
-    /// be true for that `OpAccessChain`'s execution to be well-defined. This
-    /// function adds the boolean instruction id `comparison_id` to `chain`.
-    ///
-    /// If `chain` is `None`, that means there are no bounds checks in the chain
-    /// yet. If chain is `Some(id)`, then `id` is the conjunction of all the
-    /// bounds checks in the chain.
-    ///
-    /// When we have multiple bounds checks, we combine them with
-    /// `OpLogicalAnd`, not a short-circuit branch. This means we might do
-    /// comparisons we don't need to, but we expect these checks to almost
-    /// always succeed, and keeping branches to a minimum is essential.
-    ///
-    /// [`BoundsCheckPolicy::ReadZeroSkipWrite`]: crate::proc::BoundsCheckPolicy
-    fn extend_bounds_check_condition_chain(
-        &mut self,
-        chain: &mut Option<Word>,
-        comparison_id: Word,
-        block: &mut Block,
-    ) {
-        match *chain {
-            Some(ref mut prior_checks) => {
-                let combined = self.gen_id();
-                block.body.push(Instruction::binary(
-                    spirv::Op::LogicalAnd,
-                    self.writer.get_bool_type_id(),
-                    combined,
-                    *prior_checks,
-                    comparison_id,
-                ));
-                *prior_checks = combined;
-            }
-            None => {
-                // Start a fresh chain of checks.
-                *chain = Some(comparison_id);
-            }
         }
     }
 
@@ -3176,153 +2619,66 @@ impl BlockContext<'_> {
         access_type_adjustment: AccessTypeAdjustment,
         result_type_id: Word,
     ) -> Result<Word, Error> {
-        if let Some(result_id) = self.maybe_write_uniform_matcx2_dynamic_access(pointer, block)? {
-            Ok(result_id)
-        } else if let Some(result_id) =
-            self.maybe_write_load_uniform_matcx2_struct_member(pointer, block)?
-        {
-            Ok(result_id)
+        let class = match access_type_adjustment {
+            AccessTypeAdjustment::IntroducePointer(class) => Some(class),
+            AccessTypeAdjustment::None => self.pointer_class(pointer),
+        };
+        let heap = matches!(
+            *self.fun_info[pointer].ty.inner_with(&self.ir_module.types),
+            crate::TypeInner::Pointer {
+                space: crate::AddressSpace::DescriptorHeap(_),
+                ..
+            }
+        );
+        let plain_load = !heap
+            && class
+                .is_some_and(|class| self.writer.needs_layout_conversion(result_type_id, class));
+        let load_type_id = if plain_load {
+            self.writer.plain_type_id(result_type_id)
         } else {
-            // If `pointer` refers to a uniform address space pointer to a type
-            // which was declared using a std140 compatible type variant (i.e.
-            // is a two-row matrix, or a struct or array containing such a
-            // matrix) we must ensure the access chain and the type of the load
-            // instruction use the std140 compatible type variant.
-            struct WrappedLoad {
-                access_type_adjustment: AccessTypeAdjustment,
-                r#type: Handle<crate::Type>,
-            }
-            let mut wrapped_load = None;
-            if let crate::TypeInner::Pointer {
-                base: pointer_base_type,
-                space: crate::AddressSpace::Uniform,
-            } = *self.fun_info[pointer].ty.inner_with(&self.ir_module.types)
-            {
-                if self
-                    .writer
-                    .std140_compat_uniform_types
-                    .contains_key(&pointer_base_type)
-                {
-                    wrapped_load = Some(WrappedLoad {
-                        access_type_adjustment: AccessTypeAdjustment::UseStd140CompatType,
-                        r#type: pointer_base_type,
-                    });
-                };
-            };
+            result_type_id
+        };
 
-            let (load_type_id, access_type_adjustment) = match wrapped_load {
-                Some(ref wrapped_load) => (
-                    self.writer.std140_compat_uniform_types[&wrapped_load.r#type].type_id,
-                    wrapped_load.access_type_adjustment,
-                ),
-                None => (result_type_id, access_type_adjustment),
-            };
-            let class = match access_type_adjustment {
-                AccessTypeAdjustment::IntroducePointer(class) => Some(class),
-                _ => self.pointer_class(pointer),
-            };
-            let heap = matches!(
-                *self.fun_info[pointer].ty.inner_with(&self.ir_module.types),
-                crate::TypeInner::Pointer {
-                    space: crate::AddressSpace::DescriptorHeap(_),
-                    ..
+        let load_id = {
+            let pointer_id = self.write_access_chain(pointer, block, access_type_adjustment)?;
+            let id = self.gen_id();
+            let atomic_space = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                crate::TypeInner::Pointer { base, space } => {
+                    match self.ir_module.types[base].inner {
+                        crate::TypeInner::Atomic { .. } => Some(space),
+                        _ => None,
+                    }
                 }
-            );
-            let plain_load = wrapped_load.is_none()
-                && !heap
-                && class.is_some_and(|class| {
-                    self.writer.needs_layout_conversion(result_type_id, class)
-                });
-            let load_type_id = if plain_load {
-                self.writer.plain_type_id(result_type_id)
-            } else {
-                load_type_id
+                _ => None,
             };
-
-            let load_id = match self.write_access_chain(pointer, block, access_type_adjustment)? {
-                ExpressionPointer::Ready { pointer_id } => {
-                    let id = self.gen_id();
-                    let atomic_space =
-                        match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-                            crate::TypeInner::Pointer { base, space } => {
-                                match self.ir_module.types[base].inner {
-                                    crate::TypeInner::Atomic { .. } => Some(space),
-                                    _ => None,
-                                }
-                            }
-                            _ => None,
-                        };
-                    let instruction = if let Some(space) = atomic_space {
-                        let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                        let scope_constant_id = self.get_scope_constant(scope as u32);
-                        let semantics_id = self.get_index_constant(semantics.bits());
-                        Instruction::atomic_load(
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                        )
-                    } else {
-                        let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
-                        let component = self.physical_component_load;
-                        for operand in self.memory_access(pointer, component, false) {
-                            instruction.add_operand(operand);
-                        }
-                        instruction
-                    };
-                    block.body.push(instruction);
-                    id
-                }
-                ExpressionPointer::Conditional {
-                    condition,
+            let instruction = if let Some(space) = atomic_space {
+                let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                let scope_constant_id = self.get_scope_constant(scope as u32);
+                let semantics_id = self.get_index_constant(semantics.bits());
+                Instruction::atomic_load(
+                    result_type_id,
+                    id,
                     pointer_id,
-                    access,
-                } => {
-                    //TODO: support atomics?
-                    self.write_conditional_indexed_load(
-                        load_type_id,
-                        condition,
-                        block,
-                        move |id_gen, block| {
-                            // The in-bounds path. Perform the access and the load.
-                            let value_id = id_gen.next();
-                            block.body.push(access);
-                            block.body.push(Instruction::load(
-                                load_type_id,
-                                value_id,
-                                pointer_id,
-                                None,
-                            ));
-                            value_id
-                        },
-                    )
+                    scope_constant_id,
+                    semantics_id,
+                )
+            } else {
+                let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
+                let component = self.physical_component_load;
+                for operand in self.memory_access(pointer, component, false) {
+                    instruction.add_operand(operand);
                 }
+                instruction
             };
+            block.body.push(instruction);
+            id
+        };
 
-            match wrapped_load {
-                Some(ref wrapped_load) => {
-                    // If we loaded a std140 compat type then we must call the
-                    // function to convert the loaded value to the regular type.
-                    let result_id = self.gen_id();
-                    let function_id = self.writer.wrapped_functions
-                        [&WrappedFunction::ConvertFromStd140CompatType {
-                            r#type: wrapped_load.r#type,
-                        }];
-                    block.body.push(Instruction::function_call(
-                        result_type_id,
-                        result_id,
-                        function_id,
-                        &[load_id],
-                    ));
-                    Ok(result_id)
-                }
-                None if plain_load => {
-                    self.writer
-                        .convert_layout(block, result_type_id, load_id, false)
-                }
-                None => Ok(load_id),
-            }
+        if plain_load {
+            self.writer
+                .convert_layout(block, result_type_id, load_id, false)
+        } else {
+            Ok(load_id)
         }
     }
 
@@ -4570,60 +3926,41 @@ impl BlockContext<'_> {
                         )?;
                     }
                 }
-                match self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)? {
-                    ExpressionPointer::Ready { pointer_id } => {
-                        let atomic_space =
-                            match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-                                crate::TypeInner::Pointer { base, space } => {
-                                    match self.ir_module.types[base].inner {
-                                        crate::TypeInner::Atomic { .. } => Some(space),
-                                        _ => None,
-                                    }
+                {
+                    let pointer_id =
+                        self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)?;
+                    let atomic_space =
+                        match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                            crate::TypeInner::Pointer { base, space } => {
+                                match self.ir_module.types[base].inner {
+                                    crate::TypeInner::Atomic { .. } => Some(space),
+                                    _ => None,
                                 }
-                                _ => None,
-                            };
-                        let instruction = if let Some(space) = atomic_space {
-                            let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                            let scope_constant_id = self.get_scope_constant(scope as u32);
-                            let semantics_id = self.get_index_constant(semantics.bits());
-                            Instruction::atomic_store(
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        } else {
-                            let mut instruction = Instruction::store(pointer_id, value_id, None);
-                            let swizzled = matches!(
-                                self.ir_function.expressions[value],
-                                crate::Expression::Swizzle { .. }
-                            );
-                            for operand in self.memory_access(pointer, swizzled, true) {
-                                instruction.add_operand(operand);
                             }
-                            instruction
+                            _ => None,
                         };
-                        block.body.push(instruction);
-                    }
-                    ExpressionPointer::Conditional {
-                        condition,
-                        pointer_id,
-                        access,
-                    } => {
-                        let mut selection = Selection::start(&mut block, ());
-                        selection.if_true(self, condition, ());
-
-                        // The in-bounds path. Perform the access and the store.
-                        selection.block().body.push(access);
-                        selection
-                            .block()
-                            .body
-                            .push(Instruction::store(pointer_id, value_id, None));
-
-                        // Finish the in-bounds block and start the merge block. This
-                        // is the block we'll leave current on return.
-                        selection.finish(self, ());
-                    }
+                    let instruction = if let Some(space) = atomic_space {
+                        let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                        let scope_constant_id = self.get_scope_constant(scope as u32);
+                        let semantics_id = self.get_index_constant(semantics.bits());
+                        Instruction::atomic_store(
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    } else {
+                        let mut instruction = Instruction::store(pointer_id, value_id, None);
+                        let swizzled = matches!(
+                            self.ir_function.expressions[value],
+                            crate::Expression::Swizzle { .. }
+                        );
+                        for operand in self.memory_access(pointer, swizzled, true) {
+                            instruction.add_operand(operand);
+                        }
+                        instruction
+                    };
+                    block.body.push(instruction);
                 };
             }
             Statement::ImageStore {
@@ -4664,20 +4001,13 @@ impl BlockContext<'_> {
                                 crate::TypeInner::BindingArray { .. }
                             ) =>
                         {
-                            match self.write_access_chain(
+                            self.write_access_chain(
                                 argument,
                                 &mut block,
                                 AccessTypeAdjustment::IntroducePointer(
                                     spirv::StorageClass::UniformConstant,
                                 ),
-                            )? {
-                                ExpressionPointer::Ready { pointer_id } => pointer_id,
-                                ExpressionPointer::Conditional { .. } => {
-                                    return Err(Error::FeatureNotImplemented(
-                                        "Texture array out-of-bounds handling",
-                                    ));
-                                }
-                            }
+                            )?
                         }
                         _ => self.cached.get(argument)?,
                     };
@@ -4725,18 +4055,8 @@ impl BlockContext<'_> {
                     self.cached.set(result, id)?;
                 }
 
-                let pointer_id = match self.write_access_chain(
-                    pointer,
-                    &mut block,
-                    AccessTypeAdjustment::None,
-                )? {
-                    ExpressionPointer::Ready { pointer_id } => pointer_id,
-                    ExpressionPointer::Conditional { .. } => {
-                        return Err(Error::FeatureNotImplemented(
-                            "Atomics out-of-bounds handling",
-                        ));
-                    }
-                };
+                let pointer_id =
+                    self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)?;
 
                 let space = self.fun_info[pointer]
                     .ty
@@ -5040,22 +4360,6 @@ impl BlockContext<'_> {
             } => {
                 self.writer
                     .write_scoped_barrier(execution, memory, semantics, &mut block);
-            }
-            Statement::WorkGroupUniformLoad { pointer, result } => {
-                self.writer
-                    .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
-                let result_type_id = self.get_expression_type_id(&self.fun_info[result].ty)?;
-                // Match `Expression::Load` behavior, including `OpAtomicLoad` when
-                // loading from a pointer to `atomic<T>`.
-                let id = self.write_checked_load(
-                    pointer,
-                    &mut block,
-                    AccessTypeAdjustment::None,
-                    result_type_id,
-                )?;
-                self.cached.set(result, id)?;
-                self.writer
-                    .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
             }
             Statement::RayQuery { query, ref fun } => {
                 self.write_ray_query_function(query, fun, &mut block)?;

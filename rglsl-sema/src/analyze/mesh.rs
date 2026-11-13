@@ -8,10 +8,10 @@ use rglsl_ast::ast::{
 use rglsl_ast::{Span, TranslationUnit};
 
 use super::{Analyzer, Callee};
-use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Direction, Origin, Qualifiers, Storage, SymbolKind};
 use crate::types::{ArraySize, BlockStorage, Type, TypeKind};
+use rglsl_types::ShaderStage;
 
 pub const MESH_EXT: &str = "GL_EXT_mesh_shader";
 pub const MESH_NV: &str = "GL_NV_mesh_shader";
@@ -83,16 +83,16 @@ impl Analyzer<'_> {
         let stage = self.stage();
         let allowed = match storage {
             StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
-                matches!(stage, Stage::Fragment | Stage::Mesh)
+                matches!(stage, ShaderStage::Fragment | ShaderStage::Mesh)
             }
-            StorageQualifier::PerViewNV => stage == Stage::Mesh,
-            _ => matches!(stage, Stage::Task | Stage::Mesh),
+            StorageQualifier::PerViewNV => stage == ShaderStage::Mesh,
+            _ => matches!(stage, ShaderStage::Task | ShaderStage::Mesh),
         };
         if !allowed {
             self.error(span, invalid(keyword, "not supported in this stage"));
             return;
         }
-        if stage == Stage::Fragment {
+        if stage == ShaderStage::Fragment {
             let extension = if storage == StorageQualifier::PerPrimitiveEXT {
                 MESH_EXT
             } else {
@@ -114,10 +114,10 @@ impl Analyzer<'_> {
         }
         if let Some(extensions) = variable_extension(name) {
             self.require_stage_extensions(span, name, |stage| {
-                matches!(stage, Stage::Mesh | Stage::Task).then_some(extensions)
+                matches!(stage, ShaderStage::Mesh | ShaderStage::Task).then_some(extensions)
             });
         }
-        if !indices || !self.stage_is(Stage::Mesh) {
+        if !indices || !self.stage_is(ShaderStage::Mesh) {
             return;
         }
         let required = match name {
@@ -138,7 +138,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_member_extension(&mut self, span: Span, base: &Type, field: &str) {
-        if field != "gl_PrimitiveShadingRateEXT" || !self.stage_is(Stage::Mesh) {
+        if field != "gl_PrimitiveShadingRateEXT" || !self.stage_is(ShaderStage::Mesh) {
             return;
         }
         let builtin = match base.kind {
@@ -195,7 +195,7 @@ impl Analyzer<'_> {
         if !ty.is_array() {
             if !name.node.starts_with("gl_") {
                 self.stage_check(name.span, |stage| {
-                    (stage == Stage::Mesh).then(|| DiagnosticKind::InvalidInterfaceArray {
+                    (stage == ShaderStage::Mesh).then(|| DiagnosticKind::InvalidInterfaceArray {
                         name: name.node.clone(),
                         reason: "the type must be an array",
                     })
@@ -203,7 +203,7 @@ impl Analyzer<'_> {
             }
             return;
         }
-        if !self.stage_is(Stage::Mesh) {
+        if !self.stage_is(ShaderStage::Mesh) {
             return;
         }
         let Some(size) = self.mesh_array_size(qualifiers, &name.node) else {
@@ -232,7 +232,7 @@ impl Analyzer<'_> {
                         || matches!(variable.ty.kind, TypeKind::Block(_)))
             })
         });
-        if !candidates || !self.stage_is(Stage::Mesh) {
+        if !candidates || !self.stage_is(ShaderStage::Mesh) {
             return;
         }
         let mut updates = Vec::new();
@@ -295,7 +295,7 @@ impl Analyzer<'_> {
         ty: &mut Type,
         member: bool,
     ) {
-        if !qualifiers.per_view || !self.stage_is(Stage::Mesh) {
+        if !qualifiers.per_view || !self.stage_is(ShaderStage::Mesh) {
             return;
         }
         let dimension = usize::from(!member);
@@ -348,15 +348,15 @@ impl Analyzer<'_> {
         let storage = qualifiers.storage;
         let per_task = qualifiers.per_task;
         self.stage_check(span, |stage| match (storage, stage) {
-            (Storage::In, Stage::Mesh) if !per_task => Some(invalid(
+            (Storage::In, ShaderStage::Mesh) if !per_task => Some(invalid(
                 "in",
                 "input blocks cannot be used in a mesh shader",
             )),
-            (Storage::Out, Stage::Mesh) if per_task => Some(invalid(
+            (Storage::Out, ShaderStage::Mesh) if per_task => Some(invalid(
                 "taskNV",
                 "can only use on input blocks in mesh shader",
             )),
-            (Storage::Out, Stage::Task) if !per_task => Some(invalid(
+            (Storage::Out, ShaderStage::Task) if !per_task => Some(invalid(
                 "out",
                 "output blocks cannot be used in a task shader",
             )),
@@ -365,7 +365,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_output_reads(&mut self, unit: &TranslationUnit) {
-        if !self.mesh_ext() || !self.stage_is(Stage::Mesh) {
+        if !self.mesh_ext() || !self.stage_is(ShaderStage::Mesh) {
             return;
         }
         let Ok(expressions) = rglsl_ast::expressions(unit) else {

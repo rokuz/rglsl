@@ -17,8 +17,6 @@ all-features = true
 
 [features]
 default = []
-glsl-in = ["dep:rglsl-ast", "dep:rglsl-pp", "dep:rglsl-sema"]
-
 serialize = [
     "dep:serde",
     "bitflags/serde",
@@ -40,28 +38,17 @@ arbitrary = [
     "half/std",
     "rglsl-types/arbitrary",
 ]
-spv-out = ["dep:spirv"]
-
-## Enables colored output through codespan-reporting and termcolor.
-termcolor = ["codespan-reporting/termcolor"]
-
-## Enables writing output to stderr.
-stderr = ["codespan-reporting/std"]
-
-## Enables integration with the underlying filesystem.
-fs = []
 
 [dependencies]
 rglsl-types = { workspace = true }
-rglsl-ast = { workspace = true, optional = true }
-rglsl-pp = { workspace = true, optional = true }
-rglsl-sema = { workspace = true, optional = true }
+rglsl-ast = { workspace = true }
+rglsl-pp = { workspace = true }
+rglsl-sema = { workspace = true }
 
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 arrayvec.workspace = true
 bitflags.workspace = true
 bit-set.workspace = true
-cfg-if.workspace = true
 codespan-reporting = { workspace = true }
 hashbrown.workspace = true
 half = { workspace = true, features = ["num-traits"] }
@@ -70,30 +57,17 @@ rustc-hash.workspace = true
 libm = { workspace = true, default-features = false }
 log.workspace = true
 num-traits.workspace = true
-spirv = { workspace = true, optional = true }
+spirv = { workspace = true }
 thiserror.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 
-[build-dependencies]
-cfg_aliases.workspace = true
-
 [dev-dependencies]
-diff.workspace = true
 env_logger.workspace = true
 hashbrown = { workspace = true, features = ["serde"] }
-itertools.workspace = true
 rglsl-test.workspace = true
 ron.workspace = true
 rspirv.workspace = true
-# So we don't actually need this, however if we remove this, it
-# brakes calling `--features spirv` at the workspace level. I think
-# this is because there is a `dep:spirv` in the regular feature set,
-# so cargo tries to match the feature against that, fails as it's a optional dep,
-# and then refuses to build instead of ignoring it.
-spirv.workspace = true
 serde = { workspace = true, features = ["default", "derive"] }
-strum = { workspace = true }
-walkdir.workspace = true
 
 [lints.rust]
 missing_debug_implementations = "warn"

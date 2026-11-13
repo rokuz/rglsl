@@ -176,11 +176,7 @@
         ),
     ],
     special_types: (
-        ray_desc: None,
-        ray_intersection: None,
         ray_vertex_return: None,
-        external_texture_params: None,
-        external_texture_transfer_function: None,
         predeclared_types: {
             ModfResult(
                 size: None,
@@ -272,7 +268,7 @@
                         arg3: None,
                     ),
                     Math(
-                        fun: Saturate,
+                        fun: Floor,
                         arg: 2,
                         arg1: None,
                         arg2: None,
@@ -623,7 +619,7 @@
                     ),
                     Literal(F32(1.0)),
                     Math(
-                        fun: QuantizeToF16,
+                        fun: Floor,
                         arg: 119,
                         arg1: None,
                         arg2: None,
@@ -639,7 +635,7 @@
                         ],
                     ),
                     Math(
-                        fun: QuantizeToF16,
+                        fun: Floor,
                         arg: 123,
                         arg1: None,
                         arg2: None,
@@ -657,7 +653,7 @@
                         ],
                     ),
                     Math(
-                        fun: QuantizeToF16,
+                        fun: Floor,
                         arg: 128,
                         arg1: None,
                         arg2: None,
@@ -677,7 +673,7 @@
                         ],
                     ),
                     Math(
-                        fun: QuantizeToF16,
+                        fun: Floor,
                         arg: 134,
                         arg1: None,
                         arg2: None,
@@ -1017,14 +1013,9 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

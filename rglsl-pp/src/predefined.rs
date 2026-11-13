@@ -2,7 +2,7 @@ use alloc::format;
 use alloc::string::String;
 
 use crate::options::Options;
-use crate::version::{Profile, Version};
+use crate::version::Version;
 
 const DESKTOP: [&str; 152] = [
     "GL_ARB_texture_rectangle",
@@ -159,8 +159,6 @@ const DESKTOP: [&str; 152] = [
     "GL_EXT_structured_descriptor_heap",
 ];
 
-const ES: [&str; 2] = ["GL_ES", "GL_FRAGMENT_PRECISION_HIGH"];
-
 fn define(preamble: &mut String, name: &str, value: &str) {
     preamble.push_str("#define ");
     preamble.push_str(name);
@@ -171,64 +169,38 @@ fn define(preamble: &mut String, name: &str, value: &str) {
 
 pub(crate) fn preamble(version: &Version, options: &Options) -> String {
     let mut preamble = String::new();
-    let number = version.number;
-    let es = version.profile == Some(Profile::Es);
-    if es {
-        for name in ES {
-            define(&mut preamble, name, "1");
-        }
-    } else {
-        for name in DESKTOP {
-            define(&mut preamble, name, "1");
-        }
-        if number >= 150 {
-            define(&mut preamble, "GL_core_profile", "1");
-            if version.profile == Some(Profile::Compatibility) {
-                define(&mut preamble, "GL_compatibility_profile", "1");
-            }
-        }
-        if number >= 140 {
-            define(&mut preamble, "GL_EXT_null_initializer", "1");
-            define(&mut preamble, "GL_EXT_subgroup_uniform_control_flow", "1");
-            define(&mut preamble, "GL_EXT_maximal_reconvergence", "1");
-        }
-        if number >= 130 {
-            define(&mut preamble, "GL_FRAGMENT_PRECISION_HIGH", "1");
-        }
-        if number >= 460 {
-            for name in [
-                "GL_ARM_tensors",
-                "GL_ARM_tensors_bfloat16",
-                "GL_ARM_tensors_float_e5m2",
-                "GL_ARM_tensors_float_e4m3",
-            ] {
-                define(&mut preamble, name, "1");
-            }
-        }
+    let glsl_460 = version.number >= 460;
+    for name in DESKTOP {
+        define(&mut preamble, name, "1");
     }
-    if (!es && number >= 460) || (es && number >= 320) {
-        define(&mut preamble, "GL_EXT_nontemporal_keyword", "1");
+    for name in [
+        "GL_core_profile",
+        "GL_EXT_null_initializer",
+        "GL_EXT_subgroup_uniform_control_flow",
+        "GL_EXT_maximal_reconvergence",
+        "GL_FRAGMENT_PRECISION_HIGH",
+    ] {
+        define(&mut preamble, name, "1");
     }
-    if (!es && number >= 140) || (es && number >= 310) {
+    if glsl_460 {
         for name in [
-            "GL_EXT_device_group",
-            "GL_EXT_multiview",
-            "GL_NV_shader_sm_builtins",
+            "GL_ARM_tensors",
+            "GL_ARM_tensors_bfloat16",
+            "GL_ARM_tensors_float_e5m2",
+            "GL_ARM_tensors_float_e4m3",
+            "GL_EXT_nontemporal_keyword",
         ] {
             define(&mut preamble, name, "1");
         }
     }
-    if (!es && number >= 130) || (es && number >= 300) {
-        define(&mut preamble, "GL_EXT_texture_offset_non_const", "1");
-    }
-    if number >= 300 {
-        define(&mut preamble, "GL_OVR_multiview", "1");
-        define(&mut preamble, "GL_OVR_multiview2", "1");
-    }
-    if (!es && number >= 140) || (es && number >= 300) {
-        define(&mut preamble, "GL_EXT_optional_input_attachment_index", "1");
-    }
     for name in [
+        "GL_EXT_device_group",
+        "GL_EXT_multiview",
+        "GL_NV_shader_sm_builtins",
+        "GL_EXT_texture_offset_non_const",
+        "GL_OVR_multiview",
+        "GL_OVR_multiview2",
+        "GL_EXT_optional_input_attachment_index",
         "GL_GOOGLE_cpp_style_line_directive",
         "GL_GOOGLE_include_directive",
         "GL_KHR_blend_equation_advanced",
@@ -239,13 +211,8 @@ pub(crate) fn preamble(version: &Version, options: &Options) -> String {
     if let Some(vulkan) = options.vulkan_client_version {
         define(&mut preamble, "VULKAN", &format!("{vulkan}"));
     }
-    if options.gl_spirv {
-        define(&mut preamble, "GL_SPIRV", "100");
-    }
-    if !es {
-        if let Some(stage) = options.stage {
-            define(&mut preamble, stage.macro_name(), "1");
-        }
+    if let Some(stage) = options.stage {
+        define(&mut preamble, crate::options::macro_name(stage), "1");
     }
     for user in &options.defines {
         preamble.push_str("#define ");

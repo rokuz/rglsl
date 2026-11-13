@@ -82,12 +82,6 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
             })?
     };
 
-    let shared_info = WriterSharedOptions {
-        mesh_output_validation: params.mesh_output_validation,
-        task_limits: params.task_limits,
-        bounds_checks_policies: params.bounds_check_policies,
-    };
-
     {
         if targets.contains(Targets::ANALYSIS) {
             let config = ron::ser::PrettyConfig::default().new_line("\n".to_string());
@@ -105,7 +99,6 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
             debug_info,
             &params.spv,
             &params.pipeline_constants,
-            &shared_info,
         )?;
     }
     Ok(())
@@ -118,11 +111,10 @@ fn write_output_spv(
     debug_info: Option<rglsl::back::spv::DebugInfo>,
     params: &SpirvOutParameters,
     pipeline_constants: &rglsl::back::PipelineConstants,
-    shared_options: &WriterSharedOptions,
 ) -> TestResult {
     use rglsl::back::spv;
 
-    let options = params.to_options(shared_options, debug_info);
+    let options = params.to_options(debug_info);
 
     let (module, info) =
         rglsl::back::pipeline_constants::process_overrides(module, info, None, pipeline_constants)

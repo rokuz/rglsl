@@ -5,9 +5,9 @@ use rglsl_ast::extensions::Request;
 use rglsl_ast::Span;
 
 use super::Analyzer;
-use crate::builtins::Stage;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::{PerVertex, Qualifiers, Storage};
+use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Interlock {
@@ -99,7 +99,7 @@ impl Analyzer<'_> {
                         | "non_coherent_stencil_attachment_readext"
                 )
         });
-        if !relevant || !self.stage_is(Stage::Fragment) {
+        if !relevant || !self.stage_is(ShaderStage::Fragment) {
             return;
         }
         let input = qualifiers.storage == Storage::In;
@@ -294,7 +294,7 @@ impl Analyzer<'_> {
             return;
         }
         self.stage_check(span, |stage| {
-            (stage != Stage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
+            (stage != ShaderStage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
                 feature: String::from("tileImageEXT"),
                 stage: stage.name(),
             })
@@ -334,7 +334,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn demote(&mut self, span: Span) {
         self.stage_check(span, |stage| {
-            (stage != Stage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
+            (stage != ShaderStage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
                 feature: String::from("demote"),
                 stage: stage.name(),
             })
@@ -357,7 +357,7 @@ impl Analyzer<'_> {
         };
         let reason = if !self.scopes.is_global() {
             "not allowed in nested scope"
-        } else if !self.stage_is(Stage::Fragment) {
+        } else if !self.stage_is(ShaderStage::Fragment) {
             "only fragment shader inputs can be per-vertex"
         } else {
             self.require_extension(span, extension, qualifier);

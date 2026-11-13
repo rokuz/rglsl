@@ -3,8 +3,8 @@ use alloc::{format, vec::Vec};
 use spirv::{Op, Word};
 
 use super::{
-    block::ExpressionPointer, frames::on_heap, Block, BlockContext, Error, Instruction, LocalType,
-    LookupType, NumericType, Writer, WriterFlags,
+    frames::on_heap, Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType,
+    Writer, WriterFlags,
 };
 use crate::{arena::Handle, DescriptorHeap, Module, StorageAccess, TypeInner};
 
@@ -848,16 +848,8 @@ impl BlockContext<'_> {
         if !heap {
             return Ok(None);
         }
-        let chain = match self.write_access_chain(
-            pointer,
-            block,
-            super::block::AccessTypeAdjustment::None,
-        )? {
-            ExpressionPointer::Ready { pointer_id } => pointer_id,
-            ExpressionPointer::Conditional { .. } => {
-                return Err(Error::Validation("a heap image is not addressable"))
-            }
-        };
+        let chain =
+            self.write_access_chain(pointer, block, super::block::AccessTypeAdjustment::None)?;
         let image_type_id = self.get_expression_type_id(&self.fun_info[texel.image].ty)?;
         let pointer_type_id = self.writer.get_localtype_id(LocalType::UntypedPointer {
             class: spirv::StorageClass::Image,
@@ -874,7 +866,7 @@ impl BlockContext<'_> {
         instruction.set_result(id);
         instruction.add_operand(image_type_id);
         instruction.add_operand(chain);
-        instruction.add_operand(coordinates.value_id);
+        instruction.add_operand(coordinates);
         instruction.add_operand(sample_id);
         block.body.push(instruction);
         if self
@@ -892,16 +884,8 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let chain = match self.write_access_chain(
-            descriptor,
-            block,
-            super::block::AccessTypeAdjustment::None,
-        )? {
-            ExpressionPointer::Ready { pointer_id } => pointer_id,
-            ExpressionPointer::Conditional { .. } => {
-                return Err(Error::Validation("a buffer descriptor is not addressable"))
-            }
-        };
+        let chain =
+            self.write_access_chain(descriptor, block, super::block::AccessTypeAdjustment::None)?;
         let id = self.gen_id();
         block
             .body
@@ -1009,17 +993,7 @@ fn unused_heap_types(
             .filter_map(|(handle, _)| info[handle].handle()),
     );
     let special = &module.special_types;
-    roots.extend(
-        [
-            special.ray_desc,
-            special.ray_intersection,
-            special.ray_vertex_return,
-            special.external_texture_params,
-            special.external_texture_transfer_function,
-        ]
-        .into_iter()
-        .flatten(),
-    );
+    roots.extend(special.ray_vertex_return);
     roots.extend(special.predeclared_types.values().copied());
     let functions = module
         .functions

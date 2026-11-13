@@ -11,8 +11,7 @@ use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 use rglsl::{Module, ShaderStage};
 
 use crate::args::{
-    self, Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS,
-    EXIT_USAGE,
+    Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE,
 };
 use crate::output;
 use crate::reflect;
@@ -36,25 +35,6 @@ const STAGE_ORDER: [ShaderStage; 14] = [
     ShaderStage::Task,
     ShaderStage::Mesh,
 ];
-
-pub const fn stage_extension(stage: ShaderStage) -> &'static str {
-    match stage {
-        ShaderStage::Vertex => "vert",
-        ShaderStage::TessControl => "tesc",
-        ShaderStage::TessEvaluation => "tese",
-        ShaderStage::Geometry => "geom",
-        ShaderStage::Fragment => "frag",
-        ShaderStage::Compute => "comp",
-        ShaderStage::Task => "task",
-        ShaderStage::Mesh => "mesh",
-        ShaderStage::RayGeneration => "rgen",
-        ShaderStage::Miss => "rmiss",
-        ShaderStage::AnyHit => "rahit",
-        ShaderStage::ClosestHit => "rchit",
-        ShaderStage::Intersection => "rint",
-        ShaderStage::Callable => "rcall",
-    }
-}
 
 const fn glslang_stage_name(stage: ShaderStage) -> &'static str {
     match stage {
@@ -218,7 +198,7 @@ impl<'a> Session<'a> {
 
     fn classify(&self, name: &str) -> Result<Class, Exit> {
         if let Some(ref stage) = self.options.stage {
-            return args::stage_from_name(stage)
+            return ShaderStage::from_extension(stage)
                 .map(Class::Stage)
                 .ok_or(Exit::Usage);
         }
@@ -228,13 +208,13 @@ impl<'a> Session<'a> {
         match extension {
             "hlsl" => Err(Exit::out_of_scope(name)),
             "glsl" => match stem.rsplit_once('.') {
-                Some((_, inner)) => args::stage_from_name(inner)
+                Some((_, inner)) => ShaderStage::from_extension(inner)
                     .map(Class::Stage)
                     .ok_or(Exit::Usage),
                 None => Ok(Class::Library),
             },
             OBJECT_EXTENSION => Ok(Class::Object),
-            other => args::stage_from_name(other)
+            other => ShaderStage::from_extension(other)
                 .map(Class::Stage)
                 .ok_or(Exit::Usage),
         }
@@ -682,9 +662,7 @@ impl<'a> Session<'a> {
             let options = rglsl_pp::Options {
                 preamble: Some(self.preamble.clone()),
                 vulkan_client_version: Some(100),
-                stage: unit
-                    .stage()
-                    .and_then(|stage| rglsl_pp::Stage::from_extension(stage_extension(stage))),
+                stage: unit.stage(),
                 source_name: Some(unit.name.clone()),
                 listing: true,
                 ..rglsl_pp::Options::default()
@@ -1085,7 +1063,7 @@ impl<'a> Session<'a> {
             .options
             .output
             .clone()
-            .unwrap_or_else(|| format!("{}.spv", stage_extension(stage)));
+            .unwrap_or_else(|| format!("{}.spv", stage.extension()));
         if !output::write(
             &path,
             &words,

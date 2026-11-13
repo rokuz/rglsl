@@ -5,7 +5,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration};
-use rglsl_sema::{analyze, DiagnosticKind, Options, Stage};
+use rglsl_sema::{analyze, DiagnosticKind, Options};
+use rglsl_types::ShaderStage;
 
 struct Outcome {
     file: String,
@@ -29,7 +30,7 @@ fn extensions(unit: &rglsl_ast::TranslationUnit) -> Vec<String> {
 fn check(directory: &Path, file: &str) -> Option<Outcome> {
     let source = fs::read_to_string(directory.join(file)).ok()?;
     let unit = rglsl_ast::parse(&source).ok()?;
-    let stage = Stage::from_extension(Path::new(file).extension()?.to_str()?)?;
+    let stage = ShaderStage::from_extension(Path::new(file).extension()?.to_str()?)?;
     let analysis = analyze(&unit, &Options::new(stage));
     let diagnostics = analysis
         .diagnostics

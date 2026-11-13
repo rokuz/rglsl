@@ -14,23 +14,9 @@ use alloc::vec::Vec;
 /// Note that `F32` must appear before other sizes; this is how we
 /// represent conversion rank.
 pub fn float_scalars() -> impl Iterator<Item = ir::Scalar> + Clone {
-    [
-        ir::Scalar::ABSTRACT_FLOAT,
-        ir::Scalar::F32,
-        ir::Scalar::F16,
-        ir::Scalar::F64,
-    ]
-    .into_iter()
-}
-
-/// Produce all the floating-point [`ir::Scalar`]s, but omit
-/// abstract types, for #7405.
-pub fn float_scalars_unimplemented_abstract() -> impl Iterator<Item = ir::Scalar> + Clone {
     [ir::Scalar::F32, ir::Scalar::F16, ir::Scalar::F64].into_iter()
 }
 
-/// Produce the scalar and vector [`ir::TypeInner`]s that have `s` as
-/// their scalar.
 pub fn scalar_or_vecn(scalar: ir::Scalar) -> impl Iterator<Item = ir::TypeInner> {
     [
         ir::TypeInner::Scalar(scalar),

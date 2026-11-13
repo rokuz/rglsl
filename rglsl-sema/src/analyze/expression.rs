@@ -12,12 +12,12 @@ use rglsl_ast::{Chain, Span, Spine};
 
 use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
-use crate::builtins::Stage;
 use crate::constant::{fold_binary, fold_linear, fold_unary, Constant, Linear, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
 use crate::types::CooperativeUse;
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
+use rglsl_types::ShaderStage;
 
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn value_expression(self, expression: &'b Expression) -> Operand {
@@ -652,9 +652,12 @@ impl Analyzer<'_> {
                     Place::ReadOnly("it is a uniform")
                 } else if shader_record {
                     Place::ReadOnly("can't modify a shaderrecordnv qualified buffer")
-                } else if storage == Storage::HitAttribute && !self.stage_is(Stage::Intersection) {
+                } else if storage == Storage::HitAttribute
+                    && !self.stage_is(ShaderStage::Intersection)
+                {
                     Place::ReadOnly("cannot modify hitAttributeNV in this stage")
-                } else if storage == Storage::TaskPayloadShared && self.stage_is(Stage::Mesh) {
+                } else if storage == Storage::TaskPayloadShared && self.stage_is(ShaderStage::Mesh)
+                {
                     Place::ReadOnly(
                         "can't modify variable with storage qualifier taskPayloadSharedEXT in mesh shaders",
                     )
@@ -924,7 +927,7 @@ impl Analyzer<'_> {
                             &index.kind,
                             ExpressionKind::Variable(index) if index == "gl_InvocationID"
                         );
-                        if per_vertex && !by_invocation && self.stage_is(Stage::TessControl) {
+                        if per_vertex && !by_invocation && self.stage_is(ShaderStage::TessControl) {
                             self.error(target.span, DiagnosticKind::PerVertexOutputIndex);
                         }
                     }

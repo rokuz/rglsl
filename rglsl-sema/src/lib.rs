@@ -42,9 +42,7 @@ pub use analyze::{
     CooperativeCall, DerivativeGroup, ExpressionInfo, FragmentLayout, Interlock, MatrixCall,
     Options, QcomConversion, StageDiagnostic, TensorArmCall, TensorCall,
 };
-pub use builtins::{
-    BuiltinFunctionId, Builtins, ResourceLimits, Stage, StageTables, ALL_STAGE_BITS,
-};
+pub use builtins::{BuiltinFunctionId, Builtins, ResourceLimits, StageTables, ALL_STAGE_BITS};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use rglsl_ast::extensions;
 pub use scope::{FunctionControl, FunctionId, SymbolId};

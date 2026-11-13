@@ -213,11 +213,7 @@
         ),
     ],
     special_types: (
-        ray_desc: None,
-        ray_intersection: None,
         ray_vertex_return: None,
-        external_texture_params: None,
-        external_texture_transfer_function: None,
         predeclared_types: {},
     ),
     constants: [
@@ -1132,7 +1128,6 @@
                     value: Some(153),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("uint64_function"),
@@ -1904,7 +1899,6 @@
                     value: Some(144),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -1972,14 +1966,9 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

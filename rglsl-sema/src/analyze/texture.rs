@@ -4,9 +4,9 @@ use alloc::string::String;
 use rglsl_ast::Span;
 
 use super::{Analyzer, Operand};
-use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{OpaqueKind, TextureDimension};
+use rglsl_types::ShaderStage;
 
 pub const SPARSE_TEXTURE2: &str = "GL_ARB_sparse_texture2";
 pub const SPARSE_TEXTURE_CLAMP: &str = "GL_ARB_sparse_texture_clamp";
@@ -186,10 +186,15 @@ impl Analyzer<'_> {
         if !derivative && !implicit_lod(name, operands) {
             return valid;
         }
-        let gated = |stage: Stage| matches!(stage, Stage::Compute | Stage::Task | Stage::Mesh);
+        let gated = |stage: ShaderStage| {
+            matches!(
+                stage,
+                ShaderStage::Compute | ShaderStage::Task | ShaderStage::Mesh
+            )
+        };
         if derivative
             && !self.require_stage_extensions(span, name, |stage| {
-                gated(stage).then_some(if stage == Stage::Compute {
+                gated(stage).then_some(if stage == ShaderStage::Compute {
                     &COMPUTE_DERIVATIVES[..]
                 } else {
                     &KHR_ONLY[..]

@@ -3,7 +3,7 @@ use rglsl_ast::ast::{
     Initializer, PostfixOperator, Spanned, Statement, StatementKind, TranslationUnit,
 };
 use rglsl_ast::Span;
-use rglsl_sema::Stage;
+use rglsl_types::ShaderStage;
 
 use crate::basic;
 use crate::build::Builder;
@@ -168,7 +168,7 @@ fn declares_counter(unit: &TranslationUnit) -> bool {
 
 pub fn add_guards(
     unit: &TranslationUnit,
-    stage: Stage,
+    stage: ShaderStage,
     bound: u32,
 ) -> Result<Option<TranslationUnit>, Error> {
     let analysis = analyze_shader(unit, stage, true, None)?;

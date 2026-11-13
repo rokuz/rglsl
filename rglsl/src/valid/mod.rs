@@ -34,7 +34,6 @@ pub use analyzer::{ExpressionInfo, FunctionInfo, GlobalUse, Uniformity, Uniformi
 pub use compose::ComposeError;
 pub use expression::{check_literal_value, LiteralError};
 pub use expression::{ConstExpressionError, ExpressionError};
-#[cfg(feature = "glsl-in")]
 pub(crate) use function::abort_message_length;
 pub use function::{CallError, FunctionError, LocalVariableError, SubgroupError};
 pub use immediates::ImmediateSlots;
@@ -189,8 +188,6 @@ bitflags::bitflags! {
         const RAY_HIT_VERTEX_POSITION = 1 << 25;
         /// Support for 16-bit floating-point types.
         const SHADER_FLOAT16 = 1 << 26;
-        /// Support for [`ImageClass::External`]
-        const TEXTURE_EXTERNAL = 1 << 27;
         /// Support for `quantizeToF16`, `pack2x16float`, and `unpack2x16float`, which store
         /// `f16`-precision values in `f32`s.
         const SHADER_FLOAT16_IN_FLOAT32 = 1 << 28;

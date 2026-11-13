@@ -10,11 +10,11 @@ use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::{Analyzer, Operand, SwitchContext};
-use crate::builtins::Stage;
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Lookup, Origin, Qualifiers, SymbolKind};
 use crate::types::Type;
+use rglsl_types::ShaderStage;
 
 impl Analyzer<'_> {
     pub(crate) fn statement(&mut self, statement: &Statement) {
@@ -191,7 +191,8 @@ impl Analyzer<'_> {
             }
             JumpStatement::Discard => {
                 self.stage_check(span, |stage| {
-                    (stage != Stage::Fragment).then_some(DiagnosticKind::DiscardOutsideFragment)
+                    (stage != ShaderStage::Fragment)
+                        .then_some(DiagnosticKind::DiscardOutsideFragment)
                 });
             }
             JumpStatement::Return(value) => self.return_statement(span, value.as_ref()),

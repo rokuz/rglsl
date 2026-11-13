@@ -11,8 +11,9 @@ use crate::scope::{Direction, Origin, Storage, SymbolKind};
 use crate::types::{ArraySize, Scalar, Type, TypeKind};
 use crate::{
     analyze, analyze_with_builtins, Analysis, Builtins, Callee, DiagnosticKind, Options,
-    ResourceLimits, Stage,
+    ResourceLimits,
 };
+use rglsl_types::ShaderStage;
 
 struct Checked {
     source: String,
@@ -20,7 +21,7 @@ struct Checked {
     analysis: Analysis,
 }
 
-fn check(stage: Stage, body: &str) -> TestResult<Checked> {
+fn check(stage: ShaderStage, body: &str) -> TestResult<Checked> {
     let source = format!("#version 450\n{body}");
     let unit = rglsl_ast::parse(&source)?;
     let analysis = analyze(&unit, &Options::new(stage));
@@ -31,7 +32,7 @@ fn check(stage: Stage, body: &str) -> TestResult<Checked> {
     })
 }
 
-fn accepted(stage: Stage, body: &str) -> TestResult<Checked> {
+fn accepted(stage: ShaderStage, body: &str) -> TestResult<Checked> {
     let checked = check(stage, body)?;
     assert!(
         checked.analysis.is_ok(),
@@ -96,7 +97,7 @@ impl Checked {
 #[test]
 fn expressions_have_types() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "struct S { vec3 position; float weights[4]; };
 layout(binding = 0) uniform sampler2D image;
 layout(location = 0) in vec2 uv;
@@ -133,7 +134,7 @@ void main() {
 #[test]
 fn erroneous_expressions_have_the_error_type_and_do_not_cascade() -> TestResult {
     let checked = check(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "void main() {
     float a = missing * 2.0 + sin(missing) - vec3(missing).x;
 }
@@ -157,7 +158,7 @@ fn erroneous_expressions_have_the_error_type_and_do_not_cascade() -> TestResult 
 #[test]
 fn analysis_continues_after_errors() -> TestResult {
     let checked = check(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "void main() {
     int a = 1.5;
     bool b = 1;
@@ -179,7 +180,7 @@ fn analysis_continues_after_errors() -> TestResult {
 #[test]
 fn identifiers_refer_to_symbols() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "const int limit = 4;
 layout(binding = 0) uniform Block { float scale; } block;
 layout(binding = 1) uniform Loose { vec2 offset; };
@@ -231,7 +232,7 @@ void main() {
 #[test]
 fn calls_resolve_to_functions_built_ins_and_constructors() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "float pick(float a) { return a; }
 int pick(int a) { return a; }
 void main() {
@@ -291,7 +292,7 @@ void main() {
 #[test]
 fn implicit_conversions_are_recorded() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "float half_of(float value) { return value / 2; }
 void store(out int target) { target = 0; }
 double widen() { return 1.5; }
@@ -330,7 +331,7 @@ void main() {
 #[test]
 fn lvalues_are_marked() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "layout(location = 0) in vec4 input_color;
 layout(location = 0) out vec4 output_color;
 layout(binding = 0) uniform U { float factor; };
@@ -358,7 +359,7 @@ void main() {
 #[test]
 fn constant_expressions_are_marked_and_folded() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "const int base = 3;
 const ivec2 pair = ivec2(base, base * 2);
 layout(location = 0) flat in int dynamic;
@@ -393,7 +394,7 @@ void main() {
 #[test]
 fn declared_symbols_keep_their_types_and_qualifiers() -> TestResult {
     let checked = accepted(
-        Stage::Vertex,
+        ShaderStage::Vertex,
         "struct Light { vec3 position; float intensity; };
 layout(location = 2) in vec3 normal;
 layout(location = 1) flat out ivec2 cell;
@@ -482,7 +483,7 @@ void main() {
 #[test]
 fn structs_are_nominal() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "struct A { float x; };
 struct B { float x; };
 void main() {
@@ -500,7 +501,7 @@ void main() {
 
 fn versioned(source: &str) -> TestResult<Analysis> {
     let unit = rglsl_ast::parse(source)?;
-    Ok(analyze(&unit, &Options::new(Stage::Fragment)))
+    Ok(analyze(&unit, &Options::new(ShaderStage::Fragment)))
 }
 
 fn first_kind(analysis: &Analysis) -> Option<&DiagnosticKind> {
@@ -569,7 +570,7 @@ fn extensions_are_recorded() -> TestResult {
 fn relaxed_uniforms_allow_loose_uniforms() -> TestResult {
     let source = "#version 450\nuniform float time;\nvoid main() { float t = time; }\n";
     let unit = rglsl_ast::parse(source)?;
-    let mut options = Options::new(Stage::Fragment);
+    let mut options = Options::new(ShaderStage::Fragment);
     let strict = analyze(&unit, &options);
     assert_eq!(
         first_kind(&strict),
@@ -585,7 +586,7 @@ fn resource_limits_set_the_built_in_constants() -> TestResult {
     let source =
         "#version 450\nfloat values[gl_MaxDrawBuffers];\nvoid main() { values[5] = 1.0; }\n";
     let unit = rglsl_ast::parse(source)?;
-    let mut options = Options::new(Stage::Fragment);
+    let mut options = Options::new(ShaderStage::Fragment);
     assert!(analyze(&unit, &options).is_ok());
     options.limits.max_draw_buffers = 4;
     let analysis = analyze(&unit, &options);
@@ -600,26 +601,26 @@ fn resource_limits_set_the_built_in_constants() -> TestResult {
 fn cached_built_ins_are_reused_when_they_fit() -> TestResult {
     let source = "#version 450\nvoid main() { float a = sin(1.0); }\n";
     let unit = rglsl_ast::parse(source)?;
-    let options = Options::new(Stage::Fragment);
+    let options = Options::new(ShaderStage::Fragment);
     let builtins = Arc::new(Builtins::new(
         450,
-        Stage::Fragment,
+        ShaderStage::Fragment,
         &ResourceLimits::default(),
     ));
     let analysis = analyze_with_builtins(&unit, &options, &builtins);
     assert!(analysis.is_ok());
     assert!(Arc::ptr_eq(&analysis.builtins, &builtins));
-    let other_stage = analyze_with_builtins(&unit, &Options::new(Stage::Vertex), &builtins);
+    let other_stage = analyze_with_builtins(&unit, &Options::new(ShaderStage::Vertex), &builtins);
     assert!(other_stage.is_ok());
     assert!(!Arc::ptr_eq(&other_stage.builtins, &builtins));
-    assert_eq!(other_stage.builtins.stage(), Stage::Vertex);
+    assert_eq!(other_stage.builtins.stage(), ShaderStage::Vertex);
     Ok(())
 }
 
 #[test]
 fn every_stage_can_be_analysed() -> TestResult {
-    for stage in Stage::ALL {
-        let source = if matches!(stage, Stage::Task | Stage::Mesh) {
+    for stage in ShaderStage::ALL {
+        let source = if matches!(stage, ShaderStage::Task | ShaderStage::Mesh) {
             "#version 460\n#extension GL_EXT_mesh_shader : require\nvoid main() { float a = sqrt(4.0); }\n"
         } else {
             "#version 460\nvoid main() { float a = sqrt(4.0); }\n"
@@ -634,7 +635,7 @@ fn every_stage_can_be_analysed() -> TestResult {
 
 #[test]
 fn diagnostics_have_messages() -> TestResult {
-    let checked = check(Stage::Fragment, "void main() { int a = 1.5; }\n")?;
+    let checked = check(ShaderStage::Fragment, "void main() { int a = 1.5; }\n")?;
     let message = checked
         .analysis
         .diagnostics
@@ -647,11 +648,11 @@ fn diagnostics_have_messages() -> TestResult {
 #[test]
 fn features_vulkan_lacks_have_short_messages() -> TestResult {
     let opaque = check(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "struct S { sampler2D s; };\nuniform S s;\nvoid main() {}\n",
     )?;
     let opencl = check(
-        Stage::Compute,
+        ShaderStage::Compute,
         "#extension GL_EXT_spirv_intrinsics : enable\nlayout(local_size_x = 1) in;\nspirv_execution_mode(capabilities = [6], 18, 1, 1, 1);\nspirv_storage_class(5) float g;\nspirv_instruction(set = \"OpenCL.std\", id = 171)\nvec2 vloadn(uint offset, spirv_by_reference float p, spirv_literal int n);\nvoid main() {}\n",
     )?;
     let messages: Vec<String> = opaque
@@ -707,7 +708,7 @@ fn nested_sources_are_analysed() -> TestResult {
             close.repeat(count),
         );
         let unit = rglsl_ast::parse(&source)?;
-        let analysis = analyze(&unit, &Options::new(Stage::Fragment));
+        let analysis = analyze(&unit, &Options::new(ShaderStage::Fragment));
         assert_eq!(analysis.version, Some(450), "{open}");
     }
     let structures = format!(
@@ -716,14 +717,14 @@ fn nested_sources_are_analysed() -> TestResult {
         "} a; ".repeat(limit)
     );
     let unit = rglsl_ast::parse(&structures)?;
-    assert!(!analyze(&unit, &Options::new(Stage::Fragment)).is_ok());
+    assert!(!analyze(&unit, &Options::new(ShaderStage::Fragment)).is_ok());
     let lists = format!(
         "#version 450\nint a = {}1{};\nvoid main() {{}}\n",
         "{".repeat(limit),
         "}".repeat(limit)
     );
     let unit = rglsl_ast::parse(&lists)?;
-    assert!(!analyze(&unit, &Options::new(Stage::Fragment)).is_ok());
+    assert!(!analyze(&unit, &Options::new(ShaderStage::Fragment)).is_ok());
     Ok(())
 }
 
@@ -763,7 +764,7 @@ fn extension_warnings_and_implied_extensions_are_recorded() -> TestResult {
 #[test]
 fn explicit_types_choose_glslang_common_types() -> TestResult {
     let checked = check(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "#extension GL_EXT_shader_explicit_arithmetic_types : enable\nvoid main() {\n    int8_t a = int8_t(1);\n    uint16_t b = uint16_t(2);\n    int64_t c = 3l;\n    uint d = 4u;\n    float16_t h = 1.0hf;\n    a + b;\n    c + d;\n    a + d;\n    b + h;\n    h + 1.0;\n    a * 2;\n}\n",
     )?;
     assert!(
@@ -790,7 +791,7 @@ fn explicit_types_choose_glslang_common_types() -> TestResult {
 fn sized_literals_fold_with_their_width() -> TestResult {
     use crate::constant::Value;
     let checked = check(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "#extension GL_EXT_shader_explicit_arithmetic_types : enable\nvoid main() {\n    0xFFFFFFFFFFFFFFFFul + 2ul;\n    int16_t(-32768s - 1s);\n    uint8_t(250) + uint8_t(10);\n    0.1hf;\n    -0x8000000000000000l;\n}\n",
     )?;
     assert!(
@@ -825,7 +826,7 @@ fn sized_literals_fold_with_their_width() -> TestResult {
 fn matrix_comp_mult_folds() -> TestResult {
     use crate::constant::Value;
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "void main() {\n    matrixCompMult(mat2(1.0, 2.0, 3.0, 4.0), mat2(2.0));\n    matrixCompMult(dmat2x3(1.5), dmat2x3(3.0));\n}\n",
     )?;
     let values: Vec<Vec<Value>> = statement_expressions(&checked)
@@ -877,7 +878,7 @@ fn statement_expression_types(checked: &Checked) -> Vec<Type> {
 #[test]
 fn nonuniform_propagates_as_in_glslang() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "#extension GL_EXT_nonuniform_qualifier : enable
 layout(location = 0) flat in int i;
 layout(location = 1) nonuniformEXT flat in int ni;
@@ -974,7 +975,7 @@ void main() {
 #[test]
 fn nonuniform_matrix_products_are_uniform_as_in_glslang() -> TestResult {
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         "#extension GL_EXT_nonuniform_qualifier : enable
 layout(location = 0) in vec2 v;
 void main() {
@@ -1013,7 +1014,7 @@ fn long_chains_are_typed_and_folded_in_source_order() -> TestResult {
     let assigned = format!("{}3", "x = y = ".repeat(links / 2));
     let negated = format!("{}5", "- ".repeat(links + 1));
     let checked = accepted(
-        Stage::Fragment,
+        ShaderStage::Fragment,
         &format!(
             "layout(location = 0) flat in int dynamic;
 void main() {{
@@ -1048,7 +1049,7 @@ void main() {{
 #[test]
 fn narrow_transform_feedback_names_the_narrowest_width() -> TestResult {
     let checked = check(
-        Stage::Vertex,
+        ShaderStage::Vertex,
         "#extension GL_EXT_shader_explicit_arithmetic_types : require\nlayout(location = 0, xfb_buffer = 0, xfb_offset = 0) out Block {\n    float16_t h;\n    uint8_t b;\n};\nvoid main() {}\n",
     )?;
     let messages: Vec<String> = checked

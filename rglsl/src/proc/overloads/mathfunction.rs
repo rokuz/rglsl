@@ -3,9 +3,7 @@
 use crate::proc::overloads::any_overload_set::AnyOverloadSet;
 use crate::proc::overloads::list::List;
 use crate::proc::overloads::regular::regular;
-use crate::proc::overloads::utils::{
-    float_scalars, float_scalars_unimplemented_abstract, list, pairs, rule, scalar_or_vecn, triples,
-};
+use crate::proc::overloads::utils::{float_scalars, list, pairs, rule, scalar_or_vecn, triples};
 use crate::proc::overloads::OverloadSet;
 use crate::proc::type_methods::{concrete_int_scalars, vector_sizes};
 
@@ -38,7 +36,6 @@ impl ir::MathFunction {
             | Mf::Asinh
             | Mf::Acosh
             | Mf::Atanh
-            | Mf::Saturate
             | Mf::Radians
             | Mf::Degrees
             | Mf::Ceil
@@ -66,7 +63,7 @@ impl ir::MathFunction {
             | Mf::CountOneBits
             | Mf::ReverseBits
             | Mf::FirstTrailingBit
-            | Mf::FirstLeadingBit => regular!(1, SCALAR|VECN of CONCRETE_INTEGER).into(),
+            | Mf::FirstLeadingBit => regular!(1, SCALAR|VECN of INTEGER).into(),
 
             // Packing functions
             Mf::Pack4x8snorm | Mf::Pack4x8unorm => regular!(1, VEC4 of F32 -> U32).into(),
@@ -94,24 +91,21 @@ impl ir::MathFunction {
 
             // One-off operations
             Mf::Dot => regular!(2, VECN of NUMERIC -> Scalar).into(),
-            Mf::Modf => regular!(1, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED -> Modf).into(),
-            Mf::Frexp => regular!(1, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED -> Frexp).into(),
+            Mf::Modf => regular!(1, SCALAR|VECN of FLOAT -> Modf).into(),
+            Mf::Frexp => regular!(1, SCALAR|VECN of FLOAT -> Frexp).into(),
             Mf::Ldexp => ldexp().into(),
             Mf::Outer => outer().into(),
             Mf::Cross => regular!(2, VEC3 of FLOAT).into(),
-            Mf::Distance => {
-                regular!(2, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED -> Scalar).into()
-            }
+            Mf::Distance => regular!(2, SCALAR|VECN of FLOAT -> Scalar).into(),
             Mf::Length => regular!(1, SCALAR|VECN of FLOAT -> Scalar).into(),
             Mf::Normalize => regular!(1, SCALAR|VECN of FLOAT).into(),
-            Mf::FaceForward => regular!(3, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED).into(),
-            Mf::Reflect => regular!(2, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED).into(),
+            Mf::FaceForward => regular!(3, SCALAR|VECN of FLOAT).into(),
+            Mf::Reflect => regular!(2, SCALAR|VECN of FLOAT).into(),
             Mf::Refract => refract().into(),
             Mf::Mix => mix().into(),
             Mf::Inverse => regular!(1, MAT2X2|MAT3X3|MAT4X4 of FLOAT).into(),
             Mf::Transpose => transpose().into(),
             Mf::Determinant => regular!(1, MAT2X2|MAT3X3|MAT4X4 of FLOAT -> Scalar).into(),
-            Mf::QuantizeToF16 => regular!(1, SCALAR|VECN of F32).into(),
             Mf::AddCarry | Mf::SubBorrow => regular!(2, SCALAR|VECN of U32 -> Wide).into(),
             Mf::MulExtended => regular!(2, SCALAR|VECN of U32|I32 -> Wide).into(),
             Mf::ExtractBits => extract_bits().into(),
@@ -126,12 +120,10 @@ fn ldexp() -> List {
     /// Construct the exponent scalar given the mantissa's inner.
     const fn exponent_from_mantissa(mantissa: ir::Scalar) -> Option<ir::Scalar> {
         match mantissa.kind {
-            ir::ScalarKind::AbstractFloat => Some(ir::Scalar::ABSTRACT_INT),
             ir::ScalarKind::Float => Some(ir::Scalar::I32),
             ir::ScalarKind::Sint
             | ir::ScalarKind::Uint
             | ir::ScalarKind::Bool
-            | ir::ScalarKind::AbstractInt
             | ir::ScalarKind::BFloat
             | ir::ScalarKind::FloatE4M3
             | ir::ScalarKind::FloatE5M2
@@ -145,7 +137,7 @@ fn ldexp() -> List {
 
     list(
         // The ldexp mantissa argument can be any floating-point type.
-        float_scalars_unimplemented_abstract().flat_map(|mantissa_scalar| {
+        float_scalars().flat_map(|mantissa_scalar| {
             // The exponent type is the integer counterpart of the mantissa type.
             let exponent_scalar = exponent_from_mantissa(mantissa_scalar);
             // There are scalar and vector component-wise overloads.
@@ -226,12 +218,7 @@ fn packed_integer_dot(accumulate: bool) -> List {
 
 fn outer() -> List {
     list(
-        triples(
-            vector_sizes(),
-            vector_sizes(),
-            float_scalars_unimplemented_abstract(),
-        )
-        .map(|(cols, rows, scalar)| {
+        triples(vector_sizes(), vector_sizes(), float_scalars()).map(|(cols, rows, scalar)| {
             // `outer(c, r)` is the linear-algebra product `c * r^T`: the left
             // operand is a column (one component per row of the result) and
             // the right operand has one component per column. This is what
@@ -250,7 +237,7 @@ fn outer() -> List {
 
 fn refract() -> List {
     list(
-        pairs(vector_sizes(), float_scalars_unimplemented_abstract())
+        pairs(vector_sizes(), float_scalars())
             .map(|(size, scalar)| {
                 let incident = ir::TypeInner::Vector { size, scalar };
                 let normal = incident.clone();
@@ -258,7 +245,7 @@ fn refract() -> List {
                 let result = incident.clone();
                 rule([incident, normal, ratio], result)
             })
-            .chain(float_scalars_unimplemented_abstract().map(|scalar| {
+            .chain(float_scalars().map(|scalar| {
                 let scalar = ir::TypeInner::Scalar(scalar);
                 rule([scalar.clone(), scalar.clone(), scalar.clone()], scalar)
             })),

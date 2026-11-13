@@ -204,7 +204,6 @@ fn image_name(dim: crate::ImageDimension, arrayed: bool, class: crate::ImageClas
     let (prefix, base, multi) = match class {
         crate::ImageClass::Sampled { kind, multi } => (kind_prefix(kind), "texture", multi),
         crate::ImageClass::Depth { multi } => ("", "texture", multi),
-        crate::ImageClass::External => ("", "texture", false),
         crate::ImageClass::Storage { format, multi, .. } => (
             kind_prefix(crate::Scalar::from(format).kind),
             "image",
@@ -235,7 +234,7 @@ fn sampled_image_name(
 
 const fn kind_prefix(kind: crate::ScalarKind) -> &'static str {
     match kind {
-        crate::ScalarKind::Sint | crate::ScalarKind::AbstractInt => "i",
+        crate::ScalarKind::Sint => "i",
         crate::ScalarKind::Uint => "u",
         crate::ScalarKind::Float
         | crate::ScalarKind::Bool
@@ -246,8 +245,7 @@ const fn kind_prefix(kind: crate::ScalarKind) -> &'static str {
         | crate::ScalarKind::FloatE3M2
         | crate::ScalarKind::FloatE2M3
         | crate::ScalarKind::FloatUE8M0
-        | crate::ScalarKind::FloatMXINT8
-        | crate::ScalarKind::AbstractFloat => "",
+        | crate::ScalarKind::FloatMXINT8 => "",
     }
 }
 
@@ -255,7 +253,7 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
     let bits = u32::from(scalar.width) * 8;
     match scalar.kind {
         crate::ScalarKind::Bool => ("bool", ENCODING_BOOLEAN),
-        crate::ScalarKind::Sint | crate::ScalarKind::AbstractInt => (
+        crate::ScalarKind::Sint => (
             match bits {
                 8 => "int8_t",
                 16 => "int16_t",
@@ -273,7 +271,7 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
             },
             ENCODING_UNSIGNED,
         ),
-        crate::ScalarKind::Float | crate::ScalarKind::AbstractFloat => (
+        crate::ScalarKind::Float => (
             match bits {
                 16 => "float16_t",
                 64 => "double",

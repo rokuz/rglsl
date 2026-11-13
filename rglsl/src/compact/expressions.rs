@@ -153,7 +153,6 @@ impl ExpressionTracer<'_> {
                 offset,
                 ref level,
                 depth_ref,
-                clamp_to_edge: _,
                 min_lod,
                 sparse,
             } => {
@@ -350,7 +349,6 @@ impl ExpressionTracer<'_> {
             // that we will trace.
             Ex::CallResult(_) => {}
             Ex::AtomicResult { ty, comparison: _ }
-            | Ex::WorkGroupUniformLoadResult { ty }
             | Ex::SubgroupOperationResult { ty }
             | Ex::SpirvInstructionResult { ty } => {
                 self.types_used.insert(ty);
@@ -522,7 +520,6 @@ impl ModuleMap {
                 ref mut offset,
                 ref mut level,
                 ref mut depth_ref,
-                clamp_to_edge: _,
                 ref mut min_lod,
                 ref mut sparse,
             } => {
@@ -680,7 +677,6 @@ impl ModuleMap {
                 ref mut ty,
                 comparison: _,
             } => self.types.adjust(ty)?,
-            Ex::WorkGroupUniformLoadResult { ref mut ty } => self.types.adjust(ty)?,
             Ex::SubgroupOperationResult { ref mut ty }
             | Ex::SpirvInstructionResult { ref mut ty } => self.types.adjust(ty)?,
             Ex::ArrayLength(ref mut expr) | Ex::WideArrayLength(ref mut expr) => adjust(expr)?,

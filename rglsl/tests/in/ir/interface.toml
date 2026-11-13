@@ -1,8 +1,0 @@
-targets = "SPIRV"
-
-[spv]
-adjust_coordinate_space = false
-clamp_frag_depth = true
-force_point_size = true
-separate_entry_points = true
-version = [1, 0]

@@ -5,7 +5,7 @@
 )]
 
 use rglsl_fuzz::{analyze_shader, generate_family, parse_shader, FamilyOptions, Random, ShaderJob};
-use rglsl_sema::Stage;
+use rglsl_types::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -34,7 +34,7 @@ void main() {
 
 fn assert_valid(name: &str, text: &str) -> TestResult {
     let unit = parse_shader(text).map_err(|error| format!("{name}: {error}"))?;
-    let analysis = analyze_shader(&unit, Stage::Fragment, false, None)?;
+    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None)?;
     assert!(
         analysis.diagnostics.is_empty(),
         "{name}: {:?}\n{text}",

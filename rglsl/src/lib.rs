@@ -1,16 +1,11 @@
 /*!
-A Vulkan GLSL to SPIR-V compiler: a hard fork of rglsl.
+A Vulkan GLSL to SPIR-V compiler: a hard fork of naga.
 
 # Example
 
 The following example compiles a GLSL fragment shader to SPIR-V.
-It requires the features `"glsl-in"` and `"spv-out"` to be enabled.
 
-*/
-// If we don't have the required front- and backends, don't try to build this example.
-#![cfg_attr(all(feature = "glsl-in", feature = "spv-out"), doc = "```")]
-#![cfg_attr(not(all(feature = "glsl-in", feature = "spv-out")), doc = "```ignore")]
-/*!
+```
 let glsl_source = "
 #version 450
 layout(location = 0) out vec4 color;
@@ -84,18 +79,15 @@ assert_eq!(words[0], 0x0723_0203);
 #![no_std]
 #![forbid(unsafe_code)]
 
-#[cfg(std)]
+#[cfg(any(test, feature = "arbitrary"))]
 extern crate std;
 
 extern crate alloc;
-
-extern crate rglsl_types as nt;
 
 mod arena;
 pub mod back;
 pub mod common;
 pub mod compact;
-pub mod diagnostic_filter;
 pub mod error;
 pub mod front;
 pub mod ir;
@@ -110,16 +102,13 @@ use alloc::string::String;
 pub use crate::arena::{Arena, Handle, Range, UniqueArena};
 pub use crate::span::{SourceLocation, Span, SpanContext, WithSpan};
 
-pub use nt::{FastHashMap, FastHashSet, FastIndexMap, FastIndexSet};
+pub use rglsl_types::{FastHashMap, FastHashSet, FastIndexMap, FastIndexSet};
 
 // TODO: Eliminate this re-export and migrate uses of `crate::Foo` to `use crate::ir; ir::Foo`.
 pub use ir::*;
 
 /// Width of a boolean type, in bytes.
 pub const BOOL_WIDTH: Bytes = 1;
-
-/// Width of abstract types, in bytes.
-pub const ABSTRACT_WIDTH: Bytes = 8;
 
 /// Map of expressions that have associated variable names
 pub(crate) type NamedExpressions = FastIndexMap<Handle<Expression>, String>;

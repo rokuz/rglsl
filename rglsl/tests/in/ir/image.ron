@@ -256,11 +256,7 @@
         ),
     ],
     special_types: (
-        ray_desc: None,
-        ray_intersection: None,
         ray_vertex_return: None,
-        external_texture_params: None,
-        external_texture_transfer_function: None,
         predeclared_types: {},
     ),
     constants: [],
@@ -1113,9 +1109,7 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -1243,9 +1237,7 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -1548,9 +1540,7 @@
                         value: Some(53),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -1722,9 +1712,7 @@
                         value: Some(26),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -1790,7 +1778,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1811,7 +1798,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1841,7 +1827,6 @@
                         offset: Some(24),
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1862,7 +1847,6 @@
                         offset: None,
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1883,7 +1867,6 @@
                         offset: Some(6),
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1905,7 +1888,6 @@
                         offset: Some(6),
                         level: Bias(40),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1926,7 +1908,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: true,
                     ),
                     Binary(
                         op: Add,
@@ -1948,7 +1929,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1970,7 +1950,6 @@
                         offset: Some(6),
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1992,7 +1971,6 @@
                         offset: None,
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2014,7 +1992,6 @@
                         offset: Some(6),
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2037,7 +2014,6 @@
                         offset: Some(6),
                         level: Bias(76),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2059,7 +2035,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2081,7 +2056,6 @@
                         offset: Some(6),
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2103,7 +2077,6 @@
                         offset: None,
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2125,7 +2098,6 @@
                         offset: Some(6),
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2148,7 +2120,6 @@
                         offset: Some(6),
                         level: Bias(107),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2170,7 +2141,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2192,7 +2162,6 @@
                         offset: None,
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2215,7 +2184,6 @@
                         offset: None,
                         level: Bias(126),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2237,7 +2205,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2259,7 +2226,6 @@
                         offset: None,
                         level: Exact(7),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2282,7 +2248,6 @@
                         offset: None,
                         level: Bias(145),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2593,9 +2558,7 @@
                         value: Some(148),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -2652,7 +2615,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2674,7 +2636,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2696,7 +2657,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2717,7 +2677,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2738,7 +2697,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2760,7 +2718,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2782,7 +2739,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2803,7 +2759,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(4),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -2932,9 +2887,7 @@
                         value: Some(50),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -2976,7 +2929,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(9),
                     GlobalVariable(17),
@@ -2998,7 +2950,6 @@
                         offset: Some(10),
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(19),
                     GlobalVariable(18),
@@ -3011,7 +2962,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(2),
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(19),
                     GlobalVariable(18),
@@ -3033,7 +2983,6 @@
                         offset: Some(19),
                         level: Zero,
                         depth_ref: Some(2),
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(10),
                     GlobalVariable(17),
@@ -3046,7 +2995,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(11),
                     GlobalVariable(17),
@@ -3059,7 +3007,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     As(
                         expr: 23,
@@ -3149,9 +3096,7 @@
                         value: Some(33),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
@@ -3193,7 +3138,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(19),
                     GlobalVariable(17),
@@ -3206,7 +3150,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     GlobalVariable(19),
                     GlobalVariable(17),
@@ -3219,7 +3162,6 @@
                         offset: None,
                         level: Exact(2),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Splat(
                         size: Quad,
@@ -3272,14 +3214,9 @@
                         value: Some(15),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

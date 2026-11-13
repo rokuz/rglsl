@@ -7,7 +7,9 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::{analyze, Analysis, DiagnosticKind, Options, Stage};
+use crate::{analyze, Analysis, DiagnosticKind, Options};
+
+use rglsl_types::ShaderStage;
 
 const CASES: &str = include_str!("cases.txt");
 
@@ -15,7 +17,7 @@ type TestResult<T = ()> = Result<T, alloc::boxed::Box<dyn core::error::Error>>;
 
 pub(crate) struct Case {
     pub name: String,
-    pub stage: Stage,
+    pub stage: ShaderStage,
     pub source: String,
     pub expected: Vec<(u32, String)>,
 }
@@ -64,7 +66,7 @@ pub(crate) fn cases() -> TestResult<Vec<Case>> {
         let mut target = target.split(' ');
         let stage = target
             .next()
-            .and_then(Stage::from_extension)
+            .and_then(ShaderStage::from_extension)
             .ok_or_else(|| format!("unknown stage in: {header}"))?;
         let version = target.next().unwrap_or("450");
         let mut expected: Vec<(u32, String)> = if *expectations == "ok" {
@@ -168,7 +170,7 @@ fn mutated_shaders_are_analysed_without_panicking() -> TestResult {
 
     use crate::{analyze_with_builtins, Builtins, ResourceLimits};
 
-    let mut cache: BTreeMap<(u32, Stage), Arc<Builtins>> = BTreeMap::new();
+    let mut cache: BTreeMap<(u32, ShaderStage), Arc<Builtins>> = BTreeMap::new();
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
     let mut next = move |bound: usize| {
         state ^= state << 13;

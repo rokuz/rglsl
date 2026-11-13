@@ -1,6 +1,1 @@
-targets = "SPIRV | IR | ANALYSIS"
-
-[spv]
-adjust_coordinate_space = false
-debug = true
-version = [1, 1]
+targets = "IR | ANALYSIS"

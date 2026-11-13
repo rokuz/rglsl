@@ -5,7 +5,7 @@ use rglsl_fuzz::reduce::{finalise, reduce, ReduceOptions};
 use rglsl_fuzz::{
     analyze_shader, generate_variant_with_donors, parse_shader, GeneratorOptions, Random, ShaderJob,
 };
-use rglsl_sema::Stage;
+use rglsl_types::ShaderStage;
 use samples::{sample_donors, sample_jobs, TestResult};
 
 const MARKER: &str = "800";
@@ -40,7 +40,7 @@ fn valid_with_marker(job: &ShaderJob) -> TestResult<bool> {
     let Ok(unit) = parse_shader(&text) else {
         return Ok(false);
     };
-    Ok(analyze_shader(&unit, Stage::Fragment, false, None)?
+    Ok(analyze_shader(&unit, ShaderStage::Fragment, false, None)?
         .diagnostics
         .is_empty()
         && text.contains(MARKER))

@@ -4,10 +4,8 @@ Frontend parsers that consume binary and text shaders and load them into [`Modul
 
 mod type_gen;
 
-#[cfg(feature = "glsl-in")]
 pub mod glsl;
 
-use alloc::boxed::Box;
 use core::ops;
 
 use crate::{
@@ -142,12 +140,5 @@ impl ops::Index<Handle<crate::Expression>> for Typifier {
     type Output = TypeResolution;
     fn index(&self, handle: Handle<crate::Expression>) -> &Self::Output {
         &self.resolutions[handle]
-    }
-}
-
-impl crate::Module {
-    pub fn get_or_insert_default_doc_comments(&mut self) -> &mut Box<crate::DocComments> {
-        self.doc_comments
-            .get_or_insert_with(|| Box::new(crate::DocComments::default()))
     }
 }

@@ -10,7 +10,6 @@ use alloc::vec::Vec;
 use crate::{
     arena::{self, BadHandle, HandleSet},
     compact::functions::FunctionTracer,
-    ir,
 };
 use handle_set_map::HandleMap;
 pub use remap::Remap;
@@ -40,10 +39,6 @@ impl From<KeepUnused> for bool {
 ///
 /// Unlike [`compact`], this neither changes `module` nor needs it to be valid,
 /// so a frontend can use it while it is still building the module.
-#[cfg_attr(
-    not(feature = "glsl-in"),
-    allow(dead_code, reason = "only the GLSL frontend uses this")
-)]
 pub(crate) fn live_global_variables(module: &crate::Module) -> HandleSet<crate::GlobalVariable> {
     let mut tracer = ModuleTracer::new(module);
     for entry_point in &module.entry_points {
@@ -72,7 +67,6 @@ pub enum CompactError {
 ///
 /// Always removes the following unused objects:
 /// - anonymous types, overrides, and constants
-/// - abstract-typed constants
 /// - expressions
 ///
 /// If `keep_unused` is `Yes`, the following are never considered unused,
@@ -92,8 +86,7 @@ pub enum CompactError {
 ///
 /// After removing items according to the rules above, all handles in the
 /// remaining objects are adjusted as necessary. When `KeepUnused` is `Yes`, the
-/// resulting module should have all the named objects (except abstract-typed
-/// constants) present in the original, and those objects should be functionally
+/// resulting module should have all the named objects present in the original, and those objects should be functionally
 /// identical. When `KeepUnused` is `No`, the resulting module should have the
 /// entry points present in the original, and those entry points should be
 /// functionally identical.
@@ -186,27 +179,6 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
             for &variable in &e.interface {
                 module_tracer.global_variables_used.insert(variable);
             }
-            if let Some(ref mesh_info) = e.mesh_info {
-                module_tracer
-                    .global_variables_used
-                    .insert(mesh_info.output_variable);
-                module_tracer
-                    .types_used
-                    .insert(mesh_info.vertex_output_type);
-                module_tracer
-                    .types_used
-                    .insert(mesh_info.primitive_output_type);
-                if let Some(max_vertices_override) = mesh_info.max_vertices_override {
-                    module_tracer
-                        .global_expressions_used
-                        .insert(max_vertices_override);
-                }
-                if let Some(max_primitives_override) = mesh_info.max_primitives_override {
-                    module_tracer
-                        .global_expressions_used
-                        .insert(max_primitives_override);
-                }
-            }
             if e.stage == crate::ShaderStage::Task || e.stage == crate::ShaderStage::Mesh {
                 // Mesh shaders always need a u32 type, as it is e.g. the type of some
                 // expressions. We tolerate its absence here because compaction is
@@ -295,16 +267,12 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         }
     }
 
-    // We treat all named constants as used by definition, unless they have an
-    // abstract type as we do not want those reaching the validator.
+    // We treat all named constants as used by definition.
     log::trace!("tracing named constants");
     for (handle, constant) in module.constants.iter() {
         let Some(ref name) = constant.name else {
             continue;
         };
-        if module.types[constant.ty].inner.is_abstract(&module.types) {
-            continue;
-        }
 
         log::trace!("tracing constant {name:?}");
         module_tracer.constants_used.insert(handle);
@@ -457,11 +425,6 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         }
     })?;
 
-    // Adjust doc comments
-    if let Some(ref mut doc_comments) = module.doc_comments {
-        module_map.adjust_doc_comments(doc_comments.as_mut());
-    }
-
     // Temporary storage to help us reuse allocations of existing
     // named expression tables.
     let mut reused_named_expressions = crate::NamedExpressions::default();
@@ -513,23 +476,6 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         {
             module_map.globals.adjust(variable)?;
         }
-        if let Some(ref mut mesh_info) = entry.mesh_info {
-            module_map.globals.adjust(&mut mesh_info.output_variable)?;
-            module_map.types.adjust(&mut mesh_info.vertex_output_type)?;
-            module_map
-                .types
-                .adjust(&mut mesh_info.primitive_output_type)?;
-            if let Some(ref mut max_vertices_override) = mesh_info.max_vertices_override {
-                module_map
-                    .global_expressions
-                    .adjust(max_vertices_override)?;
-            }
-            if let Some(ref mut max_primitives_override) = mesh_info.max_primitives_override {
-                module_map
-                    .global_expressions
-                    .adjust(max_primitives_override)?;
-            }
-        }
     }
     Ok(())
 }
@@ -565,31 +511,12 @@ impl<'module> ModuleTracer<'module> {
 
     fn trace_special_types(&mut self, special_types: &crate::SpecialTypes) {
         let crate::SpecialTypes {
-            ref ray_desc,
-            ref ray_intersection,
             ref ray_vertex_return,
             ref predeclared_types,
-            ref external_texture_params,
-            ref external_texture_transfer_function,
         } = *special_types;
 
-        if let Some(ray_desc) = *ray_desc {
-            self.types_used.insert(ray_desc);
-        }
-        if let Some(ray_intersection) = *ray_intersection {
-            self.types_used.insert(ray_intersection);
-        }
         if let Some(ray_vertex_return) = *ray_vertex_return {
             self.types_used.insert(ray_vertex_return);
-        }
-        // The `external_texture_params` type is generated purely as a
-        // convenience to the backends. While it will never actually be used in
-        // the IR, it must be marked as used so that it survives compaction.
-        if let Some(external_texture_params) = *external_texture_params {
-            self.types_used.insert(external_texture_params);
-        }
-        if let Some(external_texture_transfer_function) = *external_texture_transfer_function {
-            self.types_used.insert(external_texture_transfer_function);
         }
         for (_, &handle) in predeclared_types {
             self.types_used.insert(handle);
@@ -738,86 +665,18 @@ impl From<ModuleTracer<'_>> for ModuleMap {
 impl ModuleMap {
     fn adjust_special_types(&self, special: &mut crate::SpecialTypes) -> Result<(), BadHandle> {
         let crate::SpecialTypes {
-            ref mut ray_desc,
-            ref mut ray_intersection,
             ref mut ray_vertex_return,
             ref mut predeclared_types,
-            ref mut external_texture_params,
-            ref mut external_texture_transfer_function,
         } = *special;
-
-        if let Some(ref mut ray_desc) = *ray_desc {
-            self.types.adjust(ray_desc)?;
-        }
-        if let Some(ref mut ray_intersection) = *ray_intersection {
-            self.types.adjust(ray_intersection)?;
-        }
 
         if let Some(ref mut ray_vertex_return) = *ray_vertex_return {
             self.types.adjust(ray_vertex_return)?;
-        }
-
-        if let Some(ref mut external_texture_params) = *external_texture_params {
-            self.types.adjust(external_texture_params)?;
-        }
-
-        if let Some(ref mut external_texture_transfer_function) =
-            *external_texture_transfer_function
-        {
-            self.types.adjust(external_texture_transfer_function)?;
         }
 
         for handle in predeclared_types.values_mut() {
             self.types.adjust(handle)?;
         }
         Ok(())
-    }
-
-    fn adjust_doc_comments(&self, doc_comments: &mut ir::DocComments) {
-        let crate::DocComments {
-            module: _,
-            types: ref mut doc_types,
-            struct_members: ref mut doc_struct_members,
-            entry_points: _,
-            functions: ref mut doc_functions,
-            constants: ref mut doc_constants,
-            global_variables: ref mut doc_globals,
-        } = *doc_comments;
-        log::trace!("adjusting doc comments for types");
-        for (ty, doc_comment) in core::mem::take(doc_types) {
-            let Some(ty) = self.types.try_adjust(ty) else {
-                continue;
-            };
-            doc_types.insert(ty, doc_comment);
-        }
-        log::trace!("adjusting doc comments for struct members");
-        for ((ty, index), doc_comment) in core::mem::take(doc_struct_members) {
-            let Some(ty) = self.types.try_adjust(ty) else {
-                continue;
-            };
-            doc_struct_members.insert((ty, index), doc_comment);
-        }
-        log::trace!("adjusting doc comments for functions");
-        for (handle, doc_comment) in core::mem::take(doc_functions) {
-            let Some(handle) = self.functions.try_adjust(handle) else {
-                continue;
-            };
-            doc_functions.insert(handle, doc_comment);
-        }
-        log::trace!("adjusting doc comments for constants");
-        for (constant, doc_comment) in core::mem::take(doc_constants) {
-            let Some(constant) = self.constants.try_adjust(constant) else {
-                continue;
-            };
-            doc_constants.insert(constant, doc_comment);
-        }
-        log::trace!("adjusting doc comments for globals");
-        for (handle, doc_comment) in core::mem::take(doc_globals) {
-            let Some(handle) = self.globals.try_adjust(handle) else {
-                continue;
-            };
-            doc_globals.insert(handle, doc_comment);
-        }
     }
 }
 

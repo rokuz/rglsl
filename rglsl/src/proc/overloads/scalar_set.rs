@@ -6,7 +6,7 @@ use crate::proc::overloads::one_bits_iter::OneBitsIter;
 macro_rules! define_scalar_set {
     { $( $scalar:ident, )* } => {
         /// An enum used to assign distinct bit numbers to [`ScalarSet`] elements.
-        #[expect(non_camel_case_types, clippy::upper_case_acronyms)]
+        #[expect(clippy::upper_case_acronyms)]
         #[repr(u32)]
         enum ScalarSetBits {
             $( $scalar, )*
@@ -57,7 +57,6 @@ define_scalar_set! {
     //
     // In the concrete types, the 32-bit types *must* appear before
     // other sizes, since that is how we represent conversion rank.
-    ABSTRACT_INT, ABSTRACT_FLOAT,
     I32, I16, I64, I8,
     U32, U16, U64, U8,
     F32, F16, F64,
@@ -67,7 +66,7 @@ define_scalar_set! {
 impl ScalarSet {
     /// Return the set of scalars to which `scalar` can be automatically
     /// converted.
-    pub fn convertible_from(scalar: Scalar) -> Self {
+    pub const fn convertible_from(scalar: Scalar) -> Self {
         use Scalar as Sc;
         match scalar {
             Sc::I8 => Self::I8,
@@ -82,8 +81,6 @@ impl ScalarSet {
             Sc::F32 => Self::F32,
             Sc::F64 => Self::F64,
             Sc::BOOL => Self::BOOL,
-            Sc::ABSTRACT_INT => Self::INTEGER | Self::FLOAT,
-            Sc::ABSTRACT_FLOAT => Self::FLOAT,
             _ => Self::empty(),
         }
     }
@@ -104,13 +101,9 @@ impl ScalarSet {
         OneBitsIter::new(self.bits() as u64).map(|bit| Self::from_bits_retain(bit as u16))
     }
 
-    pub const FLOAT: Self = Self::ABSTRACT_FLOAT
-        .union(Self::F16)
-        .union(Self::F32)
-        .union(Self::F64);
+    pub const FLOAT: Self = Self::F16.union(Self::F32).union(Self::F64);
 
-    pub const INTEGER: Self = Self::ABSTRACT_INT
-        .union(Self::I8)
+    pub const INTEGER: Self = Self::I8
         .union(Self::I16)
         .union(Self::I32)
         .union(Self::I64)
@@ -120,14 +113,6 @@ impl ScalarSet {
         .union(Self::U64);
 
     pub const NUMERIC: Self = Self::FLOAT.union(Self::INTEGER);
-    pub const ABSTRACT: Self = Self::ABSTRACT_INT.union(Self::ABSTRACT_FLOAT);
-    pub const CONCRETE: Self = Self::all().difference(Self::ABSTRACT);
-    pub const CONCRETE_INTEGER: Self = Self::INTEGER.intersection(Self::CONCRETE);
-    pub const CONCRETE_FLOAT: Self = Self::FLOAT.intersection(Self::CONCRETE);
-
-    /// Floating-point scalars, with the abstract floats omitted for
-    /// #7405.
-    pub const FLOAT_ABSTRACT_UNIMPLEMENTED: Self = Self::CONCRETE_FLOAT;
 }
 
 macro_rules! scalar_set {

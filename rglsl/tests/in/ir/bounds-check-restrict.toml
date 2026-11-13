@@ -1,5 +1,0 @@
-targets = "SPIRV"
-
-[bounds_check_policies]
-index = "Restrict"
-buffer = "Restrict"

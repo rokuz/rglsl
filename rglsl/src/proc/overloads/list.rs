@@ -2,7 +2,7 @@
 //!
 //! [`OverloadSet`]: crate::proc::overloads::OverloadSet
 
-use crate::common::{DiagnosticDebug, ForDebug, ForDebugWithTypes};
+use crate::common::{DiagnosticDebug, ForDebugWithTypes};
 use crate::ir;
 use crate::proc::overloads::one_bits_iter::OneBitsIter;
 use crate::proc::overloads::Rule;
@@ -99,18 +99,7 @@ impl crate::proc::overloads::OverloadSet for List {
                         if arg_ty.non_struct_equivalent(rule_ty, types) {
                             log::debug!("    types are equivalent");
                         } else {
-                            match arg_ty.automatically_converts_to(rule_ty, types) {
-                                Some((from, to)) => {
-                                    log::debug!(
-                                        "    converts automatically from {:?} to {:?}",
-                                        from.for_debug(),
-                                        to.for_debug()
-                                    );
-                                }
-                                None => {
-                                    log::debug!("    no conversion possible");
-                                }
-                            }
+                            log::debug!("    no conversion possible");
                         }
                     }
                     None => {
@@ -121,16 +110,7 @@ impl crate::proc::overloads::OverloadSet for List {
             rule.arguments.get(i).is_some_and(|rule_ty| {
                 let rule_ty = rule_ty.inner_with(types);
                 arg_ty.non_struct_equivalent(rule_ty, types)
-                    || arg_ty.automatically_converts_to(rule_ty, types).is_some()
             })
-        })
-    }
-
-    fn concrete_only(self, types: &crate::UniqueArena<ir::Type>) -> Self {
-        self.filter(|rule| {
-            rule.arguments
-                .iter()
-                .all(|arg_ty| !arg_ty.inner_with(types).is_abstract(types))
         })
     }
 

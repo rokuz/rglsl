@@ -2,7 +2,8 @@ use rglsl_ast::Stalled;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rglsl_ast::TranslationUnit;
-use rglsl_sema::{analyze, analyze_with_builtins, Analysis, Builtins, Options, Stage};
+use rglsl_sema::{analyze, analyze_with_builtins, Analysis, Builtins, Options};
+use rglsl_types::ShaderStage;
 
 use crate::donate::Donor;
 use crate::error::Error;
@@ -64,7 +65,7 @@ fn effective_version(unit: &TranslationUnit) -> u32 {
     }
 }
 
-fn cached_builtins(unit: &TranslationUnit, stage: Stage) -> Option<Arc<Builtins>> {
+fn cached_builtins(unit: &TranslationUnit, stage: ShaderStage) -> Option<Arc<Builtins>> {
     let version = effective_version(unit);
     BUILTINS
         .lock()
@@ -83,7 +84,7 @@ fn remember_builtins(builtins: &Arc<Builtins>) {
 
 pub fn analyze_shader(
     unit: &TranslationUnit,
-    stage: Stage,
+    stage: ShaderStage,
     relaxed_uniforms: bool,
     builtins: Option<&Arc<Builtins>>,
 ) -> Result<Analysis, Stalled> {
@@ -117,7 +118,7 @@ fn shader_large_enough(
 fn apply_transformation(
     transformation: Transformation,
     unit: &mut TranslationUnit,
-    stage: Stage,
+    stage: ShaderStage,
     builtins: &mut Option<Arc<Builtins>>,
     probabilities: &Probabilities,
     params: GenerationParams,
@@ -152,7 +153,7 @@ fn apply_transformation(
 }
 
 fn available_transformations(
-    stage: Stage,
+    stage: ShaderStage,
     options: &GeneratorOptions,
     donors: &[Donor],
 ) -> Vec<Transformation> {
@@ -162,8 +163,8 @@ fn available_transformations(
         .filter(|transformation| options.enabled.contains(*transformation))
         .filter(|transformation| match transformation {
             Transformation::DonateDeadCode | Transformation::DonateLiveCode => has_donors,
-            Transformation::AddDeadOutputWrite => stage == Stage::Fragment,
-            Transformation::AddDeadBarrier => stage == Stage::Compute,
+            Transformation::AddDeadOutputWrite => stage == ShaderStage::Fragment,
+            Transformation::AddDeadBarrier => stage == ShaderStage::Compute,
             _ => true,
         })
         .collect()
@@ -171,7 +172,7 @@ fn available_transformations(
 
 pub fn transform_shader(
     unit: &mut TranslationUnit,
-    stage: Stage,
+    stage: ShaderStage,
     options: &GeneratorOptions,
     donors: &[Donor],
     random: &mut Random,

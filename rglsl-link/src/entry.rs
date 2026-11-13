@@ -171,7 +171,6 @@ impl Builder<'_> {
                 .map_err(internal)?
                 .clone();
             self.map_callees(table, index, &function.body)?;
-            function.diagnostic_filter_leaf = None;
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
@@ -227,7 +226,6 @@ impl Builder<'_> {
         let global = |handle: Handle<GlobalVariable>| remap.global(handle).map_err(internal);
         let expression =
             |handle: Handle<Expression>| remap.global_expression(handle).map_err(internal);
-        let ty = |handle: Handle<Type>| remap.ty(handle).map_err(internal);
         let EntryPoint {
             name,
             stage,
@@ -236,7 +234,6 @@ impl Builder<'_> {
             workgroup_size_overrides,
             workgroup_size_builtin,
             mut function,
-            mesh_info,
             task_payload,
             incoming_ray_payload,
             interface: _,
@@ -253,7 +250,6 @@ impl Builder<'_> {
             reconvergence,
             invariant_outputs,
         } = entry;
-        function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
         let workgroup_size_overrides = match workgroup_size_overrides {
             Some(sizes) => {
@@ -263,20 +259,6 @@ impl Builder<'_> {
                 }
                 Some(mapped)
             }
-            None => None,
-        };
-        let mesh_info = match mesh_info {
-            Some(info) => Some(rglsl::MeshStageInfo {
-                max_vertices_override: info.max_vertices_override.map(expression).transpose()?,
-                max_primitives_override: info
-                    .max_primitives_override
-                    .map(expression)
-                    .transpose()?,
-                vertex_output_type: ty(info.vertex_output_type)?,
-                primitive_output_type: ty(info.primitive_output_type)?,
-                output_variable: global(info.output_variable)?,
-                ..info
-            }),
             None => None,
         };
         let geometry = match geometry {
@@ -333,7 +315,6 @@ impl Builder<'_> {
             workgroup_size_overrides,
             workgroup_size_builtin,
             function,
-            mesh_info,
             task_payload: task_payload.map(global).transpose()?,
             incoming_ray_payload: incoming_ray_payload.map(global).transpose()?,
             interface,
@@ -389,22 +370,12 @@ impl Builder<'_> {
             let remap = self.remap(index)?;
             let mut special = self.module.special_types.clone();
             let incoming = &source.special_types;
-            for (slot, value) in [
-                (&mut special.ray_desc, incoming.ray_desc),
-                (&mut special.ray_intersection, incoming.ray_intersection),
-                (&mut special.ray_vertex_return, incoming.ray_vertex_return),
-                (
-                    &mut special.external_texture_params,
-                    incoming.external_texture_params,
-                ),
-                (
-                    &mut special.external_texture_transfer_function,
-                    incoming.external_texture_transfer_function,
-                ),
-            ] {
-                if slot.is_none() {
-                    *slot = value.map(|ty| remap.ty(ty)).transpose().map_err(internal)?;
-                }
+            if special.ray_vertex_return.is_none() {
+                special.ray_vertex_return = incoming
+                    .ray_vertex_return
+                    .map(|ty| remap.ty(ty))
+                    .transpose()
+                    .map_err(internal)?;
             }
             for (kind, &ty) in &incoming.predeclared_types {
                 if !special.predeclared_types.contains_key(kind) {

@@ -50,7 +50,7 @@ pub use fs::FileSystemIncluder;
 pub use include::{
     FileId, IncludeError, IncludeKind, IncludedFile, Includer, MemoryIncluder, NoIncluder,
 };
-pub use options::{Define, Limits, Options, Stage};
+pub use options::{Define, Limits, Options};
 pub use preprocessor::{preprocess, Preprocessed};
 pub use source_map::{LineEntry, PresumedSource, SourceMap};
 pub use version::{find_version, version_check, Profile, Version, VersionDirective};

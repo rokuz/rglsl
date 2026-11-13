@@ -22,111 +22,24 @@ pub use stages::{StageTables, ALL_STAGE_BITS};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
 use crate::types::{ArraySize, Opaque, Type, TypeRegistry};
+use rglsl_types::ShaderStage;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Stage {
-    Vertex,
-    TessControl,
-    TessEvaluation,
-    Geometry,
-    Fragment,
-    Compute,
-    Task,
-    Mesh,
-    RayGeneration,
-    Intersection,
-    AnyHit,
-    ClosestHit,
-    Miss,
-    Callable,
-}
-
-impl Stage {
-    pub const ALL: [Self; 14] = [
-        Self::Vertex,
-        Self::TessControl,
-        Self::TessEvaluation,
-        Self::Geometry,
-        Self::Fragment,
-        Self::Compute,
-        Self::Task,
-        Self::Mesh,
-        Self::RayGeneration,
-        Self::Intersection,
-        Self::AnyHit,
-        Self::ClosestHit,
-        Self::Miss,
-        Self::Callable,
-    ];
-
-    pub fn from_extension(extension: &str) -> Option<Self> {
-        Some(match extension {
-            "vert" => Self::Vertex,
-            "tesc" => Self::TessControl,
-            "tese" => Self::TessEvaluation,
-            "geom" => Self::Geometry,
-            "frag" => Self::Fragment,
-            "comp" => Self::Compute,
-            "task" => Self::Task,
-            "mesh" => Self::Mesh,
-            "rgen" => Self::RayGeneration,
-            "rint" => Self::Intersection,
-            "rahit" => Self::AnyHit,
-            "rchit" => Self::ClosestHit,
-            "rmiss" => Self::Miss,
-            "rcall" => Self::Callable,
-            _ => return None,
-        })
-    }
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Vertex => "vertex",
-            Self::TessControl => "tessellation control",
-            Self::TessEvaluation => "tessellation evaluation",
-            Self::Geometry => "geometry",
-            Self::Fragment => "fragment",
-            Self::Compute => "compute",
-            Self::Task => "task",
-            Self::Mesh => "mesh",
-            Self::RayGeneration => "ray generation",
-            Self::Intersection => "intersection",
-            Self::AnyHit => "any-hit",
-            Self::ClosestHit => "closest-hit",
-            Self::Miss => "miss",
-            Self::Callable => "callable",
-        }
-    }
-
-    const fn mask(self) -> u16 {
-        match self {
-            Self::Vertex => VERTEX,
-            Self::TessControl => TESS_CONTROL,
-            Self::TessEvaluation => TESS_EVALUATION,
-            Self::Geometry => GEOMETRY,
-            Self::Fragment => FRAGMENT,
-            Self::Compute => COMPUTE,
-            Self::Task => TASK,
-            Self::Mesh => MESH,
-            Self::RayGeneration => RAY_GENERATION,
-            Self::Intersection => INTERSECTION,
-            Self::AnyHit => ANY_HIT,
-            Self::ClosestHit => CLOSEST_HIT,
-            Self::Miss => MISS,
-            Self::Callable => CALLABLE,
-        }
-    }
-
-    pub const fn ray_tracing(self) -> bool {
-        matches!(
-            self,
-            Self::RayGeneration
-                | Self::Intersection
-                | Self::AnyHit
-                | Self::ClosestHit
-                | Self::Miss
-                | Self::Callable
-        )
+pub(crate) const fn stage_bit(stage: ShaderStage) -> u16 {
+    match stage {
+        ShaderStage::Vertex => VERTEX,
+        ShaderStage::TessControl => TESS_CONTROL,
+        ShaderStage::TessEvaluation => TESS_EVALUATION,
+        ShaderStage::Geometry => GEOMETRY,
+        ShaderStage::Fragment => FRAGMENT,
+        ShaderStage::Compute => COMPUTE,
+        ShaderStage::Task => TASK,
+        ShaderStage::Mesh => MESH,
+        ShaderStage::RayGeneration => RAY_GENERATION,
+        ShaderStage::Intersection => INTERSECTION,
+        ShaderStage::AnyHit => ANY_HIT,
+        ShaderStage::ClosestHit => CLOSEST_HIT,
+        ShaderStage::Miss => MISS,
+        ShaderStage::Callable => CALLABLE,
     }
 }
 
@@ -146,8 +59,8 @@ const MISS: u16 = 1 << 12;
 const CALLABLE: u16 = 1 << 13;
 const ALL_STAGES: u16 = 0;
 
-const fn available(stages: u16, stage: Stage) -> bool {
-    stages == ALL_STAGES || stages & stage.mask() != 0
+const fn available(stages: u16, stage: ShaderStage) -> bool {
+    stages == ALL_STAGES || stages & stage_bit(stage) != 0
 }
 
 struct Section {
@@ -493,7 +406,7 @@ impl BuiltinFunctionId {
 #[derive(Debug, Clone)]
 pub struct Builtins {
     version: u32,
-    stage: Stage,
+    stage: ShaderStage,
     limits: ResourceLimits,
     functions: Vec<Function>,
     names: BTreeMap<String, Vec<BuiltinFunctionId>>,
@@ -503,7 +416,7 @@ pub struct Builtins {
 }
 
 impl Builtins {
-    pub fn new(version: u32, stage: Stage, limits: &ResourceLimits) -> Self {
+    pub fn new(version: u32, stage: ShaderStage, limits: &ResourceLimits) -> Self {
         let (prototypes, mut types, footprints) = expand_prototypes(version);
         let mut seen = BTreeSet::new();
         let mut functions = Vec::new();
@@ -538,7 +451,7 @@ impl Builtins {
     #[allow(clippy::too_many_arguments)]
     fn assemble(
         version: u32,
-        stage: Stage,
+        stage: ShaderStage,
         limits: &ResourceLimits,
         functions: Vec<Function>,
         names: BTreeMap<String, Vec<BuiltinFunctionId>>,
@@ -574,7 +487,7 @@ impl Builtins {
         self.version
     }
 
-    pub const fn stage(&self) -> Stage {
+    pub const fn stage(&self) -> ShaderStage {
         self.stage
     }
 

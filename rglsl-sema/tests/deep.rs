@@ -1,7 +1,8 @@
 #![allow(clippy::panic)]
 
 use rglsl_ast::parse;
-use rglsl_sema::{analyze, Options, Stage};
+use rglsl_sema::{analyze, Options};
+use rglsl_types::ShaderStage;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -33,7 +34,7 @@ fn analyzed_with(name: &str, source: String, clean: bool) -> TestResult {
         .stack_size(STACK)
         .spawn(move || -> Result<(), String> {
             let unit = parse(&source).map_err(|error| format!("{name}: {error}"))?;
-            let options = Options::new(Stage::Fragment);
+            let options = Options::new(ShaderStage::Fragment);
             let analysis = analyze(&unit, &options);
             let errors: Vec<String> = analysis
                 .diagnostics

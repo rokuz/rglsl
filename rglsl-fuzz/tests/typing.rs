@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 use rglsl_ast::expressions;
 use rglsl_fuzz::{parse, TranslationUnit};
-use rglsl_sema::{analyze, Analysis, Options, Stage};
+use rglsl_sema::{analyze, Analysis, Options};
+use rglsl_types::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -45,7 +46,7 @@ fn parseable_samples() -> TestResult<Vec<(String, String)>> {
 
 fn analyzed(source: &str, relaxed_uniforms: bool) -> TestResult<(TranslationUnit, Analysis)> {
     let unit = parse(source)?;
-    let mut options = Options::new(Stage::Fragment);
+    let mut options = Options::new(ShaderStage::Fragment);
     options.relaxed_uniforms = relaxed_uniforms;
     let analysis = analyze(&unit, &options);
     Ok((unit, analysis))

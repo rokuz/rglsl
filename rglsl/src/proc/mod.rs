@@ -20,7 +20,7 @@ pub use constant_evaluator::{
     ConstantEvaluator, ConstantEvaluatorError, ExpressionKind, ExpressionKindTracker,
 };
 pub use emitter::Emitter;
-pub use index::{BoundsCheckPolicies, BoundsCheckPolicy, IndexableLength, IndexableLengthError};
+pub use index::{IndexableLength, IndexableLengthError};
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
@@ -32,8 +32,6 @@ pub use type_methods::{
 };
 pub use type_walk::{any_type, array_element, contains, contains_type, post_order};
 pub use typifier::{compare_types, ResolveContext, ResolveError, TypeResolution, LSS_ARRAY_LENGTH};
-
-use crate::non_max_u32::NonMaxU32;
 
 impl From<super::StorageFormat> for super::Scalar {
     fn from(format: super::StorageFormat) -> Self {
@@ -106,8 +104,6 @@ pub enum HashableLiteral {
     U64(u64),
     I64(i64),
     Bool(bool),
-    AbstractInt(i64),
-    AbstractFloat(u64),
     BF16(u16),
     BF8(u8, bool),
     Microscaling(u8, crate::ScalarKind),
@@ -128,8 +124,6 @@ impl From<crate::Literal> for HashableLiteral {
             crate::Literal::U64(v) => Self::U64(v),
             crate::Literal::I64(v) => Self::I64(v),
             crate::Literal::Bool(v) => Self::Bool(v),
-            crate::Literal::AbstractInt(v) => Self::AbstractInt(v),
-            crate::Literal::AbstractFloat(v) => Self::AbstractFloat(v.to_bits()),
             crate::Literal::BF16(v) => Self::BF16(v),
             crate::Literal::FE4M3(v) => Self::BF8(v, false),
             crate::Literal::FE5M2(v) => Self::BF8(v, true),
@@ -164,9 +158,7 @@ impl crate::Literal {
             | Self::I32(_)
             | Self::U64(_)
             | Self::I64(_)
-            | Self::Bool(_)
-            | Self::AbstractInt(_)
-            | Self::AbstractFloat(_) => return None,
+            | Self::Bool(_) => return None,
         })
     }
 
@@ -183,9 +175,7 @@ impl crate::Literal {
             crate::ScalarKind::Sint
             | crate::ScalarKind::Uint
             | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool
-            | crate::ScalarKind::AbstractInt
-            | crate::ScalarKind::AbstractFloat => return None,
+            | crate::ScalarKind::Bool => return None,
         })
     }
 
@@ -206,8 +196,6 @@ impl crate::Literal {
             (value, crate::ScalarKind::Sint, 8) => Some(Self::I64(value as _)),
             (1, crate::ScalarKind::Bool, crate::BOOL_WIDTH) => Some(Self::Bool(true)),
             (0, crate::ScalarKind::Bool, crate::BOOL_WIDTH) => Some(Self::Bool(false)),
-            (value, crate::ScalarKind::AbstractInt, 8) => Some(Self::AbstractInt(value as _)),
-            (value, crate::ScalarKind::AbstractFloat, 8) => Some(Self::AbstractFloat(value as _)),
             _ => None,
         }
     }
@@ -229,7 +217,6 @@ impl crate::Literal {
             (crate::ScalarKind::Sint, 4) => Some(Self::I32(-1)),
             (crate::ScalarKind::Sint, 2) => Some(Self::I16(-1)),
             (crate::ScalarKind::Sint, 1) => Some(Self::I8(-1)),
-            (crate::ScalarKind::AbstractInt, 8) => Some(Self::AbstractInt(-1)),
             _ => None,
         }
     }
@@ -250,7 +237,6 @@ impl crate::Literal {
             | Self::FMXINT8(_) => 1,
             Self::BF16(_) => 2,
             Self::Bool(_) => crate::BOOL_WIDTH,
-            Self::AbstractInt(_) | Self::AbstractFloat(_) => crate::ABSTRACT_WIDTH,
         }
     }
     pub const fn scalar(&self) -> crate::Scalar {
@@ -267,8 +253,6 @@ impl crate::Literal {
             Self::U64(_) => crate::Scalar::U64,
             Self::I64(_) => crate::Scalar::I64,
             Self::Bool(_) => crate::Scalar::BOOL,
-            Self::AbstractInt(_) => crate::Scalar::ABSTRACT_INT,
-            Self::AbstractFloat(_) => crate::Scalar::ABSTRACT_FLOAT,
             Self::BF16(_) => crate::Scalar::BF16,
             Self::FE4M3(_) => crate::Scalar::FE4M3,
             Self::FE5M2(_) => crate::Scalar::FE5M2,
@@ -350,7 +334,6 @@ impl super::MathFunction {
             Self::Min => 2,
             Self::Max => 2,
             Self::Clamp => 3,
-            Self::Saturate => 1,
             // trigonometry
             Self::Cos => 1,
             Self::Cosh => 1,
@@ -410,7 +393,6 @@ impl super::MathFunction {
             Self::Inverse => 1,
             Self::Transpose => 1,
             Self::Determinant => 1,
-            Self::QuantizeToF16 => 1,
             // bits
             Self::CountTrailingZeros => 1,
             Self::CountLeadingZeros => 1,
@@ -551,7 +533,6 @@ impl super::ImageClass {
             crate::ImageClass::Sampled { multi, .. }
             | crate::ImageClass::Depth { multi }
             | crate::ImageClass::Storage { multi, .. } => multi,
-            crate::ImageClass::External => false,
         }
     }
 
@@ -559,7 +540,6 @@ impl super::ImageClass {
         match self {
             crate::ImageClass::Sampled { multi, .. } | crate::ImageClass::Depth { multi } => !multi,
             crate::ImageClass::Storage { .. } => false,
-            crate::ImageClass::External => false,
         }
     }
 
@@ -646,7 +626,6 @@ impl GlobalCtx<'_> {
     /// This currently only evaluates scalar expressions. If adding support for vectors,
     /// consider changing `valid::expression::validate_constant_shift_amounts` to use that
     /// support.
-    #[cfg_attr(not(feature = "glsl-in"), allow(dead_code))]
     pub(super) fn get_const_val<T, E>(
         &self,
         handle: crate::Handle<crate::Expression>,
@@ -834,179 +813,6 @@ fn test_matrix_size() {
 }
 
 impl crate::Module {
-    /// Extracts mesh shader info from a mesh output global variable. Used in frontends
-    /// and by validators. This only validates the output variable itself, and not the
-    /// vertex and primitive output types.
-    ///
-    /// The output contains the extracted mesh stage info, with overrides unset,
-    /// and then the overrides separately. This is because the overrides should be
-    /// treated as expressions elsewhere, but that requires mutably modifying the
-    /// module and the expressions should only be created at parse time, not validation
-    /// time.
-    #[allow(clippy::type_complexity)]
-    pub fn analyze_mesh_shader_info(
-        &self,
-        gv: crate::Handle<crate::GlobalVariable>,
-    ) -> (
-        crate::MeshStageInfo,
-        [Option<crate::Handle<crate::Override>>; 2],
-        Option<crate::WithSpan<crate::valid::EntryPointError>>,
-    ) {
-        use crate::span::AddSpan;
-        use crate::valid::EntryPointError;
-        #[derive(Default)]
-        struct OutError {
-            pub inner: Option<EntryPointError>,
-        }
-        impl OutError {
-            pub fn set(&mut self, err: EntryPointError) {
-                if self.inner.is_none() {
-                    self.inner = Some(err);
-                }
-            }
-        }
-
-        // Used to temporarily initialize stuff
-        let null_type = crate::Handle::new(NonMaxU32::ZERO);
-        let mut output = crate::MeshStageInfo {
-            topology: crate::MeshOutputTopology::Triangles,
-            max_vertices: 0,
-            max_vertices_override: None,
-            max_primitives: 0,
-            max_primitives_override: None,
-            vertex_output_type: null_type,
-            primitive_output_type: null_type,
-            output_variable: gv,
-        };
-        // Stores the error to output, if any.
-        let mut error = OutError::default();
-        let r#type = &self.types[self.global_variables[gv].ty].inner;
-
-        let mut topology = output.topology;
-        // Max, max override, type
-        let mut vertex_info = (0, None, null_type);
-        let mut primitive_info = (0, None, null_type);
-
-        match r#type {
-            &crate::TypeInner::Struct { ref members, .. } => {
-                let mut builtins = crate::FastHashSet::default();
-                for member in members {
-                    match member.binding {
-                        Some(crate::Binding::BuiltIn(crate::BuiltIn::VertexCount)) => {
-                            // Must have type u32
-                            if self.types[member.ty].inner.scalar() != Some(crate::Scalar::U32) {
-                                error.set(EntryPointError::BadMeshOutputVariableField);
-                            }
-                            // Each builtin should only occur once
-                            if builtins.contains(&crate::BuiltIn::VertexCount) {
-                                error.set(EntryPointError::BadMeshOutputVariableType);
-                            }
-                            builtins.insert(crate::BuiltIn::VertexCount);
-                        }
-                        Some(crate::Binding::BuiltIn(crate::BuiltIn::PrimitiveCount)) => {
-                            // Must have type u32
-                            if self.types[member.ty].inner.scalar() != Some(crate::Scalar::U32) {
-                                error.set(EntryPointError::BadMeshOutputVariableField);
-                            }
-                            // Each builtin should only occur once
-                            if builtins.contains(&crate::BuiltIn::PrimitiveCount) {
-                                error.set(EntryPointError::BadMeshOutputVariableType);
-                            }
-                            builtins.insert(crate::BuiltIn::PrimitiveCount);
-                        }
-                        Some(crate::Binding::BuiltIn(
-                            crate::BuiltIn::Vertices | crate::BuiltIn::Primitives,
-                        )) => {
-                            let ty = &self.types[member.ty].inner;
-                            // Analyze the array type to determine size and vertex/primitive type
-                            let (a, b, c) = match ty {
-                                &crate::TypeInner::Array { base, size, .. } => {
-                                    let ty = base;
-                                    let (max, max_override) = match size {
-                                        crate::ArraySize::Constant(a) => (a.get(), None),
-                                        crate::ArraySize::Pending(o) => (0, Some(o)),
-                                        crate::ArraySize::Dynamic => {
-                                            error.set(EntryPointError::BadMeshOutputVariableField);
-                                            (0, None)
-                                        }
-                                    };
-                                    (max, max_override, ty)
-                                }
-                                _ => {
-                                    error.set(EntryPointError::BadMeshOutputVariableField);
-                                    (0, None, null_type)
-                                }
-                            };
-                            if matches!(
-                                member.binding,
-                                Some(crate::Binding::BuiltIn(crate::BuiltIn::Primitives))
-                            ) {
-                                // Primitives require special analysis to determine topology
-                                primitive_info = (a, b, c);
-                                match self.types[c].inner {
-                                    crate::TypeInner::Struct { ref members, .. } => {
-                                        for member in members {
-                                            match member.binding {
-                                                Some(crate::Binding::BuiltIn(
-                                                    crate::BuiltIn::PointIndex,
-                                                )) => {
-                                                    topology = crate::MeshOutputTopology::Points;
-                                                }
-                                                Some(crate::Binding::BuiltIn(
-                                                    crate::BuiltIn::LineIndices,
-                                                )) => {
-                                                    topology = crate::MeshOutputTopology::Lines;
-                                                }
-                                                Some(crate::Binding::BuiltIn(
-                                                    crate::BuiltIn::TriangleIndices,
-                                                )) => {
-                                                    topology = crate::MeshOutputTopology::Triangles;
-                                                }
-                                                _ => (),
-                                            }
-                                        }
-                                    }
-                                    _ => (),
-                                }
-                                // Each builtin should only occur once
-                                if builtins.contains(&crate::BuiltIn::Primitives) {
-                                    error.set(EntryPointError::BadMeshOutputVariableType);
-                                }
-                                builtins.insert(crate::BuiltIn::Primitives);
-                            } else {
-                                vertex_info = (a, b, c);
-                                // Each builtin should only occur once
-                                if builtins.contains(&crate::BuiltIn::Vertices) {
-                                    error.set(EntryPointError::BadMeshOutputVariableType);
-                                }
-                                builtins.insert(crate::BuiltIn::Vertices);
-                            }
-                        }
-                        _ => error.set(EntryPointError::BadMeshOutputVariableType),
-                    }
-                }
-                output = crate::MeshStageInfo {
-                    topology,
-                    max_vertices: vertex_info.0,
-                    max_vertices_override: None,
-                    vertex_output_type: vertex_info.2,
-                    max_primitives: primitive_info.0,
-                    max_primitives_override: None,
-                    primitive_output_type: primitive_info.2,
-                    ..output
-                }
-            }
-            _ => error.set(EntryPointError::BadMeshOutputVariableType),
-        }
-        (
-            output,
-            [vertex_info.1, primitive_info.1],
-            error
-                .inner
-                .map(|a| a.with_span_handle(self.global_variables[gv].ty, &self.types)),
-        )
-    }
-
     pub fn uses_mesh_shaders(&self) -> bool {
         let binding_uses_mesh = |b: &crate::Binding| {
             matches!(
@@ -1103,16 +909,6 @@ impl crate::Module {
 pub struct RayTracingUses {
     pub pipelines: bool,
     pub queries: bool,
-}
-
-impl crate::MeshOutputTopology {
-    pub const fn to_builtin(self) -> crate::BuiltIn {
-        match self {
-            Self::Points => crate::BuiltIn::PointIndex,
-            Self::Lines => crate::BuiltIn::LineIndices,
-            Self::Triangles => crate::BuiltIn::TriangleIndices,
-        }
-    }
 }
 
 impl crate::AddressSpace {

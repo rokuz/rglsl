@@ -532,10 +532,6 @@ impl<'a> ResolveContext<'a> {
                             scalar: format.into(),
                             size: crate::VectorSize::Quad,
                         },
-                        crate::ImageClass::External => Ti::Vector {
-                            scalar: crate::Scalar::F32,
-                            size: crate::VectorSize::Quad,
-                        },
                     })
                 }
                 ref other => {
@@ -677,7 +673,6 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::AtomicResult { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::SubgroupOperationResult { ty } => TypeResolution::Handle(ty),
             crate::Expression::SpirvInstructionResult { ty } => TypeResolution::Handle(ty),
-            crate::Expression::WorkGroupUniformLoadResult { ty } => TypeResolution::Handle(ty),
             crate::Expression::Select { accept, .. } => past(accept)?.clone(),
             crate::Expression::Derivative { expr, .. } => past(expr)?.clone(),
             crate::Expression::Relational { fun, argument } => match fun {
@@ -753,13 +748,6 @@ impl<'a> ResolveContext<'a> {
                     "initial overloads for {fun:?}, {:#?}",
                     overloads.for_debug(types)
                 );
-
-                // If any argument is not a constant expression, then no
-                // overloads that accept abstract values should be considered.
-                // `OverloadSet::concrete_only` is supposed to help impose this
-                // restriction. However, no `MathFunction` accepts a mix of
-                // abstract and concrete arguments, so we don't need to worry
-                // about that here.
 
                 let res_arg = past(arg)?;
                 overloads = overloads.arg(0, res_arg.inner_with(types), types);

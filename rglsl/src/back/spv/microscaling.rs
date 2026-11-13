@@ -36,9 +36,7 @@ const fn encoding(kind: ScalarKind) -> Option<(Word, Word)> {
         | ScalarKind::Bool
         | ScalarKind::BFloat
         | ScalarKind::FloatE4M3
-        | ScalarKind::FloatE5M2
-        | ScalarKind::AbstractInt
-        | ScalarKind::AbstractFloat => return None,
+        | ScalarKind::FloatE5M2 => return None,
     })
 }
 

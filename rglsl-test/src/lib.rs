@@ -72,14 +72,6 @@ where
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
-pub struct WriterSharedOptions {
-    pub mesh_output_validation: bool,
-    pub task_limits: Option<rglsl::back::TaskDispatchLimits>,
-    pub bounds_checks_policies: rglsl::proc::BoundsCheckPolicies,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(default)]
 pub struct SpirvOutParameters {
     pub version: SpvOutVersion,
     pub capabilities: rglsl::FastHashSet<spirv::Capability>,
@@ -90,27 +82,10 @@ pub struct SpirvOutParameters {
     pub separate_entry_points: bool,
     #[serde(deserialize_with = "deserialize_binding_map")]
     pub binding_map: rglsl::back::spv::BindingMap,
-    pub use_storage_input_output_16: bool,
-}
-impl Default for SpirvOutParameters {
-    fn default() -> Self {
-        Self {
-            version: SpvOutVersion::default(),
-            capabilities: rglsl::FastHashSet::default(),
-            debug: false,
-            adjust_coordinate_space: false,
-            force_point_size: false,
-            clamp_frag_depth: false,
-            separate_entry_points: false,
-            use_storage_input_output_16: true,
-            binding_map: rglsl::back::spv::BindingMap::default(),
-        }
-    }
 }
 impl SpirvOutParameters {
     pub fn to_options<'a>(
         &'a self,
-        shared_info: &WriterSharedOptions,
         debug_info: Option<rglsl::back::spv::DebugInfo<'a>>,
     ) -> rglsl::back::spv::Options<'a> {
         use rglsl::back::spv;
@@ -130,13 +105,9 @@ impl SpirvOutParameters {
             } else {
                 Some(self.capabilities.clone())
             },
-            bounds_check_policies: shared_info.bounds_checks_policies,
             fake_missing_bindings: true,
             binding_map: self.binding_map.clone(),
             debug_info,
-            use_storage_input_output_16: self.use_storage_input_output_16,
-            task_dispatch_limits: shared_info.task_limits,
-            mesh_shader_primitive_indices_clamp: shared_info.mesh_output_validation,
         }
     }
 }
@@ -156,21 +127,9 @@ pub struct Parameters {
     pub targets: Option<Targets>,
 
     // -- General options --
-    pub bounds_check_policies: rglsl::proc::BoundsCheckPolicies,
     pub pipeline_constants: rglsl::back::PipelineConstants,
 
-    pub mesh_output_validation: bool,
-    #[serde(default = "default_task_limits")]
-    pub task_limits: Option<rglsl::back::TaskDispatchLimits>,
-
     pub expected_error: Option<String>,
-}
-
-fn default_task_limits() -> Option<rglsl::back::TaskDispatchLimits> {
-    Some(rglsl::back::TaskDispatchLimits {
-        max_mesh_workgroups_per_dim: 256,
-        max_mesh_workgroups_total: 1024,
-    })
 }
 
 /// Information about a shader input file.

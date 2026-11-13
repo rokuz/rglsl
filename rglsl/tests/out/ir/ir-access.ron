@@ -452,11 +452,7 @@
         ),
     ],
     special_types: (
-        ray_desc: None,
-        ray_intersection: None,
         ray_vertex_return: None,
-        external_texture_params: None,
-        external_texture_transfer_function: None,
         predeclared_types: {},
     ),
     constants: [],
@@ -1038,7 +1034,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_matrix_within_array_within_struct_accesses"),
@@ -1643,7 +1638,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("read_from_private"),
@@ -1677,7 +1671,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_arr_as_arg"),
@@ -1720,7 +1713,6 @@
                     value: Some(2),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assign_through_ptr_fn"),
@@ -1749,7 +1741,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assign_array_through_ptr_fn"),
@@ -1810,7 +1801,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assign_through_ptr"),
@@ -1886,7 +1876,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("fetch_arg_ptr_member"),
@@ -1924,7 +1913,6 @@
                     value: Some(2),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assign_to_arg_ptr_member"),
@@ -1961,7 +1949,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("fetch_arg_ptr_array_element"),
@@ -1999,7 +1986,6 @@
                     value: Some(2),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assign_to_arg_ptr_array_element"),
@@ -2036,7 +2022,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assign_to_ptr_components"),
@@ -2094,7 +2079,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_ptr"),
@@ -2154,7 +2138,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("member_ptr"),
@@ -2203,7 +2186,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("let_members_of_members"),
@@ -2277,7 +2259,6 @@
                     value: Some(7),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("var_members_of_members"),
@@ -2389,7 +2370,6 @@
                     value: Some(15),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -2702,9 +2682,7 @@
                         value: Some(54),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
@@ -2904,9 +2882,7 @@
                         value: Some(31),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
@@ -2968,16 +2944,11 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
             interface: [],
             transform_feedback: false,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

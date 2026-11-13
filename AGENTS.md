@@ -21,8 +21,7 @@ If `AGENTS.local.md` exists, read it too: it has the maintainers' local workflow
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool, `glslangValidator`-compatible for Vulkan GLSL |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
-| `rglsl/xtask/` | snapshot validation (`cd rglsl && cargo xtask validate spv`) |
-| `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask cli`, `cargo xtask fuzz` |
+| `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask snapshots`, `cargo xtask cli`, `cargo xtask fuzz` |
 | `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers, KosmicKrisp, Amber and the ML emulation layer |
 
 ## Rules
@@ -71,7 +70,8 @@ cargo test --workspace --all-features
 cargo test --release -p rglsl-link --test nesting -- --ignored   # 100,000-level nesting
 cargo deny check
 
-cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, spirv-val (+ exec oracles)
+cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, spirv-val, spirv-as (+ exec oracles)
+cargo xtask snapshots                                        # spirv-val on the SPIR-V snapshots of rglsl/tests
 cargo xtask test [--glslang-dir ../glslang] [--no-exec]      # glslang's corpus (+ exec on the local GPU)
 cargo xtask test --filter NAME --no-progress-file            # quick check of some shaders
 cargo xtask cli [--glslang-dir ../glslang]                   # glslangValidator command lines: rglsl vs glslang

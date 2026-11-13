@@ -233,7 +233,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::arena::{Arena, Handle, Range, UniqueArena};
-use crate::diagnostic_filter::DiagnosticFilterNode;
 use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
 pub use block::{Block, Walk};
@@ -722,16 +721,6 @@ pub enum ScalarKind {
     FloatE2M3,
     FloatUE8M0,
     FloatMXINT8,
-
-    /// WGSL abstract integer type.
-    ///
-    /// These are forbidden by validation, and should never reach backends.
-    AbstractInt,
-
-    /// Abstract floating-point type.
-    ///
-    /// These are forbidden by validation, and should never reach backends.
-    AbstractFloat,
 }
 
 /// Role of a cooperative variable in the equation "A * B + C"
@@ -1052,8 +1041,6 @@ pub enum ImageClass {
         /// Multi-sampled depth image.
         multi: bool,
     },
-    /// External texture.
-    External,
     /// Storage image.
     Storage {
         format: StorageFormat,
@@ -1439,8 +1426,6 @@ pub enum Literal {
     U64(u64),
     I64(i64),
     Bool(bool),
-    AbstractInt(i64),
-    AbstractFloat(f64),
     BF16(u16),
     FE4M3(u8),
     FE5M2(u8),
@@ -1941,7 +1926,6 @@ pub enum MathFunction {
     Min,
     Max,
     Clamp,
-    Saturate,
     // trigonometry
     Cos,
     Cosh,
@@ -2001,7 +1985,6 @@ pub enum MathFunction {
     Inverse,
     Transpose,
     Determinant,
-    QuantizeToF16,
     // bits
     CountTrailingZeros,
     CountLeadingZeros,
@@ -2790,10 +2773,6 @@ pub enum Expression {
         offset: Option<Handle<Expression>>,
         level: SampleLevel,
         depth_ref: Option<Handle<Expression>>,
-        /// Whether the sampling operation should clamp each component of
-        /// `coordinate` to the range `[half_texel, 1 - half_texel]`, regardless
-        /// of `sampler`.
-        clamp_to_edge: bool,
         #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
         #[cfg_attr(feature = "deserialize", serde(default))]
         min_lod: Option<Handle<Expression>>,
@@ -2954,13 +2933,6 @@ pub enum Expression {
         comparison: bool,
     },
 
-    /// Result of a [`WorkGroupUniformLoad`] statement.
-    ///
-    /// [`WorkGroupUniformLoad`]: Statement::WorkGroupUniformLoad
-    WorkGroupUniformLoadResult {
-        /// The type of the result
-        ty: Handle<Type>,
-    },
     /// Get the length of an array.
     /// The expression must resolve to a pointer to an array with a dynamic size.
     ///
@@ -3583,21 +3555,6 @@ pub enum Statement {
         #[cfg_attr(feature = "deserialize", serde(default))]
         order: Option<MemoryOrder>,
     },
-    /// Load uniformly from a uniform pointer in the workgroup address space.
-    ///
-    /// Corresponds to the [`workgroupUniformLoad`](https://www.w3.org/TR/WGSL/#workgroupUniformLoad-builtin)
-    /// built-in function of wgsl, and has the same barrier semantics
-    WorkGroupUniformLoad {
-        /// This must be of type [`Pointer`] in the [`WorkGroup`] address space
-        ///
-        /// [`Pointer`]: TypeInner::Pointer
-        /// [`WorkGroup`]: AddressSpace::WorkGroup
-        pointer: Handle<Expression>,
-        /// The [`WorkGroupUniformLoadResult`] expression representing this load's result.
-        ///
-        /// [`WorkGroupUniformLoadResult`]: Expression::WorkGroupUniformLoadResult
-        result: Handle<Expression>,
-    },
     /// Calls a function.
     ///
     /// If the `result` is `Some`, the corresponding expression has to be
@@ -3832,14 +3789,6 @@ pub struct Function {
     pub precision: PrecisionExpressions,
     /// Block of instructions comprising the body of the function.
     pub body: Block,
-    /// The leaf of all diagnostic filter rules tree (stored in [`Module::diagnostic_filters`])
-    /// parsed on this function.
-    ///
-    /// In WGSL, this corresponds to `@diagnostic(…)` attributes.
-    ///
-    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
-    /// validation.
-    pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     #[cfg_attr(
         feature = "serialize",
@@ -3956,10 +3905,6 @@ pub struct EntryPoint {
     pub workgroup_size_builtin: bool,
     /// The entrance function.
     pub function: Function,
-    /// Information for [`Mesh`] shaders.
-    ///
-    /// [`Mesh`]: ShaderStage::Mesh
-    pub mesh_info: Option<MeshStageInfo>,
     /// The unique global variable used as a task payload from task shader to mesh shader
     pub task_payload: Option<Handle<GlobalVariable>>,
     /// The unique global variable used as an incoming ray payload going into any hit, closest hit and miss shaders.
@@ -4329,67 +4274,10 @@ pub enum PredeclaredType {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpecialTypes {
-    /// Type for `RayDesc`.
-    ///
-    /// Call [`Module::generate_ray_desc_type`] to populate this if
-    /// needed and return the handle.
-    pub ray_desc: Option<Handle<Type>>,
-
-    /// Type for `RayIntersection`.
-    ///
-    /// Call [`Module::generate_ray_intersection_type`] to populate
-    /// this if needed and return the handle.
-    pub ray_intersection: Option<Handle<Type>>,
-
     /// Type for `RayVertexReturn`.
     ///
     /// Call [`Module::generate_vertex_return_type`]
     pub ray_vertex_return: Option<Handle<Type>>,
-
-    /// Struct containing parameters required by some backends to emit code for
-    /// [`ImageClass::External`] textures.
-    ///
-    /// See `wgpu_core::device::resource::ExternalTextureParams` for the
-    /// documentation of each field.
-    ///
-    /// In WGSL, this type would be:
-    ///
-    /// ```ignore
-    /// struct RglslExternalTextureParams {         // align size offset
-    ///     yuv_conversion_matrix: mat4x4<f32>,    //    16   64      0
-    ///     gamut_conversion_matrix: mat3x3<f32>,  //    16   48     64
-    ///     src_tf: RglslExternalTextureTransferFn, //     4   16    112
-    ///     dst_tf: RglslExternalTextureTransferFn, //     4   16    128
-    ///     sample_transform: mat3x2<f32>,         //     8   24    144
-    ///     load_transform: mat3x2<f32>,           //     8   24    168
-    ///     size: vec2<u32>,                       //     8    8    192
-    ///     num_planes: u32,                       //     4    4    200
-    /// }                            // whole struct:    16  208
-    /// ```
-    ///
-    /// Call [`Module::generate_external_texture_types`] to populate this if
-    /// needed.
-    pub external_texture_params: Option<Handle<Type>>,
-
-    /// Struct describing a gamma encoding transfer function. Member of
-    /// `RglslExternalTextureParams`, describing how the backend should perform
-    /// color space conversion when sampling from [`ImageClass::External`]
-    /// textures.
-    ///
-    /// In WGSL, this type would be:
-    ///
-    /// ```ignore
-    /// struct RglslExternalTextureTransferFn { // align size offset
-    ///     a: f32,                            //     4    4      0
-    ///     b: f32,                            //     4    4      4
-    ///     g: f32,                            //     4    4      8
-    ///     k: f32,                            //     4    4     12
-    /// }                         // whole struct:    4   16
-    /// ```
-    ///
-    /// Call [`Module::generate_external_texture_types`] to populate this if
-    /// needed.
-    pub external_texture_transfer_function: Option<Handle<Type>>,
 
     /// Types for predeclared wgsl types instantiated on demand.
     ///
@@ -4430,28 +4318,6 @@ bitflags::bitflags! {
     }
 }
 
-/// Doc comments preceding items.
-///
-/// These can be used to generate automated documentation,
-/// IDE hover information or translate shaders with their context comments.
-#[derive(Debug, Default, Clone)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub struct DocComments {
-    pub types: FastIndexMap<Handle<Type>, Vec<String>>,
-    // The key is:
-    // - key.0: the handle to the Struct
-    // - key.1: the index of the `StructMember`.
-    pub struct_members: FastIndexMap<(Handle<Type>, usize), Vec<String>>,
-    pub entry_points: FastIndexMap<usize, Vec<String>>,
-    pub functions: FastIndexMap<Handle<Function>, Vec<String>>,
-    pub constants: FastIndexMap<Handle<Constant>, Vec<String>>,
-    pub global_variables: FastIndexMap<Handle<GlobalVariable>, Vec<String>>,
-    // Top level comments, appearing before any space.
-    pub module: Vec<String>,
-}
-
 /// The output topology for a mesh shader. Note that mesh shaders don't allow things like triangle-strips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -4464,31 +4330,6 @@ pub enum MeshOutputTopology {
     Lines,
     /// Outputs groups of 3 vertices to be rendered as triangles.
     Triangles,
-}
-
-/// Information specific to mesh shader entry points.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-#[allow(dead_code)]
-pub struct MeshStageInfo {
-    /// The type of primitive outputted.
-    pub topology: MeshOutputTopology,
-    /// The maximum number of vertices a mesh shader may output.
-    pub max_vertices: u32,
-    /// If pipeline constants are used, the expressions that override `max_vertices`
-    pub max_vertices_override: Option<Handle<Expression>>,
-    /// The maximum number of primitives a mesh shader may output.
-    pub max_primitives: u32,
-    /// If pipeline constants are used, the expressions that override `max_primitives`
-    pub max_primitives_override: Option<Handle<Expression>>,
-    /// The type used by vertex outputs, i.e. what is passed to `setVertex`.
-    pub vertex_output_type: Handle<Type>,
-    /// The type used by primitive outputs, i.e. what is passed to `setPrimitive`.
-    pub primitive_output_type: Handle<Type>,
-    /// The global variable holding the outputted vertices, primitives, and counts
-    pub output_variable: Handle<GlobalVariable>,
 }
 
 /// Ray tracing pipeline intrinsics
@@ -4820,21 +4661,6 @@ pub struct Module {
     pub functions: Arena<Function>,
     /// Entry points.
     pub entry_points: Vec<EntryPoint>,
-    /// Arena for all diagnostic filter rules parsed in this module, including those in functions
-    /// and statements.
-    ///
-    /// This arena contains elements of a _tree_ of diagnostic filter rules. When nodes are built
-    /// by a front-end, they refer to a parent scope
-    pub diagnostic_filters: Arena<DiagnosticFilterNode>,
-    /// The leaf of all diagnostic filter rules tree parsed from directives in this module.
-    ///
-    /// In WGSL, this corresponds to `diagnostic(…);` directives.
-    ///
-    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
-    /// validation.
-    pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
-    /// Doc comments.
-    pub doc_comments: Option<Box<DocComments>>,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "core::ops::Not::not")

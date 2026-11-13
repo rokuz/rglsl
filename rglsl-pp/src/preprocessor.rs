@@ -13,6 +13,7 @@ use crate::predefined;
 use crate::source_map::{clamp_line, SourceInfo, SourceMap};
 use crate::token::{At, Kind, Token};
 use crate::version::{self, Profile, Version};
+use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Macro {
@@ -112,9 +113,9 @@ pub(crate) struct MacroTable {
 
 impl MacroTable {
     fn watch(&self, name: &str) {
-        if crate::options::Stage::ALL
+        if ShaderStage::ALL
             .iter()
-            .any(|stage| stage.macro_name() == name)
+            .any(|&stage| crate::options::macro_name(stage) == name)
         {
             self.stage_used.set(true);
         }
@@ -199,8 +200,8 @@ pub struct Preprocessed {
 }
 
 impl Preprocessed {
-    pub fn same_for_stage(&self, stage: crate::options::Stage) -> bool {
-        crate::options::Stage::ALL
+    pub fn same_for_stage(&self, stage: ShaderStage) -> bool {
+        ShaderStage::ALL
             .iter()
             .position(|&candidate| candidate == stage)
             .is_some_and(|index| self.stages & (1 << index) != 0)
@@ -227,7 +228,7 @@ pub fn preprocess(
     let mut version_errors = Vec::new();
     let version = version::deduce(&scanned, options, &mut version_errors);
     let mut version_stages = 0_u16;
-    for (index, candidate) in crate::options::Stage::ALL.into_iter().enumerate() {
+    for (index, candidate) in ShaderStage::ALL.into_iter().enumerate() {
         let mut errors = Vec::new();
         let other = Options {
             stage: Some(candidate),

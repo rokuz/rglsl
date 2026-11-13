@@ -959,39 +959,12 @@ impl super::Instruction {
     // Control-Flow Instructions
     //
 
-    pub(super) fn phi(
-        result_type_id: Word,
-        result_id: Word,
-        var_parent_pairs: &[(Word, Word)],
-    ) -> Self {
-        let mut instruction = Self::new(Op::Phi);
-        instruction.add_operand(result_type_id);
-        instruction.add_operand(result_id);
-        for &(variable, parent) in var_parent_pairs {
-            instruction.add_operand(variable);
-            instruction.add_operand(parent);
-        }
-        instruction
-    }
-
     pub(super) fn selection_merge(
         merge_id: Word,
         selection_control: spirv::SelectionControl,
     ) -> Self {
         let mut instruction = Self::new(Op::SelectionMerge);
         instruction.add_operand(merge_id);
-        instruction.add_operand(selection_control.bits());
-        instruction
-    }
-
-    pub(super) fn loop_merge(
-        merge_id: Word,
-        continuing_id: Word,
-        selection_control: spirv::SelectionControl,
-    ) -> Self {
-        let mut instruction = Self::new(Op::LoopMerge);
-        instruction.add_operand(merge_id);
-        instruction.add_operand(continuing_id);
         instruction.add_operand(selection_control.bits());
         instruction
     }

@@ -2,9 +2,9 @@ use rglsl_ast::extensions::Request;
 use rglsl_ast::Span;
 
 use super::Analyzer;
-use crate::builtins::Stage;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::{LayoutEntry, Qualifiers, Storage};
+use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -85,18 +85,18 @@ const VIEWPORT_LAYER_EXTENSIONS: [&str; 2] = [
     "GL_NV_viewport_array2",
 ];
 
-const fn table(stage: Stage) -> &'static [(&'static str, Kind)] {
+const fn table(stage: ShaderStage) -> &'static [(&'static str, Kind)] {
     match stage {
-        Stage::Geometry => GEOMETRY,
-        Stage::TessEvaluation => TESS_EVALUATION,
-        Stage::TessControl => TESS_CONTROL,
-        Stage::Mesh => MESH,
+        ShaderStage::Geometry => GEOMETRY,
+        ShaderStage::TessEvaluation => TESS_EVALUATION,
+        ShaderStage::TessControl => TESS_CONTROL,
+        ShaderStage::Mesh => MESH,
         _ => &[],
     }
 }
 
 fn shader_layouts(
-    stage: Stage,
+    stage: ShaderStage,
     qualifiers: &Qualifiers,
 ) -> impl Iterator<Item = (&'static str, Kind, &LayoutEntry)> {
     qualifiers.layout.iter().filter_map(move |entry| {
@@ -107,25 +107,25 @@ fn shader_layouts(
     })
 }
 
-const PRE_RASTERIZATION: &[Stage] = &[
-    Stage::Vertex,
-    Stage::TessControl,
-    Stage::TessEvaluation,
-    Stage::Geometry,
+const PRE_RASTERIZATION: &[ShaderStage] = &[
+    ShaderStage::Vertex,
+    ShaderStage::TessControl,
+    ShaderStage::TessEvaluation,
+    ShaderStage::Geometry,
 ];
 
-const COMPUTE_LIKE: &[Stage] = &[Stage::Compute, Stage::Task, Stage::Mesh];
+const COMPUTE_LIKE: &[ShaderStage] = &[ShaderStage::Compute, ShaderStage::Task, ShaderStage::Mesh];
 
-const RAY_TRACING: &[Stage] = &[
-    Stage::RayGeneration,
-    Stage::Intersection,
-    Stage::AnyHit,
-    Stage::ClosestHit,
-    Stage::Miss,
-    Stage::Callable,
+const RAY_TRACING: &[ShaderStage] = &[
+    ShaderStage::RayGeneration,
+    ShaderStage::Intersection,
+    ShaderStage::AnyHit,
+    ShaderStage::ClosestHit,
+    ShaderStage::Miss,
+    ShaderStage::Callable,
 ];
 
-pub fn layout_stages(name: &str) -> Option<&'static [Stage]> {
+pub fn layout_stages(name: &str) -> Option<&'static [ShaderStage]> {
     Some(match name {
         "local_size_x"
         | "local_size_y"
@@ -144,17 +144,21 @@ pub fn layout_stages(name: &str) -> Option<&'static [Stage]> {
         | "shaderrecordext"
         | "hitobjectshaderrecordnv"
         | "hitobjectshaderrecordext" => RAY_TRACING,
-        "vertices" => &[Stage::TessControl],
-        "max_vertices" | "points" | "lines" => &[Stage::Geometry, Stage::Mesh],
-        "max_primitives" => &[Stage::Mesh],
+        "vertices" => &[ShaderStage::TessControl],
+        "max_vertices" | "points" | "lines" => &[ShaderStage::Geometry, ShaderStage::Mesh],
+        "max_primitives" => &[ShaderStage::Mesh],
         "invocations"
         | "stream"
         | "line_strip"
         | "lines_adjacency"
         | "triangles_adjacency"
         | "triangle_strip"
-        | "passthrough" => &[Stage::Geometry],
-        "triangles" => &[Stage::Geometry, Stage::TessEvaluation, Stage::Mesh],
+        | "passthrough" => &[ShaderStage::Geometry],
+        "triangles" => &[
+            ShaderStage::Geometry,
+            ShaderStage::TessEvaluation,
+            ShaderStage::Mesh,
+        ],
         "quads"
         | "isolines"
         | "equal_spacing"
@@ -162,7 +166,7 @@ pub fn layout_stages(name: &str) -> Option<&'static [Stage]> {
         | "fractional_odd_spacing"
         | "cw"
         | "ccw"
-        | "point_mode" => &[Stage::TessEvaluation],
+        | "point_mode" => &[ShaderStage::TessEvaluation],
         "index"
         | "origin_upper_left"
         | "pixel_center_integer"
@@ -184,11 +188,11 @@ pub fn layout_stages(name: &str) -> Option<&'static [Stage]> {
         | "shading_rate_interlock_unordered"
         | "override_coverage"
         | "full_quads"
-        | "non_coherent_attachment_readqcom" => &[Stage::Fragment],
-        "tile_attachmentqcom" => &[Stage::Fragment, Stage::Compute],
+        | "non_coherent_attachment_readqcom" => &[ShaderStage::Fragment],
+        "tile_attachmentqcom" => &[ShaderStage::Fragment, ShaderStage::Compute],
         "viewport_relative" | "secondary_view_offset" => PRE_RASTERIZATION,
         _ if name.starts_with("blend_support_") || name.starts_with("stencil_ref_") => {
-            &[Stage::Fragment]
+            &[ShaderStage::Fragment]
         }
         _ => return None,
     })
@@ -219,7 +223,7 @@ impl Analyzer<'_> {
             .iter()
             .find(|entry| entry.name.eq_ignore_ascii_case("passthrough"))
             .map(|entry| entry.span);
-        if let Some(span) = span.filter(|_| self.stage_is(Stage::Geometry)) {
+        if let Some(span) = span.filter(|_| self.stage_is(ShaderStage::Geometry)) {
             self.require_extension(
                 span,
                 "GL_NV_geometry_shader_passthrough",
@@ -258,7 +262,7 @@ impl Analyzer<'_> {
         for (span, extension, what, fragment) in required {
             self.require_stage_extensions(span, what, |stage| {
                 let applies = if fragment {
-                    stage == Stage::Fragment
+                    stage == ShaderStage::Fragment
                 } else {
                     PRE_RASTERIZATION.contains(&stage)
                 };
@@ -317,12 +321,12 @@ impl Analyzer<'_> {
         for (name, kind, span, value) in found {
             match kind {
                 Kind::Vertices => {
-                    if value == Some(0) && stage == Stage::TessControl {
+                    if value == Some(0) && stage == ShaderStage::TessControl {
                         self.error(span, invalid(name, "must be greater than 0"));
                         continue;
                     }
                     let limit = i64::from(self.options.limits.max_geometry_output_vertices);
-                    if stage == Stage::Geometry && value.is_some_and(|value| value > limit) {
+                    if stage == ShaderStage::Geometry && value.is_some_and(|value| value > limit) {
                         self.error(
                             span,
                             invalid(
@@ -331,7 +335,7 @@ impl Analyzer<'_> {
                             ),
                         );
                     }
-                    if stage == Stage::Mesh {
+                    if stage == ShaderStage::Mesh {
                         self.mesh_limit(span, name, value, false);
                     }
                     if !output {
@@ -479,7 +483,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn tessellation_barrier(&mut self, span: Span) {
-        if !self.stage_is(Stage::TessControl) {
+        if !self.stage_is(ShaderStage::TessControl) {
             return;
         }
         let reason =
@@ -502,7 +506,7 @@ impl Analyzer<'_> {
         if !matches!(name, "gl_Layer" | "gl_ViewportIndex")
             || !matches!(
                 self.stage(),
-                Stage::Vertex | Stage::TessControl | Stage::TessEvaluation
+                ShaderStage::Vertex | ShaderStage::TessControl | ShaderStage::TessEvaluation
             )
         {
             return;

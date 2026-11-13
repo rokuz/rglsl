@@ -5,13 +5,15 @@ use rglsl_ast::ast::InterpolationQualifier;
 use rglsl_ast::Span;
 
 use super::{
-    available, parse_type, words, ResourceLimits, Stage, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE,
+    available, parse_type, words, ResourceLimits, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE,
     FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS, RAY_GENERATION, TASK, TESS_CONTROL,
     TESS_EVALUATION, VERTEX,
 };
+
 use crate::constant::{Constant, Value};
 use crate::scope::{Origin, Qualifiers, Storage, Symbol, SymbolId, SymbolKind, Variable};
 use crate::types::{ArraySize, BlockStorage, BlockType, Member, Scalar, Type, TypeRegistry};
+use rglsl_types::ShaderStage;
 
 struct Group {
     stages: u16,
@@ -736,7 +738,7 @@ const TENSOR_OPERAND_CONSTANTS: [(&str, u32); 2] = [
 
 pub(super) fn build(
     version: u32,
-    stage: Stage,
+    stage: ShaderStage,
     limits: &ResourceLimits,
     types: &mut TypeRegistry,
 ) -> (Vec<Symbol>, Vec<(String, SymbolId)>) {
@@ -780,7 +782,10 @@ pub(super) fn build(
         Type::vector(Scalar::Int, 3),
         triple(limits.max_task_work_group_size_nv()),
     );
-    if matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task) {
+    if matches!(
+        stage,
+        ShaderStage::Compute | ShaderStage::Mesh | ShaderStage::Task
+    ) {
         builder.constant(
             "gl_WorkGroupSize",
             Type::vector(Scalar::Uint, 3),
@@ -822,8 +827,8 @@ pub(super) fn build(
     }
     let patch_vertices = u32::try_from(limits.max_patch_vertices).unwrap_or(0);
     let blocks: &[(BlockStorage, Instance)] = match stage {
-        Stage::Vertex => &[(BlockStorage::Out, Instance::Anonymous)],
-        Stage::TessControl => &[
+        ShaderStage::Vertex => &[(BlockStorage::Out, Instance::Anonymous)],
+        ShaderStage::TessControl => &[
             (
                 BlockStorage::In,
                 Instance::Named("gl_in", ArraySize::Sized(patch_vertices)),
@@ -833,14 +838,14 @@ pub(super) fn build(
                 Instance::Named("gl_out", ArraySize::Unsized),
             ),
         ],
-        Stage::TessEvaluation => &[
+        ShaderStage::TessEvaluation => &[
             (
                 BlockStorage::In,
                 Instance::Named("gl_in", ArraySize::Sized(patch_vertices)),
             ),
             (BlockStorage::Out, Instance::Anonymous),
         ],
-        Stage::Geometry => &[
+        ShaderStage::Geometry => &[
             (
                 BlockStorage::In,
                 Instance::Named("gl_in", ArraySize::Unsized),
@@ -852,7 +857,7 @@ pub(super) fn build(
     for (storage, instance) in blocks {
         builder.per_vertex(types, *storage, instance);
     }
-    if stage == Stage::Mesh {
+    if stage == ShaderStage::Mesh {
         for (block, instance, text, per_primitive) in MESH_BLOCKS {
             builder.mesh_block(types, block, instance, text, per_primitive);
         }

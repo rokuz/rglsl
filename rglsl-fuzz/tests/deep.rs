@@ -12,7 +12,8 @@ use rglsl_fuzz::rewrite::{
     function_statements, rewrite_expressions, rewrite_statements, statement_expression_ids,
 };
 use rglsl_fuzz::scope::find_points;
-use rglsl_sema::{analyze, Options, Stage};
+use rglsl_sema::{analyze, Options};
+use rglsl_types::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -110,7 +111,7 @@ fn scope_walks_handle_deep_nesting_on_a_small_stack() -> TestResult {
     let source = shader();
     let (unit, analysis) = on_stack(SEMA_STACK, move || -> TestResult<_> {
         let unit = parse(&source)?;
-        let analysis = analyze(&unit, &Options::new(Stage::Fragment));
+        let analysis = analyze(&unit, &Options::new(ShaderStage::Fragment));
         Ok((unit, analysis))
     })??;
     on_stack(SMALL_STACK, move || -> TestResult {

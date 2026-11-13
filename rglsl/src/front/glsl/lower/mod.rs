@@ -200,7 +200,7 @@ fn preprocessor_options(options: &Options, stage: Option<ShaderStage>) -> rglsl_
     rglsl_pp::Options {
         defines,
         vulkan_client_version: Some(100),
-        stage: stage.map(preprocessor_stage),
+        stage,
         preamble: options.preamble.clone(),
         ..rglsl_pp::Options::default()
     }
@@ -358,10 +358,10 @@ fn lower(
     let object = mode != Mode::Program;
     let preprocessed = preprocess(options, Some(options.stage), source, root, includer);
     let map = &preprocessed.source_map;
-    if preprocessed.same_for_stage(preprocessor_stage(options.stage)) {
+    if preprocessed.same_for_stage(options.stage) {
         class
             .probe
-            .map(|candidate| preprocessed.same_for_stage(preprocessor_stage(candidate)));
+            .map(|candidate| preprocessed.same_for_stage(candidate));
     } else {
         class.probe.exact();
     }
@@ -814,7 +814,7 @@ fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
         end_of_input: u32::try_from(text.len()).ok(),
         require_bindings: !options.auto_map_bindings,
         limits: options.limits,
-        ..rglsl_sema::Options::new(stage(options.stage))
+        ..rglsl_sema::Options::new(options.stage)
     }
 }
 
@@ -898,44 +898,6 @@ fn original(map: &rglsl_pp::SourceMap, span: rglsl_ast::Span) -> Span {
         (Some(start), Some(end)) => Span::new(start, end.max(start)),
         (Some(start), None) => Span::new(start, start),
         _ => Span::UNDEFINED,
-    }
-}
-
-const fn preprocessor_stage(stage: ShaderStage) -> rglsl_pp::Stage {
-    match stage {
-        ShaderStage::Vertex => rglsl_pp::Stage::Vertex,
-        ShaderStage::TessControl => rglsl_pp::Stage::TessControl,
-        ShaderStage::TessEvaluation => rglsl_pp::Stage::TessEvaluation,
-        ShaderStage::Geometry => rglsl_pp::Stage::Geometry,
-        ShaderStage::Task => rglsl_pp::Stage::Task,
-        ShaderStage::Mesh => rglsl_pp::Stage::Mesh,
-        ShaderStage::Fragment => rglsl_pp::Stage::Fragment,
-        ShaderStage::Compute => rglsl_pp::Stage::Compute,
-        ShaderStage::RayGeneration => rglsl_pp::Stage::RayGeneration,
-        ShaderStage::Miss => rglsl_pp::Stage::Miss,
-        ShaderStage::AnyHit => rglsl_pp::Stage::AnyHit,
-        ShaderStage::ClosestHit => rglsl_pp::Stage::ClosestHit,
-        ShaderStage::Intersection => rglsl_pp::Stage::Intersection,
-        ShaderStage::Callable => rglsl_pp::Stage::Callable,
-    }
-}
-
-const fn stage(stage: ShaderStage) -> rglsl_sema::Stage {
-    match stage {
-        ShaderStage::Vertex => rglsl_sema::Stage::Vertex,
-        ShaderStage::TessControl => rglsl_sema::Stage::TessControl,
-        ShaderStage::TessEvaluation => rglsl_sema::Stage::TessEvaluation,
-        ShaderStage::Geometry => rglsl_sema::Stage::Geometry,
-        ShaderStage::Task => rglsl_sema::Stage::Task,
-        ShaderStage::Mesh => rglsl_sema::Stage::Mesh,
-        ShaderStage::Fragment => rglsl_sema::Stage::Fragment,
-        ShaderStage::Compute => rglsl_sema::Stage::Compute,
-        ShaderStage::RayGeneration => rglsl_sema::Stage::RayGeneration,
-        ShaderStage::Miss => rglsl_sema::Stage::Miss,
-        ShaderStage::AnyHit => rglsl_sema::Stage::AnyHit,
-        ShaderStage::ClosestHit => rglsl_sema::Stage::ClosestHit,
-        ShaderStage::Intersection => rglsl_sema::Stage::Intersection,
-        ShaderStage::Callable => rglsl_sema::Stage::Callable,
     }
 }
 
@@ -1328,7 +1290,7 @@ impl<'a> Lowerer<'a> {
         match self.analysis.stage_tables {
             Some(ref tables) => self
                 .probe
-                .narrow(tables.same_stages(stage(self.probe.own()), name)),
+                .narrow(tables.same_stages(self.probe.own(), name)),
             None => {
                 self.stage_names.borrow_mut().insert(String::from(name));
             }

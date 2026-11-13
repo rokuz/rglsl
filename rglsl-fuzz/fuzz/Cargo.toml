@@ -16,7 +16,7 @@ libfuzzer-sys.workspace = true
 
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dependencies.rglsl]
 workspace = true
-features = ["arbitrary", "spv-out", "glsl-in"]
+features = ["arbitrary"]
 
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dependencies.rglsl-link]
 workspace = true

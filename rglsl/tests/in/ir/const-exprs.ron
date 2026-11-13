@@ -96,11 +96,7 @@
         ),
     ],
     special_types: (
-        ray_desc: None,
-        ray_intersection: None,
         ray_vertex_return: None,
-        external_texture_params: None,
-        external_texture_transfer_function: None,
         predeclared_types: {},
     ),
     constants: [
@@ -277,7 +273,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_of_compose"),
@@ -307,7 +302,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("compose_three_deep"),
@@ -341,7 +335,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("non_constant_initializers"),
@@ -440,7 +433,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("splat_of_constant"),
@@ -482,7 +474,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("compose_of_constant"),
@@ -524,7 +515,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("map_texture_kind"),
@@ -593,7 +583,6 @@
                     ],
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("compose_of_splat"),
@@ -633,7 +622,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_local_const"),
@@ -653,7 +641,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("compose_vector_zero_val_binop"),
@@ -777,7 +764,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("relational"),
@@ -869,7 +855,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("packed_dot_product"),
@@ -927,7 +912,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("abstract_access"),
@@ -1052,7 +1036,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -1152,14 +1135,9 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
-            mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )
