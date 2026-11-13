@@ -263,8 +263,9 @@ where
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let mut arena = Self::default();
         for elem in u.arbitrary_iter()? {
-            arena.set.insert(elem?);
-            arena.span_info.push(Span::UNDEFINED);
+            if arena.set.insert(elem?) {
+                arena.span_info.push(Span::UNDEFINED);
+            }
         }
         Ok(arena)
     }
@@ -272,8 +273,9 @@ where
     fn arbitrary_take_rest(u: arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let mut arena = Self::default();
         for elem in u.arbitrary_take_rest_iter()? {
-            arena.set.insert(elem?);
-            arena.span_info.push(Span::UNDEFINED);
+            if arena.set.insert(elem?) {
+                arena.span_info.push(Span::UNDEFINED);
+            }
         }
         Ok(arena)
     }
@@ -282,5 +284,28 @@ where
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
         let depth_hint = <usize as arbitrary::Arbitrary>::size_hint(depth);
         arbitrary::size_hint::and(depth_hint, (0, None))
+    }
+}
+
+#[cfg(all(test, feature = "arbitrary"))]
+mod tests {
+    use alloc::vec::Vec;
+
+    use arbitrary::{Arbitrary as _, Unstructured};
+
+    use super::UniqueArena;
+
+    #[test]
+    fn arbitrary_arenas_with_duplicates_keep_one_span_per_value() -> arbitrary::Result<()> {
+        for seed in 0..=u8::MAX {
+            let bytes: Vec<u8> = (0..64u8)
+                .map(|index| (index % 4).wrapping_mul(seed))
+                .collect();
+            let arena = UniqueArena::<u8>::arbitrary(&mut Unstructured::new(&bytes))?;
+            assert_eq!(arena.span_info.len(), arena.set.len());
+            let arena = UniqueArena::<u8>::arbitrary_take_rest(Unstructured::new(&bytes))?;
+            assert_eq!(arena.span_info.len(), arena.set.len());
+        }
+        Ok(())
     }
 }

@@ -7,7 +7,6 @@ use crate::{Span, Statement};
 #[derive(Debug, Default)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "serialize", serde(transparent))]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Block {
     body: Vec<Statement>,
     #[cfg_attr(feature = "serialize", serde(skip))]
@@ -377,8 +376,72 @@ impl<'de> serde::Deserialize<'de> for Block {
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a> arbitrary::Arbitrary<'a> for Block {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut block = Self::new();
+        for item in u.arbitrary_iter::<(Statement, Span)>()? {
+            let (statement, span) = item?;
+            block.push(statement, span);
+        }
+        Ok(block)
+    }
+
+    fn arbitrary_take_rest(u: arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut block = Self::new();
+        for item in u.arbitrary_take_rest_iter::<(Statement, Span)>()? {
+            let (statement, span) = item?;
+            block.push(statement, span);
+        }
+        Ok(block)
+    }
+
+    fn size_hint(depth: usize) -> (usize, Option<usize>) {
+        <Vec<(Statement, Span)> as arbitrary::Arbitrary>::size_hint(depth)
+    }
+}
+
 impl From<Vec<Statement>> for Block {
     fn from(body: Vec<Statement>) -> Self {
         Self::from_vec(body)
+    }
+}
+
+#[cfg(all(test, feature = "arbitrary"))]
+mod tests {
+    use alloc::vec::Vec;
+
+    use arbitrary::{Arbitrary as _, Unstructured};
+
+    use super::Block;
+
+    #[test]
+    fn arbitrary_blocks_keep_one_span_per_statement() {
+        let mut generated = 0;
+        for seed in 0..=u8::MAX {
+            let bytes: Vec<u8> = (0..256u16)
+                .map(|index| (index as u8).wrapping_mul(seed).rotate_left(3) ^ seed)
+                .collect();
+            let mut pending: Vec<Block> = [
+                Block::arbitrary(&mut Unstructured::new(&bytes)),
+                Block::arbitrary_take_rest(Unstructured::new(&bytes)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            generated += pending.len();
+            while let Some(mut block) = pending.pop() {
+                assert_eq!(block.span_info.len(), block.body.len());
+                for statement in &mut block.body {
+                    pending.extend(
+                        statement
+                            .child_blocks_mut()
+                            .into_iter()
+                            .map(core::mem::take),
+                    );
+                }
+            }
+        }
+        assert!(generated > 0);
     }
 }
