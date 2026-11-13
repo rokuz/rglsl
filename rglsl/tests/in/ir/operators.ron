@@ -433,7 +433,6 @@
                     value: Some(37),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("splat"),
@@ -572,7 +571,6 @@
                     value: Some(18),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("splat_assignment"),
@@ -688,7 +686,6 @@
                     value: Some(15),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("bool_cast"),
@@ -734,7 +731,6 @@
                     value: Some(2),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("p"),
@@ -753,7 +749,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("q"),
@@ -772,7 +767,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("r"),
@@ -791,7 +785,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("s"),
@@ -810,7 +803,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("logical"),
@@ -1200,7 +1192,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("arithmetic"),
@@ -2477,7 +2468,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("bit"),
@@ -2825,7 +2815,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("comparison"),
@@ -3357,7 +3346,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("assignment"),
@@ -3649,7 +3637,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("negation_avoids_prefix_decrement"),
@@ -3941,7 +3928,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -4069,14 +4055,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

@@ -171,7 +171,6 @@ impl Builder<'_> {
                 .map_err(internal)?
                 .clone();
             self.map_callees(table, index, &function.body)?;
-            function.diagnostic_filter_leaf = None;
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
@@ -253,7 +252,6 @@ impl Builder<'_> {
             reconvergence,
             invariant_outputs,
         } = entry;
-        function.diagnostic_filter_leaf = None;
         remap.adjust_function(&mut function).map_err(internal)?;
         let workgroup_size_overrides = match workgroup_size_overrides {
             Some(sizes) => {

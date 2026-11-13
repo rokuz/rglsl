@@ -300,7 +300,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_i32"),
@@ -336,7 +335,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_u32"),
@@ -372,7 +370,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_i64"),
@@ -408,7 +405,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_u64"),
@@ -444,7 +440,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_i32"),
@@ -480,7 +475,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_u32"),
@@ -516,7 +510,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_i64"),
@@ -552,7 +545,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_u64"),
@@ -588,7 +580,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_i32_vec"),
@@ -624,7 +615,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_u32_vec"),
@@ -660,7 +650,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_i64_vec"),
@@ -696,7 +685,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f16_to_u64_vec"),
@@ -732,7 +720,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_i32_vec"),
@@ -768,7 +755,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_u32_vec"),
@@ -804,7 +790,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_i64_vec"),
@@ -840,7 +825,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_f32_to_u64_vec"),
@@ -876,7 +860,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -1176,14 +1159,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

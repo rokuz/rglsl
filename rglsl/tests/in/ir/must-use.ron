@@ -38,7 +38,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("use_return"),
@@ -62,7 +61,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("use_assign_var"),
@@ -104,7 +102,6 @@
                     value: Some(2),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("use_assign_let"),
@@ -130,7 +127,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("use_phony_assign"),
@@ -153,7 +149,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -199,14 +194,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

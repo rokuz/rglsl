@@ -10,7 +10,6 @@ use alloc::vec::Vec;
 use crate::{
     arena::{self, BadHandle, HandleSet},
     compact::functions::FunctionTracer,
-    ir,
 };
 use handle_set_map::HandleMap;
 pub use remap::Remap;
@@ -457,11 +456,6 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         }
     })?;
 
-    // Adjust doc comments
-    if let Some(ref mut doc_comments) = module.doc_comments {
-        module_map.adjust_doc_comments(doc_comments.as_mut());
-    }
-
     // Temporary storage to help us reuse allocations of existing
     // named expression tables.
     let mut reused_named_expressions = crate::NamedExpressions::default();
@@ -771,53 +765,6 @@ impl ModuleMap {
             self.types.adjust(handle)?;
         }
         Ok(())
-    }
-
-    fn adjust_doc_comments(&self, doc_comments: &mut ir::DocComments) {
-        let crate::DocComments {
-            module: _,
-            types: ref mut doc_types,
-            struct_members: ref mut doc_struct_members,
-            entry_points: _,
-            functions: ref mut doc_functions,
-            constants: ref mut doc_constants,
-            global_variables: ref mut doc_globals,
-        } = *doc_comments;
-        log::trace!("adjusting doc comments for types");
-        for (ty, doc_comment) in core::mem::take(doc_types) {
-            let Some(ty) = self.types.try_adjust(ty) else {
-                continue;
-            };
-            doc_types.insert(ty, doc_comment);
-        }
-        log::trace!("adjusting doc comments for struct members");
-        for ((ty, index), doc_comment) in core::mem::take(doc_struct_members) {
-            let Some(ty) = self.types.try_adjust(ty) else {
-                continue;
-            };
-            doc_struct_members.insert((ty, index), doc_comment);
-        }
-        log::trace!("adjusting doc comments for functions");
-        for (handle, doc_comment) in core::mem::take(doc_functions) {
-            let Some(handle) = self.functions.try_adjust(handle) else {
-                continue;
-            };
-            doc_functions.insert(handle, doc_comment);
-        }
-        log::trace!("adjusting doc comments for constants");
-        for (constant, doc_comment) in core::mem::take(doc_constants) {
-            let Some(constant) = self.constants.try_adjust(constant) else {
-                continue;
-            };
-            doc_constants.insert(constant, doc_comment);
-        }
-        log::trace!("adjusting doc comments for globals");
-        for (handle, doc_comment) in core::mem::take(doc_globals) {
-            let Some(handle) = self.globals.try_adjust(handle) else {
-                continue;
-            };
-            doc_globals.insert(handle, doc_comment);
-        }
     }
 }
 

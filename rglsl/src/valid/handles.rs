@@ -2,14 +2,14 @@
 
 use core::hash::Hash;
 
-use super::{TypeError, ValidationError};
+use super::ValidationError;
 use crate::{
     arena::{BadHandle, BadRangeError},
-    diagnostic_filter::DiagnosticFilterNode,
-    EntryPoint, Handle,
+    Handle,
 };
 use crate::{Arena, UniqueArena};
 
+#[cfg(test)]
 use alloc::string::ToString;
 
 impl super::Validator {
@@ -39,9 +39,6 @@ impl super::Validator {
             ref types,
             ref special_types,
             ref global_expressions,
-            ref diagnostic_filters,
-            ref diagnostic_filter_leaf,
-            ref doc_comments,
             vulkan_memory_model: _,
             descriptor_heap: _,
             shader_64bit_indexing: _,
@@ -231,7 +228,6 @@ impl super::Validator {
                 ref non_uniform,
                 ref precision,
                 ref body,
-                ref diagnostic_filter_leaf,
                 linkage: _,
                 control: _,
             } = function;
@@ -296,10 +292,6 @@ impl super::Validator {
             }
 
             Self::validate_block_handles(body, expressions, functions, function_handle, types)?;
-
-            if let Some(handle) = *diagnostic_filter_leaf {
-                handle.check_valid_for(diagnostic_filters)?;
-            }
 
             Ok(())
         };
@@ -389,78 +381,6 @@ impl super::Validator {
         .chain(predeclared_types.values().copied())
         {
             validate_type(ty)?;
-        }
-
-        for (handle, _node) in diagnostic_filters.iter() {
-            let DiagnosticFilterNode { inner: _, parent } = diagnostic_filters[handle];
-            handle.check_dep_opt(parent)?;
-        }
-        if let Some(handle) = *diagnostic_filter_leaf {
-            handle.check_valid_for(diagnostic_filters)?;
-        }
-
-        if let Some(doc_comments) = doc_comments.as_ref() {
-            let crate::DocComments {
-                module: _,
-                types: ref doc_comments_for_types,
-                struct_members: ref doc_comments_for_struct_members,
-                entry_points: ref doc_comments_for_entry_points,
-                functions: ref doc_comments_for_functions,
-                constants: ref doc_comments_for_constants,
-                global_variables: ref doc_comments_for_global_variables,
-            } = **doc_comments;
-
-            for (&ty, _) in doc_comments_for_types.iter() {
-                validate_type(ty)?;
-            }
-
-            for (&(ty, struct_member_index), _) in doc_comments_for_struct_members.iter() {
-                validate_type(ty)?;
-                let struct_type = types.get_handle(ty)?;
-                match struct_type.inner {
-                    crate::TypeInner::Struct {
-                        ref members,
-                        span: ref _span,
-                    } => {
-                        (0..members.len())
-                            .contains(&struct_member_index)
-                            .then_some(())
-                            // TODO: what errors should this be?
-                            .ok_or_else(|| ValidationError::Type {
-                                handle: ty,
-                                name: struct_type.name.as_ref().map_or_else(
-                                    || "members length incorrect".to_string(),
-                                    |name| name.to_string(),
-                                ),
-                                source: TypeError::InvalidData(ty),
-                            })?;
-                    }
-                    _ => {
-                        // TODO: internal error ? We should never get here.
-                        // If entering there, it's probably that we forgot to adjust a handle in the compact phase.
-                        return Err(ValidationError::Type {
-                            handle: ty,
-                            name: struct_type
-                                .name
-                                .as_ref()
-                                .map_or_else(|| "Unknown".to_string(), |name| name.to_string()),
-                            source: TypeError::InvalidData(ty),
-                        });
-                    }
-                }
-            }
-            for (&function, _) in doc_comments_for_functions.iter() {
-                Self::validate_function_handle(function, functions)?;
-            }
-            for (&entry_point_index, _) in doc_comments_for_entry_points.iter() {
-                Self::validate_entry_point_index(entry_point_index, entry_points)?;
-            }
-            for (&constant, _) in doc_comments_for_constants.iter() {
-                Self::validate_constant_handle(constant, constants)?;
-            }
-            for (&global_variable, _) in doc_comments_for_global_variables.iter() {
-                Self::validate_global_variable_handle(global_variable, global_variables)?;
-            }
         }
 
         Ok(())
@@ -630,22 +550,6 @@ impl super::Validator {
             }
             crate::CooperativeSize::Constant(_) => Ok(None),
         }
-    }
-
-    fn validate_entry_point_index(
-        entry_point_index: usize,
-        entry_points: &[EntryPoint],
-    ) -> Result<(), InvalidHandleError> {
-        (0..entry_points.len())
-            .contains(&entry_point_index)
-            .then_some(())
-            .ok_or_else(|| {
-                BadHandle {
-                    kind: "EntryPoint",
-                    index: entry_point_index,
-                }
-                .into()
-            })
     }
 
     /// Validate all handles that occur in `expression`, whose handle is `handle`.
@@ -947,8 +851,7 @@ impl super::Validator {
             }
             crate::Expression::AtomicResult { ty, comparison: _ }
             | crate::Expression::SubgroupOperationResult { ty }
-            | crate::Expression::SpirvInstructionResult { ty }
-            | crate::Expression::WorkGroupUniformLoadResult { ty } => {
+            | crate::Expression::SpirvInstructionResult { ty } => {
                 validate_type(ty)?;
             }
             crate::Expression::RayQueryProceedResult
@@ -1241,11 +1144,6 @@ impl super::Validator {
                 Ok(())
             }
             crate::Statement::ScopedBarrier { .. } => Ok(()),
-            crate::Statement::WorkGroupUniformLoad { pointer, result } => {
-                validate_expr(pointer)?;
-                validate_expr(result)?;
-                Ok(())
-            }
             crate::Statement::Call {
                 function,
                 ref arguments,

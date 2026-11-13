@@ -301,7 +301,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureLoad_2d"),
@@ -347,7 +346,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureLoad_2d_array_u"),
@@ -400,7 +398,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureLoad_2d_array_s"),
@@ -453,7 +450,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureLoad_3d"),
@@ -499,7 +495,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureLoad_multisampled_2d"),
@@ -545,7 +540,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureStore_1d"),
@@ -583,7 +577,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureStore_2d"),
@@ -621,7 +614,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureStore_2d_array_u"),
@@ -666,7 +658,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureStore_2d_array_s"),
@@ -711,7 +702,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("test_textureStore_3d"),
@@ -749,7 +739,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -922,14 +911,10 @@
                         value: Some(36),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

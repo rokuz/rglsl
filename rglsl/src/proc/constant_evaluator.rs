@@ -948,8 +948,6 @@ pub enum ConstantEvaluatorError {
     ArrayLengthOverridden,
     #[error("Constants cannot call functions")]
     Call,
-    #[error("Constants don't support workGroupUniformLoad")]
-    WorkGroupUniformLoadResult,
     #[error("Constants don't support atomic functions")]
     Atomic,
     #[error("Constants don't support derivative functions")]
@@ -1445,9 +1443,6 @@ impl<'a> ConstantEvaluator<'a> {
             Expression::LocalVariable(_) => Err(ConstantEvaluatorError::LocalVariable),
             Expression::Derivative { .. } => Err(ConstantEvaluatorError::Derivative),
             Expression::CallResult { .. } => Err(ConstantEvaluatorError::Call),
-            Expression::WorkGroupUniformLoadResult { .. } => {
-                Err(ConstantEvaluatorError::WorkGroupUniformLoadResult)
-            }
             Expression::AtomicResult { .. } => Err(ConstantEvaluatorError::Atomic),
             Expression::FunctionArgument(_) => Err(ConstantEvaluatorError::FunctionArg),
             Expression::GlobalVariable(_) => Err(ConstantEvaluatorError::GlobalVariable),

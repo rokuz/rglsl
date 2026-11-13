@@ -73,7 +73,6 @@ const fn needs_return(last: Option<&crate::Statement>) -> bool {
             | S::Demote
             | S::BeginInvocationInterlock
             | S::EndInvocationInterlock
-            | S::WorkGroupUniformLoad { .. }
             | S::SubgroupBallot { .. }
             | S::SubgroupCollectiveOperation { .. }
             | S::SubgroupGather { .. }

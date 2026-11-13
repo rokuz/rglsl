@@ -45,7 +45,6 @@ pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
             | Statement::AtomicLoad { .. }
             | Statement::AtomicStore { .. }
             | Statement::ImageAtomic { .. }
-            | Statement::WorkGroupUniformLoad { .. }
             | Statement::RayQuery { .. }
             | Statement::RayPipelineFunction(_)
             | Statement::HitObject { .. }

@@ -192,7 +192,6 @@
                         value: Some(3),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: Some(0),
@@ -216,7 +215,6 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: Some((
                 topology: Points,
@@ -232,7 +230,4 @@
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

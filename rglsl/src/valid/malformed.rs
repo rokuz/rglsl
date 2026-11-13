@@ -51,7 +51,6 @@ fn function_argument_index_is_checked_before_analysis() -> crate::TestResult {
 fn result_expression_types_are_handle_checked() -> crate::TestResult {
     let missing = handle::<Type>(141)?;
     for expression in [
-        Expression::WorkGroupUniformLoadResult { ty: missing },
         Expression::AtomicResult {
             ty: missing,
             comparison: false,

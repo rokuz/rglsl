@@ -1132,7 +1132,6 @@
                     value: Some(153),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("uint64_function"),
@@ -1904,7 +1903,6 @@
                     value: Some(144),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -1972,14 +1970,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

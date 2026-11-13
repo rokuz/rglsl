@@ -233,7 +233,6 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::arena::{Arena, Handle, Range, UniqueArena};
-use crate::diagnostic_filter::DiagnosticFilterNode;
 use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpressions};
 
 pub use block::{Block, Walk};
@@ -2954,13 +2953,6 @@ pub enum Expression {
         comparison: bool,
     },
 
-    /// Result of a [`WorkGroupUniformLoad`] statement.
-    ///
-    /// [`WorkGroupUniformLoad`]: Statement::WorkGroupUniformLoad
-    WorkGroupUniformLoadResult {
-        /// The type of the result
-        ty: Handle<Type>,
-    },
     /// Get the length of an array.
     /// The expression must resolve to a pointer to an array with a dynamic size.
     ///
@@ -3583,21 +3575,6 @@ pub enum Statement {
         #[cfg_attr(feature = "deserialize", serde(default))]
         order: Option<MemoryOrder>,
     },
-    /// Load uniformly from a uniform pointer in the workgroup address space.
-    ///
-    /// Corresponds to the [`workgroupUniformLoad`](https://www.w3.org/TR/WGSL/#workgroupUniformLoad-builtin)
-    /// built-in function of wgsl, and has the same barrier semantics
-    WorkGroupUniformLoad {
-        /// This must be of type [`Pointer`] in the [`WorkGroup`] address space
-        ///
-        /// [`Pointer`]: TypeInner::Pointer
-        /// [`WorkGroup`]: AddressSpace::WorkGroup
-        pointer: Handle<Expression>,
-        /// The [`WorkGroupUniformLoadResult`] expression representing this load's result.
-        ///
-        /// [`WorkGroupUniformLoadResult`]: Expression::WorkGroupUniformLoadResult
-        result: Handle<Expression>,
-    },
     /// Calls a function.
     ///
     /// If the `result` is `Some`, the corresponding expression has to be
@@ -3832,14 +3809,6 @@ pub struct Function {
     pub precision: PrecisionExpressions,
     /// Block of instructions comprising the body of the function.
     pub body: Block,
-    /// The leaf of all diagnostic filter rules tree (stored in [`Module::diagnostic_filters`])
-    /// parsed on this function.
-    ///
-    /// In WGSL, this corresponds to `@diagnostic(…)` attributes.
-    ///
-    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
-    /// validation.
-    pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     #[cfg_attr(
         feature = "serialize",
@@ -4430,28 +4399,6 @@ bitflags::bitflags! {
     }
 }
 
-/// Doc comments preceding items.
-///
-/// These can be used to generate automated documentation,
-/// IDE hover information or translate shaders with their context comments.
-#[derive(Debug, Default, Clone)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub struct DocComments {
-    pub types: FastIndexMap<Handle<Type>, Vec<String>>,
-    // The key is:
-    // - key.0: the handle to the Struct
-    // - key.1: the index of the `StructMember`.
-    pub struct_members: FastIndexMap<(Handle<Type>, usize), Vec<String>>,
-    pub entry_points: FastIndexMap<usize, Vec<String>>,
-    pub functions: FastIndexMap<Handle<Function>, Vec<String>>,
-    pub constants: FastIndexMap<Handle<Constant>, Vec<String>>,
-    pub global_variables: FastIndexMap<Handle<GlobalVariable>, Vec<String>>,
-    // Top level comments, appearing before any space.
-    pub module: Vec<String>,
-}
-
 /// The output topology for a mesh shader. Note that mesh shaders don't allow things like triangle-strips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -4820,21 +4767,6 @@ pub struct Module {
     pub functions: Arena<Function>,
     /// Entry points.
     pub entry_points: Vec<EntryPoint>,
-    /// Arena for all diagnostic filter rules parsed in this module, including those in functions
-    /// and statements.
-    ///
-    /// This arena contains elements of a _tree_ of diagnostic filter rules. When nodes are built
-    /// by a front-end, they refer to a parent scope
-    pub diagnostic_filters: Arena<DiagnosticFilterNode>,
-    /// The leaf of all diagnostic filter rules tree parsed from directives in this module.
-    ///
-    /// In WGSL, this corresponds to `diagnostic(…);` directives.
-    ///
-    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
-    /// validation.
-    pub diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
-    /// Doc comments.
-    pub doc_comments: Option<Box<DocComments>>,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "core::ops::Not::not")

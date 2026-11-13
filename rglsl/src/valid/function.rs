@@ -243,14 +243,6 @@ pub enum FunctionError {
     PipelineInputRegularFunction { name: String },
     #[error("Functions that are not entry points cannot have `@location` or `@builtin` attributes on their return value types")]
     PipelineOutputRegularFunction,
-    #[error("Required uniformity for WorkGroupUniformLoad is not fulfilled because of {0:?}")]
-    // The actual load statement will be "pointed to" by the span
-    NonUniformWorkgroupUniformLoad(UniformityDisruptor),
-    // This is only possible with a misbehaving frontend
-    #[error("The expression {0:?} for a WorkGroupUniformLoad isn't a WorkgroupUniformLoadResult")]
-    WorkgroupUniformLoadExpressionMismatch(Handle<crate::Expression>),
-    #[error("The expression {0:?} is not valid as a WorkGroupUniformLoad argument. It should be a Pointer in Workgroup address space")]
-    WorkgroupUniformLoadInvalidPointer(Handle<crate::Expression>),
     #[error("Subgroup operation is invalid")]
     InvalidSubgroup(#[from] SubgroupError),
     #[error("Invalid target type for a cooperative store")]
@@ -1446,7 +1438,6 @@ impl super::Validator {
                         | Ex::ImageFootprint { .. } => self.emit_expression(handle, context)?,
                         Ex::CallResult(_)
                         | Ex::AtomicResult { .. }
-                        | Ex::WorkGroupUniformLoadResult { .. }
                         | Ex::RayQueryProceedResult
                         | Ex::ReportIntersectionResult
                         | Ex::SubgroupBallotResult
@@ -2094,59 +2085,6 @@ impl super::Validator {
                 }
             }
             S::ScopedBarrier { .. } => {}
-            S::WorkGroupUniformLoad { pointer, result } => {
-                stages &= super::ShaderStages::COMPUTE_LIKE;
-                let pointer_inner =
-                    context.resolve_type_inner(pointer, &self.valid_expression_set)?;
-                match *pointer_inner {
-                    Ti::Pointer {
-                        space: AddressSpace::WorkGroup,
-                        ..
-                    } => {}
-                    Ti::ValuePointer {
-                        space: AddressSpace::WorkGroup,
-                        ..
-                    } => {}
-                    _ => {
-                        return Err(FunctionError::WorkgroupUniformLoadInvalidPointer(pointer)
-                            .with_span_static(span, "WorkGroupUniformLoad"))
-                    }
-                }
-                self.emit_expression(result, context)?;
-                let ty = match &context.expressions[result] {
-                    &crate::Expression::WorkGroupUniformLoadResult { ty } => ty,
-                    _ => {
-                        return Err(
-                            FunctionError::WorkgroupUniformLoadExpressionMismatch(result)
-                                .with_span_static(span, "WorkGroupUniformLoad"),
-                        );
-                    }
-                };
-                let expected_pointer_inner = Ti::Pointer {
-                    base: ty,
-                    space: AddressSpace::WorkGroup,
-                };
-                // workgroupUniformLoad on atomic<T> returns T, not atomic<T>.
-                // Verify the pointer's atomic scalar matches the result scalar.
-                let atomic_specialization_ok = match *pointer_inner {
-                    Ti::Pointer {
-                        base: pointer_base,
-                        space: AddressSpace::WorkGroup,
-                    } => match (&context.types[pointer_base].inner, &context.types[ty].inner) {
-                        (&Ti::Atomic(pointer_scalar), &Ti::Scalar(result_scalar)) => {
-                            pointer_scalar == result_scalar
-                        }
-                        _ => false,
-                    },
-                    _ => false,
-                };
-                if !expected_pointer_inner.non_struct_equivalent(pointer_inner, context.types)
-                    && !atomic_specialization_ok
-                {
-                    return Err(FunctionError::WorkgroupUniformLoadInvalidPointer(pointer)
-                        .with_span_static(span, "WorkGroupUniformLoad"));
-                }
-            }
             S::RayQuery { query, ref fun } => {
                 let is_query =
                     match *context.resolve_type_inner(query, &self.valid_expression_set)? {

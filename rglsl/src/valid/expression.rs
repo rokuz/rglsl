@@ -163,10 +163,6 @@ pub enum ExpressionError {
     WrongArgumentCount(crate::MathFunction),
     #[error("Argument [{1}] to {0:?} as expression {2:?} has an invalid type.")]
     InvalidArgumentType(crate::MathFunction, u32, Handle<crate::Expression>),
-    #[error(
-        "workgroupUniformLoad result type can't be {0:?}. It can only be a constructible type."
-    )]
-    InvalidWorkGroupUniformLoadResultType(Handle<crate::Type>),
     #[error("Shader requires capability {0:?}")]
     MissingCapabilities(super::Capabilities),
     #[error(transparent)]
@@ -1607,18 +1603,6 @@ impl super::Validator {
                 // that point. The checks driven by `Validator::needs_visit` ensure
                 // that this expression is indeed visited by one `Atomic` statement.
                 ShaderStages::all()
-            }
-            E::WorkGroupUniformLoadResult { ty } => {
-                if self.types[ty.index()]
-                    .flags
-                    // Sized | Constructible is exactly the types currently supported by
-                    // WorkGroupUniformLoad
-                    .contains(TypeFlags::SIZED | TypeFlags::CONSTRUCTIBLE)
-                {
-                    ShaderStages::COMPUTE_LIKE
-                } else {
-                    return Err(ExpressionError::InvalidWorkGroupUniformLoadResultType(ty));
-                }
             }
             E::ArrayLength(expr) | E::WideArrayLength(expr) => match *resolver.resolve(expr)? {
                 Ti::Pointer { base, .. } => {

@@ -138,10 +138,6 @@ impl FunctionTracer<'_> {
                         }
                         self.expressions_used.insert(value);
                     }
-                    St::WorkGroupUniformLoad { pointer, result } => {
-                        self.expressions_used.insert(pointer);
-                        self.expressions_used.insert(result);
-                    }
                     St::Call {
                         function,
                         ref arguments,
@@ -475,13 +471,6 @@ impl FunctionMap {
                     } => {
                         self.adjust_atomic_location(location)?;
                         adjust(value)?;
-                    }
-                    St::WorkGroupUniformLoad {
-                        ref mut pointer,
-                        ref mut result,
-                    } => {
-                        adjust(pointer)?;
-                        adjust(result)?;
                     }
                     St::Call {
                         ref mut function,

@@ -127,7 +127,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("fetch_add_atomic_static_sized_array"),
@@ -178,7 +177,6 @@
                     value: Some(5),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("fetch_add_atomic_dynamic_sized_array"),
@@ -229,7 +227,6 @@
                     value: Some(5),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("exchange_atomic"),
@@ -269,7 +266,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("exchange_atomic_static_sized_array"),
@@ -322,7 +318,6 @@
                     value: Some(5),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("exchange_atomic_dynamic_sized_array"),
@@ -375,7 +370,6 @@
                     value: Some(5),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("fetch_add_atomic_dynamic_sized_array_static_index"),
@@ -421,7 +415,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("exchange_atomic_dynamic_sized_array_static_index"),
@@ -469,7 +462,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -552,14 +544,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

@@ -152,7 +152,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_dynamic_array"),
@@ -195,7 +194,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_vector"),
@@ -238,7 +236,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_vector_by_value"),
@@ -280,7 +277,6 @@
                     value: Some(2),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_matrix"),
@@ -323,7 +319,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_twice"),
@@ -377,7 +372,6 @@
                     value: Some(6),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_expensive"),
@@ -457,7 +451,6 @@
                     value: Some(11),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_in_bounds"),
@@ -553,7 +546,6 @@
                     value: Some(14),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_array"),
@@ -601,7 +593,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_dynamic_array"),
@@ -649,7 +640,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_vector"),
@@ -697,7 +687,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_matrix"),
@@ -745,7 +734,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_index_twice"),
@@ -804,7 +792,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_expensive"),
@@ -889,7 +876,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_in_bounds"),
@@ -984,7 +970,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_dynamic_array_constant_index"),
@@ -1022,7 +1007,6 @@
                     value: Some(3),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("set_dynamic_array_constant_index"),
@@ -1067,7 +1051,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -1279,14 +1262,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

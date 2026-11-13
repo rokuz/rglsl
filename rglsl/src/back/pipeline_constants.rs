@@ -827,7 +827,6 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ty: _,
             comparison: _,
         }
-        | Expression::WorkGroupUniformLoadResult { ty: _ }
         | Expression::SubgroupBallotResult
         | Expression::IsHelperInvocation
         | Expression::SubgroupOperationResult { .. }
@@ -1099,13 +1098,6 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
         } => {
             adjust_location(location, &adjust);
             adjust(value);
-        }
-        Statement::WorkGroupUniformLoad {
-            ref mut pointer,
-            ref mut result,
-        } => {
-            adjust(pointer);
-            adjust(result);
         }
         Statement::SubgroupBallot {
             ref mut result,

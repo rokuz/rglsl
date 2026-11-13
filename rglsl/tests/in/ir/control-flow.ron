@@ -306,7 +306,6 @@
                     ],
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("switch_default_break"),
@@ -339,7 +338,6 @@
                     ],
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("switch_case_break"),
@@ -372,7 +370,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("switch_selector_type_conversion"),
@@ -424,7 +421,6 @@
                     ],
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("switch_const_expr_case_selectors"),
@@ -500,7 +496,6 @@
                     ],
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("loop_switch_continue"),
@@ -547,7 +542,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("loop_switch_continue_nesting"),
@@ -701,7 +695,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("loop_switch_omit_continue_variable_checks"),
@@ -847,7 +840,6 @@
                     value: None,
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -932,14 +924,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

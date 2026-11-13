@@ -294,7 +294,6 @@ fn enter(statement: &Statement) -> Entry<'_> {
         | Statement::Demote
         | Statement::BeginInvocationInterlock
         | Statement::EndInvocationInterlock
-        | Statement::WorkGroupUniformLoad { .. }
         | Statement::SubgroupBallot { .. }
         | Statement::SubgroupCollectiveOperation { .. }
         | Statement::SubgroupGather { .. }

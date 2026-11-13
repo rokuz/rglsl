@@ -70,7 +70,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_u32_ai"),
@@ -89,7 +88,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_f32_ai"),
@@ -108,7 +106,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_f32_af"),
@@ -127,7 +124,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_vec2f32_ai"),
@@ -158,7 +154,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_arrf32_ai"),
@@ -197,7 +192,6 @@
                     value: Some(4),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_const_f32_const_ai"),
@@ -216,7 +210,6 @@
                     value: Some(0),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("return_vec2f32_const_ai"),
@@ -247,7 +240,6 @@
                     value: Some(1),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -318,14 +310,10 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )

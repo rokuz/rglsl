@@ -2008,7 +2008,6 @@ impl BlockContext<'_> {
             crate::Expression::FunctionArgument(index) => self.function.parameter_id(index)?,
             crate::Expression::CallResult(_)
             | crate::Expression::AtomicResult { .. }
-            | crate::Expression::WorkGroupUniformLoadResult { .. }
             | crate::Expression::RayQueryProceedResult
             | crate::Expression::ReportIntersectionResult
             | crate::Expression::SubgroupBallotResult
@@ -5040,22 +5039,6 @@ impl BlockContext<'_> {
             } => {
                 self.writer
                     .write_scoped_barrier(execution, memory, semantics, &mut block);
-            }
-            Statement::WorkGroupUniformLoad { pointer, result } => {
-                self.writer
-                    .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
-                let result_type_id = self.get_expression_type_id(&self.fun_info[result].ty)?;
-                // Match `Expression::Load` behavior, including `OpAtomicLoad` when
-                // loading from a pointer to `atomic<T>`.
-                let id = self.write_checked_load(
-                    pointer,
-                    &mut block,
-                    AccessTypeAdjustment::None,
-                    result_type_id,
-                )?;
-                self.cached.set(result, id)?;
-                self.writer
-                    .write_control_barrier(crate::Barrier::WORK_GROUP, &mut block.body);
             }
             Statement::RayQuery { query, ref fun } => {
                 self.write_ray_query_function(query, fun, &mut block)?;

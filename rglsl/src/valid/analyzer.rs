@@ -11,7 +11,6 @@ use core::ops;
 use super::{
     ExpressionError, FunctionError, ImmediateSlots, ModuleInfo, ShaderStages, ValidationFlags,
 };
-use crate::diagnostic_filter::{DiagnosticFilterNode, StandardFilterableTriggeringRule};
 use crate::span::{AddSpan as _, WithSpan};
 use crate::{
     arena::{Arena, Handle},
@@ -349,13 +348,6 @@ pub struct FunctionInfo {
 
     /// Indicates that the function is using dual source blending.
     pub dual_source_blending: bool,
-
-    /// The leaf of all module-wide diagnostic filter rules tree parsed from directives in this
-    /// module.
-    ///
-    /// See [`DiagnosticFilterNode`] for details on how the tree is represented and used in
-    /// validation.
-    diagnostic_filter_leaf: Option<Handle<DiagnosticFilterNode>>,
 
     /// A bitmask, tracking which 4-byte slots this function (possibly transitively) reads.
     /// Used to determine the minimum set of slots that must be written via `set_immediates`.
@@ -1060,13 +1052,6 @@ impl FunctionInfo {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },
-            E::WorkGroupUniformLoadResult { .. } => Uniformity {
-                // The result of WorkGroupUniformLoad is always uniform by definition
-                non_uniform_result: None,
-                // The call is what cares about uniformity, not the expression
-                // This expression is never emitted, so this requirement should never be used anyway?
-                requirements: UniformityRequirements::empty(),
-            },
             E::ArrayLength(expr) | E::WideArrayLength(expr) => Uniformity {
                 non_uniform_result: self.add_ref_impl(expr, GlobalUse::QUERY),
                 requirements: UniformityRequirements::empty(),
@@ -1228,7 +1213,6 @@ impl FunctionInfo {
         other_functions: &[FunctionInfo],
         disruptor: Option<UniformityDisruptor>,
         expression_arena: &Arena<crate::Expression>,
-        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
     ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
         let mut frames = Vec::from([Flow::block(statements, disruptor)]);
         let mut returned: Option<FunctionUniformity> = None;
@@ -1259,7 +1243,7 @@ impl FunctionInfo {
                         statement,
                         other_functions,
                         disruptor,
-                        (expression_arena, diagnostic_filter_arena),
+                        expression_arena,
                         &mut frames,
                     )?;
                 }
@@ -1351,10 +1335,7 @@ impl FunctionInfo {
         statement: &'a crate::Statement,
         other_functions: &[FunctionInfo],
         disruptor: Option<UniformityDisruptor>,
-        (expression_arena, diagnostic_filter_arena): (
-            &Arena<crate::Expression>,
-            &Arena<DiagnosticFilterNode>,
-        ),
+        expression_arena: &Arena<crate::Expression>,
         frames: &mut Vec<Flow<'a>>,
     ) -> Result<Option<FunctionUniformity>, WithSpan<FunctionError>> {
         use crate::Statement as S;
@@ -1408,13 +1389,7 @@ impl FunctionInfo {
             }
             _ => {
                 return self
-                    .process_statement(
-                        statement,
-                        other_functions,
-                        disruptor,
-                        expression_arena,
-                        diagnostic_filter_arena,
-                    )
+                    .process_statement(statement, other_functions, disruptor, expression_arena)
                     .map(Some)
             }
         }
@@ -1427,7 +1402,6 @@ impl FunctionInfo {
         other_functions: &[FunctionInfo],
         disruptor: Option<UniformityDisruptor>,
         expression_arena: &Arena<crate::Expression>,
-        diagnostic_filter_arena: &Arena<DiagnosticFilterNode>,
     ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
         use crate::Statement as S;
         Ok(match *statement {
@@ -1441,21 +1415,8 @@ impl FunctionInfo {
                         && !req.is_empty()
                     {
                         if let Some(cause) = disruptor {
-                            let severity = DiagnosticFilterNode::search(
-                                self.diagnostic_filter_leaf,
-                                diagnostic_filter_arena,
-                                StandardFilterableTriggeringRule::DerivativeUniformity,
-                            );
-                            severity.report_diag(
-                                FunctionError::NonUniformControlFlow(req, expr, cause)
-                                    .with_span_handle(expr, expression_arena),
-                                // TODO: Yes, this isn't contextualized with source, because
-                                // the user is supposed to render what would normally be an
-                                // error here. Once we actually support warning-level
-                                // diagnostic items, then we won't need this non-compliant hack:
-                                // <https://github.com/gfx-rs/wgpu/issues/6458>
-                                |e, level| log::log!(level, "{e}"),
-                            )?;
+                            return Err(FunctionError::NonUniformControlFlow(req, expr, cause)
+                                .with_span_handle(expr, expression_arena));
                         }
                     }
                     requirements |= req;
@@ -1492,35 +1453,6 @@ impl FunctionInfo {
                 },
                 exit: ExitFlags::empty(),
             },
-            S::WorkGroupUniformLoad { pointer, .. } => {
-                self.add_operand_ref(pointer, GlobalUse::READ);
-
-                // Don't check that this call occurs in uniform control flow until rglsl implements WGSL's standard
-                // uniformity analysis (https://github.com/gfx-rs/naga/issues/1744).
-                // The uniformity analysis rglsl uses now is less accurate than the one in the WGSL standard,
-                // causing rglsl to reject correct uses of `workgroupUniformLoad` in some interesting programs.
-
-                /*
-                if self
-                    .flags
-                    .contains(super::ValidationFlags::CONTROL_FLOW_UNIFORMITY)
-                {
-                    let condition_nur = self.add_ref(pointer);
-                    let this_disruptor =
-                        disruptor.or(condition_nur.map(UniformityDisruptor::Expression));
-                    if let Some(cause) = this_disruptor {
-                        return Err(FunctionError::NonUniformWorkgroupUniformLoad(cause)
-                            .with_span_static(*span, "WorkGroupUniformLoad"));
-                    }
-                } */
-                FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: None,
-                        requirements: UniformityRequirements::WORK_GROUP_BARRIER,
-                    },
-                    exit: ExitFlags::empty(),
-                }
-            }
             S::Return { value } => FunctionUniformity {
                 result: Uniformity {
                     non_uniform_result: value.and_then(|expr| self.add_ref(expr)),
@@ -1904,7 +1836,6 @@ impl ModuleInfo {
             expressions: vec![ExpressionInfo::new(); fun.expressions.len()].into_boxed_slice(),
             sampling: crate::FastHashSet::default(),
             dual_source_blending: false,
-            diagnostic_filter_leaf: fun.diagnostic_filter_leaf,
             immediate_slots_used: ImmediateSlots::default(),
         };
         let resolve_context =
@@ -1929,13 +1860,7 @@ impl ModuleInfo {
             }
         }
 
-        let uniformity = info.process_block(
-            &fun.body,
-            &self.functions,
-            None,
-            &fun.expressions,
-            &module.diagnostic_filters,
-        )?;
+        let uniformity = info.process_block(&fun.body, &self.functions, None, &fun.expressions)?;
         info.uniformity = uniformity.result;
         info.may_kill = uniformity.exit.contains(ExitFlags::MAY_KILL);
 
@@ -2058,7 +1983,6 @@ fn uniform_control_flow() -> crate::TestResult {
         expressions: vec![ExpressionInfo::new(); expressions.len()].into_boxed_slice(),
         sampling: crate::FastHashSet::default(),
         dual_source_blending: false,
-        diagnostic_filter_leaf: None,
         immediate_slots_used: ImmediateSlots::default(),
     };
     let resolve_context = ResolveContext {
@@ -2107,7 +2031,6 @@ fn uniform_control_flow() -> crate::TestResult {
             &[],
             None,
             &expressions,
-            &Arena::new(),
         ),
         Ok(FunctionUniformity {
             result: Uniformity {
@@ -2140,7 +2063,6 @@ fn uniform_control_flow() -> crate::TestResult {
             &[],
             None,
             &expressions,
-            &Arena::new(),
         );
         if DISABLE_UNIFORMITY_REQ_FOR_FRAGMENT_STAGE {
             assert_eq!(info[derivative_expr].ref_count, 2);
@@ -2155,45 +2077,6 @@ fn uniform_control_flow() -> crate::TestResult {
                 .with_span()),
             );
             assert_eq!(info[derivative_expr].ref_count, 1);
-
-            // Test that the same thing passes when we disable the `derivative_uniformity`
-            let mut diagnostic_filters = Arena::new();
-            let diagnostic_filter_leaf = diagnostic_filters.append(
-                DiagnosticFilterNode {
-                    inner: crate::diagnostic_filter::DiagnosticFilter {
-                        new_severity: crate::diagnostic_filter::Severity::Off,
-                        triggering_rule:
-                            crate::diagnostic_filter::FilterableTriggeringRule::Standard(
-                                StandardFilterableTriggeringRule::DerivativeUniformity,
-                            ),
-                    },
-                    parent: None,
-                },
-                crate::Span::default(),
-            );
-            let mut info = FunctionInfo {
-                diagnostic_filter_leaf: Some(diagnostic_filter_leaf),
-                ..info.clone()
-            };
-
-            let block_info = info.process_block(
-                &vec![stmt_emit2, stmt_if_non_uniform].into(),
-                &[],
-                None,
-                &expressions,
-                &diagnostic_filters,
-            );
-            assert_eq!(
-                block_info,
-                Ok(FunctionUniformity {
-                    result: Uniformity {
-                        non_uniform_result: None,
-                        requirements: UniformityRequirements::DERIVATIVE,
-                    },
-                    exit: ExitFlags::empty()
-                }),
-            );
-            assert_eq!(info[derivative_expr].ref_count, 2);
         }
     }
     assert_eq!(info[non_uniform_global], GlobalUse::READ);
@@ -2208,7 +2091,6 @@ fn uniform_control_flow() -> crate::TestResult {
             &[],
             Some(UniformityDisruptor::Return),
             &expressions,
-            &Arena::new(),
         ),
         Ok(FunctionUniformity {
             result: Uniformity {
@@ -2236,7 +2118,6 @@ fn uniform_control_flow() -> crate::TestResult {
             &[],
             Some(UniformityDisruptor::Discard),
             &expressions,
-            &Arena::new(),
         ),
         Ok(FunctionUniformity {
             result: Uniformity {

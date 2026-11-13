@@ -606,7 +606,6 @@
                     value: Some(9),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("snoise2"),
@@ -1399,7 +1398,6 @@
                     value: Some(136),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("fbm"),
@@ -1687,7 +1685,6 @@
                     value: Some(43),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("terrain_point"),
@@ -1768,7 +1765,6 @@
                     value: Some(8),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("terrain_vertex"),
@@ -2029,7 +2025,6 @@
                     value: Some(34),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("index_to_p"),
@@ -2144,7 +2139,6 @@
                     value: Some(16),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
         (
             name: Some("color23"),
@@ -2299,7 +2293,6 @@
                     value: Some(24),
                 ),
             ],
-            diagnostic_filter_leaf: None,
         ),
     ],
     entry_points: [
@@ -2734,7 +2727,6 @@
                         value: None,
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
@@ -2990,7 +2982,6 @@
                         value: Some(42),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
@@ -3573,7 +3564,6 @@
                         value: Some(80),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
@@ -3669,7 +3659,6 @@
                         value: Some(10),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
@@ -4107,14 +4096,10 @@
                         value: Some(78),
                     ),
                 ],
-                diagnostic_filter_leaf: None,
             ),
             mesh_info: None,
             task_payload: None,
             incoming_ray_payload: None,
         ),
     ],
-    diagnostic_filters: [],
-    diagnostic_filter_leaf: None,
-    doc_comments: None,
 )
