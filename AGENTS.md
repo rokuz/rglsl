@@ -75,6 +75,10 @@ cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, s
 cargo xtask test [--glslang-dir ../glslang] [--no-exec]      # glslang's corpus (+ exec on the local GPU)
 cargo xtask test --filter NAME --no-progress-file            # quick check of some shaders
 cargo xtask cli [--glslang-dir ../glslang]                   # glslangValidator command lines: rglsl vs glslang
+cargo xtask bench [--runs N] [--filter NAME] [--debug-info g|gVS]
+                                                   # compile time against glslang, one process at a time:
+                                                   # target/xtask/bench.md and bench.tsv
+
 cargo xtask fuzz --shaders DIR [--exec]                      # differential fuzzing against glslang (+ exec)
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run
 cargo xtask fuzz --decode INPUT                              # glsl_variant input -> shader family
