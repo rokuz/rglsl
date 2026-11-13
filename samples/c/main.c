@@ -1,0 +1,271 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "rglsl.h"
+
+static const char *const vertex_source =
+    "#version 450\n"
+    "layout(location = 0) in vec3 position;\n"
+    "layout(location = 1) in vec3 normal;\n"
+    "layout(location = 0) out vec3 world_normal;\n"
+    "void main() {\n"
+    "    world_normal = normal;\n"
+    "    gl_Position = vec4(position, 1.0);\n"
+    "}\n";
+
+static const char *const fragment_source =
+    "#version 450\n"
+    "layout(location = 0) in vec3 world_normal;\n"
+    "layout(location = 0) out vec4 color;\n"
+    "vec3 shade(vec3 normal);\n"
+    "void main() {\n"
+    "    color = vec4(shade(normalize(world_normal)), 1.0);\n"
+    "}\n";
+
+static const char *const lighting_source =
+    "#version 450\n"
+    "#include \"light.h\"\n"
+    "#include <material.h>\n"
+    "vec3 shade(vec3 normal) {\n"
+    "    float diffuse = max(dot(normal, LIGHT_DIRECTION), 0.0);\n"
+    "    return ALBEDO * (AMBIENT + diffuse * (1.0 - ROUGHNESS));\n"
+    "}\n";
+
+static const char *const broken_source =
+    "#version 450\n"
+    "layout(location = 0) out vec4 color;\n"
+    "void main() {\n"
+    "    color = vec4(brightness);\n"
+    "}\n";
+
+struct include_log {
+    int calls;
+};
+
+static void include_material(void *user_data, const char *requested, bool system,
+                             const char *includer, rglsl_include_result *result)
+{
+    struct include_log *log = (struct include_log *)user_data;
+    log->calls += 1;
+    printf("include callback: %c%s%c from %s\n", system ? '<' : '"', requested,
+           system ? '>' : '"', includer ? includer : "(none)");
+    if (system && strcmp(requested, "material.h") == 0) {
+        rglsl_include_result_set(result, "virtual/material.h",
+                                 "const vec3 ALBEDO = vec3(0.8, 0.6, 0.4);\n"
+                                 "const float ROUGHNESS = 0.25;\n");
+    }
+}
+
+static void report(const char *what, rglsl_result code, rglsl_diagnostics *diagnostics)
+{
+    printf("%s failed with code %u:\n%s\n", what, (unsigned)code,
+           diagnostics ? rglsl_diagnostics_text(diagnostics) : "");
+    if (diagnostics && rglsl_diagnostics_count(diagnostics) > 0) {
+        rglsl_severity severity = RGLSL_SEVERITY_WARNING;
+        const char *file = NULL;
+        uint32_t line = 0;
+        uint32_t column = 0;
+        if (rglsl_diagnostics_location(diagnostics, 0, &severity, &file, &line, &column) ==
+                RGLSL_RESULT_OK &&
+            file != NULL) {
+            printf("first %s at %s, line %u, column %u\n",
+                   severity == RGLSL_SEVERITY_ERROR ? "error" : "warning", file,
+                   (unsigned)line, (unsigned)column);
+        }
+    }
+    rglsl_diagnostics_destroy(diagnostics);
+}
+
+static rglsl_object *compile(const char *source, const rglsl_compile_options *options,
+                             const char *what)
+{
+    rglsl_object *object = NULL;
+    rglsl_diagnostics *diagnostics = NULL;
+    rglsl_result code = rglsl_compile(source, options, &object, &diagnostics);
+    if (code != RGLSL_RESULT_OK) {
+        report(what, code, diagnostics);
+        return NULL;
+    }
+    printf("compiled %s\n", what);
+    return object;
+}
+
+static rglsl_compile_options *stage_options(const char *name, rglsl_stage stage)
+{
+    rglsl_compile_options *options = NULL;
+    if (rglsl_compile_options_create(name, stage, &options) != RGLSL_RESULT_OK) {
+        return NULL;
+    }
+    return options;
+}
+
+static rglsl_compile_options *lighting_options(struct include_log *log)
+{
+    rglsl_compile_options *options = NULL;
+    if (rglsl_compile_options_create_library("lighting.glsl", &options) != RGLSL_RESULT_OK) {
+        return NULL;
+    }
+    if (rglsl_compile_options_add_define(options, "AMBIENT", "0.1") != RGLSL_RESULT_OK ||
+        rglsl_compile_options_add_include(
+            options, "light.h", "const vec3 LIGHT_DIRECTION = vec3(0.0, 0.0, 1.0);\n") !=
+            RGLSL_RESULT_OK ||
+        rglsl_compile_options_set_includer(options, include_material, log) != RGLSL_RESULT_OK) {
+        rglsl_compile_options_destroy(options);
+        return NULL;
+    }
+    return options;
+}
+
+static const char *stage_extension(rglsl_stage stage)
+{
+    switch (stage) {
+    case RGLSL_STAGE_VERTEX:
+        return "vert";
+    case RGLSL_STAGE_FRAGMENT:
+        return "frag";
+    default:
+        return "spv";
+    }
+}
+
+static int write_stages(const rglsl_program *program, const char *directory)
+{
+    size_t count = rglsl_program_stage_count(program);
+    for (size_t index = 0; index < count; ++index) {
+        rglsl_stage stage = 0;
+        const uint32_t *words = NULL;
+        size_t word_count = 0;
+        if (rglsl_program_stage(program, index, &stage) != RGLSL_RESULT_OK ||
+            rglsl_program_spirv(program, index, &words, &word_count) != RGLSL_RESULT_OK) {
+            return 1;
+        }
+        char path[4096];
+        snprintf(path, sizeof path, "%s/%s.spv", directory, stage_extension(stage));
+        FILE *file = fopen(path, "wb");
+        if (file == NULL) {
+            fprintf(stderr, "cannot write %s\n", path);
+            return 1;
+        }
+        size_t written = fwrite(words, sizeof *words, word_count, file);
+        fclose(file);
+        if (written != word_count) {
+            fprintf(stderr, "cannot write %s\n", path);
+            return 1;
+        }
+        printf("%s stage: entry point %s, %zu words -> %s\n", stage_extension(stage),
+               rglsl_program_entry_point(program, index), word_count, path);
+    }
+    return 0;
+}
+
+static rglsl_object *round_trip(const rglsl_object *object)
+{
+    rglsl_blob *blob = NULL;
+    rglsl_diagnostics *diagnostics = NULL;
+    rglsl_result code = rglsl_object_write(object, &blob, &diagnostics);
+    if (code != RGLSL_RESULT_OK) {
+        report("writing the object", code, diagnostics);
+        return NULL;
+    }
+    rglsl_object *copy = NULL;
+    code = rglsl_object_read(rglsl_blob_data(blob), rglsl_blob_size(blob), &copy, &diagnostics);
+    printf("object file: %zu bytes\n", rglsl_blob_size(blob));
+    rglsl_blob_destroy(blob);
+    if (code != RGLSL_RESULT_OK) {
+        report("reading the object", code, diagnostics);
+        return NULL;
+    }
+    return copy;
+}
+
+static int link_program(const char *directory, rglsl_object *const *objects, size_t count)
+{
+    rglsl_program_options *options = NULL;
+    if (rglsl_program_options_create(&options) != RGLSL_RESULT_OK ||
+        rglsl_program_options_set_spirv_version(options, 1, 3) != RGLSL_RESULT_OK) {
+        rglsl_program_options_destroy(options);
+        return 1;
+    }
+    rglsl_program *program = NULL;
+    rglsl_diagnostics *diagnostics = NULL;
+    rglsl_result code = rglsl_link((const rglsl_object *const *)objects, count, options,
+                                   &program, &diagnostics);
+    rglsl_program_options_destroy(options);
+    if (code != RGLSL_RESULT_OK) {
+        report("linking", code, diagnostics);
+        return 1;
+    }
+    int status = write_stages(program, directory);
+    rglsl_program_destroy(program);
+    return status;
+}
+
+static int show_compile_error(void)
+{
+    rglsl_compile_options *options = stage_options("broken.frag", RGLSL_STAGE_FRAGMENT);
+    rglsl_object *object = compile(broken_source, options, "broken.frag");
+    rglsl_compile_options_destroy(options);
+    if (object != NULL) {
+        rglsl_object_destroy(object);
+        return 1;
+    }
+    return 0;
+}
+
+static int show_link_error(const rglsl_object *fragment)
+{
+    rglsl_program *program = NULL;
+    rglsl_diagnostics *diagnostics = NULL;
+    rglsl_result code = rglsl_link(&fragment, 1, NULL, &program, &diagnostics);
+    if (code == RGLSL_RESULT_OK) {
+        rglsl_program_destroy(program);
+        return 1;
+    }
+    report("linking without the library", code, diagnostics);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    const char *directory = argc > 1 ? argv[1] : ".";
+    printf("rglsl %s (ABI %u)\n", rglsl_version(), (unsigned)rglsl_abi_version());
+    if (rglsl_abi_version() != RGLSL_ABI_VERSION) {
+        fprintf(stderr, "rglsl.h does not match the library\n");
+        return 1;
+    }
+
+    struct include_log log = {0};
+    rglsl_compile_options *vertex_options = stage_options("main.vert", RGLSL_STAGE_VERTEX);
+    rglsl_compile_options *fragment_options = stage_options("main.frag", RGLSL_STAGE_FRAGMENT);
+    rglsl_compile_options *library_options = lighting_options(&log);
+    rglsl_object *objects[3] = {NULL, NULL, NULL};
+    int status = 1;
+    if (vertex_options == NULL || fragment_options == NULL || library_options == NULL) {
+        fprintf(stderr, "cannot create the compile options\n");
+        goto done;
+    }
+    objects[0] = compile(vertex_source, vertex_options, "main.vert");
+    objects[1] = compile(fragment_source, fragment_options, "main.frag");
+    rglsl_object *library = compile(lighting_source, library_options, "lighting.glsl");
+    if (library != NULL) {
+        objects[2] = round_trip(library);
+        rglsl_object_destroy(library);
+    }
+    if (objects[0] == NULL || objects[1] == NULL || objects[2] == NULL) {
+        goto done;
+    }
+    printf("include callback calls: %d\n", log.calls);
+    status = link_program(directory, objects, 3);
+    status |= show_compile_error();
+    status |= show_link_error(objects[1]);
+
+done:
+    for (size_t index = 0; index < 3; ++index) {
+        rglsl_object_destroy(objects[index]);
+    }
+    rglsl_compile_options_destroy(vertex_options);
+    rglsl_compile_options_destroy(fragment_options);
+    rglsl_compile_options_destroy(library_options);
+    return status;
+}
