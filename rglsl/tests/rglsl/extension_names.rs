@@ -162,6 +162,9 @@ fn glsl_extension_names_are_known() -> TestResult {
 fn spirv_extension_names_are_known() -> TestResult {
     let table = workspace().join(SPIRV_TOOLS_EXTENSIONS);
     if !table.exists() {
+        if std::env::var_os("RGLSL_REQUIRE_ORACLES").is_some() {
+            return Err(format!("{} not found", table.display()).into());
+        }
         println!(
             "{} not found: run `cargo xtask oracles` to check SPIR-V extension names",
             table.display()
