@@ -4,6 +4,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_sema::scope::Direction;
 use rglsl_sema::types::{ArraySize as GlslArraySize, Type as GlslType, TypeKind};
@@ -148,7 +149,12 @@ impl Lowerer<'_> {
                         .parameters
                         .iter()
                         .map(|parameter| match parameter.direction {
-                            Direction::In if parameter.qualifiers.constant => {
+                            Direction::In
+                                if parameter
+                                    .qualifiers
+                                    .flags
+                                    .contains(QualifierFlags::CONSTANT) =>
+                            {
                                 ParameterQualifier::ConstIn
                             }
                             Direction::In => ParameterQualifier::In,

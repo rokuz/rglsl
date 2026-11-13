@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -178,7 +179,7 @@ impl Analyzer<'_> {
             "gl_PrimitivePointIndicesEXT"
             | "gl_PrimitiveLineIndicesEXT"
             | "gl_PrimitiveTriangleIndicesEXT" => primitives,
-            _ if qualifiers.per_primitive => primitives,
+            _ if qualifiers.flags.contains(QualifierFlags::PER_PRIMITIVE) => primitives,
             _ => vertices,
         })
     }
@@ -189,7 +190,8 @@ impl Analyzer<'_> {
         qualifiers: &Qualifiers,
         ty: &mut Type,
     ) {
-        if qualifiers.storage != Storage::Out || qualifiers.per_task {
+        if qualifiers.storage != Storage::Out || qualifiers.flags.contains(QualifierFlags::PER_TASK)
+        {
             return;
         }
         if !ty.is_array() {
@@ -250,11 +252,13 @@ impl Analyzer<'_> {
                         continue;
                     }
                     qualifiers.storage = Storage::Out;
-                    qualifiers.per_primitive |= block.qualifiers.per_primitive;
-                    qualifiers.per_task |= block.qualifiers.per_task;
+                    qualifiers.flags |= block.qualifiers.flags
+                        & (QualifierFlags::PER_PRIMITIVE | QualifierFlags::PER_TASK);
                 }
             }
-            if qualifiers.storage != Storage::Out || qualifiers.per_task || !variable.ty.is_array()
+            if qualifiers.storage != Storage::Out
+                || qualifiers.flags.contains(QualifierFlags::PER_TASK)
+                || !variable.ty.is_array()
             {
                 continue;
             }
@@ -295,7 +299,8 @@ impl Analyzer<'_> {
         ty: &mut Type,
         member: bool,
     ) {
-        if !qualifiers.per_view || !self.stage_is(ShaderStage::Mesh) {
+        if !qualifiers.flags.contains(QualifierFlags::PER_VIEW) || !self.stage_is(ShaderStage::Mesh)
+        {
             return;
         }
         let dimension = usize::from(!member);
@@ -346,7 +351,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn mesh_block_storage(&mut self, span: Span, qualifiers: &Qualifiers) {
         let storage = qualifiers.storage;
-        let per_task = qualifiers.per_task;
+        let per_task = qualifiers.flags.contains(QualifierFlags::PER_TASK);
         self.stage_check(span, |stage| match (storage, stage) {
             (Storage::In, ShaderStage::Mesh) if !per_task => Some(invalid(
                 "in",
@@ -447,10 +452,12 @@ impl Analyzer<'_> {
                 }
                 match variable.ty.kind {
                     TypeKind::Block(id) => self.types.block(id).is_some_and(|block| {
-                        block.storage == BlockStorage::Out && !block.qualifiers.per_task
+                        block.storage == BlockStorage::Out
+                            && !block.qualifiers.flags.contains(QualifierFlags::PER_TASK)
                     }),
                     _ => {
-                        variable.qualifiers.storage == Storage::Out && !variable.qualifiers.per_task
+                        variable.qualifiers.storage == Storage::Out
+                            && !variable.qualifiers.flags.contains(QualifierFlags::PER_TASK)
                     }
                 }
             }

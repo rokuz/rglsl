@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::vec::Vec;
 
 use rglsl_ast::ast::{
@@ -90,7 +91,7 @@ impl Analyzer<'_> {
         let Some(variable) = self.symbol(id).and_then(|symbol| symbol.variable()) else {
             return Err(BAD_INIT);
         };
-        if variable.qualifiers.constant {
+        if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT) {
             return Err(BAD_INIT);
         }
         if variable.ty != Type::INT && variable.ty != Type::FLOAT {

@@ -15,6 +15,7 @@ name = "rglsl_sema"
 [dependencies]
 rglsl-ast.workspace = true
 rglsl-types.workspace = true
+bitflags.workspace = true
 half.workspace = true
 libm.workspace = true
 rspirv.workspace = true

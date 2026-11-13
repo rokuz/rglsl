@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::{
     Attribute, CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, JumpStatement,
@@ -271,7 +272,11 @@ impl FunctionLowerer<'_, '_> {
                         continue;
                     };
                     let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
-                    if variable.qualifiers.specialization {
+                    if variable
+                        .qualifiers
+                        .flags
+                        .contains(QualifierFlags::SPECIALIZATION)
+                    {
                         if let Some(initializer) = declarator.initializer.as_ref() {
                             let name = Some(declarator.name.node.clone());
                             let ty = variable.ty.clone();
@@ -282,7 +287,7 @@ impl FunctionLowerer<'_, '_> {
                             continue;
                         }
                     }
-                    if variable.qualifiers.constant
+                    if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
                         && variable.value.as_ref().is_some_and(|value| {
                             shape(&variable.ty, &value.values, &self.lw.analysis.types).is_some()
                         })

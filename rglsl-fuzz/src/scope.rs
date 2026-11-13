@@ -1,3 +1,4 @@
+use rglsl_sema::scope::QualifierFlags;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -108,12 +109,12 @@ pub fn declared_variable(analysis: &Analysis, id: NodeId, name: &str) -> Variabl
     if let Some(symbol) = analysis.symbol(*symbol_id) {
         if let SymbolKind::Variable(details) = &symbol.kind {
             variable.parameter = details.origin == Origin::Parameter;
-            variable.constant = details.qualifiers.constant
+            variable.constant = details.qualifiers.flags.contains(QualifierFlags::CONSTANT)
                 && details.value.is_some()
                 && details.origin != Origin::Parameter;
             variable.output =
                 details.origin == Origin::Global && details.qualifiers.storage == Storage::Out;
-            variable.assignable = !details.qualifiers.constant
+            variable.assignable = !details.qualifiers.flags.contains(QualifierFlags::CONSTANT)
                 && details.origin != Origin::BuiltIn
                 && (matches!(
                     details.qualifiers.storage,

@@ -1,4 +1,5 @@
 use alloc::{format, string::String, vec, vec::Vec};
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::{
     BlockInstance, BlockStructure, Declaration, DeclarationKind, ExternalDeclaration,
@@ -146,9 +147,9 @@ pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> S
 }
 
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
-    if qualifiers.readonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY) {
         StorageAccess::LOAD
-    } else if qualifiers.writeonly {
+    } else if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
         StorageAccess::STORE
     } else {
         StorageAccess::LOAD | StorageAccess::STORE
@@ -156,7 +157,9 @@ pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
 }
 
 pub(super) fn image_access(qualifiers: &Qualifiers) -> StorageAccess {
-    if qualifiers.readonly || qualifiers.writeonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY)
+        || qualifiers.flags.contains(QualifierFlags::WRITEONLY)
+    {
         storage_access(qualifiers)
     } else {
         StorageAccess::LOAD | StorageAccess::STORE | StorageAccess::ATOMIC
@@ -168,10 +171,10 @@ fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
     if !matches!(ty.kind, TypeKind::Tensor { .. }) {
         return decorations;
     }
-    if qualifiers.readonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY) {
         decorations |= MemoryDecorations::NON_WRITABLE;
     }
-    if qualifiers.writeonly {
+    if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
         decorations |= MemoryDecorations::NON_READABLE;
     }
     decorations
@@ -189,10 +192,14 @@ pub(super) fn parameter_memory(qualifiers: &Qualifiers, ty: &GlslType) -> Memory
 
 pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDecorations {
     let mut decorations = memory(block) | memory(member);
-    if block.readonly || member.readonly {
+    if block.flags.contains(QualifierFlags::READONLY)
+        || member.flags.contains(QualifierFlags::READONLY)
+    {
         decorations |= MemoryDecorations::NON_WRITABLE;
     }
-    if block.writeonly || member.writeonly {
+    if block.flags.contains(QualifierFlags::WRITEONLY)
+        || member.flags.contains(QualifierFlags::WRITEONLY)
+    {
         decorations |= MemoryDecorations::NON_READABLE;
     }
     decorations
@@ -200,34 +207,52 @@ pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDe
 
 fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     let mut decorations = MemoryDecorations::empty();
-    if qualifiers.coherent {
+    if qualifiers.flags.contains(QualifierFlags::COHERENT) {
         decorations |= MemoryDecorations::COHERENT;
     }
     for (present, decoration) in [
-        (qualifiers.volatile, MemoryDecorations::VOLATILE),
-        (qualifiers.restrict, MemoryDecorations::RESTRICT),
         (
-            qualifiers.device_coherent,
+            qualifiers.flags.contains(QualifierFlags::VOLATILE),
+            MemoryDecorations::VOLATILE,
+        ),
+        (
+            qualifiers.flags.contains(QualifierFlags::RESTRICT),
+            MemoryDecorations::RESTRICT,
+        ),
+        (
+            qualifiers.flags.contains(QualifierFlags::DEVICE_COHERENT),
             MemoryDecorations::DEVICE_COHERENT,
         ),
         (
-            qualifiers.queue_family_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::QUEUE_FAMILY_COHERENT),
             MemoryDecorations::QUEUE_FAMILY_COHERENT,
         ),
         (
-            qualifiers.workgroup_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::WORKGROUP_COHERENT),
             MemoryDecorations::WORKGROUP_COHERENT,
         ),
         (
-            qualifiers.subgroup_coherent,
+            qualifiers.flags.contains(QualifierFlags::SUBGROUP_COHERENT),
             MemoryDecorations::SUBGROUP_COHERENT,
         ),
         (
-            qualifiers.shader_call_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::SHADER_CALL_COHERENT),
             MemoryDecorations::SHADER_CALL_COHERENT,
         ),
-        (qualifiers.nonprivate, MemoryDecorations::NONPRIVATE),
-        (qualifiers.nontemporal, MemoryDecorations::NONTEMPORAL),
+        (
+            qualifiers.flags.contains(QualifierFlags::NONPRIVATE),
+            MemoryDecorations::NONPRIVATE,
+        ),
+        (
+            qualifiers.flags.contains(QualifierFlags::NONTEMPORAL),
+            MemoryDecorations::NONTEMPORAL,
+        ),
     ] {
         if present {
             decorations |= decoration;
@@ -480,7 +505,9 @@ impl<'a> Lowerer<'a> {
                         member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
                     }
                     let count = match member_ty.element_type() {
-                        Some(element) if member.qualifiers.per_view => {
+                        Some(element)
+                            if member.qualifiers.flags.contains(QualifierFlags::PER_VIEW) =>
+                        {
                             self.glsl_location_count(&element)
                         }
                         _ => self.glsl_location_count(&member_ty),
@@ -499,7 +526,7 @@ impl<'a> Lowerer<'a> {
                     } else {
                         None
                     };
-                    let element = if variable.qualifiers.per_view {
+                    let element = if variable.qualifiers.flags.contains(QualifierFlags::PER_VIEW) {
                         element.and_then(|element| element.element_type())
                     } else {
                         element
@@ -703,7 +730,7 @@ impl<'a> Lowerer<'a> {
         let name = declarator.name.node.clone();
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
-        if qualifiers.constant {
+        if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
             if let Some(entry) = qualifiers.layout_entry("constant_id") {
                 let id = entry
                     .value
@@ -728,7 +755,7 @@ impl<'a> Lowerer<'a> {
                 self.globals.insert(symbol, GlobalRef::Override(handle));
                 return Ok(());
             }
-            if qualifiers.specialization {
+            if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION) {
                 if let Some(initializer) = declarator.initializer.as_ref() {
                     let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
                     self.globals.insert(symbol, GlobalRef::Override(handle));
@@ -948,7 +975,7 @@ impl<'a> Lowerer<'a> {
         let qualifiers = &variable.qualifiers;
         let input = qualifiers.storage == Storage::In;
         let per_vertex = self.is_per_vertex_io(qualifiers);
-        if qualifiers.invariant && input {
+        if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
             return Err(semantic("invariant can only apply to an output", at));
         }
         if input && xfb::has_xfb(qualifiers) {
@@ -972,7 +999,10 @@ impl<'a> Lowerer<'a> {
             (true, &TypeInner::Array { base, .. }) => base,
             _ => ty,
         };
-        let element = match (qualifiers.per_view, &self.module.types[element].inner) {
+        let element = match (
+            qualifiers.flags.contains(QualifierFlags::PER_VIEW),
+            &self.module.types[element].inner,
+        ) {
             (true, &TypeInner::Array { base, .. }) => base,
             _ => element,
         };
@@ -1039,9 +1069,9 @@ impl<'a> Lowerer<'a> {
             )),
             None => qualifiers.interpolation.map(interpolation_of),
         };
-        let mut sampling = if qualifiers.sample {
+        let mut sampling = if qualifiers.flags.contains(QualifierFlags::SAMPLE) {
             Some(Sampling::Sample)
-        } else if qualifiers.centroid {
+        } else if qualifiers.flags.contains(QualifierFlags::CENTROID) {
             Some(Sampling::Centroid)
         } else {
             None
@@ -1083,9 +1113,9 @@ impl<'a> Lowerer<'a> {
                     blend_src,
                     per_primitive,
                     component,
-                    invariant: qualifiers.invariant,
-                    patch: qualifiers.patch,
-                    per_view: qualifiers.per_view,
+                    invariant: qualifiers.flags.contains(QualifierFlags::INVARIANT),
+                    patch: qualifiers.flags.contains(QualifierFlags::PATCH),
+                    per_view: qualifiers.flags.contains(QualifierFlags::PER_VIEW),
                 }),
                 xfb: None,
                 input_attachment_index: None,
@@ -1415,10 +1445,10 @@ impl<'a> Lowerer<'a> {
             decorations.remove(MemoryDecorations::RESTRICT);
         }
         if !buffer || push_constant || shader_record {
-            if qualifiers.readonly {
+            if qualifiers.flags.contains(QualifierFlags::READONLY) {
                 decorations |= MemoryDecorations::NON_WRITABLE;
             }
-            if qualifiers.writeonly {
+            if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
                 decorations |= MemoryDecorations::NON_READABLE;
             }
         }
@@ -1536,9 +1566,13 @@ impl<'a> Lowerer<'a> {
         let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
         let input = block.storage == BlockStorage::In;
         let outer = &block.qualifiers;
-        let patch = outer.patch || block.members.iter().any(|member| member.qualifiers.patch);
+        let patch = outer.flags.contains(QualifierFlags::PATCH)
+            || block
+                .members
+                .iter()
+                .any(|member| member.qualifiers.flags.contains(QualifierFlags::PATCH));
         let per_vertex = self.is_per_vertex_io(outer) && !patch;
-        if outer.invariant {
+        if outer.flags.contains(QualifierFlags::INVARIANT) {
             return Err(semantic(
                 "cannot use invariant qualifier on an interface block",
                 at,
@@ -1594,7 +1628,7 @@ impl<'a> Lowerer<'a> {
                 let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
                 member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
             }
-            if qualifiers.invariant && input {
+            if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
                 return Err(semantic("invariant can only apply to an output", at));
             }
             if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer") {
@@ -1616,9 +1650,13 @@ impl<'a> Lowerer<'a> {
                 .interpolation
                 .or(outer.interpolation)
                 .map(interpolation_of);
-            let mut sampling = if qualifiers.sample || outer.sample {
+            let mut sampling = if qualifiers.flags.contains(QualifierFlags::SAMPLE)
+                || outer.flags.contains(QualifierFlags::SAMPLE)
+            {
                 Some(Sampling::Sample)
-            } else if qualifiers.centroid || outer.centroid {
+            } else if qualifiers.flags.contains(QualifierFlags::CENTROID)
+                || outer.flags.contains(QualifierFlags::CENTROID)
+            {
                 Some(Sampling::Centroid)
             } else {
                 None
@@ -1639,9 +1677,11 @@ impl<'a> Lowerer<'a> {
                     blend_src: None,
                     per_primitive: self.per_primitive_binding(qualifiers),
                     component,
-                    invariant: !input && (qualifiers.invariant || self.invariant_all),
+                    invariant: !input
+                        && (qualifiers.flags.contains(QualifierFlags::INVARIANT)
+                            || self.invariant_all),
                     patch,
-                    per_view: qualifiers.per_view,
+                    per_view: qualifiers.flags.contains(QualifierFlags::PER_VIEW),
                 }),
                 offset,
                 matrix_layout: None,
@@ -1812,7 +1852,7 @@ impl<'a> Lowerer<'a> {
         if automatic_location {
             self.automatic_locations.push(handle);
         }
-        if outer.per_task {
+        if outer.flags.contains(QualifierFlags::PER_TASK) {
             self.task_memory.push(handle);
         }
         if input {
@@ -2012,7 +2052,7 @@ impl<'a> Lowerer<'a> {
                 .find(|&&(ref requested, _)| requested == name)
                 .map_or(Span::UNDEFINED, |&(_, at)| at);
             let used = self.per_vertex_used.contains(name);
-            let invariant = member.qualifiers.invariant
+            let invariant = member.qualifiers.flags.contains(QualifierFlags::INVARIANT)
                 || self.invariant_all
                 || requested
                     .iter()
@@ -2419,7 +2459,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     variable.ty.clone(),
                     variable.qualifiers.storage == Storage::Out,
                     variable.value.as_ref(),
-                    variable.qualifiers.volatile,
+                    variable.qualifiers.flags.contains(QualifierFlags::VOLATILE),
                 )
             }
             SymbolKind::BlockMember { instance, index } => {

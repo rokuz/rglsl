@@ -1,6 +1,7 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::cell::RefCell;
 use core::future::Future;
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_types::stack::{Call, Stack};
 
@@ -693,7 +694,14 @@ impl<'a> Lowerer<'a> {
             let local = match local {
                 Local::Value(_)
                     if !opaque
-                        && (!parameter.qualifiers.constant || parameter.qualifiers.nonuniform)
+                        && (!parameter
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::CONSTANT)
+                            || parameter
+                                .qualifiers
+                                .flags
+                                .contains(QualifierFlags::NONUNIFORM))
                         && parameter.direction == Direction::In =>
                 {
                     let ty = lowerer.lw.parameter_type(&parameter.ty, Some(symbol), at)?;

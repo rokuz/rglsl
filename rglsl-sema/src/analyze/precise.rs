@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::cell::RefCell;
@@ -132,22 +133,24 @@ impl<'a> Precise<'a> {
         self.analysis.symbols.iter().any(|symbol| {
             symbol
                 .variable()
-                .is_some_and(|variable| variable.qualifiers.precise)
-        }) || self
-            .analysis
-            .functions
-            .iter()
-            .any(|function| function.return_qualifiers.precise)
-            || self.analysis.types.blocks().iter().any(|block| {
-                block.qualifiers.precise
-                    || block.members.iter().any(|member| member.qualifiers.precise)
-            })
-            || self.analysis.types.structs().iter().any(|structure| {
-                structure
+                .is_some_and(|variable| variable.qualifiers.flags.contains(QualifierFlags::PRECISE))
+        }) || self.analysis.functions.iter().any(|function| {
+            function
+                .return_qualifiers
+                .flags
+                .contains(QualifierFlags::PRECISE)
+        }) || self.analysis.types.blocks().iter().any(|block| {
+            block.qualifiers.flags.contains(QualifierFlags::PRECISE)
+                || block
                     .members
                     .iter()
-                    .any(|member| member.qualifiers.precise)
-            })
+                    .any(|member| member.qualifiers.flags.contains(QualifierFlags::PRECISE))
+        }) || self.analysis.types.structs().iter().any(|structure| {
+            structure
+                .members
+                .iter()
+                .any(|member| member.qualifiers.flags.contains(QualifierFlags::PRECISE))
+        })
     }
 
     fn symbol_precise(&self, symbol: SymbolId) -> bool {
@@ -156,7 +159,8 @@ impl<'a> Precise<'a> {
         };
         match found.kind {
             SymbolKind::Variable(ref variable) => {
-                variable.qualifiers.precise || self.type_precise(&variable.ty)
+                variable.qualifiers.flags.contains(QualifierFlags::PRECISE)
+                    || self.type_precise(&variable.ty)
             }
             SymbolKind::BlockMember { instance, index } => {
                 self.symbol_precise(instance) || self.block_member_precise(instance, index)
@@ -171,7 +175,7 @@ impl<'a> Precise<'a> {
                 .analysis
                 .types
                 .block(id)
-                .is_some_and(|block| block.qualifiers.precise),
+                .is_some_and(|block| block.qualifiers.flags.contains(QualifierFlags::PRECISE)),
             _ => false,
         }
     }
@@ -191,7 +195,7 @@ impl<'a> Precise<'a> {
             .types
             .block(id)
             .and_then(|block| block.members.get(usize::try_from(index).ok()?))
-            .is_some_and(|member| member.qualifiers.precise)
+            .is_some_and(|member| member.qualifiers.flags.contains(QualifierFlags::PRECISE))
     }
 
     fn member(&self, base: &Expression, field: &str) -> Option<(u32, bool)> {
@@ -207,7 +211,11 @@ impl<'a> Precise<'a> {
             _ => return None,
         };
         let index = members.iter().position(|member| member.name == field)?;
-        let precise = members.get(index)?.qualifiers.precise;
+        let precise = members
+            .get(index)?
+            .qualifiers
+            .flags
+            .contains(QualifierFlags::PRECISE);
         Some((u32::try_from(index).ok()?, precise))
     }
 
@@ -536,7 +544,12 @@ impl<'b, 'a: 'b> Cx<'b, Precise<'a>> {
                             .function_declarations
                             .get(&definition.id)
                             .and_then(|id| pass.analysis.function(*id))
-                            .is_some_and(|function| function.return_qualifiers.precise);
+                            .is_some_and(|function| {
+                                function
+                                    .return_qualifiers
+                                    .flags
+                                    .contains(QualifierFlags::PRECISE)
+                            });
                     });
                     for statement in &definition.body.statements {
                         self.call(self.clone().collect_statement(statement)).await;

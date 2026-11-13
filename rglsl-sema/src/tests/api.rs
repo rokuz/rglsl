@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -205,7 +206,7 @@ void main() {
     };
     let limit = symbol("limit")?.variable().ok_or("not a variable")?;
     assert_eq!(limit.origin, Origin::Global);
-    assert!(limit.qualifiers.constant);
+    assert!(limit.qualifiers.flags.contains(QualifierFlags::CONSTANT));
     assert_eq!(limit.ty, Type::INT);
     let value = symbol("value")?.variable().ok_or("not a variable")?;
     assert_eq!(value.origin, Origin::Parameter);
@@ -474,7 +475,7 @@ void main() {
     assert!(transform
         .parameters
         .last()
-        .is_some_and(|bias| bias.qualifiers.constant));
+        .is_some_and(|bias| bias.qualifiers.flags.contains(QualifierFlags::CONSTANT)));
     assert!(transform.defined);
     assert!(transform.return_type.is_void());
     Ok(())

@@ -1,5 +1,6 @@
 use alloc::string::String;
 use alloc::vec::Vec;
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::scope::{Qualifiers, Storage};
@@ -66,7 +67,7 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn per_primitive_binding(&self, qualifiers: &Qualifiers) -> bool {
-        qualifiers.per_primitive
+        qualifiers.flags.contains(QualifierFlags::PER_PRIMITIVE)
             && match self.stage() {
                 ShaderStage::Mesh => qualifiers.storage == Storage::Out,
                 ShaderStage::Fragment => qualifiers.storage == Storage::In,

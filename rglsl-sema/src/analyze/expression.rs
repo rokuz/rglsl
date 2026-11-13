@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
@@ -644,7 +645,7 @@ impl Analyzer<'_> {
                         .is_some_and(|block| super::ray::is_shader_record(&block.qualifiers)),
                     _ => false,
                 };
-                let place = if qualifiers.constant {
+                let place = if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
                     Place::ReadOnly("it is `const`")
                 } else if matches!(storage, Storage::ResourceHeap | Storage::SamplerHeap) {
                     Place::ReadOnly("it is a descriptor heap")
@@ -663,7 +664,9 @@ impl Analyzer<'_> {
                     )
                 } else if storage == Storage::In && variable.origin != Origin::Parameter {
                     Place::ReadOnly("it is a shader input")
-                } else if qualifiers.readonly && !variable.ty.is_opaque() {
+                } else if qualifiers.flags.contains(QualifierFlags::READONLY)
+                    && !variable.ty.is_opaque()
+                {
                     Place::ReadOnly("it is read-only")
                 } else if variable.ty.is_opaque() {
                     Place::ReadOnly("it has an opaque type")
@@ -682,7 +685,9 @@ impl Analyzer<'_> {
                         _ => None,
                     })
                     .and_then(|block| block.members.get(usize::try_from(*index).ok()?))
-                    .is_some_and(|member| member.qualifiers.readonly);
+                    .is_some_and(|member| {
+                        member.qualifiers.flags.contains(QualifierFlags::READONLY)
+                    });
                 if readonly && place == Place::Writable {
                     (Place::ReadOnly("it is read-only"), storage)
                 } else {
@@ -699,7 +704,11 @@ impl Analyzer<'_> {
     fn is_writeonly(&self, id: SymbolId) -> bool {
         match self.symbol(id).map(|symbol| &symbol.kind) {
             Some(SymbolKind::Variable(variable)) => {
-                variable.qualifiers.writeonly && !variable.ty.is_opaque()
+                variable
+                    .qualifiers
+                    .flags
+                    .contains(QualifierFlags::WRITEONLY)
+                    && !variable.ty.is_opaque()
             }
             Some(SymbolKind::BlockMember { instance, index }) => {
                 self.is_writeonly(*instance)
@@ -711,7 +720,9 @@ impl Analyzer<'_> {
                             _ => None,
                         })
                         .and_then(|block| block.members.get(usize::try_from(*index).ok()?))
-                        .is_some_and(|member| member.qualifiers.writeonly)
+                        .is_some_and(|member| {
+                            member.qualifiers.flags.contains(QualifierFlags::WRITEONLY)
+                        })
             }
             _ => false,
         }
@@ -719,7 +730,10 @@ impl Analyzer<'_> {
 
     fn is_non_uniform(&self, id: SymbolId) -> bool {
         match self.symbol(id).map(|symbol| &symbol.kind) {
-            Some(SymbolKind::Variable(variable)) => variable.qualifiers.nonuniform,
+            Some(SymbolKind::Variable(variable)) => variable
+                .qualifiers
+                .flags
+                .contains(QualifierFlags::NONUNIFORM),
             Some(SymbolKind::BlockMember { instance, .. }) => self.is_non_uniform(*instance),
             _ => false,
         }
@@ -823,7 +837,8 @@ impl Analyzer<'_> {
                 return Operand::error();
             }
             Some(SymbolKind::Variable(variable)) => (
-                variable.qualifiers.constant && variable.origin != Origin::Parameter,
+                variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
+                    && variable.origin != Origin::Parameter,
                 variable.value.clone(),
             ),
             _ => (false, None),
@@ -847,7 +862,10 @@ impl Analyzer<'_> {
                     .symbol(id)
                     .and_then(|symbol| symbol.variable())
                     .is_some_and(|variable| {
-                        variable.qualifiers.specialization
+                        variable
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::SPECIALIZATION)
                             || variable.qualifiers.has_layout("constant_id")
                     }));
         if specialization {
@@ -913,7 +931,10 @@ impl Analyzer<'_> {
                                 .and_then(|symbol| symbol.variable())
                                 .is_some_and(|variable| {
                                     variable.qualifiers.storage == Storage::Out
-                                        && !variable.qualifiers.patch
+                                        && !variable
+                                            .qualifiers
+                                            .flags
+                                            .contains(QualifierFlags::PATCH)
                                         && variable.origin != Origin::Parameter
                                         && variable.origin != Origin::Local
                                 }),
@@ -1218,12 +1239,12 @@ impl Analyzer<'_> {
         };
         let (place, storage) = match buffer_type {
             Some(BlockStorage::Uniform) => (Place::ReadOnly("it is a uniform"), Storage::Uniform),
-            Some(_) if member.qualifiers.readonly => {
+            Some(_) if member.qualifiers.flags.contains(QualifierFlags::READONLY) => {
                 (Place::ReadOnly("it is read-only"), Storage::Buffer)
             }
             Some(_) => (Place::Writable, Storage::Buffer),
             None if is_block
-                && member.qualifiers.readonly
+                && member.qualifiers.flags.contains(QualifierFlags::READONLY)
                 && base_operand.place == Place::Writable =>
             {
                 (Place::ReadOnly("it is read-only"), base_operand.storage)
@@ -1238,7 +1259,8 @@ impl Analyzer<'_> {
             root: base_operand.root,
             storage,
             specialization: false,
-            writeonly: base_operand.writeonly || member.qualifiers.writeonly,
+            writeonly: base_operand.writeonly
+                || member.qualifiers.flags.contains(QualifierFlags::WRITEONLY),
             non_uniform: base_operand.non_uniform,
             through_reference: base_operand.through_reference,
         }

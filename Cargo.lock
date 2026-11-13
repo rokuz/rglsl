@@ -376,6 +376,7 @@ dependencies = [
 name = "rglsl-sema"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "half",
  "libm",
  "rglsl-ast",

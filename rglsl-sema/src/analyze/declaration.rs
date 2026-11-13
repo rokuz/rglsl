@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
@@ -171,7 +172,9 @@ impl Analyzer<'_> {
                             identifier.span,
                             DiagnosticKind::UndeclaredIdentifier(identifier.node.clone()),
                         ),
-                        Some(Some(id)) if qualifiers.precise => self.make_precise(id),
+                        Some(Some(id)) if qualifiers.flags.contains(QualifierFlags::PRECISE) => {
+                            self.make_precise(id)
+                        }
                         Some(_) => {}
                     }
                 }
@@ -182,7 +185,7 @@ impl Analyzer<'_> {
     fn make_precise(&mut self, id: SymbolId) {
         let member = match self.symbol_mut(id).map(|symbol| &mut symbol.kind) {
             Some(SymbolKind::Variable(variable)) => {
-                variable.qualifiers.precise = true;
+                variable.qualifiers.flags.insert(QualifierFlags::PRECISE);
                 return;
             }
             Some(SymbolKind::BlockMember { instance, index }) => (*instance, *index),
@@ -197,7 +200,7 @@ impl Analyzer<'_> {
             .block_mut(block)
             .and_then(|block| block.members.get_mut(usize::try_from(index).ok()?))
         {
-            member.qualifiers.precise = true;
+            member.qualifiers.flags.insert(QualifierFlags::PRECISE);
         }
     }
 
@@ -411,7 +414,7 @@ impl Analyzer<'_> {
                 continue;
             };
             let is_interface = variable.qualifiers.storage == storage
-                && !variable.qualifiers.patch
+                && !variable.qualifiers.flags.contains(QualifierFlags::PATCH)
                 && variable.origin != Origin::Parameter
                 && variable.origin != Origin::Local;
             if !is_interface {
@@ -471,7 +474,7 @@ impl Analyzer<'_> {
     }
 
     fn auxiliary_qualifier(&mut self, span: Span, storage: StorageQualifier, result: &Qualifiers) {
-        if result.centroid || result.patch || result.sample || result.per_vertex.is_some() {
+        if result.flags.intersects(QualifierFlags::AUXILIARY) || result.per_vertex.is_some() {
             self.error(
                 span,
                 DiagnosticKind::InvalidQualifier {
@@ -485,7 +488,7 @@ impl Analyzer<'_> {
     fn single_qualifier(&mut self, single: &Spanned<SingleTypeQualifier>, result: &mut Qualifiers) {
         match &single.node {
             SingleTypeQualifier::Storage(storage) => match storage {
-                StorageQualifier::Const => result.constant = true,
+                StorageQualifier::Const => result.flags.insert(QualifierFlags::CONSTANT),
                 StorageQualifier::In => {
                     result.storage = if result.storage == Storage::Out {
                         Storage::Inout
@@ -508,36 +511,36 @@ impl Analyzer<'_> {
                 StorageQualifier::SamplerHeap => result.storage = Storage::SamplerHeap,
                 StorageQualifier::Centroid => {
                     self.auxiliary_qualifier(single.span, *storage, result);
-                    result.centroid = true;
+                    result.flags.insert(QualifierFlags::CENTROID);
                 }
                 StorageQualifier::Patch => {
                     self.auxiliary_qualifier(single.span, *storage, result);
-                    result.patch = true;
+                    result.flags.insert(QualifierFlags::PATCH);
                 }
                 StorageQualifier::Sample => {
                     self.auxiliary_qualifier(single.span, *storage, result);
-                    result.sample = true;
+                    result.flags.insert(QualifierFlags::SAMPLE);
                 }
-                StorageQualifier::Coherent => result.coherent = true,
+                StorageQualifier::Coherent => result.flags.insert(QualifierFlags::COHERENT),
                 StorageQualifier::DeviceCoherent => {
                     self.require_scope_extension(single.span, storage.keyword());
-                    result.device_coherent = true;
+                    result.flags.insert(QualifierFlags::DEVICE_COHERENT);
                 }
                 StorageQualifier::QueueFamilyCoherent => {
                     self.require_scope_extension(single.span, storage.keyword());
-                    result.queue_family_coherent = true;
+                    result.flags.insert(QualifierFlags::QUEUE_FAMILY_COHERENT);
                 }
                 StorageQualifier::WorkgroupCoherent => {
                     self.require_scope_extension(single.span, storage.keyword());
-                    result.workgroup_coherent = true;
+                    result.flags.insert(QualifierFlags::WORKGROUP_COHERENT);
                 }
                 StorageQualifier::SubgroupCoherent => {
                     self.require_scope_extension(single.span, storage.keyword());
-                    result.subgroup_coherent = true;
+                    result.flags.insert(QualifierFlags::SUBGROUP_COHERENT);
                 }
                 StorageQualifier::NonPrivate => {
                     self.require_scope_extension(single.span, storage.keyword());
-                    result.nonprivate = true;
+                    result.flags.insert(QualifierFlags::NONPRIVATE);
                 }
                 StorageQualifier::NonTemporal => {
                     self.require_extension(
@@ -545,19 +548,19 @@ impl Analyzer<'_> {
                         "GL_EXT_nontemporal_keyword",
                         storage.keyword(),
                     );
-                    result.nontemporal = true;
+                    result.flags.insert(QualifierFlags::NONTEMPORAL);
                 }
                 StorageQualifier::ShaderCallCoherent => {
                     self.require_extension(single.span, "GL_EXT_ray_tracing", "shadercallcoherent");
-                    result.shader_call_coherent = true;
+                    result.flags.insert(QualifierFlags::SHADER_CALL_COHERENT);
                 }
                 StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
                     self.mesh_qualifier(single.span, *storage);
-                    result.per_primitive = true;
+                    result.flags.insert(QualifierFlags::PER_PRIMITIVE);
                 }
                 StorageQualifier::PerViewNV => {
                     self.mesh_qualifier(single.span, *storage);
-                    result.per_view = true;
+                    result.flags.insert(QualifierFlags::PER_VIEW);
                 }
                 StorageQualifier::PerVertexNV | StorageQualifier::PerVertexEXT => {
                     self.auxiliary_qualifier(single.span, *storage, result);
@@ -565,7 +568,7 @@ impl Analyzer<'_> {
                 }
                 StorageQualifier::TaskNV => {
                     self.mesh_qualifier(single.span, *storage);
-                    result.per_task = true;
+                    result.flags.insert(QualifierFlags::PER_TASK);
                 }
                 StorageQualifier::TaskPayloadSharedEXT => {
                     self.mesh_qualifier(single.span, *storage);
@@ -579,10 +582,10 @@ impl Analyzer<'_> {
                     );
                     result.storage = Storage::TileImage;
                 }
-                StorageQualifier::Volatile => result.volatile = true,
-                StorageQualifier::Restrict => result.restrict = true,
-                StorageQualifier::Readonly => result.readonly = true,
-                StorageQualifier::Writeonly => result.writeonly = true,
+                StorageQualifier::Volatile => result.flags.insert(QualifierFlags::VOLATILE),
+                StorageQualifier::Restrict => result.flags.insert(QualifierFlags::RESTRICT),
+                StorageQualifier::Readonly => result.flags.insert(QualifierFlags::READONLY),
+                StorageQualifier::Writeonly => result.flags.insert(QualifierFlags::WRITEONLY),
                 StorageQualifier::RayPayloadNV
                 | StorageQualifier::RayPayloadEXT
                 | StorageQualifier::RayPayloadInNV
@@ -617,17 +620,19 @@ impl Analyzer<'_> {
             SingleTypeQualifier::Interpolation(interpolation) => {
                 result.interpolation = Some(*interpolation);
             }
-            SingleTypeQualifier::Invariant => result.invariant = true,
-            SingleTypeQualifier::Precise => result.precise = true,
-            SingleTypeQualifier::NonUniform => result.nonuniform = true,
+            SingleTypeQualifier::Invariant => result.flags.insert(QualifierFlags::INVARIANT),
+            SingleTypeQualifier::Precise => result.flags.insert(QualifierFlags::PRECISE),
+            SingleTypeQualifier::NonUniform => result.flags.insert(QualifierFlags::NONUNIFORM),
             SingleTypeQualifier::SpirvStorageClass(class) => {
                 if let Some(class) = self.spirv_storage_class(single.span, class) {
                     result.spirv_storage_class = Some(class);
                     result.storage = super::spirv::spirv_storage(class);
                 }
             }
-            SingleTypeQualifier::SpirvByReference => result.spirv_by_reference = true,
-            SingleTypeQualifier::SpirvLiteral => result.spirv_literal = true,
+            SingleTypeQualifier::SpirvByReference => {
+                result.flags.insert(QualifierFlags::SPIRV_BY_REFERENCE)
+            }
+            SingleTypeQualifier::SpirvLiteral => result.flags.insert(QualifierFlags::SPIRV_LITERAL),
             SingleTypeQualifier::Layout(_) | SingleTypeQualifier::SpirvDecorate(_) => {}
         }
     }
@@ -829,8 +834,8 @@ impl Analyzer<'_> {
         qualifier: Option<&Spanned<TypeQualifier>>,
         qualifiers: &Qualifiers,
     ) {
-        let allowed =
-            !qualifiers.constant && matches!(qualifiers.storage, Storage::None | Storage::In);
+        let allowed = !qualifiers.flags.contains(QualifierFlags::CONSTANT)
+            && matches!(qualifiers.storage, Storage::None | Storage::In);
         if !allowed {
             self.non_uniform_error(
                 qualifier,
@@ -1017,12 +1022,12 @@ impl Analyzer<'_> {
         if let Some(qualifier) = &declaration.ty.node.qualifier {
             self.heap_member_checks(qualifier.span, qualifiers, in_heap);
         }
-        if qualifiers.nonuniform {
+        if qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_error(
                 declaration.ty.qualifier.as_ref(),
                 "not allowed on block or structure members",
             );
-            qualifiers.nonuniform = false;
+            qualifiers.flags.remove(QualifierFlags::NONUNIFORM);
         }
     }
 
@@ -1034,9 +1039,13 @@ impl Analyzer<'_> {
     ) -> Qualifiers {
         let mut qualifiers = qualifiers;
         if let Some(block) = in_block {
-            if qualifiers.storage == Storage::None && !qualifiers.constant {
+            if qualifiers.storage == Storage::None
+                && !qualifiers.flags.contains(QualifierFlags::CONSTANT)
+            {
                 qualifiers.storage = block.storage;
-            } else if qualifiers.storage != block.storage || qualifiers.constant {
+            } else if qualifiers.storage != block.storage
+                || qualifiers.flags.contains(QualifierFlags::CONSTANT)
+            {
                 for declarator in &declaration.declarators {
                     self.error(
                         declarator.name.span,
@@ -1047,22 +1056,8 @@ impl Analyzer<'_> {
                     );
                 }
             }
-            qualifiers.readonly |= block.readonly;
-            qualifiers.coherent |= block.coherent;
-            qualifiers.volatile |= block.volatile;
-            qualifiers.restrict |= block.restrict;
-            qualifiers.device_coherent |= block.device_coherent;
-            qualifiers.queue_family_coherent |= block.queue_family_coherent;
-            qualifiers.workgroup_coherent |= block.workgroup_coherent;
-            qualifiers.subgroup_coherent |= block.subgroup_coherent;
-            qualifiers.shader_call_coherent |= block.shader_call_coherent;
-            qualifiers.nonprivate |= block.nonprivate;
-            qualifiers.nontemporal |= block.nontemporal;
-            qualifiers.writeonly |= block.writeonly;
-            qualifiers.per_primitive |= block.per_primitive;
+            qualifiers.flags |= block.flags & QualifierFlags::MEMBER_INHERITED;
             qualifiers.per_vertex = qualifiers.per_vertex.or(block.per_vertex);
-            qualifiers.per_view |= block.per_view;
-            qualifiers.per_task |= block.per_task;
         }
         qualifiers
     }
@@ -1151,11 +1146,18 @@ impl Analyzer<'_> {
             self.primitive_culling(qualifier.span, &qualifiers, false);
             self.qcom_layout(qualifier.span, &qualifiers);
         }
-        if qualifiers.nonuniform {
+        if qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_storage_check(list.ty.qualifier.as_ref(), &qualifiers);
         }
-        if qualifiers.spirv_by_reference || qualifiers.spirv_literal {
-            let qualifier = if qualifiers.spirv_by_reference {
+        if qualifiers
+            .flags
+            .contains(QualifierFlags::SPIRV_BY_REFERENCE)
+            || qualifiers.flags.contains(QualifierFlags::SPIRV_LITERAL)
+        {
+            let qualifier = if qualifiers
+                .flags
+                .contains(QualifierFlags::SPIRV_BY_REFERENCE)
+            {
                 "spirv_by_reference"
             } else {
                 "spirv_literal"
@@ -1211,7 +1213,7 @@ impl Analyzer<'_> {
         let misplaced = if qualifiers.has_memory_qualifier() && !qualifiers.only_nonprivate() {
             !is_image && !is_tensor && qualifiers.storage != Storage::Buffer
         } else {
-            qualifiers.nonprivate
+            qualifiers.flags.contains(QualifierFlags::NONPRIVATE)
                 && !matches!(ty.kind, TypeKind::Opaque(_))
                 && !matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer)
         };
@@ -1301,7 +1303,7 @@ impl Analyzer<'_> {
         {
             return;
         }
-        if qualifiers.patch
+        if qualifiers.flags.contains(QualifierFlags::PATCH)
             && self.stage_check(span, |stage| {
                 (!matches!(
                     stage,
@@ -1315,7 +1317,7 @@ impl Analyzer<'_> {
         if is_image
             && !ty.is_array()
             && qualifiers.storage == Storage::Uniform
-            && !qualifiers.writeonly
+            && !qualifiers.flags.contains(QualifierFlags::WRITEONLY)
             && !qualifiers
                 .layout
                 .iter()
@@ -1334,16 +1336,16 @@ impl Analyzer<'_> {
         let matrix = matches!(ty.kind, TypeKind::Matrix { .. });
         let scalar = ty.base_scalar();
         let flat = qualifiers.interpolation == Some(InterpolationQualifier::Flat);
-        let further = qualifiers.centroid
-            || qualifiers.sample
-            || qualifiers.patch
+        let further = qualifiers.flags.intersects(QualifierFlags::AUXILIARY)
             || qualifiers.interpolation.is_some();
-        let invariant = qualifiers.invariant;
-        let patch = qualifiers.patch;
+        let invariant = qualifiers.flags.contains(QualifierFlags::INVARIANT);
+        let patch = qualifiers.flags.contains(QualifierFlags::PATCH);
         let per_vertex = qualifiers.per_vertex.is_some();
         match qualifiers.storage {
             Storage::In => {
-                if qualifiers.patch && qualifiers.interpolation.is_some() {
+                if qualifiers.flags.contains(QualifierFlags::PATCH)
+                    && qualifiers.interpolation.is_some()
+                {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
                 self.stage_check(span, |stage| match stage {
@@ -1369,7 +1371,9 @@ impl Analyzer<'_> {
                 });
             }
             Storage::Out => {
-                if qualifiers.patch && qualifiers.interpolation.is_some() {
+                if qualifiers.flags.contains(QualifierFlags::PATCH)
+                    && qualifiers.interpolation.is_some()
+                {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
                 self.stage_check(span, |stage| match stage {
@@ -1533,7 +1537,7 @@ impl Analyzer<'_> {
             );
         }
         if qualifiers.has_layout("constant_id") {
-            if !qualifiers.constant {
+            if !qualifiers.flags.contains(QualifierFlags::CONSTANT) {
                 self.error(
                     name.span,
                     DiagnosticKind::InvalidQualifier {
@@ -1541,7 +1545,9 @@ impl Analyzer<'_> {
                         reason: "can only be applied to 'const'-qualified scalar",
                     },
                 );
-                qualifiers.constant = initializer.is_some();
+                qualifiers
+                    .flags
+                    .set(QualifierFlags::CONSTANT, initializer.is_some());
             }
             if !ty.is_scalar() {
                 self.error(
@@ -1554,7 +1560,7 @@ impl Analyzer<'_> {
             }
         }
         if ty.contains_reference(&self.types) {
-            if qualifiers.constant {
+            if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
                 self.error(
                     name.span,
                     DiagnosticKind::InvalidQualifier {
@@ -1562,7 +1568,7 @@ impl Analyzer<'_> {
                         reason: "variables with reference type can't have qualifier 'const'",
                     },
                 );
-                qualifiers.constant = false;
+                qualifiers.flags.remove(QualifierFlags::CONSTANT);
             }
             if matches!(ty.kind, TypeKind::Reference(_))
                 && matches!(qualifiers.storage, Storage::In | Storage::Out)
@@ -1576,9 +1582,9 @@ impl Analyzer<'_> {
                 );
             }
         }
-        if qualifiers.constant && initializer.is_none() {
+        if qualifiers.flags.contains(QualifierFlags::CONSTANT) && initializer.is_none() {
             self.error(name.span, DiagnosticKind::ConstWithoutInitializer);
-            qualifiers.constant = false;
+            qualifiers.flags.remove(QualifierFlags::CONSTANT);
         }
         if is_global {
             self.shader_record_checks(name.span, &qualifiers, false);
@@ -1632,10 +1638,9 @@ impl Analyzer<'_> {
         self.storage_small_check(name.span, &ty, qualifiers.storage);
         if !is_global
             && (qualifiers.interpolation.is_some()
-                || qualifiers.centroid
-                || qualifiers.patch
-                || qualifiers.sample
-                || qualifiers.invariant)
+                || qualifiers
+                    .flags
+                    .intersects(QualifierFlags::AUXILIARY.union(QualifierFlags::INVARIANT)))
         {
             self.error(
                 name.span,
@@ -1690,8 +1695,9 @@ impl Analyzer<'_> {
                 {
                     self.record_conversion(expression, &operand.ty, &ty);
                 }
-                let needs_constant =
-                    is_global && (qualifiers.constant || qualifiers.storage == Storage::Uniform);
+                let needs_constant = is_global
+                    && (qualifiers.flags.contains(QualifierFlags::CONSTANT)
+                        || qualifiers.storage == Storage::Uniform);
                 let lost_specialization = operand.specialization
                     && operand.ty.base_scalar().is_some_and(Scalar::is_integer)
                     && ty.base_scalar().is_some_and(Scalar::is_floating);
@@ -1701,7 +1707,7 @@ impl Analyzer<'_> {
                         DiagnosticKind::NonConstantInitializer(name.node.clone()),
                     );
                 }
-                if qualifiers.constant
+                if qualifiers.flags.contains(QualifierFlags::CONSTANT)
                     && operand.constant
                     && operand.specialization
                     && qualifiers.has_layout("constant_id")
@@ -1714,8 +1720,10 @@ impl Analyzer<'_> {
                         },
                     );
                 }
-                if qualifiers.constant && operand.constant {
-                    qualifiers.specialization = operand.specialization;
+                if qualifiers.flags.contains(QualifierFlags::CONSTANT) && operand.constant {
+                    qualifiers
+                        .flags
+                        .set(QualifierFlags::SPECIALIZATION, operand.specialization);
                     value = operand
                         .value
                         .as_ref()
@@ -1723,9 +1731,9 @@ impl Analyzer<'_> {
                             Some(scalar) => constant.convert(scalar),
                             None => constant.clone(),
                         });
-                } else if qualifiers.constant {
-                    qualifiers.constant = false;
-                    qualifiers.readonly = true;
+                } else if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
+                    qualifiers.flags.remove(QualifierFlags::CONSTANT);
+                    qualifiers.flags.insert(QualifierFlags::READONLY);
                 }
             }
         }
@@ -1733,7 +1741,7 @@ impl Analyzer<'_> {
     }
 
     fn interface_array(&mut self, name: &Identifier, qualifiers: &Qualifiers, ty: &mut Type) {
-        if qualifiers.patch || name.node.starts_with("gl_") {
+        if qualifiers.flags.contains(QualifierFlags::PATCH) || name.node.starts_with("gl_") {
             return;
         }
         if !matches!(qualifiers.storage, Storage::In | Storage::Out) {
@@ -2116,7 +2124,7 @@ impl Analyzer<'_> {
         instance: Option<&Spanned<BlockInstance>>,
     ) {
         let qualifiers = self.qualifiers(&structure.qualifier);
-        if qualifiers.nonuniform {
+        if qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_storage_check(Some(&structure.qualifier), &qualifiers);
         }
         self.no_shader_layouts(&qualifiers);
@@ -2483,7 +2491,7 @@ impl Analyzer<'_> {
         self.declarations.insert(declaration.id, variable);
         if let Some(block) = self.types.block_mut(block) {
             block.members = members.to_vec();
-            block.qualifiers.per_primitive |= qualifiers.per_primitive;
+            block.qualifiers.flags |= qualifiers.flags & QualifierFlags::PER_PRIMITIVE;
         }
         let mut sized = None;
         if let Some(SymbolKind::Variable(variable)) =
@@ -2595,9 +2603,7 @@ impl Analyzer<'_> {
 
     fn parameter_qualifiers(&mut self, span: Span, name: &str, qualifiers: &Qualifiers) {
         self.no_shader_layouts(qualifiers);
-        let auxiliary = qualifiers.centroid
-            || qualifiers.patch
-            || qualifiers.sample
+        let auxiliary = qualifiers.flags.intersects(QualifierFlags::AUXILIARY)
             || qualifiers.interpolation.is_some();
         let errors = [
             (
@@ -2609,7 +2615,10 @@ impl Analyzer<'_> {
                 "cannot use layout qualifiers on a function parameter",
             ),
             (
-                qualifiers.invariant.then_some(span),
+                qualifiers
+                    .flags
+                    .contains(QualifierFlags::INVARIANT)
+                    .then_some(span),
                 "cannot use invariant qualifier on a function parameter",
             ),
         ];
@@ -2655,7 +2664,7 @@ impl Analyzer<'_> {
                         | crate::types::Scalar::Bool
                 )
             );
-        let reason = if qualifiers.spirv_literal && !literal_type {
+        let reason = if qualifiers.flags.contains(QualifierFlags::SPIRV_LITERAL) && !literal_type {
             Some("cannot use spirv_literal qualifier")
         } else if ty.is_void() {
             Some("a parameter cannot be `void`")
@@ -2663,7 +2672,8 @@ impl Analyzer<'_> {
             Some("an array size is required")
         } else if direction != Direction::In && ty.contains_opaque(&self.types) {
             Some("an opaque type cannot be an output parameter")
-        } else if qualifiers.constant && direction != Direction::In {
+        } else if qualifiers.flags.contains(QualifierFlags::CONSTANT) && direction != Direction::In
+        {
             Some("a `const` parameter cannot be an output")
         } else if matches!(
             qualifiers.storage,
@@ -2706,7 +2716,9 @@ impl Analyzer<'_> {
     ) -> Option<FunctionId> {
         let name = &prototype.name;
         let return_qualifiers = self.optional_qualifiers(&prototype.return_type.node);
-        if return_qualifiers.constant || return_qualifiers.storage != Storage::None {
+        if return_qualifiers.flags.contains(QualifierFlags::CONSTANT)
+            || return_qualifiers.storage != Storage::None
+        {
             self.error(
                 name.span,
                 DiagnosticKind::InvalidQualifier {
@@ -2715,7 +2727,7 @@ impl Analyzer<'_> {
                 },
             );
         }
-        if return_qualifiers.nonuniform {
+        if return_qualifiers.flags.contains(QualifierFlags::NONUNIFORM) {
             self.non_uniform_storage_check(
                 prototype.return_type.qualifier.as_ref(),
                 &return_qualifiers,
@@ -2746,9 +2758,12 @@ impl Analyzer<'_> {
             self.error(close, DiagnosticKind::InvalidMain);
         }
         if spirv_instruction.is_none()
-            && parameters
-                .iter()
-                .any(|parameter| parameter.qualifiers.spirv_literal)
+            && parameters.iter().any(|parameter| {
+                parameter
+                    .qualifiers
+                    .flags
+                    .contains(QualifierFlags::SPIRV_LITERAL)
+            })
         {
             self.error(
                 close,

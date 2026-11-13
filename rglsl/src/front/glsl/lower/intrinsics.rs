@@ -1,4 +1,5 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::NodeId;
 use rglsl_ast::ast::{
@@ -264,7 +265,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let mut operands = Vec::with_capacity(arguments.len());
         for (argument, parameter) in arguments.iter().zip(&function.parameters) {
-            if parameter.qualifiers.spirv_literal {
+            if parameter
+                .qualifiers
+                .flags
+                .contains(QualifierFlags::SPIRV_LITERAL)
+            {
                 let info = self.with(|this| this.info(argument))??;
                 let value = info
                     .value
@@ -277,7 +282,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let word = value_word(&value).ok_or_else(|| internal(at))?;
                 operands.push(SpirvOperand::Literal(word));
-            } else if parameter.qualifiers.spirv_by_reference {
+            } else if parameter
+                .qualifiers
+                .flags
+                .contains(QualifierFlags::SPIRV_BY_REFERENCE)
+            {
                 let place = {
                     let frame = self.clone().place(argument);
                     let result = self.nest(frame).await;

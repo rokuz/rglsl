@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -803,7 +804,10 @@ impl Analyzer<'_> {
                     .iter()
                     .zip(&function.parameters)
                     .any(|(operand, parameter)| {
-                        parameter.qualifiers.spirv_literal
+                        parameter
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::SPIRV_LITERAL)
                             && (!operand.constant || operand.specialization)
                     });
             if literal_failed {
@@ -944,7 +948,11 @@ impl Analyzer<'_> {
         Operand {
             constant,
             value,
-            non_uniform: !is_builtin && function.return_qualifiers.nonuniform,
+            non_uniform: !is_builtin
+                && function
+                    .return_qualifiers
+                    .flags
+                    .contains(QualifierFlags::NONUNIFORM),
             ..Operand::temporary(function.return_type)
         }
     }
@@ -1240,7 +1248,11 @@ impl Analyzer<'_> {
             .and_then(|variable| format(&variable.qualifiers));
         let formal = format(&parameter.qualifiers);
         argument == formal
-            || (parameter.qualifiers.writeonly && (argument.is_none() || formal.is_none()))
+            || (parameter
+                .qualifiers
+                .flags
+                .contains(QualifierFlags::WRITEONLY)
+                && (argument.is_none() || formal.is_none()))
     }
 
     fn keeps_memory_qualifiers(&self, operand: &Operand, parameter: &Parameter) -> bool {
@@ -1298,7 +1310,15 @@ impl Analyzer<'_> {
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
                 .and_then(|symbol| symbol.variable())
-                .map(|variable| (variable.qualifiers.readonly, variable.qualifiers.writeonly));
+                .map(|variable| {
+                    (
+                        variable.qualifiers.flags.contains(QualifierFlags::READONLY),
+                        variable
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::WRITEONLY),
+                    )
+                });
             let integer_image = first
                 .and_then(|operand| operand.ty.as_opaque())
                 .is_some_and(|opaque| opaque.sampled != crate::types::SampledType::Float);

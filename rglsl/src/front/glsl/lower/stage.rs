@@ -1,4 +1,5 @@
 use alloc::{string::String, vec::Vec};
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
 use rglsl_sema::scope::{Origin, Qualifiers, Storage};
@@ -247,14 +248,14 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn is_per_vertex_io(&self, qualifiers: &Qualifiers) -> bool {
-        if qualifiers.patch {
+        if qualifiers.flags.contains(QualifierFlags::PATCH) {
             return false;
         }
         let storage = qualifiers.storage;
         if storage == Storage::In && qualifiers.per_vertex.is_some() {
             return true;
         }
-        let per_task = qualifiers.per_task;
+        let per_task = qualifiers.flags.contains(QualifierFlags::PER_TASK);
         self.stage_map(|stage| match storage {
             Storage::In => stage.has_arrayed_io(),
             Storage::Out => {
@@ -574,7 +575,8 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             }
             let builtin = per_vertex_builtin(
                 &member.name,
-                member.qualifiers.invariant || (!input && self.with(|this| this.invariant_all)?),
+                member.qualifiers.flags.contains(QualifierFlags::INVARIANT)
+                    || (!input && self.with(|this| this.invariant_all)?),
             )
             .or_else(|| match member.name.as_str() {
                 "gl_PrimitiveID" => Some(BuiltIn::PrimitiveIndex),
