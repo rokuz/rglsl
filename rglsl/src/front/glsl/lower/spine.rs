@@ -349,11 +349,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             links.push(current);
             current = base;
         }
-        let head = {
-            let frame = self.clone().chain_head(current);
-            let result = self.nest(frame).await;
-            result
-        }?;
+        let head = self.clone().chain_head(current).await?;
         let mut chain = self.with(|this| this.chain_marked(current, head))??;
         for node in links.into_iter().rev() {
             let at = self.with(|this| this.at(node.span))?;
@@ -382,18 +378,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         expression: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
         let spine = self.with(|this| this.lowered_spine(expression))??;
-        let mut left = {
-            let frame = self.clone().typed(spine.head);
-            let result = self.nest(frame).await;
-            result
-        }?;
+        let mut left = self.clone().typed(spine.head).await?;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
-            let value = {
-                let frame = self.clone().binary_link(node, left);
-                let result = self.nest(frame).await;
-                result
-            }?;
+            let value = self.clone().binary_link(node, left).await?;
             if links.peek().is_none() {
                 return Ok(value);
             }
@@ -432,11 +420,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 result
             }?
         } else {
-            let right = {
-                let frame = self.clone().typed(right);
-                let result = self.nest(frame).await;
-                result
-            }?;
+            let right = self.clone().typed(right).await?;
             self.with(|this| this.binary_typed(operator, left, right, at))??
         };
         if self.with(|this| this.info(node))??.non_uniform {
@@ -453,11 +437,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let mut operand: Option<Typed> = None;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
-            let value = {
-                let frame = self.clone().unary_link(node, operand.take());
-                let result = self.nest(frame).await;
-                result
-            }?;
+            let value = self.clone().unary_link(node, operand.take()).await?;
             if links.peek().is_none() {
                 return Ok(value);
             }
@@ -493,11 +473,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let (value, ty) = match operand {
             Some(typed) => typed,
-            None => {
-                let frame = self.clone().typed(inner);
-                let result = self.nest(frame).await;
-                result
-            }?,
+            None => self.clone().typed(inner).await?,
         };
         let value = self.with(|this| this.unary_typed(operator, at, value, ty))??;
         if self.with(|this| this.info(node))??.non_uniform {

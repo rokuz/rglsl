@@ -1506,30 +1506,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<(Handle<Expression>, GlslType)> {
-        let value = {
-            let frame = self.clone().value(expression);
-            let result = self.nest(frame).await;
-            result
-        }?;
+        let value = self.clone().value(expression).await?;
         self.with(|this| this.typed_value(expression, value))?
     }
 
     pub(super) async fn rvalue(self, expression: &'b AstExpression) -> Result<Handle<Expression>> {
-        {
-            let frame = self.clone().typed(expression);
-            let result = self.nest(frame).await;
-            result
-        }
-        .map(|(value, _)| value)
+        self.nest(self.clone().typed(expression))
+            .await
+            .map(|(value, _)| value)
     }
 
     pub(super) async fn effect(self, expression: &'b AstExpression) -> Result<()> {
-        {
-            let frame = self.clone().value(expression);
-            let result = self.nest(frame).await;
-            result
-        }
-        .map(|_| ())
+        self.clone().value(expression).await.map(|_| ())
     }
 
     pub(super) async fn constant(
@@ -1564,11 +1552,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         expression: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
         self.with(|this| this.stepped = None)?;
-        let value = {
-            let frame = self.clone().unmarked_value(expression);
-            let result = self.nest(frame).await;
-            result
-        }?;
+        let value = self.clone().unmarked_value(expression).await?;
         self.with(|this| this.flagged(expression, value))?
     }
 
@@ -1578,11 +1562,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         match self.with(|this| this.folded_value(expression))?? {
             Some(value) => Ok(Some(value)),
-            None => {
-                let frame = self.clone().computed_value(expression);
-                let result = self.nest(frame).await;
-                result
-            }
+            None => self.clone().computed_value(expression).await,
         }
     }
 
@@ -1595,11 +1575,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ExpressionKind::Variable(_)
             | ExpressionKind::Subscript { .. }
             | ExpressionKind::FieldSelection { .. } => {
-                let frame = self.clone().chain_value(expression, at);
-                let result = self.nest(frame).await;
-                result
+                self.clone().chain_value(expression, at).await.map(Some)
             }
-            .map(Some),
             ExpressionKind::Number(_) | ExpressionKind::Bool(_) => Err(internal(at)),
             ExpressionKind::String(_) => Ok(None),
             ExpressionKind::Parenthesized(ref inner) => {
@@ -1662,11 +1639,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         expression: &'b AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let chain = {
-            let frame = self.clone().chain(expression);
-            let result = self.nest(frame).await;
-            result
-        }?;
+        let chain = self.clone().chain(expression).await?;
         self.with(|this| this.chain_loaded(expression, chain, at))?
     }
 
@@ -2016,11 +1989,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     }
 
     pub(super) async fn chain(self, expression: &'b AstExpression) -> Result<Chain> {
-        {
-            let frame = self.clone().access_chain(expression);
-            let result = self.nest(frame).await;
-            result
-        }
+        self.clone().access_chain(expression).await
     }
 
     pub(super) async fn chain_head(self, expression: &'b AstExpression) -> Result<Chain> {
@@ -2030,11 +1999,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let result = self.nest(frame).await;
                 result
             }
-            ExpressionKind::Variable(_) => {
-                let frame = self.clone().variable_chain(expression);
-                let result = self.nest(frame).await;
-                result
-            }
+            ExpressionKind::Variable(_) => self.clone().variable_chain(expression).await,
             _ => {
                 let frame = self.clone().rvalue(expression);
                 let result = self.nest(frame).await;
