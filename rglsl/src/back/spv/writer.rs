@@ -705,8 +705,7 @@ impl Writer {
                         binding,
                     )?;
                     iface.varying_ids.push(varying_id);
-                    let id = self.load_varying(&mut prelude.body, varying_id, argument_type_id);
-                    id
+                    self.load_varying(&mut prelude.body, varying_id, argument_type_id)
                 } else if let crate::TypeInner::Struct { ref members, .. } =
                     ir_module.types[argument.ty].inner
                 {

@@ -2619,71 +2619,66 @@ impl BlockContext<'_> {
         access_type_adjustment: AccessTypeAdjustment,
         result_type_id: Word,
     ) -> Result<Word, Error> {
-        {
-            let load_type_id = result_type_id;
-            let class = match access_type_adjustment {
-                AccessTypeAdjustment::IntroducePointer(class) => Some(class),
-                _ => self.pointer_class(pointer),
-            };
-            let heap = matches!(
-                *self.fun_info[pointer].ty.inner_with(&self.ir_module.types),
-                crate::TypeInner::Pointer {
-                    space: crate::AddressSpace::DescriptorHeap(_),
-                    ..
-                }
-            );
-            let plain_load = !heap
-                && class.is_some_and(|class| {
-                    self.writer.needs_layout_conversion(result_type_id, class)
-                });
-            let load_type_id = if plain_load {
-                self.writer.plain_type_id(result_type_id)
-            } else {
-                load_type_id
-            };
-
-            let load_id = {
-                let pointer_id = self.write_access_chain(pointer, block, access_type_adjustment)?;
-                let id = self.gen_id();
-                let atomic_space =
-                    match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-                        crate::TypeInner::Pointer { base, space } => {
-                            match self.ir_module.types[base].inner {
-                                crate::TypeInner::Atomic { .. } => Some(space),
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    };
-                let instruction = if let Some(space) = atomic_space {
-                    let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                    let scope_constant_id = self.get_scope_constant(scope as u32);
-                    let semantics_id = self.get_index_constant(semantics.bits());
-                    Instruction::atomic_load(
-                        result_type_id,
-                        id,
-                        pointer_id,
-                        scope_constant_id,
-                        semantics_id,
-                    )
-                } else {
-                    let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
-                    let component = self.physical_component_load;
-                    for operand in self.memory_access(pointer, component, false) {
-                        instruction.add_operand(operand);
-                    }
-                    instruction
-                };
-                block.body.push(instruction);
-                id
-            };
-
-            if plain_load {
-                self.writer
-                    .convert_layout(block, result_type_id, load_id, false)
-            } else {
-                Ok(load_id)
+        let class = match access_type_adjustment {
+            AccessTypeAdjustment::IntroducePointer(class) => Some(class),
+            AccessTypeAdjustment::None => self.pointer_class(pointer),
+        };
+        let heap = matches!(
+            *self.fun_info[pointer].ty.inner_with(&self.ir_module.types),
+            crate::TypeInner::Pointer {
+                space: crate::AddressSpace::DescriptorHeap(_),
+                ..
             }
+        );
+        let plain_load = !heap
+            && class
+                .is_some_and(|class| self.writer.needs_layout_conversion(result_type_id, class));
+        let load_type_id = if plain_load {
+            self.writer.plain_type_id(result_type_id)
+        } else {
+            result_type_id
+        };
+
+        let load_id = {
+            let pointer_id = self.write_access_chain(pointer, block, access_type_adjustment)?;
+            let id = self.gen_id();
+            let atomic_space = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                crate::TypeInner::Pointer { base, space } => {
+                    match self.ir_module.types[base].inner {
+                        crate::TypeInner::Atomic { .. } => Some(space),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let instruction = if let Some(space) = atomic_space {
+                let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                let scope_constant_id = self.get_scope_constant(scope as u32);
+                let semantics_id = self.get_index_constant(semantics.bits());
+                Instruction::atomic_load(
+                    result_type_id,
+                    id,
+                    pointer_id,
+                    scope_constant_id,
+                    semantics_id,
+                )
+            } else {
+                let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
+                let component = self.physical_component_load;
+                for operand in self.memory_access(pointer, component, false) {
+                    instruction.add_operand(operand);
+                }
+                instruction
+            };
+            block.body.push(instruction);
+            id
+        };
+
+        if plain_load {
+            self.writer
+                .convert_layout(block, result_type_id, load_id, false)
+        } else {
+            Ok(load_id)
         }
     }
 

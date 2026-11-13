@@ -66,7 +66,7 @@ define_scalar_set! {
 impl ScalarSet {
     /// Return the set of scalars to which `scalar` can be automatically
     /// converted.
-    pub fn convertible_from(scalar: Scalar) -> Self {
+    pub const fn convertible_from(scalar: Scalar) -> Self {
         use Scalar as Sc;
         match scalar {
             Sc::I8 => Self::I8,

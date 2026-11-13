@@ -70,7 +70,7 @@ where
     Ok(map)
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct SpirvOutParameters {
     pub version: SpvOutVersion,
@@ -82,20 +82,6 @@ pub struct SpirvOutParameters {
     pub separate_entry_points: bool,
     #[serde(deserialize_with = "deserialize_binding_map")]
     pub binding_map: rglsl::back::spv::BindingMap,
-}
-impl Default for SpirvOutParameters {
-    fn default() -> Self {
-        Self {
-            version: SpvOutVersion::default(),
-            capabilities: rglsl::FastHashSet::default(),
-            debug: false,
-            adjust_coordinate_space: false,
-            force_point_size: false,
-            clamp_frag_depth: false,
-            separate_entry_points: false,
-            binding_map: rglsl::back::spv::BindingMap::default(),
-        }
-    }
 }
 impl SpirvOutParameters {
     pub fn to_options<'a>(
