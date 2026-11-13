@@ -64,7 +64,7 @@ pub fn parse_unit(extension: &str, source: &str) -> Result<TranslationUnit, Erro
 }
 
 pub fn renumber(unit: &TranslationUnit) -> Result<TranslationUnit, Error> {
-    parse_unit("shader", &print(unit))
+    parse_unit("shader", &print(unit)?)
 }
 
 fn parse_declarations(text: &str) -> Result<Vec<ExternalDeclaration>, Error> {
@@ -291,15 +291,15 @@ impl ShaderJob {
         Ok(Self { pipeline, shaders })
     }
 
-    pub fn emit(&self) -> EmittedShaderJob {
-        EmittedShaderJob {
+    pub fn emit(&self) -> Result<EmittedShaderJob, Error> {
+        Ok(EmittedShaderJob {
             json: self.pipeline.to_json(),
             shaders: self
                 .shaders
                 .iter()
-                .map(|shader| (shader.extension.clone(), emit(&shader.unit)))
-                .collect(),
-        }
+                .map(|shader| Ok((shader.extension.clone(), emit(&shader.unit)?)))
+                .collect::<Result<_, Error>>()?,
+        })
     }
 
     pub fn make_uniform_bindings(&mut self, push_constant: Option<&str>) -> Result<(), Error> {
@@ -576,7 +576,7 @@ fn replace_with_canonical_sampler(
     Ok(())
 }
 
-pub fn node_count(unit: &TranslationUnit) -> usize {
+pub fn node_count(unit: &TranslationUnit) -> Result<usize, Error> {
     let statements: usize = unit
         .external_declarations
         .iter()
@@ -590,5 +590,5 @@ pub fn node_count(unit: &TranslationUnit) -> usize {
             _ => 0,
         })
         .sum();
-    expressions(unit).len() + statements + unit.external_declarations.len()
+    Ok(expressions(unit)?.len() + statements + unit.external_declarations.len())
 }

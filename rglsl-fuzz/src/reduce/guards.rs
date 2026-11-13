@@ -9,6 +9,7 @@ use crate::basic;
 use crate::build::Builder;
 use crate::constants::{GLF_GLOBAL_LOOP_BOUND, GLF_GLOBAL_LOOP_COUNT};
 use crate::donate::in_bounds;
+use crate::error::Error;
 use crate::fuzzer::literal_zero_or_one;
 use crate::generate::analyze_shader;
 use crate::job::parse_unit;
@@ -165,7 +166,11 @@ fn declares_counter(unit: &TranslationUnit) -> bool {
         })
 }
 
-pub fn add_guards(unit: &TranslationUnit, stage: Stage, bound: u32) -> Option<TranslationUnit> {
+pub fn add_guards(
+    unit: &TranslationUnit,
+    stage: Stage,
+    bound: u32,
+) -> Result<Option<TranslationUnit>, Error> {
     let analysis = analyze_shader(unit, stage, true, None);
     let mut result = in_bounds(unit, &analysis);
     let mut builder = Builder::new(result.next_id());
@@ -177,8 +182,10 @@ pub fn add_guards(unit: &TranslationUnit, stage: Stage, bound: u32) -> Option<Tr
             &format!(
                 "const int {GLF_GLOBAL_LOOP_BOUND} = {bound};\nint {GLF_GLOBAL_LOOP_COUNT} = 0;\n"
             ),
-        )
-        .ok()?;
+        );
+        let Ok(declarations) = declarations else {
+            return Ok(None);
+        };
         let position = result
             .external_declarations
             .iter()
@@ -196,5 +203,5 @@ pub fn add_guards(unit: &TranslationUnit, stage: Stage, bound: u32) -> Option<Tr
             .extend(declarations.external_declarations);
         result.external_declarations.extend(tail);
     }
-    parse_unit("guards", &emit(&result)).ok()
+    Ok(parse_unit("guards", &emit(&result)?).ok())
 }

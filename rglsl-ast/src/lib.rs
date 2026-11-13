@@ -45,5 +45,6 @@ pub use chain::{placeholder, Chain, Spine};
 pub use error::{ParseError, ParseErrorKind};
 pub use parser::{parse, parse_prefix, NON_UNIFORM};
 pub use printer::print;
+pub use rglsl_types::stack::Stalled;
 pub use span::{line_column, LineColumn, Span};
 pub use walk::{expressions, statement_expressions};

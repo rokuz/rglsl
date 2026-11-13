@@ -68,7 +68,7 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
         let mut unit = parse(&source)?;
         let statements = function_statements(&unit).len();
         assert!(statements > DEPTH);
-        assert!(node_count(&unit) > 2 * DEPTH);
+        assert!(node_count(&unit)? > 2 * DEPTH);
         assert!(function_statements(&unit)
             .iter()
             .any(|(_, statement)| contains_top_level_break(statement)));

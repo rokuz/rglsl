@@ -361,7 +361,7 @@ fn report(
 }
 
 fn write_job(job: &ShaderJob, json: &Path) -> Result<()> {
-    let emitted = job.emit();
+    let emitted = job.emit()?;
     fs::write(json, emitted.json)?;
     for (extension, text) in emitted.shaders {
         fs::write(json.with_extension(extension), text)?;

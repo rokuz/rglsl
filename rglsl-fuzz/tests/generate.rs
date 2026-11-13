@@ -54,11 +54,11 @@ fn options() -> FamilyOptions {
     options
 }
 
-fn emitted(job: &ShaderJob) -> Vec<(String, String)> {
-    let emitted = job.emit();
+fn emitted(job: &ShaderJob) -> TestResult<Vec<(String, String)>> {
+    let emitted = job.emit()?;
     let mut all = emitted.shaders;
     all.push((String::from("json"), emitted.json));
-    all
+    Ok(all)
 }
 
 fn assert_valid(name: &str, text: &str) -> TestResult {
@@ -87,11 +87,15 @@ fn variants_of_every_sample_are_valid_and_deterministic() -> TestResult {
         assert_eq!(first.variants.len(), 2, "{name}: {:?}", first.failures);
         assert_valid(
             &format!("{name} reference"),
-            &first.reference.emit().shaders[0].1,
+            &first.reference.emit()?.shaders[0].1,
         )?;
         for (number, (variant, again)) in first.variants.iter().zip(&second.variants).enumerate() {
-            assert_eq!(emitted(variant), emitted(again), "{name} variant {number}");
-            let text = &variant.emit().shaders[0].1;
+            assert_eq!(
+                emitted(variant)?,
+                emitted(again)?,
+                "{name} variant {number}"
+            );
+            let text = &variant.emit()?.shaders[0].1;
             identities += text.matches("_GLF_IDENTITY(").count();
             assert!(text.contains("injectionSwitch"), "{name}");
             assert_valid(&format!("{name} variant {number}"), text)?;

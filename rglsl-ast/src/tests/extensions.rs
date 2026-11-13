@@ -345,7 +345,7 @@ fn nonuniform_is_a_qualifier_and_a_constructor() {
         .map(|single| single.node)
         .collect::<Vec<_>>();
     assert!(qualifiers.contains(&SingleTypeQualifier::NonUniform));
-    let call = crate::expressions(&parsed)
+    let call = super::expressions(&parsed)
         .into_iter()
         .find_map(|expression| match &expression.kind {
             ExpressionKind::FunctionCall(call) => match &call.function.node {

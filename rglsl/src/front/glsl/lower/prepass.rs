@@ -108,12 +108,14 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub(super) fn prepass(&mut self, _definitions: &[&'a Node<FunctionDefinition>]) {
+    pub(super) fn prepass(&mut self, _definitions: &[&'a Node<FunctionDefinition>]) -> Result<()> {
         let analysis = self.analysis;
         let mut edges: Vec<(SymbolId, SymbolId)> = Vec::new();
         let mut plain: BTreeSet<SymbolId> = BTreeSet::new();
         let mut chains = BTreeMap::new();
-        for expression in rglsl_ast::expressions(self.unit) {
+        let expressions = rglsl_ast::expressions(self.unit)
+            .map_err(|_| super::stalled(crate::Span::UNDEFINED))?;
+        for expression in expressions {
             match expression.kind {
                 ExpressionKind::Variable(_) => {
                     let Some(&symbol) = analysis.references.get(&expression.id) else {
@@ -238,6 +240,7 @@ impl<'a> Lowerer<'a> {
             }
         }
         self.depth.retain(|texture| !plain.contains(texture));
+        Ok(())
     }
 
     pub(super) fn function_order(
@@ -256,7 +259,9 @@ impl<'a> Lowerer<'a> {
             spans.push((definition.span.start, definition.span.end, id));
         }
         let mut calls: BTreeMap<FunctionId, BTreeSet<FunctionId>> = BTreeMap::new();
-        for expression in rglsl_ast::expressions(self.unit) {
+        let expressions = rglsl_ast::expressions(self.unit)
+            .map_err(|_| super::stalled(crate::Span::UNDEFINED))?;
+        for expression in expressions {
             let Some(&Callee::Function(callee)) = analysis.calls.get(&expression.id) else {
                 continue;
             };

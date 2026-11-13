@@ -826,7 +826,7 @@ impl<'a> Session<'a> {
                     })
                     .collect();
                 self.report_link(&link);
-                self.reflect(&[(unit, log.compile.is_empty())], &[]);
+                self.reflect(&[(unit, log.compile.is_empty())], &[])?;
                 self.not_generated();
                 return Ok(if log.compile.is_empty() {
                     EXIT_LINK
@@ -842,7 +842,7 @@ impl<'a> Session<'a> {
                     let mut log = self.validation_log(unit, &error);
                     log.notes = notes;
                     self.report_unit(unit, &log);
-                    self.reflect(&[(unit, true)], &[(stage, &module)]);
+                    self.reflect(&[(unit, true)], &[(stage, &module)])?;
                     self.not_generated();
                     return Ok(EXIT_COMPILE);
                 }
@@ -855,7 +855,7 @@ impl<'a> Session<'a> {
             },
         );
         self.rename_entry_point(&mut module);
-        self.reflect(&[(unit, true)], &[(stage, &module)]);
+        self.reflect(&[(unit, true)], &[(stage, &module)])?;
         if self.options.spirv {
             return self.emit(stage, &module, &info, &unit.name);
         }
@@ -871,9 +871,13 @@ impl<'a> Session<'a> {
         glsl::Frontend::default().analyze_with_includer(&options, &unit.text, root, &mut includer)
     }
 
-    fn reflect(&self, units: &[(&Unit, bool)], modules: &[(ShaderStage, &Module)]) {
+    fn reflect(
+        &self,
+        units: &[(&Unit, bool)],
+        modules: &[(ShaderStage, &Module)],
+    ) -> Result<(), Exit> {
         if !self.options.reflect {
-            return;
+            return Ok(());
         }
         let mut analyzed: Vec<(ShaderStage, Vec<(glsl::Analyzed, bool)>)> = Vec::new();
         for stage in STAGE_ORDER {
@@ -922,7 +926,10 @@ impl<'a> Session<'a> {
             keep_uncalled: self.options.keep_uncalled,
             auto_map_bindings: self.options.auto_map_bindings,
         };
-        output::stdout(&reflect::reflect(settings, &inputs));
+        let text = reflect::reflect(settings, &inputs)
+            .map_err(|stalled| Exit::error(format!("internal error: {stalled}")))?;
+        output::stdout(&text);
+        Ok(())
     }
 
     fn rename_entry_point(&self, module: &mut Module) {
@@ -963,7 +970,7 @@ impl<'a> Session<'a> {
             }
         }
         if failed {
-            self.reflect(&outcomes, &[]);
+            self.reflect(&outcomes, &[])?;
             self.not_generated();
             return Ok(EXIT_COMPILE);
         }
@@ -975,7 +982,7 @@ impl<'a> Session<'a> {
                     .map(|&(stage, ref error)| link_line(stage, error))
                     .collect();
                 self.report_link(&lines);
-                self.reflect(&outcomes, &[]);
+                self.reflect(&outcomes, &[])?;
                 self.not_generated();
                 return Ok(EXIT_LINK);
             }
@@ -1010,7 +1017,7 @@ impl<'a> Session<'a> {
             .iter()
             .map(|stage| (stage.stage, &stage.module))
             .collect();
-        self.reflect(&outcomes, &modules);
+        self.reflect(&outcomes, &modules)?;
         if self.options.spirv {
             for stage in &linked {
                 let code = self.emit(stage.stage, &stage.module, &stage.info, &name)?;

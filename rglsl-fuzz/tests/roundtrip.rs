@@ -67,11 +67,11 @@ fn printing_a_sample_and_parsing_it_again_gives_the_same_tree() -> TestResult {
     assert_eq!(parseable.len(), 43);
     for (name, source) in parseable {
         let first = parse(&source).map_err(|error| format!("{name}: {error}"))?;
-        let printed = print(&first);
+        let printed = print(&first)?;
         let second = parse(&printed).map_err(|error| format!("{name}: {error}\n{printed}"))?;
         assert_eq!(first, second, "{name}");
         assert_eq!(first.next_id(), second.next_id(), "{name}");
-        assert_eq!(printed, print(&second), "{name}");
+        assert_eq!(printed, print(&second)?, "{name}");
         assert_eq!(printed, first.to_string(), "{name}");
     }
     Ok(())
@@ -111,7 +111,7 @@ fn truncated_samples_never_panic() -> TestResult {
             attempts += 1;
             if let Ok(unit) = parse(prefix) {
                 accepted += 1;
-                assert_eq!(parse(&print(&unit)).ok(), Some(unit));
+                assert_eq!(parse(&print(&unit)?).ok(), Some(unit));
             }
         }
     }
@@ -156,7 +156,7 @@ fn mutated_samples_never_panic() -> TestResult {
             let mutated = format!("{}{replacement}{}", &source[..start], &source[end..]);
             attempts += 1;
             if let Ok(unit) = parse(&mutated) {
-                assert_eq!(parse(&print(&unit)).ok(), Some(unit));
+                assert_eq!(parse(&print(&unit)?).ok(), Some(unit));
             }
         }
     }
@@ -198,7 +198,7 @@ fn glslang_accepts_every_printed_sample_it_accepts_in_original_form() -> TestRes
         accepted += 1;
         let unit = parse(&source).map_err(|error| format!("{name}: {error}"))?;
         let printed = printed_directory.join(&name);
-        fs::write(&printed, print(&unit))?;
+        fs::write(&printed, print(&unit)?)?;
         assert!(glslang_accepts(&glslang, &printed)?, "{name}");
     }
     assert_eq!(accepted, 43);

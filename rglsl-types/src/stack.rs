@@ -9,6 +9,10 @@ use core::task::{Context, Poll, Waker};
 
 type Frame<'b> = Pin<Box<dyn Future<Output = ()> + 'b>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("a walk driven by the frame stack stopped before it finished")]
+pub struct Stalled;
+
 #[derive(Clone)]
 pub struct Stack<'b> {
     spawned: Rc<RefCell<Option<Frame<'b>>>>,
@@ -87,4 +91,15 @@ pub fn run<'b, T: 'b, F: Future<Output = T> + 'b>(root: impl FnOnce(Stack<'b>) -
         }
     }
     slot.take()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    #[test]
+    fn a_frame_that_waits_without_a_call_stalls_the_run() {
+        assert_eq!(run(|_| core::future::pending::<u32>()), None);
+        assert_eq!(run(|_| async { 7 }), Some(7));
+    }
 }

@@ -8,7 +8,7 @@ use rglsl_ast::ast::{
     Statement, StatementKind, UnaryOperator,
 };
 use rglsl_ast::{Spine, TranslationUnit};
-use rglsl_types::stack::run;
+use rglsl_types::stack::{run, Stalled};
 
 use super::frames::Cx;
 use super::{Analysis, Callee};
@@ -42,7 +42,10 @@ enum Definition<'a> {
     },
 }
 
-pub(crate) fn no_contraction(unit: &TranslationUnit, analysis: &Analysis) -> BTreeSet<NodeId> {
+pub(crate) fn no_contraction(
+    unit: &TranslationUnit,
+    analysis: &Analysis,
+) -> Result<BTreeSet<NodeId>, Stalled> {
     let mut pass = Precise {
         analysis,
         chains: BTreeMap::new(),
@@ -56,16 +59,14 @@ pub(crate) fn no_contraction(unit: &TranslationUnit, analysis: &Analysis) -> BTr
         remained: Vec::new(),
     };
     if !pass.any_precise() {
-        return BTreeSet::new();
+        return Ok(BTreeSet::new());
     }
     let finished = {
         let context = RefCell::new(&mut pass);
         run(|stack| Cx::new(&context, stack).pass(unit))
     };
-    match finished {
-        Some(()) => pass.result,
-        None => BTreeSet::new(),
-    }
+    finished.ok_or(Stalled)?;
+    Ok(pass.result)
 }
 
 struct Precise<'a> {

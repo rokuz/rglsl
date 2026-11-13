@@ -1,9 +1,10 @@
 use alloc::format;
 use alloc::string::String;
 
+use super::print;
 use super::{round_trip, unit};
 use crate::ast::{ExpressionKind, ExternalDeclaration, StatementKind};
-use crate::{parse, print, ParseErrorKind};
+use crate::{parse, ParseErrorKind};
 
 fn with_extension(extension: &str, body: &str) -> String {
     format!("#version 450\n#extension {extension} : enable\nvoid f() {{\n{body}\n}}\n")

@@ -63,6 +63,7 @@ pub(super) struct UnitCx<'p, 'd, 'a> {
     pub(super) stage: usize,
     pub(super) update_stage_masks: Cell<bool>,
     pub(super) derefs: RefCell<BTreeMap<Key, walk::Deref>>,
+    pub(super) expressions: Vec<&'a rglsl_ast::ast::Expression>,
 }
 
 #[derive(Clone)]
@@ -146,7 +147,7 @@ impl UnitCx<'_, '_, '_> {
         let declared: BTreeSet<SymbolId> =
             events.iter().filter_map(|&(_, symbol)| symbol).collect();
         let mut first_use: BTreeMap<SymbolId, u32> = BTreeMap::new();
-        for expression in rglsl_ast::expressions(&self.source.unit) {
+        for &expression in &self.expressions {
             let ExpressionKind::Variable(_) = expression.kind else {
                 continue;
             };

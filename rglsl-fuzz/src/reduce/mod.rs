@@ -49,8 +49,8 @@ struct Reducer<'a, 'b> {
     rejected: BTreeSet<String>,
 }
 
-fn renumbered(unit: &TranslationUnit) -> Option<TranslationUnit> {
-    parse_unit("reduction", &emit(unit)).ok()
+fn renumbered(unit: &TranslationUnit) -> Result<Option<TranslationUnit>, Error> {
+    Ok(parse_unit("reduction", &emit(unit)?).ok())
 }
 
 impl Reducer<'_, '_> {
@@ -67,8 +67,8 @@ impl Reducer<'_, '_> {
         let Some(old) = current.shaders.get(shader) else {
             return Ok(false);
         };
-        let text = emit(&unit);
-        if text == emit(&old.unit) || self.rejected.contains(&text) {
+        let text = emit(&unit)?;
+        if text == emit(&old.unit)? || self.rejected.contains(&text) {
             return Ok(false);
         }
         let Ok(unit) = parse_unit("reduction", &text) else {
@@ -105,7 +105,7 @@ impl Reducer<'_, '_> {
             };
             let stage = entry.stage();
             let analysis = analyze_shader(&entry.unit, stage, true, None);
-            let opportunities = finders::find(pass, &entry.unit, &analysis);
+            let opportunities = finders::find(pass, &entry.unit, &analysis)?;
             if opportunities.is_empty() {
                 break;
             }
@@ -138,7 +138,7 @@ pub fn reduce(
 ) -> Result<Reduction, Error> {
     let mut current = job.clone();
     for shader in &mut current.shaders {
-        shader.unit = renumbered(&shader.unit).ok_or_else(|| Error::Parse {
+        shader.unit = renumbered(&shader.unit)?.ok_or_else(|| Error::Parse {
             shader: shader.extension.clone(),
             message: String::from("the shader does not parse after printing"),
         })?;
@@ -155,7 +155,7 @@ pub fn reduce(
     let mut bound = None;
     if !options.preserve_semantics && options.guards {
         for candidate in GLOBAL_LOOP_BOUNDS {
-            if let Some(guarded) = add_guards_to_job(&current, candidate) {
+            if let Some(guarded) = add_guards_to_job(&current, candidate)? {
                 if judge(&guarded)? {
                     bound = Some(candidate);
                     break;
@@ -167,7 +167,7 @@ pub fn reduce(
         let Some(bound) = bound else {
             return judge(candidate);
         };
-        match add_guards_to_job(candidate, bound) {
+        match add_guards_to_job(candidate, bound)? {
             Some(candidate) => judge(&candidate),
             None => Ok(false),
         }
@@ -193,7 +193,7 @@ pub fn reduce(
     let steps = reducer.steps;
     let successes = reducer.successes;
     let job = match bound {
-        Some(bound) => add_guards_to_job(&current, bound).unwrap_or(current),
+        Some(bound) => add_guards_to_job(&current, bound)?.unwrap_or(current),
         None => current,
     };
     Ok(Reduction {
@@ -204,22 +204,25 @@ pub fn reduce(
     })
 }
 
-pub fn add_guards_to_job(job: &ShaderJob, bound: u32) -> Option<ShaderJob> {
+pub fn add_guards_to_job(job: &ShaderJob, bound: u32) -> Result<Option<ShaderJob>, Error> {
     let mut result = job.clone();
     for shader in &mut result.shaders {
         let stage = shader.stage();
-        shader.unit = guards::add_guards(&shader.unit, stage, bound)?;
+        let Some(unit) = guards::add_guards(&shader.unit, stage, bound)? else {
+            return Ok(None);
+        };
+        shader.unit = unit;
     }
-    Some(result)
+    Ok(Some(result))
 }
 
-pub fn finalise(job: &ShaderJob) -> ShaderJob {
+pub fn finalise(job: &ShaderJob) -> Result<ShaderJob, Error> {
     let mut result = job.clone();
     for shader in &mut result.shaders {
         let expanded = expand_macros(&shader.unit);
-        if let Some(unit) = renumbered(&expanded) {
+        if let Some(unit) = renumbered(&expanded)? {
             shader.unit = unit;
         }
     }
-    result
+    Ok(result)
 }

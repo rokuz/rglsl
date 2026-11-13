@@ -40,17 +40,17 @@ fn job() -> TestResult<ShaderJob> {
 }
 
 fn json(job: &ShaderJob) -> TestResult<Value> {
-    Ok(serde_json::from_str(&job.emit().json)?)
+    Ok(serde_json::from_str(&job.emit()?.json)?)
 }
 
-fn fragment(job: &ShaderJob) -> String {
-    job.emit().shaders[0].1.clone()
+fn fragment(job: &ShaderJob) -> TestResult<String> {
+    Ok(job.emit()?.shaders[0].1.clone())
 }
 
 #[test]
 fn braces_are_added_to_every_branch_and_loop_body() -> TestResult {
     let prepared = prepare_reference(&job()?, 0, false)?;
-    let text = fragment(&prepared);
+    let text = fragment(&prepared)?;
     assert!(
         text.contains("if (x > 0.0) {\n        x = 1.0;\n    } else {\n        if (x < 0.0) {"),
         "{text}"
@@ -91,7 +91,7 @@ fn uniforms_without_values_get_zeros() -> TestResult {
 #[test]
 fn every_loose_uniform_gets_its_own_block_and_binding() -> TestResult {
     let prepared = prepare_reference(&job()?, 0, true)?;
-    let text = fragment(&prepared);
+    let text = fragment(&prepared)?;
     let uniforms = json(&prepared)?;
     for (name, declaration) in [
         ("time", "float time;"),
@@ -140,7 +140,7 @@ fn surplus_uniforms_become_initialised_globals() -> TestResult {
         .keys()
         .collect();
     assert_eq!(names, ["resolution", "tex", "time"]);
-    let text = fragment(&prepared);
+    let text = fragment(&prepared)?;
     assert!(text.contains("int counts[3] = int[3](1, 2, 3);"), "{text}");
     assert!(text.contains("vec2 offset = vec2(0.0, 0.0);"), "{text}");
     assert!(text.contains("uniform buf"), "{text}");
@@ -168,7 +168,7 @@ void main() { color = texture(first, vec2(value)); }
     )?;
     let mut prepared = prepare_reference(&job, 0, false)?;
     prepared.make_uniform_bindings(None)?;
-    let text = fragment(&prepared);
+    let text = fragment(&prepared)?;
     assert!(
         text.contains("layout(set = 0, binding = 1) uniform buf1 {\n    float value;\n};"),
         "{text}"
