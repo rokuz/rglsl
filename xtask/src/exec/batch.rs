@@ -30,6 +30,29 @@ pub fn transient(error: &str) -> bool {
     TRANSIENT.iter().any(|word| error.contains(word))
 }
 
+pub fn retry_transient(
+    results: &mut [JobResult],
+    rounds: usize,
+    mut rerun: impl FnMut(&[usize]) -> Vec<JobResult>,
+) {
+    for _ in 0..rounds {
+        let lost: Vec<usize> = results
+            .iter()
+            .enumerate()
+            .filter(|(_, result)| result.as_ref().is_err_and(|error| transient(error)))
+            .map(|(index, _)| index)
+            .collect();
+        if lost.is_empty() {
+            return;
+        }
+        for (index, result) in lost.iter().zip(rerun(&lost)) {
+            if let Some(slot) = results.get_mut(*index) {
+                *slot = result;
+            }
+        }
+    }
+}
+
 pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> {
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<(usize, JobResult)>> = Mutex::new(Vec::with_capacity(jobs.len()));
@@ -147,6 +170,38 @@ mod tests {
         ));
         assert!(transient("VK_ERROR_DEVICE_LOST"));
         assert!(!transient("Missing subgroup operation quad feature"));
+    }
+
+    #[test]
+    fn transient_failures_are_rerun_a_bounded_number_of_times() {
+        let lost = || -> JobResult {
+            Err("amber exited with 1: Unable to create vulkan device: ERROR_DEVICE_LOST".into())
+        };
+        let mut results = vec![
+            Ok(Outputs::new()),
+            lost(),
+            Err("wrong value".into()),
+            lost(),
+        ];
+        let mut calls = Vec::new();
+        retry_transient(&mut results, 2, |indices| {
+            calls.push(indices.to_vec());
+            indices
+                .iter()
+                .map(|&index| {
+                    if index == 1 {
+                        Ok(Outputs::new())
+                    } else {
+                        lost()
+                    }
+                })
+                .collect()
+        });
+        assert_eq!(calls, [vec![1, 3], vec![3]]);
+        assert_eq!(results[0], Ok(Outputs::new()));
+        assert_eq!(results[1], Ok(Outputs::new()));
+        assert_eq!(results[2], Err("wrong value".to_string()));
+        assert!(results[3].as_ref().is_err_and(|error| transient(error)));
     }
 
     #[test]

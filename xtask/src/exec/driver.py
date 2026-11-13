@@ -93,7 +93,7 @@ def run_job(settings, job):
         status = run_amber(command, cwd, timeout)
         if not transient(status):
             break
-        time.sleep(0.5 * (attempt + 1))
+        time.sleep(2.0 * (attempt + 1))
     if status[0] == "ok" and dumps:
         try:
             shutil.copyfile(dump, os.path.join(results, "%s.dump" % index))

@@ -183,6 +183,8 @@ fn refusal(refusal: Refusal) -> Outcome {
 
 const DUMP_FILE: &str = "dump.comp.spv";
 const LOCAL_GPU_JOBS: usize = 2;
+const RECOVERY_ROUNDS: usize = 2;
+const RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TargetDifference {
@@ -611,6 +613,19 @@ impl Executor {
     }
 
     fn run_with(&self, jobs: &[Job], workers: Option<usize>) -> Vec<JobResult> {
+        let mut results = self.run_batch(jobs, workers);
+        batch::retry_transient(&mut results, RECOVERY_ROUNDS, |lost| {
+            std::thread::sleep(RECOVERY_WAIT);
+            let again: Vec<Job> = lost.iter().filter_map(|&i| jobs.get(i).cloned()).collect();
+            if again.len() != lost.len() {
+                return Vec::new();
+            }
+            self.run_batch(&again, Some(1))
+        });
+        results
+    }
+
+    fn run_batch(&self, jobs: &[Job], workers: Option<usize>) -> Vec<JobResult> {
         if jobs.is_empty() {
             return Vec::new();
         }
