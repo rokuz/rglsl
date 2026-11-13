@@ -254,7 +254,7 @@ impl<E> WithSpan<E> {
         E: Error,
     {
         use codespan_reporting::diagnostic::{Diagnostic, Label};
-        let diagnostic = Diagnostic::error()
+        Diagnostic::error()
             .with_message(self.inner.to_string())
             .with_labels(
                 self.spans()
@@ -272,8 +272,7 @@ impl<E> WithSpan<E> {
                     source = next;
                 }
                 notes
-            });
-        diagnostic
+            })
     }
 
     /// Emits a summary of the error to a string.

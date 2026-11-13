@@ -112,7 +112,7 @@ impl<T> Arena<T> {
     }
 
     /// Drains the arena, returning an iterator over the items stored.
-    pub fn drain(&mut self) -> impl DoubleEndedIterator<Item = (Handle<T>, T, Span)> {
+    pub fn drain(&mut self) -> impl DoubleEndedIterator<Item = (Handle<T>, T, Span)> + use<T> {
         let arena = core::mem::take(self);
         let handles = Range::full_range_from_size(arena.data.len());
         arena

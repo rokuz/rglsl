@@ -603,8 +603,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             }
             let ty = {
                 let frame = self.clone().ir_type(sized.clone(), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             self.with(|lowerer| lowerer.layouter.update(lowerer.module.to_ctx()))?
                 .map_err(|_| internal(at))?;
@@ -640,8 +639,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let frame =
                 self.clone()
                     .wrap_arrays(structure, ([GlslArraySize::Sized(size)]).to_vec(), at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let handle = self.with(|this| {
             this.module.global_variables.append(

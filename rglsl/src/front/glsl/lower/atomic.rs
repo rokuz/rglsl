@@ -249,8 +249,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let element = scalar(element);
         let place = {
             let frame = self.clone().place(memory);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let count = operand_count(name).min(rest.len());
         let (values, scope) = rest.split_at(count);
@@ -258,8 +257,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in values {
             let (value, ty) = {
                 let frame = self.clone().typed(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             operands.push(self.with(|this| this.convert(value, &ty, &memory_ty, at))??);
         }
@@ -367,8 +365,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (coordinate, array_index) =
@@ -379,8 +376,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             rest = tail;
             Some({
                 let frame = self.clone().rvalue(sample);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?)
         } else {
             None
@@ -391,8 +387,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in values {
             operands.push({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let order = if scope.is_empty() {

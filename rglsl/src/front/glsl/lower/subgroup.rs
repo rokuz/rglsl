@@ -250,21 +250,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             Collective::PartitionedReduce => CollectiveOperation::PartitionedReduce({
                 let frame = self.clone().rvalue(second()?);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             Collective::PartitionedInclusiveScan => {
                 CollectiveOperation::PartitionedInclusiveScan({
                     let frame = self.clone().rvalue(second()?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?)
             }
             Collective::PartitionedExclusiveScan => {
                 CollectiveOperation::PartitionedExclusiveScan({
                     let frame = self.clone().rvalue(second()?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?)
             }
         })
@@ -299,8 +296,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Lowered::Ballot => {
                 let predicate = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let result = self.with(|this| {
                     this.push_with_result(
@@ -317,13 +313,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Lowered::Collective(op, collective) => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let collective_op = {
                     let frame = self.clone().collective_operation(collective, arguments, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
                 let result = self.with(|this| {
@@ -343,55 +337,46 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Lowered::Gather(gather) => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let mode = match gather {
                     Gather::BroadcastFirst => GatherMode::BroadcastFirst,
                     Gather::QuadSwap(direction) => GatherMode::QuadSwap(direction),
                     Gather::Broadcast => GatherMode::Broadcast({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     Gather::Shuffle => GatherMode::Shuffle({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     Gather::ShuffleXor => GatherMode::ShuffleXor({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     Gather::ShuffleUp => GatherMode::ShuffleUp({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     Gather::ShuffleDown => GatherMode::ShuffleDown({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     Gather::QuadBroadcast => GatherMode::QuadBroadcast({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     Gather::Rotate => GatherMode::Rotate {
                         delta: {
                             let frame = self.clone().rvalue(argument(1)?);
-                            let result = self.nest(frame).await;
-                            result
+                            self.nest(frame).await
                         }?,
                         cluster_size: None,
                     },
                     Gather::ClusteredRotate => {
                         let delta = {
                             let frame = self.clone().rvalue(argument(1)?);
-                            let result = self.nest(frame).await;
-                            result
+                            self.nest(frame).await
                         }?;
                         let size = self.try_with(|this| {
                             Ok(this.constant_index(argument(2)?).ok_or_else(|| {
@@ -420,8 +405,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             Lowered::Function(function) => {
                 let frame = self.clone().subgroup_function(function, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -444,32 +428,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Function::AllEqual => (
                 SubgroupFunction::AllEqual({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),
             Function::QuadAll => (
                 SubgroupFunction::QuadAll({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),
             Function::QuadAny => (
                 SubgroupFunction::QuadAny({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),
             Function::InverseBallot => (
                 SubgroupFunction::InverseBallot({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),
@@ -477,13 +457,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 SubgroupFunction::BallotBitExtract {
                     ballot: {
                         let frame = self.clone().rvalue(argument(0)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                     index: {
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                 },
                 boolean,
@@ -492,13 +470,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 SubgroupFunction::BallotBitCount {
                     ballot: {
                         let frame = self.clone().rvalue(argument(0)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                     collective_op: {
                         let frame = self.clone().collective_operation(collective, arguments, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                 },
                 unsigned,
@@ -506,32 +482,28 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Function::BallotFindLsb => (
                 SubgroupFunction::BallotFindLsb({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 unsigned,
             ),
             Function::BallotFindMsb => (
                 SubgroupFunction::BallotFindMsb({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 unsigned,
             ),
             Function::Partition => (
                 SubgroupFunction::Partition({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 ballot,
             ),
             Function::KhrBallot => {
                 let predicate = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let result = self.with(|this| this.subgroup_result_type(ballot))?;
                 let mask = self.with(|this| {
@@ -549,13 +521,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Function::KhrReadInvocation => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let index = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
                 let result = self.with(|this| {
@@ -576,8 +546,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Function::KhrReadFirstInvocation => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
                 let result = self.with(|this| {
@@ -595,13 +564,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Function::Group(op, collective, non_uniform) => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let collective_op = {
                     let frame = self.clone().collective_operation(collective, arguments, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
                 let result = self.with(|this| {
@@ -624,24 +591,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Function::KhrAll => (
                 SubgroupFunction::KhrAll({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),
             Function::KhrAny => (
                 SubgroupFunction::KhrAny({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),
             Function::KhrAllEqual => (
                 SubgroupFunction::KhrAllEqual({
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 boolean,
             ),

@@ -508,8 +508,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let ty = &ty;
         {
             let frame = self.clone().ir_type_with(ty.clone(), false, false, span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -530,13 +529,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let base = match ty.kind {
             TypeKind::Struct(id) => {
                 let frame = self.clone().struct_type(id, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?,
             kind => {
                 let frame = self.clone().base_type(kind, depth, comparison, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?,
         };
         let mut pending = Vec::new();
@@ -555,8 +552,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         while let Some((key, outer)) = pending.pop() {
             handle = {
                 let frame = self.clone().wrap_arrays(handle, Vec::from([outer]), span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             self.with(|this| this.array_types.insert(key, handle))?;
         }
@@ -574,8 +570,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         for dimension in dimensions.iter().rev() {
             let size = {
                 let frame = self.clone().array_size(*dimension, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             self.with(|lowerer| lowerer.layouter.update(lowerer.module.to_ctx()))?
                 .map_err(|_| internal(span))?;
@@ -599,8 +594,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             GlslArraySize::Unsized => Ok(ArraySize::Dynamic),
             GlslArraySize::Specialized(size) => {
                 let frame = self.clone().specialized_size(size, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(ArraySize::Pending),
         }
@@ -617,8 +611,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 .ok_or_else(|| internal(span)),
             GlslArraySize::Specialized(size) => {
                 let frame = self.clone().specialized_size(size, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(CooperativeSize::Pending),
             GlslArraySize::Unsized => Err(internal(span)),
@@ -651,8 +644,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             TypeKind::Struct(id) => {
                 return {
                     let frame = self.clone().struct_type(id, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }
             }
             TypeKind::Block(_) => {
@@ -661,21 +653,18 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             TypeKind::Reference(block) => {
                 return {
                     let frame = self.clone().reference_type(block, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }
             }
             TypeKind::Opaque(opaque) => Lowerer::opaque_inner(opaque, depth, comparison, span)?,
             TypeKind::CooperativeMatrix(matrix) => TypeInner::CooperativeMatrix {
                 columns: {
                     let frame = self.clone().cooperative_size(matrix.columns, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 rows: {
                     let frame = self.clone().cooperative_size(matrix.rows, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 scalar: scalar(matrix.scalar),
                 role: match matrix.usage {
@@ -685,8 +674,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 },
                 scope: {
                     let frame = self.clone().cooperative_size(matrix.scope, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 class: match matrix.usage {
                     CooperativeUse::Nv => CooperativeMatrixClass::Nv,
@@ -708,8 +696,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             TypeKind::LongVector { scalar: s, size } => TypeInner::LongVector {
                 size: {
                     let frame = self.clone().cooperative_size(size, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 scalar: scalar(s),
                 class: LongVectorClass::Plain,
@@ -717,8 +704,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             TypeKind::CooperativeVector { scalar: s, size } => TypeInner::LongVector {
                 size: {
                     let frame = self.clone().cooperative_size(size, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 scalar: scalar(s),
                 class: LongVectorClass::CooperativeNv,
@@ -729,15 +715,13 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             } => TypeInner::TensorLayout {
                 dimensions: {
                     let frame = self.clone().cooperative_size(dimensions, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 clamp_mode: match clamp_mode {
                     GlslArraySize::Sized(0) => None,
                     other => Some({
                         let frame = self.clone().cooperative_size(other, span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                 },
             },
@@ -750,8 +734,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 TypeInner::TensorView {
                     dimensions: {
                         let frame = self.clone().cooperative_size(dimensions, span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                     has_dimensions,
                     permutation: permutation
@@ -765,14 +748,12 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 scalar: scalar(s),
                 rank: {
                     let frame = self.clone().cooperative_size(rank, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
             },
             TypeKind::Spirv(id) => {
                 let frame = self.clone().spirv_type(id, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?,
         };
         self.with(|this| this.insert_type(inner))
@@ -794,8 +775,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         for member in &structure.members {
             let ty = {
                 let frame = self.clone().ir_type(member.ty.clone(), span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let member = self
                 .with(|this| this.struct_member(member, ty, &mut offset, &mut alignment, span))??;
@@ -833,8 +813,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             ) => {
                 let base = {
                     let frame = self.clone().apply_layout_inner(base, element, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 TypeInner::Array { base, size, stride }
             }
@@ -848,8 +827,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                         let frame = self
                             .clone()
                             .apply_layout_inner(member.ty, &laid.layout, span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     member.offset = laid.offset;
                     member.matrix_layout = matrix_layout(&laid.layout);
@@ -919,8 +897,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     self.with(|this| this.block_bools.insert((id, index)))?;
                     {
                         let frame = self.clone().ir_type(lowered.clone(), span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?
                 }
                 None => {
@@ -929,8 +906,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     }
                     {
                         let frame = self.clone().ir_type(member_ty.clone(), span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?
                 }
             };

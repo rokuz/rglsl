@@ -173,7 +173,7 @@ pub(super) fn implicit_sizes(
             }
             if let (
                 ExpressionKind::Subscript {
-                    base: ref outer, ..
+                    base: outer, ..
                 },
                 Some(value),
             ) = (&owner.kind, constant)

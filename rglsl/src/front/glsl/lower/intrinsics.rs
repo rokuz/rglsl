@@ -207,8 +207,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 SpirvTypeParameter::Type(ref parameter) => {
                     let handle = {
                         let frame = self.clone().ir_type(parameter.clone(), span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     operands.push(SpirvTypeOperand::Type(handle));
                 }
@@ -289,8 +288,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             {
                 let place = {
                     let frame = self.clone().place(argument);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 if place.boolean || place.spilled {
                     return Err(unsupported(
@@ -322,8 +320,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             } else {
                 operands.push(SpirvOperand::Value({
                     let frame = self.clone().rvalue(argument);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?));
             }
         }

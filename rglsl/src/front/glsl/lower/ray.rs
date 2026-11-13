@@ -338,14 +338,12 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let transposed = GlslType::matrix(GlslScalar::Float, 4, 3);
             return {
                 let frame = self.clone().ir_type(transposed.clone(), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         {
             let frame = self.clone().ir_type(ty.clone(), at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 }
@@ -442,8 +440,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Handle<Expression>> {
         Ok({
             let frame = self.clone().place(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?
         .pointer)
     }
@@ -491,8 +488,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let committed = self.with(|this| this.constant_bool(committed, at))??;
             let query = {
                 let frame = self.clone().ray_query_pointer(query);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             match value {
                 Iv::TriangleVertexPositions => {
@@ -516,8 +512,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if let [ref output] = *rest {
                 let place = {
                     let frame = self.clone().place(output);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| this.store(&place, result, at))??;
                 return Ok(Some(None));
@@ -538,8 +533,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let query = arguments.first().ok_or_else(|| internal(at))?;
             let query = {
                 let frame = self.clone().ray_query_pointer(query);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             return self.with(|this| {
                 this.add(Expression::RayQueryGet { query, value }, at)
@@ -553,13 +547,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let [acceleration_structure, flags, cull_mask, origin, tmin, direction, tmax] = *{
                     let frame = self.clone().ray_operands(rest);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?
                 .as_slice() else {
                     return Err(internal(at));
@@ -587,8 +579,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let query = arguments.first().ok_or_else(|| internal(at))?;
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let result = self.with(|this| {
                     this.result_statement(
@@ -606,8 +597,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let query = arguments.first().ok_or_else(|| internal(at))?;
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let fun = if name == "rayQueryTerminateEXT" {
                     RayQueryFunction::Terminate
@@ -623,13 +613,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let hit_t = {
                     let frame = self.clone().rvalue(hit_t);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| {
                     this.push(
@@ -647,8 +635,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let (payload, operands) = arguments.split_last().ok_or_else(|| internal(at))?;
                 let operands = {
                     let frame = self.clone().ray_operands(operands);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let (time, operands) = if motion {
                     let (time, operands) = operands.split_last().ok_or_else(|| internal(at))?;
@@ -690,8 +677,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let sbt_index = {
                     let frame = self.clone().rvalue(sbt_index);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let data =
                     self.with(|this| this.ray_data(data, 1, name == "executeCallableNV", at))??;
@@ -712,13 +698,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let hit_t = {
                     let frame = self.clone().rvalue(hit_t);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let hit_kind = {
                     let frame = self.clone().rvalue(hit_kind);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let result = self.with(|this| {
                     this.result_statement(
@@ -761,8 +745,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             _ => {
                 let frame = self.clone().hit_object_call(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -775,8 +758,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let argument = arguments.first().ok_or_else(|| internal(at))?;
         let address = {
             let frame = self.clone().rvalue(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| this.add(Expression::AccelerationStructureFromAddress { address }, at))?
     }
@@ -834,15 +816,13 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             .unwrap_or_default();
         let ty = {
             let frame = self.clone().ir_type(variable.ty.clone(), at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let init = {
             let frame = self
                 .clone()
                 .global_constant(variable.ty.clone(), values.clone(), at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let handle = self.with(|this| {
             this.module.overrides.append(

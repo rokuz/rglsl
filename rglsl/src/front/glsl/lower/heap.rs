@@ -495,8 +495,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             TypeKind::Block(id) => self.with(|this| this.buffer_descriptor(id, at))?,
             TypeKind::Struct(id) => {
                 let frame = self.clone().heap_struct(id, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => Err(internal(at)),
         }
@@ -512,8 +511,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let frame = self
                 .clone()
                 .heap_members(None, &structure.members, None, false, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let handle = self.with(|this| {
             this.module.types.insert(
@@ -556,8 +554,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let element = GlslType::new(member.ty.kind);
                 let leaf = {
                     let frame = self.clone().heap_leaf(element.clone(), qualifiers, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let stride = if member.ty.is_array() {
                     size.unwrap_or(0)

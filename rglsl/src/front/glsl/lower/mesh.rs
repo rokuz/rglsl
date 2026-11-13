@@ -201,8 +201,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in arguments {
             values.push({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let function = match (name, values.as_slice()) {

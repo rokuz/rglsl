@@ -1537,8 +1537,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let slice = values.get(start..end).ok_or_else(|| internal(at))?;
                     components.push({
                         let frame = self.clone().constant(part, slice, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?);
                 }
                 let ty = self.with(|this| this.lw.ir_type(ty, at))??;
@@ -1581,13 +1580,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ExpressionKind::String(_) => Ok(None),
             ExpressionKind::Parenthesized(ref inner) => {
                 let frame = self.clone().value_converted(inner);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             ExpressionKind::FunctionCall(ref call) => {
                 let frame = self.clone().call(expression, call);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             ExpressionKind::Postfix {
                 ref operand,
@@ -1599,37 +1596,31 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     true,
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             ExpressionKind::Unary { .. } => {
                 let frame = self.clone().unary_chain(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             ExpressionKind::Binary { .. } => {
                 let frame = self.clone().binary_chain(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             ExpressionKind::Conditional { .. } => {
                 let frame = self.clone().conditional_chain(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             ExpressionKind::Assignment { .. } => {
                 let frame = self.clone().assignment_chain(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             ExpressionKind::Sequence(ref expressions) => {
                 let frame = self.clone().sequence(expressions, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -1654,14 +1645,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for expression in leading {
             {
                 let frame = self.clone().value_converted(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
         }
         {
             let frame = self.clone().sequence_result(final_expression);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -1680,14 +1669,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if !lvalue || info.is_constant || info.is_specialization || info.conversion.is_some() {
             return {
                 let frame = self.clone().value_converted(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         match {
             let frame = self.clone().chain(inner);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }? {
             Chain::Place(mut place) => {
                 place.non_uniform = false;
@@ -1706,14 +1693,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if info.ty.is_void() || info.ty.is_string() {
             return {
                 let frame = self.clone().value(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         {
             let frame = self.clone().rvalue(expression);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
         .map(Some)
     }
@@ -1721,14 +1706,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn place(self, expression: &'b AstExpression) -> Result<Place> {
         let chain = match {
             let frame = self.clone().dynamic_swizzle_component(expression);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }? {
             Some(chain) => chain,
             None => {
                 let frame = self.clone().chain(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?,
         };
         match chain {
@@ -1772,8 +1755,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let at = self.with(|this| this.at(expression.span))?;
         let place = match {
             let frame = self.clone().chain(base);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }? {
             Chain::Place(place) => place,
             value @ Chain::Value(_) => return Ok(Some(value)),
@@ -1806,8 +1788,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })??;
         let selector = {
             let frame = self.clone().rvalue(index);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let component = self.with(|this| {
             this.add(
@@ -1863,8 +1844,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         let frame = self
                             .clone()
                             .constant(variable.ty.clone(), &value.values, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?)
                 }
             });
@@ -1925,8 +1905,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if let Some(offset) = self.with(|this| this.lw.heap_offset_value(handle))? {
                 let offset = {
                     let frame = self.clone().rvalue(offset);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 value = self.with(|this| {
                     this.add(
@@ -1954,8 +1933,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if !wide {
             return {
                 let frame = self.clone().rvalue(index);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         let info = self.with(|this| this.info(index))??;
@@ -1970,8 +1948,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let value = {
             let frame = self.clone().rvalue(index);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if !narrow {
             return Ok(value);
@@ -1996,14 +1973,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         match expression.kind {
             ExpressionKind::Parenthesized(ref inner) => {
                 let frame = self.clone().chain(inner);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             ExpressionKind::Variable(_) => self.clone().variable_chain(expression).await,
             _ => {
                 let frame = self.clone().rvalue(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Chain::Value),
         }
@@ -2022,8 +1997,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .reference_subscript_chain(chain, base, index, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         let wide = self.with(|this| this.wide_index(base_ty, index))??;
@@ -2036,8 +2010,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .subscript_index(chain.clone(), index, wide, constant, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| this.subscript_access(chain, base, index, index_value, constant, at))?
     }
@@ -2061,8 +2034,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     Some(_) => Ok(None),
                     None => {
                         let frame = self.clone().rvalue(index);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }
                     .map(Some),
                 }
@@ -2070,8 +2042,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             _ if constant.is_some() => Ok(None),
             _ => {
                 let frame = self.clone().index_operand(index, wide, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
         }
@@ -2091,8 +2062,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let index = {
             let frame = self.clone().typed(index);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.reference_offset((reference, base_ty), (index.0, &index.1), false, at)
@@ -2167,8 +2137,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| this.add(Expression::AccessIndex { base: value, index }, at))??;
             components.push({
                 let frame = self.clone().relayout(part, from, to, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         self.with(|this| this.add(Expression::Compose { ty: to, components }, at))?
@@ -2190,8 +2159,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let target = if to_bool {
                     {
                         let frame = self.clone().boolean_twin(integer, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?
                 } else {
                     integer
@@ -2203,8 +2171,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     })??;
                     components.push({
                         let frame = self.clone().convert_booleans(part, base, to_bool, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?);
                 }
                 self.with(|this| {
@@ -2231,8 +2198,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             crate::TypeInner::Array { base, size, .. } => {
                 let element = {
                     let frame = self.clone().boolean_twin(base, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let stride = self.try_with(|lowerer| {
                     lowerer
@@ -2263,8 +2229,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let ty = self.with(|this| this.info(operand))??.ty.clone();
         let place = {
             let frame = self.clone().place(operand);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let old = self.with(|this| this.load(&place, at))??;
         self.with(|this| this.relax_load(operand, old))?;
@@ -2301,18 +2266,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let accept = {
-            let result = self
+            self
                 .clone()
                 .block(self.nest(self.clone().effect(accept)))
-                .await;
-            result
+                .await
         }?;
         let reject = {
-            let result = self
+            self
                 .clone()
                 .block(self.nest(self.clone().effect(reject)))
-                .await;
-            result
+                .await
         }?;
         self.with(|this| {
             this.push(
@@ -2337,18 +2300,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         let local = self.with(|this| this.local(ty, None, at))??;
         let accept = {
-            let result = self
+            self
                 .clone()
                 .block(self.nest(self.clone().stored(accept, local, at)))
-                .await;
-            result
+                .await
         }?;
         let reject = {
-            let result = self
+            self
                 .clone()
                 .block(self.nest(self.clone().stored(reject, local, at)))
-                .await;
-            result
+                .await
         }?;
         self.with(|this| {
             this.push(
@@ -2373,8 +2334,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<()> {
         let value = {
             let frame = self.clone().rvalue(expression);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let pointer = self.with(|this| this.local_pointer(local, at))??;
         self.with(|this| this.push(Statement::Store { pointer, value }, at))?;
@@ -2400,11 +2360,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             );
         })?;
         let rest = {
-            let result = self
+            self
                 .clone()
                 .block(self.nest(self.clone().stored(right, local, at)))
-                .await;
-            result
+                .await
         }?;
         let (accept, reject) = if operator == AstBinary::LogicalAnd {
             (rest, crate::Block::new())
@@ -2500,8 +2459,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| this.add(Expression::AccessIndex { base: right, index }, at))??;
             let compared = {
                 let frame = self.clone().equality(l, r, part.clone(), equal, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             result = Some(match result {
                 None => compared,
@@ -2568,8 +2526,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 for (item, element) in items.iter().zip(&elements) {
                     components.push({
                         let frame = self.clone().initializer(item, element.clone());
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?);
                 }
                 let ty = self.with(|this| this.lw.ir_type(ty, at))??;

@@ -350,8 +350,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let frame =
                 self.clone()
                     .specialization_of(Specialized::Expression(expression), name, span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -394,8 +393,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         }
         let ir = {
             let frame = self.clone().ir_type(ty.clone(), span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.module.overrides.append(
@@ -418,8 +416,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         match size {
             SpecializedSize::Constant { symbol, .. } => match {
                 let frame = self.clone().global_ref(symbol, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }? {
                 GlobalRef::Override(handle) => Ok(handle),
                 _ => Err(internal(span)),
@@ -448,8 +445,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 })??;
                 let handle = {
                     let frame = self.clone().specialization(expression, None, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| this.specialized_sizes.insert(node, handle))?;
                 Ok(handle)

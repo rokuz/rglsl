@@ -2422,8 +2422,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let frame = self
                     .clone()
                     .variable_ir_type(ty.clone(), qualifiers.clone(), span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let global = self.with(|this| this.ray_query_global(name, ty, span))?;
             let found = GlobalRef::Variable(global);
@@ -2446,16 +2445,14 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 }
                 if let Some(handle) = {
                     let frame = self.clone().builtin_override(symbol, variable, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }? {
                     return Ok(handle);
                 }
                 if self.with(|this| this.is_per_vertex_array(symbol))? {
                     return {
                         let frame = self.clone().per_vertex_array(symbol, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     };
                 }
                 (
@@ -2493,15 +2490,13 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             Some(value) => {
                 let ir = {
                     let frame = self.clone().ir_type(ty.clone(), at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let init = {
                     let frame = self
                         .clone()
                         .global_constant(ty.clone(), value.values.clone(), at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let handle = self.with(|this| {
                     this.module.constants.append(
@@ -2523,8 +2518,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     volatile,
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
         };
         self.with(|this| this.globals.insert(symbol, found))?;
@@ -2579,22 +2573,19 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let sized = element.array_of(GlslArraySize::Sized(size));
             {
                 let frame = self.clone().ir_type(sized.clone(), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
             {
                 let frame = self.clone().ir_type(GlslType::vector(Scalar::Uint, 4), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         } else {
             {
                 let frame = self
                     .clone()
                     .ray_builtin_type(String::from(name), ty.clone(), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         };
         let memory_decorations = if volatile {

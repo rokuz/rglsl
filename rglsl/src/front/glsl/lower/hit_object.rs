@@ -105,8 +105,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let (payload, operands) = arguments.split_last().ok_or_else(|| internal(at))?;
         let operands: Vec<_> = {
             let frame = self.clone().ray_operands(operands);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let (fixed, rest) = operands.split_at_checked(10).ok_or_else(|| internal(at))?;
         let &[acceleration_structure, flags, cull_mask, sbt_offset, sbt_stride, miss_index, origin, tmin, direction, tmax] =
@@ -148,8 +147,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     async fn hint(self, arguments: &'b [AstExpression], at: Span) -> Result<Option<ReorderHint>> {
         match *{
             let frame = self.clone().ray_operands(arguments);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?
         .as_slice()
         {
@@ -173,8 +171,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let [acceleration_structure, instance_id, geometry_index, primitive_index, barycentric] =
                 *{
                     let frame = self.clone().ray_operands(arguments);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?
                 .as_slice()
             else {
@@ -205,13 +202,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if let [ref hint, ref bits] = *arguments {
                 let hint = {
                     let frame = self.clone().rvalue(hint);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let bits = {
                     let frame = self.clone().rvalue(bits);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| this.push(Statement::ReorderThread { kind, hint, bits }, at))?;
                 return Ok(Some(None));
@@ -220,8 +215,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let (object, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
         let object = {
             let frame = self.clone().ray_query_pointer(object);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if let Some(value) = hit_object_value(stem) {
             self.with(|this| this.generate_value_type(value))?;
@@ -230,8 +224,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if let [ref output] = *rest {
                 let place = {
                     let frame = self.clone().place(output);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| this.store(&place, result, at))??;
                 return Ok(Some(None));
@@ -244,8 +237,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame =
                         self.clone()
                             .hit_object_trace(rest, stem == "hitObjectTraceRayMotion", at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 if hint.is_some() {
                     return Err(internal(at));
@@ -259,8 +251,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         stem == "hitObjectTraceMotionReorderExecute",
                         at,
                     );
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 HitObjectFunction::TraceReorderExecute { trace, hint }
             }
@@ -273,8 +264,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let (attributes, operands) = rest.split_last().ok_or_else(|| internal(at))?;
                 let operands = {
                     let frame = self.clone().ray_operands(operands);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let (head, tail) = operands
                     .split_at_checked(if with_index { 6 } else { 7 })
@@ -337,8 +327,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             "hitObjectRecordMiss" | "hitObjectRecordMissMotion" => {
                 let operands = {
                     let frame = self.clone().ray_operands(rest);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let (flags, operands) = match kind {
                     HitObjectKind::Nv => (None, operands.as_slice()),
@@ -375,21 +364,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let sbt_record_index = {
                     let frame = self.clone().rvalue(sbt_record_index);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let attributes = self.with(|this| this.located(attributes, ATTRIBUTES, at))??;
                 let hit_kind = match *hit_kind {
                     [] => None,
                     [ref hit_kind] => Some({
                         let frame = self.clone().rvalue(hit_kind);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     _ => return Err(internal(at)),
                 };
@@ -412,8 +398,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let (payload, hint) = rest.split_last().ok_or_else(|| internal(at))?;
                 let hint = {
                     let frame = self.clone().hint(hint, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 HitObjectFunction::ReorderExecute {
                     payload: self.with(|this| this.located(payload, PAYLOADS, at))??,
@@ -435,16 +420,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 HitObjectFunction::SetShaderBindingTableRecordIndex {
                     index: {
                         let frame = self.clone().rvalue(index);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                 }
             }
             "reorderThread" => HitObjectFunction::ReorderThread {
                 hint: {
                     let frame = self.clone().hint(rest, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
             },
             _ => return Ok(None),

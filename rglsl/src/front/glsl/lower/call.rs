@@ -418,74 +418,62 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     .is_some_and(|function| function.spirv_instruction.is_some()) =>
             {
                 let frame = self.clone().spirv_call(id, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::Function(id)) => {
                 let frame = self
                     .clone()
                     .user_function_call(expression, id, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::NonUniform) => {
                 let frame = self.clone().non_uniform_value(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             Some(&Callee::DebugPrintf) => {
                 let frame = self.clone().debug_printf(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(|()| None),
             Some(&Callee::Abort) => {
                 let frame = self.clone().abort(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(|()| None),
             Some(&Callee::Builtin(id)) => {
                 let frame = self
                     .clone()
                     .builtin_function_call(expression, id, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::Constructor(ref ty)) => {
                 let frame = self.clone().constructor_call(ty, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::Cooperative(kind)) => {
                 let frame = self.clone().cooperative_call(kind, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::Tensor(kind)) => {
                 let frame = self
                     .clone()
                     .tensor_function_call(expression, kind, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::TensorArm(kind)) => {
                 let frame = self.clone().tensor_arm_call(kind, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::Matrix(kind)) => {
                 let frame = self
                     .clone()
                     .matrix_function_call(expression, kind, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             Some(&Callee::Length) => {
                 let frame = self.clone().length_call(call, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             None => Err(internal(at)),
         }
@@ -501,8 +489,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let non_uniform = self.with(|this| this.info(expression))??.non_uniform;
         {
             let frame = self.clone().user_call(id, arguments, non_uniform, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -516,8 +503,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let result = &self.with(|this| this.info(expression))??.ty;
         {
             let frame = self.clone().builtin_call(id, result, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -533,8 +519,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         {
             return {
                 let frame = self.clone().acceleration_structure_from(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some);
         }
@@ -546,8 +531,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         {
             let frame = self.clone().construct(ty, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
         .map(Some)
     }
@@ -562,8 +546,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let result = &self.with(|this| this.info(expression))??.ty;
         {
             let frame = self.clone().tensor_call(kind, result, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
         .map(Some)
     }
@@ -578,8 +561,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let result = &self.with(|this| this.info(expression))??.ty;
         {
             let frame = self.clone().matrix_call(kind, result, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -594,14 +576,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 ref name,
             } if name.node == "length64" => {
                 let frame = self.clone().wide_length(object, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             FunctionIdentifier::Method { ref object, .. } => {
                 let frame = self.clone().length(object, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             _ => Err(internal(at)),
@@ -626,8 +606,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if runtime {
             let place = {
                 let frame = self.clone().place(object);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             if place.swizzle.is_some() {
                 return Err(internal(at));
@@ -638,8 +617,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let length = {
             let frame = self.clone().length(object, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| this.as_kind(length, crate::Scalar::I64, at))?
     }
@@ -681,8 +659,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let place = {
             let frame = self.clone().place(object);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if place.swizzle.is_some() {
             return Err(internal(at));
@@ -699,8 +676,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let argument = arguments.first().ok_or_else(|| internal(at))?;
         let (value, ty) = {
             let frame = self.clone().typed(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let shared = self.with(|this| this.tracker.is_const_or_override(value))?
             || matches!(
@@ -743,8 +719,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 parameter_types,
                 at,
             );
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let returns = !function.return_type.is_void();
         self.with(|this| {
@@ -772,8 +747,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     Rc::clone(&values),
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             writebacks.extend(writeback);
         }
@@ -797,8 +771,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         {
             return {
                 let frame = self.clone().private_argument(argument, values);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(|()| None);
         }
@@ -807,8 +780,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .spirv_in_argument(argument, &parameter.ty, values, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(|()| None);
         }
@@ -817,8 +789,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .in_argument_value(argument, parameter, parameter_ty, values, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(|()| None);
         }
@@ -826,8 +797,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .out_argument_place(argument, parameter, values, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
         .map(Some)
     }
@@ -835,8 +805,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     async fn private_argument(self, argument: &'b AstExpression, values: Values) -> Result<()> {
         let pointer = {
             let frame = self.clone().ray_query_pointer(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         values.borrow_mut().push(pointer);
         Ok(())
@@ -851,8 +820,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<()> {
         let value = {
             let frame = self.clone().rvalue(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let pointer = self.with(|this| this.spirv_argument(ty, value, at))??;
         values.borrow_mut().push(pointer);
@@ -869,8 +837,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<()> {
         let value = {
             let frame = self.clone().rvalue(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let value = self.with(|this| this.in_argument(value, parameter, parameter_ty, at))??;
         values.borrow_mut().push(value);
@@ -886,8 +853,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Writeback> {
         let place = {
             let frame = self.clone().place(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let (pointer, writeback) =
             self.with(|this| this.out_argument(argument, place, parameter, at))??;
@@ -907,24 +873,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if ty.is_reference() || (from_reference && numeric) {
                 return {
                     let frame = self.clone().reference_construct(ty, argument, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 };
             }
         }
         if ty.is_array() || ty.is_struct() {
             return {
                 let frame = self.clone().construct_composite(ty, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
             values.push({
                 let frame = self.clone().typed(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         self.with(|this| this.construct_values(ty, at, &values))?
@@ -940,8 +903,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in arguments {
             components.push({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let ir = self.with(|this| this.lw.ir_type(ty, at))??;

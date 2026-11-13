@@ -359,8 +359,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ref index,
                 } => {
                     let frame = self.clone().subscript_chain(chain, base, index, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
                 ExpressionKind::FieldSelection {
                     ref base,
@@ -416,8 +415,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let value = if logical && !self.with(|this| this.pure(right))? {
             {
                 let frame = self.clone().short_circuit(operator, left.0, right, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         } else {
             let right = self.clone().typed(right).await?;
@@ -467,8 +465,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .increment(inner, operator == AstUnary::Increment, false, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         let (value, ty) = match operand {
@@ -500,8 +497,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             };
             let place = {
                 let frame = self.clone().place(target);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let old = match super::expression::compound(operator) {
                 Some(_) => Some(self.with(|this| this.compound_old(target, &place, at))??),
@@ -524,8 +520,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 Some(result) => self.with(|this| this.passed_on(value, Some(result)))??,
                 None => {
                     let frame = self.clone().typed(value);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?,
             };
             let result = match (super::expression::compound(operator), old) {
@@ -571,21 +566,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         match (first, links) {
             (Mode::Select, _) => {
                 let frame = self.clone().select_chain(links.to_vec(), tail);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             (_, &[node]) => {
                 let frame = self.clone().single_conditional(node, first, tail);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => {
                 let frame =
                     self.clone()
                         .flat_conditionals(links.to_vec(), first == Mode::Local, tail);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -601,20 +593,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
             let condition = {
                 let frame = self.clone().rvalue(condition);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let accept = {
                 let frame = self.clone().rvalue(then_expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             parts.push((node, condition, accept));
         }
         let mut reject = {
             let frame = self.clone().rvalue(tail);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         while let Some((node, condition, accept)) = parts.pop() {
             let at = self.with(|this| this.at(node.span))?;
@@ -646,16 +635,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
         let condition = {
             let frame = self.clone().rvalue(condition);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if mode == Mode::Effect {
             return {
                 let frame = self
                     .clone()
                     .conditional_effect(condition, [then_expression, tail], at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         let ty = &self.with(|this| this.info(node))??.ty;
@@ -663,8 +650,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .conditional_local(ty, condition, [then_expression, tail], at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -677,13 +663,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         match result {
             Some(local) => {
                 let frame = self.clone().stored(expression, local, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             None => {
                 let frame = self.clone().effect(expression);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }

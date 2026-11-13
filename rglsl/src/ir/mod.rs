@@ -1861,7 +1861,7 @@ pub enum AtomicLocation {
 }
 
 impl Texel {
-    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> {
+    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
         [self.image, self.coordinate]
             .into_iter()
             .chain(self.array_index)
@@ -1870,7 +1870,7 @@ impl Texel {
 }
 
 impl AtomicLocation {
-    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> {
+    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
         let (pointer, texel) = match *self {
             Self::Pointer(pointer) => (Some(pointer), None),
             Self::Texel(texel) => (None, Some(texel)),
@@ -2468,7 +2468,7 @@ pub struct CooperativeVectorMatMul {
 }
 
 impl CooperativeVectorMatMul {
-    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> {
+    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
         let bias = self
             .bias
             .map(|bias| [bias.pointer, bias.offset, bias.interpretation]);
@@ -2607,7 +2607,7 @@ pub struct CooperativeData {
 }
 
 impl CooperativeData {
-    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> {
+    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
         [Some(self.pointer), self.stride, Some(self.layout)]
             .into_iter()
             .flatten()

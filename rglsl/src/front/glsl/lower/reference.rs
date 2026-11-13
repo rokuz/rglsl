@@ -172,8 +172,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let frame = self
                 .clone()
                 .block_struct(block, layout.packing, layout.row_major, span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         };
         self.with(|this| this.references_in_progress.remove(&block))?;
         let structure = structure?;
@@ -213,8 +212,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<Type>> {
         let plain = {
             let frame = self.clone().reference_type(block, span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let (space, qualifiers) = self.with(|this| this.reference_space(block, span))??;
         let qualifiers = qualifiers | extra;
@@ -261,13 +259,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         match ty.as_reference() {
             Some(block) if !extra.is_empty() => {
                 let frame = self.clone().qualified_reference_type(block, extra, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => {
                 let frame = self.clone().ir_type(ty.clone(), span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -616,8 +612,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Handle<Expression>> {
         let (value, from) = {
             let frame = self.clone().typed(argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if let Some(block) = ty.as_reference() {
             let target = self.with(|this| this.lw.reference_type(block, at))??;

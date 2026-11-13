@@ -340,14 +340,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let expr = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let index = if conversion == ArrayConversion::SubArray {
                     Some({
                         let frame = self.clone().rvalue(argument(1)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?)
                 } else {
                     None
@@ -357,8 +355,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let ty = self.with(|this| this.lw.ir_type(&destination_ty, at))??;
                 let place = {
                     let frame = self.clone().place(destination);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let value = self.with(|this| {
                     this.add(
@@ -377,8 +374,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::Load { .. } | CooperativeCall::Store { .. } => {
                 let data = {
                     let frame = self.clone().cooperative_data(&arguments[1..], at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let matrix = argument(0)?;
                 if let CooperativeCall::Load { .. } = kind {
@@ -386,8 +382,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let ty = self.with(|this| this.lw.ir_type(&matrix_ty, at))??;
                     let place = {
                         let frame = self.clone().place(matrix);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     let value =
                         self.with(|this| this.add(Expression::CooperativeLoad { ty, data }, at))??;
@@ -395,8 +390,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 } else {
                     let target = {
                         let frame = self.clone().rvalue(matrix);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     self.with(|this| this.push(Statement::CooperativeStore { target, data }, at))?;
                 }
@@ -405,21 +399,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::VectorLoad => {
                 let pointer = {
                     let frame = self.clone().array_pointer(argument(1)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let offset = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let vector = argument(0)?;
                 let vector_ty = self.with(|this| this.info(vector))??.ty.clone();
                 let ty = self.with(|this| this.lw.ir_type(&vector_ty, at))??;
                 let place = {
                     let frame = self.clone().place(vector);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let value = self.with(|this| {
                     this.add(
@@ -437,18 +428,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::VectorStore | CooperativeCall::VectorReduceSum => {
                 let value = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let pointer = {
                     let frame = self.clone().array_pointer(argument(1)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let offset = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let function = if kind == CooperativeCall::VectorStore {
                     CooperativeVectorFunction::Store {
@@ -484,38 +472,31 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::VectorOuterProduct => {
                 let a = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let b = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let matrix = {
                     let frame = self.clone().array_pointer(argument(2)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let offset = {
                     let frame = self.clone().rvalue(argument(3)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let stride = {
                     let frame = self.clone().rvalue(argument(4)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let layout = {
                     let frame = self.clone().rvalue(argument(5)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let interpretation = {
                     let frame = self.clone().rvalue(argument(6)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| {
                     this.push(
@@ -538,44 +519,36 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::VectorMatMul { bias } => {
                 let input = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let input_interpretation = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let matrix = {
                     let frame = self.clone().array_pointer(argument(3)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let matrix_offset = {
                     let frame = self.clone().rvalue(argument(4)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let matrix_interpretation = {
                     let frame = self.clone().rvalue(argument(5)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let (bias, rest) = if bias {
                     let pointer = {
                         let frame = self.clone().array_pointer(argument(6)?, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     let offset = {
                         let frame = self.clone().rvalue(argument(7)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     let interpretation = {
                         let frame = self.clone().rvalue(argument(8)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     (
                         Some(CooperativeVectorBias {
@@ -590,36 +563,30 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let rows = {
                     let frame = self.clone().rvalue(argument(rest)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let columns = {
                     let frame = self.clone().rvalue(argument(rest + 1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let layout = {
                     let frame = self.clone().rvalue(argument(rest + 2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let transpose = {
                     let frame = self.clone().rvalue(argument(rest + 3)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let stride = {
                     let frame = self.clone().rvalue(argument(rest + 4)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let result = argument(0)?;
                 let result_ty = self.with(|this| this.info(result))??.ty.clone();
                 let ty = self.with(|this| this.lw.ir_type(&result_ty, at))??;
                 let place = {
                     let frame = self.clone().place(result);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let value = self.with(|this| {
                     this.add(
@@ -651,13 +618,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let ty = self.with(|this| this.lw.ir_type(&target_ty, at))??;
                 let place = {
                     let frame = self.clone().place(target);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let expr = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let family = self.with(|this| this.cooperative_family())?;
                 let value = self.with(|this| {
@@ -677,18 +642,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::MulAdd { saturating, .. } => {
                 let a = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let b = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let c = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| {
                     this.add(
@@ -731,15 +693,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let (base, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
         let base = {
             let frame = self.clone().rvalue(base);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let mut operands = Vec::with_capacity(rest.len());
         for argument in rest {
             operands.push({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         self.with(|this| {
@@ -772,19 +732,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self
                         .clone()
                         .cooperative_element(argument(1)?, argument(2)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let layout = {
                     let frame = self.clone().rvalue(argument(3)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let view_value = if view {
                     Some({
                         let frame = self.clone().rvalue(argument(4)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?)
                 } else {
                     None
@@ -793,8 +750,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 if let MatrixCall::StoreTensor { .. } = kind {
                     let value = {
                         let frame = self.clone().rvalue(argument(0)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     self.with(|this| {
                         this.push(
@@ -826,8 +782,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let object = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 (
                     CooperativeMatrixFunction::LoadTensor {
@@ -844,8 +799,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::Transpose { .. } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 (
                     CooperativeMatrixFunction::Transpose { matrix, family },
@@ -855,8 +809,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::Reduce { mask, .. } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let combine =
                     self.try_with(|this| Ok(this.referenced_function(argument(3)?, at)))??;
@@ -873,8 +826,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::PerElement { .. } => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let function =
                     self.try_with(|this| Ok(this.referenced_function(argument(2)?, at)))??;
@@ -882,8 +834,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 for argument in arguments.iter().skip(3) {
                     extra.push({
                         let frame = self.clone().rvalue(argument);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?);
                 }
                 (
@@ -899,13 +850,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             MatrixCall::GetCoordinate => {
                 let matrix = {
                     let frame = self.clone().rvalue(argument(0)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let index = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 (
                     CooperativeMatrixFunction::GetCoordinate { matrix, index },
@@ -932,8 +881,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Some(target) => {
                 let place = {
                     let frame = self.clone().place(target);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| this.store(&place, value, at))??;
                 Ok(None)
@@ -950,13 +898,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Handle<Expression>> {
         let base = {
             let frame = self.clone().array_pointer(buffer, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let index = {
             let frame = self.clone().rvalue(element);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| this.add(Expression::Access { base, index }, at))?
     }
@@ -968,8 +914,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Handle<Expression>> {
         let place = {
             let frame = self.clone().place(buffer);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if place.swizzle.is_some() {
             return Err(internal(at));
@@ -987,16 +932,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let place = {
             let frame = self.clone().place(buffer);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if place.swizzle.is_some() {
             return Err(internal(at));
         }
         let index = {
             let frame = self.clone().rvalue(element);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let pointer = self.with(|this| {
             this.add(
@@ -1009,13 +952,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })??;
         let stride = {
             let frame = self.clone().rvalue(stride);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let layout = {
             let frame = self.clone().rvalue(layout);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         Ok(CooperativeData {
             pointer,

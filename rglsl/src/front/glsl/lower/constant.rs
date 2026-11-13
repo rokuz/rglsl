@@ -169,14 +169,12 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                             start..end,
                             span,
                         );
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?);
                 }
                 let ir = {
                     let frame = self.clone().ir_type(ty.clone(), span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 Ok(self.with(|this| {
                     this.module

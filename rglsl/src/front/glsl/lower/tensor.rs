@@ -31,8 +31,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         let tensor = {
             let frame = self.clone().rvalue(argument(0)?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         match kind {
             TensorArmCall::Size { dimension } => {
@@ -47,14 +46,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             } => {
                 let coordinates = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let out_of_bounds = if out_of_bounds {
                     Some({
                         let frame = self.clone().rvalue(argument(4)?);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?)
                 } else {
                     None
@@ -69,8 +66,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let ty = self.with(|this| this.lw.ir_type(&data_ty, at))??;
                 let place = {
                     let frame = self.clone().place(data);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let value = self.with(|this| {
                     this.add(
@@ -90,13 +86,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             TensorArmCall::Write { nontemporal } => {
                 let coordinates = {
                     let frame = self.clone().rvalue(argument(1)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let value = {
                     let frame = self.clone().rvalue(argument(2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 for extra in arguments.iter().skip(4) {
                     let frame = self.clone().rvalue(extra);
