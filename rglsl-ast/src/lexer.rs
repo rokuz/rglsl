@@ -4,11 +4,13 @@ use alloc::vec::Vec;
 
 use crate::ast::{Directive, DirectiveKind, ExtensionBehavior, NumericKind};
 use crate::error::{ParseError, ParseErrorKind};
+use crate::keywords::WordClass;
 use crate::span::Span;
+use rglsl_types::FastHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenKind<'a> {
-    Word(&'a str),
+    Word(&'a str, WordClass),
     Number { kind: NumericKind, text: &'a str },
     Punctuator(&'static str),
     Directive(usize),
@@ -30,11 +32,59 @@ pub(crate) struct Tokens<'a> {
     pub(crate) end: Token<'a>,
 }
 
-const PUNCTUATORS: [&str; 45] = [
-    "<<=", ">>=", "++", "--", "<=", ">=", "==", "!=", "&&", "||", "^^", "+=", "-=", "*=", "/=",
-    "%=", "&=", "|=", "^=", "<<", ">>", "(", ")", "[", "]", "{", "}", ".", ",", ":", ";", "=", "!",
-    "-", "~", "+", "*", "/", "%", "<", ">", "|", "^", "&", "?",
-];
+pub(crate) fn punctuator_at(text: &[u8]) -> Option<&'static str> {
+    let (&first, rest) = text.split_first()?;
+    let second = rest.first().copied();
+    let third = rest.get(1).copied();
+    Some(match (first, second, third) {
+        (b'<', Some(b'<'), Some(b'=')) => "<<=",
+        (b'>', Some(b'>'), Some(b'=')) => ">>=",
+        (b'<', Some(b'<'), _) => "<<",
+        (b'>', Some(b'>'), _) => ">>",
+        (b'+', Some(b'+'), _) => "++",
+        (b'-', Some(b'-'), _) => "--",
+        (b'&', Some(b'&'), _) => "&&",
+        (b'|', Some(b'|'), _) => "||",
+        (b'^', Some(b'^'), _) => "^^",
+        (b'<', Some(b'='), _) => "<=",
+        (b'>', Some(b'='), _) => ">=",
+        (b'=', Some(b'='), _) => "==",
+        (b'!', Some(b'='), _) => "!=",
+        (b'+', Some(b'='), _) => "+=",
+        (b'-', Some(b'='), _) => "-=",
+        (b'*', Some(b'='), _) => "*=",
+        (b'/', Some(b'='), _) => "/=",
+        (b'%', Some(b'='), _) => "%=",
+        (b'&', Some(b'='), _) => "&=",
+        (b'|', Some(b'='), _) => "|=",
+        (b'^', Some(b'='), _) => "^=",
+        (b'(', _, _) => "(",
+        (b')', _, _) => ")",
+        (b'[', _, _) => "[",
+        (b']', _, _) => "]",
+        (b'{', _, _) => "{",
+        (b'}', _, _) => "}",
+        (b'.', _, _) => ".",
+        (b',', _, _) => ",",
+        (b':', _, _) => ":",
+        (b';', _, _) => ";",
+        (b'=', _, _) => "=",
+        (b'!', _, _) => "!",
+        (b'-', _, _) => "-",
+        (b'~', _, _) => "~",
+        (b'+', _, _) => "+",
+        (b'*', _, _) => "*",
+        (b'/', _, _) => "/",
+        (b'%', _, _) => "%",
+        (b'<', _, _) => "<",
+        (b'>', _, _) => ">",
+        (b'|', _, _) => "|",
+        (b'^', _, _) => "^",
+        (b'&', _, _) => "&",
+        (b'?', _, _) => "?",
+        _ => return None,
+    })
+}
 
 const fn is_word_start(byte: u8) -> bool {
     byte.is_ascii_alphabetic() || byte == b'_'
@@ -60,6 +110,7 @@ struct Lexer<'a> {
     tokens: Vec<Token<'a>>,
     directives: Vec<Directive>,
     strings: Vec<String>,
+    classes: FastHashMap<&'a str, WordClass>,
 }
 
 pub(crate) fn tokenize(source: &str) -> Result<Tokens<'_>, ParseError> {
@@ -78,6 +129,7 @@ pub(crate) fn tokenize(source: &str) -> Result<Tokens<'_>, ParseError> {
         tokens: Vec::new(),
         directives: Vec::new(),
         strings: Vec::new(),
+        classes: FastHashMap::default(),
     };
     lexer.run()?;
     let end = Token {
@@ -160,16 +212,18 @@ impl<'a> Lexer<'a> {
         while self.byte_at(end).is_some_and(is_word_continue) {
             end += 1;
         }
-        self.push(TokenKind::Word(self.text(start, end)), start, end);
+        let word = self.text(start, end);
+        let class = *self
+            .classes
+            .entry(word)
+            .or_insert_with(|| WordClass::of(word));
+        self.push(TokenKind::Word(word, class), start, end);
     }
 
     fn punctuator(&mut self) -> Result<(), ParseError> {
         let start = self.offset;
         let rest = self.text(start, self.source.len());
-        match PUNCTUATORS
-            .into_iter()
-            .find(|punctuator| rest.starts_with(punctuator))
-        {
+        match punctuator_at(rest.as_bytes()) {
             Some(punctuator) => {
                 self.push(
                     TokenKind::Punctuator(punctuator),
