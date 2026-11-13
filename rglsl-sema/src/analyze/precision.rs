@@ -109,7 +109,89 @@ fn counted_arguments(name: &str, count: usize) -> usize {
     }
 }
 
+fn symbol_precision(analysis: &Analysis, symbol: SymbolId) -> Precision {
+    let Some(found) = analysis.symbol(symbol) else {
+        return Precision::None;
+    };
+    match found.kind {
+        SymbolKind::Variable(ref variable) => Precision::of(variable.qualifiers.precision),
+        SymbolKind::BlockMember { instance, index } => {
+            let Some(TypeKind::Block(block)) = analysis
+                .symbol(instance)
+                .and_then(|symbol| symbol.variable())
+                .map(|variable| variable.ty.kind)
+            else {
+                return Precision::None;
+            };
+            analysis
+                .types
+                .block(block)
+                .and_then(|block| block.members.get(usize::try_from(index).ok()?))
+                .map_or(Precision::None, |member| {
+                    Precision::of(member.qualifiers.precision)
+                })
+        }
+        _ => Precision::None,
+    }
+}
+
+fn relaxes_symbols(analysis: &Analysis) -> bool {
+    analysis
+        .references
+        .values()
+        .chain(analysis.declarations.values())
+        .any(|&symbol| symbol_precision(analysis, symbol).relaxed())
+}
+
+fn relaxes_members(analysis: &Analysis) -> bool {
+    let structs = analysis
+        .types
+        .structs()
+        .iter()
+        .flat_map(|structure| &structure.members);
+    let blocks = analysis
+        .types
+        .blocks()
+        .iter()
+        .flat_map(|block| &block.members);
+    structs
+        .chain(blocks)
+        .any(|member| Precision::of(member.qualifiers.precision).relaxed())
+}
+
+fn relaxes_returns(analysis: &Analysis) -> bool {
+    analysis
+        .functions
+        .iter()
+        .any(|function| Precision::of(function.return_qualifiers.precision).relaxed())
+}
+
+fn relaxes_builtin_results(analysis: &Analysis) -> bool {
+    analysis.calls.values().any(|callee| match *callee {
+        Callee::Builtin(id) => analysis
+            .builtins
+            .function(id)
+            .is_some_and(|function| builtin_result(&function.name).relaxed()),
+        _ => false,
+    })
+}
+
+fn has_relaxed_source(analysis: &Analysis) -> bool {
+    relaxes_symbols(analysis)
+        || relaxes_members(analysis)
+        || relaxes_returns(analysis)
+        || relaxes_builtin_results(analysis)
+}
+
 pub(crate) fn relaxed_precision(unit: &TranslationUnit, analysis: &Analysis) -> RelaxedPrecision {
+    if has_relaxed_source(analysis) {
+        walk(unit, analysis)
+    } else {
+        RelaxedPrecision::default()
+    }
+}
+
+fn walk(unit: &TranslationUnit, analysis: &Analysis) -> RelaxedPrecision {
     let mut pass = Pass {
         analysis,
         own: FastHashMap::default(),
@@ -206,33 +288,6 @@ impl<'a> Pass<'a> {
 
     fn set_own(&mut self, expression: &'a Expression, precision: Precision) {
         self.own.insert(strip(expression).id, precision);
-    }
-
-    fn symbol_precision(&self, symbol: SymbolId) -> Precision {
-        let Some(found) = self.analysis.symbol(symbol) else {
-            return Precision::None;
-        };
-        match found.kind {
-            SymbolKind::Variable(ref variable) => Precision::of(variable.qualifiers.precision),
-            SymbolKind::BlockMember { instance, index } => {
-                let Some(TypeKind::Block(block)) = self
-                    .analysis
-                    .symbol(instance)
-                    .and_then(|symbol| symbol.variable())
-                    .map(|variable| variable.ty.kind)
-                else {
-                    return Precision::None;
-                };
-                self.analysis
-                    .types
-                    .block(block)
-                    .and_then(|block| block.members.get(usize::try_from(index).ok()?))
-                    .map_or(Precision::None, |member| {
-                        Precision::of(member.qualifiers.precision)
-                    })
-            }
-            _ => Precision::None,
-        }
     }
 
     fn member_precision(&self, base: &Expression, field: &str) -> Option<Precision> {
@@ -385,7 +440,9 @@ impl<'a> Pass<'a> {
                     .analysis
                     .references
                     .get(&inner.id)
-                    .map_or(Precision::None, |symbol| self.symbol_precision(*symbol));
+                    .map_or(Precision::None, |symbol| {
+                        symbol_precision(self.analysis, *symbol)
+                    });
                 self.set_own(inner, precision);
             }
             ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => {
@@ -574,7 +631,7 @@ impl<'a> Pass<'a> {
         if !participating {
             return;
         }
-        let precision = self.symbol_precision(symbol).max(self.visible(value));
+        let precision = symbol_precision(self.analysis, symbol).max(self.visible(value));
         if precision != Precision::None {
             self.propagate(value, precision);
         }
@@ -715,4 +772,90 @@ enum Step<'a> {
     Statement(&'a Statement),
     Expression(&'a Expression),
     Condition(&'a Condition),
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+    use alloc::collections::BTreeMap;
+    use alloc::format;
+    use alloc::sync::Arc;
+
+    use rglsl_types::ShaderStage;
+
+    use super::{has_relaxed_source, walk};
+    use crate::{Builtins, Options, ResourceLimits, analyze, analyze_with_builtins};
+
+    type TestResult<T = ()> = Result<T, Box<dyn core::error::Error>>;
+
+    const FRAGMENT: &str =
+        "#version 450\nlayout(location = 0) in float v;\nlayout(location = 0) out vec4 o;\n";
+
+    fn sources(source: &str, stage: ShaderStage) -> TestResult<(bool, bool)> {
+        let unit = rglsl_ast::parse(source)?;
+        let analysis = analyze(&unit, &Options::new(stage));
+        if !analysis.is_ok() {
+            return Err(format!("{source}: {:?}", analysis.diagnostics).into());
+        }
+        let walked = walk(&unit, &analysis);
+        let relaxed = !walked.results.is_empty() || !walked.conversions.is_empty();
+        Ok((has_relaxed_source(&analysis), relaxed))
+    }
+
+    #[test]
+    fn every_kind_of_relaxed_source_is_found() -> TestResult {
+        let fragment = [
+            "void main() { mediump float a = v; o = vec4(a + a); }",
+            "precision mediump float;\nvoid main() { float a = v; o = vec4(a * a); }",
+            "struct S { mediump float x; };\nvoid main() { S s; s.x = v; o = vec4(s.x * 2.0); }",
+            "layout(binding = 0) uniform B { mediump float x; } b;\nvoid main() { o = vec4(b.x * v); }",
+            "mediump float f(float x) { return x * 2.0; }\nvoid main() { o = vec4(f(v)); }",
+        ];
+        for body in fragment {
+            let source = format!("{FRAGMENT}{body}\n");
+            assert_eq!(
+                sources(&source, ShaderStage::Fragment)?,
+                (true, true),
+                "{source}"
+            );
+        }
+        let subgroup = "#version 450\n#extension GL_KHR_shader_subgroup_basic : require\nlayout(local_size_x = 1) in;\nlayout(binding = 0) buffer B { uint r; };\nvoid main() { r = gl_SubgroupSize * 2u; }\n";
+        assert_eq!(sources(subgroup, ShaderStage::Compute)?, (true, true));
+        let tile = "#version 460\n#extension GL_EXT_shader_tile_image : require\nlayout(location = 0) out uvec4 s;\nvoid main() { uint value = stencilAttachmentReadEXT(); s = uvec4(value + 1u); }\n";
+        assert_eq!(sources(tile, ShaderStage::Fragment)?, (true, true));
+        Ok(())
+    }
+
+    #[test]
+    fn without_a_relaxed_source_nothing_is_relaxed() -> TestResult {
+        let mut builtins: BTreeMap<(bool, ShaderStage), Arc<Builtins>> = BTreeMap::new();
+        let mut skipped = 0;
+        for case in crate::tests::cases()? {
+            let Ok(unit) = rglsl_ast::parse(&case.source) else {
+                continue;
+            };
+            let glsl_460 = case.source.starts_with("#version 460");
+            let table = builtins.entry((glsl_460, case.stage)).or_insert_with(|| {
+                let version = if glsl_460 { 460 } else { 450 };
+                Arc::new(Builtins::new(
+                    version,
+                    case.stage,
+                    &ResourceLimits::default(),
+                ))
+            });
+            let analysis = analyze_with_builtins(&unit, &Options::new(case.stage), table);
+            if has_relaxed_source(&analysis) {
+                continue;
+            }
+            skipped += 1;
+            let walked = walk(&unit, &analysis);
+            assert!(
+                walked.results.is_empty() && walked.conversions.is_empty(),
+                "{}",
+                case.source
+            );
+        }
+        assert!(skipped > 100, "{skipped}");
+        Ok(())
+    }
 }
