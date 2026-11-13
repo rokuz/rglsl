@@ -188,7 +188,7 @@ pub fn apply(
     transformation: Transformation,
     input: &PassInput<'_>,
     random: &mut Random,
-) -> Option<TranslationUnit> {
+) -> Result<Option<TranslationUnit>, rglsl_ast::Stalled> {
     match transformation {
         Transformation::DonateDeadCode => donate::apply(input, random, false),
         Transformation::DonateLiveCode => donate::apply(input, random, true),

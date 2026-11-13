@@ -10,7 +10,7 @@ use rglsl_sema::analyze::Callee;
 use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::TypeKind;
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
-use rglsl_types::stack::{run, Call, Stack};
+use rglsl_types::stack::{run, Call, Stack, Stalled};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Key {
@@ -53,7 +53,10 @@ pub struct Walked {
     pub derefs: BTreeMap<Key, Deref>,
 }
 
-pub fn global_initializers(analysis: &Analysis, list: &InitDeclaratorList) -> Walked {
+pub fn global_initializers(
+    analysis: &Analysis,
+    list: &InitDeclaratorList,
+) -> Result<Walked, Stalled> {
     let walker = Walker {
         analysis,
         walked: RefCell::new(Walked::default()),
@@ -71,13 +74,11 @@ pub fn global_initializers(analysis: &Analysis, list: &InitDeclaratorList) -> Wa
             }
         }
     });
-    if finished.is_none() {
-        return Walked::default();
-    }
-    walker.walked.into_inner()
+    finished.ok_or(Stalled)?;
+    Ok(walker.walked.into_inner())
 }
 
-pub fn function_body(analysis: &Analysis, statements: &[Statement]) -> Walked {
+pub fn function_body(analysis: &Analysis, statements: &[Statement]) -> Result<Walked, Stalled> {
     let walker = Walker {
         analysis,
         walked: RefCell::new(Walked::default()),
@@ -93,10 +94,8 @@ pub fn function_body(analysis: &Analysis, statements: &[Statement]) -> Walked {
             }
         }
     });
-    if finished.is_none() {
-        return Walked::default();
-    }
-    walker.walked.into_inner()
+    finished.ok_or(Stalled)?;
+    Ok(walker.walked.into_inner())
 }
 
 struct Walker<'a> {

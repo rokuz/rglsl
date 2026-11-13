@@ -542,7 +542,7 @@ fn replace_with_canonical_sampler(
                 replaced_use = true;
             }
         }
-    });
+    })?;
     let mut kept = Vec::new();
     for mut external in core::mem::take(&mut unit.external_declarations) {
         if let ExternalDeclaration::Declaration(declaration) = &mut external {

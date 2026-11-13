@@ -100,16 +100,16 @@ pub fn find(
     let mut builder = Builder::new(unit.next_id());
     Ok(match pass {
         Pass::RemoveDead => remove_dead(unit),
-        Pass::RemoveLive => remove_live(unit),
+        Pass::RemoveLive => remove_live(unit)?,
         Pass::Unwrap => unwrap(unit, &mut builder),
         Pass::Unswitchify => unswitchify(unit, &mut builder),
         Pass::Identity => identity(unit, &mut builder)?,
         Pass::InlineOutlined => inline_outlined(unit, &mut builder)?,
-        Pass::MergeLoops => merge_loops(unit),
+        Pass::MergeLoops => merge_loops(unit)?,
         Pass::Destructify => destructify(unit, &mut builder)?,
         Pass::Devectorize => devectorize(unit, &mut builder)?,
         Pass::Flatten => flatten(unit, &mut builder),
-        Pass::StripUnused => strip_unused_generated(unit)
+        Pass::StripUnused => strip_unused_generated(unit)?
             .map(|stripped| {
                 vec![Opportunity {
                     changes: stripped
@@ -214,14 +214,14 @@ fn locally_declared(statement: &Statement) -> BTreeSet<String> {
     names
 }
 
-fn side_effect_free_live_block(statement: &Statement) -> bool {
+fn side_effect_free_live_block(statement: &Statement) -> Result<bool, Stalled> {
     let StatementKind::Compound(compound) = &statement.kind else {
-        return false;
+        return Ok(false);
     };
     if compound.statements.first().is_some_and(|first| {
         declares_name(first, &|name| name.starts_with(GLF_OUT_VAR_BACKUP_PREFIX))
     }) {
-        return true;
+        return Ok(true);
     }
     let local = locally_declared(statement);
     let mut mentions_live = false;
@@ -266,16 +266,18 @@ fn side_effect_free_live_block(statement: &Statement) -> bool {
             FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => safe = false,
         },
         _ => {}
-    });
-    mentions_live && safe && !jumps
+    })?;
+    Ok(mentions_live && safe && !jumps)
 }
 
-fn remove_live(unit: &TranslationUnit) -> Vec<Opportunity> {
-    function_statements(unit)
-        .into_iter()
-        .filter(|(_, statement)| side_effect_free_live_block(statement))
-        .map(|(_, statement)| Opportunity::single(Change::Statement(statement.id, None)))
-        .collect()
+fn remove_live(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
+    let mut result = Vec::new();
+    for (_, statement) in function_statements(unit) {
+        if side_effect_free_live_block(statement)? {
+            result.push(Opportunity::single(Change::Statement(statement.id, None)));
+        }
+    }
+    Ok(result)
 }
 
 fn unwrap(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
@@ -445,7 +447,7 @@ fn inline_outlined(
                     *inner = (*argument).clone();
                 }
             }
-        });
+        })?;
         let StatementKind::Expression(Some(inlined)) = &mut holder.kind else {
             continue;
         };
@@ -477,7 +479,7 @@ fn split_counter(statement: &Statement) -> Option<(String, String)> {
     Some((name.clone(), original.to_owned()))
 }
 
-fn merge_loops(unit: &TranslationUnit) -> Vec<Opportunity> {
+fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
     let mut result = Vec::new();
     for (_, statement) in function_statements(unit) {
         let StatementKind::Compound(compound) = &statement.kind else {
@@ -525,7 +527,7 @@ fn merge_loops(unit: &TranslationUnit) -> Vec<Opportunity> {
                         original.clone_into(name);
                     }
                 }
-            });
+            })?;
             result.push(Opportunity {
                 changes: vec![
                     Change::Statement(first.id, None),
@@ -534,7 +536,7 @@ fn merge_loops(unit: &TranslationUnit) -> Vec<Opportunity> {
             });
         }
     }
-    result
+    Ok(result)
 }
 
 fn field_path(
@@ -885,16 +887,16 @@ fn lvalue_ids(unit: &TranslationUnit, analysis: &Analysis) -> Result<BTreeSet<No
     Ok(ids)
 }
 
-fn body_expression_ids(unit: &TranslationUnit) -> BTreeSet<NodeId> {
+fn body_expression_ids(unit: &TranslationUnit) -> Result<BTreeSet<NodeId>, Stalled> {
     let mut ids = BTreeSet::new();
     for external in &unit.external_declarations {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
             for statement in &definition.body.statements {
-                ids.extend(statement_expression_ids(statement));
+                ids.extend(statement_expression_ids(statement)?);
             }
         }
     }
-    ids
+    Ok(ids)
 }
 
 fn expression_to_constant(
@@ -903,7 +905,7 @@ fn expression_to_constant(
     builder: &mut Builder,
 ) -> Result<Vec<Opportunity>, Stalled> {
     let lvalues = lvalue_ids(unit, analysis)?;
-    let bodies = body_expression_ids(unit);
+    let bodies = body_expression_ids(unit)?;
     let mut result = Vec::new();
     for expression in rglsl_ast::expressions(unit)? {
         if lvalues.contains(&expression.id) || !bodies.contains(&expression.id) {
@@ -936,7 +938,7 @@ fn expression_to_operand(
     builder: &mut Builder,
 ) -> Result<Vec<Opportunity>, Stalled> {
     let lvalues = lvalue_ids(unit, analysis)?;
-    let bodies = body_expression_ids(unit);
+    let bodies = body_expression_ids(unit)?;
     let mut result = Vec::new();
     for expression in rglsl_ast::expressions(unit)? {
         if lvalues.contains(&expression.id) || !bodies.contains(&expression.id) {

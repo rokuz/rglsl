@@ -34,7 +34,7 @@ void main() {
 
 fn assert_valid(name: &str, text: &str) -> TestResult {
     let unit = parse_shader(text).map_err(|error| format!("{name}: {error}"))?;
-    let analysis = analyze_shader(&unit, Stage::Fragment, false, None);
+    let analysis = analyze_shader(&unit, Stage::Fragment, false, None)?;
     assert!(
         analysis.diagnostics.is_empty(),
         "{name}: {:?}\n{text}",

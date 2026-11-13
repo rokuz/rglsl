@@ -1,3 +1,4 @@
+use rglsl_ast::Stalled;
 use std::collections::BTreeMap;
 
 use rglsl_ast::ast::{
@@ -50,7 +51,10 @@ fn tidy(statements: &mut Vec<Statement>) {
     }
 }
 
-pub fn apply(unit: &TranslationUnit, opportunities: &[Opportunity]) -> TranslationUnit {
+pub fn apply(
+    unit: &TranslationUnit,
+    opportunities: &[Opportunity],
+) -> Result<TranslationUnit, Stalled> {
     let mut expressions = BTreeMap::new();
     let mut statements = BTreeMap::new();
     let mut externals = BTreeMap::new();
@@ -79,7 +83,7 @@ pub fn apply(unit: &TranslationUnit, opportunities: &[Opportunity]) -> Translati
             if let Some(replacement) = expressions.remove(&expression.id) {
                 *expression = replacement;
             }
-        });
+        })?;
     }
     if !statements.is_empty() {
         rewrite_statements(&mut result, &mut |statement| {
@@ -110,5 +114,5 @@ pub fn apply(unit: &TranslationUnit, opportunities: &[Opportunity]) -> Translati
             }
         }
     }
-    result
+    Ok(result)
 }
