@@ -3,7 +3,7 @@
 > A Vulkan GLSL (450/460) → SPIR-V compiler in safe Rust, replacing glslang. Hard fork of naga 30.0.0.
 > Out of scope: GLSL ES, other `#version`s, OpenGL semantics.
 
-Read [docs/PLAN.md](docs/PLAN.md) before changing anything substantial: it defines the
+Read `docs/PLAN.md` (local, not committed) before changing anything substantial: it defines the
 goal, the language rules for linkage and `#include`, and the milestones (M0–M9).
 `PROGRESS.md` (local, not committed) has the current numbers against glslang's corpus.
 

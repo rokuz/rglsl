@@ -1,12 +1,30 @@
 # rglsl
 
 A Vulkan GLSL (`#version 450`/`460`) → SPIR-V compiler in safe Rust, a drop-in replacement for
-`glslangValidator` in Vulkan projects. Hard fork of [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga)
-30.0.0.
+`glslangValidator` in Vulkan projects, descended from naga.
 
 On glslang's own test corpus rglsl accepts what glslang accepts, reports errors on the same
 lines, and produces SPIR-V that passes `spirv-val`, has the same interface and gives the same
 results on real GPUs (KosmicKrisp on Apple, AMD, NVIDIA).
+
+## Relation to naga
+
+rglsl started as a hard fork of [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) 30.0.0
+and keeps its core:
+
+- **IR** (`rglsl/src/ir`): naga's module format — arenas of types, constants, globals, functions
+  and expressions addressed by typed handles, structured control flow, `Emit` ranges. It is
+  extended for Vulkan GLSL: imports and linkage, geometry and tessellation stages, debug
+  information, cooperative matrices and vectors, tensors and more.
+- **Validator** (`rglsl/src/valid`), including the uniformity analysis.
+- **SPIR-V backend** (`rglsl/src/back/spv`), the only backend.
+- **Processing** (`rglsl/src/proc`, `compact`): layouter, typifier, constant evaluator, compaction.
+- The arena, span and diagnostic infrastructure and the snapshot tests.
+
+Replaced or removed: naga's GLSL frontend (now a preprocessor, parser, semantic analysis and
+lowering in `rglsl-pp`, `rglsl-ast`, `rglsl-sema` and `rglsl/src/front/glsl`), the WGSL and SPIR-V
+frontends, and the WGSL, MSL, HLSL, GLSL and DOT backends. New: the linker (`rglsl-link`), object
+files and the `glslangValidator`-compatible CLI.
 
 ## Differences from glslang
 
