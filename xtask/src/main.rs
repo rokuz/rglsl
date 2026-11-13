@@ -5,6 +5,7 @@
 //! - `cargo xtask test` runs the conformance corpora against the oracles and
 //!   writes `PROGRESS.md`.
 
+mod bench;
 mod cli;
 mod corpus;
 mod debuginfo;
@@ -58,6 +59,17 @@ commands:
       --glslang-dir DIR   glslang checkout whose Test/ is used
       --filter TEXT       only run cases whose name contains TEXT
       --timeout SECS      per-process timeout (default: 30)
+  bench               compare the compile time of the rglsl command-line tool (release build)
+                      with glslangValidator (target/oracles/bin/glslang) on the corpus shaders
+                      both accept, the link tests and large synthetic shaders, one process at a
+                      time; report in target/xtask/bench.md, per-shader numbers in bench.tsv
+      --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
+      --filter TEXT       only run shaders whose name contains TEXT (or one of the
+                          comma-separated TEXTs)
+      --runs N            timed runs per shader and compiler after a warm-up run (default 10)
+      --debug-info MODE   add -g or -gVS (MODE: g, gVS) to every command line; the report
+                          goes to target/xtask/bench-MODE.md
+      --timeout SECS      per-process timeout of the warm-up run (default: 60)
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
@@ -179,6 +191,23 @@ fn run(args: Vec<String>) -> Result<i32> {
             };
             args.finish()?;
             cli::run(&workspace_root()?, &options)
+        }
+        "bench" => {
+            let options =
+                bench::Options {
+                    glslang_dir: args.value("--glslang-dir")?.map(PathBuf::from),
+                    filter: args.value("--filter")?,
+                    runs: args.parsed("--runs")?.unwrap_or(10),
+                    debug_info: match args.value("--debug-info")? {
+                        Some(mode) => Some(bench::DebugInfo::parse(&mode).with_context(|| {
+                            format!("--debug-info must be g or gVS, not `{mode}`")
+                        })?),
+                        None => None,
+                    },
+                    timeout_secs: args.parsed("--timeout")?.unwrap_or(60),
+                };
+            args.finish()?;
+            bench::run(&workspace_root()?, &options)
         }
         "fuzz" if args.has("--libfuzzer") => {
             let options = fuzz_libfuzzer::Options {

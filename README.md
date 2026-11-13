@@ -59,6 +59,17 @@ cargo xtask test --glslang-dir ../glslang             # glslang's corpus
 
 Rules for contributors: [AGENTS.md](AGENTS.md).
 
+## Benchmark
+
+```sh
+cargo xtask bench --glslang-dir ../glslang [--runs 10] [--filter TEXT] [--debug-info g|gVS]
+```
+
+Compares the compile time of the release-built `rglsl` with the pinned Release-built
+`glslangValidator` on the same command lines, one process at a time: the corpus shaders both
+accept, the link tests and large generated shaders. The report goes to `target/xtask/bench.md`,
+per-shader numbers to `target/xtask/bench.tsv`.
+
 ## Projects used
 
 - [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) — the base of the IR, validator and

@@ -1380,7 +1380,7 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
     })
 }
 
-fn build_rglsl(root: &Path) -> Result<PathBuf> {
+pub fn build_rglsl(root: &Path) -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("RGLSL_CLI") {
         return Ok(PathBuf::from(path));
     }
