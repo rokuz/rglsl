@@ -95,6 +95,8 @@ pub enum Disalignment {
 pub enum TypeError {
     #[error("A tensor rank must be from 1 to 15")]
     InvalidTensorRank,
+    #[error("The size of type {0:?} exceeds the limit")]
+    TooLarge(Handle<crate::Type>),
     #[error("Capability {0:?} is required")]
     MissingCapability(Capabilities),
     #[error("The {0:?} scalar width {1} is not supported for an atomic")]
@@ -880,7 +882,8 @@ impl super::Validator {
                         _ => {}
                     }
 
-                    let base_size = member_extent(member, &gctx.types[member.ty].inner, gctx);
+                    let base_size = member_extent(member, &gctx.types[member.ty].inner, gctx)
+                        .ok_or(TypeError::TooLarge(member.ty))?;
                     extents.push((member.offset, base_size, i as u32));
                     if member.offset.saturating_add(base_size) > span {
                         return Err(TypeError::MemberOutOfBounds {
@@ -1204,7 +1207,7 @@ fn member_extent(
     member: &crate::StructMember,
     inner: &crate::TypeInner,
     gctx: crate::proc::GlobalCtx,
-) -> u32 {
+) -> Option<u32> {
     match (inner, member.matrix_layout) {
         (
             &crate::TypeInner::Matrix {
@@ -1219,10 +1222,12 @@ fn member_extent(
             } else {
                 (columns as u32, rows as u32)
             };
-            (vectors - 1)
-                .saturating_mul(stride)
-                .saturating_add(length.saturating_mul(u32::from(scalar.width)))
+            Some(
+                (vectors - 1)
+                    .saturating_mul(stride)
+                    .saturating_add(length.saturating_mul(u32::from(scalar.width))),
+            )
         }
-        _ => inner.size(gctx),
+        _ => inner.try_size(gctx),
     }
 }

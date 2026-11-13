@@ -412,11 +412,6 @@ impl crate::TypeInner {
         }
     }
 
-    /// Get the size of this type.
-    pub fn size(&self, gctx: super::GlobalCtx) -> u32 {
-        self.try_size(gctx).unwrap_or(u32::MAX)
-    }
-
     /// Return the canonical form of `self`, or `None` if it's already in
     /// canonical form.
     ///

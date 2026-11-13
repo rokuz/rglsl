@@ -332,12 +332,20 @@ impl LiteralVector {
             Literal::FE5M2(e) => {
                 Self::F32(arrayvec_of(crate::proc::small_float::fe5m2_to_f64(e) as f32))
             }
-            Literal::FE2M1(_)
-            | Literal::FE3M2(_)
-            | Literal::FE2M3(_)
-            | Literal::FUE8M0(_)
-            | Literal::FMXINT8(_) => Self::F32(arrayvec_of(
-                literal.encoded_float_value().unwrap_or(0.0) as f32,
+            Literal::FE2M1(e) => {
+                Self::F32(arrayvec_of(crate::proc::small_float::fe2m1_to_f64(e) as f32))
+            }
+            Literal::FE3M2(e) => {
+                Self::F32(arrayvec_of(crate::proc::small_float::fe3m2_to_f64(e) as f32))
+            }
+            Literal::FE2M3(e) => {
+                Self::F32(arrayvec_of(crate::proc::small_float::fe2m3_to_f64(e) as f32))
+            }
+            Literal::FUE8M0(e) => Self::F32(arrayvec_of(
+                crate::proc::small_float::fue8m0_to_f64(e) as f32,
+            )),
+            Literal::FMXINT8(e) => Self::F32(arrayvec_of(
+                crate::proc::small_float::fmxint8_to_f64(e) as f32,
             )),
             Literal::F64(e) => Self::F64(arrayvec_of(e)),
             Literal::F32(e) => Self::F32(arrayvec_of(e)),
