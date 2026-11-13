@@ -38,7 +38,6 @@ impl ir::MathFunction {
             | Mf::Asinh
             | Mf::Acosh
             | Mf::Atanh
-            | Mf::Saturate
             | Mf::Radians
             | Mf::Degrees
             | Mf::Ceil
@@ -111,7 +110,6 @@ impl ir::MathFunction {
             Mf::Inverse => regular!(1, MAT2X2|MAT3X3|MAT4X4 of FLOAT).into(),
             Mf::Transpose => transpose().into(),
             Mf::Determinant => regular!(1, MAT2X2|MAT3X3|MAT4X4 of FLOAT -> Scalar).into(),
-            Mf::QuantizeToF16 => regular!(1, SCALAR|VECN of F32).into(),
             Mf::AddCarry | Mf::SubBorrow => regular!(2, SCALAR|VECN of U32 -> Wide).into(),
             Mf::MulExtended => regular!(2, SCALAR|VECN of U32|I32 -> Wide).into(),
             Mf::ExtractBits => extract_bits().into(),

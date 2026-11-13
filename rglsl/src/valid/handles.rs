@@ -362,23 +362,12 @@ impl super::Validator {
         }
 
         let crate::SpecialTypes {
-            ray_desc,
-            ray_intersection,
             ray_vertex_return,
-            external_texture_params,
-            external_texture_transfer_function,
             ref predeclared_types,
         } = *special_types;
-        for ty in [
-            ray_desc,
-            ray_intersection,
-            ray_vertex_return,
-            external_texture_params,
-            external_texture_transfer_function,
-        ]
-        .into_iter()
-        .flatten()
-        .chain(predeclared_types.values().copied())
+        for ty in ray_vertex_return
+            .into_iter()
+            .chain(predeclared_types.values().copied())
         {
             validate_type(ty)?;
         }
@@ -681,7 +670,6 @@ impl super::Validator {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge: _,
                 min_lod,
                 sparse,
             } => {

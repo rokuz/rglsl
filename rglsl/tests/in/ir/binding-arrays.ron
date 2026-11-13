@@ -192,11 +192,7 @@
         ),
     ],
     special_types: (
-        ray_desc: None,
-        ray_intersection: None,
         ray_vertex_return: None,
-        external_texture_params: None,
-        external_texture_transfer_function: None,
         predeclared_types: {},
     ),
     constants: [],
@@ -471,7 +467,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -500,7 +495,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -529,7 +523,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -559,7 +552,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(60),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -589,7 +581,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(68),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -619,7 +610,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(76),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -864,7 +854,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -893,7 +882,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -922,7 +910,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -952,7 +939,6 @@
                         offset: None,
                         level: Bias(168),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -982,7 +968,6 @@
                         offset: None,
                         level: Bias(176),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1012,7 +997,6 @@
                         offset: None,
                         level: Bias(184),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1042,7 +1026,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(192),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1072,7 +1055,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(200),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1102,7 +1084,6 @@
                         offset: None,
                         level: Auto,
                         depth_ref: Some(208),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1132,7 +1113,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(216),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1162,7 +1142,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(224),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1192,7 +1171,6 @@
                         offset: None,
                         level: Zero,
                         depth_ref: Some(232),
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1224,7 +1202,6 @@
                             y: 16,
                         ),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1256,7 +1233,6 @@
                             y: 16,
                         ),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1288,7 +1264,6 @@
                             y: 16,
                         ),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1318,7 +1293,6 @@
                         offset: None,
                         level: Exact(261),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1348,7 +1322,6 @@
                         offset: None,
                         level: Exact(269),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,
@@ -1378,7 +1351,6 @@
                         offset: None,
                         level: Exact(277),
                         depth_ref: None,
-                        clamp_to_edge: false,
                     ),
                     Binary(
                         op: Add,

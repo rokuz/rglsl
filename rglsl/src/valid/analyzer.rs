@@ -793,7 +793,6 @@ impl FunctionInfo {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge: _,
                 min_lod,
                 sparse: _,
             } => {

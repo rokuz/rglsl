@@ -350,7 +350,6 @@ impl super::MathFunction {
             Self::Min => 2,
             Self::Max => 2,
             Self::Clamp => 3,
-            Self::Saturate => 1,
             // trigonometry
             Self::Cos => 1,
             Self::Cosh => 1,
@@ -410,7 +409,6 @@ impl super::MathFunction {
             Self::Inverse => 1,
             Self::Transpose => 1,
             Self::Determinant => 1,
-            Self::QuantizeToF16 => 1,
             // bits
             Self::CountTrailingZeros => 1,
             Self::CountLeadingZeros => 1,
@@ -551,7 +549,6 @@ impl super::ImageClass {
             crate::ImageClass::Sampled { multi, .. }
             | crate::ImageClass::Depth { multi }
             | crate::ImageClass::Storage { multi, .. } => multi,
-            crate::ImageClass::External => false,
         }
     }
 
@@ -559,7 +556,6 @@ impl super::ImageClass {
         match self {
             crate::ImageClass::Sampled { multi, .. } | crate::ImageClass::Depth { multi } => !multi,
             crate::ImageClass::Storage { .. } => false,
-            crate::ImageClass::External => false,
         }
     }
 

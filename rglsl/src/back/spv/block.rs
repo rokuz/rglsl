@@ -1402,42 +1402,6 @@ impl BlockContext<'_> {
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UClamp,
                         _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     }),
-                    Mf::Saturate => {
-                        let (maybe_size, scalar) = match *arg_ty {
-                            crate::TypeInner::Vector { size, scalar } => (Some(size), scalar),
-                            crate::TypeInner::Scalar(scalar) => (None, scalar),
-                            _ => {
-                                return Err(Error::Validation(
-                                    "saturate of a non-scalar, non-vector value",
-                                ))
-                            }
-                        };
-                        let scalar = crate::Scalar::float(scalar.width);
-                        let mut arg1_id = self.writer.get_constant_scalar_with(0, scalar)?;
-                        let mut arg2_id = self.writer.get_constant_scalar_with(1, scalar)?;
-
-                        if let Some(size) = maybe_size {
-                            let ty =
-                                LocalType::Numeric(NumericType::Vector { size, scalar }).into();
-
-                            self.temp_list.clear();
-                            self.temp_list.resize(size as _, arg1_id);
-
-                            arg1_id = self.writer.get_constant_composite(ty, &self.temp_list)?;
-
-                            self.temp_list.fill(arg2_id);
-
-                            arg2_id = self.writer.get_constant_composite(ty, &self.temp_list)?;
-                        }
-
-                        MathOp::Custom(Instruction::ext_inst_gl_op(
-                            self.writer.gl450_ext_inst_id,
-                            spirv::GlslStd450Op::FClamp,
-                            result_type_id,
-                            id,
-                            &[arg0_id, arg1_id, arg2_id],
-                        ))
-                    }
                     // trigonometry
                     Mf::Sin => MathOp::Ext(spirv::GlslStd450Op::Sin),
                     Mf::Sinh => MathOp::Ext(spirv::GlslStd450Op::Sinh),
@@ -1750,12 +1714,6 @@ impl BlockContext<'_> {
                         arg0_id,
                     )),
                     Mf::Determinant => MathOp::Ext(spirv::GlslStd450Op::Determinant),
-                    Mf::QuantizeToF16 => MathOp::Custom(Instruction::unary(
-                        spirv::Op::QuantizeToF16,
-                        result_type_id,
-                        id,
-                        arg0_id,
-                    )),
                     Mf::ReverseBits => MathOp::Custom(Instruction::unary(
                         spirv::Op::BitReverse,
                         result_type_id,
@@ -2135,7 +2093,6 @@ impl BlockContext<'_> {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge,
                 min_lod,
                 sparse,
             } => self.write_image_sample(
@@ -2149,7 +2106,6 @@ impl BlockContext<'_> {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge,
                 min_lod,
                 sparse.is_some(),
                 block,

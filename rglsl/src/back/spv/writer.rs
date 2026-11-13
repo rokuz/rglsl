@@ -536,20 +536,6 @@ impl Writer {
         self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::F32))
     }
 
-    pub(super) fn get_vec2u_type_id(&mut self) -> Word {
-        self.get_numeric_type_id(NumericType::Vector {
-            size: crate::VectorSize::Bi,
-            scalar: crate::Scalar::U32,
-        })
-    }
-
-    pub(super) fn get_vec2f_type_id(&mut self) -> Word {
-        self.get_numeric_type_id(NumericType::Vector {
-            size: crate::VectorSize::Bi,
-            scalar: crate::Scalar::F32,
-        })
-    }
-
     pub(super) fn get_vec3u_type_id(&mut self) -> Word {
         self.get_numeric_type_id(NumericType::Vector {
             size: crate::VectorSize::Tri,
@@ -2255,9 +2241,6 @@ impl Writer {
                             }
                         }
                         false
-                    }
-                    crate::ImageClass::External => {
-                        return Err(Error::FeatureNotImplemented("external textures"))
                     }
                 };
 

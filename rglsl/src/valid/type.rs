@@ -130,8 +130,6 @@ pub enum TypeError {
     InvalidDynamicArray(String, Handle<crate::Type>),
     #[error("The base handle {0:?} has to be a struct")]
     BindingArrayBaseTypeNotStruct(Handle<crate::Type>),
-    #[error("Binding arrays of external textures are not yet supported")]
-    BindingArrayBaseExternalTextures,
     #[error("Structure member[{index}] at {offset} overlaps the previous member")]
     MemberOverlap { index: u32, offset: u32 },
     #[error(
@@ -1006,10 +1004,7 @@ impl super::Validator {
                 if dim == crate::ImageDimension::Buffer
                     && (arrayed
                         || class.is_multisampled()
-                        || matches!(
-                            class,
-                            crate::ImageClass::Depth { .. } | crate::ImageClass::External
-                        ))
+                        || matches!(class, crate::ImageClass::Depth { .. }))
                 {
                     return Err(TypeError::UnsupportedImageType {
                         dim,
@@ -1063,16 +1058,6 @@ impl super::Validator {
                 }
                 if arrayed && matches!(dim, crate::ImageDimension::Cube) {
                     self.require_type_capability(Capabilities::CUBE_ARRAY_TEXTURES)?;
-                }
-                if matches!(class, crate::ImageClass::External) {
-                    if dim != crate::ImageDimension::D2 || arrayed {
-                        return Err(TypeError::UnsupportedImageType {
-                            dim,
-                            arrayed,
-                            class,
-                        });
-                    }
-                    self.require_type_capability(Capabilities::TEXTURE_EXTERNAL)?;
                 }
                 let heap = if matches!(gctx.types[handle].inner, Ti::Image { .. }) {
                     TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED
@@ -1160,18 +1145,6 @@ impl super::Validator {
                         crate::TypeInner::Struct { .. } => {}
                         _ => return Err(TypeError::BindingArrayBaseTypeNotStruct(base)),
                     };
-                }
-                if matches!(
-                    gctx.types[base].inner,
-                    crate::TypeInner::Image {
-                        class: crate::ImageClass::External,
-                        ..
-                    }
-                ) {
-                    // Binding arrays of external textures are not yet supported.
-                    // See <https://github.com/gfx-rs/wgpu/issues/8027>. Note that
-                    // `validate_global_var` relies on this error being raised here.
-                    return Err(TypeError::BindingArrayBaseExternalTextures);
                 }
 
                 if !base_info.flags.contains(TypeFlags::CREATION_RESOLVED) {

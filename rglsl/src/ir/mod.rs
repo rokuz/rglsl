@@ -1051,8 +1051,6 @@ pub enum ImageClass {
         /// Multi-sampled depth image.
         multi: bool,
     },
-    /// External texture.
-    External,
     /// Storage image.
     Storage {
         format: StorageFormat,
@@ -1940,7 +1938,6 @@ pub enum MathFunction {
     Min,
     Max,
     Clamp,
-    Saturate,
     // trigonometry
     Cos,
     Cosh,
@@ -2000,7 +1997,6 @@ pub enum MathFunction {
     Inverse,
     Transpose,
     Determinant,
-    QuantizeToF16,
     // bits
     CountTrailingZeros,
     CountLeadingZeros,
@@ -2789,10 +2785,6 @@ pub enum Expression {
         offset: Option<Handle<Expression>>,
         level: SampleLevel,
         depth_ref: Option<Handle<Expression>>,
-        /// Whether the sampling operation should clamp each component of
-        /// `coordinate` to the range `[half_texel, 1 - half_texel]`, regardless
-        /// of `sampler`.
-        clamp_to_edge: bool,
         #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
         #[cfg_attr(feature = "deserialize", serde(default))]
         min_lod: Option<Handle<Expression>>,
@@ -4298,67 +4290,10 @@ pub enum PredeclaredType {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpecialTypes {
-    /// Type for `RayDesc`.
-    ///
-    /// Call [`Module::generate_ray_desc_type`] to populate this if
-    /// needed and return the handle.
-    pub ray_desc: Option<Handle<Type>>,
-
-    /// Type for `RayIntersection`.
-    ///
-    /// Call [`Module::generate_ray_intersection_type`] to populate
-    /// this if needed and return the handle.
-    pub ray_intersection: Option<Handle<Type>>,
-
     /// Type for `RayVertexReturn`.
     ///
     /// Call [`Module::generate_vertex_return_type`]
     pub ray_vertex_return: Option<Handle<Type>>,
-
-    /// Struct containing parameters required by some backends to emit code for
-    /// [`ImageClass::External`] textures.
-    ///
-    /// See `wgpu_core::device::resource::ExternalTextureParams` for the
-    /// documentation of each field.
-    ///
-    /// In WGSL, this type would be:
-    ///
-    /// ```ignore
-    /// struct RglslExternalTextureParams {         // align size offset
-    ///     yuv_conversion_matrix: mat4x4<f32>,    //    16   64      0
-    ///     gamut_conversion_matrix: mat3x3<f32>,  //    16   48     64
-    ///     src_tf: RglslExternalTextureTransferFn, //     4   16    112
-    ///     dst_tf: RglslExternalTextureTransferFn, //     4   16    128
-    ///     sample_transform: mat3x2<f32>,         //     8   24    144
-    ///     load_transform: mat3x2<f32>,           //     8   24    168
-    ///     size: vec2<u32>,                       //     8    8    192
-    ///     num_planes: u32,                       //     4    4    200
-    /// }                            // whole struct:    16  208
-    /// ```
-    ///
-    /// Call [`Module::generate_external_texture_types`] to populate this if
-    /// needed.
-    pub external_texture_params: Option<Handle<Type>>,
-
-    /// Struct describing a gamma encoding transfer function. Member of
-    /// `RglslExternalTextureParams`, describing how the backend should perform
-    /// color space conversion when sampling from [`ImageClass::External`]
-    /// textures.
-    ///
-    /// In WGSL, this type would be:
-    ///
-    /// ```ignore
-    /// struct RglslExternalTextureTransferFn { // align size offset
-    ///     a: f32,                            //     4    4      0
-    ///     b: f32,                            //     4    4      4
-    ///     g: f32,                            //     4    4      8
-    ///     k: f32,                            //     4    4     12
-    /// }                         // whole struct:    4   16
-    /// ```
-    ///
-    /// Call [`Module::generate_external_texture_types`] to populate this if
-    /// needed.
-    pub external_texture_transfer_function: Option<Handle<Type>>,
 
     /// Types for predeclared wgsl types instantiated on demand.
     ///

@@ -153,7 +153,6 @@ impl ExpressionTracer<'_> {
                 offset,
                 ref level,
                 depth_ref,
-                clamp_to_edge: _,
                 min_lod,
                 sparse,
             } => {
@@ -521,7 +520,6 @@ impl ModuleMap {
                 ref mut offset,
                 ref mut level,
                 ref mut depth_ref,
-                clamp_to_edge: _,
                 ref mut min_lod,
                 ref mut sparse,
             } => {

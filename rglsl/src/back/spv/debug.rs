@@ -204,7 +204,6 @@ fn image_name(dim: crate::ImageDimension, arrayed: bool, class: crate::ImageClas
     let (prefix, base, multi) = match class {
         crate::ImageClass::Sampled { kind, multi } => (kind_prefix(kind), "texture", multi),
         crate::ImageClass::Depth { multi } => ("", "texture", multi),
-        crate::ImageClass::External => ("", "texture", false),
         crate::ImageClass::Storage { format, multi, .. } => (
             kind_prefix(crate::Scalar::from(format).kind),
             "image",

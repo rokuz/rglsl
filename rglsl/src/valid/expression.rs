@@ -155,8 +155,6 @@ pub enum ExpressionError {
     InvalidSampleLevelBiasType(Handle<crate::Expression>),
     #[error("Sample level (gradient) of {1:?} doesn't match the image dimension {0:?}")]
     InvalidSampleLevelGradientType(crate::ImageDimension, Handle<crate::Expression>),
-    #[error("Clamping sample coordinate to edge is not supported with {0}")]
-    InvalidSampleClampCoordinateToEdge(alloc::string::String),
     #[error("Unable to cast")]
     InvalidCastArgument,
     #[error("Invalid argument count for {0:?}")]
@@ -602,7 +600,6 @@ impl super::Validator {
                 offset,
                 level,
                 depth_ref,
-                clamp_to_edge,
                 min_lod,
                 sparse,
             } => {
@@ -665,7 +662,6 @@ impl super::Validator {
                             crate::ScalarKind::Float | crate::ScalarKind::Uint | crate::ScalarKind::Sint,
                         multi: false,
                     } => false,
-                    crate::ImageClass::External => false,
                     crate::ImageClass::Depth { multi: false } => true,
                     _ => return Err(ExpressionError::InvalidImageClass(class)),
                 };
@@ -824,57 +820,6 @@ impl super::Validator {
 
                 if gather.is_none() && gather_pattern != crate::ImageGatherPattern::Quad {
                     return Err(ExpressionError::InvalidGatherPattern(gather_pattern));
-                }
-
-                // Clamping coordinate to edge is only supported with 2d non-arrayed, sampled images
-                // when sampling from level Zero without any offset, gather, or depth comparison.
-                if clamp_to_edge {
-                    if !matches!(
-                        class,
-                        crate::ImageClass::Sampled {
-                            kind: crate::ScalarKind::Float,
-                            multi: false
-                        } | crate::ImageClass::External
-                    ) {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            alloc::format!("image class `{class:?}`"),
-                        ));
-                    }
-                    if dim != crate::ImageDimension::D2 {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            alloc::format!("image dimension `{dim:?}`"),
-                        ));
-                    }
-                    if gather.is_some() {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            "gather".into(),
-                        ));
-                    }
-                    if array_index.is_some() {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            "array index".into(),
-                        ));
-                    }
-                    if offset.is_some() {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            "offset".into(),
-                        ));
-                    }
-                    if level != crate::SampleLevel::Zero {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            "non-zero level".into(),
-                        ));
-                    }
-                    if depth_ref.is_some() {
-                        return Err(ExpressionError::InvalidSampleClampCoordinateToEdge(
-                            "depth comparison".into(),
-                        ));
-                    }
-                }
-
-                // External textures can only be sampled using clamp_to_edge.
-                if matches!(class, crate::ImageClass::External) && !clamp_to_edge {
-                    return Err(ExpressionError::InvalidImageClass(class));
                 }
 
                 // check level properties
@@ -1511,9 +1456,7 @@ impl super::Validator {
             } => {
                 if matches!(
                     fun,
-                    crate::MathFunction::QuantizeToF16
-                        | crate::MathFunction::Pack2x16float
-                        | crate::MathFunction::Unpack2x16float
+                    crate::MathFunction::Pack2x16float | crate::MathFunction::Unpack2x16float
                 ) && !self
                     .capabilities
                     .contains(crate::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32)
@@ -2457,10 +2400,6 @@ fn sampled_texel(class: crate::ImageClass) -> crate::TypeInner {
         crate::ImageClass::Storage { format, .. } => crate::TypeInner::Vector {
             size: crate::VectorSize::Quad,
             scalar: format.into(),
-        },
-        crate::ImageClass::External => crate::TypeInner::Vector {
-            size: crate::VectorSize::Quad,
-            scalar: crate::Scalar::F32,
         },
     }
 }

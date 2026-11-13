@@ -559,31 +559,12 @@ impl<'module> ModuleTracer<'module> {
 
     fn trace_special_types(&mut self, special_types: &crate::SpecialTypes) {
         let crate::SpecialTypes {
-            ref ray_desc,
-            ref ray_intersection,
             ref ray_vertex_return,
             ref predeclared_types,
-            ref external_texture_params,
-            ref external_texture_transfer_function,
         } = *special_types;
 
-        if let Some(ray_desc) = *ray_desc {
-            self.types_used.insert(ray_desc);
-        }
-        if let Some(ray_intersection) = *ray_intersection {
-            self.types_used.insert(ray_intersection);
-        }
         if let Some(ray_vertex_return) = *ray_vertex_return {
             self.types_used.insert(ray_vertex_return);
-        }
-        // The `external_texture_params` type is generated purely as a
-        // convenience to the backends. While it will never actually be used in
-        // the IR, it must be marked as used so that it survives compaction.
-        if let Some(external_texture_params) = *external_texture_params {
-            self.types_used.insert(external_texture_params);
-        }
-        if let Some(external_texture_transfer_function) = *external_texture_transfer_function {
-            self.types_used.insert(external_texture_transfer_function);
         }
         for (_, &handle) in predeclared_types {
             self.types_used.insert(handle);
@@ -732,33 +713,12 @@ impl From<ModuleTracer<'_>> for ModuleMap {
 impl ModuleMap {
     fn adjust_special_types(&self, special: &mut crate::SpecialTypes) -> Result<(), BadHandle> {
         let crate::SpecialTypes {
-            ref mut ray_desc,
-            ref mut ray_intersection,
             ref mut ray_vertex_return,
             ref mut predeclared_types,
-            ref mut external_texture_params,
-            ref mut external_texture_transfer_function,
         } = *special;
-
-        if let Some(ref mut ray_desc) = *ray_desc {
-            self.types.adjust(ray_desc)?;
-        }
-        if let Some(ref mut ray_intersection) = *ray_intersection {
-            self.types.adjust(ray_intersection)?;
-        }
 
         if let Some(ref mut ray_vertex_return) = *ray_vertex_return {
             self.types.adjust(ray_vertex_return)?;
-        }
-
-        if let Some(ref mut external_texture_params) = *external_texture_params {
-            self.types.adjust(external_texture_params)?;
-        }
-
-        if let Some(ref mut external_texture_transfer_function) =
-            *external_texture_transfer_function
-        {
-            self.types.adjust(external_texture_transfer_function)?;
         }
 
         for handle in predeclared_types.values_mut() {

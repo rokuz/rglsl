@@ -1009,17 +1009,7 @@ fn unused_heap_types(
             .filter_map(|(handle, _)| info[handle].handle()),
     );
     let special = &module.special_types;
-    roots.extend(
-        [
-            special.ray_desc,
-            special.ray_intersection,
-            special.ray_vertex_return,
-            special.external_texture_params,
-            special.external_texture_transfer_function,
-        ]
-        .into_iter()
-        .flatten(),
-    );
+    roots.extend(special.ray_vertex_return);
     roots.extend(special.predeclared_types.values().copied());
     let functions = module
         .functions

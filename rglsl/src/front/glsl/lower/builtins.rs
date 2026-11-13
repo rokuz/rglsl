@@ -1928,7 +1928,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     offset: sample_offset,
                     level,
                     depth_ref,
-                    clamp_to_edge: false,
                     min_lod,
                     sparse,
                 },

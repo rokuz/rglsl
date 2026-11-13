@@ -532,10 +532,6 @@ impl<'a> ResolveContext<'a> {
                             scalar: format.into(),
                             size: crate::VectorSize::Quad,
                         },
-                        crate::ImageClass::External => Ti::Vector {
-                            scalar: crate::Scalar::F32,
-                            size: crate::VectorSize::Quad,
-                        },
                     })
                 }
                 ref other => {

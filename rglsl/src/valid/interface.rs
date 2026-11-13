@@ -1632,10 +1632,6 @@ impl super::Validator {
                                     ));
                                 }
                             }
-                            crate::ImageClass::External => {
-                                // This should have been rejected in `validate_type`.
-                                return Err(GlobalVariableError::InvalidType(var.space));
-                            }
                         },
                         crate::TypeInner::Sampler { .. }
                         | crate::TypeInner::SampledImage { .. } => {

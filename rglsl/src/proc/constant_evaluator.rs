@@ -1771,13 +1771,6 @@ impl<'a> ConstantEvaluator<'a> {
                     }
                 )
             }
-            crate::MathFunction::Saturate => component_wise_float(self, span, [arg], |e| match e {
-                Float::F16([e]) => Ok(Float::F16(
-                    [e.clamp(f16::from_f32(0.0), f16::from_f32(1.0))],
-                )),
-                Float::F32([e]) => Ok(Float::F32([e.clamp(0., 1.)])),
-                Float::Abstract([e]) => Ok(Float::Abstract([e.clamp(0., 1.)])),
-            }),
 
             // trigonometry
             crate::MathFunction::Cos => {
@@ -2223,7 +2216,6 @@ impl<'a> ConstantEvaluator<'a> {
             | crate::MathFunction::Inverse
             | crate::MathFunction::Transpose
             | crate::MathFunction::Determinant
-            | crate::MathFunction::QuantizeToF16
             | crate::MathFunction::ExtractBits
             | crate::MathFunction::InsertBits
             | crate::MathFunction::Pack4x8snorm

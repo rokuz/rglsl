@@ -387,22 +387,12 @@ impl Builder<'_> {
             let remap = self.remap(index)?;
             let mut special = self.module.special_types.clone();
             let incoming = &source.special_types;
-            for (slot, value) in [
-                (&mut special.ray_desc, incoming.ray_desc),
-                (&mut special.ray_intersection, incoming.ray_intersection),
-                (&mut special.ray_vertex_return, incoming.ray_vertex_return),
-                (
-                    &mut special.external_texture_params,
-                    incoming.external_texture_params,
-                ),
-                (
-                    &mut special.external_texture_transfer_function,
-                    incoming.external_texture_transfer_function,
-                ),
-            ] {
-                if slot.is_none() {
-                    *slot = value.map(|ty| remap.ty(ty)).transpose().map_err(internal)?;
-                }
+            if special.ray_vertex_return.is_none() {
+                special.ray_vertex_return = incoming
+                    .ray_vertex_return
+                    .map(|ty| remap.ty(ty))
+                    .transpose()
+                    .map_err(internal)?;
             }
             for (kind, &ty) in &incoming.predeclared_types {
                 if !special.predeclared_types.contains_key(kind) {

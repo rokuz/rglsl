@@ -551,7 +551,6 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
             ref mut min_lod,
             gather: _,
             gather_pattern: _,
-            clamp_to_edge: _,
             sparse: _,
         } => {
             adjust(image);
