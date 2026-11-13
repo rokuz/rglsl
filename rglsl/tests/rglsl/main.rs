@@ -9,6 +9,7 @@ extern crate alloc;
 mod arithmetic;
 mod atomic_compare_exchange;
 mod cooperative;
+mod extension_names;
 mod glsl_vulkan;
 mod layout_names;
 mod snapshots;
