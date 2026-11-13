@@ -437,10 +437,8 @@ impl UnitCx<'_, '_, '_> {
                 index
             }
             Some(index) => {
-                if update {
-                    if let Some(object) = blocks.get_mut(index) {
-                        object.stages |= bit;
-                    }
+                if update && let Some(object) = blocks.get_mut(index) {
+                    object.stages |= bit;
                 }
                 index
             }
@@ -601,10 +599,11 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         derefs.reverse();
         unit.mark(base_key);
         let mut array_size = 0;
-        if last.left.granular() && last.left.is_array() {
-            if let StepOp::Direct(index) = last.op {
-                array_size = index + 1;
-            }
+        if last.left.granular()
+            && last.left.is_array()
+            && let StepOp::Direct(index) = last.op
+        {
+            array_size = index + 1;
         }
         let base_name = if anonymous {
             String::new()

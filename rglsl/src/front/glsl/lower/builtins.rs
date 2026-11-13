@@ -528,10 +528,8 @@ impl FunctionLowerer<'_, '_> {
                 .get(1)
                 .and_then(GlslType::base_scalar)
                 .is_some_and(|exponent| exponent.bits() < 32);
-            if narrow {
-                if let Some(exponent) = values.get_mut(1) {
-                    *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
-                }
+            if narrow && let Some(exponent) = values.get_mut(1) {
+                *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
             }
         }
         if let Some(size) = vector {
@@ -1481,26 +1479,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         if let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::Constructor(ref ty))) =
             (&inner.kind, analysis.calls.get(&inner.id))
+            && let Some(opaque) = ty.as_opaque()
         {
-            if let Some(opaque) = ty.as_opaque() {
-                let &[ref texture, ref sampler] = call.arguments.as_slice() else {
-                    return Err(internal(at));
-                };
-                let image = {
-                    let frame = self.clone().rvalue(texture);
-                    self.nest(frame).await
-                }?;
-                let sampler = {
-                    let frame = self.clone().rvalue(sampler);
-                    self.nest(frame).await
-                }?;
-                return Ok(Sampled {
-                    image,
-                    sampler: Some(sampler),
-                    opaque,
-                    non_uniform,
-                });
-            }
+            let &[ref texture, ref sampler] = call.arguments.as_slice() else {
+                return Err(internal(at));
+            };
+            let image = {
+                let frame = self.clone().rvalue(texture);
+                self.nest(frame).await
+            }?;
+            let sampler = {
+                let frame = self.clone().rvalue(sampler);
+                self.nest(frame).await
+            }?;
+            return Ok(Sampled {
+                image,
+                sampler: Some(sampler),
+                opaque,
+                non_uniform,
+            });
         }
         let ty = self.with(|this| this.info(argument))??.ty.clone();
         match ty.as_opaque() {

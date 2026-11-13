@@ -370,12 +370,11 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
         while let Some(task) = tasks.pop() {
             match task {
                 Rewrite::Visit(mut node) => {
-                    if let ExpressionKind::FunctionCall(call) = &mut node.kind {
-                        if let FunctionIdentifier::Constructor(specifier)
+                    if let ExpressionKind::FunctionCall(call) = &mut node.kind
+                        && let FunctionIdentifier::Constructor(specifier)
                         | FunctionIdentifier::Cast(specifier) = &mut call.function.node
-                        {
-                            self.specifier_in(specifier).await;
-                        }
+                    {
+                        self.specifier_in(specifier).await;
                     }
                     let children: Vec<Expression> = node
                         .kind

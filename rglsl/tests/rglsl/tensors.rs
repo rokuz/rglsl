@@ -391,20 +391,20 @@ impl Module {
             }
         }
         for (op, operands) in &self.instructions {
-            if is(*op, Op::Function) {
-                if let Some(&ty) = operands.first() {
-                    shape.results.push(self.describe(ty));
-                }
+            if is(*op, Op::Function)
+                && let Some(&ty) = operands.first()
+            {
+                shape.results.push(self.describe(ty));
             }
-            if is(*op, Op::FunctionParameter) {
-                if let [ty, id, ..] = operands.as_slice() {
-                    let description = self.describe(*ty);
-                    let image = format!("op{}", Op::TypeImage as u32);
-                    if description.contains("tensor") || description.ends_with(&image) {
-                        let mut decorated = decorations.get(id).cloned().unwrap_or_default();
-                        decorated.sort();
-                        shape.parameters.push((description, decorated));
-                    }
+            if is(*op, Op::FunctionParameter)
+                && let [ty, id, ..] = operands.as_slice()
+            {
+                let description = self.describe(*ty);
+                let image = format!("op{}", Op::TypeImage as u32);
+                if description.contains("tensor") || description.ends_with(&image) {
+                    let mut decorated = decorations.get(id).cloned().unwrap_or_default();
+                    decorated.sort();
+                    shape.parameters.push((description, decorated));
                 }
             }
             if !is(*op, Op::Variable) {

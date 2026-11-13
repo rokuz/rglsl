@@ -1463,10 +1463,10 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     }
                 }
             }
-        } else if instruction.is(Op::Extension) {
-            if let Some((name, _)) = instruction.string(0) {
-                extensions.insert(name);
-            }
+        } else if instruction.is(Op::Extension)
+            && let Some((name, _)) = instruction.string(0)
+        {
+            extensions.insert(name);
         }
     }
 
@@ -2268,12 +2268,11 @@ fn traced_layouts(body: &[Instruction]) -> BTreeMap<u32, bool> {
             if let (Some(id), Some(known)) = (result, known) {
                 values.insert(id, known);
             }
-        } else if instruction.is(Op::Store) {
-            if let (Some(pointer), Some(value)) = (instruction.word(0), instruction.word(1)) {
-                if let Some(known) = values.get(&value).copied() {
-                    variables.insert(pointer, known);
-                }
-            }
+        } else if instruction.is(Op::Store)
+            && let (Some(pointer), Some(value)) = (instruction.word(0), instruction.word(1))
+            && let Some(known) = values.get(&value).copied()
+        {
+            variables.insert(pointer, known);
         }
     }
     values

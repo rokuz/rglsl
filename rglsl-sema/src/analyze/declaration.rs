@@ -228,17 +228,16 @@ impl Analyzer<'_> {
         if qualifiers.storage == Storage::Out {
             self.resize_mesh_arrays(qualifier.span);
         }
-        if qualifiers.storage == Storage::Out {
-            if let Some(vertices) = qualifiers
+        if qualifiers.storage == Storage::Out
+            && let Some(vertices) = qualifiers
                 .layout_entry("vertices")
                 .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
-            {
-                if self.stage_is(ShaderStage::TessControl) && self.output_array_size.is_none() {
-                    self.output_array_size = Some(vertices);
-                    self.resize_interface_arrays(qualifier.span, Storage::Out, vertices);
-                }
-            }
+            && self.stage_is(ShaderStage::TessControl)
+            && self.output_array_size.is_none()
+        {
+            self.output_array_size = Some(vertices);
+            self.resize_interface_arrays(qualifier.span, Storage::Out, vertices);
         }
         if qualifiers.storage != Storage::In {
             return;
@@ -1892,10 +1891,10 @@ impl Analyzer<'_> {
             self.declarations.insert(declarator.id, builtin);
             if let Some(SymbolKind::Variable(variable)) =
                 self.symbol_mut(builtin).map(|symbol| &mut symbol.kind)
+                && variable.ty.kind == ty.kind
+                && ty.is_array()
             {
-                if variable.ty.kind == ty.kind && ty.is_array() {
-                    variable.ty = ty;
-                }
+                variable.ty = ty;
             }
             return;
         }

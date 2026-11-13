@@ -232,10 +232,10 @@ impl ObjectModule {
 fn drop_bias(module: &mut Module) {
     for (_, function) in module.functions.iter_mut() {
         for (_, expression) in function.expressions.iter_mut() {
-            if let crate::Expression::ImageSample { ref mut level, .. } = *expression {
-                if matches!(*level, crate::SampleLevel::Bias(_)) {
-                    *level = crate::SampleLevel::Zero;
-                }
+            if let crate::Expression::ImageSample { ref mut level, .. } = *expression
+                && matches!(*level, crate::SampleLevel::Bias(_))
+            {
+                *level = crate::SampleLevel::Zero;
             }
         }
     }

@@ -1021,8 +1021,7 @@ impl super::Validator {
                     format: crate::StorageFormat::Unknown(scalar),
                     ..
                 } = class
-                {
-                    if !matches!(
+                    && !matches!(
                         scalar,
                         crate::Scalar {
                             kind: crate::ScalarKind::Float
@@ -1033,13 +1032,13 @@ impl super::Validator {
                             kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                             width: 8,
                         }
-                    ) {
-                        return Err(TypeError::UnsupportedImageType {
-                            dim,
-                            arrayed,
-                            class,
-                        });
-                    }
+                    )
+                {
+                    return Err(TypeError::UnsupportedImageType {
+                        dim,
+                        arrayed,
+                        class,
+                    });
                 }
                 if arrayed && matches!(dim, crate::ImageDimension::D3) {
                     return Err(TypeError::UnsupportedImageType {

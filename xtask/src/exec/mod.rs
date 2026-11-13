@@ -1026,11 +1026,11 @@ impl Executor {
                         twins.push((index, vec![(expected, actual)]));
                         continue;
                     }
-                    if let (Ok(e), Ok(a)) = (&expected, &actual) {
-                        if let Ok(tolerated) = compare_outputs(&ready.plan, e, a) {
-                            outcomes.push(Some(Outcome::Pass { tolerated }));
-                            continue;
-                        }
+                    if let (Ok(e), Ok(a)) = (&expected, &actual)
+                        && let Ok(tolerated) = compare_outputs(&ready.plan, e, a)
+                    {
+                        outcomes.push(Some(Outcome::Pass { tolerated }));
+                        continue;
                     }
                     outcomes.push(None);
                     pending.push((index, expected.ok()));
@@ -1119,10 +1119,10 @@ fn confirm(
             ));
         }
     };
-    if let Some(first) = expected_first {
-        if let Err(difference) = compare_outputs(plan, first, &expected) {
-            return Outcome::skip(SkipReason::Nondeterministic, difference.to_string());
-        }
+    if let Some(first) = expected_first
+        && let Err(difference) = compare_outputs(plan, first, &expected)
+    {
+        return Outcome::skip(SkipReason::Nondeterministic, difference.to_string());
     }
     match compare_outputs(plan, &expected, &actual) {
         Ok(tolerated) => Outcome::Pass { tolerated },

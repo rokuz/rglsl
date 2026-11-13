@@ -260,10 +260,10 @@ fn prepare(raw: &[String]) -> Result<()> {
     let job = read_job(Path::new(reference))?;
     let prepared = prepare_reference(&job, max_uniforms, true)?;
     let output = PathBuf::from(output);
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     write_job(&prepared, &output)
 }

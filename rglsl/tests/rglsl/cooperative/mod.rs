@@ -687,12 +687,11 @@ pub fn compile_raw_with(
         }
         Some(GlslangResult::Accepted(reference)) => Some(reference),
     };
-    if let (Some(reference), Glslang::SameStructure) = (&reference, expectation) {
-        if let Some(difference) =
+    if let (Some(reference), Glslang::SameStructure) = (&reference, expectation)
+        && let Some(difference) =
             histogram_difference(&raw_structure(reference), &raw_structure(&words))
-        {
-            return Err(format!("the module differs from glslang's: {difference}").into());
-        }
+    {
+        return Err(format!("the module differs from glslang's: {difference}").into());
     }
     Ok(RawCompiled {
         words,

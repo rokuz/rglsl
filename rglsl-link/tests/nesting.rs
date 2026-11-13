@@ -1130,10 +1130,10 @@ fn run_groups(groups: Vec<Group>) -> TestResult {
                     let Some((group, depth)) = next else {
                         break;
                     };
-                    if let Err(error) = group(depth) {
-                        if let Ok(mut failures) = failures.lock() {
-                            failures.push(error.to_string());
-                        }
+                    if let Err(error) = group(depth)
+                        && let Ok(mut failures) = failures.lock()
+                    {
+                        failures.push(error.to_string());
                     }
                 }
             });

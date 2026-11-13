@@ -336,12 +336,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut pending = Vec::from([expression]);
         while let Some(expression) = pending.pop() {
             self.walker.found.borrow_mut().push(expression);
-            if let ExpressionKind::FunctionCall(call) = &expression.kind {
-                if let FunctionIdentifier::Constructor(specifier)
+            if let ExpressionKind::FunctionCall(call) = &expression.kind
+                && let FunctionIdentifier::Constructor(specifier)
                 | FunctionIdentifier::Cast(specifier) = &call.function.node
-                {
-                    self.call(self.clone().specifier(specifier)).await;
-                }
+            {
+                self.call(self.clone().specifier(specifier)).await;
             }
             pending.extend(expression.kind.children().into_iter().rev());
         }

@@ -44,20 +44,20 @@ fn describe_variable(types: &TypeRegistry, variable: &Variable) -> String {
         variable.origin,
         variable.value
     );
-    if let TypeKind::Block(id) = variable.ty.kind {
-        if let Some(block) = types.block(id) {
+    if let TypeKind::Block(id) = variable.ty.kind
+        && let Some(block) = types.block(id)
+    {
+        text.push_str(&format!(
+            " {} {:?} {:?} {:?} {}",
+            block.name, block.storage, block.qualifiers, block.reference, block.buffer_type
+        ));
+        for member in &block.members {
             text.push_str(&format!(
-                " {} {:?} {:?} {:?} {}",
-                block.name, block.storage, block.qualifiers, block.reference, block.buffer_type
+                " {} {} {:?}",
+                member.name,
+                member.ty.display(types),
+                member.qualifiers
             ));
-            for member in &block.members {
-                text.push_str(&format!(
-                    " {} {} {:?}",
-                    member.name,
-                    member.ty.display(types),
-                    member.qualifiers
-                ));
-            }
         }
     }
     text

@@ -435,11 +435,11 @@ impl<'a> Precise<'a> {
                 let callee = self.analysis.calls.get(&expression.id);
                 if let (Some(Callee::Constructor(ty)), Some((&index, rest))) =
                     (callee, self.remained.split_first())
+                    && !ty.is_array()
+                    && matches!(ty.kind, TypeKind::Struct(_))
                 {
-                    if !ty.is_array() && matches!(ty.kind, TypeKind::Struct(_)) {
-                        let argument = call.arguments.get(usize::try_from(index).ok()?)?;
-                        return Some((argument, rest.to_vec()));
-                    }
+                    let argument = call.arguments.get(usize::try_from(index).ok()?)?;
+                    return Some((argument, rest.to_vec()));
                 }
                 if let Some(Callee::Builtin(id)) = callee {
                     let arithmetic = self

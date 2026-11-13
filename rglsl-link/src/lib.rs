@@ -374,10 +374,10 @@ fn fix_up_library_functions(
     for &handle in functions {
         let function = module.functions.get_mut(handle);
         for (_, expression) in function.expressions.iter_mut() {
-            if let Expression::ImageSample { ref mut level, .. } = *expression {
-                if matches!(*level, SampleLevel::Auto) {
-                    *level = SampleLevel::Zero;
-                }
+            if let Expression::ImageSample { ref mut level, .. } = *expression
+                && matches!(*level, SampleLevel::Auto)
+            {
+                *level = SampleLevel::Zero;
             }
         }
     }

@@ -264,10 +264,10 @@ impl Writer {
                 }
                 instruction.to_words(&mut self.logical_layout.declarations);
                 self.decorate(id, spirv::Decoration::SpecId, &[spec_id]);
-                if self.flags.contains(WriterFlags::DEBUG) {
-                    if let Some(ref name) = item.name {
-                        self.debugs.push(Instruction::name(id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && let Some(ref name) = item.name
+                {
+                    self.debugs.push(Instruction::name(id, name));
                 }
                 id
             }
@@ -276,10 +276,11 @@ impl Writer {
                     .init
                     .ok_or(Error::SpecializationConstant("an override without a value"))?;
                 let id = self.write_global_expression(init, module, mod_info)?;
-                if self.flags.contains(WriterFlags::DEBUG) && self.is_override_dependent(init) {
-                    if let Some(ref name) = item.name {
-                        self.debugs.push(Instruction::name(id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && self.is_override_dependent(init)
+                    && let Some(ref name) = item.name
+                {
+                    self.debugs.push(Instruction::name(id, name));
                 }
                 id
             }
@@ -325,10 +326,10 @@ impl Writer {
     }
 
     fn checked_type_id(&mut self, resolution: &TypeResolution) -> Result<Word, Error> {
-        if let TypeResolution::Handle(ty) = *resolution {
-            if !self.lookup_type.contains_key(&LookupType::Handle(ty)) {
-                return Err(Error::Validation("a type is used before it is declared"));
-            }
+        if let TypeResolution::Handle(ty) = *resolution
+            && !self.lookup_type.contains_key(&LookupType::Handle(ty))
+        {
+            return Err(Error::Validation("a type is used before it is declared"));
         }
         self.get_expression_type_id(resolution)
     }

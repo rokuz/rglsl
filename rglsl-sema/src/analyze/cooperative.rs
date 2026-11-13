@@ -310,10 +310,10 @@ impl Analyzer<'_> {
                     }
                     _ => None,
                 };
-                if let Some((extension, feature)) = extension {
-                    if !self.require_extension(span, extension, feature) {
-                        return Type::ERROR;
-                    }
+                if let Some((extension, feature)) = extension
+                    && !self.require_extension(span, extension, feature)
+                {
+                    return Type::ERROR;
                 }
                 Type::new(TypeKind::Tensor { scalar, rank })
             }
@@ -584,19 +584,17 @@ impl Analyzer<'_> {
                 Type::new(TypeKind::LongVector { scalar, size })
             }
         };
-        if !cooperative {
-            if let Some(result) = Self::special_long_builtin(name, operands, long) {
-                let Some(result) = result else {
-                    return ambiguous(self);
-                };
-                let id = self.builtins.overloads(name).first().copied();
-                let Some(id) = id else {
-                    return ambiguous(self);
-                };
-                self.builtin_extensions(span, name);
-                self.calls.insert(expression.id, super::Callee::Builtin(id));
-                return Operand::temporary(result);
-            }
+        if !cooperative && let Some(result) = Self::special_long_builtin(name, operands, long) {
+            let Some(result) = result else {
+                return ambiguous(self);
+            };
+            let id = self.builtins.overloads(name).first().copied();
+            let Some(id) = id else {
+                return ambiguous(self);
+            };
+            self.builtin_extensions(span, name);
+            self.calls.insert(expression.id, super::Callee::Builtin(id));
+            return Operand::temporary(result);
         }
         let features = self.numeric_features();
         let convertible = name.starts_with("subgroup");

@@ -693,11 +693,10 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
     }
     if needs.iter().any(|need| {
         matches!(need, Need::Feature(name) if name.starts_with("SubgroupSupportedOperations"))
-    }) {
-        if let Some(stage) = requirements::subgroup_stage(reflection.model) {
+    })
+        && let Some(stage) = requirements::subgroup_stage(reflection.model) {
             needs.insert(Need::Feature(stage));
         }
-    }
     for extension in &reflection.extensions {
         if !requirements::extension(extension) {
             return Err(Refusal::Capability(format!("extension {extension}")));

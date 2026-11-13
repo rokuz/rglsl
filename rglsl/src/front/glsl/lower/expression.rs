@@ -351,12 +351,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 flags
             };
             self.mark_precision(operation, flags);
-            if relaxed {
-                if let Expression::Swizzle { vector, .. } = self.expressions[operation] {
-                    if matches!(self.expressions[vector], Expression::Load { .. }) {
-                        self.mark_precision(vector, crate::Precision::RELAXED);
-                    }
-                }
+            if relaxed
+                && let Expression::Swizzle { vector, .. } = self.expressions[operation]
+                && matches!(self.expressions[vector], Expression::Load { .. })
+            {
+                self.mark_precision(vector, crate::Precision::RELAXED);
             }
         }
         Ok(value)
@@ -373,10 +372,11 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 let handle = self.lw.specialization(expression, None, at)?;
                 return self.add(Expression::Override(handle), at).map(Some);
             }
-        } else if info.is_constant && !info.ty.contains_reference(&self.lw.analysis.types) {
-            if let Some(ref value) = info.value {
-                return self.constant(&info.ty, &value.values, at).map(Some);
-            }
+        } else if info.is_constant
+            && !info.ty.contains_reference(&self.lw.analysis.types)
+            && let Some(ref value) = info.value
+        {
+            return self.constant(&info.ty, &value.values, at).map(Some);
         }
         Ok(None)
     }
@@ -986,46 +986,46 @@ impl<'a> FunctionLowerer<'_, 'a> {
         if place.swizzle.is_none() {
             value = self.store_qualified(place.pointer, value, at)?;
         }
-        if let Some(ref components) = place.swizzle {
-            if let Some(pattern) = self.full_physical_swizzle(place.pointer, components) {
-                let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
-                    .ok_or_else(|| internal(at))?;
-                let previous = self.add(
-                    Expression::Load {
-                        pointer: place.pointer,
-                    },
-                    at,
-                )?;
-                self.unemitted(
-                    Expression::Swizzle {
-                        size,
-                        vector: previous,
-                        pattern: [
-                            SwizzleComponent::X,
-                            SwizzleComponent::Y,
-                            SwizzleComponent::Z,
-                            SwizzleComponent::W,
-                        ],
-                    },
-                    at,
-                );
-                let value = self.unemitted(
-                    Expression::Swizzle {
-                        size,
-                        vector: value,
-                        pattern,
-                    },
-                    at,
-                );
-                self.push(
-                    Statement::Store {
-                        pointer: place.pointer,
-                        value,
-                    },
-                    at,
-                );
-                return Ok(());
-            }
+        if let Some(ref components) = place.swizzle
+            && let Some(pattern) = self.full_physical_swizzle(place.pointer, components)
+        {
+            let size = vector_size(u8::try_from(components.len()).unwrap_or(0))
+                .ok_or_else(|| internal(at))?;
+            let previous = self.add(
+                Expression::Load {
+                    pointer: place.pointer,
+                },
+                at,
+            )?;
+            self.unemitted(
+                Expression::Swizzle {
+                    size,
+                    vector: previous,
+                    pattern: [
+                        SwizzleComponent::X,
+                        SwizzleComponent::Y,
+                        SwizzleComponent::Z,
+                        SwizzleComponent::W,
+                    ],
+                },
+                at,
+            );
+            let value = self.unemitted(
+                Expression::Swizzle {
+                    size,
+                    vector: value,
+                    pattern,
+                },
+                at,
+            );
+            self.push(
+                Statement::Store {
+                    pointer: place.pointer,
+                    value,
+                },
+                at,
+            );
+            return Ok(());
         }
         match place.swizzle {
             Some(ref components) => {
@@ -1851,28 +1851,27 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         if let Some(&rglsl_sema::scope::SymbolKind::BlockMember { instance, index }) =
             self.with(|this| this.lw.symbol(symbol).map(|symbol| &symbol.kind))?
+            && !self.with(|this| this.lw.is_builtin_symbol(symbol))?
         {
-            if !self.with(|this| this.lw.is_builtin_symbol(symbol))? {
-                let block = self.with(|this| {
-                    this.lw
-                        .variable(instance)
-                        .and_then(|variable| match variable.ty.kind {
-                            TypeKind::Block(id) => Some(id),
-                            _ => None,
-                        })
-                        .ok_or_else(|| internal(at))
-                })??;
-                let GlobalRef::Variable(global) =
-                    self.with(|this| this.lw.global_ref(instance, at))??
-                else {
-                    return Err(internal(at));
-                };
-                let base = self.with(|this| this.add(Expression::GlobalVariable(global), at))??;
-                let pointer =
-                    self.with(|this| this.add(Expression::AccessIndex { base, index }, at))??;
-                let boolean = self.with(|this| this.lw.block_bools.contains(&(block, index)))?;
-                return Ok(Chain::Place(Place::pointer(pointer, boolean)));
-            }
+            let block = self.with(|this| {
+                this.lw
+                    .variable(instance)
+                    .and_then(|variable| match variable.ty.kind {
+                        TypeKind::Block(id) => Some(id),
+                        _ => None,
+                    })
+                    .ok_or_else(|| internal(at))
+            })??;
+            let GlobalRef::Variable(global) =
+                self.with(|this| this.lw.global_ref(instance, at))??
+            else {
+                return Err(internal(at));
+            };
+            let base = self.with(|this| this.add(Expression::GlobalVariable(global), at))??;
+            let pointer =
+                self.with(|this| this.add(Expression::AccessIndex { base, index }, at))??;
+            let boolean = self.with(|this| this.lw.block_bools.contains(&(block, index)))?;
+            return Ok(Chain::Place(Place::pointer(pointer, boolean)));
         }
         if let Some((global, index)) = self.with(|this| this.lw.per_vertex_member(symbol))? {
             let base = self.with(|this| this.add(Expression::GlobalVariable(global), at))??;
@@ -1884,39 +1883,37 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             return Ok(chain);
         }
         let global = self.with(|this| this.lw.global_ref(symbol, at))??;
-        if let GlobalRef::Variable(handle) = global {
-            if let Some(crate::Binding::BuiltIn(crate::BuiltIn::ShaderBallot(
+        if let GlobalRef::Variable(handle) = global
+            && let Some(crate::Binding::BuiltIn(crate::BuiltIn::ShaderBallot(
                 crate::ShaderBallot::Mask(_),
             ))) = self.with(|this| this.lw.module.global_variables[handle].io.clone())?
-            {
-                let pointer =
-                    self.with(|this| this.add(Expression::GlobalVariable(handle), at))??;
-                let mask = self.with(|this| this.add(Expression::Load { pointer }, at))??;
-                return Ok(Chain::Value(
-                    self.with(|this| this.ballot_to_u64(mask, at))??,
-                ));
-            }
+        {
+            let pointer = self.with(|this| this.add(Expression::GlobalVariable(handle), at))??;
+            let mask = self.with(|this| this.add(Expression::Load { pointer }, at))??;
+            return Ok(Chain::Value(
+                self.with(|this| this.ballot_to_u64(mask, at))??,
+            ));
         }
         let handle_space = matches!(global, GlobalRef::Variable(handle)
             if self.with(|this| this.lw.module.global_variables[handle].space)? == AddressSpace::Handle);
         let expression = super::Lowerer::global_expression(global);
         let mut value = self.with(|this| this.add(expression, at))??;
-        if let GlobalRef::Variable(handle) = global {
-            if let Some(offset) = self.with(|this| this.lw.heap_offset_value(handle))? {
-                let offset = {
-                    let frame = self.clone().rvalue(offset);
-                    self.nest(frame).await
-                }?;
-                value = self.with(|this| {
-                    this.add(
-                        Expression::HeapOffset {
-                            pointer: value,
-                            offset,
-                        },
-                        at,
-                    )
-                })??;
-            }
+        if let GlobalRef::Variable(handle) = global
+            && let Some(offset) = self.with(|this| this.lw.heap_offset_value(handle))?
+        {
+            let offset = {
+                let frame = self.clone().rvalue(offset);
+                self.nest(frame).await
+            }?;
+            value = self.with(|this| {
+                this.add(
+                    Expression::HeapOffset {
+                        pointer: value,
+                        offset,
+                    },
+                    at,
+                )
+            })??;
         }
         Ok(match global {
             GlobalRef::Variable(_) if !handle_space => Chain::Place(Place::pointer(value, false)),

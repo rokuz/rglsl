@@ -259,10 +259,10 @@ impl ExpressionTypeResolver<'_> {
         &self,
         handle: Handle<crate::Expression>,
     ) -> Result<&crate::TypeInner, ExpressionError> {
-        if handle < self.root {
-            if let Some(info) = self.info.expression_info(handle) {
-                return Ok(info.ty.inner_with(self.types));
-            }
+        if handle < self.root
+            && let Some(info) = self.info.expression_info(handle)
+        {
+            return Ok(info.ty.inner_with(self.types));
         }
         Err(ExpressionError::NotYetProcessed(handle))
     }
@@ -457,10 +457,11 @@ impl super::Validator {
                         }?;
                         // If we know both the length and the index, we can do the
                         // bounds check now.
-                        if let crate::proc::IndexableLength::Known(known_length) = length {
-                            if value >= known_length && !behind_pointer {
-                                return Err(ExpressionError::IndexOutOfBounds(base, value));
-                            }
+                        if let crate::proc::IndexableLength::Known(known_length) = length
+                            && value >= known_length
+                            && !behind_pointer
+                        {
+                            return Err(ExpressionError::IndexOutOfBounds(base, value));
                         }
                     }
                     Err(crate::proc::ConstValueError::Negative) => {
@@ -942,10 +943,10 @@ impl super::Validator {
                 if super::image_array_index_expected(dim, arrayed, class) != array_index.is_some() {
                     return Err(ExpressionError::InvalidImageArrayIndex);
                 }
-                if let Some(expr) = array_index {
-                    if !matches!(*resolver.resolve(expr)?, Ti::Scalar(Sc::I32 | Sc::U32)) {
-                        return Err(ExpressionError::InvalidImageArrayIndexType(expr));
-                    }
+                if let Some(expr) = array_index
+                    && !matches!(*resolver.resolve(expr)?, Ti::Scalar(Sc::I32 | Sc::U32))
+                {
+                    return Err(ExpressionError::InvalidImageArrayIndexType(expr));
                 }
 
                 match (sample, class.is_multisampled()) {
@@ -1631,10 +1632,9 @@ impl super::Validator {
                     value: crate::RayQueryIntersectionValue::TriangleVertexPositions,
                     ..
                 } = value
+                    && module.special_types.ray_vertex_return.is_none()
                 {
-                    if module.special_types.ray_vertex_return.is_none() {
-                        return Err(ExpressionError::InvalidRayQueryType(query));
-                    }
+                    return Err(ExpressionError::InvalidRayQueryType(query));
                 }
                 ShaderStages::all()
             }
@@ -1798,10 +1798,10 @@ impl super::Validator {
                 if !matches!(*resolver.resolve(coarse)?, Ti::Scalar(Sc::BOOL)) {
                     return Err(ExpressionError::InvalidImageOtherIndexType(coarse));
                 }
-                if let Some(min_lod) = min_lod {
-                    if !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32)) {
-                        return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
-                    }
+                if let Some(min_lod) = min_lod
+                    && !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32))
+                {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
                 }
                 if !matches!(module.types[ty].inner, Ti::Struct { .. }) {
                     return Err(ExpressionError::InvalidSparseResultType(ty));
@@ -1841,29 +1841,29 @@ impl super::Validator {
                 ) {
                     return Err(ExpressionError::InvalidImageOtherIndexType(coordinate));
                 }
-                if let Some(fragment) = fragment {
-                    if !matches!(*resolver.resolve(fragment)?, Ti::Scalar(Sc::U32)) {
-                        return Err(ExpressionError::InvalidImageOtherIndexType(fragment));
-                    }
+                if let Some(fragment) = fragment
+                    && !matches!(*resolver.resolve(fragment)?, Ti::Scalar(Sc::U32))
+                {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(fragment));
                 }
                 ShaderStages::all()
             }
             E::AttachmentRead { aspect, sample } => {
-                if let crate::AttachmentAspect::Color(image) = aspect {
-                    if !matches!(
+                if let crate::AttachmentAspect::Color(image) = aspect
+                    && !matches!(
                         *resolver.resolve(image)?,
                         Ti::Image {
                             dim: crate::ImageDimension::TileImageData,
                             ..
                         }
-                    ) {
-                        return Err(ExpressionError::ExpectedGlobalVariable);
-                    }
+                    )
+                {
+                    return Err(ExpressionError::ExpectedGlobalVariable);
                 }
-                if let Some(sample) = sample {
-                    if !matches!(*resolver.resolve(sample)?, Ti::Scalar(Sc::I32 | Sc::U32)) {
-                        return Err(ExpressionError::InvalidImageOtherIndexType(sample));
-                    }
+                if let Some(sample) = sample
+                    && !matches!(*resolver.resolve(sample)?, Ti::Scalar(Sc::I32 | Sc::U32))
+                {
+                    return Err(ExpressionError::InvalidImageOtherIndexType(sample));
                 }
                 ShaderStages::FRAGMENT
             }
@@ -2172,10 +2172,10 @@ impl super::Validator {
                     Some((element, _)) if element == scalar => {}
                     _ => return Err(ExpressionError::InvalidTensorOperand(root)),
                 }
-                if let Some(value) = out_of_bounds {
-                    if *resolver.resolve(value)? != Ti::Scalar(scalar) {
-                        return Err(ExpressionError::InvalidTensorOperand(value));
-                    }
+                if let Some(value) = out_of_bounds
+                    && *resolver.resolve(value)? != Ti::Scalar(scalar)
+                {
+                    return Err(ExpressionError::InvalidTensorOperand(value));
                 }
                 ShaderStages::all()
             }

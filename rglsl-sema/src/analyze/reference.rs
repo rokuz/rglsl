@@ -89,16 +89,16 @@ impl Analyzer<'_> {
                     names::BUFFER_REFERENCE,
                     "buffer_reference_align",
                 );
-                if let Some(value) = entry.value.constant() {
-                    if value <= 0 || (value & (value - 1)) != 0 {
-                        self.error(
-                            entry.span,
-                            DiagnosticKind::InvalidQualifier {
-                                qualifier: "buffer_reference_align",
-                                reason: "must be a power of 2",
-                            },
-                        );
-                    }
+                if let Some(value) = entry.value.constant()
+                    && (value <= 0 || (value & (value - 1)) != 0)
+                {
+                    self.error(
+                        entry.span,
+                        DiagnosticKind::InvalidQualifier {
+                            qualifier: "buffer_reference_align",
+                            reason: "must be a power of 2",
+                        },
+                    );
                 }
             }
         }

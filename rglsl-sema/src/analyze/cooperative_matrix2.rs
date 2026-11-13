@@ -637,12 +637,11 @@ impl Analyzer<'_> {
                 if !valid {
                     return Operand::error();
                 }
-                if load {
-                    if let Some(operand) = operands.first() {
-                        if !self.require_lvalue(first, operand) {
-                            return Operand::error();
-                        }
-                    }
+                if load
+                    && let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 for (argument, decoder) in arguments.iter().skip(functions_start).zip(&decoders) {
                     self.calls.insert(argument.id, Callee::Function(*decoder));
@@ -691,10 +690,10 @@ impl Analyzer<'_> {
                 if failed {
                     return Operand::error();
                 }
-                if let Some(operand) = operands.first() {
-                    if !self.require_lvalue(first, operand) {
-                        return Operand::error();
-                    }
+                if let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 MatrixCall::Transpose { ext }
             }
@@ -805,10 +804,10 @@ impl Analyzer<'_> {
                 if failed {
                     return Operand::error();
                 }
-                if let Some(operand) = operands.first() {
-                    if !self.require_lvalue(first, operand) {
-                        return Operand::error();
-                    }
+                if let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 if let Some(argument) = arguments.get(3) {
                     self.calls.insert(argument.id, Callee::Function(combine));
@@ -926,10 +925,10 @@ impl Analyzer<'_> {
                 if failed {
                     return Operand::error();
                 }
-                if let Some(operand) = operands.first() {
-                    if !self.require_lvalue(first, operand) {
-                        return Operand::error();
-                    }
+                if let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 if let Some(argument) = arguments.get(2) {
                     self.calls

@@ -558,15 +558,15 @@ impl Writer {
             let name = self.debug_info_string(&source.name);
             let mut operands = alloc::vec![name];
             let mut continued = Vec::new();
-            if self.debug.source_text {
-                if let Some(ref text) = source.text {
-                    for (position, chunk) in split_text(text).into_iter().enumerate() {
-                        let id = self.debug_info_string(chunk);
-                        if position == 0 {
-                            operands.push(id);
-                        } else {
-                            continued.push(id);
-                        }
+            if self.debug.source_text
+                && let Some(ref text) = source.text
+            {
+                for (position, chunk) in split_text(text).into_iter().enumerate() {
+                    let id = self.debug_info_string(chunk);
+                    if position == 0 {
+                        operands.push(id);
+                    } else {
+                        continued.push(id);
                     }
                 }
             }
@@ -773,10 +773,9 @@ impl Writer {
         for (handle, ty) in ir_module.types.iter() {
             if let (Some(name), &crate::TypeInner::Struct { ref members, .. }) =
                 (ty.name.as_deref(), &ty.inner)
+                && !members.is_empty()
             {
-                if !members.is_empty() {
-                    complete_structs.insert(name, handle);
-                }
+                complete_structs.insert(name, handle);
             }
         }
         for (handle, ty) in ir_module.types.iter() {

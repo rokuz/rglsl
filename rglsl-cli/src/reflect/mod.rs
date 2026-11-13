@@ -193,18 +193,17 @@ impl Program<'_> {
                         });
                     }
                     ExternalDeclaration::Declaration(declaration) => {
-                        if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
-                            if list
+                        if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind
+                            && list
                                 .declarators
                                 .iter()
                                 .any(|declarator| declarator.kind.initializer.is_some())
-                            {
-                                functions.push(Function {
-                                    unit: index,
-                                    item: Item::Globals(list),
-                                    signature: String::new(),
-                                });
-                            }
+                        {
+                            functions.push(Function {
+                                unit: index,
+                                item: Item::Globals(list),
+                                signature: String::new(),
+                            });
                         }
                     }
                     ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}

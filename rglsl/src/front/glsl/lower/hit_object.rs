@@ -213,19 +213,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if !stem.starts_with("hitObject") && stem != "reorderThread" {
             return Ok(None);
         }
-        if stem == "reorderThread" {
-            if let [ref hint, ref bits] = *arguments {
-                let hint = {
-                    let frame = self.clone().rvalue(hint);
-                    self.nest(frame).await
-                }?;
-                let bits = {
-                    let frame = self.clone().rvalue(bits);
-                    self.nest(frame).await
-                }?;
-                self.with(|this| this.push(Statement::ReorderThread { kind, hint, bits }, at))?;
-                return Ok(Some(None));
-            }
+        if stem == "reorderThread"
+            && let [ref hint, ref bits] = *arguments
+        {
+            let hint = {
+                let frame = self.clone().rvalue(hint);
+                self.nest(frame).await
+            }?;
+            let bits = {
+                let frame = self.clone().rvalue(bits);
+                self.nest(frame).await
+            }?;
+            self.with(|this| this.push(Statement::ReorderThread { kind, hint, bits }, at))?;
+            return Ok(Some(None));
         }
         let (object, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
         let object = {

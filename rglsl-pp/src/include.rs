@@ -109,10 +109,10 @@ impl DirectoryStack {
         while self.directories.len() < depth {
             self.directories.push(directory.clone());
         }
-        if depth == 1 {
-            if let Some(first) = self.directories.first_mut() {
-                *first = directory;
-            }
+        if depth == 1
+            && let Some(first) = self.directories.first_mut()
+        {
+            *first = directory;
         }
     }
 

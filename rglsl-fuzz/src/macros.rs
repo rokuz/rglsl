@@ -91,11 +91,11 @@ pub fn emit(unit: &TranslationUnit) -> Result<String, Error> {
     }
     let mut output = String::with_capacity(printed.len() + 1024);
     let mut lines = printed.split_inclusive('\n').peekable();
-    if let Some(first) = lines.peek() {
-        if is_version_line(first) {
-            output.push_str(first);
-            lines.next();
-        }
+    if let Some(first) = lines.peek()
+        && is_version_line(first)
+    {
+        output.push_str(first);
+        lines.next();
     }
     output.push_str(&header());
     for line in lines {

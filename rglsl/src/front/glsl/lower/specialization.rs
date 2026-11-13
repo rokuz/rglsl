@@ -244,10 +244,10 @@ impl<'a> Lowerer<'a> {
         if let Some(slot) = self.local_size_overrides.get_mut(index) {
             *slot = Some(handle);
         }
-        if id.is_none() {
-            if let Some(slot) = self.work_group_size_placeholders.get_mut(index) {
-                *slot = Some(handle);
-            }
+        if id.is_none()
+            && let Some(slot) = self.work_group_size_placeholders.get_mut(index)
+        {
+            *slot = Some(handle);
         }
         Ok(Some(handle))
     }

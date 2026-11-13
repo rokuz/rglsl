@@ -513,19 +513,19 @@ impl Preprocessor<'_> {
         let context = self.scan_context();
         let mut header = None;
         let mut token = None;
-        if let Some(Input::File(file)) = self.inputs.last_mut() {
-            if let Some(delimiter @ ('<' | '"')) = file.skip_blanks(&context, &mut self.events) {
-                file.consume_char(&context, &mut self.events);
-                let closing = if delimiter == '<' { '>' } else { '"' };
-                let kind = if delimiter == '<' {
-                    IncludeKind::System
-                } else {
-                    IncludeKind::Local
-                };
-                header = file
-                    .header_name(closing, &context, &mut self.events)
-                    .map(|(name, too_long)| (name, too_long, kind));
-            }
+        if let Some(Input::File(file)) = self.inputs.last_mut()
+            && let Some(delimiter @ ('<' | '"')) = file.skip_blanks(&context, &mut self.events)
+        {
+            file.consume_char(&context, &mut self.events);
+            let closing = if delimiter == '<' { '>' } else { '"' };
+            let kind = if delimiter == '<' {
+                IncludeKind::System
+            } else {
+                IncludeKind::Local
+            };
+            header = file
+                .header_name(closing, &context, &mut self.events)
+                .map(|(name, too_long)| (name, too_long, kind));
         }
         self.flush_events();
         if header.is_none() {
@@ -635,12 +635,12 @@ impl Preprocessor<'_> {
             self.report(DiagnosticKind::PragmaWithoutNewline, at);
             return token;
         }
-        if let [once] = words.as_slice() {
-            if once == "once" {
-                let file = self.innermost_file().map_or(self.root, |file| file.file);
-                self.included_once.insert(file);
-                return token;
-            }
+        if let [once] = words.as_slice()
+            && once == "once"
+        {
+            let file = self.innermost_file().map_or(self.root, |file| file.file);
+            self.included_once.insert(file);
+            return token;
         }
         let mut text = String::from("#pragma");
         if self.options.listing {
@@ -761,18 +761,17 @@ impl Preprocessor<'_> {
             } else {
                 self.extensions = [on; crate::preprocessor::TRACKED_EXTENSIONS.len()];
             }
-        } else if let Some(index) = TRACKED_EXTENSIONS.iter().position(|known| *known == name) {
-            if let Some(slot) = self.extensions.get_mut(index) {
-                *slot = on;
-            }
+        } else if let Some(index) = TRACKED_EXTENSIONS.iter().position(|known| *known == name)
+            && let Some(slot) = self.extensions.get_mut(index)
+        {
+            *slot = on;
         }
         if matches!(
             name,
             "GL_GOOGLE_include_directive" | "GL_ARB_shading_language_include"
-        ) {
-            if let Some(slot) = self.extensions.get_mut(CPP_STYLE_LINE) {
-                *slot = on;
-            }
+        ) && let Some(slot) = self.extensions.get_mut(CPP_STYLE_LINE)
+        {
+            *slot = on;
         }
     }
 }

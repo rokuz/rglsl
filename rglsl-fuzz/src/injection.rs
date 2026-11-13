@@ -226,17 +226,17 @@ impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
                                 in_loop,
                             );
                         }
-                        if let Some(else_branch) = else_branch {
-                            if !matches!(else_branch.kind, StatementKind::Compound(_)) {
-                                state.point(
-                                    Location::Branch {
-                                        statement: statement.id,
-                                        else_branch: true,
-                                    },
-                                    Some(else_branch),
-                                    in_loop,
-                                );
-                            }
+                        if let Some(else_branch) = else_branch
+                            && !matches!(else_branch.kind, StatementKind::Compound(_))
+                        {
+                            state.point(
+                                Location::Branch {
+                                    statement: statement.id,
+                                    else_branch: true,
+                                },
+                                Some(else_branch),
+                                in_loop,
+                            );
                         }
                     });
                 }

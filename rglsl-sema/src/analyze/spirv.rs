@@ -432,12 +432,12 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let opcode = instruction.id.filter(|_| instruction.set.is_empty());
         let mut parameters = Vec::new();
         for (index, parameter) in specifier.parameters.iter().enumerate() {
-            if let (Some(opcode), SpirvTypeParameter::Constant(expression)) = (opcode, parameter) {
-                if let Some(value) = integer(expression) {
-                    self.with(|analyzer| {
-                        analyzer.opencl_type_operand(expression.span, opcode, index, value);
-                    });
-                }
+            if let (Some(opcode), SpirvTypeParameter::Constant(expression)) = (opcode, parameter)
+                && let Some(value) = integer(expression)
+            {
+                self.with(|analyzer| {
+                    analyzer.opencl_type_operand(expression.span, opcode, index, value);
+                });
             }
             match parameter {
                 SpirvTypeParameter::Type(ty) => {

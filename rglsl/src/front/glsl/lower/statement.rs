@@ -130,11 +130,11 @@ impl FunctionLowerer<'_, '_> {
             .span_at(length.saturating_sub(1))
             .map(|(_, span)| *span);
         block.cull(length.saturating_sub(1)..);
-        if let Some(span) = span.filter(|span| span.is_defined()) {
-            if self.lw.debug.is_some() {
-                let marker = crate::Range::from_index_range(0..0, &self.expressions);
-                block.push(IrStatement::Emit(marker), span);
-            }
+        if let Some(span) = span.filter(|span| span.is_defined())
+            && self.lw.debug.is_some()
+        {
+            let marker = crate::Range::from_index_range(0..0, &self.expressions);
+            block.push(IrStatement::Emit(marker), span);
         }
         true
     }
@@ -276,16 +276,15 @@ impl FunctionLowerer<'_, '_> {
                         .qualifiers
                         .flags
                         .contains(QualifierFlags::SPECIALIZATION)
+                        && let Some(initializer) = declarator.kind.initializer.as_ref()
                     {
-                        if let Some(initializer) = declarator.kind.initializer.as_ref() {
-                            let name = Some(declarator.kind.name.node.clone());
-                            let ty = variable.ty.clone();
-                            let handle =
-                                self.lw
-                                    .specialized_initializer(initializer, &ty, name, at)?;
-                            self.lw.globals.insert(symbol, GlobalRef::Override(handle));
-                            continue;
-                        }
+                        let name = Some(declarator.kind.name.node.clone());
+                        let ty = variable.ty.clone();
+                        let handle = self
+                            .lw
+                            .specialized_initializer(initializer, &ty, name, at)?;
+                        self.lw.globals.insert(symbol, GlobalRef::Override(handle));
+                        continue;
                     }
                     if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
                         && variable.value.as_ref().is_some_and(|value| {
@@ -293,20 +292,19 @@ impl FunctionLowerer<'_, '_> {
                         })
                     {
                         self.bind_variable(symbol, Local::Constant);
-                        if self.lw.debug.is_some() {
-                            if let Some(ref value) = variable.value {
-                                let ir = self.lw.ir_type(&variable.ty, at)?;
-                                let init =
-                                    self.lw.global_constant(&variable.ty, &value.values, at)?;
-                                self.lw.module.constants.append(
-                                    crate::Constant {
-                                        name: Some(declarator.kind.name.node.clone()),
-                                        ty: ir,
-                                        init,
-                                    },
-                                    at,
-                                );
-                            }
+                        if self.lw.debug.is_some()
+                            && let Some(ref value) = variable.value
+                        {
+                            let ir = self.lw.ir_type(&variable.ty, at)?;
+                            let init = self.lw.global_constant(&variable.ty, &value.values, at)?;
+                            self.lw.module.constants.append(
+                                crate::Constant {
+                                    name: Some(declarator.kind.name.node.clone()),
+                                    ty: ir,
+                                    init,
+                                },
+                                at,
+                            );
                         }
                         continue;
                     }

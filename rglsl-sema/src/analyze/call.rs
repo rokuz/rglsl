@@ -873,10 +873,11 @@ impl Analyzer<'_> {
             if parameter.direction.is_input() {
                 self.record_conversion(argument, &operand.ty, &parameter.ty);
             }
-            if parameter.direction.is_output() && operand.ty != parameter.ty {
-                if let Some(info) = self.expressions.get_mut(&argument.id) {
-                    info.output_conversion = Some(Box::new(parameter.ty.clone()));
-                }
+            if parameter.direction.is_output()
+                && operand.ty != parameter.ty
+                && let Some(info) = self.expressions.get_mut(&argument.id)
+            {
+                info.output_conversion = Some(Box::new(parameter.ty.clone()));
             }
         }
         if is_builtin && !failed {
@@ -1379,27 +1380,27 @@ impl Analyzer<'_> {
             "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
             _ => None,
         };
-        if let Some(index) = offset_index {
-            if let Some(operand) = operands.get(index) {
-                if !operand.constant {
-                    if !self
-                        .extensions
-                        .is_requested("GL_EXT_texture_offset_non_const")
-                    {
-                        return invalid(self, span, "the offset must be a constant expression");
-                    }
-                } else if let Some(constant) = &operand.value {
-                    let limits = &self.options.limits;
-                    let range = i64::from(limits.min_program_texel_offset)
-                        ..=i64::from(limits.max_program_texel_offset);
-                    let outside = constant
-                        .values
-                        .iter()
-                        .filter_map(|value| value.as_i64())
-                        .any(|value| !range.contains(&value));
-                    if outside {
-                        return invalid(self, span, "the offset is out of range");
-                    }
+        if let Some(index) = offset_index
+            && let Some(operand) = operands.get(index)
+        {
+            if !operand.constant {
+                if !self
+                    .extensions
+                    .is_requested("GL_EXT_texture_offset_non_const")
+                {
+                    return invalid(self, span, "the offset must be a constant expression");
+                }
+            } else if let Some(constant) = &operand.value {
+                let limits = &self.options.limits;
+                let range = i64::from(limits.min_program_texel_offset)
+                    ..=i64::from(limits.max_program_texel_offset);
+                let outside = constant
+                    .values
+                    .iter()
+                    .filter_map(|value| value.as_i64())
+                    .any(|value| !range.contains(&value));
+                if outside {
+                    return invalid(self, span, "the offset is out of range");
                 }
             }
         }
@@ -1408,10 +1409,10 @@ impl Analyzer<'_> {
             .is_some_and(|opaque| opaque.shadow);
         if name == "textureGatherOffsets" {
             let index = if shadow { 3 } else { 2 };
-            if let Some(operand) = operands.get(index) {
-                if !operand.constant || operand.specialization {
-                    return invalid(self, span, "the offsets must be constant");
-                }
+            if let Some(operand) = operands.get(index)
+                && (!operand.constant || operand.specialization)
+            {
+                return invalid(self, span, "the offsets must be constant");
             }
         }
         if name.starts_with("textureGather") && !name.contains("Lod") && !shadow {
@@ -1558,14 +1559,14 @@ impl Analyzer<'_> {
         }
         let numeric =
             !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. });
-        if ty.is_reference() || numeric {
-            if let Some(operand) = self.reference_constructor(span, &ty, operands) {
-                if !operand.ty.is_error() {
-                    self.calls
-                        .insert(expression.id, Callee::Constructor(ty.clone()));
-                }
-                return operand;
+        if (ty.is_reference() || numeric)
+            && let Some(operand) = self.reference_constructor(span, &ty, operands)
+        {
+            if !operand.ty.is_error() {
+                self.calls
+                    .insert(expression.id, Callee::Constructor(ty.clone()));
             }
+            return operand;
         }
         let any_specialization = operands.iter().any(|operand| operand.specialization);
         let has_scalar = |test: fn(Scalar) -> bool| {

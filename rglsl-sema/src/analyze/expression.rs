@@ -799,14 +799,13 @@ impl Analyzer<'_> {
         {
             self.require_scope_extension(expression.span, name);
         }
-        if let Some(extension) = crate::builtins::subgroup::variable_extension(name) {
-            if self
+        if let Some(extension) = crate::builtins::subgroup::variable_extension(name)
+            && self
                 .symbol(id)
                 .and_then(|symbol| symbol.variable())
                 .is_some_and(|variable| variable.origin == Origin::BuiltIn)
-            {
-                self.require_extension(expression.span, extension, name);
-            }
+        {
+            self.require_extension(expression.span, extension, name);
         }
         if self
             .symbol(id)
@@ -1599,10 +1598,10 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         let target_type = &target_operand.ty;
-        if target_type.is_reference() {
-            if let Some(binary) = compound_operator(operator) {
-                return self.reference_compound(span, binary, &target_operand, &value_operand);
-            }
+        if target_type.is_reference()
+            && let Some(binary) = compound_operator(operator)
+        {
+            return self.reference_compound(span, binary, &target_operand, &value_operand);
         }
         let Some(binary) = compound_operator(operator) else {
             self.assignment_small_check(span, target_type, "=");

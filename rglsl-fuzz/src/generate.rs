@@ -257,10 +257,10 @@ pub fn generate_variant_with_donors(
     let mut job = reference.clone();
     let prepared = prepare_reference(reference, options.max_uniforms.saturating_sub(1), true)?;
     for name in prepared.pipeline.uniform_names() {
-        if let Some(binding) = prepared.pipeline.binding(&name) {
-            if !job.pipeline.has_binding_or_is_push_constant(&name) {
-                job.pipeline.add_uniform_binding(&name, false, binding);
-            }
+        if let Some(binding) = prepared.pipeline.binding(&name)
+            && !job.pipeline.has_binding_or_is_push_constant(&name)
+        {
+            job.pipeline.add_uniform_binding(&name, false, binding);
         }
     }
     if options.add_injection_switch {

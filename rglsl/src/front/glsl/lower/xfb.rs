@@ -379,15 +379,15 @@ impl Lowerer<'_> {
                         )
                     });
             let explicit = self.xfb.strides.get(&buffer).copied();
-            if let Some(explicit) = explicit {
-                if implicit > explicit {
-                    self.errors.push(semantic(
+            if let Some(explicit) = explicit
+                && implicit > explicit
+            {
+                self.errors.push(semantic(
                         format!(
                             "xfb_stride is too small to hold all buffer entries: xfb_buffer {buffer}, xfb_stride {explicit}, minimum stride needed: {implicit}"
                         ),
                         Span::UNDEFINED,
                     ));
-                }
             }
             let stride = explicit.unwrap_or(implicit);
             if widths.wide && !stride.is_multiple_of(8) {

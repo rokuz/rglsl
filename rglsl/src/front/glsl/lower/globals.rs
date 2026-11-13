@@ -757,12 +757,12 @@ impl<'a> Lowerer<'a> {
                 self.globals.insert(symbol, GlobalRef::Override(handle));
                 return Ok(());
             }
-            if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION) {
-                if let Some(initializer) = declarator.kind.initializer.as_ref() {
-                    let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
-                    self.globals.insert(symbol, GlobalRef::Override(handle));
-                    return Ok(());
-                }
+            if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION)
+                && let Some(initializer) = declarator.kind.initializer.as_ref()
+            {
+                let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
+                self.globals.insert(symbol, GlobalRef::Override(handle));
+                return Ok(());
             }
             if let Some(ref value) = variable.value {
                 let ir = self.ir_type(ty, at)?;
@@ -1634,13 +1634,13 @@ impl<'a> Lowerer<'a> {
             if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
                 return Err(semantic("invariant can only apply to an output", at));
             }
-            if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer") {
-                if xfb_buffer != Some(buffer) {
-                    return Err(semantic(
-                        "xfb_buffer: member cannot contradict block (or what block inherited from global)",
-                        at,
-                    ));
-                }
+            if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer")
+                && xfb_buffer != Some(buffer)
+            {
+                return Err(semantic(
+                    "xfb_buffer: member cannot contradict block (or what block inherited from global)",
+                    at,
+                ));
             }
             let ty = self.ir_type(&member_ty, at)?;
             self.layouter
@@ -1981,10 +1981,10 @@ impl<'a> Lowerer<'a> {
                     continue;
                 };
                 let mut glsl = builtin.ty.clone();
-                if glsl.outer_size() == Some(GlslArraySize::Unsized) {
-                    if let Some(size) = self.declarator_size(declarator.node.array.as_ref()) {
-                        glsl.set_outer_size(GlslArraySize::Sized(size));
-                    }
+                if glsl.outer_size() == Some(GlslArraySize::Unsized)
+                    && let Some(size) = self.declarator_size(declarator.node.array.as_ref())
+                {
+                    glsl.set_outer_size(GlslArraySize::Sized(size));
                 }
                 let ty = self.ir_type(&glsl, at)?;
                 declared.push((name, ty, offset, stride));

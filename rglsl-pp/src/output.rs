@@ -103,11 +103,11 @@ impl Output {
             column: at.column,
             source: at.source,
         };
-        if let Some(last) = self.segments.last_mut() {
-            if last.start == start {
-                *last = segment;
-                return;
-            }
+        if let Some(last) = self.segments.last_mut()
+            && last.start == start
+        {
+            *last = segment;
+            return;
         }
         self.segments.push(segment);
     }

@@ -234,29 +234,29 @@ impl Lowerer<'_> {
                 implicit_sizes,
             ));
         }
-        if let Some((handle, _)) = self.per_vertex {
-            if covered.insert(handle) {
-                let mut implicit_sizes = Vec::new();
-                if let TypeInner::Struct { ref members, .. } =
-                    self.module.types[self.module.global_variables[handle].ty].inner
-                {
-                    for (index, member) in (0_u32..).zip(members) {
-                        if member.name.as_deref().is_some_and(|name| {
-                            super::prepass::CLIP_DISTANCES.contains(&name)
-                                && !self.per_vertex_redeclared
-                        }) {
-                            implicit_sizes.push(alloc::vec![PathStep::Member(index)]);
-                        }
+        if let Some((handle, _)) = self.per_vertex
+            && covered.insert(handle)
+        {
+            let mut implicit_sizes = Vec::new();
+            if let TypeInner::Struct { ref members, .. } =
+                self.module.types[self.module.global_variables[handle].ty].inner
+            {
+                for (index, member) in (0_u32..).zip(members) {
+                    if member.name.as_deref().is_some_and(|name| {
+                        super::prepass::CLIP_DISTANCES.contains(&name)
+                            && !self.per_vertex_redeclared
+                    }) {
+                        implicit_sizes.push(alloc::vec![PathStep::Member(index)]);
                     }
                 }
-                symbols.push(self.global_symbol(
-                    handle,
-                    String::from("gl_PerVertex"),
-                    SymbolKind::BuiltIn,
-                    None,
-                    implicit_sizes,
-                ));
             }
+            symbols.push(self.global_symbol(
+                handle,
+                String::from("gl_PerVertex"),
+                SymbolKind::BuiltIn,
+                None,
+                implicit_sizes,
+            ));
         }
         if self.library {
             symbols.sort_by_key(|symbol| symbol.global.index());

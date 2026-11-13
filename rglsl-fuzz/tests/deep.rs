@@ -80,10 +80,10 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
         let mut visited = 0;
         rewrite_expressions(&mut unit, &mut |expression| {
             visited += 1;
-            if let ExpressionKind::Variable(name) = &mut expression.kind {
-                if name == "b" {
-                    *name = String::from("c");
-                }
+            if let ExpressionKind::Variable(name) = &mut expression.kind
+                && name == "b"
+            {
+                *name = String::from("c");
             }
         })?;
         assert!(visited > DEPTH);

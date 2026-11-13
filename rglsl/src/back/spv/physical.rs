@@ -269,10 +269,10 @@ impl BlockContext<'_> {
                     while let TypeInner::Array { base, .. } = types[inner].inner {
                         inner = base;
                     }
-                    if let TypeInner::Matrix { .. } = types[inner].inner {
-                        if let Some(layout) = member.matrix_layout {
-                            accumulated |= layout.stride;
-                        }
+                    if let TypeInner::Matrix { .. } = types[inner].inner
+                        && let Some(layout) = member.matrix_layout
+                    {
+                        accumulated |= layout.stride;
                     }
                     ty = member.ty;
                 }
@@ -310,10 +310,8 @@ impl BlockContext<'_> {
         if let Some(alignment) = self.innermost_pointer_alignment(ty) {
             accumulated |= alignment;
         }
-        if component {
-            if let TypeInner::Vector { scalar, .. } = types[ty].inner {
-                accumulated |= u32::from(scalar.width);
-            }
+        if component && let TypeInner::Vector { scalar, .. } = types[ty].inner {
+            accumulated |= u32::from(scalar.width);
         }
         let alignment = lowest_bit(accumulated);
         if alignment == 0 && first_member {

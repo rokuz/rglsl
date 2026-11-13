@@ -142,10 +142,11 @@ impl Writer {
                 }
             }
         };
-        if plain != id && self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(ref name) = name {
-                self.debugs.push(Instruction::name(plain, name));
-            }
+        if plain != id
+            && self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = name
+        {
+            self.debugs.push(Instruction::name(plain, name));
         }
         self.plain_types.insert(id, plain);
         if plain != id {

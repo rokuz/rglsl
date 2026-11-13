@@ -286,33 +286,32 @@ fn construct(ty: BasicType, arguments: &[Value]) -> Value {
     let target = basic::element(ty);
     let count = basic::num_elements(ty) as usize;
     let mut result = Value::new(ty, vec![0.0; count]);
-    if basic::is_matrix(ty) {
-        if let [single] = arguments {
-            if single.data.len() == 1 {
-                for column in 0..result.columns as usize {
-                    for row in 0..result.rows as usize {
-                        result.data[column * result.rows as usize + row] =
-                            if column == row { single.data[0] } else { 0.0 };
-                    }
+    if basic::is_matrix(ty)
+        && let [single] = arguments
+    {
+        if single.data.len() == 1 {
+            for column in 0..result.columns as usize {
+                for row in 0..result.rows as usize {
+                    result.data[column * result.rows as usize + row] =
+                        if column == row { single.data[0] } else { 0.0 };
                 }
-                return result;
             }
-            if single.is_matrix() {
-                for column in 0..result.columns as usize {
-                    for row in 0..result.rows as usize {
-                        let value =
-                            if column < single.columns as usize && row < single.rows as usize {
-                                single.data[column * single.rows as usize + row]
-                            } else if column == row {
-                                1.0
-                            } else {
-                                0.0
-                            };
-                        result.data[column * result.rows as usize + row] = value;
-                    }
+            return result;
+        }
+        if single.is_matrix() {
+            for column in 0..result.columns as usize {
+                for row in 0..result.rows as usize {
+                    let value = if column < single.columns as usize && row < single.rows as usize {
+                        single.data[column * single.rows as usize + row]
+                    } else if column == row {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    result.data[column * result.rows as usize + row] = value;
                 }
-                return result;
             }
+            return result;
         }
     }
     let flattened: Vec<f64> = arguments

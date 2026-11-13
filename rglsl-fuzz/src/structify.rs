@@ -89,10 +89,10 @@ fn candidates(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Candidate> {
         });
     }
     for (expression, symbol) in &analysis.references {
-        if let Some(index) = by_symbol.get(symbol) {
-            if let Some(candidate) = result.get_mut(*index) {
-                candidate.references.insert(*expression);
-            }
+        if let Some(index) = by_symbol.get(symbol)
+            && let Some(candidate) = result.get_mut(*index)
+        {
+            candidate.references.insert(*expression);
         }
     }
     result

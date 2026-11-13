@@ -68,28 +68,26 @@ impl Analyzer<'_> {
             behavior,
             ExtensionBehavior::Require | ExtensionBehavior::Enable
         );
-        if enabling {
-            if let (Some(needed), Some(target)) =
+        if enabling
+            && let (Some(needed), Some(target)) =
                 (extensions::minimum_spirv(name), self.options.spirv_version)
-            {
-                if target < needed {
-                    self.error(
-                        span,
-                        DiagnosticKind::ExtensionSpirvVersion(String::from(name)),
-                    );
-                }
-            }
+            && target < needed
+        {
+            self.error(
+                span,
+                DiagnosticKind::ExtensionSpirvVersion(String::from(name)),
+            );
         }
-        if let Some(reason) = extensions::unsupported_in_vulkan(name) {
-            if behavior != ExtensionBehavior::Disable {
-                self.error(
-                    span,
-                    DiagnosticKind::ExtensionNotInVulkan {
-                        name: String::from(name),
-                        reason,
-                    },
-                );
-            }
+        if let Some(reason) = extensions::unsupported_in_vulkan(name)
+            && behavior != ExtensionBehavior::Disable
+        {
+            self.error(
+                span,
+                DiagnosticKind::ExtensionNotInVulkan {
+                    name: String::from(name),
+                    reason,
+                },
+            );
         }
         if extensions::unsupported_with_spirv(name) {
             self.error(

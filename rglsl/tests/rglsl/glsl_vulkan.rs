@@ -3869,10 +3869,9 @@ fn physical_accesses(module: &dr::Module) -> Vec<(Op, u32)> {
                     Operand::LiteralBit32(alignment),
                     ..,
                 ] = operands
+                    && access.contains(spirv::MemoryAccess::ALIGNED)
                 {
-                    if access.contains(spirv::MemoryAccess::ALIGNED) {
-                        found.push((inst.class.opcode, *alignment));
-                    }
+                    found.push((inst.class.opcode, *alignment));
                 }
             }
         }

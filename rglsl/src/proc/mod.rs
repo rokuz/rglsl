@@ -755,14 +755,13 @@ pub fn flatten_compose<'arenas>(
         is_vector: bool,
         expressions: &'c crate::Arena<crate::Expression>,
     ) -> &'c [crate::Handle<crate::Expression>] {
-        if is_vector {
-            if let crate::Expression::Compose {
+        if is_vector
+            && let crate::Expression::Compose {
                 ty: _,
                 components: ref subcomponents,
             } = expressions[*component]
-            {
-                return subcomponents;
-            }
+        {
+            return subcomponents;
         }
         core::slice::from_ref(component)
     }
@@ -775,11 +774,9 @@ pub fn flatten_compose<'arenas>(
     ) -> impl Iterator<Item = crate::Handle<crate::Expression>> {
         let mut expr = component;
         let mut count = 1;
-        if is_vector {
-            if let crate::Expression::Splat { size, value } = expressions[expr] {
-                expr = value;
-                count = size as usize;
-            }
+        if is_vector && let crate::Expression::Splat { size, value } = expressions[expr] {
+            expr = value;
+            count = size as usize;
         }
         core::iter::repeat_n(expr, count)
     }

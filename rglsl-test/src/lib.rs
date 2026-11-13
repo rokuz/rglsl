@@ -208,10 +208,10 @@ impl Input {
                 continue;
             }
 
-            if let Ok(pat) = std::env::var("RGLSL_SNAPSHOT") {
-                if !file_name.to_string_lossy().contains(&pat) {
-                    continue;
-                }
+            if let Ok(pat) = std::env::var("RGLSL_SNAPSHOT")
+                && !file_name.to_string_lossy().contains(&pat)
+            {
+                continue;
             }
 
             let stem = file_name

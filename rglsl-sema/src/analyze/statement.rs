@@ -298,10 +298,10 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 self.with(|analyzer| analyzer.declaration(declaration));
             }
             StatementKind::Expression(expression) => {
-                if let Some(expression) = expression {
-                    if !self.with(|analyzer| analyzer.names_struct(expression)) {
-                        self.clone().expression(expression).await;
-                    }
+                if let Some(expression) = expression
+                    && !self.with(|analyzer| analyzer.names_struct(expression))
+                {
+                    self.clone().expression(expression).await;
                 }
             }
             StatementKind::Selection {

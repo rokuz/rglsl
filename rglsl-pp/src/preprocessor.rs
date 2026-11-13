@@ -798,11 +798,11 @@ impl Preprocessor<'_> {
             self.last_at = file.current_at();
             if file.role == Role::Included {
                 self.leave_include();
-                if self.options.listing {
-                    if let Some(marker) = self.line_markers.pop() {
-                        self.output
-                            .line_directive(&marker.epilogue, marker.end, marker.resume);
-                    }
+                if self.options.listing
+                    && let Some(marker) = self.line_markers.pop()
+                {
+                    self.output
+                        .line_directive(&marker.epilogue, marker.end, marker.resume);
                 }
             }
         }

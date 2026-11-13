@@ -111,10 +111,10 @@ impl Writer {
                 }
                 Instruction::type_struct(id, &member_ids)
                     .to_words(&mut self.logical_layout.declarations);
-                if self.flags.contains(WriterFlags::DEBUG) {
-                    if let Some(ref name) = module.types[ty].name {
-                        self.debugs.push(Instruction::name(id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && let Some(ref name) = module.types[ty].name
+                {
+                    self.debugs.push(Instruction::name(id, name));
                 }
                 id
             }

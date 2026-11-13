@@ -257,10 +257,10 @@ impl<'a> Session<'a> {
                 continue;
             }
             let index = shift.class.index();
-            if let Some(base) = shift.base {
-                if let Some(slot) = shifts.base.get_mut(index) {
-                    *slot = base;
-                }
+            if let Some(base) = shift.base
+                && let Some(slot) = shifts.base.get_mut(index)
+            {
+                *slot = base;
             }
             if let Some(per_set) = shifts.per_set.get_mut(index) {
                 for &(set, base) in &shift.per_set {
@@ -337,10 +337,10 @@ impl<'a> Session<'a> {
         let shifts = self.shifts(Some(stage));
         for class in ResourceClass::ALL {
             let index = class.index();
-            if let Some(&base) = shifts.base.get(index) {
-                if base != 0 {
-                    processes.push(format!("{} {base}", resource_name(class)));
-                }
+            if let Some(&base) = shifts.base.get(index)
+                && base != 0
+            {
+                processes.push(format!("{} {base}", resource_name(class)));
             }
             for (set, base) in shifts.per_set.get(index).into_iter().flatten() {
                 if *base != 0 {

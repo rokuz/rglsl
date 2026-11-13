@@ -295,10 +295,10 @@ fn generic_scalar(word: &str) -> Option<(&'static str, &'static str)> {
 
 fn shaped(word: &str) -> Option<(&str, &str)> {
     for suffix in ["CxR", "RxC", "C", "R", "N"] {
-        if let Some(stem) = word.strip_suffix(suffix) {
-            if SIZED_STEMS.contains(&stem) {
-                return Some((stem, suffix));
-            }
+        if let Some(stem) = word.strip_suffix(suffix)
+            && SIZED_STEMS.contains(&stem)
+        {
+            return Some((stem, suffix));
         }
     }
     None

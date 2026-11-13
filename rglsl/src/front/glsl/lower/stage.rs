@@ -163,10 +163,10 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn stage_input_values(&mut self, qualifier: &'a Spanned<TypeQualifier>) {
-        if self.stage_is(ShaderStage::Geometry) {
-            if let Some(invocations) = xfb::ast_layout_value(self, Some(qualifier), "invocations") {
-                self.stage_layout.invocations.get_or_insert(invocations);
-            }
+        if self.stage_is(ShaderStage::Geometry)
+            && let Some(invocations) = xfb::ast_layout_value(self, Some(qualifier), "invocations")
+        {
+            self.stage_layout.invocations.get_or_insert(invocations);
         }
     }
 

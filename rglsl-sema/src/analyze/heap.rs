@@ -62,16 +62,16 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn heap_object_check(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if let Some(entry) = qualifiers.layout_entry("descriptor_stride") {
-            if !qualifiers.has_layout("descriptor_heap") {
-                self.error(
-                    entry.span,
-                    invalid(
-                        "descriptor_stride",
-                        "must specify 'descriptor_heap' to use 'descriptor_stride'",
-                    ),
-                );
-            }
+        if let Some(entry) = qualifiers.layout_entry("descriptor_stride")
+            && !qualifiers.has_layout("descriptor_heap")
+        {
+            self.error(
+                entry.span,
+                invalid(
+                    "descriptor_stride",
+                    "must specify 'descriptor_heap' to use 'descriptor_stride'",
+                ),
+            );
         }
         if let Some(entry) = qualifiers.layout_entry("heap_offset") {
             let offset = entry.value != LayoutValue::Constant(0);

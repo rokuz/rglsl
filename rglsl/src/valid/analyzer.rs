@@ -770,16 +770,16 @@ impl FunctionInfo {
             E::Load { pointer } => {
                 let non_uniform_result = self.add_ref(pointer);
                 // Track which immediate slots this load touches.
-                if let Some(global) = self.expressions[pointer.index()].assignable_global {
-                    if resolve_context.global_vars[global].space == crate::AddressSpace::Immediate {
-                        self.immediate_slots_used |= ImmediateSlots::for_pointer(
-                            pointer,
-                            global,
-                            expression_arena,
-                            resolve_context.global_vars,
-                            resolve_context.types,
-                        );
-                    }
+                if let Some(global) = self.expressions[pointer.index()].assignable_global
+                    && resolve_context.global_vars[global].space == crate::AddressSpace::Immediate
+                {
+                    self.immediate_slots_used |= ImmediateSlots::for_pointer(
+                        pointer,
+                        global,
+                        expression_arena,
+                        resolve_context.global_vars,
+                        resolve_context.types,
+                    );
                 }
                 Uniformity {
                     non_uniform_result,
@@ -1418,11 +1418,10 @@ impl FunctionInfo {
                         .flags
                         .contains(ValidationFlags::CONTROL_FLOW_UNIFORMITY)
                         && !req.is_empty()
+                        && let Some(cause) = disruptor
                     {
-                        if let Some(cause) = disruptor {
-                            return Err(FunctionError::NonUniformControlFlow(req, expr, cause)
-                                .with_span_handle(expr, expression_arena));
-                        }
+                        return Err(FunctionError::NonUniformControlFlow(req, expr, cause)
+                            .with_span_handle(expr, expression_arena));
                     }
                     requirements |= req;
                 }
@@ -1875,10 +1874,10 @@ impl ModuleInfo {
         // assignments used to include a global in the shader's resource
         // interface. https://www.w3.org/TR/WGSL/#phony-assignment-section
         for &handle in fun.named_expressions.keys() {
-            if let Some(global) = info[handle].assignable_global {
-                if info.global_uses[global.index()].is_empty() {
-                    info.global_uses[global.index()] = GlobalUse::QUERY;
-                }
+            if let Some(global) = info[handle].assignable_global
+                && info.global_uses[global.index()].is_empty()
+            {
+                info.global_uses[global.index()] = GlobalUse::QUERY;
             }
         }
 

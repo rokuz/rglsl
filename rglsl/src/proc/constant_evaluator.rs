@@ -1685,10 +1685,10 @@ impl<'a> ConstantEvaluator<'a> {
             ))
         };
 
-        if matches!(self.behavior, Behavior::Glsl(_)) {
-            if let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span) {
-                return result;
-            }
+        if matches!(self.behavior, Behavior::Glsl(_))
+            && let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span)
+        {
+            return result;
         }
 
         // NOTE: We try to match the declaration order of `MathFunction` here.
@@ -3984,25 +3984,25 @@ impl<'a> ConstantEvaluator<'a> {
         // since we only register one expression at a time, `Compose`
         // expressions can only refer to other expressions, and `ZeroValue`
         // expressions are always okay.
-        if let Expression::Literal(literal) = expr {
-            if !matches!(self.behavior, Behavior::Glsl(_)) {
-                crate::valid::check_literal_value(literal)?;
-            }
+        if let Expression::Literal(literal) = expr
+            && !matches!(self.behavior, Behavior::Glsl(_))
+        {
+            crate::valid::check_literal_value(literal)?;
         }
 
         // Ensure vector composes contain the correct number of components. We
         // do so here when each compose is registered to avoid having to deal
         // with the mess each time the compose is used in another expression.
-        if let Expression::Compose { ty, ref components } = expr {
-            if let TypeInner::Vector { size, scalar: _ } = self.types[ty].inner {
-                let expected = size as usize;
-                let actual = self.vector_compose_flattened_size(components)?;
-                if expected != actual {
-                    return Err(ConstantEvaluatorError::InvalidVectorComposeLength {
-                        expected,
-                        actual,
-                    });
-                }
+        if let Expression::Compose { ty, ref components } = expr
+            && let TypeInner::Vector { size, scalar: _ } = self.types[ty].inner
+        {
+            let expected = size as usize;
+            let actual = self.vector_compose_flattened_size(components)?;
+            if expected != actual {
+                return Err(ConstantEvaluatorError::InvalidVectorComposeLength {
+                    expected,
+                    actual,
+                });
             }
         }
 

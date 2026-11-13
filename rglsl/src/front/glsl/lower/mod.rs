@@ -317,15 +317,14 @@ impl StageClass {
             match (start, word) {
                 (None, true) => start = Some(index),
                 (Some(from), false) => {
-                    if let Some(identifier) = text.get(from..index) {
-                        if identifier
+                    if let Some(identifier) = text.get(from..index)
+                        && identifier
                             .chars()
                             .next()
                             .is_some_and(|first| !first.is_ascii_digit())
-                            && !names.contains(identifier)
-                        {
-                            names.insert(String::from(identifier));
-                        }
+                        && !names.contains(identifier)
+                    {
+                        names.insert(String::from(identifier));
                     }
                     start = None;
                 }
@@ -754,10 +753,9 @@ fn debug_info(
                 if let Some(slot) = usize::try_from(position)
                     .ok()
                     .and_then(|position| sources.get_mut(position))
+                    && slot.text.is_none()
                 {
-                    if slot.text.is_none() {
-                        slot.text = text;
-                    }
+                    slot.text = text;
                 }
                 position
             }

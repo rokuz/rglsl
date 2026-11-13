@@ -118,11 +118,11 @@ impl Lowerer<'_> {
             let ExternalDeclaration::Declaration(ref declaration) = *declaration else {
                 continue;
             };
-            if let DeclarationKind::SpirvExecutionMode(ref mode) = declaration.kind {
-                if mode.node.kind == SpirvExecutionModeKind::Id {
-                    for operand in &mode.node.operands {
-                        operands_by_node.insert(operand.id, operand);
-                    }
+            if let DeclarationKind::SpirvExecutionMode(ref mode) = declaration.kind
+                && mode.node.kind == SpirvExecutionModeKind::Id
+            {
+                for operand in &mode.node.operands {
+                    operands_by_node.insert(operand.id, operand);
                 }
             }
         }
@@ -213,24 +213,23 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 }
             }
         }
-        if opcode == OP_TYPE_VECTOR {
-            if let [
+        if opcode == OP_TYPE_VECTOR
+            && let [
                 SpirvTypeOperand::Type(base),
                 SpirvTypeOperand::Literal(count),
             ] = operands[..]
-            {
-                let size = match count {
-                    2 => Some(VectorSize::Bi),
-                    3 => Some(VectorSize::Tri),
-                    4 => Some(VectorSize::Quad),
-                    _ => None,
-                };
-                if let (Some(size), &TypeInner::Scalar(scalar)) = (
-                    size,
-                    &self.with(|this| this.module.types[base].inner.clone())?,
-                ) {
-                    return Ok(TypeInner::Vector { size, scalar });
-                }
+        {
+            let size = match count {
+                2 => Some(VectorSize::Bi),
+                3 => Some(VectorSize::Tri),
+                4 => Some(VectorSize::Quad),
+                _ => None,
+            };
+            if let (Some(size), &TypeInner::Scalar(scalar)) = (
+                size,
+                &self.with(|this| this.module.types[base].inner.clone())?,
+            ) {
+                return Ok(TypeInner::Vector { size, scalar });
             }
         }
         Ok(TypeInner::Spirv { opcode, operands })

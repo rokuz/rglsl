@@ -178,10 +178,9 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
     for instruction in instructions(annotations) {
         if instruction.op == op(Op::Decorate)
             && instruction.operands.get(1) == Some(&(spirv::Decoration::BufferBlock as Word))
+            && let Some(&target) = instruction.operands.first()
         {
-            if let Some(&target) = instruction.operands.first() {
-                module.buffer_blocks.insert(target);
-            }
+            module.buffer_blocks.insert(target);
         }
     }
     let mut capabilities: FastIndexSet<Capability> = FastIndexSet::default();
@@ -223,10 +222,10 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             _ => None,
         };
         if let (Some(info), Some(id)) = (info, first) {
-            if let TypeInfo::Pointer(storage, _) = info {
-                if storage == class(StorageClass::PhysicalStorageBuffer) {
-                    variables.push((id, Some(storage)));
-                }
+            if let TypeInfo::Pointer(storage, _) = info
+                && storage == class(StorageClass::PhysicalStorageBuffer)
+            {
+                variables.push((id, Some(storage)));
             }
             module.types.insert(id, info);
             continue;
@@ -254,14 +253,13 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         }
     }
     for instruction in instructions(functions) {
-        if has_result_type(instruction.op) {
-            if let (Some(&ty), Some(&id)) =
+        if has_result_type(instruction.op)
+            && let (Some(&ty), Some(&id)) =
                 (instruction.operands.first(), instruction.operands.get(1))
-            {
-                module.value_types.insert(id, ty);
-                if instruction.op == op(Op::Variable) {
-                    variables.push((ty, instruction.operands.get(2).copied()));
-                }
+        {
+            module.value_types.insert(id, ty);
+            if instruction.op == op(Op::Variable) {
+                variables.push((ty, instruction.operands.get(2).copied()));
             }
         }
     }

@@ -62,11 +62,11 @@ impl FunctionLowerer<'_, '_> {
                 break;
             }
         }
-        if let Some(position) = cut {
-            if let Some(&head) = spine.links.get(position) {
-                spine.head = head;
-                spine.links.truncate(position);
-            }
+        if let Some(position) = cut
+            && let Some(&head) = spine.links.get(position)
+        {
+            spine.head = head;
+            spine.links.truncate(position);
         }
         Ok(spine)
     }

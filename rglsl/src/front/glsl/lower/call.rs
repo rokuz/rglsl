@@ -39,13 +39,13 @@ impl FunctionLowerer<'_, '_> {
             .ok_or_else(|| unsupported("calls to `main` or to functions without a body", at))?;
         for argument in arguments {
             let inner = super::prepass::strip(argument);
-            if let Some(&Callee::Constructor(ref ty)) = analysis.calls.get(&inner.id) {
-                if ty.is_opaque() {
-                    return Err(semantic(
-                        "sampler constructor must appear at point of use",
-                        self.at(inner.span),
-                    ));
-                }
+            if let Some(&Callee::Constructor(ref ty)) = analysis.calls.get(&inner.id)
+                && ty.is_opaque()
+            {
+                return Err(semantic(
+                    "sampler constructor must appear at point of use",
+                    self.at(inner.span),
+                ));
             }
         }
         Ok(handle)
@@ -643,19 +643,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 _ => self.with(|this| this.as_kind(value, crate::Scalar::I32, at))?,
             };
         }
-        if ty.outer_size() == Some(ArraySize::Unsized) {
-            if let Some(symbol) = self.with(|this| this.lw.variable_symbol(object))? {
-                if let Some(name) =
-                    self.with(|this| this.lw.symbol(symbol).map(|s| s.name.as_str()))?
-                {
-                    if let Some(size) =
-                        self.with(|this| this.lw.builtin_sizes.get(name).copied())?
-                    {
-                        let size = i32::try_from(size).map_err(|_| internal(at))?;
-                        return self.with(|this| this.literal(Literal::I32(size), at))?;
-                    }
-                }
-            }
+        if ty.outer_size() == Some(ArraySize::Unsized)
+            && let Some(symbol) = self.with(|this| this.lw.variable_symbol(object))?
+            && let Some(name) = self.with(|this| this.lw.symbol(symbol).map(|s| s.name.as_str()))?
+            && let Some(size) = self.with(|this| this.lw.builtin_sizes.get(name).copied())?
+        {
+            let size = i32::try_from(size).map_err(|_| internal(at))?;
+            return self.with(|this| this.literal(Literal::I32(size), at))?;
         }
         let place = {
             let frame = self.clone().place(object);

@@ -170,10 +170,10 @@ impl crate::TypeInner {
         let length = self.indexable_length(module);
 
         // If the length is override-based, then try to compute its value now.
-        if let Err(IndexableLengthError::Pending(size)) = length {
-            if let IndexableLength::Known(computed) = size.resolve(module.to_ctx())? {
-                return Ok(IndexableLength::Known(computed));
-            }
+        if let Err(IndexableLengthError::Pending(size)) = length
+            && let IndexableLength::Known(computed) = size.resolve(module.to_ctx())?
+        {
+            return Ok(IndexableLength::Known(computed));
         }
         length
     }

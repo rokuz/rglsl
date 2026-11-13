@@ -579,22 +579,21 @@ impl Analyzer<'_> {
                     );
                 }
                 let first = arguments.first().map_or(span, |argument| argument.span);
-                if let Some(result) = at(0) {
-                    if !self.require_lvalue(first, result) {
-                        return Operand::error();
-                    }
+                if let Some(result) = at(0)
+                    && !self.require_lvalue(first, result)
+                {
+                    return Operand::error();
                 }
-                if let Some(matrix) = at(3) {
-                    if !self.require_storage(span, name, matrix, false, false) {
-                        return Operand::error();
-                    }
+                if let Some(matrix) = at(3)
+                    && !self.require_storage(span, name, matrix, false, false)
+                {
+                    return Operand::error();
                 }
-                if bias {
-                    if let Some(bias) = at(6) {
-                        if !self.require_storage(span, name, bias, false, false) {
-                            return Operand::error();
-                        }
-                    }
+                if bias
+                    && let Some(bias) = at(6)
+                    && !self.require_storage(span, name, bias, false, false)
+                {
+                    return Operand::error();
                 }
                 let constants: &[(usize, &'static str)] = if bias {
                     &[

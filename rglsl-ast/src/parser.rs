@@ -148,10 +148,10 @@ impl<'a> StructScopes<'a> {
     }
 
     fn declare(&mut self, name: &'a str) {
-        if let Some(scope) = self.scopes.last_mut() {
-            if scope.insert(name) {
-                *self.visible.entry(name).or_default() += 1;
-            }
+        if let Some(scope) = self.scopes.last_mut()
+            && scope.insert(name)
+        {
+            *self.visible.entry(name).or_default() += 1;
         }
     }
 }

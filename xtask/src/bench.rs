@@ -581,10 +581,10 @@ impl Environment {
                 "unpinned (not built by `cargo xtask oracles`)".into(),
             ));
         }
-        if let Ok(version) = process::capture(Command::new(&tools.glslang.path).arg("--version")) {
-            if let Some(line) = version.lines().next() {
-                glslang.push(("version".into(), line.trim().to_string()));
-            }
+        if let Ok(version) = process::capture(Command::new(&tools.glslang.path).arg("--version"))
+            && let Some(line) = version.lines().next()
+        {
+            glslang.push(("version".into(), line.trim().to_string()));
         }
         if let Ok(head) = oracles::git_head(glslang_dir) {
             glslang.push(("corpus checkout".into(), head));

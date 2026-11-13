@@ -200,12 +200,11 @@ fn binding_values(unit: &TranslationUnit) -> BTreeSet<u32> {
                 if id.node.name.node != "binding" {
                     continue;
                 }
-                if let Some(value) = &id.node.value {
-                    if let ExpressionKind::Number(literal) = &value.kind {
-                        if let Ok(number) = literal.digits().parse::<u32>() {
-                            used.insert(number);
-                        }
-                    }
+                if let Some(value) = &id.node.value
+                    && let ExpressionKind::Number(literal) = &value.kind
+                    && let Ok(number) = literal.digits().parse::<u32>()
+                {
+                    used.insert(number);
                 }
             }
         }
@@ -515,12 +514,12 @@ fn inline_uniform(
         replaced.extend(parse_declarations(&format!(
             "{ty} {name}{array} = {initializer};"
         ))?);
-        if let ExternalDeclaration::Declaration(declaration) = &mut external {
-            if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
-                list.declarators.remove(index);
-                if !list.declarators.is_empty() {
-                    replaced.push(external);
-                }
+        if let ExternalDeclaration::Declaration(declaration) = &mut external
+            && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
+        {
+            list.declarators.remove(index);
+            if !list.declarators.is_empty() {
+                replaced.push(external);
             }
         }
     }
@@ -536,29 +535,28 @@ fn replace_with_canonical_sampler(
 ) -> Result<(), Error> {
     let mut replaced_use = false;
     rewrite_expressions(unit, &mut |expression| {
-        if let ExpressionKind::Variable(name) = &mut expression.kind {
-            if name == sampler {
-                *name = canonical.to_owned();
-                replaced_use = true;
-            }
+        if let ExpressionKind::Variable(name) = &mut expression.kind
+            && name == sampler
+        {
+            *name = canonical.to_owned();
+            replaced_use = true;
         }
     })?;
     let mut kept = Vec::new();
     for mut external in core::mem::take(&mut unit.external_declarations) {
-        if let ExternalDeclaration::Declaration(declaration) = &mut external {
-            if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
-                if matches!(
-                    list.ty.node.specifier.node.non_array,
-                    TypeSpecifierNonArray::Opaque(_)
-                ) {
-                    list.declarators.retain(|declarator| {
-                        declarator.kind.name.node != sampler
-                            && !(replaced_use && declarator.kind.name.node == canonical)
-                    });
-                    if list.declarators.is_empty() {
-                        continue;
-                    }
-                }
+        if let ExternalDeclaration::Declaration(declaration) = &mut external
+            && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
+            && matches!(
+                list.ty.node.specifier.node.non_array,
+                TypeSpecifierNonArray::Opaque(_)
+            )
+        {
+            list.declarators.retain(|declarator| {
+                declarator.kind.name.node != sampler
+                    && !(replaced_use && declarator.kind.name.node == canonical)
+            });
+            if list.declarators.is_empty() {
+                continue;
             }
         }
         kept.push(external);

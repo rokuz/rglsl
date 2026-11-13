@@ -195,14 +195,14 @@ impl<'a> Lowerer<'a> {
                         *entry = (*entry).max(size);
                     }
                     let (depth, inner) = subscript_chain(&mut chains, strip(base));
-                    if depth > 0 {
-                        if let Some((block, member)) = self.block_member_of(inner) {
-                            let entry = self
-                                .member_dimension_sizes
-                                .entry((block, member, depth))
-                                .or_insert(0);
-                            *entry = (*entry).max(size);
-                        }
+                    if depth > 0
+                        && let Some((block, member)) = self.block_member_of(inner)
+                    {
+                        let entry = self
+                            .member_dimension_sizes
+                            .entry((block, member, depth))
+                            .or_insert(0);
+                        *entry = (*entry).max(size);
                     }
                     let Some(symbol) = symbol else {
                         continue;
@@ -318,10 +318,10 @@ impl<'a> Lowerer<'a> {
                     None => {
                         state.insert(current, true);
                         stack.pop();
-                        if Some(current) != main {
-                            if let Some(definition) = defined.get(&current) {
-                                order.push((current, *definition));
-                            }
+                        if Some(current) != main
+                            && let Some(definition) = defined.get(&current)
+                        {
+                            order.push((current, *definition));
                         }
                     }
                 }

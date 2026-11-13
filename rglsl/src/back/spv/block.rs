@@ -2197,16 +2197,16 @@ impl BlockContext<'_> {
         let ty = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
 
         let small = |kind: crate::ScalarKind| kind.is_encoded_float();
-        if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty {
-            if small(scalar.kind) || small(kind) {
-                return self.write_cooperative_cast(
-                    expr,
-                    scalar,
-                    (kind, convert),
-                    block,
-                    result_type_id,
-                );
-            }
+        if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty
+            && (small(scalar.kind) || small(kind))
+        {
+            return self.write_cooperative_cast(
+                expr,
+                scalar,
+                (kind, convert),
+                block,
+                result_type_id,
+            );
         }
         if let crate::TypeInner::LongVector { scalar, .. }
         | crate::TypeInner::CooperativeMatrix { scalar, .. } = *ty
@@ -3481,10 +3481,10 @@ impl BlockContext<'_> {
         nested: bool,
     ) -> Result<(), Error> {
         let mut block = block;
-        if let BlockExit::Return = exit {
-            if !(nested && super::debug::ends_at_location(&block)) {
-                self.writer.debug_mark_end(&mut block);
-            }
+        if let BlockExit::Return = exit
+            && !(nested && super::debug::ends_at_location(&block))
+        {
+            self.writer.debug_mark_end(&mut block);
         }
         let termination = match exit {
             // We're generating code for the top-level Block of the function, so we

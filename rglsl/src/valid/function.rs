@@ -1176,10 +1176,9 @@ impl super::Validator {
             cluster_size: Some(size),
             ..
         } = *mode
+            && !size.is_power_of_two()
         {
-            if !size.is_power_of_two() {
-                return Err(SubgroupError::UnknownOperation.with_span().into_other());
-            }
+            return Err(SubgroupError::UnknownOperation.with_span().into_other());
         }
         self.subgroup_operand(argument, context, is_scalar_or_vector)?;
         let argument_inner = context
@@ -1361,16 +1360,16 @@ impl super::Validator {
                 FunctionError::MissingDefaultCase.with_span_static(span, "missing default case")
             );
         }
-        if let Some(case) = cases.last() {
-            if case.fall_through {
-                return Err(FunctionError::LastCaseFallTrough.with_span_static(
-                    case.body
-                        .span_iter()
-                        .next()
-                        .map_or(Default::default(), |(_, s)| *s),
-                    "bad switch arm here",
-                ));
-            }
+        if let Some(case) = cases.last()
+            && case.fall_through
+        {
+            return Err(FunctionError::LastCaseFallTrough.with_span_static(
+                case.body
+                    .span_iter()
+                    .next()
+                    .map_or(Default::default(), |(_, s)| *s),
+                "bad switch arm here",
+            ));
         }
         Ok(())
     }
@@ -1763,15 +1762,15 @@ impl super::Validator {
                         .with_handle(value, context.expressions));
                 }
 
-                if let Some(space) = pointer_ty.pointer_space() {
-                    if !space.access().contains(crate::StorageAccess::STORE) {
-                        return Err(
-                            FunctionError::InvalidStorePointer(pointer).with_span_static(
-                                context.expressions.get_span(pointer),
-                                "writing to this location is not permitted",
-                            ),
-                        );
-                    }
+                if let Some(space) = pointer_ty.pointer_space()
+                    && !space.access().contains(crate::StorageAccess::STORE)
+                {
+                    return Err(
+                        FunctionError::InvalidStorePointer(pointer).with_span_static(
+                            context.expressions.get_span(pointer),
+                            "writing to this location is not permitted",
+                        ),
+                    );
                 }
             }
             S::ImageStore {
@@ -1925,19 +1924,19 @@ impl super::Validator {
                 }
 
                 // If present, `array_index` must be a scalar integer type.
-                if let Some(expr) = array_index {
-                    if !matches!(
+                if let Some(expr) = array_index
+                    && !matches!(
                         *context.resolve_type_inner(expr, &self.valid_expression_set)?,
                         Ti::Scalar(crate::Scalar {
                             kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                             width: _,
                         })
-                    ) {
-                        return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::InvalidImageArrayIndexType(expr),
-                        )
-                        .with_span_handle(expr, context.expressions));
-                    }
+                    )
+                {
+                    return Err(FunctionError::InvalidImageStore(
+                        ExpressionError::InvalidImageArrayIndexType(expr),
+                    )
+                    .with_span_handle(expr, context.expressions));
                 }
 
                 let value_ty = crate::TypeInner::Vector {
@@ -2061,12 +2060,10 @@ impl super::Validator {
                 if let crate::AtomicFunction::Exchange {
                     compare: Some(compare),
                 } = fun
+                    && *context.resolve_type_inner(compare, &self.valid_expression_set)? != value_ty
                 {
-                    if *context.resolve_type_inner(compare, &self.valid_expression_set)? != value_ty
-                    {
-                        return Err(FunctionError::InvalidImageAtomicValue(compare)
-                            .with_span_handle(compare, context.expressions));
-                    }
+                    return Err(FunctionError::InvalidImageAtomicValue(compare)
+                        .with_span_handle(compare, context.expressions));
                 }
                 if let Some(result) = result {
                     self.validate_atomic_result(result, format.into(), context)?;
@@ -2662,11 +2659,11 @@ impl super::Validator {
                 .stages;
             info.available_stages &= stages;
 
-            if self.flags.contains(super::ValidationFlags::EXPRESSIONS) {
-                if let Some(handle) = self.needs_visit.iter().next() {
-                    return Err(FunctionError::UnvisitedExpression(handle)
-                        .with_span_handle(handle, &fun.expressions));
-                }
+            if self.flags.contains(super::ValidationFlags::EXPRESSIONS)
+                && let Some(handle) = self.needs_visit.iter().next()
+            {
+                return Err(FunctionError::UnvisitedExpression(handle)
+                    .with_span_handle(handle, &fun.expressions));
             }
         }
         Ok(info)

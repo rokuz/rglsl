@@ -1175,10 +1175,10 @@ impl VaryingContext<'_> {
                                 Capabilities::DUAL_SOURCE_BLENDING,
                             ));
                         }
-                        if index == 1 {
-                            if let Some(dual_source_blending) = self.dual_source_blending.as_mut() {
-                                **dual_source_blending = true;
-                            }
+                        if index == 1
+                            && let Some(dual_source_blending) = self.dual_source_blending.as_mut()
+                        {
+                            **dual_source_blending = true;
                         }
                         index
                     }
@@ -1669,14 +1669,14 @@ impl super::Validator {
                 (TypeFlags::CREATION_RESOLVED, false)
             }
             crate::AddressSpace::Storage { access: _ } => {
-                if let Err((ty_handle, disalignment)) = type_info.storage_layout {
-                    if self.flags.contains(super::ValidationFlags::STRUCT_LAYOUTS) {
-                        return Err(GlobalVariableError::Alignment(
-                            var.space,
-                            ty_handle,
-                            disalignment,
-                        ));
-                    }
+                if let Err((ty_handle, disalignment)) = type_info.storage_layout
+                    && self.flags.contains(super::ValidationFlags::STRUCT_LAYOUTS)
+                {
+                    return Err(GlobalVariableError::Alignment(
+                        var.space,
+                        ty_handle,
+                        disalignment,
+                    ));
                 }
                 (
                     TypeFlags::DATA | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED,
@@ -1684,14 +1684,14 @@ impl super::Validator {
                 )
             }
             crate::AddressSpace::Uniform => {
-                if let Err((ty_handle, disalignment)) = type_info.uniform_layout {
-                    if self.flags.contains(super::ValidationFlags::STRUCT_LAYOUTS) {
-                        return Err(GlobalVariableError::Alignment(
-                            var.space,
-                            ty_handle,
-                            disalignment,
-                        ));
-                    }
+                if let Err((ty_handle, disalignment)) = type_info.uniform_layout
+                    && self.flags.contains(super::ValidationFlags::STRUCT_LAYOUTS)
+                {
+                    return Err(GlobalVariableError::Alignment(
+                        var.space,
+                        ty_handle,
+                        disalignment,
+                    ));
                 }
                 (
                     TypeFlags::DATA
@@ -1715,15 +1715,13 @@ impl super::Validator {
                                 | crate::StorageFormat::Rgba16Snorm,
                             ..
                         } = class
-                        {
-                            if !self
+                            && !self
                                 .capabilities
                                 .contains(Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS)
-                            {
-                                return Err(GlobalVariableError::UnsupportedCapability(
-                                    Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS,
-                                ));
-                            }
+                        {
+                            return Err(GlobalVariableError::UnsupportedCapability(
+                                Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS,
+                            ));
                         }
                     }
                     crate::TypeInner::Sampler { .. }

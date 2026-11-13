@@ -1761,10 +1761,10 @@ impl TypeRegistry {
             if let Some(result) = found(ty) {
                 return Some(result);
             }
-            if let TypeKind::Struct(id) = ty.kind {
-                if let Some(structure) = self.structure(id) {
-                    pending.extend(structure.members.iter().rev().map(|member| &member.ty));
-                }
+            if let TypeKind::Struct(id) = ty.kind
+                && let Some(structure) = self.structure(id)
+            {
+                pending.extend(structure.members.iter().rev().map(|member| &member.ty));
             }
         }
         None

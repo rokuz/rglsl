@@ -80,10 +80,10 @@ fn parameters(
             None => ok = false,
         },
         ExpressionKind::FunctionCall(call) => {
-            if let FunctionIdentifier::Constructor(specifier) = &call.function.node {
-                if !matches!(specifier.non_array, TypeSpecifierNonArray::Basic(_)) {
-                    ok = false;
-                }
+            if let FunctionIdentifier::Constructor(specifier) = &call.function.node
+                && !matches!(specifier.non_array, TypeSpecifierNonArray::Basic(_))
+            {
+                ok = false;
             }
         }
         _ => {}

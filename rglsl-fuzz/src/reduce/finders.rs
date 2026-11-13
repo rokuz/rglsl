@@ -205,10 +205,10 @@ fn locally_declared(statement: &Statement) -> BTreeSet<String> {
         if let StatementKind::Declaration(declaration) = &inner.kind {
             names.extend(crate::injection::declared_names(declaration));
         }
-        if let StatementKind::For(for_statement) = &inner.kind {
-            if let Some(Condition::Declaration(declaration)) = &for_statement.condition {
-                names.insert(declaration.kind.name.node.clone());
-            }
+        if let StatementKind::For(for_statement) = &inner.kind
+            && let Some(Condition::Declaration(declaration)) = &for_statement.condition
+        {
+            names.insert(declaration.kind.name.node.clone());
         }
     });
     names
@@ -229,10 +229,10 @@ fn side_effect_free_live_block(statement: &Statement) -> Result<bool, Stalled> {
     let mut jumps = crate::injection::contains_top_level_break(statement)
         || crate::injection::contains_top_level_continue(statement);
     crate::rewrite::visit_statements(statement, &mut |inner| {
-        if let StatementKind::Jump(jump) = &inner.kind {
-            if !matches!(jump, JumpStatement::Break | JumpStatement::Continue) {
-                jumps = true;
-            }
+        if let StatementKind::Jump(jump) = &inner.kind
+            && !matches!(jump, JumpStatement::Break | JumpStatement::Continue)
+        {
+            jumps = true;
         }
     });
     let mut probe = statement.clone();
@@ -444,10 +444,10 @@ fn inline_outlined(
             .collect();
         let mut holder = builder.expression_statement(body.clone());
         rewrite_statement_expressions(&mut holder, &mut |inner| {
-            if let ExpressionKind::Variable(variable) = &inner.kind {
-                if let Some(argument) = substitution.get(variable.as_str()) {
-                    *inner = (*argument).clone();
-                }
+            if let ExpressionKind::Variable(variable) = &inner.kind
+                && let Some(argument) = substitution.get(variable.as_str())
+            {
+                *inner = (*argument).clone();
             }
         })?;
         let StatementKind::Expression(Some(inlined)) = &mut holder.kind else {
@@ -513,21 +513,20 @@ fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
                 },
                 _ => None,
             };
-            if let StatementKind::For(merged_for) = &mut merged.kind {
-                if let StatementKind::Declaration(declaration) = &mut merged_for.init.kind {
-                    if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
-                        for declarator in &mut list.declarators {
-                            declarator.kind.initializer.clone_from(&initial);
-                            original.clone_into(&mut declarator.kind.name.node);
-                        }
-                    }
+            if let StatementKind::For(merged_for) = &mut merged.kind
+                && let StatementKind::Declaration(declaration) = &mut merged_for.init.kind
+                && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
+            {
+                for declarator in &mut list.declarators {
+                    declarator.kind.initializer.clone_from(&initial);
+                    original.clone_into(&mut declarator.kind.name.node);
                 }
             }
             rewrite_statement_expressions(&mut merged, &mut |expression| {
-                if let ExpressionKind::Variable(name) = &mut expression.kind {
-                    if *name == first_name {
-                        original.clone_into(name);
-                    }
+                if let ExpressionKind::Variable(name) = &mut expression.kind
+                    && *name == first_name
+                {
+                    original.clone_into(name);
                 }
             })?;
             result.push(Opportunity {

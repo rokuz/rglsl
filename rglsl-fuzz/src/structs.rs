@@ -42,10 +42,10 @@ pub fn global_structs(unit: &TranslationUnit) -> Structs {
         let DeclarationKind::InitDeclaratorList(list) = &declaration.kind else {
             continue;
         };
-        if let TypeSpecifierNonArray::Struct(structure) = &list.ty.node.specifier.node.non_array {
-            if let Some(name) = &structure.name {
-                structs.insert(name.node.clone(), struct_fields(structure));
-            }
+        if let TypeSpecifierNonArray::Struct(structure) = &list.ty.node.specifier.node.non_array
+            && let Some(name) = &structure.name
+        {
+            structs.insert(name.node.clone(), struct_fields(structure));
         }
     }
     structs

@@ -283,10 +283,10 @@ impl Sizing {
     }
 
     pub fn adopt(self, ty: &mut RType, always: bool) {
-        if let Some(outer @ None) = ty.dims.first_mut() {
-            if always || !self.variably {
-                *outer = Some(self.size.max(1));
-            }
+        if let Some(outer @ None) = ty.dims.first_mut()
+            && (always || !self.variably)
+        {
+            *outer = Some(self.size.max(1));
         }
     }
 
