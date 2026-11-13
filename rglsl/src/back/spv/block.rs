@@ -2323,8 +2323,6 @@ impl BlockContext<'_> {
                     Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
                     Sk::Float => spirv::Op::FUnordNotEqual,
                     Sk::Bool
-                    | Sk::AbstractInt
-                    | Sk::AbstractFloat
                     | Sk::BFloat
                     | Sk::FloatE4M3
                     | Sk::FloatE5M2

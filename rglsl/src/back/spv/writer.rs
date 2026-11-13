@@ -115,7 +115,7 @@ impl Writer {
             task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             debug_printf: None,
-            abstract_type_declared: false,
+            undeclarable_scalar: false,
             debug_printf_strings: crate::FastHashMap::default(),
             raw_capabilities: crate::FastIndexSet::default(),
             raw_extensions: crate::FastIndexSet::default(),
@@ -277,7 +277,7 @@ impl Writer {
             task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             debug_printf: None,
-            abstract_type_declared: false,
+            undeclarable_scalar: false,
             debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
             raw_extensions: take(&mut self.raw_extensions).reclaim(),
@@ -1550,7 +1550,6 @@ impl Writer {
             Sk::FloatE2M1 | Sk::FloatE3M2 | Sk::FloatE2M3 | Sk::FloatUE8M0 | Sk::FloatMXINT8 => {
                 self.microscaling_type(id, scalar)
             }
-            Sk::AbstractInt | Sk::AbstractFloat => None,
         }
     }
 
@@ -1749,7 +1748,7 @@ impl Writer {
             NumericType::Scalar(scalar) => match self.make_scalar(id, scalar) {
                 Some(instruction) => instruction,
                 None => {
-                    self.abstract_type_declared = true;
+                    self.undeclarable_scalar = true;
                     return;
                 }
             },
@@ -2370,10 +2369,6 @@ impl Writer {
             }
             crate::Literal::Bool(true) => Instruction::constant_true(type_id, id),
             crate::Literal::Bool(false) => Instruction::constant_false(type_id, id),
-            crate::Literal::AbstractInt(_) | crate::Literal::AbstractFloat(_) => {
-                self.abstract_type_declared = true;
-                return;
-            }
         };
 
         instruction.to_words(&mut self.logical_layout.declarations);
@@ -3354,11 +3349,6 @@ impl Writer {
                             | Sk::FloatE2M3
                             | Sk::FloatUE8M0
                             | Sk::FloatMXINT8 => false,
-                            Sk::AbstractInt | Sk::AbstractFloat => {
-                                return Err(Error::Validation(
-                                    "Abstract types should not appear in IR presented to backends",
-                                ))
-                            }
                         },
                         _ => false,
                     };
@@ -4359,9 +4349,9 @@ impl Writer {
         };
 
         self.write_logical_layout(ir_module, info, ep_index)?;
-        if self.abstract_type_declared {
+        if self.undeclarable_scalar {
             return Err(Error::Validation(
-                "abstract types should never reach the backend",
+                "a scalar type without a SPIR-V declaration reached the backend",
             ));
         }
         self.write_physical_layout();

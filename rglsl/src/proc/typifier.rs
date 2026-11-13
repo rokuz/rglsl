@@ -749,13 +749,6 @@ impl<'a> ResolveContext<'a> {
                     overloads.for_debug(types)
                 );
 
-                // If any argument is not a constant expression, then no
-                // overloads that accept abstract values should be considered.
-                // `OverloadSet::concrete_only` is supposed to help impose this
-                // restriction. However, no `MathFunction` accepts a mix of
-                // abstract and concrete arguments, so we don't need to worry
-                // about that here.
-
                 let res_arg = past(arg)?;
                 overloads = overloads.arg(0, res_arg.inner_with(types), types);
                 log::debug!(

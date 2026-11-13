@@ -23,9 +23,7 @@ impl crate::ScalarKind {
             crate::ScalarKind::Sint
             | crate::ScalarKind::Uint
             | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool
-            | crate::ScalarKind::AbstractInt
-            | crate::ScalarKind::AbstractFloat => false,
+            | crate::ScalarKind::Bool => false,
         }
     }
 
@@ -38,8 +36,6 @@ impl crate::ScalarKind {
             crate::ScalarKind::Sint
             | crate::ScalarKind::Uint
             | crate::ScalarKind::Float
-            | crate::ScalarKind::AbstractInt
-            | crate::ScalarKind::AbstractFloat
             | crate::ScalarKind::BFloat
             | crate::ScalarKind::FloatE4M3
             | crate::ScalarKind::FloatE5M2
@@ -134,14 +130,6 @@ impl crate::Scalar {
         kind: crate::ScalarKind::Bool,
         width: crate::BOOL_WIDTH,
     };
-    pub const ABSTRACT_INT: Self = Self {
-        kind: crate::ScalarKind::AbstractInt,
-        width: crate::ABSTRACT_WIDTH,
-    };
-    pub const ABSTRACT_FLOAT: Self = Self {
-        kind: crate::ScalarKind::AbstractFloat,
-        width: crate::ABSTRACT_WIDTH,
-    };
 
     pub const fn bit_width(self) -> u32 {
         match self.kind {
@@ -155,27 +143,7 @@ impl crate::Scalar {
             | crate::ScalarKind::FloatE4M3
             | crate::ScalarKind::FloatE5M2
             | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8
-            | crate::ScalarKind::AbstractInt
-            | crate::ScalarKind::AbstractFloat => self.width as u32 * 8,
-        }
-    }
-
-    pub const fn is_abstract(self) -> bool {
-        match self.kind {
-            crate::ScalarKind::AbstractInt | crate::ScalarKind::AbstractFloat => true,
-            crate::ScalarKind::Sint
-            | crate::ScalarKind::Uint
-            | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool
-            | crate::ScalarKind::BFloat
-            | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatE2M1
-            | crate::ScalarKind::FloatE3M2
-            | crate::ScalarKind::FloatE2M3
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => false,
+            | crate::ScalarKind::FloatMXINT8 => self.width as u32 * 8,
         }
     }
 
@@ -667,142 +635,6 @@ impl crate::TypeInner {
             | crate::TypeInner::BufferDescriptor { .. }
             | crate::TypeInner::Spirv { .. } => None,
         }
-    }
-
-    /// Return true if `self` is an abstract type.
-    ///
-    /// Use `types` to look up type handles. This is necessary to
-    /// recognize abstract arrays.
-    pub fn is_abstract(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
-        let mut inner = self;
-        while let crate::TypeInner::Array { base, .. } = *inner {
-            inner = &types[base].inner;
-        }
-        match *inner {
-            crate::TypeInner::Scalar(scalar)
-            | crate::TypeInner::Vector { scalar, .. }
-            | crate::TypeInner::Matrix { scalar, .. }
-            | crate::TypeInner::Atomic(scalar) => scalar.is_abstract(),
-            crate::TypeInner::Array { .. } => false,
-            crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::AccelerationStructure { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::RayQuery { .. }
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => false,
-        }
-    }
-
-    /// Determine whether `self` automatically converts to `goal`.
-    ///
-    /// If rglsl IR's automatic conversions will convert `self` to
-    /// `goal`, then return a pair `(from, to)`, where `from` and `to`
-    /// are the scalar types of the leaf values of `self` and `goal`.
-    ///
-    /// If `self` and `goal` are the same type, this will simply return
-    /// a pair `(S, S)`.
-    ///
-    /// If the automatic conversions cannot convert `self` to `goal`,
-    /// return `None`.
-    ///
-    /// rglsl IR's automatic conversions will convert:
-    ///
-    /// - [`AbstractInt`] scalars to [`AbstractFloat`] or any numeric scalar type
-    ///
-    /// - [`AbstractFloat`] scalars to any floating-point scalar type
-    ///
-    /// - A [`Vector`] `{ size, scalar: S }` to `{ size, scalar: T }`
-    ///   if they would convert `S` to `T`
-    ///
-    /// - An [`Array`] `{ base: S, size, stride }` to `{ base: T, size, stride }`
-    ///   if they would convert `S` to `T`
-    ///
-    /// [`AbstractInt`]: crate::ScalarKind::AbstractInt
-    /// [`AbstractFloat`]: crate::ScalarKind::AbstractFloat
-    /// [`Vector`]: crate::TypeInner::Vector
-    /// [`Array`]: crate::TypeInner::Array
-    pub fn automatically_converts_to(
-        &self,
-        goal: &Self,
-        types: &crate::UniqueArena<crate::Type>,
-    ) -> Option<(crate::Scalar, crate::Scalar)> {
-        use crate::ScalarKind as Sk;
-        use crate::TypeInner as Ti;
-
-        // Automatic conversions only change the scalar type of a value's leaves
-        // (e.g., `vec4<AbstractFloat>` to `vec4<f32>`), never the type
-        // constructors applied to those scalar types (e.g., never scalar to
-        // `vec4`, or `vec2` to `vec3`). So first we check that the type
-        // constructors match, extracting the leaf scalar types in the process.
-        let mut pair = (self, goal);
-        let (expr_scalar, goal_scalar) = loop {
-            match pair {
-                (&Ti::Scalar(expr), &Ti::Scalar(goal)) => {
-                    break (expr, goal);
-                }
-                (
-                    &Ti::Vector {
-                        size: expr_size,
-                        scalar: expr,
-                    },
-                    &Ti::Vector {
-                        size: goal_size,
-                        scalar: goal,
-                    },
-                ) if expr_size == goal_size => {
-                    break (expr, goal);
-                }
-                (
-                    &Ti::Matrix {
-                        rows: expr_rows,
-                        columns: expr_columns,
-                        scalar: expr,
-                    },
-                    &Ti::Matrix {
-                        rows: goal_rows,
-                        columns: goal_columns,
-                        scalar: goal,
-                    },
-                ) if expr_rows == goal_rows && expr_columns == goal_columns => {
-                    break (expr, goal);
-                }
-                (
-                    &Ti::Array {
-                        base: expr_base,
-                        size: expr_size,
-                        stride: _,
-                    },
-                    &Ti::Array {
-                        base: goal_base,
-                        size: goal_size,
-                        stride: _,
-                    },
-                ) if expr_size == goal_size => {
-                    pair = (&types[expr_base].inner, &types[goal_base].inner);
-                }
-                _ => return None,
-            }
-        };
-
-        match (expr_scalar.kind, goal_scalar.kind) {
-            (Sk::AbstractFloat, Sk::Float) => {}
-            (Sk::AbstractInt, Sk::Sint | Sk::Uint | Sk::AbstractFloat | Sk::Float) => {}
-            _ => return None,
-        }
-
-        log::trace!("      okay: expr {expr_scalar:?}, goal {goal_scalar:?}");
-        Some((expr_scalar, goal_scalar))
     }
 }
 

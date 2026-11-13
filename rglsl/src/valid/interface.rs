@@ -290,8 +290,6 @@ impl LocationShape {
                 Sk::Float => (true, scalar.width == 8),
                 Sk::Sint | Sk::Uint => (false, true),
                 Sk::Bool
-                | Sk::AbstractInt
-                | Sk::AbstractFloat
                 | Sk::BFloat
                 | Sk::FloatE4M3
                 | Sk::FloatE5M2

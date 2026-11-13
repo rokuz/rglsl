@@ -64,13 +64,6 @@ macro_rules! define_any_overload_set {
                 }
             }
 
-            fn concrete_only(self, types: &crate::UniqueArena<ir::Type>) -> Self {
-                match self {
-                    $(
-                        AnyOverloadSet::$name(x) => AnyOverloadSet::$name(x.concrete_only(types)),
-                    )*
-                }
-            }
 
             fn most_preferred(&self) -> Option<Rule> {
                 match *self {

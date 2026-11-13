@@ -169,9 +169,6 @@ pub enum WidthError {
         name: &'static str,
         flag: &'static str,
     },
-
-    #[error("Abstract types may only appear in constant expressions")]
-    Abstract,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -390,9 +387,6 @@ impl super::Validator {
                 } else {
                     scalar.width == 4
                 }
-            }
-            crate::ScalarKind::AbstractInt | crate::ScalarKind::AbstractFloat => {
-                return Err(WidthError::Abstract);
             }
         };
         if good {

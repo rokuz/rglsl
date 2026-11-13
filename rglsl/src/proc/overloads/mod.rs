@@ -141,45 +141,6 @@ pub trait OverloadSet: Clone {
     /// feasible automatic conversions have been applied.
     fn arg(&self, i: usize, ty: &ir::TypeInner, types: &crate::UniqueArena<ir::Type>) -> Self;
 
-    /// Limit `self` to overloads whose arguments are all concrete types.
-    ///
-    /// rglsl's overload resolution is based on WGSL's [overload resolution
-    /// algorithm][ora], which includes the following step:
-    ///
-    /// > Eliminate any candidate where one of its subexpressions resolves to
-    /// > an abstract type after feasible automatic conversions, but another of
-    /// > the candidate’s subexpressions is not a const-expression.
-    /// >
-    /// > Note: As a consequence, if any subexpression in the phrase is not a
-    /// > const-expression, then all subexpressions in the phrase must have a
-    /// > concrete type.
-    ///
-    /// Essentially, if any one of the arguments is not a constant expression,
-    /// then the operation is going to be evaluated at runtime, so all its
-    /// arguments must be converted to a concrete type. If you determine that an
-    /// argument is non-constant, you can use this trait method to toss out any
-    /// overloads that would accept abstract types.
-    ///
-    /// In almost all cases, this operation has no effect. Only constant
-    /// expressions can have abstract types, so if any argument is not a
-    /// constant expression, it must have a concrete type. Although many
-    /// operations in rglsl IR have overloads for both abstract types and
-    /// concrete types, few operations have overloads that accept a mix of
-    /// abstract and concrete types. Thus, a single concrete argument will
-    /// usually have eliminated all overloads that accept abstract types anyway.
-    /// (The exceptions are oddities like `Expression::Select`, where the
-    /// `condition` operand could be a runtime expression even as the `accept`
-    /// and `reject` operands have abstract types.)
-    ///
-    /// Note that it is *not* correct to just [concretize] all arguments once
-    /// you've noticed that some argument is non-constant. The type to which
-    /// each argument is converted depends on the overloads available, not just
-    /// the argument's own type.
-    ///
-    /// [ora]: https://gpuweb.github.io/gpuweb/wgsl/#overload-resolution-section
-    /// [concretize]: https://gpuweb.github.io/gpuweb/wgsl/#concretization
-    fn concrete_only(self, types: &crate::UniqueArena<ir::Type>) -> Self;
-
     /// Return the most preferred candidate.
     ///
     /// Rank the candidates in `self` as described in WGSL's [overload

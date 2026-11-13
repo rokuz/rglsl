@@ -1103,8 +1103,6 @@ impl super::Validator {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
                             Sk::Bool
-                            | Sk::AbstractInt
-                            | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
                             | Sk::FloatE5M2
@@ -1123,8 +1121,6 @@ impl super::Validator {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
                             Sk::Bool
-                            | Sk::AbstractInt
-                            | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
                             | Sk::FloatE5M2
@@ -1141,8 +1137,6 @@ impl super::Validator {
                             Some(Sk::Uint | Sk::Sint | Sk::Float) => true,
                             Some(
                                 Sk::Bool
-                                | Sk::AbstractInt
-                                | Sk::AbstractFloat
                                 | Sk::BFloat
                                 | Sk::FloatE4M3
                                 | Sk::FloatE5M2
@@ -1236,8 +1230,6 @@ impl super::Validator {
                             Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                                 Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
                                 Sk::Bool
-                                | Sk::AbstractInt
-                                | Sk::AbstractFloat
                                 | Sk::BFloat
                                 | Sk::FloatE4M3
                                 | Sk::FloatE5M2
@@ -1268,8 +1260,6 @@ impl super::Validator {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                             Sk::Bool | Sk::Sint | Sk::Uint => left_inner == right_inner,
                             Sk::Float
-                            | Sk::AbstractInt
-                            | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
                             | Sk::FloatE5M2
@@ -1289,8 +1279,6 @@ impl super::Validator {
                             Sk::Sint | Sk::Uint => left_inner == right_inner,
                             Sk::Bool
                             | Sk::Float
-                            | Sk::AbstractInt
-                            | Sk::AbstractFloat
                             | Sk::BFloat
                             | Sk::FloatE4M3
                             | Sk::FloatE5M2
@@ -1328,8 +1316,6 @@ impl super::Validator {
                         match base_scalar.kind {
                             Sk::Sint | Sk::Uint => base_size.is_ok() && base_size == shift_size,
                             Sk::Float
-                            | Sk::AbstractInt
-                            | Sk::AbstractFloat
                             | Sk::Bool
                             | Sk::BFloat
                             | Sk::FloatE4M3
@@ -1486,13 +1472,6 @@ impl super::Validator {
                     fun,
                     overloads.for_debug(&module.types)
                 );
-
-                // If any argument is not a constant expression, then no
-                // overloads that accept abstract values should be considered.
-                // `OverloadSet::concrete_only` is supposed to help impose this
-                // restriction. However, no `MathFunction` accepts a mix of
-                // abstract and concrete arguments, so we don't need to worry
-                // about that here.
 
                 for (i, (&expr, ty)) in actuals.iter().zip(actual_types).enumerate() {
                     // Remove overloads that cannot accept an `i`'th

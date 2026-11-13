@@ -71,7 +71,6 @@ pub enum CompactError {
 ///
 /// Always removes the following unused objects:
 /// - anonymous types, overrides, and constants
-/// - abstract-typed constants
 /// - expressions
 ///
 /// If `keep_unused` is `Yes`, the following are never considered unused,
@@ -91,8 +90,7 @@ pub enum CompactError {
 ///
 /// After removing items according to the rules above, all handles in the
 /// remaining objects are adjusted as necessary. When `KeepUnused` is `Yes`, the
-/// resulting module should have all the named objects (except abstract-typed
-/// constants) present in the original, and those objects should be functionally
+/// resulting module should have all the named objects present in the original, and those objects should be functionally
 /// identical. When `KeepUnused` is `No`, the resulting module should have the
 /// entry points present in the original, and those entry points should be
 /// functionally identical.
@@ -273,16 +271,12 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         }
     }
 
-    // We treat all named constants as used by definition, unless they have an
-    // abstract type as we do not want those reaching the validator.
+    // We treat all named constants as used by definition.
     log::trace!("tracing named constants");
     for (handle, constant) in module.constants.iter() {
         let Some(ref name) = constant.name else {
             continue;
         };
-        if module.types[constant.ty].inner.is_abstract(&module.types) {
-            continue;
-        }
 
         log::trace!("tracing constant {name:?}");
         module_tracer.constants_used.insert(handle);

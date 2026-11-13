@@ -23,12 +23,8 @@ fn literal_words(literal: Literal) -> Vec<Word> {
         Literal::U32(value) => vec![value],
         Literal::I32(value) => vec![value as u32],
         Literal::U64(value) => vec![value as u32, (value >> 32) as u32],
-        Literal::I64(value) | Literal::AbstractInt(value) => {
+        Literal::I64(value) => {
             vec![value as u32, (value >> 32) as u32]
-        }
-        Literal::AbstractFloat(value) => {
-            let bits = value.to_bits();
-            vec![bits as u32, (bits >> 32) as u32]
         }
         Literal::Bool(value) => vec![u32::from(value)],
         Literal::BF16(value) => vec![u32::from(value)],
@@ -535,9 +531,7 @@ impl Writer {
                 }
                 let signed = scalar.kind == ScalarKind::Sint;
                 let opcode = match (op, scalar.kind) {
-                    (_, ScalarKind::Float | ScalarKind::AbstractFloat) => {
-                        return Err(not_allowed("floating-point arithmetic"))
-                    }
+                    (_, ScalarKind::Float) => return Err(not_allowed("floating-point arithmetic")),
                     (BinaryOperator::Add, ScalarKind::Sint | ScalarKind::Uint) => Op::IAdd,
                     (BinaryOperator::Subtract, ScalarKind::Sint | ScalarKind::Uint) => Op::ISub,
                     (BinaryOperator::Multiply, ScalarKind::Sint | ScalarKind::Uint) => Op::IMul,

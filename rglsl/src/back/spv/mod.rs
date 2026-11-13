@@ -842,7 +842,7 @@ pub struct Writer {
 
     /// Non semantic debug printf extension `OpExtInstImport`
     debug_printf: Option<Word>,
-    abstract_type_declared: bool,
+    undeclarable_scalar: bool,
     debug_printf_strings: crate::FastHashMap<String, Word>,
     raw_capabilities: crate::FastIndexSet<Word>,
     raw_extensions: crate::FastIndexSet<String>,

@@ -721,16 +721,6 @@ pub enum ScalarKind {
     FloatE2M3,
     FloatUE8M0,
     FloatMXINT8,
-
-    /// WGSL abstract integer type.
-    ///
-    /// These are forbidden by validation, and should never reach backends.
-    AbstractInt,
-
-    /// Abstract floating-point type.
-    ///
-    /// These are forbidden by validation, and should never reach backends.
-    AbstractFloat,
 }
 
 /// Role of a cooperative variable in the equation "A * B + C"
@@ -1436,8 +1426,6 @@ pub enum Literal {
     U64(u64),
     I64(i64),
     Bool(bool),
-    AbstractInt(i64),
-    AbstractFloat(f64),
     BF16(u16),
     FE4M3(u8),
     FE5M2(u8),

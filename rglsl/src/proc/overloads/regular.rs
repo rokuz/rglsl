@@ -28,13 +28,13 @@ use core::fmt;
 /// combination of scalars and constructors, essentially the cartesian
 /// product of the two sets.
 ///
-/// For example, if the arity is 2, set of scalars is { AbstractFloat,
-/// `f32` }, and the set of constructors is { `vec2`, `vec3` }, then
-/// that represents the set of overloads:
+/// For example, if the arity is 2, set of scalars is { `f16`, `f32` },
+/// and the set of constructors is { `vec2`, `vec3` }, then that
+/// represents the set of overloads:
 ///
-/// - (`vec2<AbstractFloat>`, `vec2<AbstractFloat>`) -> `vec2<AbstractFloat>`
+/// - (`vec2<f16>`, `vec2<f16>`) -> `vec2<f16>`
 /// - (`vec2<f32>`, `vec2<f32>`) -> `vec2<f32>`
-/// - (`vec3<AbstractFloat>`, `vec3<AbstractFloat>`) -> `vec3<AbstractFloat>`
+/// - (`vec3<f16>`, `vec3<f16>`) -> `vec3<f16>`
 /// - (`vec3<f32>`, `vec3<f32>`) -> `vec3<f32>`
 ///
 /// The `conclude` value says how to determine the return type from
@@ -139,13 +139,6 @@ impl OverloadSet for Regular {
             scalars: self.scalars & scalars,
 
             conclude: self.conclude,
-        }
-    }
-
-    fn concrete_only(self, _types: &UniqueArena<ir::Type>) -> Self {
-        Self {
-            scalars: self.scalars & ScalarSet::CONCRETE,
-            ..self
         }
     }
 
@@ -435,27 +428,7 @@ mod test {
         check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
 
         let ok = builtin
-            .arg(0, &scalar(ir::Scalar::ABSTRACT_FLOAT), &arena)
-            .arg(1, &scalar(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
-
-        let ok = builtin
-            .arg(0, &scalar(ir::Scalar::F32), &arena)
-            .arg(1, &scalar(ir::Scalar::ABSTRACT_INT), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
-
-        let ok = builtin
             .arg(0, &scalar(ir::Scalar::U32), &arena)
-            .arg(1, &scalar(ir::Scalar::U32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
-
-        let ok = builtin
-            .arg(0, &scalar(ir::Scalar::U32), &arena)
-            .arg(1, &scalar(ir::Scalar::ABSTRACT_INT), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
-
-        let ok = builtin
-            .arg(0, &scalar(ir::Scalar::ABSTRACT_INT), &arena)
             .arg(1, &scalar(ir::Scalar::U32), &arena);
         check_return_type(&ok, &scalar(ir::Scalar::U32), &arena)?;
 
@@ -513,40 +486,6 @@ mod test {
         let err = builtin
             .arg(0, &scalar(ir::Scalar::F32), &arena)
             .arg(1, &vec3(ir::Scalar::F32), &arena);
-        assert!(err.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    #[rustfmt::skip]
-    fn binary_vec_or_scalar_numeric_vector_abstract() -> crate::TestResult {
-        let arena = UniqueArena::default();
-
-        let builtin = regular!(2, VECN|SCALAR of NUMERIC);
-
-        let ok = builtin
-            .arg(0, &vec2(ir::Scalar::ABSTRACT_INT), &arena)
-            .arg(1, &vec2(ir::Scalar::U32), &arena);
-        check_return_type(&ok, &vec2(ir::Scalar::U32), &arena)?;
-
-        let ok = builtin
-            .arg(0, &vec3(ir::Scalar::ABSTRACT_INT), &arena)
-            .arg(1, &vec3(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &vec3(ir::Scalar::F32), &arena)?;
-
-        let ok = builtin
-            .arg(0, &scalar(ir::Scalar::ABSTRACT_FLOAT), &arena)
-            .arg(1, &scalar(ir::Scalar::F32), &arena);
-        check_return_type(&ok, &scalar(ir::Scalar::F32), &arena)?;
-
-        let err = builtin
-            .arg(0, &scalar(ir::Scalar::ABSTRACT_FLOAT), &arena)
-            .arg(1, &scalar(ir::Scalar::U32), &arena);
-        assert!(err.is_empty());
-
-        let err = builtin
-            .arg(0, &scalar(ir::Scalar::I32), &arena)
-            .arg(1, &scalar(ir::Scalar::U32), &arena);
         assert!(err.is_empty());
         Ok(())
     }

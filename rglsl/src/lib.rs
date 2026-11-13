@@ -117,9 +117,6 @@ pub use ir::*;
 /// Width of a boolean type, in bytes.
 pub const BOOL_WIDTH: Bytes = 1;
 
-/// Width of abstract types, in bytes.
-pub const ABSTRACT_WIDTH: Bytes = 8;
-
 /// Map of expressions that have associated variable names
 pub(crate) type NamedExpressions = FastIndexMap<Handle<Expression>, String>;
 

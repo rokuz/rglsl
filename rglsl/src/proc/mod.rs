@@ -104,8 +104,6 @@ pub enum HashableLiteral {
     U64(u64),
     I64(i64),
     Bool(bool),
-    AbstractInt(i64),
-    AbstractFloat(u64),
     BF16(u16),
     BF8(u8, bool),
     Microscaling(u8, crate::ScalarKind),
@@ -126,8 +124,6 @@ impl From<crate::Literal> for HashableLiteral {
             crate::Literal::U64(v) => Self::U64(v),
             crate::Literal::I64(v) => Self::I64(v),
             crate::Literal::Bool(v) => Self::Bool(v),
-            crate::Literal::AbstractInt(v) => Self::AbstractInt(v),
-            crate::Literal::AbstractFloat(v) => Self::AbstractFloat(v.to_bits()),
             crate::Literal::BF16(v) => Self::BF16(v),
             crate::Literal::FE4M3(v) => Self::BF8(v, false),
             crate::Literal::FE5M2(v) => Self::BF8(v, true),
@@ -162,9 +158,7 @@ impl crate::Literal {
             | Self::I32(_)
             | Self::U64(_)
             | Self::I64(_)
-            | Self::Bool(_)
-            | Self::AbstractInt(_)
-            | Self::AbstractFloat(_) => return None,
+            | Self::Bool(_) => return None,
         })
     }
 
@@ -181,9 +175,7 @@ impl crate::Literal {
             crate::ScalarKind::Sint
             | crate::ScalarKind::Uint
             | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool
-            | crate::ScalarKind::AbstractInt
-            | crate::ScalarKind::AbstractFloat => return None,
+            | crate::ScalarKind::Bool => return None,
         })
     }
 
@@ -204,8 +196,6 @@ impl crate::Literal {
             (value, crate::ScalarKind::Sint, 8) => Some(Self::I64(value as _)),
             (1, crate::ScalarKind::Bool, crate::BOOL_WIDTH) => Some(Self::Bool(true)),
             (0, crate::ScalarKind::Bool, crate::BOOL_WIDTH) => Some(Self::Bool(false)),
-            (value, crate::ScalarKind::AbstractInt, 8) => Some(Self::AbstractInt(value as _)),
-            (value, crate::ScalarKind::AbstractFloat, 8) => Some(Self::AbstractFloat(value as _)),
             _ => None,
         }
     }
@@ -227,7 +217,6 @@ impl crate::Literal {
             (crate::ScalarKind::Sint, 4) => Some(Self::I32(-1)),
             (crate::ScalarKind::Sint, 2) => Some(Self::I16(-1)),
             (crate::ScalarKind::Sint, 1) => Some(Self::I8(-1)),
-            (crate::ScalarKind::AbstractInt, 8) => Some(Self::AbstractInt(-1)),
             _ => None,
         }
     }
@@ -248,7 +237,6 @@ impl crate::Literal {
             | Self::FMXINT8(_) => 1,
             Self::BF16(_) => 2,
             Self::Bool(_) => crate::BOOL_WIDTH,
-            Self::AbstractInt(_) | Self::AbstractFloat(_) => crate::ABSTRACT_WIDTH,
         }
     }
     pub const fn scalar(&self) -> crate::Scalar {
@@ -265,8 +253,6 @@ impl crate::Literal {
             Self::U64(_) => crate::Scalar::U64,
             Self::I64(_) => crate::Scalar::I64,
             Self::Bool(_) => crate::Scalar::BOOL,
-            Self::AbstractInt(_) => crate::Scalar::ABSTRACT_INT,
-            Self::AbstractFloat(_) => crate::Scalar::ABSTRACT_FLOAT,
             Self::BF16(_) => crate::Scalar::BF16,
             Self::FE4M3(_) => crate::Scalar::FE4M3,
             Self::FE5M2(_) => crate::Scalar::FE5M2,
