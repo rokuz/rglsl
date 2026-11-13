@@ -110,6 +110,30 @@ fn layout_qualifier_ids_keep_their_expressions() {
 }
 
 #[test]
+fn layout_qualifier_ids_are_lower_case_as_in_glslang() {
+    let list = variables(
+        "layout(SET = 1, Binding = N, RGBA8, SHARED, row_MAJOR, Std140) uniform image2D a;\n",
+    );
+    let found = qualifiers(&list.ty.node);
+    let Some(SingleTypeQualifier::Layout(layout)) = found.first() else {
+        panic!("{found:?}");
+    };
+    let names: Vec<&str> = layout
+        .ids
+        .iter()
+        .map(|id| id.node.name.node.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["set", "binding", "rgba8", "shared", "row_major", "std140"]
+    );
+    assert_eq!(
+        round_trip("layout(LOCAL_SIZE_X = WIDTH, Local_Size_Y_Id = 1) in;\n"),
+        "layout(local_size_x = WIDTH, local_size_y_id = 1) in;\n"
+    );
+}
+
+#[test]
 fn qualifier_only_declarations() {
     assert!(matches!(
         declaration("layout(early_fragment_tests) in;\n").kind,

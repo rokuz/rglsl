@@ -79,11 +79,11 @@ impl Analyzer<'_> {
     pub(crate) fn buffer_reference_layout(&mut self, qualifiers: &Qualifiers) -> bool {
         let mut reference = false;
         for entry in &qualifiers.layout {
-            if entry.name.eq_ignore_ascii_case("buffer_reference") {
+            if entry.name == "buffer_reference" {
                 reference = true;
                 self.storage_buffer_class = true;
                 self.require_extension(entry.span, names::BUFFER_REFERENCE, "buffer_reference");
-            } else if entry.name.eq_ignore_ascii_case("buffer_reference_align") {
+            } else if entry.name == "buffer_reference_align" {
                 self.require_extension(
                     entry.span,
                     names::BUFFER_REFERENCE,

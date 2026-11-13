@@ -87,10 +87,9 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 impl Analyzer<'_> {
     pub(crate) fn fragment_layouts(&mut self, qualifiers: &Qualifiers) {
         let relevant = qualifiers.layout.iter().any(|entry| {
-            let name = entry.name.to_ascii_lowercase();
-            Interlock::from_layout(&name).is_some()
+            Interlock::from_layout(&entry.name).is_some()
                 || matches!(
-                    name.as_str(),
+                    entry.name.as_str(),
                     "post_depth_coverage"
                         | "early_fragment_tests"
                         | "early_and_late_fragment_tests_amd"
@@ -106,7 +105,7 @@ impl Analyzer<'_> {
         let entries: alloc::vec::Vec<(String, Span)> = qualifiers
             .layout
             .iter()
-            .map(|entry| (entry.name.to_ascii_lowercase(), entry.span))
+            .map(|entry| (entry.name.clone(), entry.span))
             .collect();
         for (name, span) in entries {
             if let Some(interlock) = Interlock::from_layout(&name) {

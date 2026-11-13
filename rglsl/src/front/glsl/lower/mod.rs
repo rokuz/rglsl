@@ -1317,12 +1317,14 @@ impl<'a> Lowerer<'a> {
         if self.options.auto_map_locations {
             self.reserve_explicit_locations();
         }
+        let before_globals = self.errors.len();
         for declaration in &unit.external_declarations {
             if let ExternalDeclaration::Declaration(ref declaration) = *declaration {
                 let result = self.global_declaration(declaration);
                 self.report(result);
             }
         }
+        let globals_failed = self.errors.len() > before_globals;
         let result = self.declare_per_vertex();
         self.report(result);
         self.spirv_requirements();
@@ -1338,6 +1340,10 @@ impl<'a> Lowerer<'a> {
             self.check_stage_layout();
         }
         let missing_layouts: Vec<Error> = self.errors.drain(layout_errors..).collect();
+        if globals_failed {
+            self.errors.extend(missing_layouts);
+            return Err(core::mem::take(&mut self.errors).into());
+        }
         let order = match self.function_order(&definitions) {
             Ok(order) => order,
             Err(error) => return Err(vec![error].into()),

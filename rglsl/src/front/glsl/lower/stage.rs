@@ -121,7 +121,6 @@ fn per_vertex_builtin(name: &str, invariant: bool) -> Option<BuiltIn> {
 
 impl<'a> Lowerer<'a> {
     pub(super) fn stage_input_layout(&mut self, names: &[String]) {
-        let names: Vec<String> = names.iter().map(|name| name.to_ascii_lowercase()).collect();
         let relevant = |stage: ShaderStage| {
             names.iter().any(|name| match stage {
                 ShaderStage::Geometry => input_primitive(name).is_some(),
@@ -137,7 +136,7 @@ impl<'a> Lowerer<'a> {
         let Some(stage) = self.stage_map(|stage| relevant(stage).then_some(stage)) else {
             return;
         };
-        for name in &names {
+        for name in names {
             match stage {
                 ShaderStage::Geometry => {
                     if let Some(primitive) = input_primitive(name) {
@@ -177,9 +176,8 @@ impl<'a> Lowerer<'a> {
         qualifier: &'a Spanned<TypeQualifier>,
     ) {
         let relevant = names.iter().any(|name| {
-            let name = name.to_ascii_lowercase();
-            output_primitive(&name).is_some()
-                || super::mesh::mesh_topology(&name).is_some()
+            output_primitive(name).is_some()
+                || super::mesh::mesh_topology(name).is_some()
                 || matches!(
                     name.as_str(),
                     "max_vertices" | "stream" | "vertices" | "max_primitives"
@@ -191,7 +189,7 @@ impl<'a> Lowerer<'a> {
         match self.stage() {
             ShaderStage::Geometry => {
                 for name in names {
-                    if let Some(primitive) = output_primitive(&name.to_ascii_lowercase()) {
+                    if let Some(primitive) = output_primitive(name) {
                         self.stage_layout.output_primitive.get_or_insert(primitive);
                     }
                 }
@@ -213,7 +211,7 @@ impl<'a> Lowerer<'a> {
             }
             ShaderStage::Mesh => {
                 for name in names {
-                    if let Some(topology) = super::mesh::mesh_topology(&name.to_ascii_lowercase()) {
+                    if let Some(topology) = super::mesh::mesh_topology(name) {
                         self.stage_layout.mesh_topology.get_or_insert(topology);
                     }
                 }

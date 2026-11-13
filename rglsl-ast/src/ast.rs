@@ -364,10 +364,9 @@ pub struct TypeQualifier {
 impl TypeQualifier {
     pub fn has_layout(&self, name: &str) -> bool {
         self.qualifiers.iter().any(|single| match single.node {
-            SingleTypeQualifier::Layout(ref layout) => layout
-                .ids
-                .iter()
-                .any(|id| id.node.name.node.eq_ignore_ascii_case(name)),
+            SingleTypeQualifier::Layout(ref layout) => {
+                layout.ids.iter().any(|id| id.node.name.node == name)
+            }
             _ => false,
         })
     }

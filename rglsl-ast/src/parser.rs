@@ -1383,7 +1383,8 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 let token = self.advance();
                 Spanned::new(token.span, String::from("shared"))
             } else {
-                self.identifier()?
+                let identifier = self.identifier()?;
+                Spanned::new(identifier.span, identifier.node.to_ascii_lowercase())
             };
             let value = if self.eat("=") {
                 Some(self.call(self.clone().parse_assignment()).await?.expression)

@@ -621,6 +621,47 @@ color: offset 0, type 8b52, size 1, index 0, binding -1, stages 16
 }
 
 #[test]
+fn reflects_layouts_written_in_any_case_as_glslang() -> TestResult {
+    let directory = work_dir("reflection_layout_case")?;
+    fs::write(
+        directory.join("shader.comp"),
+        "#version 450
+layout(LOCAL_SIZE_X = 8, Local_Size_Y = 2) in;
+layout(SET = 1, BINDING = 3, STD430) buffer Data { float values[]; } data;
+layout(Binding = 0, Std140) uniform Params { layout(ROW_MAJOR) mat4 m; vec4 tint; } params;
+void main() { data.values[gl_GlobalInvocationID.x] = params.tint.x + params.m[0][0]; }
+",
+    )?;
+    let run = rglsl(&directory, &["-V", "-q", "shader.comp"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(
+        run.stdout,
+        "Uniform reflection:
+Data.values: offset 0, type 1406, size 0, index 0, binding -1, stages 32, arrayStride 4, topLevelArrayStride 4
+Params.tint: offset 64, type 8b52, size 1, index 1, binding -1, stages 32
+Params.m: offset 0, type 8b5c, size 1, index 1, binding -1, stages 32
+
+Uniform block reflection:
+Data: offset -1, type ffffffff, size 4, index 0, binding 3, stages 32, numMembers 1
+Params: offset -1, type ffffffff, size 80, index 1, binding 0, stages 32, numMembers 2
+
+Buffer variable reflection:
+
+Buffer block reflection:
+
+Pipeline input reflection:
+
+Pipeline output reflection:
+
+Local size X: 8
+Local size Y: 2
+
+"
+    );
+    Ok(())
+}
+
+#[test]
 fn reflects_linked_stages_and_options() -> TestResult {
     let directory = work_dir("reflection_linked")?;
     fs::write(directory.join("shader.vert"), REFLECTION_VERTEX)?;

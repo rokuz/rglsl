@@ -10,6 +10,7 @@ mod arithmetic;
 mod atomic_compare_exchange;
 mod cooperative;
 mod glsl_vulkan;
+mod layout_names;
 mod snapshots;
 mod stage_io;
 mod tensors;

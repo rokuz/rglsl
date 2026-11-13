@@ -34,7 +34,7 @@ pub(super) fn compute_layout(units: &[&Analyzed]) -> ([u32; 3], [i64; 3]) {
                     continue;
                 };
                 for id in &layout.ids {
-                    let (tile, axis) = match id.node.name.node.to_ascii_lowercase().as_str() {
+                    let (tile, axis) = match id.node.name.node.as_str() {
                         "local_size_x" => (false, 0),
                         "local_size_y" => (false, 1),
                         "local_size_z" => (false, 2),
