@@ -920,9 +920,17 @@ fn included(map: &rglsl_pp::SourceMap, offset: u32) -> Option<IncludeLocation> {
 }
 
 fn original(map: &rglsl_pp::SourceMap, span: rglsl_ast::Span) -> Span {
+    original_located(map.root(), |offset| map.locate(offset), span)
+}
+
+fn original_located(
+    root: rglsl_pp::FileId,
+    locate: impl Fn(usize) -> rglsl_pp::Location,
+    span: rglsl_ast::Span,
+) -> Span {
     let locate = |offset: u32| {
-        let location = map.locate(usize::try_from(offset).unwrap_or(usize::MAX));
-        (location.file == map.root()).then_some(location.offset)
+        let location = locate(usize::try_from(offset).unwrap_or(usize::MAX));
+        (location.file == root).then_some(location.offset)
     };
     match (locate(span.start), locate(span.end)) {
         (Some(start), Some(end)) => Span::new(start, end.max(start)),
@@ -998,6 +1006,7 @@ pub(super) struct Initialization<'a> {
 #[derive(Debug)]
 pub(super) struct Lowerer<'a> {
     pub(super) source_map: &'a rglsl_pp::SourceMap,
+    locator: rglsl_pp::Locator<'a>,
     pub(super) unit: &'a TranslationUnit,
     pub(super) analysis: &'a Analysis,
     pub(super) options: &'a Options,
@@ -1086,6 +1095,7 @@ impl<'a> Lowerer<'a> {
     ) -> Self {
         Self {
             source_map,
+            locator: rglsl_pp::Locator::new(source_map),
             unit,
             analysis,
             options,
@@ -1175,7 +1185,11 @@ impl<'a> Lowerer<'a> {
         if self.debug.is_some() {
             return Span::new(span.start, span.end);
         }
-        original(self.source_map, span)
+        original_located(
+            self.source_map.root(),
+            |offset| self.locator.locate(offset),
+            span,
+        )
     }
 
     pub(super) fn debug_scope(&mut self, start: u32, end: u32, at: u32) {

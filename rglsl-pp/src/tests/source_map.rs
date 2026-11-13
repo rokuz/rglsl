@@ -158,3 +158,31 @@ fn offsets_outside_tokens_are_clamped() {
     assert_eq!(empty.source_map.locate(3).offset, 0);
     assert_eq!(empty.source_map.line(3), (FileId(0), 1));
 }
+
+#[test]
+fn a_locator_agrees_with_the_source_map_in_any_order() {
+    let mut source = alloc::string::String::from(
+        "#version 450\n#define ADD(a, b) ((a) + (b))\nint x = ADD(left, right);\n",
+    );
+    for index in 0..300 {
+        source.push_str(&alloc::format!("int y{index} = ADD({index}, x);\n"));
+    }
+    let result = run(&source);
+    let locator = crate::Locator::new(&result.source_map);
+    let end = result.text.len() + 3;
+    let forward = 0..end;
+    let backward = (0..end).rev();
+    let strided = (0..end).map(|step| step * 7919 % end);
+    for offset in forward.chain(backward).chain(strided) {
+        assert_eq!(
+            locator.locate(offset),
+            result.source_map.locate(offset),
+            "{offset}"
+        );
+    }
+    let empty = run("");
+    assert_eq!(
+        crate::Locator::new(&empty.source_map).locate(3),
+        empty.source_map.locate(3)
+    );
+}
