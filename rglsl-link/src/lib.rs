@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod calls;
+mod compiler;
 mod entry;
 mod error;
 mod file;
@@ -15,15 +16,20 @@ use rglsl::compact::{KeepUnused, compact};
 use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, ValidationMode, Validator};
 use rglsl::{
     AddressSpace, ArraySize, Binding, Expression, Function, GeometryInputPrimitive, Handle, Module,
-    SampleLevel, ShaderStage, TypeInner,
+    SampleLevel, TypeInner,
 };
 
+pub use compiler::{
+    CompileOptions, Diagnostic, Diagnostics, Program, ProgramOptions, Severity, StageBinary,
+    compile, compile_and_link, link_spirv, read_object, write_object,
+};
 pub use error::{LinkError, LinkErrors};
 pub use file::{FileError, decode, encode};
 pub use program::{
     StagedErrors, group_by_stage, link_objects, link_objects_staged, link_program,
     link_program_staged,
 };
+pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
 
 use calls::SymbolTable;

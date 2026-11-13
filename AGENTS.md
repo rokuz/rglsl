@@ -20,6 +20,7 @@ If `AGENTS.local.md` exists, read it too: it has the maintainers' local workflow
 | `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) |
 | `rglsl-cli/` | the `rglsl` command-line tool, `glslangValidator`-compatible for Vulkan GLSL |
+| `samples/` | runtime use of the compiler through `rglsl-link`'s `compile`/`link_spirv`; `samples/run.sh` runs them (CI) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
 | `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask snapshots`, `cargo xtask cli`, `cargo xtask fuzz` |
 | `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers, KosmicKrisp, Amber and the ML emulation layer |

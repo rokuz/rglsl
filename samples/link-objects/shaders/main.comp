@@ -1,0 +1,12 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) buffer Values {
+    float values[];
+};
+float smooth_step(float x);
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index < values.length()) {
+        values[index] = smooth_step(values[index]);
+    }
+}

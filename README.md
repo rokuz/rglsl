@@ -49,6 +49,22 @@ rglsl --object lighting.glsl                          # object module lighting.r
 
 Options, exit codes and messages are `glslangValidator`'s.
 
+From Rust, `rglsl-link` compiles GLSL strings into object modules, links them and returns SPIR-V
+words or diagnostics:
+
+```rust
+use rglsl_link::{CompileOptions, ProgramOptions, ShaderStage, compile, link_spirv};
+
+let main = compile(MAIN, &CompileOptions::new("main.comp", ShaderStage::Compute))?;
+let library = compile(LIBRARY, &CompileOptions::library("library.glsl"))?;
+let program = link_spirv(&[main, library], &ProgramOptions::default())?;
+for binary in &program.stages {
+    upload(binary.stage, &binary.words);
+}
+```
+
+Complete examples, including object files on disk: [samples](samples/README.md).
+
 ## Development
 
 ```sh

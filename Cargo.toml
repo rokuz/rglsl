@@ -12,6 +12,8 @@ members = [
     "rglsl-link",
     "rglsl-fuzz/fuzz",
     "xtask",
+    "samples/compile-and-link",
+    "samples/link-objects",
 ]
 
 [workspace.lints.rust]
