@@ -35,6 +35,7 @@ jobs:
           RUSTFLAGS: --cfg fuzzing
       - run: cargo test --workspace --all-features
       - run: cargo test --release -p rglsl-link --test nesting -- --ignored
+      - run: sh samples/run.sh
 
   deny:
     name: cargo deny
@@ -63,6 +64,9 @@ jobs:
           path: target/oracles
           key: oracles-${{ runner.os }}-${{ hashFiles('oracles.toml', 'xtask/src/oracles.rs') }}
       - run: cargo xtask oracles --no-exec
+      - run: sh samples/run.sh
+        env:
+          SPIRV_VAL: target/oracles/bin/spirv-val
       - run: cargo xtask snapshots
       - run: cargo xtask test --no-exec
       - run: cargo xtask cli
