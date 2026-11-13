@@ -273,6 +273,7 @@ impl Parsed {
 pub(super) struct StageClass {
     probe: StageProbe<ShaderStage>,
     names: RefCell<BTreeSet<String>>,
+    collects_identifiers: bool,
     version: core::cell::Cell<Option<u32>>,
 }
 
@@ -281,7 +282,15 @@ impl StageClass {
         Self {
             probe: StageProbe::new(stage, &ShaderStage::ALL),
             names: RefCell::new(BTreeSet::new()),
+            collects_identifiers: false,
             version: core::cell::Cell::new(None),
+        }
+    }
+
+    pub(super) fn collecting_identifiers(stage: ShaderStage) -> Self {
+        Self {
+            collects_identifiers: true,
+            ..Self::new(stage)
         }
     }
 
@@ -298,6 +307,9 @@ impl StageClass {
     }
 
     fn identifiers(&self, text: &str) {
+        if !self.collects_identifiers {
+            return;
+        }
         let mut names = self.names.borrow_mut();
         let mut start = None;
         for (index, character) in text
