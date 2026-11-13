@@ -351,5 +351,5 @@ fn compile_only(
     };
     let mut options = spirv_options(lang_version, debug);
     options.flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
-    write_words(&object.module, &info, &options, out)
+    write_words(&object.unit.module, &info, &options, out)
 }

@@ -961,7 +961,7 @@ fn nested_object(depth: usize) -> TestResult<String> {
     let mut object = Frontend::default()
         .compile(&options, &shader("", "b = 2;"))
         .map_err(|errors| format!("{errors:?}"))?;
-    let function = &mut object.module.entry_points[0].function;
+    let function = &mut object.unit.module.entry_points[0].function;
     let condition = function.expressions.append(
         rglsl::Expression::Literal(rglsl::Literal::Bool(true)),
         rglsl::Span::default(),

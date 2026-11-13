@@ -65,7 +65,7 @@ pub(super) fn parse(
         false,
         &StageClass::new(options.stage),
     )
-    .map(|object| object.module)
+    .map(|object| object.unit.module)
 }
 
 pub(super) fn compile(
@@ -336,10 +336,10 @@ fn lower_object(
     class: &StageClass,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let mut object = lower(options, source, mode, root, includer, names, false, class)?;
-    if object.work_group_size_constant {
-        object.specialized = lower(options, source, mode, root, includer, names, true, class)
+    if object.unit.work_group_size_constant {
+        object.unit.specialized = lower(options, source, mode, root, includer, names, true, class)
             .ok()
-            .map(alloc::boxed::Box::new);
+            .map(|specialized| alloc::boxed::Box::new(specialized.unit));
     }
     Ok(object)
 }
@@ -604,7 +604,7 @@ fn run_lowerer(
                         errors: Vec::from([stalled(Span::UNDEFINED)]),
                         included: Vec::new(),
                     })?;
-                object.object.module.debug_info = Some(alloc::boxed::Box::new(info));
+                object.object.unit.module.debug_info = Some(alloc::boxed::Box::new(info));
             }
             Ok(object.object)
         })

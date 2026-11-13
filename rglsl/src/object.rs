@@ -7,11 +7,11 @@ use serde::Serialize;
 
 use crate::{
     ConservativeDepth, Function, GeometryInputPrimitive, GeometryOutputPrimitive, GlobalVariable,
-    Handle, MeshOutputTopology, Module, Override, RayTracingFeatures, ShaderStage,
+    Handle, MeshOutputTopology, Module, Override, RayTracingFeatures, ShaderStage, ShaderStageMask,
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 16;
+pub const FORMAT_VERSION: u32 = 17;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -19,19 +19,48 @@ pub const FORMAT_VERSION: u32 = 16;
 pub struct ObjectModule {
     pub format_version: u32,
     pub name: Option<String>,
-    pub stage: Option<ShaderStage>,
-    pub stages: Vec<ShaderStage>,
+    pub target: ObjectTarget,
+    pub unit: CompiledUnit,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub enum ObjectTarget {
+    Stage(ShaderStage),
+    Library(Library),
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub struct Library {
+    pub stages: ShaderStageMask,
+    pub variants: Vec<LibraryVariant>,
+    pub rejections: Vec<StageRejection>,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub struct LibraryVariant {
+    pub stages: ShaderStageMask,
+    pub unit: CompiledUnit,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub struct CompiledUnit {
     pub glsl_version: u32,
     pub extensions: Vec<String>,
     pub module: Module,
     pub functions: Vec<FunctionSymbol>,
     pub globals: Vec<GlobalSymbol>,
     pub layout: StageLayout,
-    pub variants: Vec<ObjectModule>,
-    pub rejections: Vec<StageRejection>,
     pub work_group_size_constant: bool,
     pub work_group_size_placeholders: [Option<Handle<Override>>; 3],
-    pub specialized: Option<Box<ObjectModule>>,
+    pub specialized: Option<Box<CompiledUnit>>,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "core::ops::Not::not")
@@ -40,102 +69,20 @@ pub struct ObjectModule {
     pub deferred_bias: bool,
 }
 
-impl ObjectModule {
-    pub fn new(stage: Option<ShaderStage>, module: Module) -> Self {
+impl CompiledUnit {
+    pub fn new(module: Module) -> Self {
         Self {
-            format_version: FORMAT_VERSION,
-            name: None,
-            stage,
-            stages: match stage {
-                Some(_) => Vec::new(),
-                None => ShaderStage::ALL.to_vec(),
-            },
             glsl_version: 0,
             extensions: Vec::new(),
             module,
             functions: Vec::new(),
             globals: Vec::new(),
             layout: StageLayout::default(),
-            variants: Vec::new(),
-            rejections: Vec::new(),
             work_group_size_constant: false,
             work_group_size_placeholders: [None; 3],
             specialized: None,
             deferred_bias: false,
         }
-    }
-
-    pub fn supports(&self, stage: ShaderStage) -> bool {
-        self.stage.map_or_else(
-            || {
-                self.stages.contains(&stage)
-                    || self
-                        .variants
-                        .iter()
-                        .any(|variant| variant.stages.contains(&stage))
-            },
-            |own| own == stage,
-        )
-    }
-
-    pub fn for_stage(&self, stage: ShaderStage) -> Result<ObjectModule, StageRejection> {
-        let found = match self.stage {
-            Some(own) if own == stage => Some(self),
-            Some(_) => None,
-            None if self.stages.contains(&stage) => Some(self),
-            None => self
-                .variants
-                .iter()
-                .find(|variant| variant.stages.contains(&stage)),
-        };
-        match found {
-            Some(object) => {
-                let mut object = ObjectModule {
-                    name: self.name.clone(),
-                    variants: Vec::new(),
-                    rejections: Vec::new(),
-                    ..object.clone()
-                };
-                if self.stage.is_none() {
-                    if stage != ShaderStage::Geometry {
-                        object.layout.streams.clear();
-                        object.layout.multi_stream = false;
-                    }
-                    object.module.ray_tracing = ray_tracing_for(stage, object.module.ray_tracing);
-                    if object.deferred_bias && stage != ShaderStage::Fragment {
-                        drop_bias(&mut object.module);
-                    }
-                    object.deferred_bias = false;
-                    if let Some(ref mut specialized) = object.specialized {
-                        specialized.module.ray_tracing =
-                            ray_tracing_for(stage, specialized.module.ray_tracing);
-                        if specialized.deferred_bias && stage != ShaderStage::Fragment {
-                            drop_bias(&mut specialized.module);
-                        }
-                        specialized.deferred_bias = false;
-                    }
-                }
-                Ok(object)
-            }
-            None => Err(self
-                .rejections
-                .iter()
-                .find(|rejection| rejection.stage == stage)
-                .cloned()
-                .unwrap_or_else(|| StageRejection {
-                    stage,
-                    file: None,
-                    line: None,
-                    message: match self.stage {
-                        Some(own) => alloc::format!("the module is a {} shader", own.name()),
-                        None => String::from("the library is not compiled for this stage"),
-                    },
-                })),
-        }
-    }
-
-    pub const fn is_library(&self) -> bool {
-        self.stage.is_none()
     }
 
     pub const fn has_entry_point(&self) -> bool {
@@ -150,6 +97,135 @@ impl ObjectModule {
 
     pub fn global_symbol(&self, global: Handle<GlobalVariable>) -> Option<&GlobalSymbol> {
         self.globals.iter().find(|symbol| symbol.global == global)
+    }
+
+    fn for_library_stage(&self, stage: ShaderStage) -> Self {
+        let mut unit = self.clone();
+        if stage != ShaderStage::Geometry {
+            unit.layout.streams.clear();
+            unit.layout.multi_stream = false;
+        }
+        unit.module.ray_tracing = ray_tracing_for(stage, unit.module.ray_tracing);
+        if unit.deferred_bias && stage != ShaderStage::Fragment {
+            drop_bias(&mut unit.module);
+        }
+        unit.deferred_bias = false;
+        if let Some(ref mut specialized) = unit.specialized {
+            specialized.module.ray_tracing = ray_tracing_for(stage, specialized.module.ray_tracing);
+            if specialized.deferred_bias && stage != ShaderStage::Fragment {
+                drop_bias(&mut specialized.module);
+            }
+            specialized.deferred_bias = false;
+        }
+        unit
+    }
+}
+
+impl ObjectModule {
+    pub const fn new(target: ObjectTarget, unit: CompiledUnit) -> Self {
+        Self {
+            format_version: FORMAT_VERSION,
+            name: None,
+            target,
+            unit,
+        }
+    }
+
+    pub const fn stage(&self) -> Option<ShaderStage> {
+        match self.target {
+            ObjectTarget::Stage(stage) => Some(stage),
+            ObjectTarget::Library(_) => None,
+        }
+    }
+
+    pub const fn library(&self) -> Option<&Library> {
+        match self.target {
+            ObjectTarget::Stage(_) => None,
+            ObjectTarget::Library(ref library) => Some(library),
+        }
+    }
+
+    pub fn supports(&self, stage: ShaderStage) -> bool {
+        match self.target {
+            ObjectTarget::Stage(own) => own == stage,
+            ObjectTarget::Library(ref library) => {
+                library.stages.has(stage)
+                    || library
+                        .variants
+                        .iter()
+                        .any(|variant| variant.stages.has(stage))
+            }
+        }
+    }
+
+    pub fn for_stage(&self, stage: ShaderStage) -> Result<ObjectModule, StageRejection> {
+        let library = match self.target {
+            ObjectTarget::Stage(own) if own == stage => return Ok(self.clone()),
+            ObjectTarget::Stage(own) => {
+                return Err(StageRejection {
+                    stage,
+                    file: None,
+                    line: None,
+                    message: alloc::format!("the module is a {} shader", own.name()),
+                })
+            }
+            ObjectTarget::Library(ref library) => library,
+        };
+        let found = if library.stages.has(stage) {
+            Some((library.stages, &self.unit))
+        } else {
+            library
+                .variants
+                .iter()
+                .find(|variant| variant.stages.has(stage))
+                .map(|variant| (variant.stages, &variant.unit))
+        };
+        match found {
+            Some((stages, unit)) => Ok(ObjectModule {
+                format_version: self.format_version,
+                name: self.name.clone(),
+                target: ObjectTarget::Library(Library {
+                    stages,
+                    variants: Vec::new(),
+                    rejections: Vec::new(),
+                }),
+                unit: unit.for_library_stage(stage),
+            }),
+            None => Err(library
+                .rejections
+                .iter()
+                .find(|rejection| rejection.stage == stage)
+                .cloned()
+                .unwrap_or_else(|| StageRejection {
+                    stage,
+                    file: None,
+                    line: None,
+                    message: String::from("the library is not compiled for this stage"),
+                })),
+        }
+    }
+
+    pub const fn library_mut(&mut self) -> Option<&mut Library> {
+        match self.target {
+            ObjectTarget::Stage(_) => None,
+            ObjectTarget::Library(ref mut library) => Some(library),
+        }
+    }
+
+    pub const fn is_library(&self) -> bool {
+        matches!(self.target, ObjectTarget::Library(_))
+    }
+
+    pub const fn has_entry_point(&self) -> bool {
+        self.unit.has_entry_point()
+    }
+
+    pub fn units(&self) -> impl Iterator<Item = &CompiledUnit> {
+        core::iter::once(&self.unit).chain(
+            self.library()
+                .into_iter()
+                .flat_map(|library| library.variants.iter().map(|variant| &variant.unit)),
+        )
     }
 }
 

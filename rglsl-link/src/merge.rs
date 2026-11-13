@@ -122,7 +122,7 @@ impl<'a> Builder<'a> {
             .objects
             .get(index)
             .ok_or_else(|| internal("object index"))?;
-        let source = &object.module;
+        let source = &object.unit.module;
         let mut remap = Remap::new();
         let mut pending_overrides = Vec::new();
         for (handle, value) in source.overrides.iter() {
@@ -266,7 +266,7 @@ impl<'a> Builder<'a> {
         let symbol = self
             .objects
             .get(object)
-            .and_then(|object| object.global_symbol(handle))
+            .and_then(|object| object.unit.global_symbol(handle))
             .cloned();
         let name = symbol
             .as_ref()

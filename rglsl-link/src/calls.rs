@@ -78,8 +78,8 @@ impl SymbolTable {
         let mut table = Self::default();
         let mut duplicates = BTreeSet::new();
         for (index, object) in objects.iter().enumerate() {
-            for symbol in &object.functions {
-                let Ok(function) = object.module.functions.try_get(symbol.function) else {
+            for symbol in &object.unit.functions {
+                let Ok(function) = object.unit.module.functions.try_get(symbol.function) else {
                     errors.push(LinkError::Internal(format!(
                         "function symbol `{}` has no function",
                         symbol.signature
@@ -102,13 +102,13 @@ impl SymbolTable {
         }
         let mut mismatched = BTreeSet::new();
         for object in objects {
-            for symbol in &object.functions {
+            for symbol in &object.unit.functions {
                 let Some(&(defining, handle)) = table.definitions.get(&symbol.signature) else {
                     continue;
                 };
                 let Some(definition) = objects
                     .get(defining)
-                    .and_then(|object| object.function_symbol(handle))
+                    .and_then(|object| object.unit.function_symbol(handle))
                 else {
                     continue;
                 };
@@ -128,13 +128,13 @@ impl SymbolTable {
         let Some(object) = objects.get(index) else {
             return Err(String::from("<unknown>"));
         };
-        let Ok(function) = object.module.functions.try_get(handle) else {
+        let Ok(function) = object.unit.module.functions.try_get(handle) else {
             return Err(String::from("<unknown>"));
         };
         if function.linkage.is_definition() {
             return Ok(node);
         }
-        let signature = object.function_symbol(handle).map_or_else(
+        let signature = object.unit.function_symbol(handle).map_or_else(
             || function.name.clone().unwrap_or_default(),
             |symbol| symbol.signature.clone(),
         );
@@ -151,7 +151,7 @@ pub(crate) fn order(
 ) -> Vec<Node> {
     let Some(entry) = objects
         .get(main)
-        .and_then(|object| object.module.entry_points.first())
+        .and_then(|object| object.unit.module.entry_points.first())
     else {
         return Vec::new();
     };
@@ -167,7 +167,7 @@ pub(crate) fn order(
         let (index, handle) = node;
         objects
             .get(index)
-            .and_then(|object| object.module.functions.try_get(handle).ok())
+            .and_then(|object| object.unit.module.functions.try_get(handle).ok())
             .map(|function| &function.body)
     };
     let name = |node: Node| -> String {
@@ -176,10 +176,12 @@ pub(crate) fn order(
             .get(index)
             .and_then(|object| {
                 object
+                    .unit
                     .function_symbol(handle)
                     .map(|symbol| symbol.signature.clone())
                     .or_else(|| {
                         object
+                            .unit
                             .module
                             .functions
                             .try_get(handle)
@@ -200,7 +202,13 @@ pub(crate) fn order(
         let mut uncalled: Vec<Result<Node, String>> = objects
             .iter()
             .enumerate()
-            .flat_map(|(index, object)| object.functions.iter().map(move |symbol| (index, symbol)))
+            .flat_map(|(index, object)| {
+                object
+                    .unit
+                    .functions
+                    .iter()
+                    .map(move |symbol| (index, symbol))
+            })
             .filter(|&(index, symbol)| {
                 table.definitions.get(&symbol.signature) == Some(&(index, symbol.function))
             })

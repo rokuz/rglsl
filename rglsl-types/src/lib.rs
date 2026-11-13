@@ -168,6 +168,68 @@ impl ShaderStage {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+    #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
+    #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+    #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+    pub struct ShaderStageMask: u16 {
+        const VERTEX = 1 << 0;
+        const TESS_CONTROL = 1 << 1;
+        const TESS_EVALUATION = 1 << 2;
+        const GEOMETRY = 1 << 3;
+        const FRAGMENT = 1 << 4;
+        const COMPUTE = 1 << 5;
+        const TASK = 1 << 6;
+        const MESH = 1 << 7;
+        const RAY_GENERATION = 1 << 8;
+        const INTERSECTION = 1 << 9;
+        const ANY_HIT = 1 << 10;
+        const CLOSEST_HIT = 1 << 11;
+        const MISS = 1 << 12;
+        const CALLABLE = 1 << 13;
+    }
+}
+
+impl ShaderStageMask {
+    pub const fn of(stage: ShaderStage) -> Self {
+        match stage {
+            ShaderStage::Vertex => Self::VERTEX,
+            ShaderStage::TessControl => Self::TESS_CONTROL,
+            ShaderStage::TessEvaluation => Self::TESS_EVALUATION,
+            ShaderStage::Geometry => Self::GEOMETRY,
+            ShaderStage::Fragment => Self::FRAGMENT,
+            ShaderStage::Compute => Self::COMPUTE,
+            ShaderStage::Task => Self::TASK,
+            ShaderStage::Mesh => Self::MESH,
+            ShaderStage::RayGeneration => Self::RAY_GENERATION,
+            ShaderStage::Intersection => Self::INTERSECTION,
+            ShaderStage::AnyHit => Self::ANY_HIT,
+            ShaderStage::ClosestHit => Self::CLOSEST_HIT,
+            ShaderStage::Miss => Self::MISS,
+            ShaderStage::Callable => Self::CALLABLE,
+        }
+    }
+
+    pub const fn has(self, stage: ShaderStage) -> bool {
+        self.contains(Self::of(stage))
+    }
+
+    pub fn stages(self) -> impl Iterator<Item = ShaderStage> {
+        ShaderStage::ALL
+            .into_iter()
+            .filter(move |&stage| self.has(stage))
+    }
+}
+
+impl FromIterator<ShaderStage> for ShaderStageMask {
+    fn from_iter<I: IntoIterator<Item = ShaderStage>>(stages: I) -> Self {
+        stages
+            .into_iter()
+            .fold(Self::empty(), |mask, stage| mask | Self::of(stage))
+    }
+}
+
 /// Hash map that is faster but not resilient to DoS attacks.
 /// (Similar to rustc_hash::FxHashMap but using hashbrown::HashMap instead of alloc::collections::HashMap.)
 /// To construct a new instance: `FastHashMap::default()`

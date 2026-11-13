@@ -755,8 +755,8 @@ impl<'a> Session<'a> {
                 let info = rglsl_link::validate_object(&object).map_err(|errors| {
                     Exit::error(format!("cannot validate the module of {name}: {errors}"))
                 })?;
-                self.rename_entry_point(&mut object.module);
-                let code = self.emit(stage, &object.module, &info, &name)?;
+                self.rename_entry_point(&mut object.unit.module);
+                let code = self.emit(stage, &object.unit.module, &info, &name)?;
                 if code != EXIT_SUCCESS {
                     return Ok(code);
                 }

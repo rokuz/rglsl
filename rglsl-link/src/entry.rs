@@ -164,6 +164,7 @@ impl Builder<'_> {
             let object = self.object(index)?;
             let library = object.is_library();
             let mut function = object
+                .unit
                 .module
                 .functions
                 .try_get(handle)
@@ -173,7 +174,7 @@ impl Builder<'_> {
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
-            let span = object.module.functions.get_span(handle);
+            let span = object.unit.module.functions.get_span(handle);
             let new = self.module.functions.append(function, span);
             if library {
                 self.library_functions.push(new);
@@ -214,6 +215,7 @@ impl Builder<'_> {
     ) -> Result<EntryPoint, LinkError> {
         let entry = self
             .object(main)?
+            .unit
             .module
             .entry_points
             .first()
@@ -336,18 +338,20 @@ impl Builder<'_> {
         let mut interface = Vec::new();
         for (index, object) in self.objects.iter().enumerate() {
             let remap = self.remap(index)?;
-            let declared: Vec<Handle<GlobalVariable>> = match object.module.entry_points.first() {
-                Some(entry) => entry.interface.clone(),
-                None => object
-                    .module
-                    .global_variables
-                    .iter()
-                    .filter(|&(_, global)| {
-                        matches!(global.space, AddressSpace::Input | AddressSpace::Output)
-                    })
-                    .map(|(handle, _)| handle)
-                    .collect(),
-            };
+            let declared: Vec<Handle<GlobalVariable>> =
+                match object.unit.module.entry_points.first() {
+                    Some(entry) => entry.interface.clone(),
+                    None => object
+                        .unit
+                        .module
+                        .global_variables
+                        .iter()
+                        .filter(|&(_, global)| {
+                            matches!(global.space, AddressSpace::Input | AddressSpace::Output)
+                        })
+                        .map(|(handle, _)| handle)
+                        .collect(),
+                };
             for handle in declared {
                 let mapped = remap.global(handle).map_err(internal)?;
                 if !interface.contains(&mapped) {
@@ -363,9 +367,9 @@ impl Builder<'_> {
             && self
                 .objects
                 .iter()
-                .all(|object| object.module.legacy_buffer_blocks);
+                .all(|object| object.unit.module.legacy_buffer_blocks);
         for index in 0..self.objects.len() {
-            let source = &self.object(index)?.module;
+            let source = &self.object(index)?.unit.module;
             let remap = self.remap(index)?;
             let mut special = self.module.special_types.clone();
             let incoming = &source.special_types;

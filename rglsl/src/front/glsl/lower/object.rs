@@ -11,8 +11,8 @@ use rglsl_sema::FunctionId;
 
 use super::{GlobalRef, Lowerer, Result};
 use crate::object::{
-    BindingAssignment, FunctionSymbol, GlobalSymbol, ObjectModule, ParameterQualifier, PathStep,
-    StageLayout, SymbolKind,
+    BindingAssignment, CompiledUnit, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
+    ObjectTarget, ParameterQualifier, PathStep, StageLayout, SymbolKind,
 };
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
 
@@ -314,18 +314,27 @@ impl Lowerer<'_> {
             && self.analysis.work_group_size_read
             && self.local_size_ids.iter().any(Option::is_none)
             && self.stage_map(crate::ShaderStage::compute_like);
-        ObjectModule {
-            stage,
-            work_group_size_constant,
-            work_group_size_placeholders: self.work_group_size_placeholders,
-            deferred_bias: self.deferred_bias,
-            glsl_version: self.analysis.version.unwrap_or(0),
-            extensions,
-            functions,
-            globals,
-            layout,
-            stages: Vec::new(),
-            ..ObjectModule::new(stage, module)
-        }
+        let target = match stage {
+            Some(stage) => ObjectTarget::Stage(stage),
+            None => ObjectTarget::Library(Library {
+                stages: crate::ShaderStageMask::empty(),
+                variants: Vec::new(),
+                rejections: Vec::new(),
+            }),
+        };
+        ObjectModule::new(
+            target,
+            CompiledUnit {
+                work_group_size_constant,
+                work_group_size_placeholders: self.work_group_size_placeholders,
+                deferred_bias: self.deferred_bias,
+                glsl_version: self.analysis.version.unwrap_or(0),
+                extensions,
+                functions,
+                globals,
+                layout,
+                ..CompiledUnit::new(module)
+            },
+        )
     }
 }

@@ -72,13 +72,14 @@ float helper(float x) { return x * 2.0; }
 fn prototypes_become_imports() -> TestResult {
     let main = object(ShaderStage::Fragment, MAIN)?;
     let imports: Vec<_> = main
+        .unit
         .module
         .functions
         .iter()
         .filter(|(_, function)| function.linkage == Linkage::Import)
         .collect();
     assert_eq!(imports.len(), 1);
-    assert_eq!(main.functions[0].signature, "helper(float)");
+    assert_eq!(main.unit.functions[0].signature, "helper(float)");
     rglsl_link::validate_object(&main)?;
     Ok(())
 }
@@ -91,8 +92,9 @@ fn modules_without_main_and_prototype_only_modules_compile() -> TestResult {
         ShaderStage::Fragment,
         "#version 450\nfloat a(float x);\nint b(ivec2 v);\n",
     )?;
-    assert_eq!(prototypes.module.functions.len(), 2);
+    assert_eq!(prototypes.unit.module.functions.len(), 2);
     assert!(prototypes
+        .unit
         .module
         .functions
         .iter()
@@ -107,10 +109,11 @@ fn modules_without_main_and_prototype_only_modules_compile() -> TestResult {
 fn executable_validation_and_the_backend_refuse_imports() -> TestResult {
     let main = object(ShaderStage::Fragment, MAIN)?;
     let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
-    assert!(validator.validate(&main.module).is_err());
+    assert!(validator.validate(&main.unit.module).is_err());
     validator.mode(ValidationMode::Object);
-    let info = validator.validate(&main.module)?;
-    let Err(error) = spv::write_vec(&main.module, &info, &spv::Options::default(), None) else {
+    let info = validator.validate(&main.unit.module)?;
+    let Err(error) = spv::write_vec(&main.unit.module, &info, &spv::Options::default(), None)
+    else {
         return Err("the backend accepted a module with imports".into());
     };
     assert!(matches!(error, spv::Error::Import(ref name) if name == "helper"));
@@ -120,11 +123,11 @@ fn executable_validation_and_the_backend_refuse_imports() -> TestResult {
 #[test]
 fn compact_keeps_imports() -> TestResult {
     let mut main = object(ShaderStage::Fragment, MAIN)?;
-    compact(&mut main.module, KeepUnused::No)?;
-    assert_eq!(main.module.functions.len(), 1);
+    compact(&mut main.unit.module, KeepUnused::No)?;
+    assert_eq!(main.unit.module.functions.len(), 1);
     let mut prototypes = object(ShaderStage::Fragment, "#version 450\nfloat a(float x);\n")?;
-    compact(&mut prototypes.module, KeepUnused::Yes)?;
-    assert_eq!(prototypes.module.functions.len(), 1);
+    compact(&mut prototypes.unit.module, KeepUnused::Yes)?;
+    assert_eq!(prototypes.unit.module.functions.len(), 1);
     Ok(())
 }
 
@@ -149,7 +152,7 @@ fn object_modules_round_trip_through_the_file_format() -> TestResult {
     let main = object(ShaderStage::Fragment, MAIN)?;
     let text = encode(&main)?;
     let decoded = decode(&text)?;
-    assert_eq!(decoded.functions, main.functions);
+    assert_eq!(decoded.unit.functions, main.unit.functions);
     linked(&[decoded, library(HELPER)?])?;
     let current = format!("format_version:{}", rglsl::object::FORMAT_VERSION);
     let future = text.replacen(&current, "format_version:99", 1);
@@ -543,7 +546,9 @@ vec4 f(vec2 uv) { return texture(tex, uv) * block.v * float(N); }
     ] {
         assert!(neutral.supports(stage), "{stage:?}");
     }
-    assert!(neutral.variants.is_empty());
+    assert!(neutral
+        .library()
+        .is_some_and(|library| library.variants.is_empty()));
     let interface = object(
         ShaderStage::Vertex,
         "#version 450\nlayout(location = 0) in vec4 value;\nvec4 f() { return value; }\n",
@@ -1116,8 +1121,8 @@ fn work_group_size_override(linked: &Linked) -> TestResult<rglsl::Override> {
 #[test]
 fn work_group_size_is_specialized_by_a_library() -> TestResult {
     let main = object(ShaderStage::Compute, WORK_GROUP_MAIN)?;
-    assert!(main.work_group_size_constant);
-    assert!(main.specialized.is_some());
+    assert!(main.unit.work_group_size_constant);
+    assert!(main.unit.specialized.is_some());
     let lib = library(WORK_GROUP_LIBRARY)?;
     let result = linked(&[main.clone(), lib.clone()])?;
     work_group_size_override(&result)?;

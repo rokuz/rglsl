@@ -1,4 +1,4 @@
-use rglsl::object::ObjectModule;
+use rglsl::object::{CompiledUnit, Library, ObjectModule, ObjectTarget};
 use rglsl::{Expression, Handle, Literal, Module, Override};
 
 use crate::error::LinkError;
@@ -6,7 +6,7 @@ use crate::error::LinkError;
 fn merged_ids(objects: &[ObjectModule]) -> [Option<u32>; 3] {
     let mut ids = [None; 3];
     for object in objects {
-        for (slot, &id) in ids.iter_mut().zip(&object.layout.local_size_ids) {
+        for (slot, &id) in ids.iter_mut().zip(&object.unit.layout.local_size_ids) {
             if slot.is_none() {
                 *slot = id;
             }
@@ -71,28 +71,41 @@ fn clear_entry_slots(module: &mut Module) {
 }
 
 fn specialized(object: &ObjectModule, ids: [Option<u32>; 3]) -> Option<ObjectModule> {
-    let mut twin = ObjectModule::clone(object.specialized.as_deref()?);
-    twin.name.clone_from(&object.name);
-    for (placeholder, id) in twin.work_group_size_placeholders.into_iter().zip(ids) {
+    let unit = CompiledUnit::clone(object.unit.specialized.as_deref()?);
+    let target = match object.target {
+        ObjectTarget::Stage(stage) => ObjectTarget::Stage(stage),
+        ObjectTarget::Library(ref library) => ObjectTarget::Library(Library {
+            stages: library.stages,
+            variants: Vec::new(),
+            rejections: Vec::new(),
+        }),
+    };
+    let mut twin = ObjectModule {
+        format_version: object.format_version,
+        name: object.name.clone(),
+        target,
+        unit,
+    };
+    for (placeholder, id) in twin.unit.work_group_size_placeholders.into_iter().zip(ids) {
         let Some(placeholder) = placeholder else {
             continue;
         };
         match id {
             Some(id) => {
-                if let Ok(value) = twin.module.overrides.try_get(placeholder) {
+                if let Ok(value) = twin.unit.module.overrides.try_get(placeholder) {
                     let mut value = value.clone();
                     value.id = Some(id);
-                    *twin.module.overrides.get_mut(placeholder) = value;
+                    *twin.unit.module.overrides.get_mut(placeholder) = value;
                 }
             }
             None => {
-                let size = default_size(&twin.module, placeholder);
-                replace_override(&mut twin.module, placeholder, size);
+                let size = default_size(&twin.unit.module, placeholder);
+                replace_override(&mut twin.unit.module, placeholder, size);
             }
         }
     }
-    clear_entry_slots(&mut twin.module);
-    twin.work_group_size_placeholders = [None; 3];
+    clear_entry_slots(&mut twin.unit.module);
+    twin.unit.work_group_size_placeholders = [None; 3];
     Some(twin)
 }
 
@@ -104,10 +117,10 @@ pub(crate) fn specialize(
     objects
         .into_iter()
         .map(|object| {
-            let needed = object.work_group_size_constant
+            let needed = object.unit.work_group_size_constant
                 && ids
                     .iter()
-                    .zip(&object.layout.local_size_ids)
+                    .zip(&object.unit.layout.local_size_ids)
                     .any(|(merged, own)| merged.is_some() && own.is_none());
             if !needed {
                 return object;
