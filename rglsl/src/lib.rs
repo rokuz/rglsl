@@ -15,7 +15,7 @@ void main() {
 ";
 
 // Parse the source into a Module.
-let mut frontend = rglsl::front::glsl::Frontend::default();
+let frontend = rglsl::front::glsl::Frontend::default();
 let options = rglsl::front::glsl::Options::from(rglsl::ShaderStage::Fragment);
 let module: rglsl::Module = frontend
     .parse(&options, glsl_source)

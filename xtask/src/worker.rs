@@ -102,7 +102,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     };
 
     // Frontend
-    let mut frontend = glsl::Frontend::default();
+    let frontend = glsl::Frontend::default();
     let options = glsl::Options {
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
@@ -118,7 +118,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     let root = includer.add_root(input);
     if object {
         return compile_only(
-            &mut frontend,
+            &frontend,
             &options,
             &source,
             root,
@@ -319,7 +319,7 @@ fn parse_version(spv_version: &str) -> (u8, u8) {
 }
 
 fn compile_only(
-    frontend: &mut glsl::Frontend,
+    frontend: &glsl::Frontend,
     options: &glsl::Options,
     source: &str,
     root: rglsl_pp::FileId,
