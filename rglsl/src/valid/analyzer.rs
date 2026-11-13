@@ -369,6 +369,12 @@ impl FunctionInfo {
     pub const fn expression_count(&self) -> usize {
         self.expressions.len()
     }
+    pub(super) fn expression_info(
+        &self,
+        handle: Handle<crate::Expression>,
+    ) -> Option<&ExpressionInfo> {
+        self.expressions.get(handle.index())
+    }
     pub fn dominates_global_use(&self, other: &Self) -> bool {
         for (self_global_uses, other_global_uses) in
             self.global_uses.iter().zip(other.global_uses.iter())
