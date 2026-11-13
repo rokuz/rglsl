@@ -37,7 +37,7 @@ mod fuzz {
     fuzz_target!(|data: (OptionsProxy, String)| {
         let (options, source) = data;
         // Ensure the parser can handle potentially malformed strings without crashing.
-        let mut parser = Frontend::default();
+        let parser = Frontend::default();
         let _result = parser.parse(&options.into(), &source);
     });
 }
