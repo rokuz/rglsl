@@ -258,6 +258,7 @@ impl<'a> Lowerer<'a> {
             defined.insert(id, definition);
             spans.push((definition.span.start, definition.span.end, id));
         }
+        spans.sort_unstable();
         let mut calls: BTreeMap<FunctionId, BTreeSet<FunctionId>> = BTreeMap::new();
         let expressions = rglsl_ast::expressions(self.unit)
             .map_err(|_| super::stalled(crate::Span::UNDEFINED))?;
@@ -272,10 +273,10 @@ impl<'a> Lowerer<'a> {
                 ));
             }
             let caller = spans
-                .iter()
-                .find(|&&(start, end, _)| {
-                    start <= expression.span.start && expression.span.end <= end
-                })
+                .partition_point(|&(start, _, _)| start <= expression.span.start)
+                .checked_sub(1)
+                .and_then(|index| spans.get(index))
+                .filter(|&&(_, end, _)| expression.span.end <= end)
                 .map(|&(_, _, id)| id);
             if let Some(caller) = caller {
                 calls.entry(caller).or_default().insert(callee);
