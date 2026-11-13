@@ -1,7 +1,7 @@
 use alloc::string::String;
 
 use rglsl_ast::ast::ExtensionBehavior;
-use rglsl_ast::extensions::{self, names, ExtensionIssue, Feature, Request, EXPLICIT_ARITHMETIC};
+use rglsl_ast::extensions::{self, names, Extension, ExtensionIssue, Feature, Request};
 use rglsl_ast::Span;
 
 use super::Analyzer;
@@ -141,14 +141,18 @@ impl Analyzer<'_> {
 
     pub(crate) fn numeric_features(&self) -> NumericFeatures {
         NumericFeatures {
-            explicit_arithmetic: self.extensions.any_on(&EXPLICIT_ARITHMETIC),
-            half_float: self.extensions.is_on(names::AMD_GPU_SHADER_HALF_FLOAT),
-            int16: self.extensions.is_on(names::AMD_GPU_SHADER_INT16),
+            explicit_arithmetic: self.extensions.explicit_arithmetic(),
+            half_float: self
+                .extensions
+                .is_extension_on(Extension::AmdGpuShaderHalfFloat),
+            int16: self
+                .extensions
+                .is_extension_on(Extension::AmdGpuShaderInt16),
         }
     }
 
     pub(crate) fn explicit_types(&self) -> bool {
-        self.extensions.any_on(&EXPLICIT_ARITHMETIC)
+        self.extensions.explicit_arithmetic()
     }
 
     pub(crate) fn converts(&self, from: &Type, to: &Type) -> bool {

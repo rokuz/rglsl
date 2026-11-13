@@ -7,7 +7,7 @@ use crate::ast::{
 };
 use crate::extensions::{
     is_known, Extension, ExtensionIssue, ExtensionState, Feature, Request, EXPLICIT_ARITHMETIC,
-    KNOWN,
+    EXPLICIT_ARITHMETIC_EXTENSIONS, KNOWN,
 };
 use crate::{parse, ParseErrorKind};
 
@@ -37,6 +37,11 @@ fn the_registry_knows_every_glslang_extension() {
     for name in EXPLICIT_ARITHMETIC {
         assert!(is_known(name), "{name}");
     }
+    let typed: Vec<&str> = EXPLICIT_ARITHMETIC_EXTENSIONS
+        .into_iter()
+        .map(Extension::name)
+        .collect();
+    assert_eq!(typed, EXPLICIT_ARITHMETIC);
     assert!(is_known("GL_EXT_shader_16bit_storage"));
     assert!(is_known("GL_ARB_gpu_shader_int64"));
     assert!(!is_known("GL_FOO_bar"));

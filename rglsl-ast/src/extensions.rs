@@ -1049,6 +1049,17 @@ pub const EXPLICIT_ARITHMETIC: [&str; 8] = [
     EXPLICIT_FLOAT64,
 ];
 
+pub const EXPLICIT_ARITHMETIC_EXTENSIONS: [Extension; 8] = [
+    Extension::ExtShaderExplicitArithmeticTypes,
+    Extension::ExtShaderExplicitArithmeticTypesInt8,
+    Extension::ExtShaderExplicitArithmeticTypesInt16,
+    Extension::ExtShaderExplicitArithmeticTypesInt32,
+    Extension::ExtShaderExplicitArithmeticTypesInt64,
+    Extension::ExtShaderExplicitArithmeticTypesFloat16,
+    Extension::ExtShaderExplicitArithmeticTypesFloat32,
+    Extension::ExtShaderExplicitArithmeticTypesFloat64,
+];
+
 const INT64_TYPES: &[&str] = &[
     ARB_GPU_SHADER_INT64,
     EXPLICIT_ARITHMETIC_TYPES,
@@ -1467,6 +1478,16 @@ impl ExtensionState {
         Extension::from_name(name).is_some_and(|extension| self.is_extension_requested(extension))
     }
 
+    pub fn is_extension_on(&self, extension: Extension) -> bool {
+        self.extension_behavior(extension) != ExtensionBehavior::Disable
+    }
+
+    pub fn any_extension_on(&self, extensions: &[Extension]) -> bool {
+        extensions
+            .iter()
+            .any(|&extension| self.is_extension_on(extension))
+    }
+
     pub fn is_on(&self, name: &str) -> bool {
         self.behavior(name) != ExtensionBehavior::Disable
     }
@@ -1510,6 +1531,6 @@ impl ExtensionState {
     }
 
     pub fn explicit_arithmetic(&self) -> bool {
-        self.any_on(&EXPLICIT_ARITHMETIC)
+        self.any_extension_on(&EXPLICIT_ARITHMETIC_EXTENSIONS)
     }
 }
