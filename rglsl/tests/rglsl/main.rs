@@ -12,6 +12,7 @@ mod cooperative;
 mod extension_names;
 mod glsl_vulkan;
 mod layout_names;
+mod object_schema;
 mod snapshots;
 mod stage_io;
 mod tensors;
