@@ -65,7 +65,7 @@ pub(super) fn parse(
         false,
         &StageClass::new(options.stage),
     )
-    .map(|object| object.module)
+    .map(|object| object.unit.module)
 }
 
 pub(super) fn compile(
@@ -253,7 +253,7 @@ impl Parsed {
             matches!(
                 *declaration,
                 ExternalDeclaration::FunctionDefinition(ref definition)
-                    if definition.prototype.name.node == "main"
+                    if definition.kind.prototype.node.name.node == "main"
             )
         }))
     }
@@ -336,10 +336,10 @@ fn lower_object(
     class: &StageClass,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     let mut object = lower(options, source, mode, root, includer, names, false, class)?;
-    if object.work_group_size_constant {
-        object.specialized = lower(options, source, mode, root, includer, names, true, class)
+    if object.unit.work_group_size_constant {
+        object.unit.specialized = lower(options, source, mode, root, includer, names, true, class)
             .ok()
-            .map(alloc::boxed::Box::new);
+            .map(|specialized| alloc::boxed::Box::new(specialized.unit));
     }
     Ok(object)
 }
@@ -506,9 +506,9 @@ fn exported_main(
         .iter()
         .find_map(|declaration| match *declaration {
             ExternalDeclaration::FunctionDefinition(ref definition)
-                if definition.prototype.node.name.node == "main" =>
+                if definition.kind.prototype.node.name.node == "main" =>
             {
-                let end = definition.prototype.span.end.saturating_sub(1);
+                let end = definition.kind.prototype.span.end.saturating_sub(1);
                 Some((
                     Error {
                         kind: ErrorKind::SemanticError(Cow::Borrowed(
@@ -604,7 +604,7 @@ fn run_lowerer(
                         errors: Vec::from([stalled(Span::UNDEFINED)]),
                         included: Vec::new(),
                     })?;
-                object.object.module.debug_info = Some(alloc::boxed::Box::new(info));
+                object.object.unit.module.debug_info = Some(alloc::boxed::Box::new(info));
             }
             Ok(object.object)
         })
@@ -967,80 +967,81 @@ pub(super) struct Initialization<'a> {
 
 #[derive(Debug)]
 pub(super) struct Lowerer<'a> {
-    pub source_map: &'a rglsl_pp::SourceMap,
-    pub unit: &'a TranslationUnit,
-    pub analysis: &'a Analysis,
-    pub options: &'a Options,
+    pub(super) source_map: &'a rglsl_pp::SourceMap,
+    pub(super) unit: &'a TranslationUnit,
+    pub(super) analysis: &'a Analysis,
+    pub(super) options: &'a Options,
     probe: &'a StageProbe<ShaderStage>,
     stage_names: &'a RefCell<BTreeSet<String>>,
-    pub module: Module,
-    pub layouter: Layouter,
-    pub errors: Vec<Error>,
-    pub structs: BTreeMap<StructId, Handle<Type>>,
-    pub array_types: BTreeMap<(SharedDimensions, Handle<Type>), Handle<Type>>,
-    pub relayout: BTreeMap<Handle<Type>, Handle<Type>>,
-    pub references: BTreeMap<(BlockId, crate::PointerQualifiers), Handle<Type>>,
-    pub references_in_progress: BTreeSet<BlockId>,
-    pub qualified_references: BTreeMap<Handle<Type>, Handle<Type>>,
-    pub block_bools: BTreeSet<(BlockId, u32)>,
-    pub globals: BTreeMap<SymbolId, GlobalRef>,
-    pub functions: BTreeMap<FunctionId, Handle<crate::Function>>,
-    pub parameters: BTreeMap<FunctionId, Vec<Option<SymbolId>>>,
-    pub depth: BTreeSet<SymbolId>,
-    pub comparison: BTreeSet<SymbolId>,
-    pub interface: Vec<Handle<GlobalVariable>>,
-    pub outputs: BTreeMap<String, Handle<GlobalVariable>>,
-    pub inputs: BTreeSet<String>,
-    pub builtins: BTreeMap<String, Handle<GlobalVariable>>,
-    pub builtin_sizes: BTreeMap<String, u32>,
-    pub implicit_sizes: BTreeMap<SymbolId, u32>,
-    pub variably_indexed: BTreeSet<SymbolId>,
-    pub member_sizes: BTreeMap<(BlockId, u32), u32>,
-    pub member_dimension_sizes: BTreeMap<(BlockId, u32, usize), u32>,
-    pub task_payload: Option<Handle<GlobalVariable>>,
-    pub task_memory: Vec<Handle<GlobalVariable>>,
-    pub member_indices: BTreeMap<(BlockId, u32), u32>,
-    pub invariant_all: bool,
-    pub invariant: Vec<(String, Span)>,
-    pub unbound: Vec<(Handle<GlobalVariable>, Option<u32>)>,
-    pub next_location: [u32; 2],
-    pub explicit_locations: [Vec<(u32, u32)>; 2],
-    pub initializers: Vec<Initialization<'a>>,
-    pub uniform_defaults: BlockDefaults,
-    pub buffer_defaults: BlockDefaults,
-    pub early_fragment_tests: bool,
-    pub quad_control: crate::QuadControl,
-    pub tile_shading_rate: [Option<u32>; 3],
-    pub non_coherent_tile_read: bool,
-    pub conservative_depth: Option<ConservativeDepth>,
-    pub layer_layout: LayerLayout,
-    pub override_coverage: bool,
-    pub per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
-    pub per_vertex_used: BTreeSet<String>,
-    pub per_vertex_first_use: Option<u32>,
-    pub per_vertex_redeclared: bool,
-    pub block_outputs: BTreeSet<String>,
-    pub specialized_sizes: BTreeMap<rglsl_ast::ast::NodeId, Handle<crate::Override>>,
-    pub size_expressions: BTreeMap<rglsl_ast::ast::NodeId, &'a rglsl_ast::ast::Expression>,
-    pub local_size_ids: [Option<u32>; 3],
-    pub local_size_overrides: [Option<Handle<crate::Override>>; 3],
-    pub specialize_work_group_size: bool,
-    pub work_group_size_placeholders: [Option<Handle<crate::Override>>; 3],
-    pub work_group_size: Option<Handle<crate::Override>>,
-    pub heap_structs: BTreeMap<StructId, Handle<Type>>,
-    pub heap_runtime_offsets: BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
-    pub ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
-    pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
-    pub deferred_private: BTreeMap<SymbolId, (String, Span)>,
+    pub(super) module: Module,
+    pub(super) layouter: Layouter,
+    pub(super) errors: Vec<Error>,
+    pub(super) structs: BTreeMap<StructId, Handle<Type>>,
+    pub(super) array_types: BTreeMap<(SharedDimensions, Handle<Type>), Handle<Type>>,
+    pub(super) relayout: BTreeMap<Handle<Type>, Handle<Type>>,
+    pub(super) references: BTreeMap<(BlockId, crate::PointerQualifiers), Handle<Type>>,
+    pub(super) references_in_progress: BTreeSet<BlockId>,
+    pub(super) qualified_references: BTreeMap<Handle<Type>, Handle<Type>>,
+    pub(super) block_bools: BTreeSet<(BlockId, u32)>,
+    pub(super) globals: BTreeMap<SymbolId, GlobalRef>,
+    pub(super) functions: BTreeMap<FunctionId, Handle<crate::Function>>,
+    pub(super) parameters: BTreeMap<FunctionId, Vec<Option<SymbolId>>>,
+    pub(super) depth: BTreeSet<SymbolId>,
+    pub(super) comparison: BTreeSet<SymbolId>,
+    pub(super) interface: Vec<Handle<GlobalVariable>>,
+    pub(super) outputs: BTreeMap<String, Handle<GlobalVariable>>,
+    pub(super) inputs: BTreeSet<String>,
+    pub(super) builtins: BTreeMap<String, Handle<GlobalVariable>>,
+    pub(super) builtin_sizes: BTreeMap<String, u32>,
+    pub(super) implicit_sizes: BTreeMap<SymbolId, u32>,
+    pub(super) variably_indexed: BTreeSet<SymbolId>,
+    pub(super) member_sizes: BTreeMap<(BlockId, u32), u32>,
+    pub(super) member_dimension_sizes: BTreeMap<(BlockId, u32, usize), u32>,
+    pub(super) task_payload: Option<Handle<GlobalVariable>>,
+    pub(super) task_memory: Vec<Handle<GlobalVariable>>,
+    pub(super) member_indices: BTreeMap<(BlockId, u32), u32>,
+    pub(super) invariant_all: bool,
+    pub(super) invariant: Vec<(String, Span)>,
+    pub(super) unbound: Vec<(Handle<GlobalVariable>, Option<u32>)>,
+    pub(super) next_location: [u32; 2],
+    pub(super) explicit_locations: [Vec<(u32, u32)>; 2],
+    pub(super) initializers: Vec<Initialization<'a>>,
+    pub(super) uniform_defaults: BlockDefaults,
+    pub(super) buffer_defaults: BlockDefaults,
+    pub(super) early_fragment_tests: bool,
+    pub(super) quad_control: crate::QuadControl,
+    pub(super) tile_shading_rate: [Option<u32>; 3],
+    pub(super) non_coherent_tile_read: bool,
+    pub(super) conservative_depth: Option<ConservativeDepth>,
+    pub(super) layer_layout: LayerLayout,
+    pub(super) override_coverage: bool,
+    pub(super) per_vertex: Option<(Handle<GlobalVariable>, Vec<String>)>,
+    pub(super) per_vertex_used: BTreeSet<String>,
+    pub(super) per_vertex_first_use: Option<u32>,
+    pub(super) per_vertex_redeclared: bool,
+    pub(super) block_outputs: BTreeSet<String>,
+    pub(super) specialized_sizes: BTreeMap<rglsl_ast::ast::NodeId, Handle<crate::Override>>,
+    pub(super) size_expressions: BTreeMap<rglsl_ast::ast::NodeId, &'a rglsl_ast::ast::Expression>,
+    pub(super) local_size_ids: [Option<u32>; 3],
+    pub(super) local_size_overrides: [Option<Handle<crate::Override>>; 3],
+    pub(super) specialize_work_group_size: bool,
+    pub(super) work_group_size_placeholders: [Option<Handle<crate::Override>>; 3],
+    pub(super) work_group_size: Option<Handle<crate::Override>>,
+    pub(super) heap_structs: BTreeMap<StructId, Handle<Type>>,
+    pub(super) heap_runtime_offsets:
+        BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
+    pub(super) ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
+    pub(super) incoming_ray_payload: Option<Handle<GlobalVariable>>,
+    pub(super) deferred_private: BTreeMap<SymbolId, (String, Span)>,
     xfb: xfb::Xfb,
     stage_layout: stage::StageLayout,
-    pub object: bool,
-    pub library: bool,
-    pub deferred_bias: bool,
-    pub automatic_locations: Vec<Handle<GlobalVariable>>,
-    pub automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
-    pub declared_local_size: [Option<u32>; 3],
-    pub debug: Option<DebugCollector>,
+    pub(super) object: bool,
+    pub(super) library: bool,
+    pub(super) deferred_bias: bool,
+    pub(super) automatic_locations: Vec<Handle<GlobalVariable>>,
+    pub(super) automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
+    pub(super) declared_local_size: [Option<u32>; 3],
+    pub(super) debug: Option<DebugCollector>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -1168,7 +1169,7 @@ impl<'a> Lowerer<'a> {
         let definition = &node.kind;
         let start = node.span.start;
         let at = self.debug_position(definition.prototype.span.end.saturating_sub(1));
-        let end = (!definition.body.statements.is_empty())
+        let end = (!definition.body.node.statements.is_empty())
             .then(|| self.debug_position(definition.body.span.end.saturating_sub(1)));
         if let Some(ref mut debug) = self.debug {
             debug.functions.push(crate::DebugFunction {
@@ -1427,7 +1428,9 @@ impl<'a> Lowerer<'a> {
             return;
         };
         let symbols = definition
+            .kind
             .prototype
+            .node
             .parameters
             .iter()
             .map(|parameter| self.analysis.declarations.get(&parameter.id).copied())

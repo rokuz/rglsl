@@ -1,4 +1,3 @@
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -239,6 +238,759 @@ pub const KNOWN: [&str; 233] = [
     "GL_QCOM_multiple_wait_queues",
     "GL_QCOM_tile_shading",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum Extension {
+    Gl3dlArrayObjects,
+    AmdGcnShader,
+    AmdGpuShaderHalfFloat,
+    AmdGpuShaderHalfFloatFetch,
+    AmdGpuShaderInt16,
+    AmdShaderBallot,
+    AmdShaderEarlyAndLateFragmentTests,
+    AmdShaderExplicitVertexParameter,
+    AmdShaderFragmentMask,
+    AmdShaderImageLoadStoreLod,
+    AmdShaderTrinaryMinmax,
+    AmdTextureGatherBiasLod,
+    AndroidExtensionPackEs31a,
+    ArbBindlessTexture,
+    ArbComputeShader,
+    ArbConservativeDepth,
+    ArbCullDistance,
+    ArbDerivativeControl,
+    ArbDrawInstanced,
+    ArbEnhancedLayouts,
+    ArbExplicitAttribLocation,
+    ArbExplicitUniformLocation,
+    ArbFragmentCoordConventions,
+    ArbFragmentShaderInterlock,
+    ArbGpuShader5,
+    ArbGpuShaderFp64,
+    ArbGpuShaderInt64,
+    ArbPostDepthCoverage,
+    ArbSampleShading,
+    ArbSeparateShaderObjects,
+    ArbShaderAtomicCounterOps,
+    ArbShaderAtomicCounters,
+    ArbShaderBallot,
+    ArbShaderBitEncoding,
+    ArbShaderClock,
+    ArbShaderDrawParameters,
+    ArbShaderGroupVote,
+    ArbShaderImageLoadStore,
+    ArbShaderImageSize,
+    ArbShaderStencilExport,
+    ArbShaderStorageBufferObject,
+    ArbShaderTextureImageSamples,
+    ArbShaderTextureLod,
+    ArbShaderViewportLayerArray,
+    ArbShadingLanguage420pack,
+    ArbShadingLanguageInclude,
+    ArbShadingLanguagePacking,
+    ArbSparseTexture2,
+    ArbSparseTextureClamp,
+    ArbTessellationShader,
+    ArbTextureCubeMapArray,
+    ArbTextureGather,
+    ArbTextureMultisample,
+    ArbTextureQueryLod,
+    ArbTextureRectangle,
+    ArbUniformBufferObject,
+    ArbVertexAttrib64bit,
+    ArbViewportArray,
+    ArmShaderCoreBuiltins,
+    ArmTensors,
+    ArmTensorsBfloat16,
+    ArmTensorsFloatE4m3,
+    ArmTensorsFloatE5m2,
+    ExtYuvTarget,
+    ExtAbort,
+    ExtBfloat16,
+    ExtBlendFuncExtended,
+    ExtBufferReference,
+    ExtBufferReference2,
+    ExtBufferReferenceUvec2,
+    ExtClipCullDistance,
+    ExtConservativeDepth,
+    ExtControlFlowAttributes,
+    ExtControlFlowAttributes2,
+    ExtCooperativeMatrixMaintenance1,
+    ExtDebugPrintf,
+    ExtDemoteToHelperInvocation,
+    ExtDescriptorHeap,
+    ExtDeviceGroup,
+    ExtDrawInstanced,
+    ExtExpectAssume,
+    ExtFloatE2m1,
+    ExtFloatE2m3,
+    ExtFloatE3m2,
+    ExtFloatE4m3,
+    ExtFloatE5m2,
+    ExtFloatMxint8,
+    ExtFloatUe8m0,
+    ExtFragDepth,
+    ExtFragmentInvocationDensity,
+    ExtFragmentShaderBarycentric,
+    ExtFragmentShadingRate,
+    ExtFunctionControlAttributes,
+    ExtGeometryPointSize,
+    ExtGeometryShader,
+    ExtGpuShader5,
+    ExtIntegerDotProduct,
+    ExtLongVector,
+    ExtMaximalReconvergence,
+    ExtMeshShader,
+    ExtMultiview,
+    ExtNontemporalKeyword,
+    ExtNonuniformQualifier,
+    ExtNullInitializer,
+    ExtOpacityMicromap,
+    ExtOpacityMicromapRayQueryMode,
+    ExtOptionalInputAttachmentIndex,
+    ExtPostDepthCoverage,
+    ExtPrimitiveBoundingBox,
+    ExtRayCullMask,
+    ExtRayFlagsPrimitiveCulling,
+    ExtRayQuery,
+    ExtRayTracing,
+    ExtRayTracingPositionFetch,
+    ExtSamplerlessTextureFunctions,
+    ExtScalarBlockLayout,
+    ExtShader16bitStorage,
+    ExtShader64bitIndexing,
+    ExtShader8bitStorage,
+    ExtShaderAtomicFloat,
+    ExtShaderAtomicFloat2,
+    ExtShaderAtomicInt64,
+    ExtShaderExplicitArithmeticTypes,
+    ExtShaderExplicitArithmeticTypesFloat16,
+    ExtShaderExplicitArithmeticTypesFloat32,
+    ExtShaderExplicitArithmeticTypesFloat64,
+    ExtShaderExplicitArithmeticTypesInt16,
+    ExtShaderExplicitArithmeticTypesInt32,
+    ExtShaderExplicitArithmeticTypesInt64,
+    ExtShaderExplicitArithmeticTypesInt8,
+    ExtShaderImageInt64,
+    ExtShaderImageLoadFormatted,
+    ExtShaderImplicitConversions,
+    ExtShaderIntegerMix,
+    ExtShaderInvocationReorder,
+    ExtShaderIoBlocks,
+    ExtShaderNonConstantGlobalInitializers,
+    ExtShaderQuadControl,
+    ExtShaderRealtimeClock,
+    ExtShaderSubgroupExtendedTypesFloat16,
+    ExtShaderSubgroupExtendedTypesInt16,
+    ExtShaderSubgroupExtendedTypesInt64,
+    ExtShaderSubgroupExtendedTypesInt8,
+    ExtShaderTextureLod,
+    ExtShaderTileImage,
+    ExtShadowSamplers,
+    ExtSharedMemoryBlock,
+    ExtSpecConstantComposites,
+    ExtSpirvIntrinsics,
+    ExtSplitBarrier,
+    ExtStructuredDescriptorHeap,
+    ExtSubgroupUniformControlFlow,
+    ExtTerminateInvocation,
+    ExtTessellationPointSize,
+    ExtTessellationShader,
+    ExtTextureArray,
+    ExtTextureBuffer,
+    ExtTextureCubeMapArray,
+    ExtTextureOffsetNonConst,
+    ExtTextureShadowLod,
+    ExtUniformBufferUnsizedArray,
+    GoogleCppStyleLineDirective,
+    GoogleIncludeDirective,
+    IntelShaderIntegerFunctions2,
+    KhrBlendEquationAdvanced,
+    KhrComputeShaderDerivatives,
+    KhrCooperativeMatrix,
+    KhrMemoryScopeSemantics,
+    KhrShaderSubgroupArithmetic,
+    KhrShaderSubgroupBallot,
+    KhrShaderSubgroupBasic,
+    KhrShaderSubgroupClustered,
+    KhrShaderSubgroupQuad,
+    KhrShaderSubgroupRotate,
+    KhrShaderSubgroupShuffle,
+    KhrShaderSubgroupShuffleRelative,
+    KhrShaderSubgroupVote,
+    NvxMultiviewPerViewAttributes,
+    NvClusterAccelerationStructure,
+    NvComputeShaderDerivatives,
+    NvConservativeRasterUnderestimation,
+    NvCooperativeMatrix,
+    NvCooperativeMatrix2,
+    NvCooperativeMatrixDecodeVector,
+    NvCooperativeVector,
+    NvDesktopLowpMediump,
+    NvDisplacementMicromap,
+    NvExplicitTypecast,
+    NvFragmentShaderBarycentric,
+    NvGeometryShaderPassthrough,
+    NvGpuShader5,
+    NvIntegerCooperativeMatrix,
+    NvLinearSweptSpheres,
+    NvMeshShader,
+    NvPushConstantBank,
+    NvRayTracing,
+    NvRayTracingMotionBlur,
+    NvSampleMaskOverrideCoverage,
+    NvShaderAtomicFp16Vector,
+    NvShaderAtomicInt64,
+    NvShaderInvocationReorder,
+    NvShaderNoperspectiveInterpolation,
+    NvShaderSmBuiltins,
+    NvShaderSubgroupPartitioned,
+    NvShaderTextureFootprint,
+    NvShadingRateImage,
+    NvStereoViewRendering,
+    NvViewportArray2,
+    OesEglImageExternal,
+    OesEglImageExternalEssl3,
+    OesGeometryPointSize,
+    OesGeometryShader,
+    OesGpuShader5,
+    OesPrimitiveBoundingBox,
+    OesSampleVariables,
+    OesShaderImageAtomic,
+    OesShaderIoBlocks,
+    OesShaderMultisampleInterpolation,
+    OesStandardDerivatives,
+    OesTessellationPointSize,
+    OesTessellationShader,
+    OesTexture3d,
+    OesTextureBuffer,
+    OesTextureCubeMapArray,
+    OesTextureStorageMultisample2dArray,
+    OvrMultiview,
+    OvrMultiview2,
+    QcomCooperativeMatrixConversion,
+    QcomImageProcessing,
+    QcomImageProcessing2,
+    QcomImageProcessing3,
+    QcomMultipleWaitQueues,
+    QcomTileShading,
+}
+
+impl Extension {
+    pub const ALL: [Self; 233] = [
+        Self::Gl3dlArrayObjects,
+        Self::AmdGcnShader,
+        Self::AmdGpuShaderHalfFloat,
+        Self::AmdGpuShaderHalfFloatFetch,
+        Self::AmdGpuShaderInt16,
+        Self::AmdShaderBallot,
+        Self::AmdShaderEarlyAndLateFragmentTests,
+        Self::AmdShaderExplicitVertexParameter,
+        Self::AmdShaderFragmentMask,
+        Self::AmdShaderImageLoadStoreLod,
+        Self::AmdShaderTrinaryMinmax,
+        Self::AmdTextureGatherBiasLod,
+        Self::AndroidExtensionPackEs31a,
+        Self::ArbBindlessTexture,
+        Self::ArbComputeShader,
+        Self::ArbConservativeDepth,
+        Self::ArbCullDistance,
+        Self::ArbDerivativeControl,
+        Self::ArbDrawInstanced,
+        Self::ArbEnhancedLayouts,
+        Self::ArbExplicitAttribLocation,
+        Self::ArbExplicitUniformLocation,
+        Self::ArbFragmentCoordConventions,
+        Self::ArbFragmentShaderInterlock,
+        Self::ArbGpuShader5,
+        Self::ArbGpuShaderFp64,
+        Self::ArbGpuShaderInt64,
+        Self::ArbPostDepthCoverage,
+        Self::ArbSampleShading,
+        Self::ArbSeparateShaderObjects,
+        Self::ArbShaderAtomicCounterOps,
+        Self::ArbShaderAtomicCounters,
+        Self::ArbShaderBallot,
+        Self::ArbShaderBitEncoding,
+        Self::ArbShaderClock,
+        Self::ArbShaderDrawParameters,
+        Self::ArbShaderGroupVote,
+        Self::ArbShaderImageLoadStore,
+        Self::ArbShaderImageSize,
+        Self::ArbShaderStencilExport,
+        Self::ArbShaderStorageBufferObject,
+        Self::ArbShaderTextureImageSamples,
+        Self::ArbShaderTextureLod,
+        Self::ArbShaderViewportLayerArray,
+        Self::ArbShadingLanguage420pack,
+        Self::ArbShadingLanguageInclude,
+        Self::ArbShadingLanguagePacking,
+        Self::ArbSparseTexture2,
+        Self::ArbSparseTextureClamp,
+        Self::ArbTessellationShader,
+        Self::ArbTextureCubeMapArray,
+        Self::ArbTextureGather,
+        Self::ArbTextureMultisample,
+        Self::ArbTextureQueryLod,
+        Self::ArbTextureRectangle,
+        Self::ArbUniformBufferObject,
+        Self::ArbVertexAttrib64bit,
+        Self::ArbViewportArray,
+        Self::ArmShaderCoreBuiltins,
+        Self::ArmTensors,
+        Self::ArmTensorsBfloat16,
+        Self::ArmTensorsFloatE4m3,
+        Self::ArmTensorsFloatE5m2,
+        Self::ExtYuvTarget,
+        Self::ExtAbort,
+        Self::ExtBfloat16,
+        Self::ExtBlendFuncExtended,
+        Self::ExtBufferReference,
+        Self::ExtBufferReference2,
+        Self::ExtBufferReferenceUvec2,
+        Self::ExtClipCullDistance,
+        Self::ExtConservativeDepth,
+        Self::ExtControlFlowAttributes,
+        Self::ExtControlFlowAttributes2,
+        Self::ExtCooperativeMatrixMaintenance1,
+        Self::ExtDebugPrintf,
+        Self::ExtDemoteToHelperInvocation,
+        Self::ExtDescriptorHeap,
+        Self::ExtDeviceGroup,
+        Self::ExtDrawInstanced,
+        Self::ExtExpectAssume,
+        Self::ExtFloatE2m1,
+        Self::ExtFloatE2m3,
+        Self::ExtFloatE3m2,
+        Self::ExtFloatE4m3,
+        Self::ExtFloatE5m2,
+        Self::ExtFloatMxint8,
+        Self::ExtFloatUe8m0,
+        Self::ExtFragDepth,
+        Self::ExtFragmentInvocationDensity,
+        Self::ExtFragmentShaderBarycentric,
+        Self::ExtFragmentShadingRate,
+        Self::ExtFunctionControlAttributes,
+        Self::ExtGeometryPointSize,
+        Self::ExtGeometryShader,
+        Self::ExtGpuShader5,
+        Self::ExtIntegerDotProduct,
+        Self::ExtLongVector,
+        Self::ExtMaximalReconvergence,
+        Self::ExtMeshShader,
+        Self::ExtMultiview,
+        Self::ExtNontemporalKeyword,
+        Self::ExtNonuniformQualifier,
+        Self::ExtNullInitializer,
+        Self::ExtOpacityMicromap,
+        Self::ExtOpacityMicromapRayQueryMode,
+        Self::ExtOptionalInputAttachmentIndex,
+        Self::ExtPostDepthCoverage,
+        Self::ExtPrimitiveBoundingBox,
+        Self::ExtRayCullMask,
+        Self::ExtRayFlagsPrimitiveCulling,
+        Self::ExtRayQuery,
+        Self::ExtRayTracing,
+        Self::ExtRayTracingPositionFetch,
+        Self::ExtSamplerlessTextureFunctions,
+        Self::ExtScalarBlockLayout,
+        Self::ExtShader16bitStorage,
+        Self::ExtShader64bitIndexing,
+        Self::ExtShader8bitStorage,
+        Self::ExtShaderAtomicFloat,
+        Self::ExtShaderAtomicFloat2,
+        Self::ExtShaderAtomicInt64,
+        Self::ExtShaderExplicitArithmeticTypes,
+        Self::ExtShaderExplicitArithmeticTypesFloat16,
+        Self::ExtShaderExplicitArithmeticTypesFloat32,
+        Self::ExtShaderExplicitArithmeticTypesFloat64,
+        Self::ExtShaderExplicitArithmeticTypesInt16,
+        Self::ExtShaderExplicitArithmeticTypesInt32,
+        Self::ExtShaderExplicitArithmeticTypesInt64,
+        Self::ExtShaderExplicitArithmeticTypesInt8,
+        Self::ExtShaderImageInt64,
+        Self::ExtShaderImageLoadFormatted,
+        Self::ExtShaderImplicitConversions,
+        Self::ExtShaderIntegerMix,
+        Self::ExtShaderInvocationReorder,
+        Self::ExtShaderIoBlocks,
+        Self::ExtShaderNonConstantGlobalInitializers,
+        Self::ExtShaderQuadControl,
+        Self::ExtShaderRealtimeClock,
+        Self::ExtShaderSubgroupExtendedTypesFloat16,
+        Self::ExtShaderSubgroupExtendedTypesInt16,
+        Self::ExtShaderSubgroupExtendedTypesInt64,
+        Self::ExtShaderSubgroupExtendedTypesInt8,
+        Self::ExtShaderTextureLod,
+        Self::ExtShaderTileImage,
+        Self::ExtShadowSamplers,
+        Self::ExtSharedMemoryBlock,
+        Self::ExtSpecConstantComposites,
+        Self::ExtSpirvIntrinsics,
+        Self::ExtSplitBarrier,
+        Self::ExtStructuredDescriptorHeap,
+        Self::ExtSubgroupUniformControlFlow,
+        Self::ExtTerminateInvocation,
+        Self::ExtTessellationPointSize,
+        Self::ExtTessellationShader,
+        Self::ExtTextureArray,
+        Self::ExtTextureBuffer,
+        Self::ExtTextureCubeMapArray,
+        Self::ExtTextureOffsetNonConst,
+        Self::ExtTextureShadowLod,
+        Self::ExtUniformBufferUnsizedArray,
+        Self::GoogleCppStyleLineDirective,
+        Self::GoogleIncludeDirective,
+        Self::IntelShaderIntegerFunctions2,
+        Self::KhrBlendEquationAdvanced,
+        Self::KhrComputeShaderDerivatives,
+        Self::KhrCooperativeMatrix,
+        Self::KhrMemoryScopeSemantics,
+        Self::KhrShaderSubgroupArithmetic,
+        Self::KhrShaderSubgroupBallot,
+        Self::KhrShaderSubgroupBasic,
+        Self::KhrShaderSubgroupClustered,
+        Self::KhrShaderSubgroupQuad,
+        Self::KhrShaderSubgroupRotate,
+        Self::KhrShaderSubgroupShuffle,
+        Self::KhrShaderSubgroupShuffleRelative,
+        Self::KhrShaderSubgroupVote,
+        Self::NvxMultiviewPerViewAttributes,
+        Self::NvClusterAccelerationStructure,
+        Self::NvComputeShaderDerivatives,
+        Self::NvConservativeRasterUnderestimation,
+        Self::NvCooperativeMatrix,
+        Self::NvCooperativeMatrix2,
+        Self::NvCooperativeMatrixDecodeVector,
+        Self::NvCooperativeVector,
+        Self::NvDesktopLowpMediump,
+        Self::NvDisplacementMicromap,
+        Self::NvExplicitTypecast,
+        Self::NvFragmentShaderBarycentric,
+        Self::NvGeometryShaderPassthrough,
+        Self::NvGpuShader5,
+        Self::NvIntegerCooperativeMatrix,
+        Self::NvLinearSweptSpheres,
+        Self::NvMeshShader,
+        Self::NvPushConstantBank,
+        Self::NvRayTracing,
+        Self::NvRayTracingMotionBlur,
+        Self::NvSampleMaskOverrideCoverage,
+        Self::NvShaderAtomicFp16Vector,
+        Self::NvShaderAtomicInt64,
+        Self::NvShaderInvocationReorder,
+        Self::NvShaderNoperspectiveInterpolation,
+        Self::NvShaderSmBuiltins,
+        Self::NvShaderSubgroupPartitioned,
+        Self::NvShaderTextureFootprint,
+        Self::NvShadingRateImage,
+        Self::NvStereoViewRendering,
+        Self::NvViewportArray2,
+        Self::OesEglImageExternal,
+        Self::OesEglImageExternalEssl3,
+        Self::OesGeometryPointSize,
+        Self::OesGeometryShader,
+        Self::OesGpuShader5,
+        Self::OesPrimitiveBoundingBox,
+        Self::OesSampleVariables,
+        Self::OesShaderImageAtomic,
+        Self::OesShaderIoBlocks,
+        Self::OesShaderMultisampleInterpolation,
+        Self::OesStandardDerivatives,
+        Self::OesTessellationPointSize,
+        Self::OesTessellationShader,
+        Self::OesTexture3d,
+        Self::OesTextureBuffer,
+        Self::OesTextureCubeMapArray,
+        Self::OesTextureStorageMultisample2dArray,
+        Self::OvrMultiview,
+        Self::OvrMultiview2,
+        Self::QcomCooperativeMatrixConversion,
+        Self::QcomImageProcessing,
+        Self::QcomImageProcessing2,
+        Self::QcomImageProcessing3,
+        Self::QcomMultipleWaitQueues,
+        Self::QcomTileShading,
+    ];
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        KNOWN
+            .binary_search(&name)
+            .ok()
+            .and_then(|index| Self::ALL.get(index).copied())
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Gl3dlArrayObjects => "GL_3DL_array_objects",
+            Self::AmdGcnShader => "GL_AMD_gcn_shader",
+            Self::AmdGpuShaderHalfFloat => "GL_AMD_gpu_shader_half_float",
+            Self::AmdGpuShaderHalfFloatFetch => "GL_AMD_gpu_shader_half_float_fetch",
+            Self::AmdGpuShaderInt16 => "GL_AMD_gpu_shader_int16",
+            Self::AmdShaderBallot => "GL_AMD_shader_ballot",
+            Self::AmdShaderEarlyAndLateFragmentTests => {
+                "GL_AMD_shader_early_and_late_fragment_tests"
+            }
+            Self::AmdShaderExplicitVertexParameter => "GL_AMD_shader_explicit_vertex_parameter",
+            Self::AmdShaderFragmentMask => "GL_AMD_shader_fragment_mask",
+            Self::AmdShaderImageLoadStoreLod => "GL_AMD_shader_image_load_store_lod",
+            Self::AmdShaderTrinaryMinmax => "GL_AMD_shader_trinary_minmax",
+            Self::AmdTextureGatherBiasLod => "GL_AMD_texture_gather_bias_lod",
+            Self::AndroidExtensionPackEs31a => "GL_ANDROID_extension_pack_es31a",
+            Self::ArbBindlessTexture => "GL_ARB_bindless_texture",
+            Self::ArbComputeShader => "GL_ARB_compute_shader",
+            Self::ArbConservativeDepth => "GL_ARB_conservative_depth",
+            Self::ArbCullDistance => "GL_ARB_cull_distance",
+            Self::ArbDerivativeControl => "GL_ARB_derivative_control",
+            Self::ArbDrawInstanced => "GL_ARB_draw_instanced",
+            Self::ArbEnhancedLayouts => "GL_ARB_enhanced_layouts",
+            Self::ArbExplicitAttribLocation => "GL_ARB_explicit_attrib_location",
+            Self::ArbExplicitUniformLocation => "GL_ARB_explicit_uniform_location",
+            Self::ArbFragmentCoordConventions => "GL_ARB_fragment_coord_conventions",
+            Self::ArbFragmentShaderInterlock => "GL_ARB_fragment_shader_interlock",
+            Self::ArbGpuShader5 => "GL_ARB_gpu_shader5",
+            Self::ArbGpuShaderFp64 => "GL_ARB_gpu_shader_fp64",
+            Self::ArbGpuShaderInt64 => "GL_ARB_gpu_shader_int64",
+            Self::ArbPostDepthCoverage => "GL_ARB_post_depth_coverage",
+            Self::ArbSampleShading => "GL_ARB_sample_shading",
+            Self::ArbSeparateShaderObjects => "GL_ARB_separate_shader_objects",
+            Self::ArbShaderAtomicCounterOps => "GL_ARB_shader_atomic_counter_ops",
+            Self::ArbShaderAtomicCounters => "GL_ARB_shader_atomic_counters",
+            Self::ArbShaderBallot => "GL_ARB_shader_ballot",
+            Self::ArbShaderBitEncoding => "GL_ARB_shader_bit_encoding",
+            Self::ArbShaderClock => "GL_ARB_shader_clock",
+            Self::ArbShaderDrawParameters => "GL_ARB_shader_draw_parameters",
+            Self::ArbShaderGroupVote => "GL_ARB_shader_group_vote",
+            Self::ArbShaderImageLoadStore => "GL_ARB_shader_image_load_store",
+            Self::ArbShaderImageSize => "GL_ARB_shader_image_size",
+            Self::ArbShaderStencilExport => "GL_ARB_shader_stencil_export",
+            Self::ArbShaderStorageBufferObject => "GL_ARB_shader_storage_buffer_object",
+            Self::ArbShaderTextureImageSamples => "GL_ARB_shader_texture_image_samples",
+            Self::ArbShaderTextureLod => "GL_ARB_shader_texture_lod",
+            Self::ArbShaderViewportLayerArray => "GL_ARB_shader_viewport_layer_array",
+            Self::ArbShadingLanguage420pack => "GL_ARB_shading_language_420pack",
+            Self::ArbShadingLanguageInclude => "GL_ARB_shading_language_include",
+            Self::ArbShadingLanguagePacking => "GL_ARB_shading_language_packing",
+            Self::ArbSparseTexture2 => "GL_ARB_sparse_texture2",
+            Self::ArbSparseTextureClamp => "GL_ARB_sparse_texture_clamp",
+            Self::ArbTessellationShader => "GL_ARB_tessellation_shader",
+            Self::ArbTextureCubeMapArray => "GL_ARB_texture_cube_map_array",
+            Self::ArbTextureGather => "GL_ARB_texture_gather",
+            Self::ArbTextureMultisample => "GL_ARB_texture_multisample",
+            Self::ArbTextureQueryLod => "GL_ARB_texture_query_lod",
+            Self::ArbTextureRectangle => "GL_ARB_texture_rectangle",
+            Self::ArbUniformBufferObject => "GL_ARB_uniform_buffer_object",
+            Self::ArbVertexAttrib64bit => "GL_ARB_vertex_attrib_64bit",
+            Self::ArbViewportArray => "GL_ARB_viewport_array",
+            Self::ArmShaderCoreBuiltins => "GL_ARM_shader_core_builtins",
+            Self::ArmTensors => "GL_ARM_tensors",
+            Self::ArmTensorsBfloat16 => "GL_ARM_tensors_bfloat16",
+            Self::ArmTensorsFloatE4m3 => "GL_ARM_tensors_float_e4m3",
+            Self::ArmTensorsFloatE5m2 => "GL_ARM_tensors_float_e5m2",
+            Self::ExtYuvTarget => "GL_EXT_YUV_target",
+            Self::ExtAbort => "GL_EXT_abort",
+            Self::ExtBfloat16 => "GL_EXT_bfloat16",
+            Self::ExtBlendFuncExtended => "GL_EXT_blend_func_extended",
+            Self::ExtBufferReference => "GL_EXT_buffer_reference",
+            Self::ExtBufferReference2 => "GL_EXT_buffer_reference2",
+            Self::ExtBufferReferenceUvec2 => "GL_EXT_buffer_reference_uvec2",
+            Self::ExtClipCullDistance => "GL_EXT_clip_cull_distance",
+            Self::ExtConservativeDepth => "GL_EXT_conservative_depth",
+            Self::ExtControlFlowAttributes => "GL_EXT_control_flow_attributes",
+            Self::ExtControlFlowAttributes2 => "GL_EXT_control_flow_attributes2",
+            Self::ExtCooperativeMatrixMaintenance1 => "GL_EXT_cooperative_matrix_maintenance1",
+            Self::ExtDebugPrintf => "GL_EXT_debug_printf",
+            Self::ExtDemoteToHelperInvocation => "GL_EXT_demote_to_helper_invocation",
+            Self::ExtDescriptorHeap => "GL_EXT_descriptor_heap",
+            Self::ExtDeviceGroup => "GL_EXT_device_group",
+            Self::ExtDrawInstanced => "GL_EXT_draw_instanced",
+            Self::ExtExpectAssume => "GL_EXT_expect_assume",
+            Self::ExtFloatE2m1 => "GL_EXT_float_e2m1",
+            Self::ExtFloatE2m3 => "GL_EXT_float_e2m3",
+            Self::ExtFloatE3m2 => "GL_EXT_float_e3m2",
+            Self::ExtFloatE4m3 => "GL_EXT_float_e4m3",
+            Self::ExtFloatE5m2 => "GL_EXT_float_e5m2",
+            Self::ExtFloatMxint8 => "GL_EXT_float_mxint8",
+            Self::ExtFloatUe8m0 => "GL_EXT_float_ue8m0",
+            Self::ExtFragDepth => "GL_EXT_frag_depth",
+            Self::ExtFragmentInvocationDensity => "GL_EXT_fragment_invocation_density",
+            Self::ExtFragmentShaderBarycentric => "GL_EXT_fragment_shader_barycentric",
+            Self::ExtFragmentShadingRate => "GL_EXT_fragment_shading_rate",
+            Self::ExtFunctionControlAttributes => "GL_EXT_function_control_attributes",
+            Self::ExtGeometryPointSize => "GL_EXT_geometry_point_size",
+            Self::ExtGeometryShader => "GL_EXT_geometry_shader",
+            Self::ExtGpuShader5 => "GL_EXT_gpu_shader5",
+            Self::ExtIntegerDotProduct => "GL_EXT_integer_dot_product",
+            Self::ExtLongVector => "GL_EXT_long_vector",
+            Self::ExtMaximalReconvergence => "GL_EXT_maximal_reconvergence",
+            Self::ExtMeshShader => "GL_EXT_mesh_shader",
+            Self::ExtMultiview => "GL_EXT_multiview",
+            Self::ExtNontemporalKeyword => "GL_EXT_nontemporal_keyword",
+            Self::ExtNonuniformQualifier => "GL_EXT_nonuniform_qualifier",
+            Self::ExtNullInitializer => "GL_EXT_null_initializer",
+            Self::ExtOpacityMicromap => "GL_EXT_opacity_micromap",
+            Self::ExtOpacityMicromapRayQueryMode => "GL_EXT_opacity_micromap_ray_query_mode",
+            Self::ExtOptionalInputAttachmentIndex => "GL_EXT_optional_input_attachment_index",
+            Self::ExtPostDepthCoverage => "GL_EXT_post_depth_coverage",
+            Self::ExtPrimitiveBoundingBox => "GL_EXT_primitive_bounding_box",
+            Self::ExtRayCullMask => "GL_EXT_ray_cull_mask",
+            Self::ExtRayFlagsPrimitiveCulling => "GL_EXT_ray_flags_primitive_culling",
+            Self::ExtRayQuery => "GL_EXT_ray_query",
+            Self::ExtRayTracing => "GL_EXT_ray_tracing",
+            Self::ExtRayTracingPositionFetch => "GL_EXT_ray_tracing_position_fetch",
+            Self::ExtSamplerlessTextureFunctions => "GL_EXT_samplerless_texture_functions",
+            Self::ExtScalarBlockLayout => "GL_EXT_scalar_block_layout",
+            Self::ExtShader16bitStorage => "GL_EXT_shader_16bit_storage",
+            Self::ExtShader64bitIndexing => "GL_EXT_shader_64bit_indexing",
+            Self::ExtShader8bitStorage => "GL_EXT_shader_8bit_storage",
+            Self::ExtShaderAtomicFloat => "GL_EXT_shader_atomic_float",
+            Self::ExtShaderAtomicFloat2 => "GL_EXT_shader_atomic_float2",
+            Self::ExtShaderAtomicInt64 => "GL_EXT_shader_atomic_int64",
+            Self::ExtShaderExplicitArithmeticTypes => "GL_EXT_shader_explicit_arithmetic_types",
+            Self::ExtShaderExplicitArithmeticTypesFloat16 => {
+                "GL_EXT_shader_explicit_arithmetic_types_float16"
+            }
+            Self::ExtShaderExplicitArithmeticTypesFloat32 => {
+                "GL_EXT_shader_explicit_arithmetic_types_float32"
+            }
+            Self::ExtShaderExplicitArithmeticTypesFloat64 => {
+                "GL_EXT_shader_explicit_arithmetic_types_float64"
+            }
+            Self::ExtShaderExplicitArithmeticTypesInt16 => {
+                "GL_EXT_shader_explicit_arithmetic_types_int16"
+            }
+            Self::ExtShaderExplicitArithmeticTypesInt32 => {
+                "GL_EXT_shader_explicit_arithmetic_types_int32"
+            }
+            Self::ExtShaderExplicitArithmeticTypesInt64 => {
+                "GL_EXT_shader_explicit_arithmetic_types_int64"
+            }
+            Self::ExtShaderExplicitArithmeticTypesInt8 => {
+                "GL_EXT_shader_explicit_arithmetic_types_int8"
+            }
+            Self::ExtShaderImageInt64 => "GL_EXT_shader_image_int64",
+            Self::ExtShaderImageLoadFormatted => "GL_EXT_shader_image_load_formatted",
+            Self::ExtShaderImplicitConversions => "GL_EXT_shader_implicit_conversions",
+            Self::ExtShaderIntegerMix => "GL_EXT_shader_integer_mix",
+            Self::ExtShaderInvocationReorder => "GL_EXT_shader_invocation_reorder",
+            Self::ExtShaderIoBlocks => "GL_EXT_shader_io_blocks",
+            Self::ExtShaderNonConstantGlobalInitializers => {
+                "GL_EXT_shader_non_constant_global_initializers"
+            }
+            Self::ExtShaderQuadControl => "GL_EXT_shader_quad_control",
+            Self::ExtShaderRealtimeClock => "GL_EXT_shader_realtime_clock",
+            Self::ExtShaderSubgroupExtendedTypesFloat16 => {
+                "GL_EXT_shader_subgroup_extended_types_float16"
+            }
+            Self::ExtShaderSubgroupExtendedTypesInt16 => {
+                "GL_EXT_shader_subgroup_extended_types_int16"
+            }
+            Self::ExtShaderSubgroupExtendedTypesInt64 => {
+                "GL_EXT_shader_subgroup_extended_types_int64"
+            }
+            Self::ExtShaderSubgroupExtendedTypesInt8 => {
+                "GL_EXT_shader_subgroup_extended_types_int8"
+            }
+            Self::ExtShaderTextureLod => "GL_EXT_shader_texture_lod",
+            Self::ExtShaderTileImage => "GL_EXT_shader_tile_image",
+            Self::ExtShadowSamplers => "GL_EXT_shadow_samplers",
+            Self::ExtSharedMemoryBlock => "GL_EXT_shared_memory_block",
+            Self::ExtSpecConstantComposites => "GL_EXT_spec_constant_composites",
+            Self::ExtSpirvIntrinsics => "GL_EXT_spirv_intrinsics",
+            Self::ExtSplitBarrier => "GL_EXT_split_barrier",
+            Self::ExtStructuredDescriptorHeap => "GL_EXT_structured_descriptor_heap",
+            Self::ExtSubgroupUniformControlFlow => "GL_EXT_subgroup_uniform_control_flow",
+            Self::ExtTerminateInvocation => "GL_EXT_terminate_invocation",
+            Self::ExtTessellationPointSize => "GL_EXT_tessellation_point_size",
+            Self::ExtTessellationShader => "GL_EXT_tessellation_shader",
+            Self::ExtTextureArray => "GL_EXT_texture_array",
+            Self::ExtTextureBuffer => "GL_EXT_texture_buffer",
+            Self::ExtTextureCubeMapArray => "GL_EXT_texture_cube_map_array",
+            Self::ExtTextureOffsetNonConst => "GL_EXT_texture_offset_non_const",
+            Self::ExtTextureShadowLod => "GL_EXT_texture_shadow_lod",
+            Self::ExtUniformBufferUnsizedArray => "GL_EXT_uniform_buffer_unsized_array",
+            Self::GoogleCppStyleLineDirective => "GL_GOOGLE_cpp_style_line_directive",
+            Self::GoogleIncludeDirective => "GL_GOOGLE_include_directive",
+            Self::IntelShaderIntegerFunctions2 => "GL_INTEL_shader_integer_functions2",
+            Self::KhrBlendEquationAdvanced => "GL_KHR_blend_equation_advanced",
+            Self::KhrComputeShaderDerivatives => "GL_KHR_compute_shader_derivatives",
+            Self::KhrCooperativeMatrix => "GL_KHR_cooperative_matrix",
+            Self::KhrMemoryScopeSemantics => "GL_KHR_memory_scope_semantics",
+            Self::KhrShaderSubgroupArithmetic => "GL_KHR_shader_subgroup_arithmetic",
+            Self::KhrShaderSubgroupBallot => "GL_KHR_shader_subgroup_ballot",
+            Self::KhrShaderSubgroupBasic => "GL_KHR_shader_subgroup_basic",
+            Self::KhrShaderSubgroupClustered => "GL_KHR_shader_subgroup_clustered",
+            Self::KhrShaderSubgroupQuad => "GL_KHR_shader_subgroup_quad",
+            Self::KhrShaderSubgroupRotate => "GL_KHR_shader_subgroup_rotate",
+            Self::KhrShaderSubgroupShuffle => "GL_KHR_shader_subgroup_shuffle",
+            Self::KhrShaderSubgroupShuffleRelative => "GL_KHR_shader_subgroup_shuffle_relative",
+            Self::KhrShaderSubgroupVote => "GL_KHR_shader_subgroup_vote",
+            Self::NvxMultiviewPerViewAttributes => "GL_NVX_multiview_per_view_attributes",
+            Self::NvClusterAccelerationStructure => "GL_NV_cluster_acceleration_structure",
+            Self::NvComputeShaderDerivatives => "GL_NV_compute_shader_derivatives",
+            Self::NvConservativeRasterUnderestimation => {
+                "GL_NV_conservative_raster_underestimation"
+            }
+            Self::NvCooperativeMatrix => "GL_NV_cooperative_matrix",
+            Self::NvCooperativeMatrix2 => "GL_NV_cooperative_matrix2",
+            Self::NvCooperativeMatrixDecodeVector => "GL_NV_cooperative_matrix_decode_vector",
+            Self::NvCooperativeVector => "GL_NV_cooperative_vector",
+            Self::NvDesktopLowpMediump => "GL_NV_desktop_lowp_mediump",
+            Self::NvDisplacementMicromap => "GL_NV_displacement_micromap",
+            Self::NvExplicitTypecast => "GL_NV_explicit_typecast",
+            Self::NvFragmentShaderBarycentric => "GL_NV_fragment_shader_barycentric",
+            Self::NvGeometryShaderPassthrough => "GL_NV_geometry_shader_passthrough",
+            Self::NvGpuShader5 => "GL_NV_gpu_shader5",
+            Self::NvIntegerCooperativeMatrix => "GL_NV_integer_cooperative_matrix",
+            Self::NvLinearSweptSpheres => "GL_NV_linear_swept_spheres",
+            Self::NvMeshShader => "GL_NV_mesh_shader",
+            Self::NvPushConstantBank => "GL_NV_push_constant_bank",
+            Self::NvRayTracing => "GL_NV_ray_tracing",
+            Self::NvRayTracingMotionBlur => "GL_NV_ray_tracing_motion_blur",
+            Self::NvSampleMaskOverrideCoverage => "GL_NV_sample_mask_override_coverage",
+            Self::NvShaderAtomicFp16Vector => "GL_NV_shader_atomic_fp16_vector",
+            Self::NvShaderAtomicInt64 => "GL_NV_shader_atomic_int64",
+            Self::NvShaderInvocationReorder => "GL_NV_shader_invocation_reorder",
+            Self::NvShaderNoperspectiveInterpolation => "GL_NV_shader_noperspective_interpolation",
+            Self::NvShaderSmBuiltins => "GL_NV_shader_sm_builtins",
+            Self::NvShaderSubgroupPartitioned => "GL_NV_shader_subgroup_partitioned",
+            Self::NvShaderTextureFootprint => "GL_NV_shader_texture_footprint",
+            Self::NvShadingRateImage => "GL_NV_shading_rate_image",
+            Self::NvStereoViewRendering => "GL_NV_stereo_view_rendering",
+            Self::NvViewportArray2 => "GL_NV_viewport_array2",
+            Self::OesEglImageExternal => "GL_OES_EGL_image_external",
+            Self::OesEglImageExternalEssl3 => "GL_OES_EGL_image_external_essl3",
+            Self::OesGeometryPointSize => "GL_OES_geometry_point_size",
+            Self::OesGeometryShader => "GL_OES_geometry_shader",
+            Self::OesGpuShader5 => "GL_OES_gpu_shader5",
+            Self::OesPrimitiveBoundingBox => "GL_OES_primitive_bounding_box",
+            Self::OesSampleVariables => "GL_OES_sample_variables",
+            Self::OesShaderImageAtomic => "GL_OES_shader_image_atomic",
+            Self::OesShaderIoBlocks => "GL_OES_shader_io_blocks",
+            Self::OesShaderMultisampleInterpolation => "GL_OES_shader_multisample_interpolation",
+            Self::OesStandardDerivatives => "GL_OES_standard_derivatives",
+            Self::OesTessellationPointSize => "GL_OES_tessellation_point_size",
+            Self::OesTessellationShader => "GL_OES_tessellation_shader",
+            Self::OesTexture3d => "GL_OES_texture_3D",
+            Self::OesTextureBuffer => "GL_OES_texture_buffer",
+            Self::OesTextureCubeMapArray => "GL_OES_texture_cube_map_array",
+            Self::OesTextureStorageMultisample2dArray => {
+                "GL_OES_texture_storage_multisample_2d_array"
+            }
+            Self::OvrMultiview => "GL_OVR_multiview",
+            Self::OvrMultiview2 => "GL_OVR_multiview2",
+            Self::QcomCooperativeMatrixConversion => "GL_QCOM_cooperative_matrix_conversion",
+            Self::QcomImageProcessing => "GL_QCOM_image_processing",
+            Self::QcomImageProcessing2 => "GL_QCOM_image_processing2",
+            Self::QcomImageProcessing3 => "GL_QCOM_image_processing3",
+            Self::QcomMultipleWaitQueues => "GL_QCOM_multiple_wait_queues",
+            Self::QcomTileShading => "GL_QCOM_tile_shading",
+        }
+    }
+}
+
+const EXTENSION_COUNT: usize = KNOWN.len();
 
 pub const ALL: &str = "all";
 
@@ -602,18 +1354,53 @@ pub enum Request {
     Missing,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+const REQUESTED_WORDS: usize = EXTENSION_COUNT.div_ceil(64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionState {
-    behaviors: BTreeMap<&'static str, ExtensionBehavior>,
-    requested: BTreeSet<&'static str>,
+    behaviors: [ExtensionBehavior; EXTENSION_COUNT],
+    requested: [u64; REQUESTED_WORDS],
+}
+
+impl Default for ExtensionState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExtensionState {
     pub const fn new() -> Self {
         Self {
-            behaviors: BTreeMap::new(),
-            requested: BTreeSet::new(),
+            behaviors: [ExtensionBehavior::Disable; EXTENSION_COUNT],
+            requested: [0; REQUESTED_WORDS],
         }
+    }
+
+    fn set(&mut self, extension: Extension, behavior: ExtensionBehavior) {
+        if let Some(slot) = self.behaviors.get_mut(extension as usize) {
+            *slot = behavior;
+        }
+    }
+
+    fn mark_requested(&mut self, extension: Extension) {
+        let index = extension as usize;
+        if let Some(word) = self.requested.get_mut(index / 64) {
+            *word |= 1 << (index % 64);
+        }
+    }
+
+    pub fn extension_behavior(&self, extension: Extension) -> ExtensionBehavior {
+        self.behaviors
+            .get(extension as usize)
+            .copied()
+            .unwrap_or(ExtensionBehavior::Disable)
+    }
+
+    pub fn is_extension_requested(&self, extension: Extension) -> bool {
+        let index = extension as usize;
+        self.requested
+            .get(index / 64)
+            .is_some_and(|word| word & (1 << (index % 64)) != 0)
     }
 
     pub fn apply(&mut self, name: &str, behavior: ExtensionBehavior) -> Vec<ExtensionIssue> {
@@ -645,41 +1432,39 @@ impl ExtensionState {
             ) {
                 issues.push(ExtensionIssue::AllEnabled(behavior));
             } else {
-                for known in KNOWN {
-                    self.behaviors.insert(known, behavior);
-                }
+                self.behaviors = [behavior; EXTENSION_COUNT];
             }
             return;
         }
-        match KNOWN.binary_search(&name) {
-            Ok(index) => {
-                if let Some(known) = KNOWN.get(index) {
-                    self.behaviors.insert(known, behavior);
-                    if behavior != ExtensionBehavior::Disable {
-                        self.requested.insert(known);
-                    }
+        match Extension::from_name(name) {
+            Some(extension) => {
+                self.set(extension, behavior);
+                if behavior != ExtensionBehavior::Disable {
+                    self.mark_requested(extension);
                 }
             }
-            Err(_) if behavior == ExtensionBehavior::Require => {
+            None if behavior == ExtensionBehavior::Require => {
                 issues.push(ExtensionIssue::UnknownRequired(String::from(name)));
             }
-            Err(_) => issues.push(ExtensionIssue::Unknown(String::from(name))),
+            None => issues.push(ExtensionIssue::Unknown(String::from(name))),
         }
     }
 
     pub fn behavior(&self, name: &str) -> ExtensionBehavior {
-        self.behaviors
-            .get(name)
-            .copied()
-            .unwrap_or(ExtensionBehavior::Disable)
+        Extension::from_name(name).map_or(ExtensionBehavior::Disable, |extension| {
+            self.extension_behavior(extension)
+        })
     }
 
     pub fn requested(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.requested.iter().copied()
+        Extension::ALL
+            .into_iter()
+            .filter(|&extension| self.is_extension_requested(extension))
+            .map(Extension::name)
     }
 
     pub fn is_requested(&self, name: &str) -> bool {
-        self.requested.contains(name)
+        Extension::from_name(name).is_some_and(|extension| self.is_extension_requested(extension))
     }
 
     pub fn is_on(&self, name: &str) -> bool {
@@ -707,10 +1492,10 @@ impl ExtensionState {
     }
 
     pub fn enabled(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.behaviors
-            .iter()
-            .filter(|(_, behavior)| **behavior != ExtensionBehavior::Disable)
-            .map(|(name, _)| *name)
+        Extension::ALL
+            .into_iter()
+            .filter(|&extension| self.extension_behavior(extension) != ExtensionBehavior::Disable)
+            .map(Extension::name)
     }
 
     pub fn keyword_enabled(&self, word: &str) -> bool {

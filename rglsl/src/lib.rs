@@ -15,7 +15,7 @@ void main() {
 ";
 
 // Parse the source into a Module.
-let mut frontend = rglsl::front::glsl::Frontend::default();
+let frontend = rglsl::front::glsl::Frontend::default();
 let options = rglsl::front::glsl::Options::from(rglsl::ShaderStage::Fragment);
 let module: rglsl::Module = frontend
     .parse(&options, glsl_source)
@@ -86,7 +86,7 @@ extern crate alloc;
 
 mod arena;
 pub mod back;
-pub mod common;
+pub(crate) mod common;
 pub mod compact;
 pub mod error;
 pub mod front;

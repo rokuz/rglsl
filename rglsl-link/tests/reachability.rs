@@ -55,11 +55,11 @@ void main() { color = vec4(called(1.0)); }
 fn object_modules_keep_every_function_and_linking_prunes() -> TestResult {
     let main = object(ShaderStage::Fragment, false, UNCALLED)?;
     assert_eq!(
-        names(&main.module.functions),
+        names(&main.unit.module.functions),
         ["called", "helper", "uncalled"]
     );
     let library = object(ShaderStage::Compute, true, HELPER)?;
-    assert_eq!(names(&library.module.functions), ["helper", "spare"]);
+    assert_eq!(names(&library.unit.module.functions), ["helper", "spare"]);
     let linked = rglsl_link::link(&[main, library], &rglsl_link::Options::default())?;
     assert_eq!(names(&linked.module.functions), ["called", "helper"]);
     Ok(())

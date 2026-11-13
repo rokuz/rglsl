@@ -29,6 +29,7 @@ use crate::keywords::{
     is_opaque_type_keyword, is_reserved_word, is_type_keyword, is_unavailable_word,
 };
 use crate::lexer::{tokenize, Token, TokenKind};
+use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
 use rglsl_types::stack::{run, Call, Stack};
 
@@ -204,12 +205,7 @@ pub fn parse(source: &str) -> core::result::Result<TranslationUnit, ParseError> 
 pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
     let lexed = match tokenize(source) {
         Ok(lexed) => lexed,
-        Err(error) => {
-            return (
-                TranslationUnit::new(Vec::new(), NodeId::new(0)),
-                Some(error),
-            )
-        }
+        Err(error) => return (TranslationUnit::new(Vec::new(), 0), Some(error)),
     };
     let parser = Parser {
         source,
@@ -242,7 +238,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
             Some(Err(error)) => {
                 if let Some(partial) = parser.partial_function.borrow_mut().take() {
                     let end = partial.definition.body.span.end;
-                    let id = NodeId::new(parser.next_id.get());
+                    let id = NodeId::saturating(parser.next_id.get());
                     external_declarations.push(ExternalDeclaration::FunctionDefinition(Node::new(
                         id,
                         Span::new(partial.start, end),
@@ -259,7 +255,7 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
             }
         }
     }
-    let unit = TranslationUnit::new(external_declarations, NodeId::new(parser.next_id.get()));
+    let unit = TranslationUnit::new(external_declarations, parser.next_id.get());
     (unit, failure)
 }
 
@@ -373,12 +369,10 @@ impl<'a> Parser<'a> {
 
     fn node<K>(&self, start: u32, kind: K) -> Result<Node<K>> {
         let span = self.span_from(start);
-        let id = NodeId::new(self.next_id.get());
-        let next = self
-            .next_id
-            .get()
-            .checked_add(1)
-            .ok_or_else(|| self.error(ParseErrorKind::TooManyNodes, span))?;
+        let current = self.next_id.get();
+        let (Some(id), Some(next)) = (NodeId::new(current), current.checked_add(1)) else {
+            return Err(self.error(ParseErrorKind::TooManyNodes, span));
+        };
         self.next_id.set(next);
         Ok(Node::new(id, span, kind))
     }
@@ -705,9 +699,9 @@ impl<'a> Parser<'a> {
         } else if let Some(basic) = BasicType::from_keyword(word) {
             self.require_type_extension(word, token.span)?;
             TypeSpecifierNonArray::Basic(basic)
-        } else if is_opaque_type_keyword(word) {
+        } else if let Some(keyword) = OpaqueKeyword::parse(word) {
             self.require_type_extension(word, token.span)?;
-            TypeSpecifierNonArray::Opaque(word.to_owned())
+            TypeSpecifierNonArray::Opaque(keyword)
         } else if let Some(kind) = ParameterizedType::from_keyword(word) {
             self.require_type_extension(word, token.span)?;
             TypeSpecifierNonArray::Parameterized(kind)
@@ -1023,8 +1017,8 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             return Ok(AfterQualifier::Type(qualifier));
         };
         if self.at_nth(1, "{") && word != "struct" {
-            let reference =
-                qualifier.has_layout("buffer_reference") || qualifier.has_layout("buffer_type");
+            let reference = qualifier.node.has_layout("buffer_reference")
+                || qualifier.node.has_layout("buffer_type");
             let kind = self.call(self.clone().parse_block(qualifier)).await?;
             if reference {
                 self.declare_struct(word);
@@ -1040,7 +1034,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 identifiers.push(self.identifier()?);
             }
             self.expect(";")?;
-            if qualifier.has_layout("buffer_reference") {
+            if qualifier.node.has_layout("buffer_reference") {
                 for identifier in &identifiers {
                     if let Some(name) = identifier.span.text(self.source) {
                         self.declare_struct(name);
@@ -1094,9 +1088,10 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut prototype = self
             .call(self.clone().parse_prototype(start, return_type, name))
             .await?;
-        prototype.attributes = attributes;
+        prototype.node.attributes = attributes;
         if self.at_attribute_list() {
-            prototype.trailing_attributes = self.call(self.clone().parse_attribute_list()).await?;
+            prototype.node.trailing_attributes =
+                self.call(self.clone().parse_attribute_list()).await?;
         }
         if self.eat(";") {
             return self.declaration(start, DeclarationKind::FunctionPrototype(prototype));

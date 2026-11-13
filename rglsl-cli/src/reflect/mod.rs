@@ -129,7 +129,7 @@ struct Function<'a> {
 
 impl Function<'_> {
     fn is_main(&self) -> bool {
-        matches!(self.item, Item::Function(definition) if definition.prototype.node.name.node == "main")
+        matches!(self.item, Item::Function(definition) if definition.kind.prototype.node.name.node == "main")
     }
 }
 
@@ -158,7 +158,7 @@ impl Program<'_> {
                         matches!(
                             declaration,
                             ExternalDeclaration::FunctionDefinition(definition)
-                                if definition.prototype.node.name.node == "main"
+                                if definition.kind.prototype.node.name.node == "main"
                         )
                     })
                     .count()
@@ -197,7 +197,7 @@ impl Program<'_> {
                             if list
                                 .declarators
                                 .iter()
-                                .any(|declarator| declarator.initializer.is_some())
+                                .any(|declarator| declarator.kind.initializer.is_some())
                             {
                                 functions.push(Function {
                                     unit: index,
@@ -219,7 +219,7 @@ impl Program<'_> {
                     || Ok(Walked::default()),
                     |analysis| match function.item {
                         Item::Function(definition) => {
-                            walk::function_body(analysis, &definition.body.node.statements)
+                            walk::function_body(analysis, &definition.kind.body.node.statements)
                         }
                         Item::Globals(list) => walk::global_initializers(analysis, list),
                     },

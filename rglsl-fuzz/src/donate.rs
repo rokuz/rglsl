@@ -233,13 +233,14 @@ fn donation_position(unit: &TranslationUnit) -> usize {
                 DeclarationKind::InitDeclaratorList(list) => !list
                     .declarators
                     .iter()
-                    .any(|declarator| declarator.name.node == INJECTION_SWITCH),
+                    .any(|declarator| declarator.kind.name.node == INJECTION_SWITCH),
                 DeclarationKind::Block { structure, .. } => {
                     !structure.members.iter().any(|member| {
                         member
+                            .node
                             .declarators
                             .iter()
-                            .any(|declarator| declarator.name.node == INJECTION_SWITCH)
+                            .any(|declarator| declarator.node.name.node == INJECTION_SWITCH)
                     })
                 }
                 _ => true,
@@ -313,16 +314,16 @@ fn usable(unit: &TranslationUnit) -> bool {
                 DeclarationKind::Block { instance, .. } => instance.is_none(),
                 DeclarationKind::InitDeclaratorList(list) => {
                     let opaque = matches!(
-                        list.ty.specifier.non_array,
+                        list.ty.node.specifier.node.non_array,
                         TypeSpecifierNonArray::Opaque(_)
                     );
-                    !(opaque && list.declarators.iter().any(|d| d.array.is_some()))
-                        && list.ty.specifier.array.is_none()
+                    !(opaque && list.declarators.iter().any(|d| d.kind.array.is_some()))
+                        && list.ty.node.specifier.node.array.is_none()
                 }
                 _ => true,
             },
             ExternalDeclaration::Directive(directive) => !matches!(
-                directive.kind,
+                directive.node.kind,
                 rglsl_ast::ast::DirectiveKind::Extension { .. }
             ),
             _ => true,
@@ -469,26 +470,30 @@ pub fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> Result<Translat
 }
 
 fn strip_interface_qualifiers(ty: &mut Spanned<FullySpecifiedType>) -> bool {
-    let Some(qualifier) = &mut ty.qualifier else {
+    let Some(qualifier) = &mut ty.node.qualifier else {
         return false;
     };
     let uniform = qualifier
+        .node
         .qualifiers
         .iter()
         .any(|single| single.node == SingleTypeQualifier::Storage(StorageQualifier::Uniform));
-    qualifier.qualifiers.retain(|single| match &single.node {
-        SingleTypeQualifier::Storage(storage) => {
-            matches!(storage, StorageQualifier::Const | StorageQualifier::Uniform)
-        }
-        SingleTypeQualifier::Layout(_)
-        | SingleTypeQualifier::Interpolation(_)
-        | SingleTypeQualifier::Invariant
-        | SingleTypeQualifier::Precise
-        | SingleTypeQualifier::Precision(_) => false,
-        _ => false,
-    });
-    if qualifier.qualifiers.is_empty() {
-        ty.qualifier = None;
+    qualifier
+        .node
+        .qualifiers
+        .retain(|single| match &single.node {
+            SingleTypeQualifier::Storage(storage) => {
+                matches!(storage, StorageQualifier::Const | StorageQualifier::Uniform)
+            }
+            SingleTypeQualifier::Layout(_)
+            | SingleTypeQualifier::Interpolation(_)
+            | SingleTypeQualifier::Invariant
+            | SingleTypeQualifier::Precise
+            | SingleTypeQualifier::Precision(_) => false,
+            _ => false,
+        });
+    if qualifier.node.qualifiers.is_empty() {
+        ty.node.qualifier = None;
     }
     uniform
 }
@@ -504,21 +509,21 @@ fn flatten_interface(unit: &mut TranslationUnit, builder: &mut Builder) {
             DeclarationKind::InitDeclaratorList(list) => {
                 let uniform = strip_interface_qualifiers(&mut list.ty);
                 let basic_or_opaque = matches!(
-                    list.ty.specifier.non_array,
+                    list.ty.node.specifier.node.non_array,
                     TypeSpecifierNonArray::Basic(_) | TypeSpecifierNonArray::Opaque(_)
                 );
                 if uniform && !basic_or_opaque {
-                    if let Some(qualifier) = &mut list.ty.qualifier {
-                        qualifier.qualifiers.retain(|single| {
+                    if let Some(qualifier) = &mut list.ty.node.qualifier {
+                        qualifier.node.qualifiers.retain(|single| {
                             single.node != SingleTypeQualifier::Storage(StorageQualifier::Uniform)
                         });
-                        if qualifier.qualifiers.is_empty() {
-                            list.ty.qualifier = None;
+                        if qualifier.node.qualifiers.is_empty() {
+                            list.ty.node.qualifier = None;
                         }
                     }
                 }
                 let opaque = matches!(
-                    list.ty.specifier.non_array,
+                    list.ty.node.specifier.node.non_array,
                     TypeSpecifierNonArray::Opaque(_)
                 );
                 if opaque && !uniform {
@@ -528,11 +533,12 @@ fn flatten_interface(unit: &mut TranslationUnit, builder: &mut Builder) {
             }
             DeclarationKind::Block { structure, .. } => {
                 for member in &structure.members {
-                    let mut ty = member.ty.clone();
+                    let mut ty = member.node.ty.clone();
                     ty.node.qualifier = None;
-                    for declarator in &member.declarators {
-                        let size = declarator.array.as_ref().map(|array| {
+                    for declarator in &member.node.declarators {
+                        let size = declarator.node.array.as_ref().map(|array| {
                             array
+                                .node
                                 .dimensions
                                 .first()
                                 .and_then(|dimension| match &dimension.node {
@@ -549,7 +555,7 @@ fn flatten_interface(unit: &mut TranslationUnit, builder: &mut Builder) {
                         });
                         let declaration = builder.declaration_with(
                             ty.node.clone(),
-                            vec![(declarator.name.node.clone(), size, None)],
+                            vec![(declarator.node.name.node.clone(), size, None)],
                         );
                         result.push(ExternalDeclaration::Declaration(declaration));
                     }
@@ -587,7 +593,7 @@ fn array_size(declarator: &rglsl_ast::ast::InitDeclarator) -> Option<Option<u32>
     let Some(array) = &declarator.array else {
         return Some(None);
     };
-    let [dimension] = array.dimensions.as_slice() else {
+    let [dimension] = array.node.dimensions.as_slice() else {
         return None;
     };
     let rglsl_ast::ast::ArrayDimension::Sized(size) = &dimension.node else {
@@ -610,21 +616,21 @@ fn initialize_declaration(
     let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind else {
         return;
     };
-    let qualifier = list.ty.qualifier.as_ref();
+    let qualifier = list.ty.node.qualifier.as_ref();
     if has_storage(qualifier, StorageQualifier::Uniform)
         || has_storage(qualifier, StorageQualifier::Shared)
     {
         return;
     }
     let constant = global || has_storage(qualifier, StorageQualifier::Const);
-    let Some(ty) = basic::from_specifier(&list.ty.specifier) else {
+    let Some(ty) = basic::from_specifier(&list.ty.node.specifier.node) else {
         return;
     };
     for declarator in &mut list.declarators {
-        if declarator.initializer.is_some() {
+        if declarator.kind.initializer.is_some() {
             continue;
         }
-        let value = match array_size(declarator) {
+        let value = match array_size(&declarator.kind) {
             Some(None) => fuzz_initializer(templates, params, random, builder, ty, constant),
             Some(Some(size)) if size <= 64 => {
                 let elements = (0..size)
@@ -645,7 +651,7 @@ fn initialize_declaration(
             }
             _ => continue,
         };
-        declarator.initializer = Some(Spanned::new(
+        declarator.kind.initializer = Some(Spanned::new(
             rglsl_ast::Span::new(0, 0),
             Initializer::Expression(value),
         ));
@@ -725,7 +731,7 @@ fn fragments(unit: &TranslationUnit) -> Vec<(usize, NodeId)> {
         };
         let mut local_struct = false;
         let mut found = Vec::new();
-        for statement in &definition.body.statements {
+        for statement in &definition.kind.body.node.statements {
             collect_fragments(statement, &mut found, &mut local_struct);
         }
         if !local_struct {
@@ -765,7 +771,7 @@ fn collect_fragments(statement: &Statement, found: &mut Vec<NodeId>, local_struc
             StatementKind::Declaration(declaration) => {
                 if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind {
                     if matches!(
-                        list.ty.specifier.non_array,
+                        list.ty.node.specifier.node.non_array,
                         TypeSpecifierNonArray::Struct(_)
                     ) {
                         *local_struct = true;
@@ -806,7 +812,9 @@ fn find_statement(
         None
     }
     definition
+        .kind
         .body
+        .node
         .statements
         .iter()
         .find_map(|statement| search(statement, id))
@@ -1035,8 +1043,23 @@ fn dead_statement(
         renames.insert(variable.name.clone(), replacement);
     }
     rename_in_statement(&mut fragment, &renames)?;
-    let same_return = definition.prototype.return_type.specifier.node
-        == point.function.prototype.return_type.specifier.node;
+    let same_return = definition
+        .kind
+        .prototype
+        .node
+        .return_type
+        .node
+        .specifier
+        .node
+        == point
+            .function
+            .kind
+            .prototype
+            .node
+            .return_type
+            .node
+            .specifier
+            .node;
     let removal = Removal {
         case_labels: true,
         breaks: !(point.in_loop || point.in_switch),

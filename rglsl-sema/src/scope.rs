@@ -50,9 +50,24 @@ impl Storage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutEntry {
     pub name: String,
-    pub has_value: bool,
-    pub value: Option<i64>,
+    pub value: LayoutValue,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutValue {
+    Flag,
+    Constant(i64),
+    Invalid,
+}
+
+impl LayoutValue {
+    pub const fn constant(self) -> Option<i64> {
+        match self {
+            Self::Constant(value) => Some(value),
+            Self::Flag | Self::Invalid => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,40 +76,72 @@ pub enum PerVertex {
     Ext,
 }
 
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct QualifierFlags: u32 {
+        const CONSTANT = 1 << 0;
+        const SPECIALIZATION = 1 << 1;
+        const CENTROID = 1 << 2;
+        const PATCH = 1 << 3;
+        const SAMPLE = 1 << 4;
+        const INVARIANT = 1 << 5;
+        const PRECISE = 1 << 6;
+        const NONUNIFORM = 1 << 7;
+        const READONLY = 1 << 8;
+        const WRITEONLY = 1 << 9;
+        const COHERENT = 1 << 10;
+        const VOLATILE = 1 << 11;
+        const RESTRICT = 1 << 12;
+        const DEVICE_COHERENT = 1 << 13;
+        const QUEUE_FAMILY_COHERENT = 1 << 14;
+        const WORKGROUP_COHERENT = 1 << 15;
+        const SUBGROUP_COHERENT = 1 << 16;
+        const SHADER_CALL_COHERENT = 1 << 17;
+        const NONPRIVATE = 1 << 18;
+        const NONTEMPORAL = 1 << 19;
+        const PER_PRIMITIVE = 1 << 20;
+        const PER_VIEW = 1 << 21;
+        const PER_TASK = 1 << 22;
+        const SPIRV_BY_REFERENCE = 1 << 23;
+        const SPIRV_LITERAL = 1 << 24;
+    }
+}
+
+impl QualifierFlags {
+    pub const AUXILIARY: Self = Self::CENTROID.union(Self::PATCH).union(Self::SAMPLE);
+    pub const SCOPED_COHERENT: Self = Self::DEVICE_COHERENT
+        .union(Self::QUEUE_FAMILY_COHERENT)
+        .union(Self::WORKGROUP_COHERENT)
+        .union(Self::SUBGROUP_COHERENT)
+        .union(Self::SHADER_CALL_COHERENT);
+    pub const VULKAN_MEMORY_MODEL: Self = Self::COHERENT
+        .union(Self::VOLATILE)
+        .union(Self::SCOPED_COHERENT)
+        .union(Self::NONPRIVATE);
+    pub const MEMORY: Self = Self::READONLY
+        .union(Self::WRITEONLY)
+        .union(Self::COHERENT)
+        .union(Self::VOLATILE)
+        .union(Self::RESTRICT)
+        .union(Self::NONTEMPORAL);
+    pub const MEMBER_INHERITED: Self = Self::MEMORY
+        .union(Self::SCOPED_COHERENT)
+        .union(Self::NONPRIVATE)
+        .union(Self::PER_PRIMITIVE)
+        .union(Self::PER_VIEW)
+        .union(Self::PER_TASK);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Qualifiers {
     pub storage: Storage,
-    pub constant: bool,
-    pub specialization: bool,
-    pub centroid: bool,
-    pub patch: bool,
-    pub sample: bool,
-    pub invariant: bool,
-    pub precise: bool,
-    pub nonuniform: bool,
-    pub readonly: bool,
-    pub writeonly: bool,
-    pub coherent: bool,
-    pub volatile: bool,
-    pub restrict: bool,
-    pub device_coherent: bool,
-    pub queue_family_coherent: bool,
-    pub workgroup_coherent: bool,
-    pub subgroup_coherent: bool,
-    pub shader_call_coherent: bool,
-    pub nonprivate: bool,
-    pub nontemporal: bool,
-    pub per_primitive: bool,
+    pub flags: QualifierFlags,
     pub per_vertex: Option<PerVertex>,
-    pub per_view: bool,
-    pub per_task: bool,
     pub interpolation: Option<InterpolationQualifier>,
     pub precision: Option<PrecisionQualifier>,
     pub layout: Vec<LayoutEntry>,
     pub spirv_storage_class: Option<u32>,
     pub spirv_decorations: Vec<SpirvDecoration>,
-    pub spirv_by_reference: bool,
-    pub spirv_literal: bool,
 }
 
 impl Qualifiers {
@@ -106,83 +153,77 @@ impl Qualifiers {
         self.layout_entry(name).is_some()
     }
 
+    pub const fn has(&self, flags: QualifierFlags) -> bool {
+        self.flags.contains(flags)
+    }
+
     pub const fn has_memory_qualifier(&self) -> bool {
-        self.readonly
-            || self.writeonly
-            || self.coherent
-            || self.volatile
-            || self.restrict
-            || self.nontemporal
-            || self.needs_vulkan_memory_model()
+        self.flags.intersects(QualifierFlags::MEMORY) || self.needs_vulkan_memory_model()
     }
 
     pub fn dropped_memory_qualifiers(&self, formal: &Self) -> impl Iterator<Item = &'static str> {
-        let device = formal.device_coherent || formal.coherent;
-        let queue_family = device || formal.queue_family_coherent;
-        let workgroup = queue_family || formal.workgroup_coherent;
-        let subgroup = workgroup || formal.subgroup_coherent;
+        let own = self.flags;
+        let formal = formal.flags;
+        let device =
+            formal.intersects(QualifierFlags::DEVICE_COHERENT.union(QualifierFlags::COHERENT));
+        let queue_family = device || formal.contains(QualifierFlags::QUEUE_FAMILY_COHERENT);
+        let workgroup = queue_family || formal.contains(QualifierFlags::WORKGROUP_COHERENT);
+        let subgroup = workgroup || formal.contains(QualifierFlags::SUBGROUP_COHERENT);
+        let dropped = |flag: QualifierFlags| own.contains(flag) && !formal.contains(flag);
         [
-            (self.volatile && !formal.volatile, "volatile"),
-            (self.coherent && !device, "coherent"),
-            (self.device_coherent && !device, "devicecoherent"),
+            (dropped(QualifierFlags::VOLATILE), "volatile"),
             (
-                self.queue_family_coherent && !queue_family,
+                own.contains(QualifierFlags::COHERENT) && !device,
+                "coherent",
+            ),
+            (
+                own.contains(QualifierFlags::DEVICE_COHERENT) && !device,
+                "devicecoherent",
+            ),
+            (
+                own.contains(QualifierFlags::QUEUE_FAMILY_COHERENT) && !queue_family,
                 "queuefamilycoherent",
             ),
-            (self.workgroup_coherent && !workgroup, "workgroupcoherent"),
-            (self.subgroup_coherent && !subgroup, "subgroupcoherent"),
-            (self.readonly && !formal.readonly, "readonly"),
-            (self.writeonly && !formal.writeonly, "writeonly"),
-            (self.nontemporal && !formal.nontemporal, "nontemporal"),
+            (
+                own.contains(QualifierFlags::WORKGROUP_COHERENT) && !workgroup,
+                "workgroupcoherent",
+            ),
+            (
+                own.contains(QualifierFlags::SUBGROUP_COHERENT) && !subgroup,
+                "subgroupcoherent",
+            ),
+            (dropped(QualifierFlags::READONLY), "readonly"),
+            (dropped(QualifierFlags::WRITEONLY), "writeonly"),
+            (dropped(QualifierFlags::NONTEMPORAL), "nontemporal"),
         ]
         .into_iter()
         .filter_map(|(dropped, name)| dropped.then_some(name))
     }
 
     pub const fn only_nonprivate(&self) -> bool {
-        self.nonprivate
-            && !(self.readonly
-                || self.writeonly
-                || self.coherent
-                || self.volatile
-                || self.restrict
-                || self.nontemporal
-                || self.device_coherent
-                || self.queue_family_coherent
-                || self.workgroup_coherent
-                || self.subgroup_coherent
-                || self.shader_call_coherent)
+        self.flags.contains(QualifierFlags::NONPRIVATE)
+            && !self
+                .flags
+                .intersects(QualifierFlags::MEMORY.union(QualifierFlags::SCOPED_COHERENT))
     }
 
     pub const fn needs_vulkan_memory_model(&self) -> bool {
-        self.coherent
-            || self.volatile
-            || self.device_coherent
-            || self.queue_family_coherent
-            || self.workgroup_coherent
-            || self.subgroup_coherent
-            || self.shader_call_coherent
-            || self.nonprivate
+        self.flags.intersects(QualifierFlags::VULKAN_MEMORY_MODEL)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SymbolId(pub(crate) u32);
+index_id!(SymbolId);
 
 impl SymbolId {
-    pub const fn index(self) -> u32 {
-        self.0
+    pub(crate) const fn saturating(index: u32) -> Self {
+        match Self::new(index) {
+            Some(id) => id,
+            None => Self(core::num::NonZeroU32::MAX),
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FunctionId(pub(crate) u32);
-
-impl FunctionId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
+index_id!(FunctionId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Origin {
@@ -276,21 +317,26 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct FunctionControl {
-    pub inline: bool,
-    pub dont_inline: bool,
+pub enum FunctionControl {
+    #[default]
+    None,
+    Inline,
+    DontInline,
+    Incompatible,
 }
 
 impl FunctionControl {
     pub const fn merge(self, other: Self) -> Self {
-        Self {
-            inline: self.inline || other.inline,
-            dont_inline: self.dont_inline || other.dont_inline,
+        match (self, other) {
+            (Self::None, control) | (control, Self::None) => control,
+            (Self::Inline, Self::Inline) => Self::Inline,
+            (Self::DontInline, Self::DontInline) => Self::DontInline,
+            _ => Self::Incompatible,
         }
     }
 
     pub const fn is_incompatible(self) -> bool {
-        self.inline && self.dont_inline
+        matches!(self, Self::Incompatible)
     }
 }
 
@@ -322,7 +368,7 @@ struct Level {
 pub enum PrecisionKey {
     Float,
     Int,
-    Opaque(String),
+    Opaque(rglsl_ast::opaque::OpaqueKeyword),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

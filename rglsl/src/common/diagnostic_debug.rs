@@ -64,37 +64,12 @@ impl fmt::Debug for DiagnosticDebug<Scalar> {
     }
 }
 
-pub trait ForDebug: Sized {
-    /// Format this type using [`core::fmt::Debug`].
-    ///
-    /// Return a value that implements the [`core::fmt::Debug`] trait
-    /// by displaying `self` in a language-appropriate way. For
-    /// example:
-    ///
-    ///     # use rglsl::common::ForDebug;
-    ///     # let scalar: rglsl::Scalar = rglsl::Scalar::F32;
-    ///     log::debug!("My scalar: {:?}", scalar.for_debug());
-    fn for_debug(self) -> DiagnosticDebug<Self> {
-        DiagnosticDebug(self)
-    }
-}
-
-impl ForDebug for Scalar {}
-
 pub trait ForDebugWithTypes: Sized {
     /// Format this type using [`core::fmt::Debug`].
     ///
     /// Given an arena to look up type handles in, return a value that
     /// implements the [`core::fmt::Debug`] trait by displaying `self`
-    /// in a language-appropriate way. For example:
-    ///
-    ///     # use rglsl::{Span, Type, TypeInner, Scalar, UniqueArena};
-    ///     # use rglsl::common::ForDebugWithTypes;
-    ///     # let mut types = UniqueArena::<Type>::default();
-    ///     # let inner = TypeInner::Scalar(Scalar::F32);
-    ///     # let span = Span::UNDEFINED;
-    ///     # let handle = types.insert(Type { name: None, inner }, span);
-    ///     log::debug!("My type: {:?}", handle.for_debug(&types));
+    /// in a language-appropriate way.
     fn for_debug(self, types: &UniqueArena<Type>) -> DiagnosticDebug<(Self, &UniqueArena<Type>)> {
         DiagnosticDebug((self, types))
     }

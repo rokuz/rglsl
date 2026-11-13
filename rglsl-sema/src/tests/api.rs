@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -205,7 +206,7 @@ void main() {
     };
     let limit = symbol("limit")?.variable().ok_or("not a variable")?;
     assert_eq!(limit.origin, Origin::Global);
-    assert!(limit.qualifiers.constant);
+    assert!(limit.qualifiers.flags.contains(QualifierFlags::CONSTANT));
     assert_eq!(limit.ty, Type::INT);
     let value = symbol("value")?.variable().ok_or("not a variable")?;
     assert_eq!(value.origin, Origin::Parameter);
@@ -216,7 +217,7 @@ void main() {
         block
             .qualifiers
             .layout_entry("binding")
-            .and_then(|entry| entry.value),
+            .and_then(|entry| entry.value.constant()),
         Some(0)
     );
     assert!(matches!(
@@ -424,7 +425,7 @@ void main() {
         normal
             .qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value),
+            .and_then(|entry| entry.value.constant()),
         Some(2)
     );
     let cell = variable("cell")?;
@@ -436,7 +437,7 @@ void main() {
         scene
             .qualifiers
             .layout_entry("set")
-            .and_then(|entry| entry.value),
+            .and_then(|entry| entry.value.constant()),
         Some(1)
     );
     let TypeKind::Block(block) = scene.ty.kind else {
@@ -474,7 +475,7 @@ void main() {
     assert!(transform
         .parameters
         .last()
-        .is_some_and(|bias| bias.qualifiers.constant));
+        .is_some_and(|bias| bias.qualifiers.flags.contains(QualifierFlags::CONSTANT)));
     assert!(transform.defined);
     assert!(transform.return_type.is_void());
     Ok(())
@@ -858,7 +859,9 @@ fn statement_expressions(checked: &Checked) -> Vec<Expression> {
         panic!("the shader ends with a function");
     };
     definition
+        .kind
         .body
+        .node
         .statements
         .iter()
         .filter_map(|statement| match &statement.kind {

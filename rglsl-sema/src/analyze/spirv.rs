@@ -83,8 +83,9 @@ impl Analyzer<'_> {
         let mut extensions = false;
         let mut capabilities = false;
         for requirement in requirements {
-            let name = requirement.name.node.as_str();
+            let name = requirement.node.name.node.as_str();
             let strings: Option<Vec<String>> = requirement
+                .node
                 .values
                 .iter()
                 .map(|value| match value.kind {
@@ -92,7 +93,7 @@ impl Analyzer<'_> {
                     _ => None,
                 })
                 .collect();
-            let integers: Option<Vec<u32>> = requirement.values.iter().map(integer).collect();
+            let integers: Option<Vec<u32>> = requirement.node.values.iter().map(integer).collect();
             match name {
                 "extensions" => match strings {
                     Some(_) if extensions => {
@@ -119,7 +120,7 @@ impl Analyzer<'_> {
                     }
                     Some(integers) => {
                         capabilities = true;
-                        for (value, &capability) in requirement.values.iter().zip(&integers) {
+                        for (value, &capability) in requirement.node.values.iter().zip(&integers) {
                             self.opencl_capability(value.span, capability);
                         }
                         self.spirv_requirements.capabilities.extend(integers);
@@ -147,8 +148,8 @@ impl Analyzer<'_> {
         };
         let mut id_span = None;
         for qualifier in qualifiers {
-            let name = qualifier.name.node.as_str();
-            match (name, &qualifier.value.kind) {
+            let name = qualifier.node.name.node.as_str();
+            match (name, &qualifier.node.value.kind) {
                 ("set", ExpressionKind::String(text)) => {
                     if !instruction.set.is_empty() {
                         self.error(
@@ -172,8 +173,8 @@ impl Analyzer<'_> {
                             ),
                         );
                     } else {
-                        instruction.id = integer(&qualifier.value);
-                        id_span = Some(qualifier.value.span);
+                        instruction.id = integer(&qualifier.node.value);
+                        id_span = Some(qualifier.node.value.span);
                     }
                 }
                 _ => self.error(
@@ -198,14 +199,15 @@ impl Analyzer<'_> {
                 ),
             );
         }
-        self.spirv_requirements(&mode.requirements);
-        let Some(id) = integer(&mode.mode) else {
+        self.spirv_requirements(&mode.node.requirements);
+        let Some(id) = integer(&mode.node.mode) else {
             return;
         };
-        self.opencl_execution_mode(mode.mode.span, id);
-        let operands = match mode.kind {
+        self.opencl_execution_mode(mode.node.mode.span, id);
+        let operands = match mode.node.kind {
             SpirvExecutionModeKind::Literal => SpirvExecutionModeOperands::Literals(
-                mode.operands
+                mode.node
+                    .operands
                     .iter()
                     .filter_map(literal_words)
                     .flatten()
@@ -213,7 +215,7 @@ impl Analyzer<'_> {
             ),
             SpirvExecutionModeKind::Id => {
                 let mut ids = Vec::new();
-                for operand in &mode.operands {
+                for operand in &mode.node.operands {
                     if self.spirv_constant_operand(operand) {
                         ids.push(operand.id);
                     }

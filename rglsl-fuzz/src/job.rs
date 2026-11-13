@@ -35,7 +35,7 @@ impl Shader {
             .external_declarations
             .iter()
             .find_map(|external| match external {
-                ExternalDeclaration::Directive(directive) => match &directive.kind {
+                ExternalDeclaration::Directive(directive) => match &directive.node.kind {
                     rglsl_ast::ast::DirectiveKind::Version { number, .. } => Some(*number),
                     _ => None,
                 },
@@ -78,7 +78,7 @@ fn is_uniform_list(external: &ExternalDeclaration) -> Option<&InitDeclaratorList
     let DeclarationKind::InitDeclaratorList(list) = &declaration.kind else {
         return None;
     };
-    has_storage(list.ty.qualifier.as_ref(), StorageQualifier::Uniform).then_some(list)
+    has_storage(list.ty.node.qualifier.as_ref(), StorageQualifier::Uniform).then_some(list)
 }
 
 fn insertion_point(unit: &TranslationUnit) -> usize {
@@ -103,7 +103,7 @@ pub fn global_names(unit: &TranslationUnit) -> BTreeSet<String> {
         match &declaration.kind {
             DeclarationKind::InitDeclaratorList(list) => {
                 for declarator in &list.declarators {
-                    names.insert(declarator.name.node.clone());
+                    names.insert(declarator.kind.name.node.clone());
                 }
             }
             DeclarationKind::Block {
@@ -111,12 +111,12 @@ pub fn global_names(unit: &TranslationUnit) -> BTreeSet<String> {
                 instance,
             } => match instance {
                 Some(instance) => {
-                    names.insert(instance.name.node.clone());
+                    names.insert(instance.node.name.node.clone());
                 }
                 None => {
                     for member in &structure.members {
-                        for declarator in &member.declarators {
-                            names.insert(declarator.name.node.clone());
+                        for declarator in &member.node.declarators {
+                            names.insert(declarator.node.name.node.clone());
                         }
                     }
                 }
@@ -192,15 +192,15 @@ fn binding_values(unit: &TranslationUnit) -> BTreeSet<u32> {
         let Some(qualifier) = qualifier else {
             return;
         };
-        for single in &qualifier.qualifiers {
+        for single in &qualifier.node.qualifiers {
             let SingleTypeQualifier::Layout(layout) = &single.node else {
                 continue;
             };
             for id in &layout.ids {
-                if id.name.node != "binding" {
+                if id.node.name.node != "binding" {
                     continue;
                 }
-                if let Some(value) = &id.value {
+                if let Some(value) = &id.node.value {
                     if let ExpressionKind::Number(literal) = &value.kind {
                         if let Ok(number) = literal.digits().parse::<u32>() {
                             used.insert(number);
@@ -215,7 +215,7 @@ fn binding_values(unit: &TranslationUnit) -> BTreeSet<u32> {
             continue;
         };
         match &declaration.kind {
-            DeclarationKind::InitDeclaratorList(list) => collect(list.ty.qualifier.as_ref()),
+            DeclarationKind::InitDeclaratorList(list) => collect(list.ty.node.qualifier.as_ref()),
             DeclarationKind::Block { structure, .. } => collect(Some(&structure.qualifier)),
             DeclarationKind::Qualifier(qualifier)
             | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => collect(Some(qualifier)),
@@ -233,24 +233,24 @@ fn member_text(list: &InitDeclaratorList, index: usize) -> String {
         .cloned()
         .into_iter()
         .map(|mut declarator| {
-            declarator.initializer = None;
+            declarator.kind.initializer = None;
             declarator
         })
         .collect();
-    if let Some(qualifier) = &mut single.ty.qualifier {
-        qualifier.qualifiers.retain(|single| {
+    if let Some(qualifier) = &mut single.ty.node.qualifier {
+        qualifier.node.qualifiers.retain(|single| {
             !matches!(
                 single.node,
                 SingleTypeQualifier::Storage(StorageQualifier::Uniform)
                     | SingleTypeQualifier::Layout(_)
             )
         });
-        if qualifier.qualifiers.is_empty() {
-            single.ty.qualifier = None;
+        if qualifier.node.qualifiers.is_empty() {
+            single.ty.node.qualifier = None;
         }
     }
     let declaration = Declaration::new(
-        rglsl_ast::ast::NodeId::new(0),
+        rglsl_ast::ast::NodeId::FIRST,
         Span::new(0, 0),
         DeclarationKind::InitDeclaratorList(single),
     );
@@ -258,14 +258,14 @@ fn member_text(list: &InitDeclaratorList, index: usize) -> String {
 }
 
 fn sampler_text(list: &InitDeclaratorList, index: usize, binding: u32) -> String {
-    let specifier = match &list.ty.specifier.node.non_array {
-        TypeSpecifierNonArray::Opaque(name) => name.clone(),
+    let specifier = match &list.ty.node.specifier.node.non_array {
+        TypeSpecifierNonArray::Opaque(keyword) => keyword.to_string(),
         _ => String::from("sampler2D"),
     };
     let name = list
         .declarators
         .get(index)
-        .map(|declarator| declarator.name.node.clone())
+        .map(|declarator| declarator.kind.name.node.clone())
         .unwrap_or_default();
     format!("layout(set = 0, binding = {binding}) uniform {specifier} {name};")
 }
@@ -319,7 +319,7 @@ impl ShaderJob {
                     continue;
                 };
                 for (index, declarator) in list.declarators.iter().enumerate() {
-                    let name = declarator.name.node.as_str();
+                    let name = declarator.kind.name.node.as_str();
                     if !self.pipeline.has_uniform(name) {
                         return Err(Error::Generation(format!(
                             "uniform {name} has no value in the shader job"
@@ -336,7 +336,7 @@ impl ShaderJob {
                         }
                     }
                     let opaque = matches!(
-                        list.ty.specifier.node.non_array,
+                        list.ty.node.specifier.node.non_array,
                         TypeSpecifierNonArray::Opaque(_)
                     );
                     let text = if opaque {
@@ -484,12 +484,12 @@ fn inline_uniform(
         let Some(index) = list
             .declarators
             .iter()
-            .position(|declarator| declarator.name.node == name)
+            .position(|declarator| declarator.kind.name.node == name)
         else {
             replaced.push(external);
             continue;
         };
-        let TypeSpecifierNonArray::Basic(ty) = list.ty.specifier.node.non_array else {
+        let TypeSpecifierNonArray::Basic(ty) = list.ty.node.specifier.node.non_array else {
             return Err(Error::Unsupported(format!(
                 "pruning uniform {name} of a non-basic type"
             )));
@@ -498,7 +498,7 @@ fn inline_uniform(
             replaced.push(external);
             continue;
         };
-        let count = array_count(declarator)?;
+        let count = array_count(&declarator.kind)?;
         let args = pipeline.args(name);
         let initializer = match count {
             Some(count) => {
@@ -548,12 +548,12 @@ fn replace_with_canonical_sampler(
         if let ExternalDeclaration::Declaration(declaration) = &mut external {
             if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
                 if matches!(
-                    list.ty.specifier.node.non_array,
+                    list.ty.node.specifier.node.non_array,
                     TypeSpecifierNonArray::Opaque(_)
                 ) {
                     list.declarators.retain(|declarator| {
-                        declarator.name.node != sampler
-                            && !(replaced_use && declarator.name.node == canonical)
+                        declarator.kind.name.node != sampler
+                            && !(replaced_use && declarator.kind.name.node == canonical)
                     });
                     if list.declarators.is_empty() {
                         continue;
@@ -582,7 +582,9 @@ pub fn node_count(unit: &TranslationUnit) -> Result<usize, Error> {
         .iter()
         .map(|external| match external {
             ExternalDeclaration::FunctionDefinition(definition) => definition
+                .kind
                 .body
+                .node
                 .statements
                 .iter()
                 .map(count_statements)

@@ -241,7 +241,7 @@ pub use debug::{
     DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope, DebugSource, DebugStruct,
     DebugUnit, ModuleSpans, ScopeIndex,
 };
-pub use rglsl_types::{ResourceBinding, ShaderStage};
+pub use rglsl_types::{ResourceBinding, ShaderStage, ShaderStageMask};
 
 /// Explicitly allows early depth/stencil tests.
 ///

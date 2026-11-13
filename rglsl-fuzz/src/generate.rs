@@ -52,7 +52,8 @@ fn effective_version(unit: &TranslationUnit) -> u32 {
         .external_declarations
         .iter()
         .find_map(|external| match external {
-            rglsl_ast::ast::ExternalDeclaration::Directive(directive) => match &directive.kind {
+            rglsl_ast::ast::ExternalDeclaration::Directive(directive) => match &directive.node.kind
+            {
                 rglsl_ast::ast::DirectiveKind::Version { number, .. } => Some(*number),
                 _ => None,
             },

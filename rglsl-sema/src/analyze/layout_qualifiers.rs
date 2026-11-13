@@ -2,7 +2,7 @@ use rglsl_ast::Span;
 
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
-use crate::scope::{Qualifiers, Storage};
+use crate::scope::{LayoutValue, Qualifiers, Storage};
 use rglsl_types::ShaderStage;
 
 const PUSH_CONSTANT_BANK: &str = "GL_NV_push_constant_bank";
@@ -186,14 +186,14 @@ impl Analyzer<'_> {
             let (qualifier, valid, reason) = match entry.name.as_str() {
                 "bank" => (
                     "bank",
-                    entry.value.is_none_or(|value| value < BANK_END),
+                    entry.value.constant().is_none_or(|value| value < BANK_END),
                     "bank out of range",
                 ),
                 "member_offset" => ("member_offset", true, ""),
                 _ => continue,
             };
             self.require_extension(entry.span, PUSH_CONSTANT_BANK, qualifier);
-            if entry.has_value && entry.value.is_none() {
+            if entry.value == LayoutValue::Invalid {
                 self.error(
                     entry.span,
                     DiagnosticKind::InvalidQualifier {
@@ -213,7 +213,7 @@ impl Analyzer<'_> {
     pub(crate) fn xfb_limit_check(&mut self, qualifiers: &Qualifiers) {
         let limits = self.options.limits;
         for entry in &qualifiers.layout {
-            let Some(value) = entry.value else {
+            let Some(value) = entry.value.constant() else {
                 continue;
             };
             let error = match entry.name.as_str() {
@@ -248,7 +248,7 @@ impl Analyzer<'_> {
         }
         let Some(location) = qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {
             return;

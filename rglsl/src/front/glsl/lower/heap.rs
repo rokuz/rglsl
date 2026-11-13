@@ -29,6 +29,7 @@ pub(super) enum HeapOffset<'a> {
 
 fn heap_offset_expression(qualifier: &Spanned<TypeQualifier>) -> Option<&AstExpression> {
     qualifier
+        .node
         .qualifiers
         .iter()
         .filter_map(|single| match single.node {
@@ -36,8 +37,8 @@ fn heap_offset_expression(qualifier: &Spanned<TypeQualifier>) -> Option<&AstExpr
             _ => None,
         })
         .flat_map(|layout| layout.ids.iter())
-        .filter(|id| id.name.node == "heap_offset")
-        .filter_map(|id| id.value.as_ref())
+        .filter(|id| id.node.name.node == "heap_offset")
+        .filter_map(|id| id.node.value.as_ref())
         .next_back()
 }
 
@@ -55,7 +56,10 @@ fn explicit_packing(qualifiers: &Qualifiers) -> Option<Packing> {
 }
 
 fn layout_u32(qualifiers: &Qualifiers, name: &str, at: Span) -> Result<Option<u32>> {
-    match qualifiers.layout_entry(name).and_then(|entry| entry.value) {
+    match qualifiers
+        .layout_entry(name)
+        .and_then(|entry| entry.value.constant())
+    {
         Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
         None => Ok(None),
     }

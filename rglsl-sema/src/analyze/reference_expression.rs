@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 
 use rglsl_ast::ast::{BinaryOperator, Expression, Identifier};
@@ -59,7 +60,7 @@ impl Analyzer<'_> {
             );
             return Operand::error();
         };
-        let place = if member.qualifiers.readonly {
+        let place = if member.qualifiers.flags.contains(QualifierFlags::READONLY) {
             Place::ReadOnly("it is read-only")
         } else {
             Place::Writable
@@ -72,7 +73,7 @@ impl Analyzer<'_> {
             root: None,
             storage: Storage::Buffer,
             specialization: false,
-            writeonly: member.qualifiers.writeonly,
+            writeonly: member.qualifiers.flags.contains(QualifierFlags::WRITEONLY),
             through_reference: true,
             non_uniform: base.non_uniform,
         }

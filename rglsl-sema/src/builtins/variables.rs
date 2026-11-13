@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -485,11 +486,11 @@ fn parse_declaration(line: &[&str]) -> Option<Declared> {
         match word {
             "in" => qualifiers.storage = Storage::In,
             "out" => qualifiers.storage = Storage::Out,
-            "patch" => qualifiers.patch = true,
+            "patch" => qualifiers.flags.insert(QualifierFlags::PATCH),
             "flat" => qualifiers.interpolation = Some(InterpolationQualifier::Flat),
-            "volatile" => qualifiers.volatile = true,
-            "perprimitiveNV" => qualifiers.per_primitive = true,
-            "perviewNV" => qualifiers.per_view = true,
+            "volatile" => qualifiers.flags.insert(QualifierFlags::VOLATILE),
+            "perprimitiveNV" => qualifiers.flags.insert(QualifierFlags::PER_PRIMITIVE),
+            "perviewNV" => qualifiers.flags.insert(QualifierFlags::PER_VIEW),
             "lowp" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::Low),
             "mediump" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::Medium),
             "highp" => qualifiers.precision = Some(rglsl_ast::ast::PrecisionQualifier::High),
@@ -521,7 +522,7 @@ struct Builder {
 
 impl Builder {
     fn add(&mut self, name: &str, kind: SymbolKind, visible: bool) -> Option<SymbolId> {
-        let id = SymbolId(u32::try_from(self.symbols.len()).ok()?);
+        let id = SymbolId::new(u32::try_from(self.symbols.len()).ok()?)?;
         self.symbols.push(Symbol {
             name: String::from(name),
             span: Span::default(),
@@ -553,7 +554,7 @@ impl Builder {
 
     fn constant(&mut self, name: &str, ty: Type, values: Vec<Value>) {
         let qualifiers = Qualifiers {
-            constant: true,
+            flags: QualifierFlags::CONSTANT,
             ..Qualifiers::default()
         };
         self.variable(name, ty, qualifiers, Some(Constant::new(values)), true);
@@ -638,7 +639,11 @@ impl Builder {
             .collect();
         let qualifiers = Qualifiers {
             storage: Storage::Out,
-            per_primitive,
+            flags: if per_primitive {
+                QualifierFlags::PER_PRIMITIVE
+            } else {
+                QualifierFlags::empty()
+            },
             ..Qualifiers::default()
         };
         let block = types.add_block(BlockType {

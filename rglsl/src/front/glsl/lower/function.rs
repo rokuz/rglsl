@@ -1,6 +1,7 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::cell::RefCell;
 use core::future::Future;
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_types::stack::{Call, Stack};
 
@@ -26,28 +27,28 @@ pub(super) enum Local {
 }
 
 pub(super) struct FunctionLowerer<'l, 'a> {
-    pub lw: &'l mut Lowerer<'a>,
-    pub expressions: Arena<Expression>,
-    pub locals: Arena<LocalVariable>,
-    pub tracker: ExpressionKindTracker,
-    pub emitter: Emitter,
-    pub block: Block,
-    pub variables: BTreeMap<SymbolId, Local>,
+    pub(super) lw: &'l mut Lowerer<'a>,
+    pub(super) expressions: Arena<Expression>,
+    pub(super) locals: Arena<LocalVariable>,
+    pub(super) tracker: ExpressionKindTracker,
+    pub(super) emitter: Emitter,
+    pub(super) block: Block,
+    pub(super) variables: BTreeMap<SymbolId, Local>,
     unflagged: Vec<SymbolId>,
-    pub purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
-    pub specializing: bool,
-    pub non_uniform: crate::NonUniformExpressions,
-    pub precision: crate::PrecisionExpressions,
-    pub stepped: Option<Handle<Expression>>,
-    pub physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
-    pub argument_types: Vec<Handle<crate::Type>>,
+    pub(super) purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
+    pub(super) specializing: bool,
+    pub(super) non_uniform: crate::NonUniformExpressions,
+    pub(super) precision: crate::PrecisionExpressions,
+    pub(super) stepped: Option<Handle<Expression>>,
+    pub(super) physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
+    pub(super) argument_types: Vec<Handle<crate::Type>>,
     jump_targets: Vec<JumpTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct JumpTarget {
-    pub breaks: usize,
-    pub continues: usize,
+    pub(super) breaks: usize,
+    pub(super) continues: usize,
     innermost_loop: Option<usize>,
 }
 
@@ -693,7 +694,14 @@ impl<'a> Lowerer<'a> {
             let local = match local {
                 Local::Value(_)
                     if !opaque
-                        && (!parameter.qualifiers.constant || parameter.qualifiers.nonuniform)
+                        && (!parameter
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::CONSTANT)
+                            || parameter
+                                .qualifiers
+                                .flags
+                                .contains(QualifierFlags::NONUNIFORM))
                         && parameter.direction == Direction::In =>
                 {
                     let ty = lowerer.lw.parameter_type(&parameter.ty, Some(symbol), at)?;
@@ -718,12 +726,14 @@ impl<'a> Lowerer<'a> {
             let pointer = lowerer.add(Expression::GlobalVariable(initialization.global), span)?;
             lowerer.push(Statement::Store { pointer, value }, span);
         }
-        let control = match (function.control.inline, function.control.dont_inline) {
-            (true, false) => crate::FunctionControl::Inline,
-            (false, true) => crate::FunctionControl::DontInline,
-            (true, true) | (false, false) => crate::FunctionControl::None,
+        let control = match function.control {
+            rglsl_sema::FunctionControl::Inline => crate::FunctionControl::Inline,
+            rglsl_sema::FunctionControl::DontInline => crate::FunctionControl::DontInline,
+            rglsl_sema::FunctionControl::None | rglsl_sema::FunctionControl::Incompatible => {
+                crate::FunctionControl::None
+            }
         };
-        lowerer.statements(&definition.body.statements)?;
+        lowerer.statements(&definition.kind.body.node.statements)?;
         let mut lowered = lowerer.finish(result, arguments, name);
         lowered.control = control;
         Ok(lowered)

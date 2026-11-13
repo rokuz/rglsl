@@ -114,7 +114,7 @@ impl From<ShaderStage> for Options {
 ///     void main() {}
 /// "#;
 ///
-/// let mut frontend = Frontend::default();
+/// let frontend = Frontend::default();
 /// let options = Options::from(ShaderStage::Vertex);
 /// frontend.parse(&options, glsl);
 /// ```
@@ -133,12 +133,12 @@ impl Frontend {
     /// [`Error`]s.
     ///
     /// Multiple calls using the same `Frontend` and different shaders are supported.
-    pub fn parse(&mut self, options: &Options, source: &str) -> Result<Module, ParseErrors> {
+    pub fn parse(&self, options: &Options, source: &str) -> Result<Module, ParseErrors> {
         lower::parse(options, source, FileId(0), &mut NoIncluder)
     }
 
     pub fn parse_with_includer(
-        &mut self,
+        &self,
         options: &Options,
         source: &str,
         root: FileId,
@@ -148,7 +148,7 @@ impl Frontend {
     }
 
     pub fn compile(
-        &mut self,
+        &self,
         options: &Options,
         source: &str,
     ) -> Result<crate::object::ObjectModule, ParseErrors> {
@@ -156,7 +156,7 @@ impl Frontend {
     }
 
     pub fn compile_with_includer(
-        &mut self,
+        &self,
         options: &Options,
         source: &str,
         root: FileId,
@@ -166,7 +166,7 @@ impl Frontend {
     }
 
     pub fn analyze_with_includer(
-        &mut self,
+        &self,
         options: &Options,
         source: &str,
         root: FileId,
@@ -176,13 +176,13 @@ impl Frontend {
     }
 
     #[doc(hidden)]
-    pub fn library_lowerings(&mut self, options: &Options, source: &str) -> usize {
+    pub fn library_lowerings(&self, options: &Options, source: &str) -> usize {
         lower::library_lowerings(options, source, FileId(0), &mut NoIncluder)
     }
 
     #[doc(hidden)]
     pub fn compile_library_per_stage(
-        &mut self,
+        &self,
         options: &Options,
         source: &str,
     ) -> Result<crate::object::ObjectModule, ParseErrors> {

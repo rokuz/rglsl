@@ -47,7 +47,7 @@ pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) -> Result<(
     for external in &mut unit.external_declarations {
         match external {
             ExternalDeclaration::FunctionDefinition(definition) => {
-                prototype_names(&mut definition.prototype, renamer);
+                prototype_names(&mut definition.kind.prototype.node, renamer);
             }
             ExternalDeclaration::Declaration(declaration) => {
                 declaration_names(declaration, renamer)
@@ -72,13 +72,13 @@ fn statement_names(statement: &mut Statement, renamer: &dyn Renamer) {
             condition: Condition::Declaration(declaration),
             ..
         } => {
-            fully_specified_names(&mut declaration.ty, renamer);
-            identifier(&mut declaration.name, NameKind::Variable, renamer);
+            fully_specified_names(&mut declaration.kind.ty, renamer);
+            identifier(&mut declaration.kind.name, NameKind::Variable, renamer);
         }
         StatementKind::For(for_statement) => {
             if let Some(Condition::Declaration(declaration)) = &mut for_statement.condition {
-                fully_specified_names(&mut declaration.ty, renamer);
-                identifier(&mut declaration.name, NameKind::Variable, renamer);
+                fully_specified_names(&mut declaration.kind.ty, renamer);
+                identifier(&mut declaration.kind.name, NameKind::Variable, renamer);
             }
         }
         _ => {}
@@ -117,12 +117,12 @@ fn member_specifiers(
 ) -> impl Iterator<Item = &mut TypeSpecifier> {
     members
         .iter_mut()
-        .map(|member| &mut member.ty.specifier.node)
+        .map(|member| &mut member.node.ty.node.specifier.node)
 }
 
 fn members(members: &mut [rglsl_ast::ast::Spanned<StructDeclaration>], renamer: &dyn Renamer) {
     for member in members {
-        fully_specified_names(&mut member.ty, renamer);
+        fully_specified_names(&mut member.node.ty, renamer);
     }
 }
 
@@ -130,15 +130,15 @@ fn fully_specified_names(
     ty: &mut rglsl_ast::ast::Spanned<FullySpecifiedType>,
     renamer: &dyn Renamer,
 ) {
-    specifier_names(&mut ty.specifier, renamer);
+    specifier_names(&mut ty.node.specifier.node, renamer);
 }
 
 fn prototype_names(prototype: &mut FunctionPrototype, renamer: &dyn Renamer) {
     fully_specified_names(&mut prototype.return_type, renamer);
     identifier(&mut prototype.name, NameKind::Function, renamer);
     for parameter in &mut prototype.parameters {
-        fully_specified_names(&mut parameter.ty, renamer);
-        if let Some(name) = &mut parameter.name {
+        fully_specified_names(&mut parameter.kind.ty, renamer);
+        if let Some(name) = &mut parameter.kind.name {
             identifier(name, NameKind::Variable, renamer);
         }
     }
@@ -146,11 +146,13 @@ fn prototype_names(prototype: &mut FunctionPrototype, renamer: &dyn Renamer) {
 
 fn declaration_names(declaration: &mut Declaration, renamer: &dyn Renamer) {
     match &mut declaration.kind {
-        DeclarationKind::FunctionPrototype(prototype) => prototype_names(prototype, renamer),
+        DeclarationKind::FunctionPrototype(prototype) => {
+            prototype_names(&mut prototype.node, renamer)
+        }
         DeclarationKind::InitDeclaratorList(list) => {
             fully_specified_names(&mut list.ty, renamer);
             for declarator in &mut list.declarators {
-                identifier(&mut declarator.name, NameKind::Variable, renamer);
+                identifier(&mut declarator.kind.name, NameKind::Variable, renamer);
             }
         }
         DeclarationKind::Block {
@@ -160,13 +162,13 @@ fn declaration_names(declaration: &mut Declaration, renamer: &dyn Renamer) {
             members(&mut structure.members, renamer);
             if instance.is_none() {
                 for member in &mut structure.members {
-                    for declarator in &mut member.declarators {
-                        identifier(&mut declarator.name, NameKind::Variable, renamer);
+                    for declarator in &mut member.node.declarators {
+                        identifier(&mut declarator.node.name, NameKind::Variable, renamer);
                     }
                 }
             }
             if let Some(instance) = instance {
-                identifier(&mut instance.name, NameKind::Variable, renamer);
+                identifier(&mut instance.node.name, NameKind::Variable, renamer);
             }
         }
         DeclarationKind::Precision { .. }

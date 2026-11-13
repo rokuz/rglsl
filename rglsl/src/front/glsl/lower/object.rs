@@ -4,6 +4,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_sema::scope::Direction;
 use rglsl_sema::types::{ArraySize as GlslArraySize, Type as GlslType, TypeKind};
@@ -11,8 +12,8 @@ use rglsl_sema::FunctionId;
 
 use super::{GlobalRef, Lowerer, Result};
 use crate::object::{
-    FunctionSymbol, GlobalSymbol, ObjectModule, ParameterQualifier, PathStep, StageLayout,
-    SymbolKind,
+    BindingAssignment, CompiledUnit, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
+    ObjectTarget, ParameterQualifier, PathStep, StageLayout, SymbolKind,
 };
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
 
@@ -148,7 +149,12 @@ impl Lowerer<'_> {
                         .parameters
                         .iter()
                         .map(|parameter| match parameter.direction {
-                            Direction::In if parameter.qualifiers.constant => {
+                            Direction::In
+                                if parameter
+                                    .qualifiers
+                                    .flags
+                                    .contains(QualifierFlags::CONSTANT) =>
+                            {
                                 ParameterQualifier::ConstIn
                             }
                             Direction::In => ParameterQualifier::In,
@@ -274,11 +280,13 @@ impl Lowerer<'_> {
             instance,
             implicit_sizes,
             automatic_location: self.automatic_locations.contains(&handle),
-            automatic_binding: self
+            binding: self
                 .automatic_bindings
                 .iter()
                 .find(|&&(global, _)| global == handle)
-                .map(|&(_, set)| set),
+                .map_or(BindingAssignment::Explicit, |&(_, set)| {
+                    BindingAssignment::Automatic { set }
+                }),
         }
     }
 
@@ -312,18 +320,27 @@ impl Lowerer<'_> {
             && self.analysis.work_group_size_read
             && self.local_size_ids.iter().any(Option::is_none)
             && self.stage_map(crate::ShaderStage::compute_like);
-        ObjectModule {
-            stage,
-            work_group_size_constant,
-            work_group_size_placeholders: self.work_group_size_placeholders,
-            deferred_bias: self.deferred_bias,
-            glsl_version: self.analysis.version.unwrap_or(0),
-            extensions,
-            functions,
-            globals,
-            layout,
-            stages: Vec::new(),
-            ..ObjectModule::new(stage, module)
-        }
+        let target = match stage {
+            Some(stage) => ObjectTarget::Stage(stage),
+            None => ObjectTarget::Library(Library {
+                stages: crate::ShaderStageMask::empty(),
+                variants: Vec::new(),
+                rejections: Vec::new(),
+            }),
+        };
+        ObjectModule::new(
+            target,
+            CompiledUnit {
+                work_group_size_constant,
+                work_group_size_placeholders: self.work_group_size_placeholders,
+                deferred_bias: self.deferred_bias,
+                glsl_version: self.analysis.version.unwrap_or(0),
+                extensions,
+                functions,
+                globals,
+                layout,
+                ..CompiledUnit::new(module)
+            },
+        )
     }
 }

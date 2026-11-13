@@ -75,7 +75,9 @@ pub fn explicit_packing(qualifiers: &Qualifiers) -> Option<Pack> {
 }
 
 pub fn layout_value(qualifiers: &Qualifiers, name: &str) -> Option<i64> {
-    qualifiers.layout_entry(name).and_then(|entry| entry.value)
+    qualifiers
+        .layout_entry(name)
+        .and_then(|entry| entry.value.constant())
 }
 
 const fn dimension(size: ArraySize) -> Option<u32> {

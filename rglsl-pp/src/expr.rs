@@ -126,9 +126,28 @@ enum Operand {
     Nested(u8, Resume),
 }
 
+#[derive(Clone, Copy)]
+enum UnaryOp {
+    Plus,
+    Minus,
+    BitNot,
+    LogicalNot,
+}
+
+impl UnaryOp {
+    fn apply(self, value: i32) -> i32 {
+        match self {
+            Self::Plus => value,
+            Self::Minus => value.wrapping_neg(),
+            Self::BitNot => !value,
+            Self::LogicalNot => i32::from(value == 0),
+        }
+    }
+}
+
 enum Resume {
     Parenthesized,
-    Unary(u8),
+    Unary(UnaryOp),
     Binary { left: i32, operation: Binary },
 }
 
@@ -251,10 +270,10 @@ impl Preprocessor<'_> {
             return Operand::Nested(MIN_PRECEDENCE, Resume::Parenthesized);
         }
         let unary = match token.kind {
-            Kind::Op("+") => Some(0),
-            Kind::Op("-") => Some(1),
-            Kind::Op("~") => Some(2),
-            Kind::Op("!") => Some(3),
+            Kind::Op("+") => Some(UnaryOp::Plus),
+            Kind::Op("-") => Some(UnaryOp::Minus),
+            Kind::Op("~") => Some(UnaryOp::BitNot),
+            Kind::Op("!") => Some(UnaryOp::LogicalNot),
             _ => None,
         };
         let Some(unary) = unary else {
@@ -308,12 +327,7 @@ impl Preprocessor<'_> {
                 Step::AfterOperand
             }
             Resume::Unary(unary) => {
-                state.value = match unary {
-                    0 => state.value,
-                    1 => state.value.wrapping_neg(),
-                    2 => !state.value,
-                    _ => i32::from(state.value == 0),
-                };
+                state.value = unary.apply(state.value);
                 Step::AfterOperand
             }
             Resume::Binary { left, operation } => {

@@ -127,7 +127,7 @@ pub(crate) fn relaxed_precision(unit: &TranslationUnit, analysis: &Analysis) -> 
                     .map_or(Precision::None, |function| {
                         Precision::of(function.return_qualifiers.precision)
                     });
-                for statement in &definition.body.statements {
+                for statement in &definition.kind.body.node.statements {
                     pass.statement(statement);
                 }
             }
@@ -599,14 +599,14 @@ impl<'a> Pass<'a> {
             return;
         };
         for declarator in &list.declarators {
-            if let Some(ref initializer) = declarator.initializer {
+            if let Some(ref initializer) = declarator.kind.initializer {
                 let symbol = self.analysis.declarations.get(&declarator.id).copied();
-                self.assign_initializer(symbol, initializer);
+                self.assign_initializer(symbol, &initializer.node);
             }
         }
         for declarator in &list.declarators {
-            if let Some(ref array) = declarator.array {
-                for dimension in &array.dimensions {
+            if let Some(ref array) = declarator.kind.array {
+                for dimension in &array.node.dimensions {
                     if let rglsl_ast::ast::ArrayDimension::Sized(ref size) = dimension.node {
                         self.expression(size);
                     }
@@ -620,7 +620,7 @@ impl<'a> Pass<'a> {
             Condition::Expression(expression) => self.expression(expression),
             Condition::Declaration(declaration) => {
                 let symbol = self.analysis.declarations.get(&declaration.id).copied();
-                self.assign_initializer(symbol, &declaration.initializer);
+                self.assign_initializer(symbol, &declaration.kind.initializer.node);
             }
         }
     }

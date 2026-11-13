@@ -6,7 +6,8 @@ use crate::ast::{
     TypeSpecifierNonArray,
 };
 use crate::extensions::{
-    is_known, ExtensionIssue, ExtensionState, Feature, Request, EXPLICIT_ARITHMETIC, KNOWN,
+    is_known, Extension, ExtensionIssue, ExtensionState, Feature, Request, EXPLICIT_ARITHMETIC,
+    KNOWN,
 };
 use crate::{parse, ParseErrorKind};
 
@@ -39,6 +40,17 @@ fn the_registry_knows_every_glslang_extension() {
     assert!(is_known("GL_EXT_shader_16bit_storage"));
     assert!(is_known("GL_ARB_gpu_shader_int64"));
     assert!(!is_known("GL_FOO_bar"));
+}
+
+#[test]
+fn every_extension_is_its_registry_entry() {
+    assert_eq!(Extension::ALL.len(), KNOWN.len());
+    for (index, (extension, name)) in Extension::ALL.into_iter().zip(KNOWN).enumerate() {
+        assert_eq!(extension as usize, index);
+        assert_eq!(extension.name(), name);
+        assert_eq!(Extension::from_name(name), Some(extension));
+    }
+    assert_eq!(Extension::from_name("GL_FOO_bar"), None);
 }
 
 #[test]
@@ -293,7 +305,7 @@ fn a_prefix_is_returned_with_the_first_syntax_error() -> TestResult {
     else {
         panic!("the partial function is missing");
     };
-    assert_eq!(definition.body.node.statements.len(), 2);
+    assert_eq!(definition.kind.body.node.statements.len(), 2);
     Ok(())
 }
 
@@ -338,7 +350,7 @@ fn nonuniform_is_a_qualifier_and_a_constructor() {
             ExternalDeclaration::Declaration(Declaration {
                 kind: DeclarationKind::InitDeclaratorList(list),
                 ..
-            }) => list.ty.qualifier.clone(),
+            }) => list.ty.node.qualifier.clone(),
             _ => None,
         })
         .flat_map(|qualifier| qualifier.node.qualifiers)

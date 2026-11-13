@@ -9,7 +9,7 @@ use super::reference::{matrix_of, packing_of};
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
 use crate::layout::block_size;
-use crate::scope::{Qualifiers, Storage, SymbolKind};
+use crate::scope::{LayoutValue, Qualifiers, Storage, SymbolKind};
 use crate::types::{BlockStorage, BlockType, Member, ReferenceLayout, Type, TypeKind};
 
 pub(crate) const DESCRIPTOR_HEAP: &str = "GL_EXT_descriptor_heap";
@@ -34,6 +34,7 @@ impl Analyzer<'_> {
                     self.require_extension(entry.span, DESCRIPTOR_HEAP, "descriptor_stride");
                     if entry
                         .value
+                        .constant()
                         .is_some_and(|value| value <= 0 || (value & (value - 1)) != 0)
                     {
                         self.error(
@@ -73,7 +74,7 @@ impl Analyzer<'_> {
             }
         }
         if let Some(entry) = qualifiers.layout_entry("heap_offset") {
-            let offset = entry.value != Some(0) || entry.has_value && entry.value.is_none();
+            let offset = entry.value != LayoutValue::Constant(0);
             if offset
                 && !qualifiers.has_layout("descriptor_heap")
                 && !is_heap_storage(qualifiers.storage)

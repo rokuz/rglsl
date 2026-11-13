@@ -741,11 +741,11 @@ const NO_DOUBLE_LONG_VECTOR: [&str; 19] = [
 
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn ignored_type_parameters(self, parameters: &'b Spanned<TypeParameters>) {
-        if let Some(element) = &parameters.element {
+        if let Some(element) = &parameters.node.element {
             self.call(self.clone().type_specifier(element)).await;
         }
         let uses = self.with(|analyzer| analyzer.specialization_uses);
-        for value in &parameters.values {
+        for value in &parameters.node.values {
             let operand = self.call(self.clone().expression(value)).await;
             self.with(|analyzer| analyzer.type_parameter_with(value, &operand));
         }
@@ -781,7 +781,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             };
             return self.with(|analyzer| analyzer.parameter_error(span, keyword, reason));
         };
-        let element = match &parameters.element {
+        let element = match &parameters.node.element {
             Some(element) => {
                 let ty = self.call(self.clone().type_specifier(element)).await;
                 if ty.is_error() {
@@ -800,10 +800,10 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             }
             None => None,
         };
-        let mut values = Vec::with_capacity(parameters.values.len());
+        let mut values = Vec::with_capacity(parameters.node.values.len());
         let mut failed = false;
         let uses = self.with(|analyzer| analyzer.specialization_uses);
-        for value in &parameters.values {
+        for value in &parameters.node.values {
             let operand = self.call(self.clone().expression(value)).await;
             match self.with(|analyzer| analyzer.type_parameter_with(value, &operand)) {
                 Some(parameter) => values.push(parameter),

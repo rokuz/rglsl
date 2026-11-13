@@ -408,7 +408,7 @@ pub fn link_program_staged(
     let mut errors: StagedErrors = Vec::new();
     let mut merged = Vec::new();
     for objects in stages {
-        let stage = objects.iter().find_map(|object| object.stage);
+        let stage = objects.iter().find_map(rglsl::object::ObjectModule::stage);
         match merge(objects, options) {
             Ok(result) => merged.push(result),
             Err(failure) => errors.extend(failure.errors.into_iter().map(|error| (stage, error))),
@@ -466,7 +466,10 @@ pub fn group_by_stage(
     objects: &[rglsl::object::ObjectModule],
 ) -> Vec<Vec<rglsl::object::ObjectModule>> {
     let mut stages: Vec<ShaderStage> = Vec::new();
-    for stage in objects.iter().filter_map(|object| object.stage) {
+    for stage in objects
+        .iter()
+        .filter_map(rglsl::object::ObjectModule::stage)
+    {
         if !stages.contains(&stage) {
             stages.push(stage);
         }
@@ -474,7 +477,7 @@ pub fn group_by_stage(
     if stages.is_empty() {
         return vec![objects.to_vec()];
     }
-    let joins = |object: &rglsl::object::ObjectModule, stage: ShaderStage| match object.stage {
+    let joins = |object: &rglsl::object::ObjectModule, stage: ShaderStage| match object.stage() {
         Some(own) => own == stage,
         None => object.supports(stage) || stages.iter().all(|&other| !object.supports(other)),
     };

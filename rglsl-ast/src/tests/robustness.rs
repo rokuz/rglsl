@@ -47,10 +47,10 @@ fn node_ids_are_unique_and_below_the_next_id() {
     assert!(ids.len() > 150, "{}", ids.len());
     assert_eq!(ids.len(), distinct.len());
     let next = parsed.next_id();
-    assert_eq!(u32::try_from(ids.len()).ok(), Some(next.index()));
-    assert!(distinct.iter().all(|id| *id < next.index()));
-    assert_eq!(parsed.allocate_id(), Some(next));
-    assert_eq!(parsed.next_id(), NodeId::new(next.index() + 1));
+    assert_eq!(u32::try_from(ids.len()).ok(), Some(next));
+    assert!(distinct.iter().all(|id| *id < next));
+    assert_eq!(parsed.allocate_id(), NodeId::new(next));
+    assert_eq!(parsed.next_id(), next + 1);
 }
 
 #[test]
@@ -66,19 +66,20 @@ fn spans_point_at_the_source_text() {
         panic!("{first:?}");
     };
     assert_eq!(text(list.ty.span), "uniform  float[2]");
-    assert_eq!(text(list.ty.specifier.span), "float[2]");
+    assert_eq!(text(list.ty.node.specifier.span), "float[2]");
     let qualifier_spans: Vec<&str> = list
         .ty
+        .node
         .qualifier
         .iter()
-        .flat_map(|qualifier| qualifier.qualifiers.iter())
+        .flat_map(|qualifier| qualifier.node.qualifiers.iter())
         .map(|single| text(single.span))
         .collect();
     assert_eq!(qualifier_spans, ["uniform"]);
     let declarator_spans: Vec<(&str, &str)> = list
         .declarators
         .iter()
-        .map(|declarator| (text(declarator.span), text(declarator.name.span)))
+        .map(|declarator| (text(declarator.span), text(declarator.kind.name.span)))
         .collect();
     assert_eq!(declarator_spans, [("scale [3] = X", "scale")]);
     let body = body_of(source);

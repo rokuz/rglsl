@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::scope::Qualifiers;
@@ -14,37 +15,46 @@ use crate::{
 
 pub(super) fn pointer_qualifiers(qualifiers: &Qualifiers) -> PointerQualifiers {
     let mut result = PointerQualifiers::empty();
-    if qualifiers.restrict {
+    if qualifiers.flags.contains(QualifierFlags::RESTRICT) {
         result |= PointerQualifiers::RESTRICT;
     }
-    if qualifiers.coherent {
+    if qualifiers.flags.contains(QualifierFlags::COHERENT) {
         result |= PointerQualifiers::COHERENT;
     }
-    if qualifiers.volatile {
+    if qualifiers.flags.contains(QualifierFlags::VOLATILE) {
         result |= PointerQualifiers::VOLATILE;
     }
     for (present, flag) in [
         (
-            qualifiers.device_coherent,
+            qualifiers.flags.contains(QualifierFlags::DEVICE_COHERENT),
             PointerQualifiers::DEVICE_COHERENT,
         ),
         (
-            qualifiers.queue_family_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::QUEUE_FAMILY_COHERENT),
             PointerQualifiers::QUEUE_FAMILY_COHERENT,
         ),
         (
-            qualifiers.workgroup_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::WORKGROUP_COHERENT),
             PointerQualifiers::WORKGROUP_COHERENT,
         ),
         (
-            qualifiers.subgroup_coherent,
+            qualifiers.flags.contains(QualifierFlags::SUBGROUP_COHERENT),
             PointerQualifiers::SUBGROUP_COHERENT,
         ),
         (
-            qualifiers.shader_call_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::SHADER_CALL_COHERENT),
             PointerQualifiers::SHADER_CALL_COHERENT,
         ),
-        (qualifiers.nonprivate, PointerQualifiers::NONPRIVATE),
+        (
+            qualifiers.flags.contains(QualifierFlags::NONPRIVATE),
+            PointerQualifiers::NONPRIVATE,
+        ),
     ] {
         if present {
             result |= flag;
@@ -54,9 +64,9 @@ pub(super) fn pointer_qualifiers(qualifiers: &Qualifiers) -> PointerQualifiers {
 }
 
 fn block_access(qualifiers: &Qualifiers) -> StorageAccess {
-    if qualifiers.readonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY) {
         StorageAccess::LOAD
-    } else if qualifiers.writeonly {
+    } else if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
         StorageAccess::STORE
     } else {
         StorageAccess::LOAD | StorageAccess::STORE

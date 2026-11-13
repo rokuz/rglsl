@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -70,9 +71,11 @@ fn coordinate_count(ty: &Type) -> Option<u32> {
 }
 
 fn formal_qualifiers(readonly: bool, writeonly: bool) -> Qualifiers {
+    let mut flags = QualifierFlags::empty();
+    flags.set(QualifierFlags::READONLY, readonly);
+    flags.set(QualifierFlags::WRITEONLY, writeonly);
     Qualifiers {
-        readonly,
-        writeonly,
+        flags,
         ..Qualifiers::default()
     }
 }

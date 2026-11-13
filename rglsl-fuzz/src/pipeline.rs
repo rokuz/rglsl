@@ -40,7 +40,7 @@ pub fn array_count(declarator: &InitDeclarator) -> Result<Option<u32>, Error> {
     let Some(array) = &declarator.array else {
         return Ok(None);
     };
-    let [dimension] = array.dimensions.as_slice() else {
+    let [dimension] = array.node.dimensions.as_slice() else {
         return Err(Error::Unsupported(format!(
             "multi-dimensional array uniform {}",
             declarator.name.node
@@ -74,16 +74,16 @@ pub fn uniform_declarators(unit: &TranslationUnit) -> Result<Vec<UniformDeclarat
         let DeclarationKind::InitDeclaratorList(list) = &declaration.kind else {
             continue;
         };
-        if !has_storage(list.ty.qualifier.as_ref(), StorageQualifier::Uniform) {
+        if !has_storage(list.ty.node.qualifier.as_ref(), StorageQualifier::Uniform) {
             continue;
         }
-        let specifier = &list.ty.specifier;
-        let ty = match &specifier.non_array {
-            TypeSpecifierNonArray::Basic(ty) if specifier.array.is_none() => {
+        let specifier = &list.ty.node.specifier;
+        let ty = match &specifier.node.non_array {
+            TypeSpecifierNonArray::Basic(ty) if specifier.node.array.is_none() => {
                 UniformType::Basic(*ty)
             }
-            TypeSpecifierNonArray::Opaque(name) if specifier.array.is_none() => {
-                UniformType::Opaque(name.clone())
+            TypeSpecifierNonArray::Opaque(name) if specifier.node.array.is_none() => {
+                UniformType::Opaque(name.to_string())
             }
             TypeSpecifierNonArray::Struct(_) | TypeSpecifierNonArray::TypeName(_) => continue,
             _ => {
@@ -94,9 +94,9 @@ pub fn uniform_declarators(unit: &TranslationUnit) -> Result<Vec<UniformDeclarat
         };
         for declarator in &list.declarators {
             result.push(UniformDeclarator {
-                name: declarator.name.node.clone(),
+                name: declarator.kind.name.node.clone(),
                 ty: ty.clone(),
-                count: array_count(declarator)?,
+                count: array_count(&declarator.kind)?,
             });
         }
     }

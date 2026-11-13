@@ -41,7 +41,7 @@ impl<'a> Spine<'a> {
 }
 
 pub fn placeholder() -> Expression {
-    Expression::new(NodeId::new(0), Span::default(), ExpressionKind::Bool(false))
+    Expression::new(NodeId::FIRST, Span::default(), ExpressionKind::Bool(false))
 }
 
 impl ExpressionKind {

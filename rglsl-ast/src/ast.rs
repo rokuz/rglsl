@@ -2,26 +2,51 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-use core::ops::{Deref, DerefMut};
+use core::num::NonZeroU32;
 
+use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NodeId(u32);
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId(NonZeroU32);
 
 impl NodeId {
-    pub const fn new(index: u32) -> Self {
-        Self(index)
+    pub const FIRST: Self = Self(NonZeroU32::MIN);
+
+    pub const fn new(index: u32) -> Option<Self> {
+        match index.checked_add(1) {
+            Some(raw) => match NonZeroU32::new(raw) {
+                Some(raw) => Some(Self(raw)),
+                None => None,
+            },
+            None => None,
+        }
+    }
+
+    pub const fn saturating(index: u32) -> Self {
+        match Self::new(index) {
+            Some(id) => id,
+            None => Self(NonZeroU32::MAX),
+        }
     }
 
     pub const fn index(self) -> u32 {
-        self.0
+        self.0.get() - 1
+    }
+}
+
+impl fmt::Debug for NodeId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("NodeId")
+            .field(&self.index())
+            .finish()
     }
 }
 
 impl fmt::Display for NodeId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "#{}", self.0)
+        write!(formatter, "#{}", self.index())
     }
 }
 
@@ -46,20 +71,6 @@ impl<K: PartialEq> PartialEq for Node<K> {
 
 impl<K: Eq> Eq for Node<K> {}
 
-impl<K> Deref for Node<K> {
-    type Target = K;
-
-    fn deref(&self) -> &K {
-        &self.kind
-    }
-}
-
-impl<K> DerefMut for Node<K> {
-    fn deref_mut(&mut self) -> &mut K {
-        &mut self.kind
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Spanned<T> {
     pub span: Span,
@@ -80,20 +91,6 @@ impl<T: PartialEq> PartialEq for Spanned<T> {
 
 impl<T: Eq> Eq for Spanned<T> {}
 
-impl<T> Deref for Spanned<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.node
-    }
-}
-
-impl<T> DerefMut for Spanned<T> {
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.node
-    }
-}
-
 pub type Identifier = Spanned<String>;
 pub type Expression = Node<ExpressionKind>;
 pub type Statement = Node<StatementKind>;
@@ -106,19 +103,19 @@ pub struct TranslationUnit {
 }
 
 impl TranslationUnit {
-    pub const fn new(external_declarations: Vec<ExternalDeclaration>, next_id: NodeId) -> Self {
+    pub const fn new(external_declarations: Vec<ExternalDeclaration>, next_id: u32) -> Self {
         Self {
             external_declarations,
-            next_id: next_id.index(),
+            next_id,
         }
     }
 
-    pub const fn next_id(&self) -> NodeId {
-        NodeId(self.next_id)
+    pub const fn next_id(&self) -> u32 {
+        self.next_id
     }
 
     pub fn allocate_id(&mut self) -> Option<NodeId> {
-        let id = NodeId(self.next_id);
+        let id = NodeId::new(self.next_id)?;
         self.next_id = self.next_id.checked_add(1)?;
         Some(id)
     }
@@ -370,7 +367,7 @@ impl TypeQualifier {
             SingleTypeQualifier::Layout(ref layout) => layout
                 .ids
                 .iter()
-                .any(|id| id.name.node.eq_ignore_ascii_case(name)),
+                .any(|id| id.node.name.node.eq_ignore_ascii_case(name)),
             _ => false,
         })
     }
@@ -698,7 +695,7 @@ impl ParameterizedType {
 pub enum TypeSpecifierNonArray {
     Void,
     Basic(BasicType),
-    Opaque(String),
+    Opaque(OpaqueKeyword),
     Parameterized(ParameterizedType),
     Struct(StructSpecifier),
     TypeName(String),

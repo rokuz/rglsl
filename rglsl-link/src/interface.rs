@@ -6,6 +6,7 @@ use rglsl::{
 };
 
 use crate::merge::MergedGlobal;
+use rglsl::object::BindingAssignment;
 
 const fn vector_locations(size: VectorSize, width: u8) -> u32 {
     match (size, width) {
@@ -391,7 +392,10 @@ pub(crate) fn assign_bindings(
 ) {
     let mut unbound: Vec<(Handle<GlobalVariable>, Option<u32>)> = globals
         .iter()
-        .filter_map(|global| global.automatic_binding.map(|set| (global.handle, set)))
+        .filter_map(|global| match global.binding {
+            BindingAssignment::Automatic { set } => Some((global.handle, set)),
+            BindingAssignment::Explicit => None,
+        })
         .collect();
     if unbound.is_empty() {
         return;

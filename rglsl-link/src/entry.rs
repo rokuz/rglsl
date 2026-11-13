@@ -1,4 +1,4 @@
-use rglsl::object::PathStep;
+use rglsl::object::{BindingAssignment, PathStep};
 use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Type};
 
 use crate::calls::{callees, Node, SymbolTable};
@@ -11,7 +11,7 @@ pub(crate) struct Candidate<'c> {
     pub global: &'c GlobalVariable,
     pub implicit: &'c [Vec<PathStep>],
     pub automatic_location: bool,
-    pub automatic_binding: Option<Option<u32>>,
+    pub binding: BindingAssignment,
     pub instance: Option<String>,
 }
 
@@ -49,8 +49,7 @@ impl Builder<'_> {
             self.errors.push(mismatch("storage qualifiers"));
             return;
         }
-        let automatic =
-            existing.automatic_binding.is_some() || candidate.automatic_binding.is_some();
+        let automatic = existing.binding.is_automatic() || candidate.binding.is_automatic();
         if current.binding != binding && !automatic {
             self.errors.push(mismatch("layout binding qualifiers"));
         }
@@ -97,7 +96,7 @@ impl Builder<'_> {
         match unify(&mut self.module, current_ty, ty, &implicit, &mut Vec::new()) {
             Ok(unified) => {
                 self.module.global_variables.get_mut(existing.handle).ty = unified;
-                if existing.automatic_binding.is_some() && candidate.automatic_binding.is_none() {
+                if existing.binding.is_automatic() && !candidate.binding.is_automatic() {
                     self.module
                         .global_variables
                         .get_mut(existing.handle)
@@ -107,8 +106,8 @@ impl Builder<'_> {
                     merged.implicit = common_paths(&existing.implicit, candidate.implicit);
                     merged.automatic_location =
                         existing.automatic_location && candidate.automatic_location;
-                    if candidate.automatic_binding.is_none() {
-                        merged.automatic_binding = None;
+                    if !candidate.binding.is_automatic() {
+                        merged.binding = BindingAssignment::Explicit;
                     }
                 }
             }
@@ -165,6 +164,7 @@ impl Builder<'_> {
             let object = self.object(index)?;
             let library = object.is_library();
             let mut function = object
+                .unit
                 .module
                 .functions
                 .try_get(handle)
@@ -174,7 +174,7 @@ impl Builder<'_> {
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
-            let span = object.module.functions.get_span(handle);
+            let span = object.unit.module.functions.get_span(handle);
             let new = self.module.functions.append(function, span);
             if library {
                 self.library_functions.push(new);
@@ -215,6 +215,7 @@ impl Builder<'_> {
     ) -> Result<EntryPoint, LinkError> {
         let entry = self
             .object(main)?
+            .unit
             .module
             .entry_points
             .first()
@@ -337,18 +338,20 @@ impl Builder<'_> {
         let mut interface = Vec::new();
         for (index, object) in self.objects.iter().enumerate() {
             let remap = self.remap(index)?;
-            let declared: Vec<Handle<GlobalVariable>> = match object.module.entry_points.first() {
-                Some(entry) => entry.interface.clone(),
-                None => object
-                    .module
-                    .global_variables
-                    .iter()
-                    .filter(|&(_, global)| {
-                        matches!(global.space, AddressSpace::Input | AddressSpace::Output)
-                    })
-                    .map(|(handle, _)| handle)
-                    .collect(),
-            };
+            let declared: Vec<Handle<GlobalVariable>> =
+                match object.unit.module.entry_points.first() {
+                    Some(entry) => entry.interface.clone(),
+                    None => object
+                        .unit
+                        .module
+                        .global_variables
+                        .iter()
+                        .filter(|&(_, global)| {
+                            matches!(global.space, AddressSpace::Input | AddressSpace::Output)
+                        })
+                        .map(|(handle, _)| handle)
+                        .collect(),
+                };
             for handle in declared {
                 let mapped = remap.global(handle).map_err(internal)?;
                 if !interface.contains(&mapped) {
@@ -364,9 +367,9 @@ impl Builder<'_> {
             && self
                 .objects
                 .iter()
-                .all(|object| object.module.legacy_buffer_blocks);
+                .all(|object| object.unit.module.legacy_buffer_blocks);
         for index in 0..self.objects.len() {
-            let source = &self.object(index)?.module;
+            let source = &self.object(index)?.unit.module;
             let remap = self.remap(index)?;
             let mut special = self.module.special_types.clone();
             let incoming = &source.special_types;

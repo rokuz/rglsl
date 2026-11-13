@@ -299,15 +299,17 @@ fn object(stage: ShaderStage, name: &str, source: &str, library: bool) -> TestRe
 fn object_files_and_linking_keep_debug_information_per_unit() -> TestResult {
     let program = object(ShaderStage::Fragment, "program.frag", PROGRAM, false)?;
     let library = object(ShaderStage::Fragment, "library.glsl", LIBRARY, true)?;
-    assert!(program.module.debug_info.is_some());
+    assert!(program.unit.module.debug_info.is_some());
     assert!(program
+        .unit
         .module
         .functions
         .iter()
-        .chain(library.module.functions.iter())
+        .chain(library.unit.module.functions.iter())
         .all(
-            |(handle, _)| program.module.functions.try_get(handle).is_err()
+            |(handle, _)| program.unit.module.functions.try_get(handle).is_err()
                 || program
+                    .unit
                     .module
                     .functions
                     .get_span(handle)

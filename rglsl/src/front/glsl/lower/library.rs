@@ -15,8 +15,8 @@ use super::{
     sema_options, Mode, Parsed, StageClass,
 };
 use crate::front::glsl::{Error, ErrorKind, Options, ParseErrors};
-use crate::object::{ObjectModule, StageRejection};
-use crate::{ShaderStage, Span};
+use crate::object::{LibraryVariant, ObjectModule, StageRejection};
+use crate::{ShaderStage, ShaderStageMask, Span};
 
 fn stage_options(options: &Options, stage: ShaderStage) -> Options {
     Options {
@@ -33,7 +33,11 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
 fn fingerprint(object: &ObjectModule) -> String {
     format!(
         "{:?}{:?}{:?}{:?}{:?}",
-        object.module, object.functions, object.globals, object.layout, object.specialized
+        object.unit.module,
+        object.unit.functions,
+        object.unit.globals,
+        object.unit.layout,
+        object.unit.specialized
     )
 }
 
@@ -179,14 +183,34 @@ fn assemble(
             |(_, errors)| errors,
         ));
     };
-    library.variants = variants.collect();
-    library.rejections = rejections;
-    library.rejections.extend(
-        failures
-            .iter()
-            .map(|&(stage, ref errors)| rejection(stage, errors, source)),
-    );
+    let variants: Vec<LibraryVariant> = variants
+        .map(|variant| LibraryVariant {
+            stages: library_stages(&variant),
+            unit: variant.unit,
+        })
+        .collect();
+    if let Some(target) = library.library_mut() {
+        target.variants = variants;
+        target.rejections = rejections;
+        target.rejections.extend(
+            failures
+                .iter()
+                .map(|&(stage, ref errors)| rejection(stage, errors, source)),
+        );
+    }
     Ok(library)
+}
+
+fn library_stages(object: &ObjectModule) -> ShaderStageMask {
+    object
+        .library()
+        .map_or(ShaderStageMask::empty(), |library| library.stages)
+}
+
+fn add_stage(object: &mut ObjectModule, stage: ShaderStage) {
+    if let Some(library) = object.library_mut() {
+        library.stages |= ShaderStageMask::of(stage);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -213,7 +237,7 @@ fn per_class(
                 match outcome {
                     Outcome::Variant(index) => {
                         if let Some(&mut (_, ref mut variant)) = variants.get_mut(index) {
-                            variant.stages.push(stage);
+                            add_stage(variant, stage);
                         }
                     }
                     Outcome::Failure(index) => {
@@ -250,12 +274,14 @@ fn per_class(
                 {
                     Some(index) => {
                         if let Some(&mut (_, ref mut variant)) = variants.get_mut(index) {
-                            variant.stages.push(stage);
+                            add_stage(variant, stage);
                         }
                         Outcome::Variant(index)
                     }
                     None => {
-                        object.stages = alloc::vec![stage];
+                        if let Some(library) = object.library_mut() {
+                            library.stages = ShaderStageMask::of(stage);
+                        }
                         variants.push((key, object));
                         Outcome::Variant(variants.len() - 1)
                     }
@@ -424,12 +450,14 @@ fn once(
     let mut object = main.object;
     let mut accepted = main.accepted;
     if let Some(ref mut object) = object {
-        if object.work_group_size_constant {
+        if object.unit.work_group_size_constant {
             let specialized = context.run(true, names);
             if specialized.accepted & accepted == accepted {
-                object.specialized = specialized.object.map(alloc::boxed::Box::new);
+                object.unit.specialized = specialized
+                    .object
+                    .map(|specialized| alloc::boxed::Box::new(specialized.unit));
             } else if specialized.accepted & accepted == 0 && specialized.unknown & accepted == 0 {
-                object.specialized = None;
+                object.unit.specialized = None;
             } else {
                 unknown |= accepted;
                 accepted = 0;
@@ -437,11 +465,13 @@ fn once(
         }
     }
     let object = object.filter(|_| accepted != 0).map(|mut object| {
-        object.stages = order
-            .iter()
-            .copied()
-            .filter(|&candidate| accepted & stage_bit(candidate) != 0)
-            .collect();
+        if let Some(library) = object.library_mut() {
+            library.stages = order
+                .iter()
+                .copied()
+                .filter(|&candidate| accepted & stage_bit(candidate) != 0)
+                .collect();
+        }
         object
     });
     rejections.sort_by_key(|&(stage, _)| order.iter().position(|&known| known == stage));

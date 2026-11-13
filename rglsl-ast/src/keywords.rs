@@ -1,28 +1,6 @@
+use crate::opaque::OpaqueKeyword;
+
 use crate::ast::{BasicType, ParameterizedType, SingleTypeQualifier};
-
-const SAMPLED_SHAPES: [&str; 10] = [
-    "1D",
-    "2D",
-    "3D",
-    "Cube",
-    "1DArray",
-    "2DArray",
-    "CubeArray",
-    "Buffer",
-    "2DMS",
-    "2DMSArray",
-];
-
-const SHADOW_SHAPES: [&str; 6] = [
-    "1DShadow",
-    "2DShadow",
-    "CubeShadow",
-    "1DArrayShadow",
-    "2DArrayShadow",
-    "CubeArrayShadow",
-];
-
-const SAMPLED_FAMILIES: [&str; 3] = ["sampler", "texture", "image"];
 
 const SYNTAX_WORDS: [&str; 19] = [
     "struct",
@@ -187,45 +165,7 @@ const EXTENSION_KEYWORDS: [&str; 85] = [
 ];
 
 pub fn is_opaque_type_keyword(word: &str) -> bool {
-    if matches!(
-        word,
-        "atomic_uint"
-            | "sampler"
-            | "samplerShadow"
-            | "accelerationStructureNV"
-            | "accelerationStructureEXT"
-            | "rayQueryEXT"
-            | "hitObjectNV"
-            | "hitObjectEXT"
-            | "attachmentEXT"
-            | "iattachmentEXT"
-            | "uattachmentEXT"
-    ) {
-        return true;
-    }
-    if word
-        .strip_prefix("sampler")
-        .is_some_and(|shape| SHADOW_SHAPES.contains(&shape))
-    {
-        return true;
-    }
-    let is_family_member = |name: &str| {
-        matches!(name, "subpassInput" | "subpassInputMS")
-            || SAMPLED_FAMILIES.iter().any(|family| {
-                name.strip_prefix(family)
-                    .is_some_and(|shape| SAMPLED_SHAPES.contains(&shape))
-            })
-    };
-    let is_wide_image = |name: &str| {
-        name.strip_prefix("image")
-            .is_some_and(|shape| SAMPLED_SHAPES.contains(&shape))
-    };
-    is_family_member(word)
-        || word.strip_prefix(['i', 'u']).is_some_and(is_family_member)
-        || word
-            .strip_prefix("i64")
-            .or_else(|| word.strip_prefix("u64"))
-            .is_some_and(is_wide_image)
+    OpaqueKeyword::parse(word).is_some()
 }
 
 pub fn is_type_keyword(word: &str) -> bool {

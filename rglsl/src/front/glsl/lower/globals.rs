@@ -1,4 +1,5 @@
 use alloc::{format, string::String, vec, vec::Vec};
+use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::{
     BlockInstance, BlockStructure, Declaration, DeclarationKind, ExternalDeclaration,
@@ -24,9 +25,9 @@ use crate::{
 
 fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
     let mut names = Vec::new();
-    for single in qualifier.iter().flat_map(|q| &q.qualifiers) {
+    for single in qualifier.iter().flat_map(|q| &q.node.qualifiers) {
         if let SingleTypeQualifier::Layout(ref layout) = single.node {
-            names.extend(layout.ids.iter().map(|id| id.name.node.as_str()));
+            names.extend(layout.ids.iter().map(|id| id.node.name.node.as_str()));
         }
     }
     names
@@ -48,14 +49,14 @@ fn has_qualifier(
 ) -> bool {
     qualifier
         .iter()
-        .flat_map(|q| &q.qualifiers)
+        .flat_map(|q| &q.node.qualifiers)
         .any(|single| test(&single.node))
 }
 
 fn storage_of(qualifier: Option<&Spanned<TypeQualifier>>) -> Option<StorageQualifier> {
     qualifier
         .iter()
-        .flat_map(|q| &q.qualifiers)
+        .flat_map(|q| &q.node.qualifiers)
         .find_map(|single| match single.node {
             SingleTypeQualifier::Storage(
                 storage @ (StorageQualifier::In
@@ -146,9 +147,9 @@ pub(super) const fn unknown_format(sampled: rglsl_sema::types::SampledType) -> S
 }
 
 pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
-    if qualifiers.readonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY) {
         StorageAccess::LOAD
-    } else if qualifiers.writeonly {
+    } else if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
         StorageAccess::STORE
     } else {
         StorageAccess::LOAD | StorageAccess::STORE
@@ -156,7 +157,9 @@ pub(super) fn storage_access(qualifiers: &Qualifiers) -> StorageAccess {
 }
 
 pub(super) fn image_access(qualifiers: &Qualifiers) -> StorageAccess {
-    if qualifiers.readonly || qualifiers.writeonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY)
+        || qualifiers.flags.contains(QualifierFlags::WRITEONLY)
+    {
         storage_access(qualifiers)
     } else {
         StorageAccess::LOAD | StorageAccess::STORE | StorageAccess::ATOMIC
@@ -168,10 +171,10 @@ fn tensor_access(qualifiers: &Qualifiers, ty: &GlslType) -> MemoryDecorations {
     if !matches!(ty.kind, TypeKind::Tensor { .. }) {
         return decorations;
     }
-    if qualifiers.readonly {
+    if qualifiers.flags.contains(QualifierFlags::READONLY) {
         decorations |= MemoryDecorations::NON_WRITABLE;
     }
-    if qualifiers.writeonly {
+    if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
         decorations |= MemoryDecorations::NON_READABLE;
     }
     decorations
@@ -189,10 +192,14 @@ pub(super) fn parameter_memory(qualifiers: &Qualifiers, ty: &GlslType) -> Memory
 
 pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDecorations {
     let mut decorations = memory(block) | memory(member);
-    if block.readonly || member.readonly {
+    if block.flags.contains(QualifierFlags::READONLY)
+        || member.flags.contains(QualifierFlags::READONLY)
+    {
         decorations |= MemoryDecorations::NON_WRITABLE;
     }
-    if block.writeonly || member.writeonly {
+    if block.flags.contains(QualifierFlags::WRITEONLY)
+        || member.flags.contains(QualifierFlags::WRITEONLY)
+    {
         decorations |= MemoryDecorations::NON_READABLE;
     }
     decorations
@@ -200,34 +207,52 @@ pub(super) fn member_memory(block: &Qualifiers, member: &Qualifiers) -> MemoryDe
 
 fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
     let mut decorations = MemoryDecorations::empty();
-    if qualifiers.coherent {
+    if qualifiers.flags.contains(QualifierFlags::COHERENT) {
         decorations |= MemoryDecorations::COHERENT;
     }
     for (present, decoration) in [
-        (qualifiers.volatile, MemoryDecorations::VOLATILE),
-        (qualifiers.restrict, MemoryDecorations::RESTRICT),
         (
-            qualifiers.device_coherent,
+            qualifiers.flags.contains(QualifierFlags::VOLATILE),
+            MemoryDecorations::VOLATILE,
+        ),
+        (
+            qualifiers.flags.contains(QualifierFlags::RESTRICT),
+            MemoryDecorations::RESTRICT,
+        ),
+        (
+            qualifiers.flags.contains(QualifierFlags::DEVICE_COHERENT),
             MemoryDecorations::DEVICE_COHERENT,
         ),
         (
-            qualifiers.queue_family_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::QUEUE_FAMILY_COHERENT),
             MemoryDecorations::QUEUE_FAMILY_COHERENT,
         ),
         (
-            qualifiers.workgroup_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::WORKGROUP_COHERENT),
             MemoryDecorations::WORKGROUP_COHERENT,
         ),
         (
-            qualifiers.subgroup_coherent,
+            qualifiers.flags.contains(QualifierFlags::SUBGROUP_COHERENT),
             MemoryDecorations::SUBGROUP_COHERENT,
         ),
         (
-            qualifiers.shader_call_coherent,
+            qualifiers
+                .flags
+                .contains(QualifierFlags::SHADER_CALL_COHERENT),
             MemoryDecorations::SHADER_CALL_COHERENT,
         ),
-        (qualifiers.nonprivate, MemoryDecorations::NONPRIVATE),
-        (qualifiers.nontemporal, MemoryDecorations::NONTEMPORAL),
+        (
+            qualifiers.flags.contains(QualifierFlags::NONPRIVATE),
+            MemoryDecorations::NONPRIVATE,
+        ),
+        (
+            qualifiers.flags.contains(QualifierFlags::NONTEMPORAL),
+            MemoryDecorations::NONTEMPORAL,
+        ),
     ] {
         if present {
             decorations |= decoration;
@@ -461,7 +486,7 @@ impl<'a> Lowerer<'a> {
         let location_of = |qualifiers: &Qualifiers| {
             qualifiers
                 .layout_entry("location")
-                .and_then(|entry| entry.value)
+                .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
         };
         let mut ranges = Vec::new();
@@ -480,7 +505,9 @@ impl<'a> Lowerer<'a> {
                         member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
                     }
                     let count = match member_ty.element_type() {
-                        Some(element) if member.qualifiers.per_view => {
+                        Some(element)
+                            if member.qualifiers.flags.contains(QualifierFlags::PER_VIEW) =>
+                        {
                             self.glsl_location_count(&element)
                         }
                         _ => self.glsl_location_count(&member_ty),
@@ -499,7 +526,7 @@ impl<'a> Lowerer<'a> {
                     } else {
                         None
                     };
-                    let element = if variable.qualifiers.per_view {
+                    let element = if variable.qualifiers.flags.contains(QualifierFlags::PER_VIEW) {
                         element.and_then(|element| element.element_type())
                     } else {
                         element
@@ -529,13 +556,15 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn global_declaration(&mut self, declaration: &'a Declaration) -> Result<()> {
         let qualifiers: Vec<&Spanned<TypeQualifier>> = match declaration.kind {
-            DeclarationKind::InitDeclaratorList(ref list) => list.ty.qualifier.iter().collect(),
+            DeclarationKind::InitDeclaratorList(ref list) => {
+                list.ty.node.qualifier.iter().collect()
+            }
             DeclarationKind::Block { ref structure, .. } => core::iter::once(&structure.qualifier)
                 .chain(
                     structure
                         .members
                         .iter()
-                        .filter_map(|member| member.ty.qualifier.as_ref()),
+                        .filter_map(|member| member.node.ty.node.qualifier.as_ref()),
                 )
                 .collect(),
             DeclarationKind::Qualifier(ref qualifier)
@@ -700,13 +729,14 @@ impl<'a> Lowerer<'a> {
         if variable.origin == Origin::BuiltIn {
             return self.builtin_redeclaration(symbol, list, declarator, at);
         }
-        let name = declarator.name.node.clone();
+        let name = declarator.kind.name.node.clone();
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
-        if qualifiers.constant {
+        if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
             if let Some(entry) = qualifiers.layout_entry("constant_id") {
                 let id = entry
                     .value
+                    .constant()
                     .and_then(|value| u32::try_from(value).ok())
                     .filter(|value| *value != u32::MAX)
                     .ok_or_else(|| semantic("the `constant_id` is out of range", at))?;
@@ -727,8 +757,8 @@ impl<'a> Lowerer<'a> {
                 self.globals.insert(symbol, GlobalRef::Override(handle));
                 return Ok(());
             }
-            if qualifiers.specialization {
-                if let Some(initializer) = declarator.initializer.as_ref() {
+            if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION) {
+                if let Some(initializer) = declarator.kind.initializer.as_ref() {
                     let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
                     self.globals.insert(symbol, GlobalRef::Override(handle));
                     return Ok(());
@@ -752,7 +782,7 @@ impl<'a> Lowerer<'a> {
         match qualifiers.storage {
             Storage::In | Storage::Out => self.interface_variable(symbol, name, at),
             Storage::Uniform if self.is_heap_view(qualifiers) => {
-                self.heap_resource(symbol, name, list.ty.qualifier.as_ref(), at)
+                self.heap_resource(symbol, name, list.ty.node.qualifier.as_ref(), at)
             }
             Storage::Uniform => self.resource(symbol, name, at),
             Storage::TaskPayloadShared => self.task_payload_variable(symbol, name, at),
@@ -760,6 +790,7 @@ impl<'a> Lowerer<'a> {
             Storage::Shared => {
                 let ir = self.ir_type(ty, at)?;
                 let init = declarator
+                    .kind
                     .initializer
                     .as_ref()
                     .filter(|initializer| {
@@ -815,7 +846,7 @@ impl<'a> Lowerer<'a> {
         let location = variable
             .qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| internal(at))?;
         let ty = self.ir_type(&variable.ty, at)?;
@@ -878,7 +909,7 @@ impl<'a> Lowerer<'a> {
         };
         let mut init = None;
         let mut runtime = None;
-        if let Some(ref initializer) = declarator.initializer {
+        if let Some(ref initializer) = declarator.kind.initializer {
             if rglsl_sema::analyze::is_null_initializer(&initializer.node) {
                 init = Some(
                     self.module
@@ -947,7 +978,7 @@ impl<'a> Lowerer<'a> {
         let qualifiers = &variable.qualifiers;
         let input = qualifiers.storage == Storage::In;
         let per_vertex = self.is_per_vertex_io(qualifiers);
-        if qualifiers.invariant && input {
+        if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
             return Err(semantic("invariant can only apply to an output", at));
         }
         if input && xfb::has_xfb(qualifiers) {
@@ -971,7 +1002,10 @@ impl<'a> Lowerer<'a> {
             (true, &TypeInner::Array { base, .. }) => base,
             _ => ty,
         };
-        let element = match (qualifiers.per_view, &self.module.types[element].inner) {
+        let element = match (
+            qualifiers.flags.contains(QualifierFlags::PER_VIEW),
+            &self.module.types[element].inner,
+        ) {
             (true, &TypeInner::Array { base, .. }) => base,
             _ => element,
         };
@@ -1015,7 +1049,10 @@ impl<'a> Lowerer<'a> {
             return Ok(());
         }
         let automatic_location = qualifiers.layout_entry("location").is_none();
-        let location = match qualifiers.layout_entry("location").and_then(|e| e.value) {
+        let location = match qualifiers
+            .layout_entry("location")
+            .and_then(|e| e.value.constant())
+        {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
             None if self.options.auto_map_locations => {
                 let count = location_count(&self.module, element);
@@ -1035,9 +1072,9 @@ impl<'a> Lowerer<'a> {
             )),
             None => qualifiers.interpolation.map(interpolation_of),
         };
-        let mut sampling = if qualifiers.sample {
+        let mut sampling = if qualifiers.flags.contains(QualifierFlags::SAMPLE) {
             Some(Sampling::Sample)
-        } else if qualifiers.centroid {
+        } else if qualifiers.flags.contains(QualifierFlags::CENTROID) {
             Some(Sampling::Centroid)
         } else {
             None
@@ -1046,11 +1083,17 @@ impl<'a> Lowerer<'a> {
             interpolation = Some(Interpolation::Perspective);
             sampling.get_or_insert(Sampling::Center);
         }
-        let component = match qualifiers.layout_entry("component").and_then(|e| e.value) {
+        let component = match qualifiers
+            .layout_entry("component")
+            .and_then(|e| e.value.constant())
+        {
             Some(component) => Some(u32::try_from(component).map_err(|_| internal(at))?),
             None => None,
         };
-        let blend_src = match qualifiers.layout_entry("index").and_then(|e| e.value) {
+        let blend_src = match qualifiers
+            .layout_entry("index")
+            .and_then(|e| e.value.constant())
+        {
             Some(index) => Some(u32::try_from(index).map_err(|_| internal(at))?),
             None => None,
         };
@@ -1073,9 +1116,9 @@ impl<'a> Lowerer<'a> {
                     blend_src,
                     per_primitive,
                     component,
-                    invariant: qualifiers.invariant,
-                    patch: qualifiers.patch,
-                    per_view: qualifiers.per_view,
+                    invariant: qualifiers.flags.contains(QualifierFlags::INVARIANT),
+                    patch: qualifiers.flags.contains(QualifierFlags::PATCH),
+                    per_view: qualifiers.flags.contains(QualifierFlags::PER_VIEW),
                 }),
                 xfb: None,
                 input_attachment_index: None,
@@ -1129,7 +1172,10 @@ impl<'a> Lowerer<'a> {
         at: Span,
     ) -> Result<(Option<ResourceBinding>, Option<Option<u32>>)> {
         let value = |name: &str| -> Result<Option<u32>> {
-            match qualifiers.layout_entry(name).and_then(|e| e.value) {
+            match qualifiers
+                .layout_entry(name)
+                .and_then(|e| e.value.constant())
+            {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
                 None => Ok(None),
             }
@@ -1254,7 +1300,7 @@ impl<'a> Lowerer<'a> {
         let (binding, unbound) = self.binding(qualifiers, at)?;
         let input_attachment_index = match qualifiers
             .layout_entry("input_attachment_index")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
         {
             Some(index) if opaque.is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput) => {
                 Some(u32::try_from(index).map_err(|_| internal(at))?)
@@ -1334,12 +1380,12 @@ impl<'a> Lowerer<'a> {
         let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
         let qualifiers = &block.qualifiers;
         let instance_name =
-            instance.map_or_else(String::new, |instance| instance.name.node.clone());
+            instance.map_or_else(String::new, |instance| instance.node.name.node.clone());
         let buffer = match block.storage {
             BlockStorage::Uniform => false,
             BlockStorage::Buffer => true,
             BlockStorage::In | BlockStorage::Out => {
-                let name = instance.map(|instance| instance.name.node.clone());
+                let name = instance.map(|instance| instance.node.name.node.clone());
                 return self.interface_block(symbol, id, name, at);
             }
             BlockStorage::ResourceHeap | BlockStorage::SamplerHeap => {
@@ -1402,10 +1448,10 @@ impl<'a> Lowerer<'a> {
             decorations.remove(MemoryDecorations::RESTRICT);
         }
         if !buffer || push_constant || shader_record {
-            if qualifiers.readonly {
+            if qualifiers.flags.contains(QualifierFlags::READONLY) {
                 decorations |= MemoryDecorations::NON_WRITABLE;
             }
-            if qualifiers.writeonly {
+            if qualifiers.flags.contains(QualifierFlags::WRITEONLY) {
                 decorations |= MemoryDecorations::NON_READABLE;
             }
         }
@@ -1438,7 +1484,7 @@ impl<'a> Lowerer<'a> {
         let layout_value = |name| {
             qualifiers
                 .layout_entry(name)
-                .and_then(|entry| entry.value)
+                .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
         };
         let immediate_bank = push_constant
@@ -1523,16 +1569,23 @@ impl<'a> Lowerer<'a> {
         let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
         let input = block.storage == BlockStorage::In;
         let outer = &block.qualifiers;
-        let patch = outer.patch || block.members.iter().any(|member| member.qualifiers.patch);
+        let patch = outer.flags.contains(QualifierFlags::PATCH)
+            || block
+                .members
+                .iter()
+                .any(|member| member.qualifiers.flags.contains(QualifierFlags::PATCH));
         let per_vertex = self.is_per_vertex_io(outer) && !patch;
-        if outer.invariant {
+        if outer.flags.contains(QualifierFlags::INVARIANT) {
             return Err(semantic(
                 "cannot use invariant qualifier on an interface block",
                 at,
             ));
         }
         let explicit = |qualifiers: &Qualifiers, name: &str| -> Result<Option<u32>> {
-            match qualifiers.layout_entry(name).and_then(|entry| entry.value) {
+            match qualifiers
+                .layout_entry(name)
+                .and_then(|entry| entry.value.constant())
+            {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
                 None => Ok(None),
             }
@@ -1578,7 +1631,7 @@ impl<'a> Lowerer<'a> {
                 let size = self.member_sizes.get(&(id, index)).copied().unwrap_or(1);
                 member_ty.set_outer_size(GlslArraySize::Sized(size.max(1)));
             }
-            if qualifiers.invariant && input {
+            if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
                 return Err(semantic("invariant can only apply to an output", at));
             }
             if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer") {
@@ -1600,9 +1653,13 @@ impl<'a> Lowerer<'a> {
                 .interpolation
                 .or(outer.interpolation)
                 .map(interpolation_of);
-            let mut sampling = if qualifiers.sample || outer.sample {
+            let mut sampling = if qualifiers.flags.contains(QualifierFlags::SAMPLE)
+                || outer.flags.contains(QualifierFlags::SAMPLE)
+            {
                 Some(Sampling::Sample)
-            } else if qualifiers.centroid || outer.centroid {
+            } else if qualifiers.flags.contains(QualifierFlags::CENTROID)
+                || outer.flags.contains(QualifierFlags::CENTROID)
+            {
                 Some(Sampling::Centroid)
             } else {
                 None
@@ -1623,9 +1680,11 @@ impl<'a> Lowerer<'a> {
                     blend_src: None,
                     per_primitive: self.per_primitive_binding(qualifiers),
                     component,
-                    invariant: !input && (qualifiers.invariant || self.invariant_all),
+                    invariant: !input
+                        && (qualifiers.flags.contains(QualifierFlags::INVARIANT)
+                            || self.invariant_all),
                     patch,
-                    per_view: qualifiers.per_view,
+                    per_view: qualifiers.flags.contains(QualifierFlags::PER_VIEW),
                 }),
                 offset,
                 matrix_layout: None,
@@ -1796,7 +1855,7 @@ impl<'a> Lowerer<'a> {
         if automatic_location {
             self.automatic_locations.push(handle);
         }
-        if outer.per_task {
+        if outer.flags.contains(QualifierFlags::PER_TASK) {
             self.task_memory.push(handle);
         }
         if input {
@@ -1881,7 +1940,7 @@ impl<'a> Lowerer<'a> {
     ) -> Option<u32> {
         array
             .iter()
-            .flat_map(|array| &array.dimensions)
+            .flat_map(|array| &array.node.dimensions)
             .find_map(|dimension| match dimension.node {
                 rglsl_ast::ast::ArrayDimension::Sized(ref size) => self
                     .analysis
@@ -1905,7 +1964,7 @@ impl<'a> Lowerer<'a> {
             .ok_or_else(|| internal(Span::UNDEFINED))?;
         let mut declared = Vec::new();
         for member in &structure.members {
-            let qualifier = member.ty.qualifier.as_ref();
+            let qualifier = member.node.ty.node.qualifier.as_ref();
             let offset = xfb::ast_layout_value(self, qualifier, "xfb_offset");
             let stride = xfb::ast_layout_value(self, qualifier, "xfb_stride");
             if xfb::ast_layout_value(self, qualifier, "xfb_buffer")
@@ -1916,14 +1975,14 @@ impl<'a> Lowerer<'a> {
                     at,
                 ));
             }
-            for declarator in &member.declarators {
-                let name = declarator.name.node.clone();
+            for declarator in &member.node.declarators {
+                let name = declarator.node.name.node.clone();
                 let Some((_, builtin)) = block.member(&name) else {
                     continue;
                 };
                 let mut glsl = builtin.ty.clone();
                 if glsl.outer_size() == Some(GlslArraySize::Unsized) {
-                    if let Some(size) = self.declarator_size(declarator.array.as_ref()) {
+                    if let Some(size) = self.declarator_size(declarator.node.array.as_ref()) {
                         glsl.set_outer_size(GlslArraySize::Sized(size));
                     }
                 }
@@ -1996,7 +2055,7 @@ impl<'a> Lowerer<'a> {
                 .find(|&&(ref requested, _)| requested == name)
                 .map_or(Span::UNDEFINED, |&(_, at)| at);
             let used = self.per_vertex_used.contains(name);
-            let invariant = member.qualifiers.invariant
+            let invariant = member.qualifiers.flags.contains(QualifierFlags::INVARIANT)
                 || self.invariant_all
                 || requested
                     .iter()
@@ -2113,11 +2172,11 @@ impl<'a> Lowerer<'a> {
             .symbol(symbol)
             .map(|symbol| symbol.name.clone())
             .ok_or_else(|| internal(at))?;
-        let size = self.declarator_size(declarator.array.as_ref());
+        let size = self.declarator_size(declarator.kind.array.as_ref());
         if let Some(size) = size {
             self.builtin_sizes.insert(name.clone(), size);
         }
-        let qualifier = list.ty.qualifier.as_ref();
+        let qualifier = list.ty.node.qualifier.as_ref();
         if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
             self.invariant.push((name.clone(), at));
         }
@@ -2403,7 +2462,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     variable.ty.clone(),
                     variable.qualifiers.storage == Storage::Out,
                     variable.value.as_ref(),
-                    variable.qualifiers.volatile,
+                    variable.qualifiers.flags.contains(QualifierFlags::VOLATILE),
                 )
             }
             SymbolKind::BlockMember { instance, index } => {

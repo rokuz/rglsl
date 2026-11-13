@@ -52,7 +52,7 @@ impl Setup {
         make: impl FnOnce(&mut OpaqueGenerator<'_>) -> Expression,
     ) -> Expression {
         let mut random = Random::new(seed);
-        let mut builder = Builder::new(rglsl_fuzz::ast::NodeId::new(1_000_000));
+        let mut builder = Builder::new(1_000_000);
         let mut generator = OpaqueGenerator {
             random: &mut random,
             builder: &mut builder,
@@ -146,7 +146,9 @@ fn check_in_shader(
         })
         .ok_or("no main")?;
     let last = main
+        .kind
         .body
+        .node
         .statements
         .last()
         .ok_or("main has no statements")?;

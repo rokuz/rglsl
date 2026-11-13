@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 
 use rglsl_ast::ast::StorageQualifier;
@@ -252,7 +253,7 @@ impl Analyzer<'_> {
         };
         let Some(location) = qualifiers
             .layout_entry("location")
-            .and_then(|entry| entry.value)
+            .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {
             return;
@@ -311,7 +312,9 @@ impl Analyzer<'_> {
             );
             return true;
         }
-        if qualifiers.storage != Storage::None || qualifiers.constant {
+        if qualifiers.storage != Storage::None
+            || qualifiers.flags.contains(QualifierFlags::CONSTANT)
+        {
             self.error(
                 span,
                 DiagnosticKind::HitObjectStorage {
@@ -541,7 +544,7 @@ impl Analyzer<'_> {
         let entry = qualifiers.layout_entry("constant_id").cloned();
         let valid = entry.is_some()
             && qualifiers.storage == Storage::None
-            && !qualifiers.constant
+            && !qualifiers.flags.contains(QualifierFlags::CONSTANT)
             && qualifiers.layout.len() == 1;
         if !valid {
             self.opacity_micromap_error(span);
@@ -550,7 +553,10 @@ impl Analyzer<'_> {
         if let Some(crate::scope::SymbolKind::Variable(variable)) =
             self.symbol_mut(id).map(|symbol| &mut symbol.kind)
         {
-            variable.qualifiers.specialization = true;
+            variable
+                .qualifiers
+                .flags
+                .insert(QualifierFlags::SPECIALIZATION);
             variable.qualifiers.layout.extend(entry);
         }
         true
@@ -575,7 +581,9 @@ impl Analyzer<'_> {
             return Some(id);
         }
         let value = value.filter(|_| {
-            qualifiers.constant && qualifiers.storage == Storage::None && *ty == Type::BOOL
+            qualifiers.flags.contains(QualifierFlags::CONSTANT)
+                && qualifiers.storage == Storage::None
+                && *ty == Type::BOOL
         });
         let Some(value) = value else {
             self.opacity_micromap_error(span);

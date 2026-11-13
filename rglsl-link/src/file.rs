@@ -1,4 +1,4 @@
-use rglsl::object::{ObjectModule, FORMAT_VERSION};
+use rglsl::object::{CompiledUnit, ObjectModule, ObjectTarget, FORMAT_VERSION};
 use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
 use rglsl::{Block, Span, Statement};
 
@@ -105,21 +105,25 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
 }
 
 fn validate(object: &ObjectModule) -> Result<(), FileError> {
-    let mut pending = Vec::from([object]);
-    while let Some(object) = pending.pop() {
-        if object.format_version != FORMAT_VERSION {
-            return Err(FileError::Version {
-                found: object.format_version,
-                expected: FORMAT_VERSION,
-            });
-        }
-        let module = &object.module;
+    if object.format_version != FORMAT_VERSION {
+        return Err(FileError::Version {
+            found: object.format_version,
+            expected: FORMAT_VERSION,
+        });
+    }
+    let mut pending = Vec::from([&object.unit]);
+    let mut variants = object
+        .library()
+        .map(|library| library.variants.as_slice())
+        .unwrap_or_default();
+    while let Some(unit) = pending.pop() {
+        let module = &unit.module;
         let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
         validator.mode(ValidationMode::Object);
         validator
             .validate(module)
             .map_err(|error| FileError::Invalid(crate::message(error.as_inner())))?;
-        if object
+        if unit
             .functions
             .iter()
             .any(|symbol| module.functions.try_get(symbol.function).is_err())
@@ -128,8 +132,8 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
                 "a function symbol names a missing function",
             )));
         }
-        let layout = &object.layout;
-        if object
+        let layout = &unit.layout;
+        if unit
             .globals
             .iter()
             .map(|symbol| symbol.global)
@@ -141,7 +145,7 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
                 "a global symbol names a missing global variable",
             )));
         }
-        if object
+        if unit
             .work_group_size_placeholders
             .iter()
             .flatten()
@@ -151,15 +155,16 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
                 "a work group size placeholder names a missing specialization constant",
             )));
         }
-        if let Some(ref specialized) = object.specialized {
-            if specialized.specialized.is_some() || !specialized.variants.is_empty() {
+        if let Some(ref specialized) = unit.specialized {
+            if specialized.specialized.is_some() {
                 return Err(FileError::Invalid(String::from(
                     "a specialized object module has its own variants",
                 )));
             }
             pending.push(specialized);
         }
-        pending.extend(&object.variants);
+        pending.extend(variants.iter().map(|variant| &variant.unit));
+        variants = &[];
     }
     Ok(())
 }
@@ -168,40 +173,50 @@ fn decode_error(message: &str) -> FileError {
     FileError::Decode(String::from(message))
 }
 
-fn modules(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
-    let mut found = Vec::new();
-    let mut objects = Vec::from([object]);
-    while let Some(object) = objects.pop() {
-        found.push(&mut object.module);
-        objects.extend(object.variants.iter_mut().rev());
+fn units(object: &mut ObjectModule) -> Vec<&mut CompiledUnit> {
+    let ObjectModule {
+        ref mut unit,
+        ref mut target,
+        ..
+    } = *object;
+    let mut units = Vec::from([unit]);
+    if let ObjectTarget::Library(ref mut library) = *target {
+        units.extend(library.variants.iter_mut().map(|variant| &mut variant.unit));
     }
-    found
+    units
+}
+
+fn modules(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
+    units(object)
+        .into_iter()
+        .map(|unit| &mut unit.module)
+        .collect()
 }
 
 fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {
     let mut slots = Vec::new();
-    let mut objects = Vec::from([object]);
-    while let Some(object) = objects.pop() {
-        let module = &mut object.module;
-        slots.extend(
-            module
-                .functions
-                .iter_mut()
-                .map(|(_, function)| &mut function.body),
-        );
-        slots.extend(
-            module
-                .entry_points
-                .iter_mut()
-                .map(|entry| &mut entry.function.body),
-        );
-        let ObjectModule {
-            ref mut variants,
-            ref mut specialized,
-            ..
-        } = *object;
-        objects.extend(variants.iter_mut().rev());
-        objects.extend(specialized.as_deref_mut());
+    for unit in units(object) {
+        let mut next = Some(unit);
+        while let Some(unit) = next {
+            let CompiledUnit {
+                ref mut module,
+                ref mut specialized,
+                ..
+            } = *unit;
+            slots.extend(
+                module
+                    .functions
+                    .iter_mut()
+                    .map(|(_, function)| &mut function.body),
+            );
+            slots.extend(
+                module
+                    .entry_points
+                    .iter_mut()
+                    .map(|entry| &mut entry.function.body),
+            );
+            next = specialized.as_deref_mut();
+        }
     }
     slots
 }

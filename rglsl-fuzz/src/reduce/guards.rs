@@ -109,20 +109,20 @@ fn initialise(unit: &mut TranslationUnit, builder: &mut Builder) {
         let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind else {
             return;
         };
-        if list.ty.qualifier.is_some() {
+        if list.ty.node.qualifier.is_some() {
             return;
         }
-        let Some(ty) = basic::from_specifier(&list.ty.specifier) else {
+        let Some(ty) = basic::from_specifier(&list.ty.node.specifier.node) else {
             return;
         };
         for declarator in &mut list.declarators {
-            if declarator.initializer.is_some() {
+            if declarator.kind.initializer.is_some() {
                 continue;
             }
-            let value = match &declarator.array {
+            let value = match &declarator.kind.array {
                 None => literal_zero_or_one(builder, true, ty),
                 Some(array) => {
-                    let [dimension] = array.dimensions.as_slice() else {
+                    let [dimension] = array.node.dimensions.as_slice() else {
                         continue;
                     };
                     let rglsl_ast::ast::ArrayDimension::Sized(size) = &dimension.node else {
@@ -145,7 +145,7 @@ fn initialise(unit: &mut TranslationUnit, builder: &mut Builder) {
                     builder.construct_specifier(specifier, elements)
                 }
             };
-            declarator.initializer = Some(Spanned::new(
+            declarator.kind.initializer = Some(Spanned::new(
                 Span::new(0, 0),
                 Initializer::Expression(value),
             ));

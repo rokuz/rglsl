@@ -145,7 +145,7 @@ fn declarations_in_loop_conditions() {
     let Some(Condition::Declaration(declaration)) = &for_parts.condition else {
         panic!("{for_parts:?}");
     };
-    assert_eq!(declaration.name.node, "more");
+    assert_eq!(declaration.kind.name.node, "more");
     assert_eq!(
         in_for.to_string(),
         "for (int i = 0; bool more = i < 3; i++)\n    a;\n"

@@ -130,10 +130,10 @@ fn block_entries(statements: &[Statement], analysis: &Analysis) -> Result<Vec<En
         let DeclarationKind::InitDeclaratorList(list) = &declaration.kind else {
             continue;
         };
-        if list.ty.qualifier.is_some() {
+        if list.ty.node.qualifier.is_some() {
             continue;
         }
-        let Some(ty) = basic::from_specifier(&list.ty.specifier) else {
+        let Some(ty) = basic::from_specifier(&list.ty.node.specifier.node) else {
             continue;
         };
         if basic::is_matrix(ty) || basic::is_boolean(ty) {
@@ -141,14 +141,14 @@ fn block_entries(statements: &[Statement], analysis: &Analysis) -> Result<Vec<En
         }
         let excluded: BTreeSet<NodeId> = statement_expression_ids(statement)?.into_iter().collect();
         for declarator in &list.declarators {
-            if declarator.array.is_some() {
+            if declarator.kind.array.is_some() {
                 continue;
             }
             let Some(symbol) = analysis.declarations.get(&declarator.id) else {
                 continue;
             };
             entries.push(Entry {
-                name: declarator.name.node.clone(),
+                name: declarator.kind.name.node.clone(),
                 ty,
                 statement_index: index,
                 symbol: *symbol,
@@ -183,9 +183,9 @@ fn blocks(unit: &TranslationUnit) -> Vec<(BlockId, &[Statement])> {
         };
         result.push((
             BlockId::Function(index),
-            definition.body.statements.as_slice(),
+            definition.kind.body.node.statements.as_slice(),
         ));
-        for statement in &definition.body.statements {
+        for statement in &definition.kind.body.node.statements {
             visit_statements(statement, &mut |inner| {
                 if let StatementKind::Compound(compound) = &inner.kind {
                     result.push((BlockId::Statement(inner.id), compound.statements.as_slice()));

@@ -376,6 +376,7 @@ dependencies = [
 name = "rglsl-sema"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "half",
  "libm",
  "rglsl-ast",
@@ -402,6 +403,7 @@ name = "rglsl-types"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "bitflags",
  "hashbrown",
  "indexmap",
  "rustc-hash",

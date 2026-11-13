@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -803,7 +804,10 @@ impl Analyzer<'_> {
                     .iter()
                     .zip(&function.parameters)
                     .any(|(operand, parameter)| {
-                        parameter.qualifiers.spirv_literal
+                        parameter
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::SPIRV_LITERAL)
                             && (!operand.constant || operand.specialization)
                     });
             if literal_failed {
@@ -944,7 +948,11 @@ impl Analyzer<'_> {
         Operand {
             constant,
             value,
-            non_uniform: !is_builtin && function.return_qualifiers.nonuniform,
+            non_uniform: !is_builtin
+                && function
+                    .return_qualifiers
+                    .flags
+                    .contains(QualifierFlags::NONUNIFORM),
             ..Operand::temporary(function.return_type)
         }
     }
@@ -1079,22 +1087,21 @@ impl Analyzer<'_> {
         if matches!(name, "expectEXT" | "assumeEXT") {
             self.require_extension(span, "GL_EXT_expect_assume", name);
         }
-        let lower = name.to_ascii_lowercase();
-        if lower.contains("bfloat16") {
+        if contains_ignore_ascii_case(name, "bfloat16") {
             self.require_extension(span, "GL_EXT_bfloat16", name);
-        } else if lower.contains("floate4m3") {
+        } else if contains_ignore_ascii_case(name, "floate4m3") {
             self.require_extension(span, "GL_EXT_float_e4m3", name);
-        } else if lower.contains("floate5m2") {
+        } else if contains_ignore_ascii_case(name, "floate5m2") {
             self.require_extension(span, "GL_EXT_float_e5m2", name);
-        } else if lower.contains("fe2m1") {
+        } else if contains_ignore_ascii_case(name, "fe2m1") {
             self.require_extension(span, "GL_EXT_float_e2m1", name);
-        } else if lower.contains("fe3m2") {
+        } else if contains_ignore_ascii_case(name, "fe3m2") {
             self.require_extension(span, "GL_EXT_float_e3m2", name);
-        } else if lower.contains("fe2m3") {
+        } else if contains_ignore_ascii_case(name, "fe2m3") {
             self.require_extension(span, "GL_EXT_float_e2m3", name);
-        } else if lower.contains("floatue8m0") {
+        } else if contains_ignore_ascii_case(name, "floatue8m0") {
             self.require_extension(span, "GL_EXT_float_ue8m0", name);
-        } else if lower.contains("floatmxint8") {
+        } else if contains_ignore_ascii_case(name, "floatmxint8") {
             self.require_extension(span, "GL_EXT_float_mxint8", name);
         }
         self.mesh_function_extension(span, name);
@@ -1240,7 +1247,11 @@ impl Analyzer<'_> {
             .and_then(|variable| format(&variable.qualifiers));
         let formal = format(&parameter.qualifiers);
         argument == formal
-            || (parameter.qualifiers.writeonly && (argument.is_none() || formal.is_none()))
+            || (parameter
+                .qualifiers
+                .flags
+                .contains(QualifierFlags::WRITEONLY)
+                && (argument.is_none() || formal.is_none()))
     }
 
     fn keeps_memory_qualifiers(&self, operand: &Operand, parameter: &Parameter) -> bool {
@@ -1298,7 +1309,15 @@ impl Analyzer<'_> {
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
                 .and_then(|symbol| symbol.variable())
-                .map(|variable| (variable.qualifiers.readonly, variable.qualifiers.writeonly));
+                .map(|variable| {
+                    (
+                        variable.qualifiers.flags.contains(QualifierFlags::READONLY),
+                        variable
+                            .qualifiers
+                            .flags
+                            .contains(QualifierFlags::WRITEONLY),
+                    )
+                });
             let integer_image = first
                 .and_then(|operand| operand.ty.as_opaque())
                 .is_some_and(|opaque| opaque.sampled != crate::types::SampledType::Float);
@@ -1848,3 +1867,11 @@ fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
             .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
 }
 pub(crate) const SPEC_CONSTANT_COMPOSITES: &str = "GL_EXT_spec_constant_composites";
+
+fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
+    needle.is_empty()
+        || text
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::cell::RefCell;
 
 use rglsl_ast::ast::{
-    DeclarationKind, ExternalDeclaration, NodeId, TranslationUnit, TypeSpecifierNonArray,
+    DeclarationKind, ExternalDeclaration, TranslationUnit, TypeSpecifierNonArray,
 };
 
 use crate::constants::{is_donated_name, STRUCTIFICATION_STRUCT_PREFIX};
@@ -12,7 +12,7 @@ use crate::rename::{rename_all, NameKind};
 
 pub fn referenced_names(external: &ExternalDeclaration) -> Result<BTreeSet<String>, Stalled> {
     let names = RefCell::new(BTreeSet::new());
-    let mut unit = TranslationUnit::new(vec![external.clone()], NodeId::new(0));
+    let mut unit = TranslationUnit::new(vec![external.clone()], 0);
     let record = |_: NameKind, name: &str| {
         names.borrow_mut().insert(name.to_owned());
         None
@@ -24,10 +24,12 @@ pub fn referenced_names(external: &ExternalDeclaration) -> Result<BTreeSet<Strin
 fn defined_function(external: &ExternalDeclaration) -> Option<&str> {
     match external {
         ExternalDeclaration::FunctionDefinition(definition) => {
-            Some(definition.prototype.name.node.as_str())
+            Some(definition.kind.prototype.node.name.node.as_str())
         }
         ExternalDeclaration::Declaration(declaration) => match &declaration.kind {
-            DeclarationKind::FunctionPrototype(prototype) => Some(prototype.name.node.as_str()),
+            DeclarationKind::FunctionPrototype(prototype) => {
+                Some(prototype.node.name.node.as_str())
+            }
             _ => None,
         },
         _ => None,
@@ -42,7 +44,7 @@ fn donated_globals(external: &ExternalDeclaration) -> Option<Vec<String>> {
         DeclarationKind::InitDeclaratorList(list) => list
             .declarators
             .iter()
-            .map(|declarator| declarator.name.node.clone())
+            .map(|declarator| declarator.kind.name.node.clone())
             .collect(),
         DeclarationKind::Block {
             structure,
@@ -50,8 +52,8 @@ fn donated_globals(external: &ExternalDeclaration) -> Option<Vec<String>> {
         } => structure
             .members
             .iter()
-            .flat_map(|member| member.declarators.iter())
-            .map(|declarator| declarator.name.node.clone())
+            .flat_map(|member| member.node.declarators.iter())
+            .map(|declarator| declarator.node.name.node.clone())
             .collect(),
         _ => return None,
     };
@@ -74,7 +76,7 @@ fn donated_struct(external: &ExternalDeclaration) -> Option<String> {
     if !list.declarators.is_empty() {
         return None;
     }
-    let TypeSpecifierNonArray::Struct(structure) = &list.ty.specifier.non_array else {
+    let TypeSpecifierNonArray::Struct(structure) = &list.ty.node.specifier.node.non_array else {
         return None;
     };
     let name = structure.name.as_ref()?;

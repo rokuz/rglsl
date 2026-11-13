@@ -71,7 +71,9 @@ fn outcome(
         .map(|stage| {
             let linked = match object.for_stage(stage) {
                 Ok(mut variant) => {
-                    variant.stages = vec![stage];
+                    if let Some(library) = variant.library_mut() {
+                        library.stages = rglsl::ShaderStageMask::of(stage);
+                    }
                     rglsl_link::encode(&variant).unwrap_or_else(|error| error.to_string())
                 }
                 Err(rejection) => format!("{rejection:?}"),

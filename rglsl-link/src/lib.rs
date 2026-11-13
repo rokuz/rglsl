@@ -70,13 +70,17 @@ pub fn link(objects: &[ObjectModule], options: &Options) -> Result<Linked, LinkE
 pub fn validate_object(object: &ObjectModule) -> Result<ModuleInfo, LinkErrors> {
     let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
     validator.mode(ValidationMode::Object);
-    for variant in &object.variants {
+    for variant in object
+        .library()
+        .into_iter()
+        .flat_map(|library| &library.variants)
+    {
         validator
-            .validate(&variant.module)
+            .validate(&variant.unit.module)
             .map_err(|error| LinkError::Validation(message(error.as_inner())))?;
     }
     validator
-        .validate(&object.module)
+        .validate(&object.unit.module)
         .map_err(|error| LinkError::Validation(message(error.as_inner())).into())
 }
 
@@ -105,7 +109,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
         return Err(errors.into());
     }
     let mut stage: Option<ShaderStage> = None;
-    for object_stage in objects.iter().filter_map(|object| object.stage) {
+    for object_stage in objects.iter().filter_map(ObjectModule::stage) {
         match stage {
             None => stage = Some(object_stage),
             Some(previous) if previous != object_stage => {
@@ -245,17 +249,17 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
 fn merge_debug_info(objects: &mut [ObjectModule]) -> Option<Box<rglsl::DebugInfo>> {
     if objects
         .iter()
-        .all(|object| object.module.debug_info.is_none())
+        .all(|object| object.unit.module.debug_info.is_none())
     {
         return None;
     }
     let mut merged = rglsl::DebugInfo::default();
     let mut base = 0_u32;
     for object in objects.iter_mut() {
-        let Some(info) = object.module.debug_info.take() else {
+        let Some(info) = object.unit.module.debug_info.take() else {
             continue;
         };
-        rglsl::shift_module_spans(&mut object.module, base);
+        rglsl::shift_module_spans(&mut object.unit.module, base);
         let end = info.end();
         merged.append(*info, base);
         base = base.saturating_add(end).saturating_add(1);
@@ -275,13 +279,13 @@ fn geometry_interface(
     let mut passthrough: Vec<Handle<rglsl::GlobalVariable>> = Vec::new();
     for (index, object) in builder.objects.iter().enumerate() {
         let remap = builder.remap(index)?;
-        for &(handle, stream) in &object.layout.streams {
+        for &(handle, stream) in &object.unit.layout.streams {
             let mapped = remap.global(handle).map_err(error::internal)?;
             if !streams.iter().any(|&(known, _)| known == mapped) {
                 streams.push((mapped, stream));
             }
         }
-        for &handle in &object.layout.passthrough {
+        for &handle in &object.unit.layout.passthrough {
             let mapped = remap.global(handle).map_err(error::internal)?;
             if !passthrough.contains(&mapped) {
                 passthrough.push(mapped);
@@ -327,13 +331,13 @@ fn check_geometry_inputs(
 ) {
     let expected = primitive_vertices(primitive);
     for object in objects {
-        for (handle, global) in object.module.global_variables.iter() {
+        for (handle, global) in object.unit.module.global_variables.iter() {
             if global.space != AddressSpace::Input
                 || !matches!(global.io, Some(Binding::Location { .. }))
             {
                 continue;
             }
-            let size = match object.module.types[global.ty].inner {
+            let size = match object.unit.module.types[global.ty].inner {
                 TypeInner::Array {
                     size: ArraySize::Constant(size),
                     ..
@@ -343,6 +347,7 @@ fn check_geometry_inputs(
             };
             if size != expected {
                 let name = object
+                    .unit
                     .global_symbol(handle)
                     .map(|symbol| symbol.name.clone())
                     .or_else(|| global.name.clone())

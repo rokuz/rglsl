@@ -194,10 +194,11 @@ pub(super) fn ast_layout_signed<'q>(
 ) -> Option<i64> {
     let mut found = None;
     for qualifier in qualifier {
-        for single in &qualifier.qualifiers {
+        for single in &qualifier.node.qualifiers {
             if let SingleTypeQualifier::Layout(ref layout) = single.node {
-                for id in layout.ids.iter().filter(|id| id.name.node == name) {
+                for id in layout.ids.iter().filter(|id| id.node.name.node == name) {
                     found = id
+                        .node
                         .value
                         .as_ref()
                         .and_then(|value| lowerer.analysis.expression(value.id))
@@ -213,7 +214,7 @@ pub(super) fn ast_layout_signed<'q>(
 pub(super) fn layout_value(qualifiers: &Qualifiers, name: &str) -> Option<u32> {
     qualifiers
         .layout_entry(name)
-        .and_then(|entry| entry.value)
+        .and_then(|entry| entry.value.constant())
         .and_then(|value| u32::try_from(value).ok())
 }
 

@@ -16,18 +16,16 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub const fn new(first: NodeId) -> Self {
-        Self {
-            next_id: first.index(),
-        }
+    pub const fn new(next_id: u32) -> Self {
+        Self { next_id }
     }
 
-    pub const fn next_id(&self) -> NodeId {
-        NodeId::new(self.next_id)
+    pub const fn next_id(&self) -> u32 {
+        self.next_id
     }
 
     pub const fn id(&mut self) -> NodeId {
-        let id = NodeId::new(self.next_id);
+        let id = NodeId::saturating(self.next_id);
         self.next_id = self.next_id.saturating_add(1);
         id
     }

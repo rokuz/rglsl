@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hash, Hasher};
+use rglsl_ast::opaque::{OpaqueKeyword, SampledFamily, SampledPrefix, SampledShape, WidePrefix};
 
 use rglsl_ast::ast::NodeId;
 
@@ -379,23 +380,9 @@ impl Scalar {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct StructId(pub(crate) u32);
+index_id!(StructId);
 
-impl StructId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BlockId(pub(crate) u32);
-
-impl BlockId {
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-}
+index_id!(BlockId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OpaqueKind {
@@ -544,79 +531,88 @@ impl Opaque {
     }
 
     pub fn from_keyword(word: &str) -> Option<Self> {
-        match word {
-            "sampler" => return Some(Self::plain_sampler(false)),
-            "samplerShadow" => return Some(Self::plain_sampler(true)),
-            "accelerationStructureEXT" | "accelerationStructureNV" => {
-                return Some(Self::ray(OpaqueKind::AccelerationStructure))
+        OpaqueKeyword::parse(word).and_then(Self::from_opaque_keyword)
+    }
+
+    pub const fn from_opaque_keyword(keyword: OpaqueKeyword) -> Option<Self> {
+        const fn sampled_type(prefix: SampledPrefix) -> SampledType {
+            match prefix {
+                SampledPrefix::Float => SampledType::Float,
+                SampledPrefix::Int => SampledType::Int,
+                SampledPrefix::Uint => SampledType::Uint,
             }
-            "rayQueryEXT" => return Some(Self::ray(OpaqueKind::RayQuery)),
-            "hitObjectNV" => return Some(Self::ray(OpaqueKind::HitObjectNv)),
-            "hitObjectEXT" => return Some(Self::ray(OpaqueKind::HitObjectExt)),
-            "attachmentEXT" | "iattachmentEXT" | "uattachmentEXT" => {
-                let sampled = match word.as_bytes().first() {
-                    Some(b'i') => SampledType::Int,
-                    Some(b'u') => SampledType::Uint,
-                    _ => SampledType::Float,
-                };
-                return Some(Self {
-                    kind: OpaqueKind::TileImage,
-                    sampled,
-                    dimension: TextureDimension::D2,
-                    arrayed: false,
-                    shadow: false,
-                    multisample: false,
-                });
-            }
-            _ => {}
         }
-        let families = ["sampler", "texture", "image", "subpassInput"];
-        let is_family = |rest: &str| families.iter().any(|family| rest.starts_with(family));
-        let (sampled, rest) = match (word.strip_prefix('i'), word.strip_prefix('u')) {
-            _ if is_family(word) => (SampledType::Float, word),
-            (Some(rest), _) if rest.starts_with("64image") => {
-                (SampledType::Int64, rest.trim_start_matches("64"))
+        match keyword {
+            OpaqueKeyword::AtomicUint => None,
+            OpaqueKeyword::Sampler => Some(Self::plain_sampler(false)),
+            OpaqueKeyword::SamplerShadow => Some(Self::plain_sampler(true)),
+            OpaqueKeyword::AccelerationStructureNv | OpaqueKeyword::AccelerationStructureExt => {
+                Some(Self::ray(OpaqueKind::AccelerationStructure))
             }
-            (_, Some(rest)) if rest.starts_with("64image") => {
-                (SampledType::Uint64, rest.trim_start_matches("64"))
-            }
-            (Some(rest), _) if is_family(rest) => (SampledType::Int, rest),
-            (_, Some(rest)) if is_family(rest) => (SampledType::Uint, rest),
-            _ => return None,
-        };
-        match rest {
-            "subpassInput" => return Some(Self::subpass_input(sampled, false)),
-            "subpassInputMS" => return Some(Self::subpass_input(sampled, true)),
-            _ => {}
+            OpaqueKeyword::RayQueryExt => Some(Self::ray(OpaqueKind::RayQuery)),
+            OpaqueKeyword::HitObjectNv => Some(Self::ray(OpaqueKind::HitObjectNv)),
+            OpaqueKeyword::HitObjectExt => Some(Self::ray(OpaqueKind::HitObjectExt)),
+            OpaqueKeyword::Attachment(prefix) => Some(Self {
+                kind: OpaqueKind::TileImage,
+                sampled: sampled_type(prefix),
+                dimension: TextureDimension::D2,
+                arrayed: false,
+                shadow: false,
+                multisample: false,
+            }),
+            OpaqueKeyword::Shadow(shape) => Self::sampled_image(
+                OpaqueKind::CombinedSampler,
+                SampledType::Float,
+                shape.shape(),
+                true,
+            ),
+            OpaqueKeyword::Sampled {
+                prefix,
+                family,
+                shape,
+            } => Self::sampled_image(
+                match family {
+                    SampledFamily::Sampler => OpaqueKind::CombinedSampler,
+                    SampledFamily::Texture => OpaqueKind::Texture,
+                    SampledFamily::Image => OpaqueKind::Image,
+                },
+                sampled_type(prefix),
+                shape,
+                false,
+            ),
+            OpaqueKeyword::SubpassInput {
+                prefix,
+                multisample,
+            } => Some(Self::subpass_input(sampled_type(prefix), multisample)),
+            OpaqueKeyword::WideImage { prefix, shape } => Self::sampled_image(
+                OpaqueKind::Image,
+                match prefix {
+                    WidePrefix::Int64 => SampledType::Int64,
+                    WidePrefix::Uint64 => SampledType::Uint64,
+                },
+                shape,
+                false,
+            ),
         }
-        let (kind, shape) = if let Some(shape) = rest.strip_prefix("sampler") {
-            (OpaqueKind::CombinedSampler, shape)
-        } else if let Some(shape) = rest.strip_prefix("texture") {
-            (OpaqueKind::Texture, shape)
-        } else if let Some(shape) = rest.strip_prefix("image") {
-            (OpaqueKind::Image, shape)
-        } else {
-            return None;
-        };
-        let (shape, shadow) = match shape.strip_suffix("Shadow") {
-            Some(shape) => (shape, true),
-            None => (shape, false),
-        };
-        if shadow && (kind != OpaqueKind::CombinedSampler || sampled != SampledType::Float) {
-            return None;
-        }
+    }
+
+    const fn sampled_image(
+        kind: OpaqueKind,
+        sampled: SampledType,
+        shape: SampledShape,
+        shadow: bool,
+    ) -> Option<Self> {
         let (dimension, arrayed, multisample) = match shape {
-            "1D" => (TextureDimension::D1, false, false),
-            "2D" => (TextureDimension::D2, false, false),
-            "3D" => (TextureDimension::D3, false, false),
-            "Cube" => (TextureDimension::Cube, false, false),
-            "1DArray" => (TextureDimension::D1, true, false),
-            "2DArray" => (TextureDimension::D2, true, false),
-            "CubeArray" => (TextureDimension::Cube, true, false),
-            "Buffer" => (TextureDimension::Buffer, false, false),
-            "2DMS" => (TextureDimension::D2, false, true),
-            "2DMSArray" => (TextureDimension::D2, true, true),
-            _ => return None,
+            SampledShape::D1 => (TextureDimension::D1, false, false),
+            SampledShape::D2 => (TextureDimension::D2, false, false),
+            SampledShape::D3 => (TextureDimension::D3, false, false),
+            SampledShape::Cube => (TextureDimension::Cube, false, false),
+            SampledShape::D1Array => (TextureDimension::D1, true, false),
+            SampledShape::D2Array => (TextureDimension::D2, true, false),
+            SampledShape::CubeArray => (TextureDimension::Cube, true, false),
+            SampledShape::Buffer => (TextureDimension::Buffer, false, false),
+            SampledShape::D2Ms => (TextureDimension::D2, false, true),
+            SampledShape::D2MsArray => (TextureDimension::D2, true, true),
         };
         if shadow
             && (multisample || matches!(dimension, TextureDimension::D3 | TextureDimension::Buffer))
@@ -1793,19 +1789,19 @@ impl TypeRegistry {
 
     pub fn add_spirv(&mut self, ty: SpirvType) -> Option<SpirvTypeId> {
         if let Some(index) = self.spirv.iter().position(|known| *known == ty) {
-            return Some(SpirvTypeId(u32::try_from(index).ok()?));
+            return SpirvTypeId::new(u32::try_from(index).ok()?);
         }
-        let id = SpirvTypeId(u32::try_from(self.spirv.len()).ok()?);
+        let id = SpirvTypeId::new(u32::try_from(self.spirv.len()).ok()?)?;
         self.spirv.push(ty);
         Some(id)
     }
 
     pub fn spirv(&self, id: SpirvTypeId) -> Option<&SpirvType> {
-        self.spirv.get(usize::try_from(id.0).ok()?)
+        self.spirv.get(usize::try_from(id.index()).ok()?)
     }
 
     pub fn add_struct(&mut self, name: Option<String>, members: Vec<Member>) -> Option<StructId> {
-        let id = StructId(u32::try_from(self.structs.len()).ok()?);
+        let id = StructId::new(u32::try_from(self.structs.len()).ok()?)?;
         let mut contains_opaque = false;
         let mut contains_unsized_array = false;
         let mut contains_reference = false;
@@ -1838,21 +1834,21 @@ impl TypeRegistry {
     }
 
     pub fn add_block(&mut self, block: BlockType) -> Option<BlockId> {
-        let id = BlockId(u32::try_from(self.blocks.len()).ok()?);
+        let id = BlockId::new(u32::try_from(self.blocks.len()).ok()?)?;
         self.blocks.push(block);
         Some(id)
     }
 
     pub fn structure(&self, id: StructId) -> Option<&StructType> {
-        self.structs.get(usize::try_from(id.0).ok()?)
+        self.structs.get(usize::try_from(id.index()).ok()?)
     }
 
     pub fn block(&self, id: BlockId) -> Option<&BlockType> {
-        self.blocks.get(usize::try_from(id.0).ok()?)
+        self.blocks.get(usize::try_from(id.index()).ok()?)
     }
 
     pub fn block_mut(&mut self, id: BlockId) -> Option<&mut BlockType> {
-        self.blocks.get_mut(usize::try_from(id.0).ok()?)
+        self.blocks.get_mut(usize::try_from(id.index()).ok()?)
     }
 
     pub fn structs(&self) -> &[StructType] {

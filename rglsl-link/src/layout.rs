@@ -39,7 +39,7 @@ fn merged(
 ) -> StageLayout {
     let mut merged = StageLayout::default();
     for object in objects {
-        let layout = &object.layout;
+        let layout = &object.unit.layout;
         for index in 0..3 {
             if let (Some(slot), Some(&value)) = (
                 merged.local_size.get_mut(index),

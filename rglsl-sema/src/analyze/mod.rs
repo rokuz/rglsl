@@ -280,7 +280,7 @@ fn version_of(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> Opti
         let ExternalDeclaration::Directive(directive) = declaration else {
             continue;
         };
-        let DirectiveKind::Version { number, profile } = &directive.kind else {
+        let DirectiveKind::Version { number, profile } = &directive.node.kind else {
             continue;
         };
         if !matches!(number, 450 | 460) {
@@ -522,7 +522,7 @@ impl<'a> Analyzer<'a> {
         self.patch_vertices_limit();
         for declaration in &unit.external_declarations {
             match declaration {
-                ExternalDeclaration::Directive(directive) => match &directive.kind {
+                ExternalDeclaration::Directive(directive) => match &directive.node.kind {
                     DirectiveKind::Extension { name, behavior } => {
                         self.extension_directive(directive.span, name, *behavior);
                     }
@@ -905,7 +905,7 @@ impl<'a> Analyzer<'a> {
     }
 
     pub(crate) fn add_symbol(&mut self, name: &str, span: Span, kind: SymbolKind) -> SymbolId {
-        let id = SymbolId(u32::try_from(self.symbols.len()).unwrap_or(u32::MAX));
+        let id = SymbolId::saturating(u32::try_from(self.symbols.len()).unwrap_or(u32::MAX));
         self.symbols.push(Symbol {
             name: String::from(name),
             span,

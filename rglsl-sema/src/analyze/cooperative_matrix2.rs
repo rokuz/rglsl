@@ -1,3 +1,4 @@
+use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -423,7 +424,12 @@ impl Analyzer<'_> {
         };
         let mut valid = true;
         for parameter in &function.parameters {
-            if parameter.direction != Direction::In || !parameter.qualifiers.constant {
+            if parameter.direction != Direction::In
+                || !parameter
+                    .qualifiers
+                    .flags
+                    .contains(QualifierFlags::CONSTANT)
+            {
                 self.error(
                     span,
                     DiagnosticKind::InvalidCooperativeCall {

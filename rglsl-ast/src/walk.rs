@@ -63,9 +63,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         for declaration in &unit.external_declarations {
             match declaration {
                 ExternalDeclaration::FunctionDefinition(definition) => {
-                    self.call(self.clone().prototype(&definition.prototype))
+                    self.call(self.clone().prototype(&definition.kind.prototype.node))
                         .await;
-                    for statement in &definition.body.statements {
+                    for statement in &definition.kind.body.node.statements {
                         self.call(self.clone().statement(statement)).await;
                     }
                 }
@@ -78,11 +78,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn qualifier(self, qualifier: &'a Spanned<TypeQualifier>) {
-        for single in &qualifier.qualifiers {
+        for single in &qualifier.node.qualifiers {
             match &single.node {
                 SingleTypeQualifier::Layout(layout) => {
                     for id in &layout.ids {
-                        if let Some(value) = &id.value {
+                        if let Some(value) = &id.node.value {
                             self.call(self.clone().expression(value)).await;
                         }
                     }
@@ -103,7 +103,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let Some(specifier) = specifier else {
             return;
         };
-        for dimension in &specifier.dimensions {
+        for dimension in &specifier.node.dimensions {
             if let ArrayDimension::Sized(size) = &dimension.node {
                 self.call(self.clone().expression(size)).await;
             }
@@ -112,9 +112,10 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn members(self, members: &'a [Spanned<StructDeclaration>]) {
         for member in members {
-            self.call(self.clone().fully_specified(&member.ty)).await;
-            for declarator in &member.declarators {
-                self.call(self.clone().array(declarator.array.as_ref()))
+            self.call(self.clone().fully_specified(&member.node.ty))
+                .await;
+            for declarator in &member.node.declarators {
+                self.call(self.clone().array(declarator.node.array.as_ref()))
                     .await;
             }
         }
@@ -135,17 +136,19 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                         SpirvTypeParameter::Constant(value) => {
                             self.call(self.clone().expression(value)).await
                         }
-                        SpirvTypeParameter::Type(ty) => self.call(self.clone().specifier(ty)).await,
+                        SpirvTypeParameter::Type(ty) => {
+                            self.call(self.clone().specifier(&ty.node)).await
+                        }
                     }
                 }
             }
             _ => {}
         }
         if let Some(parameters) = &specifier.parameters {
-            if let Some(element) = &parameters.element {
-                self.call(self.clone().specifier(element)).await;
+            if let Some(element) = &parameters.node.element {
+                self.call(self.clone().specifier(&element.node)).await;
             }
-            for value in &parameters.values {
+            for value in &parameters.node.values {
                 self.call(self.clone().expression(value)).await;
             }
         }
@@ -154,18 +157,20 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn fully_specified(self, ty: &'a Spanned<FullySpecifiedType>) {
-        if let Some(qualifier) = &ty.qualifier {
+        if let Some(qualifier) = &ty.node.qualifier {
             self.call(self.clone().qualifier(qualifier)).await;
         }
-        self.call(self.clone().specifier(&ty.specifier)).await;
+        self.call(self.clone().specifier(&ty.node.specifier.node))
+            .await;
     }
 
     async fn prototype(self, prototype: &'a FunctionPrototype) {
         self.call(self.clone().fully_specified(&prototype.return_type))
             .await;
         for parameter in &prototype.parameters {
-            self.call(self.clone().fully_specified(&parameter.ty)).await;
-            self.call(self.clone().array(parameter.array.as_ref()))
+            self.call(self.clone().fully_specified(&parameter.kind.ty))
+                .await;
+            self.call(self.clone().array(parameter.kind.array.as_ref()))
                 .await;
         }
         for attribute in prototype
@@ -186,7 +191,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             }
             Initializer::List(items) => {
                 for item in items {
-                    self.call(self.clone().initializer(item)).await;
+                    self.call(self.clone().initializer(&item.node)).await;
                 }
             }
         }
@@ -195,15 +200,15 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn declaration(self, declaration: &'a Declaration) {
         match &declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
-                self.call(self.clone().prototype(prototype)).await
+                self.call(self.clone().prototype(&prototype.node)).await
             }
             DeclarationKind::InitDeclaratorList(list) => {
                 self.call(self.clone().fully_specified(&list.ty)).await;
                 for declarator in &list.declarators {
-                    self.call(self.clone().array(declarator.array.as_ref()))
+                    self.call(self.clone().array(declarator.kind.array.as_ref()))
                         .await;
-                    if let Some(initializer) = &declarator.initializer {
-                        self.call(self.clone().initializer(initializer)).await;
+                    if let Some(initializer) = &declarator.kind.initializer {
+                        self.call(self.clone().initializer(&initializer.node)).await;
                     }
                 }
             }
@@ -216,7 +221,8 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                     .await;
                 self.call(self.clone().members(&structure.members)).await;
                 if let Some(instance) = instance {
-                    self.call(self.clone().array(instance.array.as_ref())).await;
+                    self.call(self.clone().array(instance.node.array.as_ref()))
+                        .await;
                 }
             }
             DeclarationKind::Qualifier(qualifier)
@@ -224,11 +230,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 self.call(self.clone().qualifier(qualifier)).await
             }
             DeclarationKind::SpirvInstruction { prototype, .. } => {
-                self.call(self.clone().prototype(prototype)).await
+                self.call(self.clone().prototype(&prototype.node)).await
             }
             DeclarationKind::SpirvExecutionMode(mode) => {
-                if mode.kind == SpirvExecutionModeKind::Id {
-                    for operand in &mode.operands {
+                if mode.node.kind == SpirvExecutionModeKind::Id {
+                    for operand in &mode.node.operands {
                         self.call(self.clone().expression(operand)).await;
                     }
                 }
@@ -242,9 +248,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 self.call(self.clone().expression(expression)).await
             }
             Condition::Declaration(declaration) => {
-                self.call(self.clone().fully_specified(&declaration.ty))
+                self.call(self.clone().fully_specified(&declaration.kind.ty))
                     .await;
-                self.call(self.clone().initializer(&declaration.initializer))
+                self.call(self.clone().initializer(&declaration.kind.initializer.node))
                     .await;
             }
         }
