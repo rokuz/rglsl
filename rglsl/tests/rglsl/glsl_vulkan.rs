@@ -3158,6 +3158,48 @@ fn default_writer_options_keep_vulkan_glsl_semantics() {
 }
 
 #[test]
+fn statement_operands_are_counted_and_their_results_stay_non_uniform() -> crate::TestResult {
+    let module = parse(
+        ShaderStage::Compute,
+        r#"#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) buffer B { uint counter; uint seen; };
+void main() {
+    uint first = atomicAdd(counter, 1u);
+    uint i = 0u;
+    do { i += first; } while (i < 8u);
+    seen = i;
+}
+"#,
+    )?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let entry = module.entry_points.first().ok_or("no entry point")?;
+    let function = info.get_entry_point(0);
+    let mut atomics = 0;
+    for (handle, expression) in entry.function.expressions.iter() {
+        let expression_info = &function[handle];
+        if matches!(*expression, rglsl::Expression::AtomicResult { .. }) {
+            atomics += 1;
+            assert!(expression_info.uniformity.non_uniform_result.is_some());
+        }
+        let used = entry
+            .function
+            .body
+            .walk()
+            .any(|statement| match *statement {
+                rglsl::Statement::Atomic { value, .. } => value == handle,
+                rglsl::Statement::Loop { break_if, .. } => break_if == Some(handle),
+                _ => false,
+            });
+        if used {
+            assert!(expression_info.ref_count > 0, "{expression:?}");
+        }
+    }
+    assert_eq!(atomics, 1);
+    Ok(())
+}
+
+#[test]
 fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 1) in;

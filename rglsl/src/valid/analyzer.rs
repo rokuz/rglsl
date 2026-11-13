@@ -417,16 +417,16 @@ impl FunctionInfo {
     fn add_location_ref(&mut self, location: &crate::AtomicLocation, global_use: GlobalUse) {
         match *location {
             crate::AtomicLocation::Pointer(pointer) => {
-                let _ = self.add_ref_impl(pointer, global_use);
+                self.add_operand_ref(pointer, global_use);
             }
             crate::AtomicLocation::Texel(texel) => {
-                let _ = self.add_ref_impl(texel.image, GlobalUse::ATOMIC);
-                let _ = self.add_ref(texel.coordinate);
+                self.add_operand_ref(texel.image, GlobalUse::ATOMIC);
+                self.add_operand_ref(texel.coordinate, GlobalUse::READ);
                 if let Some(expr) = texel.array_index {
-                    let _ = self.add_ref(expr);
+                    self.add_operand_ref(expr, GlobalUse::READ);
                 }
                 if let Some(expr) = texel.sample {
-                    let _ = self.add_ref(expr);
+                    self.add_operand_ref(expr, GlobalUse::READ);
                 }
             }
         }
@@ -445,13 +445,17 @@ impl FunctionInfo {
         expr: Handle<crate::Expression>,
         global_use: GlobalUse,
     ) -> NonUniformResult {
+        self.add_operand_ref(expr, global_use);
+        self.expressions[expr.index()].uniformity.non_uniform_result
+    }
+
+    fn add_operand_ref(&mut self, expr: Handle<crate::Expression>, global_use: GlobalUse) {
         let info = &mut self.expressions[expr.index()];
         info.ref_count += 1;
         // Record usage if this expression may access a global
         if let Some(global) = info.assignable_global {
             self.global_uses[global.index()] |= global_use;
         }
-        info.uniformity.non_uniform_result
     }
 
     /// Note an entry point's use of `global` not recorded by [`ModuleInfo::process_function`].
@@ -1331,7 +1335,7 @@ impl FunctionInfo {
                         }
                         Some(body) => {
                             if let Some(expr) = break_if {
-                                let _ = self.add_ref(expr);
+                                self.add_operand_ref(expr, GlobalUse::READ);
                             }
                             returned = Some(body | uniformity);
                         }
@@ -1489,7 +1493,7 @@ impl FunctionInfo {
                 exit: ExitFlags::empty(),
             },
             S::WorkGroupUniformLoad { pointer, .. } => {
-                let _condition_nur = self.add_ref(pointer);
+                self.add_operand_ref(pointer, GlobalUse::READ);
 
                 // Don't check that this call occurs in uniform control flow until rglsl implements WGSL's standard
                 // uniformity analysis (https://github.com/gfx-rs/naga/issues/1744).
@@ -1532,8 +1536,8 @@ impl FunctionInfo {
             // and their results do not affect the function return value,
             // so we can ignore their non-uniformity.
             S::Store { pointer, value } => {
-                let _ = self.add_ref_impl(pointer, GlobalUse::WRITE);
-                let _ = self.add_ref(value);
+                self.add_operand_ref(pointer, GlobalUse::WRITE);
+                self.add_operand_ref(value, GlobalUse::READ);
                 FunctionUniformity::new()
             }
             S::TensorWrite {
@@ -1542,19 +1546,19 @@ impl FunctionInfo {
                 value,
                 ..
             } => {
-                let _ = self.add_ref_impl(tensor, GlobalUse::WRITE);
-                let _ = self.add_ref(coordinates);
-                let _ = self.add_ref(value);
+                self.add_operand_ref(tensor, GlobalUse::WRITE);
+                self.add_operand_ref(coordinates, GlobalUse::READ);
+                self.add_operand_ref(value, GlobalUse::READ);
                 FunctionUniformity::new()
             }
             S::SpirvInstruction { ref operands, .. } => {
                 for operand in operands {
                     match *operand {
                         crate::SpirvOperand::Value(value) => {
-                            let _ = self.add_ref(value);
+                            self.add_operand_ref(value, GlobalUse::READ);
                         }
                         crate::SpirvOperand::Pointer(pointer) => {
-                            let _ = self.add_ref_impl(pointer, GlobalUse::READ);
+                            self.add_operand_ref(pointer, GlobalUse::READ);
                         }
                         crate::SpirvOperand::Literal(_) => {}
                     }
@@ -1569,12 +1573,12 @@ impl FunctionInfo {
                 level,
                 value,
             } => {
-                let _ = self.add_ref_impl(image, GlobalUse::WRITE);
+                self.add_operand_ref(image, GlobalUse::WRITE);
                 for expr in array_index.into_iter().chain(sample).chain(level) {
-                    let _ = self.add_ref(expr);
+                    self.add_operand_ref(expr, GlobalUse::READ);
                 }
-                let _ = self.add_ref(coordinate);
-                let _ = self.add_ref(value);
+                self.add_operand_ref(coordinate, GlobalUse::READ);
+                self.add_operand_ref(value, GlobalUse::READ);
                 FunctionUniformity::new()
             }
             S::Call {
@@ -1587,7 +1591,7 @@ impl FunctionInfo {
                         crate::Expression::GlobalVariable(_) => GlobalUse::QUERY,
                         _ => GlobalUse::READ,
                     };
-                    let _ = self.add_ref_impl(argument, usage);
+                    self.add_operand_ref(argument, usage);
                 }
                 let info = &other_functions[function.index()];
                 //Note: the result is validated by the Validator, not here
@@ -1600,10 +1604,10 @@ impl FunctionInfo {
                 result: _,
                 order: _,
             } => {
-                let _ = self.add_ref_impl(pointer, GlobalUse::READ | GlobalUse::WRITE);
-                let _ = self.add_ref(value);
+                self.add_operand_ref(pointer, GlobalUse::READ | GlobalUse::WRITE);
+                self.add_operand_ref(value, GlobalUse::READ);
                 if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
-                    let _ = self.add_ref(cmp);
+                    self.add_operand_ref(cmp, GlobalUse::READ);
                 }
                 FunctionUniformity::new()
             }
@@ -1617,17 +1621,17 @@ impl FunctionInfo {
                 result: _,
                 order: _,
             } => {
-                let _ = self.add_ref_impl(image, GlobalUse::ATOMIC);
-                let _ = self.add_ref(coordinate);
+                self.add_operand_ref(image, GlobalUse::ATOMIC);
+                self.add_operand_ref(coordinate, GlobalUse::READ);
                 if let Some(expr) = array_index {
-                    let _ = self.add_ref(expr);
+                    self.add_operand_ref(expr, GlobalUse::READ);
                 }
                 if let crate::AtomicFunction::Exchange { compare: Some(cmp) } = *fun {
-                    let _ = self.add_ref(cmp);
+                    self.add_operand_ref(cmp, GlobalUse::READ);
                 }
-                let _ = self.add_ref(value);
+                self.add_operand_ref(value, GlobalUse::READ);
                 if let Some(expr) = sample {
-                    let _ = self.add_ref(expr);
+                    self.add_operand_ref(expr, GlobalUse::READ);
                 }
                 FunctionUniformity::new()
             }
@@ -1645,13 +1649,13 @@ impl FunctionInfo {
                 order: _,
             } => {
                 self.add_location_ref(location, GlobalUse::WRITE);
-                let _ = self.add_ref(value);
+                self.add_operand_ref(value, GlobalUse::READ);
                 FunctionUniformity::new()
             }
             S::RayQuery { query, ref fun } => {
-                let _ = self.add_ref(query);
+                self.add_operand_ref(query, GlobalUse::READ);
                 for operand in fun.operands() {
-                    let _ = self.add_ref(operand);
+                    self.add_operand_ref(operand, GlobalUse::READ);
                 }
                 FunctionUniformity::new()
             }
@@ -1660,7 +1664,7 @@ impl FunctionInfo {
                 predicate,
             } => {
                 if let Some(predicate) = predicate {
-                    let _ = self.add_ref(predicate);
+                    self.add_operand_ref(predicate, GlobalUse::READ);
                 }
                 FunctionUniformity::new()
             }
@@ -1671,9 +1675,9 @@ impl FunctionInfo {
                 result: _,
             } => {
                 if let Some(ballot) = collective_op.partition() {
-                    let _ = self.add_ref(ballot);
+                    self.add_operand_ref(ballot, GlobalUse::READ);
                 }
-                let _ = self.add_ref(argument);
+                self.add_operand_ref(argument, GlobalUse::READ);
                 FunctionUniformity::new()
             }
             S::SubgroupGather {
@@ -1681,15 +1685,15 @@ impl FunctionInfo {
                 argument,
                 result: _,
             } => {
-                let _ = self.add_ref(argument);
+                self.add_operand_ref(argument, GlobalUse::READ);
                 if let Some(index) = mode.index() {
-                    let _ = self.add_ref(index);
+                    self.add_operand_ref(index, GlobalUse::READ);
                 }
                 FunctionUniformity::new()
             }
             S::SubgroupFunction { ref fun, result: _ } => {
                 for operand in fun.operands().into_iter().flatten() {
-                    let _ = self.add_ref(operand);
+                    self.add_operand_ref(operand, GlobalUse::READ);
                 }
                 FunctionUniformity::new()
             }
@@ -1705,7 +1709,7 @@ impl FunctionInfo {
                 exit: ExitFlags::empty(),
             },
             S::HitObject { object, ref fun } => {
-                let _ = self.add_ref_impl(object, GlobalUse::READ | GlobalUse::WRITE);
+                self.add_operand_ref(object, GlobalUse::READ | GlobalUse::WRITE);
                 let written = match *fun {
                     crate::HitObjectFunction::TraceRay(ref trace)
                     | crate::HitObjectFunction::TraceReorderExecute { ref trace, .. } => {
@@ -1727,13 +1731,13 @@ impl FunctionInfo {
                     } else {
                         GlobalUse::READ
                     };
-                    let _ = self.add_ref_impl(operand, usage);
+                    self.add_operand_ref(operand, usage);
                 }
                 FunctionUniformity::new()
             }
             S::ReorderThread { hint, bits, .. } => {
-                let _ = self.add_ref(hint);
-                let _ = self.add_ref(bits);
+                self.add_operand_ref(hint, GlobalUse::READ);
+                self.add_operand_ref(bits, GlobalUse::READ);
                 FunctionUniformity::new()
             }
             S::RayPipelineFunction(ref fun) => {
@@ -1750,7 +1754,7 @@ impl FunctionInfo {
                     } else {
                         GlobalUse::READ
                     };
-                    let _ = self.add_ref_impl(operand, usage);
+                    self.add_operand_ref(operand, usage);
                 }
                 if fun.is_terminator() {
                     FunctionUniformity {
@@ -1921,7 +1925,7 @@ impl ModuleInfo {
 
         for (_, expr) in fun.local_variables.iter() {
             if let Some(init) = expr.init {
-                let _ = info.add_ref(init);
+                info.add_operand_ref(init, GlobalUse::READ);
             }
         }
 
