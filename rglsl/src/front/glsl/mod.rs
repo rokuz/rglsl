@@ -13,9 +13,10 @@ To begin, take a look at the documentation for the [`Frontend`].
 
 pub use error::{Error, ErrorKind, IncludeLocation, ParseErrors};
 pub use rglsl_pp::{FileId, Includer, NoIncluder};
-pub use rglsl_sema::ResourceLimits;
+pub use rglsl_sema::{BuiltinTables, FreshTables, ResourceLimits};
 
 use alloc::string::String;
+use alloc::sync::Arc;
 
 use crate::{FastHashMap, Module, ShaderStage};
 
@@ -70,6 +71,7 @@ pub struct Options {
     pub preamble: Option<String>,
     pub export_functions: bool,
     pub limits: ResourceLimits,
+    pub builtin_tables: Arc<dyn BuiltinTables + Send + Sync>,
 }
 
 impl From<ShaderStage> for Options {
@@ -90,6 +92,7 @@ impl From<ShaderStage> for Options {
             preamble: None,
             export_functions: false,
             limits: ResourceLimits::default(),
+            builtin_tables: Arc::new(FreshTables),
         }
     }
 }

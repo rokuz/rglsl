@@ -88,7 +88,7 @@ impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
         self.stack.call(frame)
     }
 
-    pub(super) async fn block_with<T>(self, frame: Call<'b, Result<T>>) -> Result<(Block, T)> {
+    pub(super) async fn block_with<T: 'b>(self, frame: Call<'b, Result<T>>) -> Result<(Block, T)> {
         let outer = self.with(|this| this.open_block())?;
         let result = frame.await;
         let mut value = None;

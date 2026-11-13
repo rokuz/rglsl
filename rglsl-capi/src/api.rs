@@ -110,6 +110,9 @@ pub struct CompileOptions {
 pub struct ProgramOptions(rglsl_link::ProgramOptions);
 
 #[derive(Debug)]
+pub struct Compiler(rglsl_link::Compiler);
+
+#[derive(Debug)]
 pub struct Object(ObjectModule);
 
 #[derive(Debug)]
@@ -435,6 +438,26 @@ fn resolve(includer: Includer, request: IncludeRequest<'_>) -> Option<ResolvedIn
     })
 }
 
+fn compiled(
+    compiler: &rglsl_link::Compiler,
+    source: Option<&CStr>,
+    options: Option<&CompileOptions>,
+) -> Result<Object, Failure> {
+    let source = text(source, "source")?;
+    let options = required(options, "options")?;
+    let compiled = match options.includer {
+        Some(includer) => {
+            compiler.compile_with_includer(source, &options.options, &mut |request| {
+                resolve(includer, request)
+            })
+        }
+        None => compiler.compile(source, &options.options),
+    };
+    compiled
+        .map(Object)
+        .map_err(|errors| Failure::new(RGLSL_RESULT_COMPILE_FAILED, &errors))
+}
+
 pub(crate) fn compile(
     source: Option<&CStr>,
     options: Option<&CompileOptions>,
@@ -442,19 +465,23 @@ pub(crate) fn compile(
     diagnostics: Slot<'_, Diagnostics>,
 ) -> ResultCode {
     produce(object, diagnostics, || {
-        let source = text(source, "source")?;
-        let options = required(options, "options")?;
-        let compiled = match options.includer {
-            Some(includer) => {
-                rglsl_link::compile_with_includer(source, &options.options, &mut |request| {
-                    resolve(includer, request)
-                })
-            }
-            None => rglsl_link::compile(source, &options.options),
-        };
-        compiled
-            .map(Object)
-            .map_err(|errors| Failure::new(RGLSL_RESULT_COMPILE_FAILED, &errors))
+        compiled(&rglsl_link::Compiler::new(), source, options)
+    })
+}
+
+pub(crate) fn compiler_create(output: Slot<'_, Compiler>) -> ResultCode {
+    produce(output, None, || Ok(Compiler(rglsl_link::Compiler::new())))
+}
+
+pub(crate) fn compiler_compile(
+    compiler: Option<&Compiler>,
+    source: Option<&CStr>,
+    options: Option<&CompileOptions>,
+    object: Slot<'_, Object>,
+    diagnostics: Slot<'_, Diagnostics>,
+) -> ResultCode {
+    produce(object, diagnostics, || {
+        compiled(&required(compiler, "compiler")?.0, source, options)
     })
 }
 

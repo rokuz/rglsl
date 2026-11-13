@@ -4,6 +4,7 @@ mod limits;
 pub(crate) mod ray;
 mod stages;
 pub(crate) mod subgroup;
+mod tables;
 mod textures;
 mod variables;
 
@@ -18,6 +19,8 @@ use rglsl_ast::ast::BasicType;
 
 pub use limits::ResourceLimits;
 pub use stages::{ALL_STAGE_BITS, StageTables};
+pub(crate) use tables::Prebuilt;
+pub use tables::{BuiltinTables, FreshTables};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
 use crate::types::{ArraySize, Opaque, Type, TypeRegistry};

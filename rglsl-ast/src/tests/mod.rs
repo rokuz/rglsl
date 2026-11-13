@@ -3,6 +3,7 @@ mod deep;
 mod errors;
 mod expressions;
 mod extensions;
+mod lexer;
 mod robustness;
 mod statements;
 mod strings;

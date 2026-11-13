@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod cache;
 mod calls;
 mod compiler;
 mod entry;
@@ -19,9 +20,11 @@ use rglsl::{
     SampleLevel, TypeInner,
 };
 
+pub use cache::BuiltinCache;
 pub use compiler::{
-    CompileOptions, Diagnostic, Diagnostics, Program, ProgramOptions, Severity, StageBinary,
-    compile, compile_and_link, compile_with_includer, link_spirv, read_object, write_object,
+    CompileOptions, Compiler, Diagnostic, Diagnostics, Program, ProgramOptions, Severity,
+    StageBinary, compile, compile_and_link, compile_with_includer, link_spirv, read_object,
+    write_object,
 };
 pub use error::{LinkError, LinkErrors};
 pub use file::{FileError, decode, encode};

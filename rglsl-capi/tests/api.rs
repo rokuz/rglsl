@@ -7,7 +7,7 @@ use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
 
 use rglsl_c::{
-    Blob, CompileOptions, Diagnostics, IncludeResult, Object, Program, ProgramOptions,
+    Blob, CompileOptions, Compiler, Diagnostics, IncludeResult, Object, Program, ProgramOptions,
     RGLSL_ABI_VERSION, RGLSL_RESULT_COMPILE_FAILED, RGLSL_RESULT_INVALID_ARGUMENT,
     RGLSL_RESULT_INVALID_OBJECT, RGLSL_RESULT_LINK_FAILED, RGLSL_RESULT_OK, RGLSL_SEVERITY_ERROR,
     RGLSL_SEVERITY_WARNING, RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX,
@@ -751,6 +751,58 @@ fn indices_out_of_range_are_rejected() -> TestResult {
         );
         assert!(rglsl_c::rglsl_diagnostics_message(warnings, 0).is_null());
     }
+    Ok(())
+}
+
+fn compiler_compile(
+    compiler: *const Compiler,
+    source: &CStr,
+    options: &Owned<CompileOptions>,
+) -> TestResult<Outcome<Object>> {
+    let mut object = ptr::null_mut();
+    let mut diagnostics = ptr::null_mut();
+    let code = unsafe {
+        rglsl_c::rglsl_compiler_compile(
+            compiler,
+            source.as_ptr(),
+            options.as_const(),
+            &raw mut object,
+            &raw mut diagnostics,
+        )
+    };
+    Outcome::new(code, object, rglsl_c::rglsl_object_destroy, diagnostics)
+}
+
+#[test]
+fn a_compiler_compiles_like_rglsl_compile() -> TestResult {
+    let mut compiler = ptr::null_mut();
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_compiler_create(&raw mut compiler) },
+        RGLSL_RESULT_OK
+    );
+    let compiler = Owned::new(compiler, rglsl_c::rglsl_compiler_destroy)?;
+    for _ in 0..2 {
+        for (source, name, stage) in [
+            (VERTEX, c"main.vert", RGLSL_STAGE_VERTEX),
+            (FRAGMENT, c"main.frag", RGLSL_STAGE_FRAGMENT),
+        ] {
+            let options = compile_options(name, stage)?;
+            let shared = compiler_compile(compiler.as_const(), source, &options)?.done()?;
+            let alone = compile(source, &options)?.done()?;
+            assert_eq!(write_object(&shared)?, write_object(&alone)?);
+        }
+    }
+    let options = compile_options(c"broken.frag", RGLSL_STAGE_FRAGMENT)?;
+    let shared = compiler_compile(compiler.as_const(), BROKEN, &options)?.failed()?;
+    assert_eq!(shared, compile(BROKEN, &options)?.failed()?);
+    let (code, text) = compiler_compile(ptr::null(), VERTEX, &options)?.failed()?;
+    assert_eq!(code, RGLSL_RESULT_INVALID_ARGUMENT);
+    assert_eq!(text, "ERROR: invalid argument: compiler is NULL");
+    unsafe { rglsl_c::rglsl_compiler_destroy(ptr::null_mut()) };
+    assert_eq!(
+        unsafe { rglsl_c::rglsl_compiler_create(ptr::null_mut()) },
+        RGLSL_RESULT_INVALID_ARGUMENT
+    );
     Ok(())
 }
 

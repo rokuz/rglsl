@@ -3,7 +3,7 @@ use std::ptr;
 use std::slice;
 
 use crate::api::{
-    self, Blob, CompileOptions, Diagnostics, IncludeResult, Location, Object, Program,
+    self, Blob, CompileOptions, Compiler, Diagnostics, IncludeResult, Location, Object, Program,
     ProgramOptions, ResultCode, Severity, Stage,
 };
 
@@ -224,6 +224,32 @@ pub unsafe extern "C" fn rglsl_compile(
     let object = unsafe { object.as_mut() };
     let diagnostics = unsafe { diagnostics.as_mut() };
     api::compile(source, options, object, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compiler_create(compiler: *mut *mut Compiler) -> ResultCode {
+    api::compiler_create(unsafe { compiler.as_mut() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compiler_destroy(compiler: *mut Compiler) {
+    api::destroy(unsafe { take(compiler) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compiler_compile(
+    compiler: *const Compiler,
+    source: *const c_char,
+    options: *const CompileOptions,
+    object: *mut *mut Object,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let compiler = unsafe { compiler.as_ref() };
+    let source = unsafe { c_str(source) };
+    let options = unsafe { options.as_ref() };
+    let object = unsafe { object.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    api::compiler_compile(compiler, source, options, object, diagnostics)
 }
 
 #[unsafe(no_mangle)]

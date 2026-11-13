@@ -8,7 +8,7 @@ mod api;
 mod ffi;
 
 pub use api::{
-    Blob, CompileOptions, Diagnostics, IncludeResult, Object, Program, ProgramOptions,
+    Blob, CompileOptions, Compiler, Diagnostics, IncludeResult, Object, Program, ProgramOptions,
     RGLSL_ABI_VERSION, RGLSL_RESULT_COMPILE_FAILED, RGLSL_RESULT_INTERNAL_ERROR,
     RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_OBJECT, RGLSL_RESULT_LINK_FAILED,
     RGLSL_RESULT_OK, RGLSL_SEVERITY_ERROR, RGLSL_SEVERITY_WARNING, RGLSL_STAGE_ANY_HIT,

@@ -25,9 +25,7 @@ use crate::ast::{
 };
 use crate::error::{ParseError, ParseErrorKind};
 use crate::extensions::{ExtensionState, Feature};
-use crate::keywords::{
-    is_opaque_type_keyword, is_reserved_word, is_type_keyword, is_unavailable_word,
-};
+use crate::keywords::{WordClass, is_reserved_word, is_unavailable_word};
 use crate::lexer::{Token, TokenKind, tokenize};
 use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
@@ -291,7 +289,7 @@ impl<'a> Parser<'a> {
     }
 
     fn at_word(&self, word: &str) -> bool {
-        matches!(self.peek().kind, TokenKind::Word(found) if found == word)
+        matches!(self.peek().kind, TokenKind::Word(found, _) if found == word)
     }
 
     fn eat(&self, punctuator: &str) -> bool {
@@ -340,7 +338,7 @@ impl<'a> Parser<'a> {
     fn unexpected(&self, expected: &str) -> Box<ParseError> {
         let token = self.peek();
         let found = match token.kind {
-            TokenKind::Word(text) | TokenKind::Number { text, .. } => format!("`{text}`"),
+            TokenKind::Word(text, _) | TokenKind::Number { text, .. } => format!("`{text}`"),
             TokenKind::Punctuator(text) => format!("`{text}`"),
             TokenKind::Directive(_) => String::from("a preprocessor directive"),
             TokenKind::String(_) => String::from("a string literal"),
@@ -386,10 +384,10 @@ impl<'a> Parser<'a> {
     fn identifier(&self) -> Result<Identifier> {
         let token = self.peek();
         match token.kind {
-            TokenKind::Word(word) if is_reserved_word(word) => {
+            TokenKind::Word(word, class) if class.is_reserved() => {
                 Err(self.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span))
             }
-            TokenKind::Word(word) => {
+            TokenKind::Word(word, _) => {
                 self.advance();
                 Ok(Spanned::new(token.span, word.to_owned()))
             }
@@ -430,8 +428,8 @@ impl<'a> Parser<'a> {
         self.struct_scopes.borrow().contains(word)
     }
 
-    fn is_type_name(&self, word: &str) -> bool {
-        is_type_keyword(word)
+    fn is_type_name(&self, word: &str, class: WordClass) -> bool {
+        class.is_type_keyword()
             || self.is_struct_name(word)
             || self.is_spirv_word(word, &[SPIRV_TYPE])
     }
@@ -484,29 +482,27 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_declaration(&self) -> bool {
-        let TokenKind::Word(word) = self.peek().kind else {
+        let TokenKind::Word(word, class) = self.peek().kind else {
             return false;
         };
         if word == NON_UNIFORM && self.at_nth(1, "(") {
             return false;
         }
         if matches!(word, "precision" | "struct" | "layout" | "subroutine")
-            || SingleTypeQualifier::from_keyword(word).is_some()
+            || (class.is_keyword() && SingleTypeQualifier::from_keyword(word).is_some())
             || self.is_spirv_word(word, &SPIRV_QUALIFIERS)
             || self.is_spirv_word(word, &SPIRV_DECLARATIONS)
             || self.is_spirv_word(word, &[SPIRV_TYPE])
         {
             return true;
         }
-        self.is_type_name(word) && matches!(self.token_after_array_specifier(), TokenKind::Word(_))
+        self.is_type_name(word, class)
+            && matches!(self.token_after_array_specifier(), TokenKind::Word(..))
     }
 
-    fn starts_constructor(&self, word: &str) -> bool {
-        if BasicType::from_keyword(word).is_some()
-            || is_opaque_type_keyword(word)
-            || ParameterizedType::from_keyword(word).is_some()
-        {
-            return true;
+    fn starts_constructor(&self, word: &str, class: WordClass) -> bool {
+        if class.is_type_keyword() {
+            return word != "void";
         }
         self.is_struct_name(word)
             && matches!(
@@ -520,11 +516,13 @@ impl<'a> Parser<'a> {
     }
 
     fn is_spirv_word_here(&self, words: &[&str]) -> bool {
-        matches!(self.peek().kind, TokenKind::Word(word) if self.is_spirv_word(word, words))
+        matches!(self.peek().kind, TokenKind::Word(word, _) if self.is_spirv_word(word, words))
     }
 
     fn at_spirv_requirement(&self) -> bool {
-        matches!(self.peek().kind, TokenKind::Word(_)) && self.at_nth(1, "=") && self.at_nth(2, "[")
+        matches!(self.peek().kind, TokenKind::Word(..))
+            && self.at_nth(1, "=")
+            && self.at_nth(2, "[")
     }
 
     fn parse_spirv_requirements(&self) -> Result<Vec<Spanned<SpirvRequirement>>> {
@@ -569,7 +567,7 @@ impl<'a> Parser<'a> {
             let value = self.parse_spirv_token(accepted)?;
             qualifiers.push(self.spanned(start, SpirvInstructionQualifier { name, value }));
             let another = self.at(",")
-                && matches!(self.peek_nth(1).kind, TokenKind::Word(_))
+                && matches!(self.peek_nth(1).kind, TokenKind::Word(..))
                 && self.at_nth(2, "=");
             if !another {
                 break;
@@ -606,10 +604,10 @@ impl<'a> Parser<'a> {
                 })
             }
             (
-                TokenKind::Word(word @ ("true" | "false")),
+                TokenKind::Word(word @ ("true" | "false"), _),
                 SpirvToken::Scalar | SpirvToken::Any | SpirvToken::ScalarOrName,
             ) => ExpressionKind::Bool(word == "true"),
-            (TokenKind::Word(word), SpirvToken::ScalarOrName) if !is_reserved_word(word) => {
+            (TokenKind::Word(word, class), SpirvToken::ScalarOrName) if !class.is_reserved() => {
                 ExpressionKind::Variable(word.to_owned())
             }
             _ => return Err(self.unexpected(accepted.expected())),
@@ -665,7 +663,7 @@ impl<'a> Parser<'a> {
     fn parse_precision_qualifier(&self) -> Result<Spanned<PrecisionQualifier>> {
         let token = self.peek();
         let qualifier = match token.kind {
-            TokenKind::Word(word) => PrecisionQualifier::from_keyword(word),
+            TokenKind::Word(word, _) => PrecisionQualifier::from_keyword(word),
             _ => None,
         };
         match qualifier {
@@ -810,20 +808,22 @@ impl<'a> Parser<'a> {
             return false;
         }
         match self.token_at(self.cursor.get().saturating_add(1)).kind {
-            TokenKind::Word(word) if self.is_type_name(word) => true,
-            TokenKind::Word(word) => self.casts_to_name(word),
+            TokenKind::Word(word, class) if self.is_type_name(word, class) => true,
+            TokenKind::Word(_, class) => self.casts_to_name(class),
             _ => false,
         }
     }
 
-    fn casts_to_name(&self, word: &str) -> bool {
-        if is_reserved_word(word)
+    fn casts_to_name(&self, class: WordClass) -> bool {
+        if class.is_reserved()
             || self.token_at(self.cursor.get().saturating_add(2)).kind != TokenKind::Punctuator(")")
         {
             return false;
         }
         match self.token_at(self.cursor.get().saturating_add(3)).kind {
-            TokenKind::Word(next) => !is_reserved_word(next) || matches!(next, "true" | "false"),
+            TokenKind::Word(next, class) => {
+                !class.is_reserved() || matches!(next, "true" | "false")
+            }
             TokenKind::Number { .. } => true,
             _ => false,
         }
@@ -861,7 +861,7 @@ impl<'a> Parser<'a> {
             TokenKind::String(index) => {
                 ExpressionKind::String(self.string_literal(index, token.span)?)
             }
-            TokenKind::Word(word) => ExpressionKind::Bool(word == "true"),
+            TokenKind::Word(word, _) => ExpressionKind::Bool(word == "true"),
             _ => return Err(self.unexpected("an expression")),
         };
         self.parsed(start, kind)
@@ -1013,7 +1013,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 .declaration(start, DeclarationKind::Qualifier(qualifier))
                 .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
         }
-        let TokenKind::Word(word) = self.peek().kind else {
+        let TokenKind::Word(word, class) = self.peek().kind else {
             return Ok(AfterQualifier::Type(qualifier));
         };
         if self.at_nth(1, "{") && word != "struct" {
@@ -1028,7 +1028,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 .map(|declaration| AfterQualifier::Declaration(Box::new(declaration)));
         }
         let names_follow = self.at_nth(1, ";") || self.at_nth(1, ",");
-        if names_follow && !self.is_type_name(word) {
+        if names_follow && !self.is_type_name(word, class) {
             let mut identifiers = Vec::from([self.identifier()?]);
             while self.eat(",") {
                 identifiers.push(self.identifier()?);
@@ -1263,7 +1263,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut parameters = Vec::new();
         while self.eat(",") {
             let parameter = match self.peek().kind {
-                TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => {
+                TokenKind::Word(word, class)
+                    if word == "struct" || self.is_type_name(word, class) =>
+                {
                     SpirvTypeParameter::Type(Box::new(
                         self.call(self.clone().parse_type_specifier()).await?,
                     ))
@@ -1295,7 +1297,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 specifier,
             },
         );
-        let (name, array) = if matches!(self.peek().kind, TokenKind::Word(_)) {
+        let (name, array) = if matches!(self.peek().kind, TokenKind::Word(..)) {
             (
                 Some(self.identifier()?),
                 self.call(self.clone().parse_array_specifier()).await?,
@@ -1344,7 +1346,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_type_qualifier(self) -> Result<Option<Spanned<TypeQualifier>>> {
         let start = self.start();
         let mut qualifiers = Vec::new();
-        while let TokenKind::Word(word) = self.peek().kind {
+        while let TokenKind::Word(word, _) = self.peek().kind {
             let single_start = self.start();
             let single = if word == "layout" {
                 self.advance();
@@ -1402,7 +1404,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_type_specifier(self) -> Result<Spanned<TypeSpecifier>> {
         let token = self.peek();
-        let TokenKind::Word(word) = token.kind else {
+        let TokenKind::Word(word, _) = token.kind else {
             return Err(self.unexpected("a type"));
         };
         let non_array = self
@@ -1457,9 +1459,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let start = self.start();
         self.expect("<")?;
         let element = match self.peek().kind {
-            TokenKind::Word(word) if word == "struct" || self.is_type_name(word) => Some(Box::new(
-                self.call(self.clone().parse_type_specifier()).await?,
-            )),
+            TokenKind::Word(word, class) if word == "struct" || self.is_type_name(word, class) => {
+                Some(Box::new(
+                    self.call(self.clone().parse_type_specifier()).await?,
+                ))
+            }
             _ => None,
         };
         let mut values = Vec::new();
@@ -1512,7 +1516,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let declarations = self
             .call(self.clone().parse_struct_declaration_list())
             .await?;
-        if let (Some(_), TokenKind::Word(word)) = (&name, name_token.kind) {
+        if let (Some(_), TokenKind::Word(word, _)) = (&name, name_token.kind) {
             self.declare_struct(word);
         }
         Ok(StructSpecifier { name, declarations })
@@ -1613,22 +1617,22 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             TokenKind::Punctuator("{") => {
                 self.call(self.clone().parse_compound_as_statement()).await
             }
-            TokenKind::Word("if") => self.call(self.clone().parse_selection()).await,
-            TokenKind::Word("switch") => self.call(self.clone().parse_switch()).await,
-            TokenKind::Word("case") => self.call(self.clone().parse_case_label()).await,
-            TokenKind::Word("default") => self.parse_default_label(),
-            TokenKind::Word("while") => self.call(self.clone().parse_while()).await,
-            TokenKind::Word("do") => self.call(self.clone().parse_do_while()).await,
-            TokenKind::Word("for") => self.call(self.clone().parse_for()).await,
-            TokenKind::Word("continue") => self.parse_jump(JumpStatement::Continue),
-            TokenKind::Word("break") => self.parse_jump(JumpStatement::Break),
-            TokenKind::Word("discard") => self.parse_jump(JumpStatement::Discard),
-            TokenKind::Word("demote") => self.parse_jump(JumpStatement::Demote),
-            TokenKind::Word("terminateRayEXT") => self.parse_jump(JumpStatement::TerminateRay),
-            TokenKind::Word("ignoreIntersectionEXT") => {
+            TokenKind::Word("if", _) => self.call(self.clone().parse_selection()).await,
+            TokenKind::Word("switch", _) => self.call(self.clone().parse_switch()).await,
+            TokenKind::Word("case", _) => self.call(self.clone().parse_case_label()).await,
+            TokenKind::Word("default", _) => self.parse_default_label(),
+            TokenKind::Word("while", _) => self.call(self.clone().parse_while()).await,
+            TokenKind::Word("do", _) => self.call(self.clone().parse_do_while()).await,
+            TokenKind::Word("for", _) => self.call(self.clone().parse_for()).await,
+            TokenKind::Word("continue", _) => self.parse_jump(JumpStatement::Continue),
+            TokenKind::Word("break", _) => self.parse_jump(JumpStatement::Break),
+            TokenKind::Word("discard", _) => self.parse_jump(JumpStatement::Discard),
+            TokenKind::Word("demote", _) => self.parse_jump(JumpStatement::Demote),
+            TokenKind::Word("terminateRayEXT", _) => self.parse_jump(JumpStatement::TerminateRay),
+            TokenKind::Word("ignoreIntersectionEXT", _) => {
                 self.parse_jump(JumpStatement::IgnoreIntersection)
             }
-            TokenKind::Word("return") => self.call(self.clone().parse_return()).await,
+            TokenKind::Word("return", _) => self.call(self.clone().parse_return()).await,
             TokenKind::Punctuator("[") if self.at_attribute_list() => {
                 self.call(self.clone().parse_attributed()).await
             }
@@ -1641,7 +1645,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let attributes = self.call(self.clone().parse_attribute_list()).await?;
         if !matches!(
             self.peek().kind,
-            TokenKind::Word("if" | "switch" | "while" | "do" | "for")
+            TokenKind::Word("if" | "switch" | "while" | "do" | "for", _)
         ) {
             return Err(self.unexpected("a selection, switch or iteration statement"));
         }
@@ -1661,7 +1665,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut attributes = Vec::new();
         loop {
             let token = self.peek();
-            let TokenKind::Word(word) = token.kind else {
+            let TokenKind::Word(word, _) = token.kind else {
                 return Err(self.unexpected("an attribute"));
             };
             self.advance();
@@ -2008,7 +2012,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let start = self.start();
         self.expect("(")?;
         let name = match self.peek().kind {
-            TokenKind::Word(word) if !self.is_type_name(word) => Some(word),
+            TokenKind::Word(word, class) if !self.is_type_name(word, class) => Some(word),
             _ => None,
         };
         let specifier = match name {
@@ -2119,20 +2123,20 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_primary(self) -> Result<Parsed> {
         let token = self.peek();
         match token.kind {
-            TokenKind::Number { .. } | TokenKind::String(_) | TokenKind::Word("true" | "false") => {
-                self.parse_literal(token)
-            }
+            TokenKind::Number { .. }
+            | TokenKind::String(_)
+            | TokenKind::Word("true" | "false", _) => self.parse_literal(token),
             TokenKind::Punctuator("(") => self.clone().parse_parenthesized().await,
-            TokenKind::Word(NON_UNIFORM) if self.at_nth(1, "(") => {
+            TokenKind::Word(NON_UNIFORM, _) if self.at_nth(1, "(") => {
                 self.clone().parse_non_uniform(token).await
             }
-            TokenKind::Word(word) if self.starts_constructor(word) => {
+            TokenKind::Word(word, class) if self.starts_constructor(word, class) => {
                 self.call(self.clone().parse_constructor()).await
             }
-            TokenKind::Word(word) if !is_reserved_word(word) => {
+            TokenKind::Word(word, class) if !class.is_reserved() => {
                 self.clone().parse_name(token, word).await
             }
-            TokenKind::Word(word) if is_unavailable_word(word) => {
+            TokenKind::Word(word, class) if class.is_unavailable() => {
                 Err(self.error(ParseErrorKind::ReservedWord(word.to_owned()), token.span))
             }
             _ => Err(self.unexpected("an expression")),

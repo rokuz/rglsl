@@ -61,7 +61,7 @@ pub(super) fn parse(
         Mode::Program,
         root,
         includer,
-        &mut library::StageNames::new(options.limits),
+        &mut library::StageNames::new(options),
         false,
         &StageClass::new(options.stage),
     )
@@ -80,7 +80,7 @@ pub(super) fn compile(
         root,
         includer,
         true,
-        &mut library::StageNames::new(options.limits),
+        &mut library::StageNames::new(options),
     )
 }
 
@@ -99,7 +99,7 @@ pub(super) fn analyze(
     if failure.is_some() {
         return None;
     }
-    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    let analysis = analyze_unit(options, &unit, &sema_options(options, text));
     Some(super::Analyzed { unit, analysis })
 }
 
@@ -109,7 +109,7 @@ pub(super) fn library_lowerings(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> usize {
-    let mut names = library::StageNames::new(options.limits);
+    let mut names = library::StageNames::new(options);
     let _ = compile_sharing(options, source, root, includer, true, &mut names);
     names.lowerings
 }
@@ -163,7 +163,7 @@ pub(super) fn compile_library_per_stage(
         root,
         includer,
         false,
-        &mut library::StageNames::new(options.limits),
+        &mut library::StageNames::new(options),
     )
 }
 
@@ -446,7 +446,8 @@ fn lower_parsed(
     let Some((ref unit, ref failure)) = parsed.unit else {
         return Err(Vec::from([internal(Span::UNDEFINED)]).into());
     };
-    let analysis = rglsl_sema::analyze(
+    let analysis = analyze_unit(
+        options,
         unit,
         &rglsl_sema::Options {
             specialize_work_group_size: specialize,
@@ -872,6 +873,10 @@ fn only_version_errors(preprocessed: &rglsl_pp::Preprocessed) -> bool {
         })
 }
 
+fn analyze_unit(options: &Options, unit: &TranslationUnit, sema: &rglsl_sema::Options) -> Analysis {
+    rglsl_sema::analyze_with_tables(unit, sema, &*options.builtin_tables)
+}
+
 fn semantic_errors_before(
     options: &Options,
     preprocessed: &rglsl_pp::Preprocessed,
@@ -882,7 +887,7 @@ fn semantic_errors_before(
     let text = preprocessed.text.as_str();
     class.identifiers(text);
     let (unit, failure) = rglsl_ast::parse_prefix(text);
-    let analysis = rglsl_sema::analyze(&unit, &sema_options(options, text));
+    let analysis = analyze_unit(options, &unit, &sema_options(options, text));
     class.probe.narrow(analysis.stages);
     class.version.set(analysis.version);
     class

@@ -1,4 +1,3 @@
-use alloc::format;
 use alloc::string::String;
 
 use crate::options::Options;
@@ -159,69 +158,73 @@ const DESKTOP: [&str; 152] = [
     "GL_EXT_structured_descriptor_heap",
 ];
 
-fn define(preamble: &mut String, name: &str, value: &str) {
-    preamble.push_str("#define ");
-    preamble.push_str(name);
-    preamble.push(' ');
-    preamble.push_str(value);
-    preamble.push('\n');
+const PROFILE: [&str; 5] = [
+    "GL_core_profile",
+    "GL_EXT_null_initializer",
+    "GL_EXT_subgroup_uniform_control_flow",
+    "GL_EXT_maximal_reconvergence",
+    "GL_FRAGMENT_PRECISION_HIGH",
+];
+
+const GLSL_460: [&str; 5] = [
+    "GL_ARM_tensors",
+    "GL_ARM_tensors_bfloat16",
+    "GL_ARM_tensors_float_e5m2",
+    "GL_ARM_tensors_float_e4m3",
+    "GL_EXT_nontemporal_keyword",
+];
+
+const VULKAN_EXTENSIONS: [&str; 11] = [
+    "GL_EXT_device_group",
+    "GL_EXT_multiview",
+    "GL_NV_shader_sm_builtins",
+    "GL_EXT_texture_offset_non_const",
+    "GL_OVR_multiview",
+    "GL_OVR_multiview2",
+    "GL_EXT_optional_input_attachment_index",
+    "GL_GOOGLE_cpp_style_line_directive",
+    "GL_GOOGLE_include_directive",
+    "GL_KHR_blend_equation_advanced",
+    "GL_EXT_terminate_invocation",
+];
+
+pub(crate) fn macros(
+    version: &Version,
+    options: &Options,
+) -> impl Iterator<Item = (&'static str, u32)> {
+    let glsl_460: &[&str] = if version.number >= 460 {
+        &GLSL_460
+    } else {
+        &[]
+    };
+    DESKTOP
+        .iter()
+        .chain(&PROFILE)
+        .chain(glsl_460)
+        .chain(&VULKAN_EXTENSIONS)
+        .map(|&name| (name, 1))
+        .chain(
+            options
+                .vulkan_client_version
+                .map(|vulkan| ("VULKAN", vulkan)),
+        )
+        .chain(
+            options
+                .stage
+                .map(|stage| (crate::options::macro_name(stage), 1)),
+        )
 }
 
-pub(crate) fn preamble(version: &Version, options: &Options) -> String {
-    let mut preamble = String::new();
-    let glsl_460 = version.number >= 460;
-    for name in DESKTOP {
-        define(&mut preamble, name, "1");
-    }
-    for name in [
-        "GL_core_profile",
-        "GL_EXT_null_initializer",
-        "GL_EXT_subgroup_uniform_control_flow",
-        "GL_EXT_maximal_reconvergence",
-        "GL_FRAGMENT_PRECISION_HIGH",
-    ] {
-        define(&mut preamble, name, "1");
-    }
-    if glsl_460 {
-        for name in [
-            "GL_ARM_tensors",
-            "GL_ARM_tensors_bfloat16",
-            "GL_ARM_tensors_float_e5m2",
-            "GL_ARM_tensors_float_e4m3",
-            "GL_EXT_nontemporal_keyword",
-        ] {
-            define(&mut preamble, name, "1");
-        }
-    }
-    for name in [
-        "GL_EXT_device_group",
-        "GL_EXT_multiview",
-        "GL_NV_shader_sm_builtins",
-        "GL_EXT_texture_offset_non_const",
-        "GL_OVR_multiview",
-        "GL_OVR_multiview2",
-        "GL_EXT_optional_input_attachment_index",
-        "GL_GOOGLE_cpp_style_line_directive",
-        "GL_GOOGLE_include_directive",
-        "GL_KHR_blend_equation_advanced",
-        "GL_EXT_terminate_invocation",
-    ] {
-        define(&mut preamble, name, "1");
-    }
-    if let Some(vulkan) = options.vulkan_client_version {
-        define(&mut preamble, "VULKAN", &format!("{vulkan}"));
-    }
-    if let Some(stage) = options.stage {
-        define(&mut preamble, crate::options::macro_name(stage), "1");
-    }
+pub(crate) fn user_defines(options: &Options) -> String {
+    let mut text = String::new();
     for user in &options.defines {
-        preamble.push_str("#define ");
-        preamble.push_str(&user.name);
+        text.push_str("#define ");
+        text.push_str(&user.name);
         if let Some(value) = &user.value {
-            preamble.push(' ');
-            preamble.push_str(value);
+            text.push(' ');
+            text.push_str(value);
         }
-        preamble.push('\n');
+        text.push('\n');
     }
-    preamble
+    text
 }

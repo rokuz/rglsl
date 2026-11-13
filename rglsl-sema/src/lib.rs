@@ -72,9 +72,12 @@ mod tests;
 pub use analyze::{
     Analysis, Callee, CooperativeCall, DerivativeGroup, ExpressionInfo, FragmentLayout, Interlock,
     MatrixCall, Options, QcomConversion, StageDiagnostic, TensorArmCall, TensorCall, analyze,
-    analyze_library, analyze_with_builtins, layout_stages,
+    analyze_library, analyze_with_builtins, analyze_with_tables, layout_stages,
 };
-pub use builtins::{ALL_STAGE_BITS, BuiltinFunctionId, Builtins, ResourceLimits, StageTables};
+pub use builtins::{
+    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, ResourceLimits,
+    StageTables,
+};
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use rglsl_ast::extensions;
 pub use scope::{FunctionControl, FunctionId, SymbolId};

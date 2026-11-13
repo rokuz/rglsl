@@ -191,3 +191,37 @@ pub fn is_unavailable_word(word: &str) -> bool {
 pub fn is_reserved_word(word: &str) -> bool {
     is_keyword(word) || is_unavailable_word(word)
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WordClass {
+    type_keyword: bool,
+    keyword: bool,
+    unavailable: bool,
+}
+
+impl WordClass {
+    pub(crate) fn of(word: &str) -> Self {
+        let type_keyword = is_type_keyword(word);
+        Self {
+            type_keyword,
+            keyword: type_keyword || is_keyword(word),
+            unavailable: is_unavailable_word(word),
+        }
+    }
+
+    pub(crate) const fn is_type_keyword(self) -> bool {
+        self.type_keyword
+    }
+
+    pub(crate) const fn is_keyword(self) -> bool {
+        self.keyword
+    }
+
+    pub(crate) const fn is_unavailable(self) -> bool {
+        self.unavailable
+    }
+
+    pub(crate) const fn is_reserved(self) -> bool {
+        self.keyword || self.unavailable
+    }
+}

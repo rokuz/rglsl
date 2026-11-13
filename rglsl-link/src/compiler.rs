@@ -1,6 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use rglsl::back::spv;
 use rglsl::front::glsl;
@@ -11,6 +12,7 @@ use rglsl_pp::{
     ResolvedInclude,
 };
 
+use crate::cache::BuiltinCache;
 use crate::{LinkError, Options, file, link_objects_staged, message, validate_object};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,10 +160,11 @@ impl CompileOptions {
         self
     }
 
-    fn frontend(&self) -> glsl::Options {
+    fn frontend(&self, builtin_tables: Arc<BuiltinCache>) -> glsl::Options {
         let defines: FastHashMap<String, String> = self.defines.iter().cloned().collect();
         glsl::Options {
             defines,
+            builtin_tables,
             library: self.stage.is_none(),
             auto_map_bindings: self.auto_map_bindings,
             auto_map_locations: self.auto_map_locations,
@@ -173,8 +176,76 @@ impl CompileOptions {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct Compiler {
+    builtins: Arc<BuiltinCache>,
+}
+
+impl Compiler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn compile(
+        &self,
+        source: &str,
+        options: &CompileOptions,
+    ) -> Result<ObjectModule, Diagnostics> {
+        self.compile_with_includer(source, options, &mut |_| None)
+    }
+
+    pub fn compile_with_includer(
+        &self,
+        source: &str,
+        options: &CompileOptions,
+        resolve: &mut dyn FnMut(IncludeRequest<'_>) -> Option<ResolvedInclude>,
+    ) -> Result<ObjectModule, Diagnostics> {
+        let mut memory = MemoryIncluder::with_include_dirs(options.include_dirs.iter().cloned());
+        for (name, text) in &options.includes {
+            memory.add_file(name, text);
+        }
+        let root = memory.add_file(&options.name, source);
+        let mut includer = ResolvingIncluder {
+            memory,
+            resolve,
+            answers: BTreeMap::new(),
+        };
+        let frontend = options.frontend(Arc::clone(&self.builtins));
+        let mut object = glsl::Frontend::default()
+            .compile_with_includer(&frontend, source, root, &mut includer)
+            .map_err(|errors| parse_diagnostics(&errors, source, &options.name))?;
+        object.name = Some(options.name.clone());
+        validate_object(&object).map_err(|errors| Diagnostics {
+            list: errors
+                .iter()
+                .map(|error| Diagnostic::error(Some(&options.name), error.to_string()))
+                .collect(),
+        })?;
+        Ok(object)
+    }
+
+    pub fn compile_and_link(
+        &self,
+        sources: &[(&str, CompileOptions)],
+        options: &ProgramOptions,
+    ) -> Result<Program, Diagnostics> {
+        let mut objects = Vec::with_capacity(sources.len());
+        let mut errors = Diagnostics::default();
+        for &(source, ref compile_options) in sources {
+            match self.compile(source, compile_options) {
+                Ok(object) => objects.push(object),
+                Err(diagnostics) => errors.list.extend(diagnostics.list),
+            }
+        }
+        if !errors.list.is_empty() {
+            return Err(errors);
+        }
+        link_spirv(&objects, options)
+    }
+}
+
 pub fn compile(source: &str, options: &CompileOptions) -> Result<ObjectModule, Diagnostics> {
-    compile_with_includer(source, options, &mut |_| None)
+    Compiler::new().compile(source, options)
 }
 
 pub fn compile_with_includer(
@@ -182,27 +253,7 @@ pub fn compile_with_includer(
     options: &CompileOptions,
     resolve: &mut dyn FnMut(IncludeRequest<'_>) -> Option<ResolvedInclude>,
 ) -> Result<ObjectModule, Diagnostics> {
-    let mut memory = MemoryIncluder::with_include_dirs(options.include_dirs.iter().cloned());
-    for (name, text) in &options.includes {
-        memory.add_file(name, text);
-    }
-    let root = memory.add_file(&options.name, source);
-    let mut includer = ResolvingIncluder {
-        memory,
-        resolve,
-        answers: BTreeMap::new(),
-    };
-    let mut object = glsl::Frontend::default()
-        .compile_with_includer(&options.frontend(), source, root, &mut includer)
-        .map_err(|errors| parse_diagnostics(&errors, source, &options.name))?;
-    object.name = Some(options.name.clone());
-    validate_object(&object).map_err(|errors| Diagnostics {
-        list: errors
-            .iter()
-            .map(|error| Diagnostic::error(Some(&options.name), error.to_string()))
-            .collect(),
-    })?;
-    Ok(object)
+    Compiler::new().compile_with_includer(source, options, resolve)
 }
 
 struct ResolvingIncluder<'a> {
@@ -407,16 +458,5 @@ pub fn compile_and_link(
     sources: &[(&str, CompileOptions)],
     options: &ProgramOptions,
 ) -> Result<Program, Diagnostics> {
-    let mut objects = Vec::with_capacity(sources.len());
-    let mut errors = Diagnostics::default();
-    for &(source, ref compile_options) in sources {
-        match compile(source, compile_options) {
-            Ok(object) => objects.push(object),
-            Err(diagnostics) => errors.list.extend(diagnostics.list),
-        }
-    }
-    if !errors.list.is_empty() {
-        return Err(errors);
-    }
-    link_spirv(&objects, options)
+    Compiler::new().compile_and_link(sources, options)
 }

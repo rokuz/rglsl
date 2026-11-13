@@ -10,6 +10,7 @@ no_includes = true
 [export.rename]
 "Blob" = "rglsl_blob"
 "CompileOptions" = "rglsl_compile_options"
+"Compiler" = "rglsl_compiler"
 "Diagnostics" = "rglsl_diagnostics"
 "IncludeCallback" = "rglsl_include_callback"
 "IncludeResult" = "rglsl_include_result"

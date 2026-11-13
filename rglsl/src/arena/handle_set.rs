@@ -90,18 +90,16 @@ impl<T> HandleSet<T> {
     /// Removes and returns the numerically largest handle in the set, or `None`
     /// if the set is empty.
     pub fn pop(&mut self) -> Option<Handle<T>> {
-        let members = core::mem::take(&mut self.members);
-        let mut vec = members.into_bit_vec();
-        let result = vec.iter_mut().enumerate().rev().find_map(|(i, mut bit)| {
-            if *bit {
-                *bit = false;
-                Some(i)
-            } else {
-                None
-            }
-        });
-        self.members = bit_set::BitSet::from_bit_vec(vec);
-        result.and_then(Handle::try_from_usize)
+        let storage = self.members.get_ref().storage();
+        let (block, bits) = storage
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|&(_, &bits)| bits != 0)?;
+        let highest = u32::BITS - 1 - bits.leading_zeros();
+        let index = block * u32::BITS as usize + highest as usize;
+        self.members.truncate(index);
+        Handle::try_from_usize(index)
     }
 }
 

@@ -210,6 +210,10 @@ impl StageTables {
         self.version
     }
 
+    pub const fn limits(&self) -> &ResourceLimits {
+        &self.limits
+    }
+
     fn index(stage: ShaderStage) -> usize {
         ShaderStage::ALL
             .iter()

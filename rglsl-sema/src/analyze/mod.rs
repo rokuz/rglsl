@@ -48,7 +48,10 @@ pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
-use crate::builtins::{ALL_STAGE_BITS, BuiltinFunctionId, Builtins, ResourceLimits, StageTables};
+use crate::builtins::{
+    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, Prebuilt,
+    ResourceLimits, StageTables,
+};
 
 use crate::constant::Constant;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -213,7 +216,7 @@ pub use layout_ids::layout_stages;
 pub use ray::is_shader_record;
 
 pub fn analyze(unit: &TranslationUnit, options: &Options) -> Analysis {
-    run(unit, options, None)
+    analyze_with_tables(unit, options, &FreshTables)
 }
 
 pub fn analyze_library(
@@ -239,26 +242,21 @@ pub fn analyze_with_builtins(
     options: &Options,
     builtins: &Arc<Builtins>,
 ) -> Analysis {
-    run(unit, options, Some(builtins))
+    analyze_with_tables(unit, options, &Prebuilt(builtins))
 }
 
-fn run(unit: &TranslationUnit, options: &Options, cached: Option<&Arc<Builtins>>) -> Analysis {
+pub fn analyze_with_tables(
+    unit: &TranslationUnit,
+    options: &Options,
+    tables: &dyn BuiltinTables,
+) -> Analysis {
     let mut diagnostics = Vec::new();
     let version = version_of(unit, &mut diagnostics);
     let effective = match version {
         Some(460) => 460,
         _ => 450,
     };
-    let builtins = match cached {
-        Some(builtins)
-            if builtins.version() == effective
-                && builtins.stage() == options.stage
-                && *builtins.limits() == options.limits =>
-        {
-            Arc::clone(builtins)
-        }
-        _ => Arc::new(Builtins::new(effective, options.stage, &options.limits)),
-    };
+    let builtins = tables.builtins(effective, options.stage, &options.limits);
     let mut analyzer = Analyzer::new(options, builtins, diagnostics);
     analyzer.version = version;
     analyzer.unit(unit);

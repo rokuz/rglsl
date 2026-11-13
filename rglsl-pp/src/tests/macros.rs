@@ -1,8 +1,14 @@
+use alloc::format;
+use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
+use alloc::vec::Vec;
 
 use super::{code, errors, expect_code, first_error, lex, run, run_with, warnings};
-use crate::{Define, DiagnosticKind, Options, Redefinition};
+use crate::lexer::{Events, FileInput, Role, ScanContext};
+use crate::preprocessor::Macro;
+use crate::token::Token;
+use crate::{Define, DiagnosticKind, FileId, Options, Redefinition};
 use rglsl_types::ShaderStage;
 
 #[test]
@@ -344,6 +350,66 @@ fn predefined_macros() {
         },
     );
     assert!(code(&without.text).is_empty());
+}
+
+#[test]
+fn predefined_macros_are_lexed_definitions() {
+    let context = ScanContext {
+        continuation_allowed: true,
+        if_depth: 0,
+        disable_escapes: false,
+    };
+    for value in [0, 1, 7, 100, 450, u32::MAX] {
+        let text = format!("#define NAME {value}\n");
+        let mut input = FileInput::new(FileId(0), Rc::from(text.as_str()), Role::Preamble, 0);
+        let mut events = Events::new();
+        let lexed: Vec<Token> = core::iter::from_fn(|| {
+            let token = input.scan(&context, &mut events);
+            (!token.kind.ends_line()).then_some(token)
+        })
+        .collect();
+        let [_, _, _, ref lexed_value] = *lexed.as_slice() else {
+            panic!("unexpected tokens: {lexed:?}");
+        };
+        let predefined = Macro::integer(value);
+        let [ref token] = *predefined.body else {
+            panic!("unexpected body: {:?}", predefined.body);
+        };
+        assert!(!predefined.function_like && predefined.params.is_empty());
+        assert_eq!(
+            (token.kind, &*token.text, token.value, token.space),
+            (
+                lexed_value.kind,
+                &*lexed_value.text,
+                lexed_value.value,
+                lexed_value.space
+            )
+        );
+    }
+}
+
+#[test]
+fn predefined_macros_cannot_be_redefined_or_undefined() {
+    for source in [
+        "#version 450\n#define GL_core_profile 2\n",
+        "#version 450\n#define VULKAN 101\n",
+    ] {
+        assert!(!errors(&run(source)).is_empty(), "{source}");
+    }
+    let same = Options {
+        preamble: Some(String::from(
+            "#define VULKAN 100\n#define GL_core_profile 1\n",
+        )),
+        ..Options::default()
+    };
+    let result = run_with("#version 450\nint a = VULKAN;\n", &same);
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+    let different = Options {
+        preamble: Some(String::from("#define VULKAN 101\n")),
+        ..Options::default()
+    };
+    let result = run_with("#version 450\nint a = VULKAN;\n", &different);
+    assert!(!errors(&result).is_empty());
 }
 
 #[test]
