@@ -1,8 +1,6 @@
-#![allow(clippy::panic)]
-
+use rglsl::ShaderStage;
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
-use rglsl::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

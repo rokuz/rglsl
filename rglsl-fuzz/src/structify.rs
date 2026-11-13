@@ -8,11 +8,11 @@ use rglsl_ast::ast::{
 use rglsl_sema::Analysis;
 
 use crate::basic;
-use crate::build::{named_type, Builder};
+use crate::build::{Builder, named_type};
 use crate::constants::{
     GLF_STRUCT_REPLACEMENT, STRUCTIFICATION_FIELD_PREFIX, STRUCTIFICATION_STRUCT_PREFIX,
 };
-use crate::fuzzer::{literal_zero_or_one, GenerationParams};
+use crate::fuzzer::{GenerationParams, literal_zero_or_one};
 use crate::injection::choose;
 use crate::job::parse_unit;
 use crate::outline::next_id_with_prefix;
@@ -89,10 +89,10 @@ fn candidates(unit: &TranslationUnit, analysis: &Analysis) -> Vec<Candidate> {
         });
     }
     for (expression, symbol) in &analysis.references {
-        if let Some(index) = by_symbol.get(symbol) {
-            if let Some(candidate) = result.get_mut(*index) {
-                candidate.references.insert(*expression);
-            }
+        if let Some(index) = by_symbol.get(symbol)
+            && let Some(candidate) = result.get_mut(*index)
+        {
+            candidate.references.insert(*expression);
         }
     }
     result

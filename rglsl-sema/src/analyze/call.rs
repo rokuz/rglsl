@@ -3,15 +3,15 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExpressionKind, FunctionCall, FunctionIdentifier, Identifier, TypeSpecifier,
 };
-use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::subgroup;
-use crate::constant::{fold_builtin, Constant, Value};
+use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
 use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
@@ -318,20 +318,20 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         if name == DEBUG_PRINTF || name == ABORT {
             let operands = self.call(self.clone().operands(arguments)).await;
             return self.with(|analyzer| {
-                analyzer.message_call_with(expression, span, name, arguments, operands)
+                analyzer.message_call_with(expression, span, name, arguments, &operands)
             });
         }
         let unknown = self.with(|analyzer| analyzer.scopes.function_levels(name).is_empty());
         if super::cooperative_call::cooperative_function(name) && unknown {
             let operands = self.call(self.clone().operands(arguments)).await;
             return self.with(|analyzer| {
-                analyzer.cooperative_call_with(expression, span, name, arguments, operands)
+                analyzer.cooperative_call_with(expression, span, name, arguments, &operands)
             });
         }
         if super::tensor::tensor_arm_function(name) && unknown {
             let operands = self.call(self.clone().operands(arguments)).await;
             return self.with(|analyzer| {
-                analyzer.tensor_arm_call_with(expression, span, name, arguments, operands)
+                analyzer.tensor_arm_call_with(expression, span, name, arguments, &operands)
             });
         }
         if unknown {
@@ -354,7 +354,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         }
         let operands = self.call(self.clone().operands(arguments)).await;
         self.with(|analyzer| {
-            analyzer.function_call_with(expression, span, name, arguments, operands)
+            analyzer.function_call_with(expression, span, name, arguments, &operands)
         })
     }
 
@@ -369,7 +369,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             .call(self.clone().bare_type_specifier(specifier, span))
             .await;
         let operands = self.call(self.clone().operands(arguments)).await;
-        self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, operands))
+        self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, &operands))
     }
 }
 
@@ -696,7 +696,7 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        operands: Vec<Operand>,
+        operands: &[Operand],
     ) -> Operand {
         if let Some(Lookup::Symbol(id)) = self.lookup_quiet(name) {
             let is_struct = matches!(
@@ -723,7 +723,7 @@ impl Analyzer<'_> {
                     .is_some_and(|function| function.same_parameter_types(&types))
             })
         {
-            return self.long_vector_builtin(expression, span, name, arguments, &operands);
+            return self.long_vector_builtin(expression, span, name, arguments, operands);
         }
         let levels: Vec<Vec<Candidate>> = self
             .scopes
@@ -823,7 +823,7 @@ impl Analyzer<'_> {
             }
         }
         for ((argument, operand), parameter) in
-            arguments.iter().zip(&operands).zip(&function.parameters)
+            arguments.iter().zip(operands).zip(&function.parameters)
         {
             if parameter.direction.is_output() {
                 self.per_vertex_output_check(argument);
@@ -873,10 +873,11 @@ impl Analyzer<'_> {
             if parameter.direction.is_input() {
                 self.record_conversion(argument, &operand.ty, &parameter.ty);
             }
-            if parameter.direction.is_output() && operand.ty != parameter.ty {
-                if let Some(info) = self.expressions.get_mut(&argument.id) {
-                    info.output_conversion = Some(Box::new(parameter.ty.clone()));
-                }
+            if parameter.direction.is_output()
+                && operand.ty != parameter.ty
+                && let Some(info) = self.expressions.get_mut(&argument.id)
+            {
+                info.output_conversion = Some(Box::new(parameter.ty.clone()));
             }
         }
         if is_builtin && !failed {
@@ -888,13 +889,13 @@ impl Analyzer<'_> {
             }
         }
         if is_builtin && !failed {
-            failed = !self.ray_builtin_checks(span, name, &operands);
+            failed = !self.ray_builtin_checks(span, name, operands);
         }
         if is_builtin && !failed {
-            failed = !self.texture_checks(span, name, &operands);
+            failed = !self.texture_checks(span, name, operands);
         }
         if is_builtin && !failed {
-            failed = !self.builtin_checks(span, name, &operands);
+            failed = !self.builtin_checks(span, name, operands);
             let reason = "{} types can only be in uniform block or buffer storage";
             if !self.require_small_arithmetic(
                 span,
@@ -904,7 +905,7 @@ impl Analyzer<'_> {
             ) {
                 failed = true;
             }
-            for operand in &operands {
+            for operand in operands {
                 if !self.require_small_arithmetic(
                     first_argument,
                     &operand.ty,
@@ -916,7 +917,7 @@ impl Analyzer<'_> {
             }
         }
         if is_builtin && !failed && subgroup::is_subgroup_operation(name) {
-            failed = !self.subgroup_checks(span, name, &operands);
+            failed = !self.subgroup_checks(span, name, operands);
         }
         if failed {
             return Operand::error();
@@ -1008,7 +1009,7 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        operands: Vec<Operand>,
+        operands: &[Operand],
     ) -> Operand {
         let abort = name == ABORT;
         let (extension, callee) = if abort {
@@ -1379,27 +1380,27 @@ impl Analyzer<'_> {
             "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
             _ => None,
         };
-        if let Some(index) = offset_index {
-            if let Some(operand) = operands.get(index) {
-                if !operand.constant {
-                    if !self
-                        .extensions
-                        .is_requested("GL_EXT_texture_offset_non_const")
-                    {
-                        return invalid(self, span, "the offset must be a constant expression");
-                    }
-                } else if let Some(constant) = &operand.value {
-                    let limits = &self.options.limits;
-                    let range = i64::from(limits.min_program_texel_offset)
-                        ..=i64::from(limits.max_program_texel_offset);
-                    let outside = constant
-                        .values
-                        .iter()
-                        .filter_map(|value| value.as_i64())
-                        .any(|value| !range.contains(&value));
-                    if outside {
-                        return invalid(self, span, "the offset is out of range");
-                    }
+        if let Some(index) = offset_index
+            && let Some(operand) = operands.get(index)
+        {
+            if !operand.constant {
+                if !self
+                    .extensions
+                    .is_requested("GL_EXT_texture_offset_non_const")
+                {
+                    return invalid(self, span, "the offset must be a constant expression");
+                }
+            } else if let Some(constant) = &operand.value {
+                let limits = &self.options.limits;
+                let range = i64::from(limits.min_program_texel_offset)
+                    ..=i64::from(limits.max_program_texel_offset);
+                let outside = constant
+                    .values
+                    .iter()
+                    .filter_map(|value| value.as_i64())
+                    .any(|value| !range.contains(&value));
+                if outside {
+                    return invalid(self, span, "the offset is out of range");
                 }
             }
         }
@@ -1408,10 +1409,10 @@ impl Analyzer<'_> {
             .is_some_and(|opaque| opaque.shadow);
         if name == "textureGatherOffsets" {
             let index = if shadow { 3 } else { 2 };
-            if let Some(operand) = operands.get(index) {
-                if !operand.constant || operand.specialization {
-                    return invalid(self, span, "the offsets must be constant");
-                }
+            if let Some(operand) = operands.get(index)
+                && (!operand.constant || operand.specialization)
+            {
+                return invalid(self, span, "the offsets must be constant");
             }
         }
         if name.starts_with("textureGather") && !name.contains("Lod") && !shadow {
@@ -1482,7 +1483,7 @@ impl Analyzer<'_> {
         span: Span,
         arguments: &[Expression],
         mut ty: Type,
-        operands: Vec<Operand>,
+        operands: &[Operand],
     ) -> Operand {
         if ty.is_error() || operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
@@ -1499,7 +1500,7 @@ impl Analyzer<'_> {
         };
         if let Some(opaque) = ty.as_opaque() {
             if opaque.kind == OpaqueKind::AccelerationStructure {
-                if !Self::acceleration_structure_constructor(&operands) {
+                if !Self::acceleration_structure_constructor(operands) {
                     return fail(self, &ty, "cannot construct with these arguments");
                 }
                 self.calls
@@ -1509,7 +1510,7 @@ impl Analyzer<'_> {
             if opaque.kind != OpaqueKind::CombinedSampler {
                 return fail(self, &ty, "this type has no constructor");
             }
-            if !self.texture_sampler_constructor(span, opaque, &operands) {
+            if !self.texture_sampler_constructor(span, opaque, operands) {
                 return Operand::error();
             }
             self.calls
@@ -1534,7 +1535,7 @@ impl Analyzer<'_> {
         {
             return fail(self, &ty, "can't convert");
         }
-        if microscaling_conversion(&ty, &operands) {
+        if microscaling_conversion(&ty, operands) {
             return fail(
                 self,
                 &ty,
@@ -1549,7 +1550,7 @@ impl Analyzer<'_> {
                     | TypeKind::CooperativeVector { .. }
             )
         {
-            let operand = self.cooperative_constructor(span, &ty, &operands);
+            let operand = self.cooperative_constructor(span, &ty, operands);
             if !operand.ty.is_error() {
                 self.calls
                     .insert(expression.id, Callee::Constructor(ty.clone()));
@@ -1558,14 +1559,14 @@ impl Analyzer<'_> {
         }
         let numeric =
             !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. });
-        if ty.is_reference() || numeric {
-            if let Some(operand) = self.reference_constructor(span, &ty, &operands) {
-                if !operand.ty.is_error() {
-                    self.calls
-                        .insert(expression.id, Callee::Constructor(ty.clone()));
-                }
-                return operand;
+        if (ty.is_reference() || numeric)
+            && let Some(operand) = self.reference_constructor(span, &ty, operands)
+        {
+            if !operand.ty.is_error() {
+                self.calls
+                    .insert(expression.id, Callee::Constructor(ty.clone()));
             }
+            return operand;
         }
         let any_specialization = operands.iter().any(|operand| operand.specialization);
         let has_scalar = |test: fn(Scalar) -> bool| {
@@ -1643,7 +1644,7 @@ impl Analyzer<'_> {
                             self,
                             &ty,
                             "the arguments are not arrays of the element type",
-                        )
+                        );
                     }
                 }
             }
@@ -1674,7 +1675,7 @@ impl Analyzer<'_> {
         }
         if !element_types.is_empty() {
             if matches!(ty.kind, TypeKind::Struct(_)) {
-                for operand in &operands {
+                for operand in operands {
                     self.require_small_arithmetic(
                         span,
                         &operand.ty,
@@ -1700,8 +1701,7 @@ impl Analyzer<'_> {
                     );
                 }
             }
-            for ((argument, operand), element) in
-                arguments.iter().zip(&operands).zip(&element_types)
+            for ((argument, operand), element) in arguments.iter().zip(operands).zip(&element_types)
             {
                 self.record_conversion(argument, &operand.ty, element);
             }
@@ -1756,7 +1756,7 @@ impl Analyzer<'_> {
         let mut full = false;
         let mut over_full = false;
         let mut matrix_argument = false;
-        for operand in &operands {
+        for operand in operands {
             if operand.ty.is_array() {
                 return fail(self, &ty, "an argument is an array");
             }
@@ -1790,7 +1790,7 @@ impl Analyzer<'_> {
         self.calls
             .insert(expression.id, Callee::Constructor(ty.clone()));
         let value = if constant {
-            self.fold_constructor(&ty, target_scalar, needed, &operands)
+            Self::fold_constructor(&ty, target_scalar, needed, operands)
         } else {
             None
         };
@@ -1802,7 +1802,6 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn fold_constructor(
-        &self,
         ty: &Type,
         scalar: Scalar,
         needed: u32,

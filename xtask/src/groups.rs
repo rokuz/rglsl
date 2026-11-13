@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::corpus::{supported_version, Case, Corpus, Kind, Target, STAGE_EXTENSIONS};
+use crate::corpus::{Case, Corpus, Kind, STAGE_EXTENSIONS, Target, supported_version};
 
 pub const LINK_SUITES: [(&str, &str); 2] = [
     ("Link.FromFile.Vk.cpp", "LinkTestVulkan"),

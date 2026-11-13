@@ -1,9 +1,8 @@
 use crate::scope::QualifierFlags;
 use alloc::string::String;
-use alloc::vec::Vec;
 
-use rglsl_ast::ast::Expression;
 use rglsl_ast::Span;
+use rglsl_ast::ast::Expression;
 
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
@@ -104,16 +103,16 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        operands: Vec<Operand>,
+        operands: &[Operand],
     ) -> Operand {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let call = if name == "tensorSizeARM" {
-            self.tensor_size(span, first_argument, name, &operands)
+            self.tensor_size(span, first_argument, name, operands)
         } else {
-            self.tensor_access(span, first_argument, name, arguments, &operands)
+            self.tensor_access(span, first_argument, name, arguments, operands)
         };
         let Some((call, result)) = call else {
             return Operand::error();

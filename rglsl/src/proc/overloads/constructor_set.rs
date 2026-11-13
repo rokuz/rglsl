@@ -71,8 +71,8 @@ impl ConstructorSet {
 
     /// Return the size of the sole element of `self`.
     pub const fn size(self) -> Option<ConstructorSize> {
-        use ir::VectorSize as Vs;
         use ConstructorSize as Cs;
+        use ir::VectorSize as Vs;
 
         Some(match self {
             ConstructorSet::SCALAR => Cs::Scalar,

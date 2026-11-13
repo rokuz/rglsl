@@ -2,8 +2,8 @@ use alloc::{format, string::String, vec::Vec};
 
 use spirv::Word;
 
-use super::{helpers, Block, Function, Instruction, Writer};
-use crate::{arena::Handle, FastHashMap};
+use super::{Block, Function, Instruction, Writer, helpers};
+use crate::{FastHashMap, arena::Handle};
 
 const MARKER: u32 = u32::MAX;
 const MARK_LOCATION: Word = 0;
@@ -296,13 +296,15 @@ fn parameter_copies(function: &crate::Function) -> FastHashMap<u32, Handle<crate
         match *statement {
             crate::Statement::Emit(_) => {}
             crate::Statement::Store { pointer, value } => {
-                let local = match function.expressions.try_get(pointer) {
-                    Ok(&crate::Expression::LocalVariable(local)) => local,
-                    _ => break,
+                let Ok(&crate::Expression::LocalVariable(local)) =
+                    function.expressions.try_get(pointer)
+                else {
+                    break;
                 };
-                let index = match function.expressions.try_get(value) {
-                    Ok(&crate::Expression::FunctionArgument(index)) => index,
-                    _ => break,
+                let Ok(&crate::Expression::FunctionArgument(index)) =
+                    function.expressions.try_get(value)
+                else {
+                    break;
                 };
                 copies.entry(index).or_insert(local);
             }
@@ -556,15 +558,15 @@ impl Writer {
             let name = self.debug_info_string(&source.name);
             let mut operands = alloc::vec![name];
             let mut continued = Vec::new();
-            if self.debug.source_text {
-                if let Some(ref text) = source.text {
-                    for (position, chunk) in split_text(text).into_iter().enumerate() {
-                        let id = self.debug_info_string(chunk);
-                        if position == 0 {
-                            operands.push(id);
-                        } else {
-                            continued.push(id);
-                        }
+            if self.debug.source_text
+                && let Some(ref text) = source.text
+            {
+                for (position, chunk) in split_text(text).into_iter().enumerate() {
+                    let id = self.debug_info_string(chunk);
+                    if position == 0 {
+                        operands.push(id);
+                    } else {
+                        continued.push(id);
                     }
                 }
             }
@@ -742,11 +744,7 @@ impl Writer {
                     .and_then(|line| usize::try_from(line).ok())
                     .and_then(|line| lengths.get(line))
                     .is_some_and(|&length| position.column <= length);
-                if fits {
-                    position.column
-                } else {
-                    0
-                }
+                if fits { position.column } else { 0 }
             }
             None => position.column,
         };
@@ -775,10 +773,9 @@ impl Writer {
         for (handle, ty) in ir_module.types.iter() {
             if let (Some(name), &crate::TypeInner::Struct { ref members, .. }) =
                 (ty.name.as_deref(), &ty.inner)
+                && !members.is_empty()
             {
-                if !members.is_empty() {
-                    complete_structs.insert(name, handle);
-                }
+                complete_structs.insert(name, handle);
             }
         }
         for (handle, ty) in ir_module.types.iter() {
@@ -1006,8 +1003,9 @@ impl Writer {
         let column = self.debug_uint(0);
         let size = self.debug_uint(0);
         let flags = self.debug_uint(FLAG_IS_PUBLIC);
-        let mut operands =
-            alloc::vec![name_id, tag, source, line, column, unit_id, name_id, size, flags];
+        let mut operands = alloc::vec![
+            name_id, tag, source, line, column, unit_id, name_id, size, flags
+        ];
         operands.extend(member_ids);
         Ok(match reserved {
             Some(id) => {

@@ -5,15 +5,15 @@ use hashbrown::hash_map::Entry;
 use spirv::Word;
 
 use super::{
+    BITS_PER_BYTE, Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType,
+    EntryPointContext, Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction,
+    LocalImageType, LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType,
+    NumericType, Options, PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags,
     helpers::{contains_builtin, global_needs_wrapper, map_storage_class},
-    Block, BlockContext, CachedConstant, CachedExpressions, CooperativeType, EntryPointContext,
-    Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction, LocalImageType,
-    LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType, NumericType, Options,
-    PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags, BITS_PER_BYTE,
 };
 use crate::{
     arena::{Handle, HandleVec, UniqueArena},
-    back::spv::{helpers::BindingDecorations, BindingInfo},
+    back::spv::{BindingInfo, helpers::BindingDecorations},
     proc::{Alignment, TypeResolution},
     valid::{FunctionInfo, ModuleInfo},
 };
@@ -331,7 +331,10 @@ impl Writer {
                         {
                             Some(&cap) => cap,
                             None => {
-                                return Err(Error::MissingCapabilities(what, capabilities.to_vec()))
+                                return Err(Error::MissingCapabilities(
+                                    what,
+                                    capabilities.to_vec(),
+                                ));
                             }
                         }
                     }
@@ -648,16 +651,16 @@ impl Writer {
     /// return an error, unless [`Writer::fake_missing_bindings`] is set.
     pub(super) fn resolve_resource_binding(
         &self,
-        res_binding: &crate::ResourceBinding,
+        res_binding: crate::ResourceBinding,
     ) -> Result<BindingInfo, Error> {
-        match self.binding_map.get(res_binding) {
+        match self.binding_map.get(&res_binding) {
             Some(target) => Ok(*target),
             None if self.fake_missing_bindings => Ok(BindingInfo {
                 descriptor_set: res_binding.group,
                 binding: res_binding.binding,
                 binding_array_size: None,
             }),
-            None => Err(Error::MissingBinding(*res_binding)),
+            None => Err(Error::MissingBinding(res_binding)),
         }
     }
 
@@ -751,10 +754,10 @@ impl Writer {
                 }
                 self.decorate_parameter_memory(argument_id, argument.memory_decorations);
                 let instruction = Instruction::function_parameter(argument_type_id, argument_id);
-                if self.flags.contains(WriterFlags::DEBUG) {
-                    if let Some(ref name) = argument.name {
-                        self.debugs.push(Instruction::name(argument_id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && let Some(ref name) = argument.name
+                {
+                    self.debugs.push(Instruction::name(argument_id, name));
                 }
                 function.parameters.push(FunctionArgument {
                     instruction,
@@ -881,10 +884,10 @@ impl Writer {
         };
 
         let function_id = self.id_gen.next();
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(ref name) = ir_function.name {
-                self.debugs.push(Instruction::name(function_id, name));
-            }
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = ir_function.name
+        {
+            self.debugs.push(Instruction::name(function_id, name));
         }
 
         let function_type = self.get_function_type(lookup_function_type);
@@ -931,10 +934,10 @@ impl Writer {
         for gv in self.global_variables.iter_mut() {
             gv.reset_for_function();
         }
-        if let Some(ref mut iface) = interface {
-            if self.physical_layout.version >= 0x10400 {
-                iface.varying_ids.extend(self.heap_variable_ids());
-            }
+        if let Some(ref mut iface) = interface
+            && self.physical_layout.version >= 0x10400
+        {
+            iface.varying_ids.extend(self.heap_variable_ids());
         }
         for (handle, var) in ir_module.global_variables.iter() {
             if info[handle].is_empty() {
@@ -1034,10 +1037,10 @@ impl Writer {
                     .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
             }
 
-            if context.writer.flags.contains(WriterFlags::DEBUG) {
-                if let Some(ref name) = variable.name {
-                    context.writer.debugs.push(Instruction::name(id, name));
-                }
+            if context.writer.flags.contains(WriterFlags::DEBUG)
+                && let Some(ref name) = variable.name
+            {
+                context.writer.debugs.push(Instruction::name(id, name));
             }
 
             let type_id = context.get_handle_type_id(variable.ty)?;
@@ -2198,7 +2201,7 @@ impl Writer {
                 | crate::TypeInner::RayQuery { .. }
                 | crate::TypeInner::HitObject { .. }
                 | crate::TypeInner::BufferDescriptor { .. } => {
-                    return Err(Error::Validation("a non-aggregate type has no local type"))
+                    return Err(Error::Validation("a non-aggregate type has no local type"));
                 }
             };
 
@@ -2222,10 +2225,10 @@ impl Writer {
             );
         }
 
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(ref name) = ty.name {
-                self.debugs.push(Instruction::name(id, name));
-            }
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = ty.name
+        {
+            self.debugs.push(Instruction::name(id, name));
         }
 
         Ok(id)
@@ -2323,10 +2326,10 @@ impl Writer {
         value: &crate::Literal,
         debug_name: Option<&String>,
     ) {
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(name) = debug_name {
-                self.debugs.push(Instruction::name(id, name));
-            }
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(name) = debug_name
+        {
+            self.debugs.push(Instruction::name(id, name));
         }
         let type_id = self.get_numeric_type_id(NumericType::Scalar(value.scalar()));
         let instruction = match *value {
@@ -2382,7 +2385,7 @@ impl Writer {
     ) -> Result<Word, Error> {
         let handle = match ty {
             LookupType::Local(local) => {
-                return Ok(self.get_local_constant_composite(local, constituent_ids))
+                return Ok(self.get_local_constant_composite(local, constituent_ids));
             }
             LookupType::Handle(handle) => handle,
         };
@@ -2426,10 +2429,10 @@ impl Writer {
         constituent_ids: &[Word],
         debug_name: Option<&String>,
     ) {
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(name) = debug_name {
-                self.debugs.push(Instruction::name(id, name));
-            }
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(name) = debug_name
+        {
+            self.debugs.push(Instruction::name(id, name));
         }
         if let Some(value) = self.replicated_constituent(type_id, constituent_ids) {
             let mut instruction = Instruction::new(spirv::Op::ConstantCompositeReplicateEXT);
@@ -2664,10 +2667,9 @@ impl Writer {
         if self
             .flags
             .contains(WriterFlags::DEBUG | WriterFlags::LABEL_VARYINGS)
+            && let Some(name) = debug_name
         {
-            if let Some(name) = debug_name {
-                self.debugs.push(Instruction::name(id, name));
-            }
+            self.debugs.push(Instruction::name(id, name));
         }
 
         let binding = self.map_binding(ir_module, stage, class, ty, binding)?;
@@ -3240,7 +3242,7 @@ impl Writer {
                     Bi::VertexCount | Bi::Vertices | Bi::PrimitiveCount | Bi::Primitives => {
                         return Err(Error::Validation(
                             "a mesh output built-in is used as a varying",
-                        ))
+                        ));
                     }
                     // ray tracing pipeline
                     Bi::RayInvocationId => BuiltIn::LaunchIdKHR,
@@ -3457,13 +3459,12 @@ impl Writer {
         | crate::AddressSpace::ShaderRecord = global_variable.space
         {
             self.require_ray_tracing()?;
-            if let Some(crate::Binding::Location { location, .. }) = global_variable.io {
-                if self
+            if let Some(crate::Binding::Location { location, .. }) = global_variable.io
+                && self
                     .ray_tracing_features
                     .contains(crate::RayTracingFeatures::PAYLOAD_LOCATIONS)
-                {
-                    self.decorate(id, Decoration::Location, &[location]);
-                }
+            {
+                self.decorate(id, Decoration::Location, &[location]);
             }
         }
 
@@ -3493,10 +3494,10 @@ impl Writer {
             self.decorate(id, Decoration::Volatile, &[]);
         }
 
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(ref name) = global_variable.name {
-                self.debugs.push(Instruction::name(id, name));
-            }
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = global_variable.name
+        {
+            self.debugs.push(Instruction::name(id, name));
         }
 
         let storage_access = match global_variable.space {
@@ -3538,24 +3539,23 @@ impl Writer {
         // and it is failing on 0.
         let mut substitute_inner_type_lookup = None;
         if let Some(ref res_binding) = global_variable.binding {
-            let bind_target = self.resolve_resource_binding(res_binding)?;
+            let bind_target = self.resolve_resource_binding(*res_binding)?;
             self.decorate(id, Decoration::DescriptorSet, &[bind_target.descriptor_set]);
             self.decorate(id, Decoration::Binding, &[bind_target.binding]);
 
-            if let Some(remapped_binding_array_size) = bind_target.binding_array_size {
-                if let crate::TypeInner::BindingArray { base, .. } =
+            if let Some(remapped_binding_array_size) = bind_target.binding_array_size
+                && let crate::TypeInner::BindingArray { base, .. } =
                     ir_module.types[global_variable.ty].inner
-                {
-                    let base_type_id = self.get_handle_type_id(base)?;
-                    let binding_array_type_id = self.get_localtype_id(LocalType::BindingArray {
-                        base_type_id,
-                        size: remapped_binding_array_size,
-                    });
-                    substitute_inner_type_lookup = Some(LookupType::Local(LocalType::Pointer {
-                        base: binding_array_type_id,
-                        class,
-                    }));
-                }
+            {
+                let base_type_id = self.get_handle_type_id(base)?;
+                let binding_array_type_id = self.get_localtype_id(LocalType::BindingArray {
+                    base_type_id,
+                    size: remapped_binding_array_size,
+                });
+                substitute_inner_type_lookup = Some(LookupType::Local(LocalType::Pointer {
+                    base: binding_array_type_id,
+                    class,
+                }));
             }
         };
         if let Some(index) = global_variable.input_attachment_index {
@@ -3633,20 +3633,17 @@ impl Writer {
                 let block_id = self.pointee_type_id(structure_id, class);
                 self.decorate_buffer_block(block_id, global_variable)?;
             }
-            if let Some(structure) = block_struct {
-                if let crate::AddressSpace::Uniform
+            if let Some(structure) = block_struct
+                && let crate::AddressSpace::Uniform
                 | crate::AddressSpace::Storage { .. }
                 | crate::AddressSpace::ShaderRecord
                 | crate::AddressSpace::Immediate = global_variable.space
+            {
+                let block_id = self.get_handle_type_id(structure)?;
+                if self.decorate_buffer_block(block_id, global_variable)?
+                    && let Some(bank) = global_variable.immediate_bank.and_then(|bank| bank.bank)
                 {
-                    let block_id = self.get_handle_type_id(structure)?;
-                    if self.decorate_buffer_block(block_id, global_variable)? {
-                        if let Some(bank) =
-                            global_variable.immediate_bank.and_then(|bank| bank.bank)
-                        {
-                            self.decorate(block_id, Decoration::BankNV, &[bank]);
-                        }
-                    }
+                    self.decorate(block_id, Decoration::BankNV, &[bank]);
                 }
             }
             if substitute_inner_type_lookup.is_some() {
@@ -3665,7 +3662,10 @@ impl Writer {
         Ok(id)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn write_interface_block(
         &mut self,
         ir_module: &crate::Module,
@@ -3777,10 +3777,10 @@ impl Writer {
                 }
                 Some(built_in) => {
                     let mut others = ArrayVec::new();
-                    if let crate::Binding::BuiltIn(ir_built_in) = *binding {
-                        if self.invariant_output(class, ir_built_in) {
-                            others.push(spirv::Decoration::Invariant);
-                        }
+                    if let crate::Binding::BuiltIn(ir_built_in) = *binding
+                        && self.invariant_output(class, ir_built_in)
+                    {
+                        others.push(spirv::Decoration::Invariant);
                     }
                     BindingDecorations::BuiltIn(built_in, others)
                 }
@@ -3866,11 +3866,11 @@ impl Writer {
     ) -> Result<(), Error> {
         use spirv::Decoration;
 
-        if self.flags.contains(WriterFlags::DEBUG) {
-            if let Some(ref name) = member.name {
-                self.debugs
-                    .push(Instruction::member_name(struct_id, index as u32, name));
-            }
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = member.name
+        {
+            self.debugs
+                .push(Instruction::member_name(struct_id, index as u32, name));
         }
 
         if member.relaxed_precision {
@@ -4581,7 +4581,7 @@ pub(super) fn mark_laid_out(
         }
         match types[ty].inner {
             crate::TypeInner::Array { base, .. } | crate::TypeInner::BindingArray { base, .. } => {
-                pending.push(base)
+                pending.push(base);
             }
             crate::TypeInner::Struct { ref members, .. } => {
                 pending.extend(members.iter().map(|member| member.ty));

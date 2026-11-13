@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::reflect::{
-    CooperativeMatrixType, MatrixClass, VectorProduct, COMPONENT_BFLOAT16, COMPONENT_FLOAT_E4M3,
-    COMPONENT_FLOAT_E5M2,
+    COMPONENT_BFLOAT16, COMPONENT_FLOAT_E4M3, COMPONENT_FLOAT_E5M2, CooperativeMatrixType,
+    MatrixClass, VectorProduct,
 };
 use super::requirements::{
-    Need, COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS, COOPERATIVE_MATRIX_WORKGROUP_SCOPE,
+    COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS, COOPERATIVE_MATRIX_WORKGROUP_SCOPE, Need,
 };
 
 const MAX_SPECIALIZED: usize = 6;
@@ -341,7 +341,7 @@ pub fn specialize(
             return Ok(Specialization {
                 values: Vec::new(),
                 needs,
-            })
+            });
         }
         Err(problem) => problem,
     };
@@ -541,9 +541,9 @@ mod tests {
         ];
         assert_eq!(unsupported(&valid, &shapes), None);
         let invalid = [matrix(F32, 1, 8, USE_A)];
-        assert!(unsupported(&invalid, &shapes).is_some_and(
-            |e| e.starts_with("cooperative matrix float32 1x8 MatrixA (Subgroup scope)")
-        ));
+        assert!(unsupported(&invalid, &shapes).is_some_and(|e| {
+            e.starts_with("cooperative matrix float32 1x8 MatrixA (Subgroup scope)")
+        }));
         let unknown = [CooperativeMatrixType {
             rows: None,
             ..matrix(F32, 1, 8, USE_A)
@@ -579,9 +579,11 @@ mod tests {
         };
         let found = specialize(&[workgroup(64, 32, USE_ACCUMULATOR)], &shapes, &limits)?;
         assert!(found.needs.contains(&COOPERATIVE_MATRIX_WORKGROUP_SCOPE));
-        assert!(found
-            .needs
-            .contains(&COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS));
+        assert!(
+            found
+                .needs
+                .contains(&COOPERATIVE_MATRIX_FLEXIBLE_DIMENSIONS)
+        );
         let other = Limits {
             invocations: 32,
             ..limits
@@ -621,8 +623,10 @@ mod tests {
             rows_spec: Some(3),
             ..matrix(F32, 1, 8, USE_A)
         }];
-        assert!(specialize(&hopeless, &shapes, &SUBGROUP)
-            .is_err_and(|e| e.contains("no values of its specialization constants")));
+        assert!(
+            specialize(&hopeless, &shapes, &SUBGROUP)
+                .is_err_and(|e| e.contains("no values of its specialization constants"))
+        );
     }
 
     #[test]

@@ -4,15 +4,15 @@ use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::Expression;
 use rglsl_ast::TranslationUnit;
+use rglsl_ast::ast::Expression;
 
 use super::TestResult;
 use crate::scope::{Direction, Origin, Storage, SymbolKind};
 use crate::types::{ArraySize, Scalar, Type, TypeKind};
 use crate::{
-    analyze, analyze_with_builtins, Analysis, Builtins, Callee, DiagnosticKind, Options,
-    ResourceLimits,
+    Analysis, Builtins, Callee, DiagnosticKind, Options, ResourceLimits, analyze,
+    analyze_with_builtins,
 };
 use rglsl_types::ShaderStage;
 
@@ -472,10 +472,12 @@ void main() {
             Direction::In
         ]
     );
-    assert!(transform
-        .parameters
-        .last()
-        .is_some_and(|bias| bias.qualifiers.flags.contains(QualifierFlags::CONSTANT)));
+    assert!(
+        transform
+            .parameters
+            .last()
+            .is_some_and(|bias| bias.qualifiers.flags.contains(QualifierFlags::CONSTANT))
+    );
     assert!(transform.defined);
     assert!(transform.return_type.is_void());
     Ok(())
@@ -1067,10 +1069,12 @@ fn narrow_transform_feedback_names_the_narrowest_width() -> TestResult {
             "transform feedback of 8-bit components is not supported: Vulkan captures components of at least 32 bits"
         )]
     );
-    assert!(checked
-        .analysis
-        .diagnostics
-        .iter()
-        .all(|diagnostic| diagnostic.kind.waits_for_lowering()));
+    assert!(
+        checked
+            .analysis
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.kind.waits_for_lowering())
+    );
     Ok(())
 }

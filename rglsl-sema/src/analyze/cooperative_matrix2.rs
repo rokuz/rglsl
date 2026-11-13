@@ -2,8 +2,8 @@ use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{Expression, ExpressionKind};
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
@@ -187,7 +187,14 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             });
         }
         self.with(|analyzer| {
-            analyzer.matrix2_function_with(expression, span, name, arguments, references, operands)
+            analyzer.matrix2_function_with(
+                expression,
+                span,
+                name,
+                arguments,
+                &references,
+                &operands,
+            )
         })
     }
 }
@@ -340,7 +347,7 @@ impl Analyzer<'_> {
                                     span,
                                     name,
                                     "the dimension permutation is not a permutation",
-                                )
+                                );
                             }
                         }
                     }
@@ -520,8 +527,8 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        references: Vec<Option<FunctionId>>,
-        operands: Vec<Operand>,
+        references: &[Option<FunctionId>],
+        operands: &[Operand],
     ) -> Operand {
         let ext = name.ends_with("EXT");
         let tensor_memory = matches!(name, "coopMatLoadTensorNV" | "coopMatStoreTensorNV");
@@ -630,12 +637,11 @@ impl Analyzer<'_> {
                 if !valid {
                     return Operand::error();
                 }
-                if load {
-                    if let Some(operand) = operands.first() {
-                        if !self.require_lvalue(first, operand) {
-                            return Operand::error();
-                        }
-                    }
+                if load
+                    && let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 for (argument, decoder) in arguments.iter().skip(functions_start).zip(&decoders) {
                     self.calls.insert(argument.id, Callee::Function(*decoder));
@@ -684,10 +690,10 @@ impl Analyzer<'_> {
                 if failed {
                     return Operand::error();
                 }
-                if let Some(operand) = operands.first() {
-                    if !self.require_lvalue(first, operand) {
-                        return Operand::error();
-                    }
+                if let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 MatrixCall::Transpose { ext }
             }
@@ -798,10 +804,10 @@ impl Analyzer<'_> {
                 if failed {
                     return Operand::error();
                 }
-                if let Some(operand) = operands.first() {
-                    if !self.require_lvalue(first, operand) {
-                        return Operand::error();
-                    }
+                if let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 if let Some(argument) = arguments.get(3) {
                     self.calls.insert(argument.id, Callee::Function(combine));
@@ -888,7 +894,7 @@ impl Analyzer<'_> {
                             "third parameter must match cooperative matrix component type",
                         );
                     }
-                    for (parameter, operand) in parameters.iter().zip(&operands).skip(3) {
+                    for (parameter, operand) in parameters.iter().zip(operands).skip(3) {
                         if operand.ty.as_cooperative_matrix().is_some() {
                             if operand.ty != *source_type {
                                 fail_function(
@@ -919,10 +925,10 @@ impl Analyzer<'_> {
                 if failed {
                     return Operand::error();
                 }
-                if let Some(operand) = operands.first() {
-                    if !self.require_lvalue(first, operand) {
-                        return Operand::error();
-                    }
+                if let Some(operand) = operands.first()
+                    && !self.require_lvalue(first, operand)
+                {
+                    return Operand::error();
                 }
                 if let Some(argument) = arguments.get(2) {
                     self.calls

@@ -6,12 +6,12 @@ use crate::ast::{
     TypeSpecifierNonArray,
 };
 use crate::extensions::{
-    is_known, Extension, ExtensionIssue, ExtensionState, Feature, Request, EXPLICIT_ARITHMETIC,
-    EXPLICIT_ARITHMETIC_EXTENSIONS, KNOWN,
+    EXPLICIT_ARITHMETIC, EXPLICIT_ARITHMETIC_EXTENSIONS, Extension, ExtensionIssue, ExtensionState,
+    Feature, KNOWN, Request, is_known,
 };
-use crate::{parse, ParseErrorKind};
+use crate::{ParseErrorKind, parse};
 
-use super::{expression, rejected, round_trip, unit, TestResult};
+use super::{TestResult, expression, rejected, round_trip, unit};
 
 fn declared_types(source: &str) -> Vec<TypeSpecifierNonArray> {
     unit(source)

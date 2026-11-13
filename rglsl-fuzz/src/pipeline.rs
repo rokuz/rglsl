@@ -89,7 +89,7 @@ pub fn uniform_declarators(unit: &TranslationUnit) -> Result<Vec<UniformDeclarat
             _ => {
                 return Err(Error::Unsupported(String::from(
                     "uniforms with array base types",
-                )))
+                )));
             }
         };
         for declarator in &list.declarators {

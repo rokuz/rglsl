@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use spirv::Op;
 
 use super::{Block, BlockContext, Error, Instruction};
-use crate::{arena::Handle, AddressSpace, Expression, PointerQualifiers, TypeInner};
+use crate::{AddressSpace, Expression, PointerQualifiers, TypeInner, arena::Handle};
 
 fn physical_qualifiers(
     types: &crate::UniqueArena<crate::Type>,
@@ -240,14 +240,17 @@ impl BlockContext<'_> {
                 _ => break,
             }
         }
-        let (mut ty, mut accumulated) =
-            match *self.fun_info[current].ty.inner_with(&self.ir_module.types) {
-                TypeInner::Pointer {
-                    base,
-                    space: AddressSpace::PhysicalStorage { alignment, .. },
-                } => (base, alignment),
-                _ => return None,
-            };
+        let TypeInner::Pointer {
+            base: mut ty,
+            space:
+                AddressSpace::PhysicalStorage {
+                    alignment: mut accumulated,
+                    ..
+                },
+        } = *self.fun_info[current].ty.inner_with(&self.ir_module.types)
+        else {
+            return None;
+        };
         let types = &self.ir_module.types;
         let mut scalar_component = None;
         let mut first_member = false;
@@ -266,10 +269,10 @@ impl BlockContext<'_> {
                     while let TypeInner::Array { base, .. } = types[inner].inner {
                         inner = base;
                     }
-                    if let TypeInner::Matrix { .. } = types[inner].inner {
-                        if let Some(layout) = member.matrix_layout {
-                            accumulated |= layout.stride;
-                        }
+                    if let TypeInner::Matrix { .. } = types[inner].inner
+                        && let Some(layout) = member.matrix_layout
+                    {
+                        accumulated |= layout.stride;
                     }
                     ty = member.ty;
                 }
@@ -307,10 +310,8 @@ impl BlockContext<'_> {
         if let Some(alignment) = self.innermost_pointer_alignment(ty) {
             accumulated |= alignment;
         }
-        if component {
-            if let TypeInner::Vector { scalar, .. } = types[ty].inner {
-                accumulated |= u32::from(scalar.width);
-            }
+        if component && let TypeInner::Vector { scalar, .. } = types[ty].inner {
+            accumulated |= u32::from(scalar.width);
         }
         let alignment = lowest_bit(accumulated);
         if alignment == 0 && first_member {
@@ -362,9 +363,9 @@ impl BlockContext<'_> {
 
     fn member_qualifiers(&self, base: Handle<Expression>, index: u32) -> PointerQualifiers {
         let types = &self.ir_module.types;
-        let pointee = match *self.fun_info[base].ty.inner_with(types) {
-            TypeInner::Pointer { base, .. } => base,
-            _ => return PointerQualifiers::empty(),
+        let TypeInner::Pointer { base: pointee, .. } = *self.fun_info[base].ty.inner_with(types)
+        else {
+            return PointerQualifiers::empty();
         };
         match types[pointee].inner {
             TypeInner::Struct { ref members, .. } => usize::try_from(index)

@@ -3,13 +3,13 @@ use super::reflect::{Scalar, ScalarKind, Slot};
 
 pub const MAX_ULP: u64 = 4;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Comparison {
     Equal { tolerated: usize },
     Differ(Difference),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Difference {
     pub offset: u32,
     pub expected: String,

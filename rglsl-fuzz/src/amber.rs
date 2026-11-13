@@ -45,7 +45,7 @@ pub fn amber_script(job: &ShaderJob) -> Result<String, Error> {
             _ => {
                 return Err(Error::Unsupported(format!(
                     "Amber scripts for {extension} shaders"
-                )))
+                )));
             }
         }
     }

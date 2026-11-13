@@ -1,12 +1,12 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExpressionKind, NumericKind, Spanned, SpirvDecorate, SpirvDecorateKind,
     SpirvExecutionMode, SpirvExecutionModeKind, SpirvInstructionQualifier, SpirvRequirement,
     SpirvStorageClass, SpirvTypeParameter, SpirvTypeSpecifier,
 };
-use rglsl_ast::Span;
 
 use super::expression::literal;
 use super::frames::Cx;
@@ -15,8 +15,8 @@ use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Storage, SymbolKind};
 use crate::spirv::{
-    string_words, value_word, SpirvDecoration, SpirvDecorationOperands, SpirvExecutionModeOperands,
-    SpirvIdOperand, SpirvInstruction, SpirvType, SpirvTypeParameter as TypeParameter,
+    SpirvDecoration, SpirvDecorationOperands, SpirvExecutionModeOperands, SpirvIdOperand,
+    SpirvInstruction, SpirvType, SpirvTypeParameter as TypeParameter, string_words, value_word,
 };
 use crate::types::{Type, TypeKind};
 
@@ -277,7 +277,6 @@ impl Analyzer<'_> {
     }
 
     fn spirv_decorate_with(
-        &mut self,
         decorate: &SpirvDecorate,
         decoration: u32,
         ids: Vec<SpirvIdOperand>,
@@ -422,7 +421,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 }
             }
         }
-        Some(self.with(|analyzer| analyzer.spirv_decorate_with(decorate, decoration, ids)))
+        Some(Analyzer::spirv_decorate_with(decorate, decoration, ids))
     }
 
     pub(crate) async fn spirv_type_specifier(self, specifier: &'b SpirvTypeSpecifier) -> Type {
@@ -433,12 +432,12 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let opcode = instruction.id.filter(|_| instruction.set.is_empty());
         let mut parameters = Vec::new();
         for (index, parameter) in specifier.parameters.iter().enumerate() {
-            if let (Some(opcode), SpirvTypeParameter::Constant(expression)) = (opcode, parameter) {
-                if let Some(value) = integer(expression) {
-                    self.with(|analyzer| {
-                        analyzer.opencl_type_operand(expression.span, opcode, index, value);
-                    });
-                }
+            if let (Some(opcode), SpirvTypeParameter::Constant(expression)) = (opcode, parameter)
+                && let Some(value) = integer(expression)
+            {
+                self.with(|analyzer| {
+                    analyzer.opencl_type_operand(expression.span, opcode, index, value);
+                });
             }
             match parameter {
                 SpirvTypeParameter::Type(ty) => {

@@ -8,7 +8,7 @@ use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::{BlockId, OpaqueKind, TypeKind};
 use rglsl_sema::{Callee, FunctionId, SymbolId};
 
-use super::{semantic, Lowerer, Result};
+use super::{Lowerer, Result, semantic};
 
 pub(super) fn strip(expression: &Expression) -> &Expression {
     let mut current = expression;
@@ -90,9 +90,8 @@ impl<'a> Lowerer<'a> {
                     return None;
                 };
                 let variable = self.variable(instance)?;
-                let id = match variable.ty.kind {
-                    TypeKind::Block(id) => id,
-                    _ => return None,
+                let TypeKind::Block(id) = variable.ty.kind else {
+                    return None;
                 };
                 Some((id, index))
             }
@@ -196,14 +195,14 @@ impl<'a> Lowerer<'a> {
                         *entry = (*entry).max(size);
                     }
                     let (depth, inner) = subscript_chain(&mut chains, strip(base));
-                    if depth > 0 {
-                        if let Some((block, member)) = self.block_member_of(inner) {
-                            let entry = self
-                                .member_dimension_sizes
-                                .entry((block, member, depth))
-                                .or_insert(0);
-                            *entry = (*entry).max(size);
-                        }
+                    if depth > 0
+                        && let Some((block, member)) = self.block_member_of(inner)
+                    {
+                        let entry = self
+                            .member_dimension_sizes
+                            .entry((block, member, depth))
+                            .or_insert(0);
+                        *entry = (*entry).max(size);
                     }
                     let Some(symbol) = symbol else {
                         continue;
@@ -319,10 +318,10 @@ impl<'a> Lowerer<'a> {
                     None => {
                         state.insert(current, true);
                         stack.pop();
-                        if Some(current) != main {
-                            if let Some(definition) = defined.get(&current) {
-                                order.push((current, *definition));
-                            }
+                        if Some(current) != main
+                            && let Some(definition) = defined.get(&current)
+                        {
+                            order.push((current, *definition));
                         }
                     }
                 }

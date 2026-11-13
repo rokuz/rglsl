@@ -5,16 +5,16 @@ use rglsl_ast::ast::NodeId;
 use rglsl_ast::ast::{
     DeclarationKind, Expression as AstExpression, ExternalDeclaration, SpirvExecutionModeKind,
 };
+use rglsl_sema::FunctionId;
 use rglsl_sema::spirv::{
-    value_word, SpirvDecorationOperands as SemaDecorationOperands,
+    SpirvDecorationOperands as SemaDecorationOperands,
     SpirvExecutionModeOperands as SemaModeOperands, SpirvIdOperand, SpirvTypeId,
-    SpirvTypeParameter,
+    SpirvTypeParameter, value_word,
 };
 use rglsl_sema::types::{Type as GlslType, TypeKind};
-use rglsl_sema::FunctionId;
 
 use super::function::FunctionLowerer;
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{
     Expression, Handle, Span, SpirvDecoration, SpirvDecorationOperands, SpirvExecutionMode,
     SpirvExecutionModeOperands, SpirvId, SpirvInstruction, SpirvOperand, SpirvRequirements,
@@ -118,11 +118,11 @@ impl Lowerer<'_> {
             let ExternalDeclaration::Declaration(ref declaration) = *declaration else {
                 continue;
             };
-            if let DeclarationKind::SpirvExecutionMode(ref mode) = declaration.kind {
-                if mode.node.kind == SpirvExecutionModeKind::Id {
-                    for operand in &mode.node.operands {
-                        operands_by_node.insert(operand.id, operand);
-                    }
+            if let DeclarationKind::SpirvExecutionMode(ref mode) = declaration.kind
+                && mode.node.kind == SpirvExecutionModeKind::Id
+            {
+                for operand in &mode.node.operands {
+                    operands_by_node.insert(operand.id, operand);
                 }
             }
         }
@@ -202,32 +202,34 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     return Err(unsupported(
                         "`spirv_type` parameters that are named constants",
                         span,
-                    ))
+                    ));
                 }
                 SpirvTypeParameter::Type(ref parameter) => {
                     let handle = {
                         let frame = self.clone().ir_type(parameter.clone(), span);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                     operands.push(SpirvTypeOperand::Type(handle));
                 }
             }
         }
-        if opcode == OP_TYPE_VECTOR {
-            if let [SpirvTypeOperand::Type(base), SpirvTypeOperand::Literal(count)] = operands[..] {
-                let size = match count {
-                    2 => Some(VectorSize::Bi),
-                    3 => Some(VectorSize::Tri),
-                    4 => Some(VectorSize::Quad),
-                    _ => None,
-                };
-                if let (Some(size), &TypeInner::Scalar(scalar)) = (
-                    size,
-                    &self.with(|this| this.module.types[base].inner.clone())?,
-                ) {
-                    return Ok(TypeInner::Vector { size, scalar });
-                }
+        if opcode == OP_TYPE_VECTOR
+            && let [
+                SpirvTypeOperand::Type(base),
+                SpirvTypeOperand::Literal(count),
+            ] = operands[..]
+        {
+            let size = match count {
+                2 => Some(VectorSize::Bi),
+                3 => Some(VectorSize::Tri),
+                4 => Some(VectorSize::Quad),
+                _ => None,
+            };
+            if let (Some(size), &TypeInner::Scalar(scalar)) = (
+                size,
+                &self.with(|this| this.module.types[base].inner.clone())?,
+            ) {
+                return Ok(TypeInner::Vector { size, scalar });
             }
         }
         Ok(TypeInner::Spirv { opcode, operands })
@@ -289,8 +291,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             {
                 let place = {
                     let frame = self.clone().place(argument);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 if place.boolean || place.spilled {
                     return Err(unsupported(
@@ -314,7 +315,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             return Err(unsupported(
                                 "a swizzle as the argument of a `spirv_by_reference` parameter",
                                 at,
-                            ))
+                            ));
                         }
                     },
                 };
@@ -322,8 +323,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             } else {
                 operands.push(SpirvOperand::Value({
                     let frame = self.clone().rvalue(argument);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?));
             }
         }

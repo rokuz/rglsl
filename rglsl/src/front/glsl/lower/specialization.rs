@@ -4,7 +4,7 @@ use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind, Initializer, S
 use rglsl_sema::types::{SpecializedSize, Type as GlslType};
 
 use super::function::FunctionLowerer;
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{Arena, Expression, Handle, Literal, Override, Scalar, Span, Statement, TypeInner};
 
 const LOCAL_SIZE_IDS: [&str; 3] = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
@@ -244,10 +244,10 @@ impl<'a> Lowerer<'a> {
         if let Some(slot) = self.local_size_overrides.get_mut(index) {
             *slot = Some(handle);
         }
-        if id.is_none() {
-            if let Some(slot) = self.work_group_size_placeholders.get_mut(index) {
-                *slot = Some(handle);
-            }
+        if id.is_none()
+            && let Some(slot) = self.work_group_size_placeholders.get_mut(index)
+        {
+            *slot = Some(handle);
         }
         Ok(Some(handle))
     }
@@ -350,8 +350,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let frame =
                 self.clone()
                     .specialization_of(Specialized::Expression(expression), name, span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -394,8 +393,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         }
         let ir = {
             let frame = self.clone().ir_type(ty.clone(), span);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.module.overrides.append(
@@ -418,8 +416,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         match size {
             SpecializedSize::Constant { symbol, .. } => match {
                 let frame = self.clone().global_ref(symbol, span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }? {
                 GlobalRef::Override(handle) => Ok(handle),
                 _ => Err(internal(span)),
@@ -448,8 +445,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 })??;
                 let handle = {
                     let frame = self.clone().specialization(expression, None, span);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 self.with(|this| this.specialized_sizes.insert(node, handle))?;
                 Ok(handle)

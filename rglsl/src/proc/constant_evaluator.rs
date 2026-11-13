@@ -13,12 +13,12 @@ use core::iter;
 
 use arrayvec::ArrayVec;
 use half::f16;
-use num_traits::{real::Real, One, Zero};
+use num_traits::{One, Zero, real::Real};
 
 use crate::{
-    arena::{Arena, Handle, HandleVec, UniqueArena},
     ArraySize, BinaryOperator, Constant, Expression, Literal, Override, RelationalFunction,
     ScalarKind, Span, Type, TypeInner, UnaryOperator,
+    arena::{Arena, Handle, HandleVec, UniqueArena},
 };
 
 /// A macro that allows dollar signs (`$`) to be emitted by other macros. Useful for generating
@@ -182,7 +182,6 @@ macro_rules! gen_component_wise_extractor {
 
         with_dollar_sign! {
             ($d:tt) => {
-                #[allow(unused)]
                 #[doc = concat!(
                     "A convenience macro for using the same RHS for each [`",
                     stringify!($target),
@@ -283,8 +282,7 @@ enum LiteralVector {
 }
 
 impl LiteralVector {
-    #[allow(clippy::missing_const_for_fn, reason = "MSRV")]
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         match *self {
             LiteralVector::F64(ref v) => v.len(),
             LiteralVector::F32(ref v) => v.len(),
@@ -393,7 +391,6 @@ impl LiteralVector {
         })
     }
 
-    #[allow(dead_code)]
     /// Returns [`ArrayVec`] of [`Literal`]s
     fn to_literal_vec(&self) -> ArrayVec<Literal, { crate::VectorSize::MAX }> {
         macro_rules! decompose_literals {
@@ -421,7 +418,6 @@ impl LiteralVector {
         }
     }
 
-    #[allow(dead_code)]
     /// Puts self into eval's expressions arena and returns handle to it
     fn register_as_evaluated_expr(
         &self,
@@ -453,7 +449,7 @@ impl LiteralVector {
                                             expected: crate::VectorSize::MAX,
                                             actual,
                                         },
-                                    )
+                                    );
                                 }
                             },
                             scalar: lit_vec[0].scalar(),
@@ -803,6 +799,12 @@ pub struct ExpressionKindTracker {
     inner: HandleVec<Expression, ExpressionKind>,
 }
 
+impl Default for ExpressionKindTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExpressionKindTracker {
     pub const fn new() -> Self {
         Self {
@@ -857,7 +859,7 @@ impl ExpressionKindTracker {
             Expression::Compose { ref components, .. } => {
                 let mut expr_type = ExpressionKind::Const;
                 for component in components {
-                    expr_type = expr_type.max(self.type_of(*component))
+                    expr_type = expr_type.max(self.type_of(*component));
                 }
                 expr_type
             }
@@ -877,18 +879,9 @@ impl ExpressionKindTracker {
                 ..
             } => self
                 .type_of(arg)
-                .max(
-                    arg1.map(|arg| self.type_of(arg))
-                        .unwrap_or(ExpressionKind::Const),
-                )
-                .max(
-                    arg2.map(|arg| self.type_of(arg))
-                        .unwrap_or(ExpressionKind::Const),
-                )
-                .max(
-                    arg3.map(|arg| self.type_of(arg))
-                        .unwrap_or(ExpressionKind::Const),
-                ),
+                .max(arg1.map_or(ExpressionKind::Const, |arg| self.type_of(arg)))
+                .max(arg2.map_or(ExpressionKind::Const, |arg| self.type_of(arg)))
+                .max(arg3.map_or(ExpressionKind::Const, |arg| self.type_of(arg))),
             Expression::As { expr, .. } => self.type_of(expr),
             Expression::Select {
                 condition,
@@ -906,7 +899,7 @@ impl ExpressionKindTracker {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ConstantEvaluatorError {
     #[error("internal error: a constant evaluation did not finish")]
     Unfinished,
@@ -1008,11 +1001,11 @@ pub enum ConstantEvaluatorError {
     #[error("Expected boolean vector for condition arg., got something else")]
     SelectConditionNotAVecBool,
     #[error(
-        "Expected same number of vector components between condition, accept, and reject args., got something else",
+        "Expected same number of vector components between condition, accept, and reject args., got something else"
     )]
     SelectConditionVecSizeMismatch,
     #[error(
-        "Expected reject and accept args. to be scalars of vectors of the same type, got something else",
+        "Expected reject and accept args. to be scalars of vectors of the same type, got something else"
     )]
     SelectAcceptRejectTypeMismatch,
     #[error("Cooperative operations can't be constant")]
@@ -1630,11 +1623,10 @@ impl<'a> ConstantEvaluator<'a> {
                 if e1.len() != e2.len() {
                     return None;
                 }
-                let result = match match_literal_vector!(match (e1, e2) => Literal {
+                let Ok(result) = match_literal_vector!(match (e1, e2) => Literal {
                     Float => |e1, e2| { sum_of_products(e1, e2) },
-                }) {
-                    Ok(result) => result,
-                    Err(_) => return None,
+                }) else {
+                    return None;
                 };
                 self.register_evaluated_expr(Expression::Literal(result), span)
             }
@@ -1643,11 +1635,10 @@ impl<'a> ConstantEvaluator<'a> {
                     Ok(e1) => e1,
                     Err(error) => return Some(Err(error)),
                 };
-                let result = match match_literal_vector!(match e1 => Literal {
+                let Ok(result) = match_literal_vector!(match e1 => Literal {
                     Float => |e1| { sum_of_products(e1, e1).sqrt() },
-                }) {
-                    Ok(result) => result,
-                    Err(_) => return None,
+                }) else {
+                    return None;
                 };
                 self.register_evaluated_expr(Expression::Literal(result), span)
             }
@@ -1694,10 +1685,10 @@ impl<'a> ConstantEvaluator<'a> {
             ))
         };
 
-        if matches!(self.behavior, Behavior::Glsl(_)) {
-            if let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span) {
-                return result;
-            }
+        if matches!(self.behavior, Behavior::Glsl(_))
+            && let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span)
+        {
+            return result;
         }
 
         // NOTE: We try to match the declaration order of `MathFunction` here.
@@ -3726,7 +3717,7 @@ impl<'a> ConstantEvaluator<'a> {
                     return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
                 };
                 self.dot_exprs(
-                    vec_components.iter().cloned(),
+                    vec_components.iter().copied(),
                     components.clone().into_iter(),
                     span,
                 )
@@ -3758,8 +3749,8 @@ impl<'a> ConstantEvaluator<'a> {
         let nr = mat_rows as usize;
         let components = (0..nr)
             .map(|r| {
-                let row = flatten.iter().skip(r).step_by(nr).cloned();
-                self.dot_exprs(row, vec_components.iter().cloned(), span)
+                let row = flatten.iter().skip(r).step_by(nr).copied();
+                self.dot_exprs(row, vec_components.iter().copied(), span)
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Expression::Compose { ty, components })
@@ -3809,7 +3800,7 @@ impl<'a> ConstantEvaluator<'a> {
                 .map(|r| {
                     let row = left_flattened.iter().skip(r).step_by(left_nr);
                     let column = right_flattened.iter().skip(c * right_nr).take(right_nr);
-                    self.dot_exprs(row.cloned(), column.cloned(), span)
+                    self.dot_exprs(row.copied(), column.copied(), span)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let expr = Expression::Compose {
@@ -3922,7 +3913,7 @@ impl<'a> ConstantEvaluator<'a> {
                         ref expr @ (Expression::Literal(_)
                         | Expression::Constant(_)
                         | Expression::ZeroValue(_)) => {
-                            results.push(self.register_evaluated_expr(expr.clone(), span)?)
+                            results.push(self.register_evaluated_expr(expr.clone(), span)?);
                         }
                         Expression::Compose { ty, ref components } => {
                             tasks.push(CopyTask::Compose {
@@ -3993,25 +3984,25 @@ impl<'a> ConstantEvaluator<'a> {
         // since we only register one expression at a time, `Compose`
         // expressions can only refer to other expressions, and `ZeroValue`
         // expressions are always okay.
-        if let Expression::Literal(literal) = expr {
-            if !matches!(self.behavior, Behavior::Glsl(_)) {
-                crate::valid::check_literal_value(literal)?;
-            }
+        if let Expression::Literal(literal) = expr
+            && !matches!(self.behavior, Behavior::Glsl(_))
+        {
+            crate::valid::check_literal_value(literal)?;
         }
 
         // Ensure vector composes contain the correct number of components. We
         // do so here when each compose is registered to avoid having to deal
         // with the mess each time the compose is used in another expression.
-        if let Expression::Compose { ty, ref components } = expr {
-            if let TypeInner::Vector { size, scalar: _ } = self.types[ty].inner {
-                let expected = size as usize;
-                let actual = self.vector_compose_flattened_size(components)?;
-                if expected != actual {
-                    return Err(ConstantEvaluatorError::InvalidVectorComposeLength {
-                        expected,
-                        actual,
-                    });
-                }
+        if let Expression::Compose { ty, ref components } = expr
+            && let TypeInner::Vector { size, scalar: _ } = self.types[ty].inner
+        {
+            let expected = size as usize;
+            let actual = self.vector_compose_flattened_size(components)?;
+            if expected != actual {
+                return Err(ConstantEvaluatorError::InvalidVectorComposeLength {
+                    expected,
+                    actual,
+                });
             }
         }
 
@@ -4057,8 +4048,8 @@ impl<'a> ConstantEvaluator<'a> {
         &self,
         expr: Handle<Expression>,
     ) -> Result<crate::proc::TypeResolution, ConstantEvaluatorError> {
-        use crate::proc::TypeResolution as Tr;
         use crate::Expression as Ex;
+        use crate::proc::TypeResolution as Tr;
         let resolution = match self.expressions[expr] {
             Ex::Literal(ref literal) => Tr::Value(literal.ty_inner()),
             Ex::Constant(c) => Tr::Handle(self.constants[c].ty),
@@ -4094,11 +4085,7 @@ impl<'a> ConstantEvaluator<'a> {
         let select_single_component =
             |this: &mut Self, reject_scalar, reject, accept, condition| {
                 let accept = this.cast(accept, reject_scalar, span)?;
-                if condition {
-                    Ok(accept)
-                } else {
-                    Ok(reject)
-                }
+                if condition { Ok(accept) } else { Ok(reject) }
             };
 
         match (&self.expressions[reject], &self.expressions[accept]) {
@@ -4180,7 +4167,7 @@ impl<'a> ConstantEvaluator<'a> {
                                 _ => {
                                     return Err(
                                         ConstantEvaluatorError::SelectAcceptRejectTypeMismatch,
-                                    )
+                                    );
                                 }
                             };
                             select_single_component(self, reject_scalar, reject, accept, condition)
@@ -4242,7 +4229,7 @@ fn first_trailing_bit_smoke() {
         assert_eq!(
             first_trailing_bit(ConcreteInt::I32([1 << idx])),
             ConcreteInt::I32([idx])
-        )
+        );
     }
 
     assert_eq!(
@@ -4269,7 +4256,7 @@ fn first_trailing_bit_smoke() {
         assert_eq!(
             first_trailing_bit(ConcreteInt::U32([1 << idx])),
             ConcreteInt::U32([idx])
-        )
+        );
     }
 }
 
@@ -4356,7 +4343,7 @@ fn first_leading_bit_smoke() {
         assert_eq!(
             first_leading_bit(ConcreteInt::U32([1 << idx])),
             ConcreteInt::U32([idx])
-        )
+        );
     }
 }
 
@@ -4875,7 +4862,7 @@ mod tests {
                 Default::default(),
             );
 
-            vec1_components.push(h)
+            vec1_components.push(h);
         }
 
         for i in 3..6 {
@@ -4884,7 +4871,7 @@ mod tests {
                 Default::default(),
             );
 
-            vec2_components.push(h)
+            vec2_components.push(h);
         }
 
         let vec1 = constants.append(

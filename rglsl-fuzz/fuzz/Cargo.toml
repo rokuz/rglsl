@@ -4,6 +4,7 @@ version.workspace = true
 authors.workspace = true
 publish = false
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 build = "build.rs"
 
@@ -55,11 +56,5 @@ bench = false
 test = false
 doc = false
 
-[lints.clippy]
-disallowed_types = "allow"
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-unreachable = "deny"
-unimplemented = "deny"
-todo = "deny"
+[lints]
+workspace = true

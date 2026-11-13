@@ -2,13 +2,13 @@ use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::InterpolationQualifier;
 use rglsl_ast::Span;
+use rglsl_ast::ast::InterpolationQualifier;
 
 use super::{
-    available, parse_type, words, ResourceLimits, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE,
-    FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS, RAY_GENERATION, TASK, TESS_CONTROL,
-    TESS_EVALUATION, VERTEX,
+    ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE, FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS,
+    RAY_GENERATION, ResourceLimits, TASK, TESS_CONTROL, TESS_EVALUATION, VERTEX, available,
+    parse_type, words,
 };
 
 use crate::constant::{Constant, Value};

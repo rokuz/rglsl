@@ -10,12 +10,12 @@ use rglsl_sema::scope::Direction;
 use rglsl_sema::types::Type as GlslType;
 use rglsl_sema::{FunctionId, SymbolId};
 
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::front::glsl::Error;
 use crate::{
-    proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
     AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, Function, FunctionArgument,
     FunctionResult, Handle, LocalVariable, NonUniform, Span, Statement, TypeInner,
+    proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -504,9 +504,8 @@ impl<'a> Lowerer<'a> {
         ty: &GlslType,
         span: Span,
     ) -> Result<Option<Handle<crate::Type>>> {
-        let size = match *ty.dimensions() {
-            [size @ rglsl_sema::types::ArraySize::Sized(_)] => size,
-            _ => return Ok(None),
+        let [size @ rglsl_sema::types::ArraySize::Sized(_)] = *ty.dimensions() else {
+            return Ok(None);
         };
         let Some(element) = ty
             .element_type()
@@ -850,7 +849,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub(super) const fn global_expression(&mut self, global: GlobalRef) -> Expression {
+    pub(super) const fn global_expression(global: GlobalRef) -> Expression {
         match global {
             GlobalRef::Variable(handle) => Expression::GlobalVariable(handle),
             GlobalRef::Constant(handle) => Expression::Constant(handle),

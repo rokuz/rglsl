@@ -5,6 +5,7 @@ use core::cell::RefCell;
 
 use rglsl_types::stack::run;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, BlockInstance, BlockStructure, Declaration, DeclarationKind,
     Expression, FullySpecifiedType, FunctionDefinition, FunctionPrototype, Identifier,
@@ -12,7 +13,6 @@ use rglsl_ast::ast::{
     ParameterDeclaration, SingleTypeQualifier, Spanned, StorageQualifier, StructDeclaration,
     StructSpecifier, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::heap::is_heap_storage;
@@ -173,7 +173,7 @@ impl Analyzer<'_> {
                             DiagnosticKind::UndeclaredIdentifier(identifier.node.clone()),
                         ),
                         Some(Some(id)) if qualifiers.flags.contains(QualifierFlags::PRECISE) => {
-                            self.make_precise(id)
+                            self.make_precise(id);
                         }
                         Some(_) => {}
                     }
@@ -228,17 +228,16 @@ impl Analyzer<'_> {
         if qualifiers.storage == Storage::Out {
             self.resize_mesh_arrays(qualifier.span);
         }
-        if qualifiers.storage == Storage::Out {
-            if let Some(vertices) = qualifiers
+        if qualifiers.storage == Storage::Out
+            && let Some(vertices) = qualifiers
                 .layout_entry("vertices")
                 .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
-            {
-                if self.stage_is(ShaderStage::TessControl) && self.output_array_size.is_none() {
-                    self.output_array_size = Some(vertices);
-                    self.resize_interface_arrays(qualifier.span, Storage::Out, vertices);
-                }
-            }
+            && self.stage_is(ShaderStage::TessControl)
+            && self.output_array_size.is_none()
+        {
+            self.output_array_size = Some(vertices);
+            self.resize_interface_arrays(qualifier.span, Storage::Out, vertices);
         }
         if qualifiers.storage != Storage::In {
             return;
@@ -628,7 +627,7 @@ impl Analyzer<'_> {
                 }
             }
             SingleTypeQualifier::SpirvByReference => {
-                result.flags.insert(QualifierFlags::SPIRV_BY_REFERENCE)
+                result.flags.insert(QualifierFlags::SPIRV_BY_REFERENCE);
             }
             SingleTypeQualifier::SpirvLiteral => result.flags.insert(QualifierFlags::SPIRV_LITERAL),
             SingleTypeQualifier::Layout(_) | SingleTypeQualifier::SpirvDecorate(_) => {}
@@ -1066,7 +1065,6 @@ impl Analyzer<'_> {
         qualifiers
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn typed_member(
         &mut self,
         declarator: &Spanned<rglsl_ast::ast::StructDeclarator>,
@@ -1595,7 +1593,7 @@ impl Analyzer<'_> {
             self.shader_record_checks(name.span, &qualifiers, false);
             self.ray_variable_checks(name.span, &qualifiers);
         }
-        if self.is_ray_query(&ty) && initializer.is_some() {
+        if Self::is_ray_query(&ty) && initializer.is_some() {
             self.error(
                 name.span,
                 DiagnosticKind::RayQueryInitializer(name.node.clone()),
@@ -1610,7 +1608,7 @@ impl Analyzer<'_> {
         );
         if hit_object {
             qualifiers.storage = Storage::None;
-        } else if qualifiers.storage == Storage::TileImage || self.is_tile_image(&ty) {
+        } else if qualifiers.storage == Storage::TileImage || Self::is_tile_image(&ty) {
             self.tile_image_declaration(name.span, &qualifiers, &ty);
         } else if qualifiers.storage != Storage::Uniform && self.opaque_outside_uniform(&ty) {
             self.error(name.span, DiagnosticKind::OpaqueNotAllowed(self.show(&ty)));
@@ -1893,10 +1891,10 @@ impl Analyzer<'_> {
             self.declarations.insert(declarator.id, builtin);
             if let Some(SymbolKind::Variable(variable)) =
                 self.symbol_mut(builtin).map(|symbol| &mut symbol.kind)
+                && variable.ty.kind == ty.kind
+                && ty.is_array()
             {
-                if variable.ty.kind == ty.kind && ty.is_array() {
-                    variable.ty = ty;
-                }
+                variable.ty = ty;
             }
             return;
         }
@@ -2450,7 +2448,10 @@ impl Analyzer<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn redeclare_mesh_block(
         &mut self,
         declaration: &Declaration,

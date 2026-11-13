@@ -2,10 +2,10 @@ use alloc::collections::BTreeSet;
 use std::process::Command;
 
 use rglsl::{
+    ShaderStage,
     back::spv,
     front::glsl,
     valid::{Capabilities, ValidationFlags, Validator},
-    ShaderStage,
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op};

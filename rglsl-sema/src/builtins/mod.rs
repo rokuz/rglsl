@@ -7,17 +7,17 @@ pub(crate) mod subgroup;
 mod textures;
 mod variables;
 
-pub use variables::{variable_extension, view_extension};
 pub(crate) use variables::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
+pub use variables::{variable_extension, view_extension};
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::BasicType;
 use rglsl_ast::Span;
+use rglsl_ast::ast::BasicType;
 
 pub use limits::ResourceLimits;
-pub use stages::{StageTables, ALL_STAGE_BITS};
+pub use stages::{ALL_STAGE_BITS, StageTables};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
 use crate::types::{ArraySize, Opaque, Type, TypeRegistry};
@@ -295,10 +295,10 @@ fn generic_scalar(word: &str) -> Option<(&'static str, &'static str)> {
 
 fn shaped(word: &str) -> Option<(&str, &str)> {
     for suffix in ["CxR", "RxC", "C", "R", "N"] {
-        if let Some(stem) = word.strip_suffix(suffix) {
-            if SIZED_STEMS.contains(&stem) {
-                return Some((stem, suffix));
-            }
+        if let Some(stem) = word.strip_suffix(suffix)
+            && SIZED_STEMS.contains(&stem)
+        {
+            return Some((stem, suffix));
         }
     }
     None
@@ -488,7 +488,10 @@ impl Builtins {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn assemble(
         version: u32,
         stage: ShaderStage,

@@ -6,7 +6,7 @@ use core::fmt;
 use core::future::Future;
 use core::ops::Deref;
 
-use rglsl_types::stack::{run, Call, Stack};
+use rglsl_types::stack::{Call, Stack, run};
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, Attribute, CaseLabel, CompoundStatement, Condition,
@@ -198,7 +198,7 @@ impl<'b> Cx<'b> {
             ExternalDeclaration::Directive(directive) => self.write(&directive.node.raw),
             ExternalDeclaration::Semicolon(_) => self.write(";"),
             ExternalDeclaration::Declaration(declaration) => {
-                self.call(self.clone().declaration(declaration)).await
+                self.call(self.clone().declaration(declaration)).await;
             }
             ExternalDeclaration::FunctionDefinition(definition) => {
                 self.call(
@@ -217,10 +217,10 @@ impl<'b> Cx<'b> {
         match &declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
                 self.call(self.clone().function_prototype(&prototype.node))
-                    .await
+                    .await;
             }
             DeclarationKind::InitDeclaratorList(list) => {
-                self.call(self.clone().init_declarator_list(list)).await
+                self.call(self.clone().init_declarator_list(list)).await;
             }
             DeclarationKind::Precision { qualifier, ty } => {
                 self.write("precision ");
@@ -250,7 +250,7 @@ impl<'b> Cx<'b> {
             }
             DeclarationKind::Qualifier(qualifier) => {
                 self.call(self.clone().type_qualifier(&qualifier.node))
-                    .await
+                    .await;
             }
             DeclarationKind::QualifiedIdentifiers {
                 qualifier,
@@ -364,10 +364,10 @@ impl<'b> Cx<'b> {
             self.write(", ");
             match parameter {
                 SpirvTypeParameter::Constant(value) => {
-                    self.call(self.clone().expression(value)).await
+                    self.call(self.clone().expression(value)).await;
                 }
                 SpirvTypeParameter::Type(ty) => {
-                    self.call(self.clone().type_specifier(&ty.node)).await
+                    self.call(self.clone().type_specifier(&ty.node)).await;
                 }
             }
         }
@@ -452,7 +452,7 @@ impl<'b> Cx<'b> {
     async fn initializer(self, initializer: &'b Initializer) {
         match initializer {
             Initializer::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await
+                self.call(self.clone().expression(expression)).await;
             }
             Initializer::List(elements) => {
                 self.write("{");
@@ -536,7 +536,7 @@ impl<'b> Cx<'b> {
                     self.write(")");
                 }
                 SingleTypeQualifier::SpirvDecorate(decorate) => {
-                    self.call(self.clone().spirv_decorate(decorate)).await
+                    self.call(self.clone().spirv_decorate(decorate)).await;
                 }
                 SingleTypeQualifier::SpirvByReference => self.write("spirv_by_reference"),
                 SingleTypeQualifier::SpirvLiteral => self.write("spirv_literal"),
@@ -590,7 +590,7 @@ impl<'b> Cx<'b> {
                     .await;
             }
             TypeSpecifierNonArray::Spirv(specifier) => {
-                self.call(self.clone().spirv_type(specifier)).await
+                self.call(self.clone().spirv_type(specifier)).await;
             }
         }
         if let Some(parameters) = &specifier.parameters {
@@ -651,7 +651,7 @@ impl<'b> Cx<'b> {
         match &statement.kind {
             StatementKind::Compound(compound) => self.call(self.clone().compound(compound)).await,
             StatementKind::Declaration(declaration) => {
-                self.call(self.clone().declaration(declaration)).await
+                self.call(self.clone().declaration(declaration)).await;
             }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
@@ -668,7 +668,7 @@ impl<'b> Cx<'b> {
                     self.clone()
                         .selection(condition, then_branch, else_branch.as_deref()),
                 )
-                .await
+                .await;
             }
             StatementKind::Switch {
                 selector,
@@ -797,7 +797,7 @@ impl<'b> Cx<'b> {
     async fn condition(self, condition: &'b Condition) {
         match condition {
             Condition::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await
+                self.call(self.clone().expression(expression)).await;
             }
             Condition::Declaration(declaration) => {
                 self.call(self.clone().fully_specified_type(&declaration.kind.ty.node))
@@ -868,7 +868,7 @@ fn expression_pieces<'a>(expression: &'a Expression, pieces: &mut Vec<Piece<'a>>
         ExpressionKind::Variable(name) => pieces.push(Piece::Text(name)),
         ExpressionKind::Number(literal) => pieces.push(Piece::Text(&literal.text)),
         ExpressionKind::Bool(value) => {
-            pieces.push(Piece::Text(if *value { "true" } else { "false" }))
+            pieces.push(Piece::Text(if *value { "true" } else { "false" }));
         }
         ExpressionKind::String(value) => pieces.push(Piece::String(value)),
         ExpressionKind::Parenthesized(inner) => {

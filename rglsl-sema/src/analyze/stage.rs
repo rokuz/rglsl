@@ -1,5 +1,5 @@
-use rglsl_ast::extensions::Request;
 use rglsl_ast::Span;
+use rglsl_ast::extensions::Request;
 
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};

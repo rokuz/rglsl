@@ -11,7 +11,7 @@ use crate::basic::{INT, UINT};
 use crate::build::Builder;
 use crate::constants::SPLIT_LOOP_COUNTER_PREFIX;
 use crate::injection::{
-    apply_edits, choose, contains_top_level_break, injection_points, Edit, InjectionPoint,
+    Edit, InjectionPoint, apply_edits, choose, contains_top_level_break, injection_points,
 };
 use crate::random::Random;
 use crate::rewrite::rewrite_statement_expressions;
@@ -230,20 +230,19 @@ fn literal(builder: &mut Builder, value: i64, unsigned: bool) -> Expression {
 fn renamed(statement: &Statement, info: &LoopSplitInfo, name: &str) -> Result<Statement, Stalled> {
     let mut copy = statement.clone();
     rewrite_statement_expressions(&mut copy, &mut |expression| {
-        if info.references.contains(&expression.id) {
-            if let ExpressionKind::Variable(variable) = &mut expression.kind {
-                name.clone_into(variable);
-            }
+        if info.references.contains(&expression.id)
+            && let ExpressionKind::Variable(variable) = &mut expression.kind
+        {
+            name.clone_into(variable);
         }
     })?;
-    if let StatementKind::For(for_statement) = &mut copy.kind {
-        if let StatementKind::Declaration(declaration) = &mut for_statement.init.kind {
-            if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
-                for declarator in &mut list.declarators {
-                    if declarator.kind.name.node == info.counter {
-                        name.clone_into(&mut declarator.kind.name.node);
-                    }
-                }
+    if let StatementKind::For(for_statement) = &mut copy.kind
+        && let StatementKind::Declaration(declaration) = &mut for_statement.init.kind
+        && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
+    {
+        for declarator in &mut list.declarators {
+            if declarator.kind.name.node == info.counter {
+                name.clone_into(&mut declarator.kind.name.node);
             }
         }
     }
@@ -272,17 +271,16 @@ fn split(
         for_statement.condition = Some(Condition::Expression(test));
     }
     let mut second = renamed(&statement, info, &name)?;
-    if let StatementKind::For(for_statement) = &mut second.kind {
-        if let StatementKind::Declaration(declaration) = &mut for_statement.init.kind {
-            if let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind {
-                for declarator in &mut list.declarators {
-                    let start = literal(&mut builder, middle, info.unsigned);
-                    declarator.kind.initializer = Some(rglsl_ast::ast::Spanned::new(
-                        rglsl_ast::Span::new(0, 0),
-                        Initializer::Expression(start),
-                    ));
-                }
-            }
+    if let StatementKind::For(for_statement) = &mut second.kind
+        && let StatementKind::Declaration(declaration) = &mut for_statement.init.kind
+        && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
+    {
+        for declarator in &mut list.declarators {
+            let start = literal(&mut builder, middle, info.unsigned);
+            declarator.kind.initializer = Some(rglsl_ast::ast::Spanned::new(
+                rglsl_ast::Span::new(0, 0),
+                Initializer::Expression(start),
+            ));
         }
     }
     Ok(builder.block(vec![first, second]))

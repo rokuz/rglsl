@@ -9,8 +9,8 @@ use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
 use super::constant::shape;
-use super::function::{ends_in_jump, FunctionLowerer, Local};
-use super::{internal, semantic, unsupported, GlobalRef, Result};
+use super::function::{FunctionLowerer, Local, ends_in_jump};
+use super::{GlobalRef, Result, internal, semantic, unsupported};
 use crate::{
     Block, Expression, Literal, LoopControl, LoopDependency, SelectionControl,
     Statement as IrStatement, SwitchCase, SwitchValue, UnaryOperator,
@@ -130,11 +130,11 @@ impl FunctionLowerer<'_, '_> {
             .span_at(length.saturating_sub(1))
             .map(|(_, span)| *span);
         block.cull(length.saturating_sub(1)..);
-        if let Some(span) = span.filter(|span| span.is_defined()) {
-            if self.lw.debug.is_some() {
-                let marker = crate::Range::from_index_range(0..0, &self.expressions);
-                block.push(IrStatement::Emit(marker), span);
-            }
+        if let Some(span) = span.filter(|span| span.is_defined())
+            && self.lw.debug.is_some()
+        {
+            let marker = crate::Range::from_index_range(0..0, &self.expressions);
+            block.push(IrStatement::Emit(marker), span);
         }
         true
     }
@@ -276,16 +276,15 @@ impl FunctionLowerer<'_, '_> {
                         .qualifiers
                         .flags
                         .contains(QualifierFlags::SPECIALIZATION)
+                        && let Some(initializer) = declarator.kind.initializer.as_ref()
                     {
-                        if let Some(initializer) = declarator.kind.initializer.as_ref() {
-                            let name = Some(declarator.kind.name.node.clone());
-                            let ty = variable.ty.clone();
-                            let handle =
-                                self.lw
-                                    .specialized_initializer(initializer, &ty, name, at)?;
-                            self.lw.globals.insert(symbol, GlobalRef::Override(handle));
-                            continue;
-                        }
+                        let name = Some(declarator.kind.name.node.clone());
+                        let ty = variable.ty.clone();
+                        let handle = self
+                            .lw
+                            .specialized_initializer(initializer, &ty, name, at)?;
+                        self.lw.globals.insert(symbol, GlobalRef::Override(handle));
+                        continue;
                     }
                     if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
                         && variable.value.as_ref().is_some_and(|value| {
@@ -293,20 +292,19 @@ impl FunctionLowerer<'_, '_> {
                         })
                     {
                         self.bind_variable(symbol, Local::Constant);
-                        if self.lw.debug.is_some() {
-                            if let Some(ref value) = variable.value {
-                                let ir = self.lw.ir_type(&variable.ty, at)?;
-                                let init =
-                                    self.lw.global_constant(&variable.ty, &value.values, at)?;
-                                self.lw.module.constants.append(
-                                    crate::Constant {
-                                        name: Some(declarator.kind.name.node.clone()),
-                                        ty: ir,
-                                        init,
-                                    },
-                                    at,
-                                );
-                            }
+                        if self.lw.debug.is_some()
+                            && let Some(ref value) = variable.value
+                        {
+                            let ir = self.lw.ir_type(&variable.ty, at)?;
+                            let init = self.lw.global_constant(&variable.ty, &value.values, at)?;
+                            self.lw.module.constants.append(
+                                crate::Constant {
+                                    name: Some(declarator.kind.name.node.clone()),
+                                    ty: ir,
+                                    init,
+                                },
+                                at,
+                            );
                         }
                         continue;
                     }
@@ -384,8 +382,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     }
                 })?;
                 let frame = self.clone().statements(&compound.statements);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::Declaration(ref declaration) => {
                 self.with(|this| this.local_declaration(declaration, true))?
@@ -406,8 +403,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     SelectionControl::None,
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::Switch {
                 ref selector,
@@ -416,22 +412,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .switch(selector, statements, SelectionControl::None, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::CaseLabel(_) => Err(semantic("a case label outside a switch", at)),
             StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
                 let frame = self.clone().iteration(statement, LoopControl::default());
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::Attributed {
                 ref attributes,
                 ref statement,
             } => {
                 let frame = self.clone().attributed(attributes, statement);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::Jump(ref jump) => self.with(|this| this.jump(jump, at))?,
         }
@@ -441,13 +434,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         match body.kind {
             StatementKind::Compound(ref compound) => {
                 let frame = self.clone().statements(&compound.statements);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => {
                 let frame = self.clone().statement(body);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -458,8 +449,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let control = self.with(|this| this.loop_control(attributes))?;
                 {
                     let frame = self.clone().iteration(statement, control);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }
             }
             StatementKind::Selection {
@@ -474,8 +464,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     selection_control(attributes),
                     self.with(|this| this.at(statement.span))?,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::Switch {
                 ref selector,
@@ -487,13 +476,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     selection_control(attributes),
                     self.with(|this| this.at(statement.span))?,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => {
                 let frame = self.clone().statement(statement);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         }
     }
@@ -521,23 +508,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let condition = {
             let frame = self.clone().rvalue(condition);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let accept = {
-            let result = self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().statement(then_branch)))
-                .await;
-            result
+                .await
         }?;
         let reject = match else_branch {
             Some(branch) => {
-                let result = self
-                    .clone()
+                self.clone()
                     .block(self.nest(self.clone().statement(branch)))
-                    .await;
-                result
+                    .await
             }?,
             None => Block::new(),
         };
@@ -550,7 +532,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -571,21 +553,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 ref body,
             } => {
                 let frame = self.clone().while_loop(condition, body, control, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::DoWhile {
                 ref body,
                 ref condition,
             } => {
                 let frame = self.clone().do_while_loop(body, condition, control, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             StatementKind::For(ref for_statement) => {
                 let frame = self.clone().for_loop(for_statement, control, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => Err(internal(at)),
         }
@@ -611,10 +590,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             cx.nest(cx.clone().loop_body(body)).await
         };
-        let body = {
-            let result = self.clone().block(self.nest(frame)).await;
-            result
-        }?;
+        let body = { self.clone().block(self.nest(frame)).await }?;
         self.with(|this| this.leave_jump_target(at))??;
         self.with(|this| {
             this.push(
@@ -625,7 +601,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -640,11 +616,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let constant = self.with(|this| this.constant_condition(condition))?;
         self.with(|this| this.enter_jump_target(true))?;
         let mut body = {
-            let result = self
-                .clone()
+            self.clone()
                 .block(self.nest(self.clone().statement(body)))
-                .await;
-            result
+                .await
         }?;
         let mut target = self.with(|this| this.leave_jump_target(at))??;
         if constant == Some(false) && target.continues == 0 {
@@ -667,7 +641,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         control,
                     },
                     at,
-                )
+                );
             })?;
             return Ok(());
         }
@@ -692,10 +666,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     .map(Some)
             })
         };
-        let (continuing, break_if) = {
-            let result = self.clone().block_with(self.nest(frame)).await;
-            result
-        }?;
+        let (continuing, break_if) = { self.clone().block_with(self.nest(frame)).await }?;
         self.with(|this| {
             this.push(
                 IrStatement::Loop {
@@ -705,7 +676,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -718,8 +689,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<()> {
         {
             let frame = self.clone().statement(&statement.init);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let constant = match statement.condition {
             Some(ref condition) => self.with(|this| this.constant_loop_condition(condition))?,
@@ -737,10 +707,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             cx.nest(cx.clone().loop_body(&statement.body)).await
         };
-        let body = {
-            let result = self.clone().block(self.nest(frame)).await;
-            result
-        }?;
+        let body = { self.clone().block(self.nest(frame)).await }?;
         self.with(|this| this.leave_jump_target(at))??;
         let cx = self.clone();
         let frame = async move {
@@ -749,10 +716,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 None => Ok(()),
             }
         };
-        let continuing = {
-            let result = self.clone().block(self.nest(frame)).await;
-            result
-        }?;
+        let continuing = { self.clone().block(self.nest(frame)).await }?;
         self.with(|this| {
             this.push(
                 IrStatement::Loop {
@@ -762,7 +726,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -777,8 +741,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if statements.is_empty() {
             return {
                 let frame = self.clone().effect(selector);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             };
         }
         let constant = self.with(|this| this.constant_selector(selector))?;
@@ -787,8 +750,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             None => {
                 let (value, ty) = {
                     let frame = self.clone().typed(selector);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 (Some(value), ty)
             }
@@ -815,7 +777,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     };
                     match groups.last_mut() {
                         Some(&mut (ref mut labels, ref body)) if body.is_empty() => {
-                            labels.push(case)
+                            labels.push(case);
                         }
                         _ => groups.push((alloc::vec![case], Vec::new())),
                     }
@@ -851,8 +813,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }
                 let mut block = {
                     let frame = self.clone().case_statements(body.clone());
-                    let result = self.clone().block(self.nest(frame)).await;
-                    result
+                    self.clone().block(self.nest(frame)).await
                 }?;
                 let fall_through = if self.with(|this| this.strip_trailing_break(&mut block))? {
                     false
@@ -898,7 +859,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -950,8 +911,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self.with(|this| this.enter_jump_target(false))?;
         let mut block = {
             let frame = self.clone().case_statements(statements);
-            let result = self.clone().block(self.nest(frame)).await;
-            result
+            self.clone().block(self.nest(frame)).await
         }?;
         let mut target = self.with(|this| this.leave_jump_target(at))??;
         if self.with(|this| this.strip_trailing_break(&mut block))? {
@@ -963,8 +923,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let selector = {
             let frame = self.clone().rvalue(selector);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.push(
@@ -978,7 +937,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     control,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }

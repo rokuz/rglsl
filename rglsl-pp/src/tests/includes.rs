@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 
 use super::{code, errors, lex, line_of, warnings};
 use crate::{
-    preprocess, DiagnosticKind, FileId, IncludeKind, Includer, MemoryIncluder, Options,
-    Preprocessed,
+    DiagnosticKind, FileId, IncludeKind, Includer, MemoryIncluder, Options, Preprocessed,
+    preprocess,
 };
 
 fn run_files(files: &[(&str, &str)], include_dirs: &[&str], options: &Options) -> Preprocessed {
@@ -64,7 +64,10 @@ fn quoted_includes_search_the_including_directory_first() {
         ("shaders/common.h", "int local_common;\n"),
         ("lib/common.h", "int lib_common;\n"),
         ("lib/only_lib.h", "int only_lib;\n"),
-        ("shaders/sub/x.h", "#include \"y.h\"\n#include \"common.h\"\n"),
+        (
+            "shaders/sub/x.h",
+            "#include \"y.h\"\n#include \"common.h\"\n",
+        ),
         ("shaders/sub/y.h", "int sub_y;\n"),
     ];
     let result = run_files(&files, &["lib"], &Options::default());
@@ -147,7 +150,9 @@ fn line_and_file_inside_included_files() {
     no_errors(&result);
     assert_eq!(
         code(&result.text),
-        lex("int before = 2; int fromA = 1; int fileA = \"./a.h\"; int inB = 40; int fileB = \"./sub/b.h\"; int inC = 1; int afterB = 4; int after = 4; int file = 0;")
+        lex(
+            "int before = 2; int fromA = 1; int fileA = \"./a.h\"; int inB = 40; int fileB = \"./sub/b.h\"; int inC = 1; int afterB = 4; int after = 4; int file = 0;"
+        )
     );
     assert_eq!(line_of(&result, "int inB"), 40);
     assert_eq!(line_of(&result, "int afterB"), 4);

@@ -1,10 +1,10 @@
 use rglsl_ast::Stalled;
 use std::collections::BTreeMap;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExternalDeclaration, Node, NodeId, Statement, StatementKind, TranslationUnit,
 };
-use rglsl_ast::Span;
 
 use crate::reduce::finders::is_splice;
 use crate::rewrite::{rewrite_expressions, rewrite_statements};

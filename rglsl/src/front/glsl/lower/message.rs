@@ -6,7 +6,7 @@ use rglsl_sema::types::Scalar as GlslScalar;
 
 use super::function::FunctionLowerer;
 use super::types::matrix_layout;
-use super::{internal, unsupported, Packing, Result};
+use super::{Packing, Result, internal, unsupported};
 use crate::proc::Alignment;
 use crate::{
     ArraySize, DebugPrintfArgument, Expression, Literal, Scalar, Span, Statement, StructMember,
@@ -28,14 +28,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 for expression in leading {
                     {
                         let frame = self.clone().effect(expression);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?;
                 }
                 {
                     let frame = self.clone().string_value(last, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }
             }
             _ => Err(unsupported(
@@ -58,8 +56,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if ty.is_string() {
                 let text = {
                     let frame = self.clone().string_value(argument, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 values.push(DebugPrintfArgument::String(text));
                 continue;
@@ -69,8 +66,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             values.push(DebugPrintfArgument::Value({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?));
         }
         self.with(|this| {
@@ -80,7 +76,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     arguments: values,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }
@@ -141,8 +137,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let (value, ty) = if ty.scalar_type() == Some(GlslScalar::Bool) {
                 let value = {
                     let frame = self.clone().rvalue(argument);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let unsigned = ty.with_scalar(GlslScalar::Uint);
                 let one = self.with(|this| this.filled(&unsigned, Literal::U32(1), at))??;
@@ -162,8 +157,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 (
                     {
                         let frame = self.clone().rvalue(argument);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                     ty,
                 )
@@ -210,7 +204,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     arguments: values,
                 },
                 at,
-            )
+            );
         })?;
         Ok(())
     }

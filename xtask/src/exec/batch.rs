@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use super::amber::{parse_dump, Amber};
+use super::amber::{Amber, parse_dump};
 
 pub type Outputs = BTreeMap<String, Vec<u8>>;
 pub type JobResult = Result<Outputs, String>;
@@ -58,23 +58,25 @@ pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> 
     let results: Mutex<Vec<(usize, JobResult)>> = Mutex::new(Vec::with_capacity(jobs.len()));
     std::thread::scope(|scope| {
         for _ in 0..workers.max(1).min(jobs.len().max(1)) {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(job) = jobs.get(index) else { break };
-                let dumps: Vec<&str> = job.dumps.iter().map(String::as_str).collect();
-                let out = job.dir.join(format!("{}.dump.txt", job.script));
-                let script = job.dir.join(&job.script);
-                let mut result = amber.run(&script, &dumps, &out, job.tensor_layer);
-                for _ in 1..ATTEMPTS {
-                    if !result.as_ref().is_err_and(|e| transient(e)) {
-                        break;
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(job) = jobs.get(index) else { break };
+                    let dumps: Vec<&str> = job.dumps.iter().map(String::as_str).collect();
+                    let out = job.dir.join(format!("{}.dump.txt", job.script));
+                    let script = job.dir.join(&job.script);
+                    let mut result = amber.run(&script, &dumps, &out, job.tensor_layer);
+                    for _ in 1..ATTEMPTS {
+                        if !result.as_ref().is_err_and(|e| transient(e)) {
+                            break;
+                        }
+                        result = amber.run(&script, &dumps, &out, job.tensor_layer);
                     }
-                    result = amber.run(&script, &dumps, &out, job.tensor_layer);
+                    results
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push((index, result));
                 }
-                results
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push((index, result));
             });
         }
     });
@@ -227,9 +229,11 @@ mod tests {
             parse_result("ok\n\n", Some(dump), true).map_err(anyhow::Error::msg)?["dump:0:0"],
             [1, 2]
         );
-        assert!(parse_result("ok\n\n", None, false)
-            .map_err(anyhow::Error::msg)?
-            .is_empty());
+        assert!(
+            parse_result("ok\n\n", None, false)
+                .map_err(anyhow::Error::msg)?
+                .is_empty()
+        );
         assert_eq!(
             parse_result("ok\n\n", None, true).err().as_deref(),
             Some("the remote run returned no dump")

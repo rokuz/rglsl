@@ -47,7 +47,7 @@ use handle::Index;
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "serialize", serde(transparent))]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Arena<T> {
     /// Values of this arena.
     data: Vec<T>,
@@ -112,7 +112,7 @@ impl<T> Arena<T> {
     }
 
     /// Drains the arena, returning an iterator over the items stored.
-    pub fn drain(&mut self) -> impl DoubleEndedIterator<Item = (Handle<T>, T, Span)> {
+    pub fn drain(&mut self) -> impl DoubleEndedIterator<Item = (Handle<T>, T, Span)> + use<T> {
         let arena = core::mem::take(self);
         let handles = Range::full_range_from_size(arena.data.len());
         arena
@@ -409,7 +409,7 @@ mod tests {
         let t1 = arena.fetch_or_append(0, Default::default());
         let t2 = arena.fetch_or_append(0, Default::default());
         assert!(t1 == t2);
-        assert!(arena[t1] == arena[t2])
+        assert!(arena[t1] == arena[t2]);
     }
 
     #[test]

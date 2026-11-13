@@ -1,9 +1,9 @@
+use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     Condition, Declaration, DeclarationKind, ExpressionKind, ExternalDeclaration,
     FullySpecifiedType, FunctionIdentifier, FunctionPrototype, Identifier, Statement,
     StatementKind, StructDeclaration, TranslationUnit, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Stalled;
 
 use crate::rewrite::{rewrite_expressions, rewrite_statements};
 
@@ -50,7 +50,7 @@ pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) -> Result<(
                 prototype_names(&mut definition.kind.prototype.node, renamer);
             }
             ExternalDeclaration::Declaration(declaration) => {
-                declaration_names(declaration, renamer)
+                declaration_names(declaration, renamer);
             }
             ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
         }
@@ -147,7 +147,7 @@ fn prototype_names(prototype: &mut FunctionPrototype, renamer: &dyn Renamer) {
 fn declaration_names(declaration: &mut Declaration, renamer: &dyn Renamer) {
     match &mut declaration.kind {
         DeclarationKind::FunctionPrototype(prototype) => {
-            prototype_names(&mut prototype.node, renamer)
+            prototype_names(&mut prototype.node, renamer);
         }
         DeclarationKind::InitDeclaratorList(list) => {
             fully_specified_names(&mut list.ty, renamer);

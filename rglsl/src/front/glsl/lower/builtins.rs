@@ -10,7 +10,7 @@ use rglsl_sema::{BuiltinFunctionId, Callee};
 use super::function::FunctionLowerer;
 use super::prepass::strip;
 use super::types::{scalar, vector_size};
-use super::{internal, unsupported, Result};
+use super::{Result, internal, unsupported};
 use crate::{
     BinaryOperator, BlockMatchMetric, BlockMatchSearch, DerivativeAxis, DerivativeControl,
     Expression, Handle, ImageGatherPattern, ImageProcessingOperation, ImageQuery, Literal,
@@ -321,7 +321,7 @@ impl FunctionLowerer<'_, '_> {
             .find(|ty| ty.sized_vector_length().is_some())
             .cloned();
         if let Some(ref shape) = long_shape {
-            return self.long_generic(name, call_type, shape, values, types, at);
+            return self.long_generic(name, call_type, shape, values, &types, at);
         }
         let result = &function.return_type;
         let first_ty = types.first().cloned().unwrap_or(GlslType::VOID);
@@ -528,10 +528,8 @@ impl FunctionLowerer<'_, '_> {
                 .get(1)
                 .and_then(GlslType::base_scalar)
                 .is_some_and(|exponent| exponent.bits() < 32);
-            if narrow {
-                if let Some(exponent) = values.get_mut(1) {
-                    *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
-                }
+            if narrow && let Some(exponent) = values.get_mut(1) {
+                *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
             }
         }
         if let Some(size) = vector {
@@ -905,8 +903,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let name = function.name.as_str();
         if let Some(result) = {
             let frame = self.clone().ray_builtin_call(name, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }? {
             return Ok(result);
         }
@@ -916,83 +913,69 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame =
                     self.clone()
                         .sample(call, function, arguments, ImageGatherPattern::Quad, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some);
         }
         match name {
             _ if gather_pattern(name).is_some() => {
                 let frame = self.clone().gather_call(name, function, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "sparseTexelFetchARB" => {
                 let frame = self.clone().fetch(function, arguments, false, true, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "sparseTexelFetchOffsetARB" => {
                 let frame = self.clone().fetch(function, arguments, true, true, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "sparseImageLoadARB" | "sparseImageLoadLodAMD" => {
                 let frame = self.clone().image(name, function, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "sparseTexelsResidentARB" => {
                 let frame = self.clone().sparse_texels_resident_call(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "textureQueryLod" | "textureQueryLOD" => {
                 let frame = self.clone().query_lod(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             _ if image_processing(name).is_some() => {
                 let frame = self.clone().image_processing_call(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "texelFetch" => {
                 let frame = self.clone().fetch(function, arguments, false, false, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "texelFetchOffset" => {
                 let frame = self.clone().fetch(function, arguments, true, false, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
             | "imageSamples" => {
                 let frame = self.clone().query(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "imageLoad" | "imageStore" | "imageLoadLodAMD" | "imageStoreLodAMD" => {
                 let frame = self.clone().image(name, function, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ if name.starts_with("imageAtomic") => {
                 let frame = self.clone().image_atomic_call(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "subpassLoad" => {
                 let frame = self.clone().subpass_load(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "barrier"
@@ -1016,72 +999,60 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             | "textureFootprintGradNV"
             | "textureFootprintGradClampNV" => {
                 let frame = self.clone().footprint(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
                 let frame = self.clone().fragment_fetch_call(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
                 let frame = self.clone().interpolate(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
                 let frame = self.clone().attachment_read_call(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
                 let frame = self.clone().mesh_statement_call(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
                 self.with(|this| this.primitive_statement_call(name, arguments, at))?
             }
             "expectEXT" => {
                 let frame = self.clone().expect_call(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "assumeEXT" => {
                 let frame = self.clone().assume_call(arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "modf" | "frexp" => {
                 let frame = self.clone().split(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
             "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
             | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
                 let frame = self.clone().atomic(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
                 let frame = self.clone().wide(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ if super::subgroup::is_subgroup_function(name) => {
                 let frame = self.clone().subgroup(name, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => {
                 let frame = self
                     .clone()
                     .generic(name, function, call_type, arguments, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some),
         }
@@ -1099,8 +1070,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .sample(texture_call(base), function, arguments, pattern, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
         .map(Some)
     }
@@ -1114,8 +1084,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .rvalue(arguments.first().ok_or_else(|| internal(at))?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.add(Expression::ImageSparseResident { code }, at)
@@ -1132,8 +1101,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let operation = image_processing(name).ok_or_else(|| internal(at))?;
         {
             let frame = self.clone().image_processing(operation, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
         .map(Some)
     }
@@ -1152,15 +1120,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         {
             let frame = self
                 .clone()
                 .image_atomic(name, image, opaque, non_uniform, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }
     }
 
@@ -1180,8 +1146,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })?;
         let image = {
             let frame = self.clone().rvalue(first);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let mut rest = arguments.iter().skip(1);
         let coordinate = if subpass {
@@ -1203,15 +1168,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let coordinate = rest.next().ok_or_else(|| internal(at))?;
             {
                 let frame = self.clone().rvalue(coordinate);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         };
         let fragment = match rest.next() {
             Some(fragment) if name == "fragmentFetchAMD" => Some({
                 let frame = self.clone().rvalue(fragment);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             _ => None,
         };
@@ -1240,8 +1203,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let image = rest.next().ok_or_else(|| internal(at))?;
                 crate::AttachmentAspect::Color({
                     let frame = self.clone().rvalue(image);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?)
             }
             "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
@@ -1250,8 +1212,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let sample = match rest.next() {
             Some(sample) => Some({
                 let frame = self.clone().rvalue(sample);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             None => None,
         };
@@ -1269,8 +1230,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Option<Handle<Expression>>> {
         {
             let frame = self.clone().mesh_statement(name, arguments, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         Ok(None)
     }
@@ -1284,15 +1244,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .rvalue(arguments.first().ok_or_else(|| internal(at))?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let expected = {
             let frame = self
                 .clone()
                 .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.add(Expression::Expect { value, expected }, at)
@@ -1309,8 +1267,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self
                 .clone()
                 .rvalue(arguments.first().ok_or_else(|| internal(at))?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| this.flush())?;
         self.with(|this| this.push(Statement::Assume { condition }, at))?;
@@ -1337,8 +1294,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in arguments {
             let (value, ty) = {
                 let frame = self.clone().typed(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             values.push(value);
             types.push(ty);
@@ -1357,8 +1313,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let (value, ty) = {
             let frame = self.clone().typed(value);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let base = ty.base_scalar().ok_or_else(|| internal(at))?;
         let size = match ty.kind {
@@ -1409,8 +1364,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let output_ty = self.with(|this| this.info(output))??.ty.clone();
         let place = {
             let frame = self.clone().place(output);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let other_ty = if name == "modf" {
             ty.clone()
@@ -1433,13 +1387,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let (x, ty) = {
             let frame = self.clone().typed(x);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let (y, _) = {
             let frame = self.clone().typed(y);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let base = ty.base_scalar().ok_or_else(|| internal(at))?;
         let size = match ty.kind {
@@ -1494,8 +1446,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let output_ty = self.with(|this| this.info(output))??.ty.clone();
             let place = {
                 let frame = self.clone().place(output);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let half = self.with(|this| this.convert(half, &ty, &output_ty, at))??;
             self.with(|this| this.store(&place, half, at))??;
@@ -1517,8 +1468,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 (&constructed.kind, analysis.calls.get(&constructed.id)),
                 (
                     &ExpressionKind::FunctionCall(_),
-                    Some(&Callee::Constructor(_))
-                ) | (&ExpressionKind::FunctionCall(_), Some(&Callee::NonUniform))
+                    Some(&Callee::Constructor(_) | &Callee::NonUniform)
+                )
             );
             if !is_constructor {
                 break;
@@ -1528,28 +1479,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         if let (&ExpressionKind::FunctionCall(ref call), Some(&Callee::Constructor(ref ty))) =
             (&inner.kind, analysis.calls.get(&inner.id))
+            && let Some(opaque) = ty.as_opaque()
         {
-            if let Some(opaque) = ty.as_opaque() {
-                let &[ref texture, ref sampler] = call.arguments.as_slice() else {
-                    return Err(internal(at));
-                };
-                let image = {
-                    let frame = self.clone().rvalue(texture);
-                    let result = self.nest(frame).await;
-                    result
-                }?;
-                let sampler = {
-                    let frame = self.clone().rvalue(sampler);
-                    let result = self.nest(frame).await;
-                    result
-                }?;
-                return Ok(Sampled {
-                    image,
-                    sampler: Some(sampler),
-                    opaque,
-                    non_uniform,
-                });
-            }
+            let &[ref texture, ref sampler] = call.arguments.as_slice() else {
+                return Err(internal(at));
+            };
+            let image = {
+                let frame = self.clone().rvalue(texture);
+                self.nest(frame).await
+            }?;
+            let sampler = {
+                let frame = self.clone().rvalue(sampler);
+                self.nest(frame).await
+            }?;
+            return Ok(Sampled {
+                image,
+                sampler: Some(sampler),
+                opaque,
+                non_uniform,
+            });
         }
         let ty = self.with(|this| this.info(argument))??.ty.clone();
         match ty.as_opaque() {
@@ -1562,8 +1510,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 Ok(Sampled {
                     image: {
                         let frame = self.clone().rvalue(argument);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?,
                     sampler: None,
                     opaque,
@@ -1583,20 +1530,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         let source = {
             let frame = self.clone().sampled(argument(0)?, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let coordinate = {
             let frame = self.clone().rvalue(argument(1)?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let (reference, reference_coordinate, size) = match operation {
             ImageProcessingOperation::SampleWeighted => (
                 Some({
                     let frame = self.clone().sampled(argument(2)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
                 None,
                 None,
@@ -1606,25 +1550,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 None,
                 Some({
                     let frame = self.clone().rvalue(argument(2)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?),
             ),
             ImageProcessingOperation::BlockMatch { .. } => {
                 let reference = {
                     let frame = self.clone().sampled(argument(2)?, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let reference_coordinate = {
                     let frame = self.clone().rvalue(argument(3)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let size = {
                     let frame = self.clone().rvalue(argument(4)?);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 (Some(reference), Some(reference_coordinate), Some(size))
             }
@@ -1671,8 +1611,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             non_uniform,
         } = {
             let frame = self.clone().sampled(first, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
             return Err(internal(at));
@@ -1685,8 +1624,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, coordinate_ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let mut size = u32::from(match coordinate_ty.kind {
             TypeKind::Vector { size, .. } => size,
@@ -1705,8 +1643,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?)
         } else {
             None
@@ -1747,8 +1684,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         if grad {
@@ -1761,8 +1697,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let y = {
                 let frame = self.clone().next_argument(
@@ -1773,8 +1708,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             level = SampleLevel::Gradient { x, y };
         }
@@ -1789,8 +1723,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let mut min_lod = None;
@@ -1804,8 +1737,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let texel_out = if call.sparse {
@@ -1835,7 +1767,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                                 return Err(unsupported(
                                     "a gather component that is not a constant",
                                     at,
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1853,8 +1785,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?);
             }
         } else if !lod && !grad && next < function.parameters.len() {
@@ -1867,8 +1798,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     },
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let implicit = match level {
@@ -1942,8 +1872,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .sparse_result(sample, function, arguments, index, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             None => Ok(sample),
         }
@@ -1971,8 +1900,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let output_ty = self.with(|this| this.info(output))??.ty.clone();
         let place = {
             let frame = self.clone().place(output);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let texel = self.with(|this| this.convert(texel, &parameter.ty, &output_ty, at))??;
         self.with(|this| this.store(&place, texel, at))??;
@@ -2013,8 +1941,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if non_uniform {
             self.with(|this| this.mark(image, NonUniform::VALUE))?;
@@ -2022,8 +1949,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (mut point, array_index) =
@@ -2031,8 +1957,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let extra = match arguments.get(2) {
             Some(argument) => Some({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             None => None,
         };
@@ -2040,8 +1965,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let offset = arguments.get(3).ok_or_else(|| internal(at))?;
             let offset = {
                 let frame = self.clone().rvalue(offset);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             point = self.with(|this| this.binary_op(BinaryOperator::Add, point, offset, at))??;
         }
@@ -2077,8 +2001,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .sparse_result(result, function, arguments, index, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
         } else {
             Ok(result)
@@ -2098,15 +2021,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let coordinate = {
             let frame = self
                 .clone()
                 .rvalue(arguments.get(1).ok_or_else(|| internal(at))?);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let query = self.with(|this| {
             this.add(
@@ -2142,8 +2063,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let coordinate = {
             let frame = self.clone().next_argument(
@@ -2154,8 +2074,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let mut level = SampleLevel::Auto;
         let mut min_lod = None;
@@ -2170,8 +2089,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?);
             }
             "textureFootprintGradNV" | "textureFootprintGradClampNV" => {
@@ -2184,8 +2102,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let y = {
                     let frame = self.clone().next_argument(
@@ -2196,8 +2113,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 level = SampleLevel::Gradient { x, y };
                 if name == "textureFootprintGradClampNV" {
@@ -2210,8 +2126,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             },
                             at,
                         );
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?);
                 }
             }
@@ -2225,8 +2140,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?);
             }
             _ => {}
@@ -2240,8 +2154,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let coarse = {
             let frame = self.clone().next_argument(
@@ -2252,16 +2165,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let output = arguments.get(next).ok_or_else(|| internal(at))?;
         next += 1;
         if let Some(bias) = arguments.get(next) {
             level = SampleLevel::Bias({
                 let frame = self.clone().rvalue(bias);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let output_ty = self.with(|this| this.info(output))??.ty.clone();
@@ -2314,8 +2225,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })??;
         let place = {
             let frame = self.clone().place(output);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| this.store(&place, value, at))??;
         self.with(|this| {
@@ -2338,8 +2248,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let super::expression::Chain::Place(place) = {
             let frame = self.clone().chain(first);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?
         else {
             return Err(internal(at));
@@ -2347,13 +2256,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let location = match (name, arguments.get(1)) {
             ("interpolateAtSample", Some(sample)) => crate::InterpolationLocation::Sample({
                 let frame = self.clone().rvalue(sample);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             ("interpolateAtOffset", Some(offset)) => crate::InterpolationLocation::Offset({
                 let frame = self.clone().rvalue(offset);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             _ => crate::InterpolationLocation::Centroid,
         };
@@ -2397,14 +2304,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let image = {
             let frame = self.clone().rvalue(first);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let sample = match arguments.get(1) {
             Some(argument) => Some({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
             None => None,
         };
@@ -2452,8 +2357,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if non_uniform {
             self.with(|this| this.mark(image, NonUniform::VALUE))?;
@@ -2461,8 +2365,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, ty) = {
             let frame = self.clone().typed(coordinate_argument);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (point, array_index) =
@@ -2471,8 +2374,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let sample = arguments.get(2).ok_or_else(|| internal(at))?;
             Some({
                 let frame = self.clone().rvalue(sample);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?)
         } else {
             None
@@ -2482,8 +2384,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let level = arguments.get(2).ok_or_else(|| internal(at))?;
             Some({
                 let frame = self.clone().rvalue(level);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?)
         } else {
             None
@@ -2512,8 +2413,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self
                     .clone()
                     .sparse_result(result, function, arguments, operands, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             .map(Some);
         }
@@ -2536,8 +2436,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let value = arguments.get(operands).ok_or_else(|| internal(at))?;
         let value = {
             let frame = self.clone().rvalue(value);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         self.with(|this| {
             this.push(
@@ -2550,7 +2449,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     value,
                 },
                 at,
-            )
+            );
         })?;
         Ok(None)
     }
@@ -2569,8 +2468,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ..
         } = {
             let frame = self.clone().sampled(first, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         if non_uniform {
             self.with(|this| this.mark(image, NonUniform::VALUE))?;
@@ -2582,8 +2480,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let level = match arguments.get(1) {
                     Some(level) => Some({
                         let frame = self.clone().rvalue(level);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     }?),
                     None => None,
                 };

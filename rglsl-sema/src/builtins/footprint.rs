@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{Prototype, ALL_STAGES};
+use super::{ALL_STAGES, Prototype};
 use crate::scope::{Direction, Qualifiers};
 use crate::types::{
     Member, Opaque, OpaqueKind, SampledType, Scalar, StructId, TextureDimension, Type, TypeRegistry,

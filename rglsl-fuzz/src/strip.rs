@@ -7,8 +7,8 @@ use rglsl_ast::ast::{
     DeclarationKind, ExternalDeclaration, TranslationUnit, TypeSpecifierNonArray,
 };
 
-use crate::constants::{is_donated_name, STRUCTIFICATION_STRUCT_PREFIX};
-use crate::rename::{rename_all, NameKind};
+use crate::constants::{STRUCTIFICATION_STRUCT_PREFIX, is_donated_name};
+use crate::rename::{NameKind, rename_all};
 
 pub fn referenced_names(external: &ExternalDeclaration) -> Result<BTreeSet<String>, Stalled> {
     let names = RefCell::new(BTreeSet::new());

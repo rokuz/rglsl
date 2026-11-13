@@ -42,10 +42,10 @@ mod walk;
 mod tests;
 
 pub use ast::TranslationUnit;
-pub use chain::{placeholder, Chain, Spine};
+pub use chain::{Chain, Spine, placeholder};
 pub use error::{ParseError, ParseErrorKind};
-pub use parser::{parse, parse_prefix, NON_UNIFORM};
+pub use parser::{NON_UNIFORM, parse, parse_prefix};
 pub use printer::print;
 pub use rglsl_types::stack::Stalled;
-pub use span::{line_column, LineColumn, Span};
+pub use span::{LineColumn, Span, line_column};
 pub use walk::{expressions, statement_expressions};

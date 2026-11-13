@@ -1,9 +1,9 @@
 use crate::scope::QualifierFlags;
 use alloc::string::String;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{BinaryOperator, Expression, Identifier};
 use rglsl_ast::extensions::names;
-use rglsl_ast::Span;
 
 use super::{Analyzer, Operand, Place};
 use crate::constant::{Constant, Value};

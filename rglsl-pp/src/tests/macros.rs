@@ -249,7 +249,9 @@ fn reserved_names() {
         warnings(&result).first(),
         Some(DiagnosticKind::ReservedDoubleUnderscore { .. })
     ));
-    let allowed = run("#version 450\n#extension GL_EXT_spirv_intrinsics : enable\n#define GL_FOO 1\nint a = GL_FOO;\n");
+    let allowed = run(
+        "#version 450\n#extension GL_EXT_spirv_intrinsics : enable\n#define GL_FOO 1\nint a = GL_FOO;\n",
+    );
     assert!(errors(&allowed).is_empty(), "{:?}", allowed.diagnostics);
     assert_eq!(code(&allowed.text), lex("int a = 1;"));
 }
@@ -384,7 +386,9 @@ fn expansion_depth_is_limited() {
     }
     source.push_str(";\n");
     let result = run(&source);
-    assert!(errors(&result)
-        .iter()
-        .any(|kind| matches!(kind, DiagnosticKind::ExpansionTooDeep { .. })));
+    assert!(
+        errors(&result)
+            .iter()
+            .any(|kind| matches!(kind, DiagnosticKind::ExpansionTooDeep { .. }))
+    );
 }

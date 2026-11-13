@@ -1,7 +1,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use super::{declaration, rejected, round_trip, unit, TestResult};
+use super::{TestResult, declaration, rejected, round_trip, unit};
 use crate::ast::{
     ArrayDimension, BasicType, DeclarationKind, Dimension, DirectiveKind, ExtensionBehavior,
     ExternalDeclaration, FullySpecifiedType, Initializer, InterpolationQualifier,
@@ -173,15 +173,19 @@ fn array_specifiers_on_types_and_on_declarators_are_distinct() {
     let on_name = variables("int a[3];\n");
     assert_ne!(on_type, on_name);
     assert!(on_type.ty.node.specifier.node.array.is_some());
-    assert!(on_type
-        .declarators
-        .iter()
-        .all(|declarator| declarator.kind.array.is_none()));
+    assert!(
+        on_type
+            .declarators
+            .iter()
+            .all(|declarator| declarator.kind.array.is_none())
+    );
     assert!(on_name.ty.node.specifier.node.array.is_none());
-    assert!(on_name
-        .declarators
-        .iter()
-        .all(|declarator| declarator.kind.array.is_some()));
+    assert!(
+        on_name
+            .declarators
+            .iter()
+            .all(|declarator| declarator.kind.array.is_some())
+    );
     assert_eq!(
         round_trip("int[3] a;\nint b[3];\n"),
         "int[3] a;\nint b[3];\n"
@@ -531,9 +535,11 @@ fn directives_are_parsed_and_kept_verbatim() {
 fn stray_semicolons_and_empty_sources() {
     assert_eq!(round_trip(";\nint a;\n;\n"), ";\nint a;\n;\n");
     assert!(unit("").external_declarations.is_empty());
-    assert!(unit(" \n// nothing\n/* at all */\n")
-        .external_declarations
-        .is_empty());
+    assert!(
+        unit(" \n// nothing\n/* at all */\n")
+            .external_declarations
+            .is_empty()
+    );
 }
 
 #[test]
@@ -558,12 +564,14 @@ fn heap_blocks_and_inline_reference_members() {
         .collect();
     assert_eq!(blocks.len(), 2);
     let heap = blocks[1];
-    assert!(heap
-        .qualifier
-        .node
-        .qualifiers
-        .iter()
-        .any(|single| single.node == SingleTypeQualifier::Storage(StorageQualifier::ResourceHeap)));
+    assert!(
+        heap.qualifier
+            .node
+            .qualifiers
+            .iter()
+            .any(|single| single.node
+                == SingleTypeQualifier::Storage(StorageQualifier::ResourceHeap))
+    );
     assert!(matches!(
         heap.members[0].node.ty.node.specifier.node.non_array,
         TypeSpecifierNonArray::TypeName(ref name) if name == "Data"

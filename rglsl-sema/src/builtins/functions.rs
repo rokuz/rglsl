@@ -1,4 +1,4 @@
-use super::{Section, ALL_STAGES, COMPUTE, FRAGMENT, GEOMETRY, MESH, TASK, TESS_CONTROL};
+use super::{ALL_STAGES, COMPUTE, FRAGMENT, GEOMETRY, MESH, Section, TASK, TESS_CONTROL};
 
 const ENCODED_FLOATS: &str = "
 int16_t bfloat16BitsToIntEXT(bfloat16_t)

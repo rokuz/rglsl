@@ -258,7 +258,7 @@ impl Scalar {
         match self {
             Self::BFloat16 => return matches!(target, Self::Float | Self::Double),
             Self::FloatE4M3 | Self::FloatE5M2 => {
-                return matches!(target, Self::Float16 | Self::Float | Self::Double)
+                return matches!(target, Self::Float16 | Self::Float | Self::Double);
             }
             Self::FloatE2M1 => {
                 return matches!(
@@ -269,13 +269,13 @@ impl Scalar {
                         | Self::BFloat16
                         | Self::FloatE4M3
                         | Self::FloatE5M2
-                )
+                );
             }
             Self::FloatE3M2 | Self::FloatE2M3 | Self::FloatMXINT8 => {
                 return matches!(
                     target,
                     Self::Float16 | Self::Float | Self::Double | Self::BFloat16
-                )
+                );
             }
             Self::FloatUE8M0 => return false,
             _ => {}
@@ -1761,10 +1761,10 @@ impl TypeRegistry {
             if let Some(result) = found(ty) {
                 return Some(result);
             }
-            if let TypeKind::Struct(id) = ty.kind {
-                if let Some(structure) = self.structure(id) {
-                    pending.extend(structure.members.iter().rev().map(|member| &member.ty));
-                }
+            if let TypeKind::Struct(id) = ty.kind
+                && let Some(structure) = self.structure(id)
+            {
+                pending.extend(structure.members.iter().rev().map(|member| &member.ty));
             }
         }
         None

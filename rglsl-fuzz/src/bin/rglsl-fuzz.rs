@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use rglsl_fuzz::amber::amber_script;
-use rglsl_fuzz::reduce::{finalise, reduce, ReduceOptions};
+use rglsl_fuzz::reduce::{ReduceOptions, finalise, reduce};
 use rglsl_fuzz::{
-    generate_family, prepare_reference, Donor, EnabledTransformations, FamilyOptions, Random,
-    ShaderJob, STAGE_EXTENSIONS,
+    Donor, EnabledTransformations, FamilyOptions, Random, STAGE_EXTENSIONS, ShaderJob,
+    generate_family, prepare_reference,
 };
 use serde_json::{Map, Value};
 
@@ -260,10 +260,10 @@ fn prepare(raw: &[String]) -> Result<()> {
     let job = read_job(Path::new(reference))?;
     let prepared = prepare_reference(&job, max_uniforms, true)?;
     let output = PathBuf::from(output);
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
     write_job(&prepared, &output)
 }

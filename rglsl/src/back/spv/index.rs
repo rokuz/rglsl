@@ -2,7 +2,7 @@
 Indexing for SPIR-V output.
 */
 
-use super::{helpers::global_needs_wrapper, Block, BlockContext, Error, Instruction, Word};
+use super::{Block, BlockContext, Error, Instruction, Word, helpers::global_needs_wrapper};
 use crate::{arena::Handle, proc::index::GuardedIndex};
 
 /// The results of performing a bounds check.
@@ -59,17 +59,16 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<Word, Error> {
         if let crate::Expression::AccessIndex { base, index } = self.ir_function.expressions[array]
+            && let crate::Expression::BufferPointer { .. } = self.ir_function.expressions[base]
         {
-            if let crate::Expression::BufferPointer { .. } = self.ir_function.expressions[base] {
-                let length_id = self.gen_id();
-                block.body.push(Instruction::array_length(
-                    type_id,
-                    length_id,
-                    self.cached.get(base)?,
-                    index,
-                ));
-                return Ok(length_id);
-            }
+            let length_id = self.gen_id();
+            block.body.push(Instruction::array_length(
+                type_id,
+                length_id,
+                self.cached.get(base)?,
+                index,
+            ));
+            return Ok(length_id);
         }
         // The index into the binding array, if any.
         let binding_array_index_id: Option<Word>;
@@ -106,7 +105,7 @@ impl BlockContext<'_> {
                         _ => {
                             return Err(Error::Validation(
                                 "array length expression: AccessIndex(AccessIndex(Global))",
-                            ))
+                            ));
                         }
                     },
                     crate::Expression::Access {
@@ -125,7 +124,7 @@ impl BlockContext<'_> {
                         _ => {
                             return Err(Error::Validation(
                                 "array length expression: AccessIndex(Access(Global))",
-                            ))
+                            ));
                         }
                     },
                     crate::Expression::GlobalVariable(handle) => {
@@ -140,7 +139,7 @@ impl BlockContext<'_> {
                     _ => {
                         return Err(Error::Validation(
                             "array length expression: AccessIndex(<unexpected>)",
-                        ))
+                        ));
                     }
                 }
             }
@@ -170,7 +169,7 @@ impl BlockContext<'_> {
             _ => {
                 return Err(Error::Validation(
                     "array length expression: bad binding array inference",
-                ))
+                ));
             }
         }
 

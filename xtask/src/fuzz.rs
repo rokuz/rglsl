@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::corpus::STAGE_EXTENSIONS;
 use crate::exec::{self, Executor, TargetId, TargetSpec};
@@ -104,28 +104,30 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let errors: Mutex<Vec<anyhow::Error>> = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(shader) = shaders.get(index) else {
-                    break;
-                };
-                let spirv = spirv_dir.join(format!("{index}.spv"));
-                match compare(
-                    &glslang.path,
-                    &spirv_val.path,
-                    &self_exe,
-                    shader,
-                    &spirv,
-                    timeout,
-                ) {
-                    Ok(outcome) => outcomes
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push(outcome),
-                    Err(error) => errors
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .push(error.context(shader.display().to_string())),
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(shader) = shaders.get(index) else {
+                        break;
+                    };
+                    let spirv = spirv_dir.join(format!("{index}.spv"));
+                    match compare(
+                        &glslang.path,
+                        &spirv_val.path,
+                        &self_exe,
+                        shader,
+                        &spirv,
+                        timeout,
+                    ) {
+                        Ok(outcome) => outcomes
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push(outcome),
+                        Err(error) => errors
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push(error.context(shader.display().to_string())),
+                    }
                 }
             });
         }

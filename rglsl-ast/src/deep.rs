@@ -236,12 +236,11 @@ impl Initializer {
 
 impl ExpressionKind {
     pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        if let Self::FunctionCall(call) = self {
-            if let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
+        if let Self::FunctionCall(call) = self
+            && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
                 &mut call.function.node
-            {
-                take_type(ty, into);
-            }
+        {
+            take_type(ty, into);
         }
         for child in self.children_mut() {
             take_expression(child, into);

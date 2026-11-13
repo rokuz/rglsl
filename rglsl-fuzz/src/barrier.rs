@@ -1,8 +1,8 @@
-use rglsl_ast::ast::TranslationUnit;
 use rglsl_ast::Stalled;
+use rglsl_ast::ast::TranslationUnit;
 
 use crate::context::Context;
-use crate::injection::{apply_edits, choose, injection_points, Edit};
+use crate::injection::{Edit, apply_edits, choose, injection_points};
 use crate::jump::dead_conditional;
 use crate::random::Random;
 use crate::transformation::PassInput;

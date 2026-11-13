@@ -3,7 +3,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::errors;
-use crate::{preprocess, DiagnosticKind, Limits, MemoryIncluder, Options, Preprocessed};
+use crate::{DiagnosticKind, Limits, MemoryIncluder, Options, Preprocessed, preprocess};
 
 const SEEDS: [&str; 3] = [
     "#version 450\n#extension GL_GOOGLE_include_directive : enable\n#define F(a, b) a ## b + #a\n#define G(x) F(x, 1) * __LINE__\n#if defined(G) && G(2) > 0 || (1 << 3) / 2\nint F(v, w) = G(3);\n#elif 0\n#error no\n#else\n#line 20 \"x\"\n#endif\n#include \"a.h\"\n/* c */ int s = __FILE__; // e\n",
@@ -191,9 +191,11 @@ fn deeply_nested_invocations() {
 fn self_including_files_terminate() {
     let source = "#version 450\n#include \"self.h\"\nint after;\n";
     let result = run_limited(source);
-    assert!(errors(&result)
-        .iter()
-        .any(|kind| matches!(kind, DiagnosticKind::RecursiveInclude { .. })));
+    assert!(
+        errors(&result)
+            .iter()
+            .any(|kind| matches!(kind, DiagnosticKind::RecursiveInclude { .. }))
+    );
 }
 
 #[test]

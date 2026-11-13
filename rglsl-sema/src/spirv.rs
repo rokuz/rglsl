@@ -80,7 +80,6 @@ pub fn string_words(text: &str) -> Vec<u32> {
         .collect()
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn value_word(value: &Value) -> Option<u32> {
     Some(match *value {
         Value::Bool(value) => u32::from(value),

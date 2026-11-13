@@ -11,8 +11,8 @@ use rglsl_sema::{ResourceLimits, StageTables};
 use rglsl_types::probe::StageProbe;
 
 use super::{
-    link_time, lower_object, preprocess, preprocessor_options, run_lowerer, sema_error,
-    sema_options, Mode, Parsed, StageClass,
+    Mode, Parsed, StageClass, link_time, lower_object, preprocess, preprocessor_options,
+    run_lowerer, sema_error, sema_options,
 };
 use crate::front::glsl::{Error, ErrorKind, Options, ParseErrors};
 use crate::object::{LibraryVariant, ObjectModule, StageRejection};
@@ -88,7 +88,10 @@ fn stage_order(hint: Option<ShaderStage>) -> Vec<ShaderStage> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 pub(super) fn compile(
     options: &Options,
     hint: Option<ShaderStage>,
@@ -128,10 +131,10 @@ pub(super) fn compile(
     let mut objects: Vec<ObjectModule> = once.object.into_iter().collect();
     objects.extend(variants.into_iter().map(|(_, object)| object));
     if objects.is_empty() {
-        if let Some(stage) = hint {
-            if let Some((_, errors)) = failures.into_iter().find(|&(failed, _)| failed == stage) {
-                return Err(errors);
-            }
+        if let Some(stage) = hint
+            && let Some((_, errors)) = failures.into_iter().find(|&(failed, _)| failed == stage)
+        {
+            return Err(errors);
         }
         let reported = hint.map_or(all, stage_bit);
         let (variants, failures) = per_class(
@@ -213,7 +216,10 @@ fn add_stage(object: &mut ObjectModule, stage: ShaderStage) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn per_class(
     options: &Options,
     hint: Option<ShaderStage>,
@@ -232,24 +238,21 @@ fn per_class(
         if stages & bit == 0 {
             continue;
         }
-        if share {
-            if let Some(&(_, outcome)) = classes.iter().find(|&&(mask, _)| mask & bit != 0) {
-                match outcome {
-                    Outcome::Variant(index) => {
-                        if let Some(&mut (_, ref mut variant)) = variants.get_mut(index) {
-                            add_stage(variant, stage);
-                        }
-                    }
-                    Outcome::Failure(index) => {
-                        if let Some(errors) =
-                            failures.get(index).map(|&(_, ref errors)| errors.clone())
-                        {
-                            failures.push((stage, errors));
-                        }
+        if share && let Some(&(_, outcome)) = classes.iter().find(|&&(mask, _)| mask & bit != 0) {
+            match outcome {
+                Outcome::Variant(index) => {
+                    if let Some(&mut (_, ref mut variant)) = variants.get_mut(index) {
+                        add_stage(variant, stage);
                     }
                 }
-                continue;
+                Outcome::Failure(index) => {
+                    if let Some(errors) = failures.get(index).map(|&(_, ref errors)| errors.clone())
+                    {
+                        failures.push((stage, errors));
+                    }
+                }
             }
+            continue;
         }
         let options = stage_options(options, stage);
         let class = StageClass::collecting_identifiers(stage);
@@ -449,19 +452,19 @@ fn once(
     rejections.extend(main.rejected);
     let mut object = main.object;
     let mut accepted = main.accepted;
-    if let Some(ref mut object) = object {
-        if object.unit.work_group_size_constant {
-            let specialized = context.run(true, names);
-            if specialized.accepted & accepted == accepted {
-                object.unit.specialized = specialized
-                    .object
-                    .map(|specialized| alloc::boxed::Box::new(specialized.unit));
-            } else if specialized.accepted & accepted == 0 && specialized.unknown & accepted == 0 {
-                object.unit.specialized = None;
-            } else {
-                unknown |= accepted;
-                accepted = 0;
-            }
+    if let Some(ref mut object) = object
+        && object.unit.work_group_size_constant
+    {
+        let specialized = context.run(true, names);
+        if specialized.accepted & accepted == accepted {
+            object.unit.specialized = specialized
+                .object
+                .map(|specialized| alloc::boxed::Box::new(specialized.unit));
+        } else if specialized.accepted & accepted == 0 && specialized.unknown & accepted == 0 {
+            object.unit.specialized = None;
+        } else {
+            unknown |= accepted;
+            accepted = 0;
         }
     }
     let object = object.filter(|_| accepted != 0).map(|mut object| {
@@ -642,10 +645,10 @@ fn reword(
     own: ShaderStage,
 ) -> Option<String> {
     use rglsl_sema::DiagnosticKind;
-    let name = match *kind {
-        DiagnosticKind::UndeclaredIdentifier(ref name)
-        | DiagnosticKind::NoMatchingFunction(ref name) => name,
-        _ => return None,
+    let (DiagnosticKind::UndeclaredIdentifier(ref name)
+    | DiagnosticKind::NoMatchingFunction(ref name)) = *kind
+    else {
+        return None;
     };
     let declared = !tables.declares(own, name)
         && ShaderStage::ALL
@@ -666,15 +669,14 @@ fn identifiers(text: &str) -> BTreeSet<String> {
         match (start, word) {
             (None, true) => start = Some(index),
             (Some(from), false) => {
-                if let Some(identifier) = text.get(from..index) {
-                    if identifier
+                if let Some(identifier) = text.get(from..index)
+                    && identifier
                         .chars()
                         .next()
                         .is_some_and(|first| !first.is_ascii_digit())
-                        && !names.contains(identifier)
-                    {
-                        names.insert(String::from(identifier));
-                    }
+                    && !names.contains(identifier)
+                {
+                    names.insert(String::from(identifier));
                 }
                 start = None;
             }

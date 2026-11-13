@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::future::Future;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Initializer, Node, Statement, StatementKind, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Span;
 use rglsl_types::stack::{Call, Stack};
 
 pub struct Cx<'b, T> {

@@ -25,12 +25,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
 use self::amber::{Amber, Device};
 pub use self::batch::Outputs;
 use self::batch::{Job, JobResult};
-use self::compare::{compare, Comparison};
+use self::compare::{Comparison, compare};
 use self::harness::ShaderKind;
 use self::plan::{Inputs, Plan, PlannedTensor, Refusal, ScriptPaths};
 use self::reflect::Reflection;
@@ -186,7 +186,7 @@ const LOCAL_GPU_JOBS: usize = 2;
 const RECOVERY_ROUNDS: usize = 2;
 const RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TargetDifference {
     pub target: String,
     pub difference: compare::Difference,
@@ -230,7 +230,7 @@ pub fn compare_outputs(
                 return Err(TargetDifference {
                     target: target.name.clone(),
                     difference,
-                })
+                });
             }
         }
     }
@@ -279,7 +279,9 @@ pub fn select_targets(local: bool, remote: bool) -> Result<Vec<TargetSpec>> {
         if oracles::EXEC_PLATFORM {
             targets.push(TargetSpec::Local);
         } else {
-            eprintln!("[xtask] warning: the local exec target was skipped: KosmicKrisp runs on macOS on arm64 only");
+            eprintln!(
+                "[xtask] warning: the local exec target was skipped: KosmicKrisp runs on macOS on arm64 only"
+            );
         }
     }
     if remote {
@@ -312,7 +314,11 @@ pub fn named_targets(name: &str) -> Result<Vec<TargetSpec>> {
         bail!(
             "unknown exec target `{name}`: use local, remote (every entry of {}) or one of its entries ({})",
             remote::HOST_VAR,
-            if listed.is_empty() { "none set".to_string() } else { listed.join(", ") }
+            if listed.is_empty() {
+                "none set".to_string()
+            } else {
+                listed.join(", ")
+            }
         );
     }
     Ok(chosen)
@@ -409,14 +415,16 @@ pub fn parallel_map<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync)
     let results: Mutex<Vec<(usize, R)>> = Mutex::new(Vec::with_capacity(items.len()));
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(item) = items.get(index) else { break };
-                let result = run(item);
-                results
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push((index, result));
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else { break };
+                    let result = run(item);
+                    results
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push((index, result));
+                }
             });
         }
     });
@@ -436,7 +444,9 @@ impl Executor {
         let backend = match spec {
             TargetSpec::Local => {
                 let (Some(binary), Some(icd)) = (amber_tool(root), icd_manifest(root)) else {
-                    bail!("the local exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec");
+                    bail!(
+                        "the local exec oracles (Amber, KosmicKrisp) are missing: run `cargo xtask oracles` or pass --no-exec"
+                    );
                 };
                 Backend::Local(Amber {
                     binary,
@@ -545,7 +555,11 @@ impl Executor {
             self.target.label(),
             self.support.len() - missing.len(),
             self.support.len(),
-            if missing.is_empty() { "none".to_string() } else { missing.join(", ") }
+            if missing.is_empty() {
+                "none".to_string()
+            } else {
+                missing.join(", ")
+            }
         );
         Ok(())
     }
@@ -671,7 +685,6 @@ impl Executor {
     }
 
     pub fn stage(
-        &self,
         plan: &Plan,
         dir: &Path,
         harness: &[(ShaderKind, PathBuf)],
@@ -780,11 +793,9 @@ impl Executor {
         let harness = self
             .prepare(&plan, &dir)
             .map_err(|error| Outcome::skip(SkipReason::Binding, format!("harness: {error}")))?;
-        let theirs_job = self
-            .stage(&plan, &dir, &harness, &case.reference, "glslang")
+        let theirs_job = Self::stage(&plan, &dir, &harness, &case.reference, "glslang")
             .map_err(|error| Outcome::skip(SkipReason::Binding, error))?;
-        let ours_job = self
-            .stage(&our_plan, &dir, &harness, &case.ours, "rglsl")
+        let ours_job = Self::stage(&our_plan, &dir, &harness, &case.ours, "rglsl")
             .map_err(|error| Outcome::skip(SkipReason::Binding, error))?;
         Ok(Ready {
             plan,
@@ -1015,11 +1026,11 @@ impl Executor {
                         twins.push((index, vec![(expected, actual)]));
                         continue;
                     }
-                    if let (Ok(e), Ok(a)) = (&expected, &actual) {
-                        if let Ok(tolerated) = compare_outputs(&ready.plan, e, a) {
-                            outcomes.push(Some(Outcome::Pass { tolerated }));
-                            continue;
-                        }
+                    if let (Ok(e), Ok(a)) = (&expected, &actual)
+                        && let Ok(tolerated) = compare_outputs(&ready.plan, e, a)
+                    {
+                        outcomes.push(Some(Outcome::Pass { tolerated }));
+                        continue;
                     }
                     outcomes.push(None);
                     pending.push((index, expected.ok()));
@@ -1105,13 +1116,13 @@ fn confirm(
         Err(error) => {
             return Outcome::Fail(format!(
                 "our module fails on the driver (confirmed alone): {error}"
-            ))
+            ));
         }
     };
-    if let Some(first) = expected_first {
-        if let Err(difference) = compare_outputs(plan, first, &expected) {
-            return Outcome::skip(SkipReason::Nondeterministic, difference.to_string());
-        }
+    if let Some(first) = expected_first
+        && let Err(difference) = compare_outputs(plan, first, &expected)
+    {
+        return Outcome::skip(SkipReason::Nondeterministic, difference.to_string());
     }
     match compare_outputs(plan, &expected, &actual) {
         Ok(tolerated) => Outcome::Pass { tolerated },
@@ -1148,13 +1159,13 @@ fn interface_difference(theirs: &Reflection, mine: &Reflection) -> Option<String
                     resource.set,
                     resource.binding,
                     resource.kind.describe()
-                ))
+                ));
             }
             Some(other) if other.kind != resource.kind => {
                 return Some(format!(
                     "set {} binding {}: {:?} vs {:?}",
                     resource.set, resource.binding, resource.kind, other.kind
-                ))
+                ));
             }
             Some(_) => {}
         }

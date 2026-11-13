@@ -171,12 +171,8 @@ pub(super) fn implicit_sizes(
             while let ExpressionKind::Parenthesized(ref inner) = owner.kind {
                 owner = inner;
             }
-            if let (
-                ExpressionKind::Subscript {
-                    base: ref outer, ..
-                },
-                Some(value),
-            ) = (&owner.kind, constant)
+            if let (ExpressionKind::Subscript { base: outer, .. }, Some(value)) =
+                (&owner.kind, constant)
             {
                 let nested = analysis
                     .type_of(outer.id)

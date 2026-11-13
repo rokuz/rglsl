@@ -5,9 +5,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 
-use super::amber::{first_line, parse_device, Device, VULKAN_VERSION};
+use super::amber::{Device, VULKAN_VERSION, first_line, parse_device};
 use super::batch::{self, Job, JobResult};
 use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
@@ -198,7 +198,7 @@ impl Remote {
         }
     }
 
-    fn scp(&self, args: &[String], timeout: Duration, what: &str) -> Result<(), String> {
+    fn scp(args: &[String], timeout: Duration, what: &str) -> Result<(), String> {
         let mut command = Command::new("scp");
         command.args(["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]);
         command.args(args);
@@ -216,7 +216,7 @@ impl Remote {
     fn upload(&self, files: &[&Path], relative_dir: &str, timeout: Duration) -> Result<(), String> {
         let mut args: Vec<String> = files.iter().map(|f| f.display().to_string()).collect();
         args.push(format!("{}:{}/", self.host, self.path(relative_dir)));
-        self.scp(&args, timeout, "uploading the batch")
+        Self::scp(&args, timeout, "uploading the batch")
     }
 
     fn download(&self, relative: &str, to: &Path, timeout: Duration) -> Result<(), String> {
@@ -224,7 +224,7 @@ impl Remote {
             format!("{}:{}", self.host, self.path(relative)),
             to.display().to_string(),
         ];
-        self.scp(&args, timeout, "downloading the results")
+        Self::scp(&args, timeout, "downloading the results")
     }
 
     pub fn device(&self) -> Result<Device, String> {
@@ -267,7 +267,7 @@ impl Remote {
             "creating the work directory",
         )
         .map_err(|e| anyhow!(e))?;
-        let mut uploads = vec![script.clone()];
+        let mut uploads = vec![script];
         if let Some(src) = &amber_src {
             let archive = local.join(AMBER_ARCHIVE);
             pack_amber_sources(src, &archive)?;
@@ -644,9 +644,11 @@ mod tests {
             specs.get(1).map(RemoteSpec::work_name).as_deref(),
             Some("remote-second-nvidia")
         );
-        assert!(specs
-            .get(2)
-            .is_some_and(|s| s.matches("THIRD") && s.matches("third@radeon rx")));
+        assert!(
+            specs
+                .get(2)
+                .is_some_and(|s| s.matches("THIRD") && s.matches("third@radeon rx"))
+        );
         assert!(parse_specs("").map_err(|e| anyhow!(e))?.is_empty());
         assert!(parse_specs("a@").is_err());
         assert!(parse_specs("@x").is_err());

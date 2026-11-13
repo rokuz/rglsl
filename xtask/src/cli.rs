@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 mod limits;
 
@@ -109,14 +109,14 @@ impl Case {
         let mut vulkan = None;
         let mut spirv = None;
         for pair in self.args.windows(2) {
-            if let [option, value] = *pair {
-                if option == "--target-env" {
-                    if let Some(version) = value.strip_prefix("vulkan") {
-                        vulkan = Some(version);
-                    }
-                    if let Some(version) = value.strip_prefix("spirv") {
-                        spirv = Some(version);
-                    }
+            if let [option, value] = *pair
+                && option == "--target-env"
+            {
+                if let Some(version) = value.strip_prefix("vulkan") {
+                    vulkan = Some(version);
+                }
+                if let Some(version) = value.strip_prefix("spirv") {
+                    spirv = Some(version);
                 }
             }
         }
@@ -1431,10 +1431,10 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         .map(|case| (case, &env))
         .chain(reflection::own_cases().into_iter().map(|case| (case, &own)));
     for (case, env) in all {
-        if let Some(ref filter) = options.filter {
-            if !case.name.contains(filter.as_str()) {
-                continue;
-            }
+        if let Some(ref filter) = options.filter
+            && !case.name.contains(filter.as_str())
+        {
+            continue;
         }
         let verdict = check(env, &case)?;
         let command = case.args.join(" ");

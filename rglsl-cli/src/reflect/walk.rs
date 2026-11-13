@@ -10,7 +10,7 @@ use rglsl_sema::analyze::Callee;
 use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::TypeKind;
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
-use rglsl_types::stack::{run, Call, Stack, Stalled};
+use rglsl_types::stack::{Call, Stack, Stalled, run};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Key {

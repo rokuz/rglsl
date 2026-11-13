@@ -246,15 +246,15 @@ impl Analyzer<'_> {
                 continue;
             }
             let mut qualifiers = variable.qualifiers.clone();
-            if let TypeKind::Block(id) = variable.ty.kind {
-                if let Some(block) = self.types.block(id) {
-                    if block.storage != BlockStorage::Out {
-                        continue;
-                    }
-                    qualifiers.storage = Storage::Out;
-                    qualifiers.flags |= block.qualifiers.flags
-                        & (QualifierFlags::PER_PRIMITIVE | QualifierFlags::PER_TASK);
+            if let TypeKind::Block(id) = variable.ty.kind
+                && let Some(block) = self.types.block(id)
+            {
+                if block.storage != BlockStorage::Out {
+                    continue;
                 }
+                qualifiers.storage = Storage::Out;
+                qualifiers.flags |= block.qualifiers.flags
+                    & (QualifierFlags::PER_PRIMITIVE | QualifierFlags::PER_TASK);
             }
             if qualifiers.storage != Storage::Out
                 || qualifiers.flags.contains(QualifierFlags::PER_TASK)

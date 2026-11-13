@@ -6,7 +6,7 @@ use crate::TestResult;
 const DIR_IN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/in");
 const DIR_OUT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/out");
 
-#[allow(unused_variables)]
+#[expect(unused_variables, reason = "some targets ignore the inputs")]
 fn check_targets(
     input: &Input,
     module: &mut rglsl::Module,

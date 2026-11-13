@@ -89,7 +89,7 @@ pub const LSS_ARRAY_LENGTH: core::num::NonZeroU32 = core::num::NonZeroU32::MIN.s
 ///
 /// [`TypeInner::Pointer`]: crate::TypeInner::Pointer
 /// [`TypeInner::ValuePointer`]: crate::TypeInner::ValuePointer
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 pub enum TypeResolution {
@@ -127,7 +127,7 @@ impl TypeResolution {
     }
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ResolveError {
     #[error("Index {index} is out of bounds for expression {expr:?}")]
     OutOfBoundsIndex {
@@ -623,7 +623,7 @@ impl<'a> ResolveContext<'a> {
                         (tl, tr) => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{tl:?} * {tr:?}"
-                            )))
+                            )));
                         }
                     }
                 }
@@ -646,7 +646,7 @@ impl<'a> ResolveContext<'a> {
                         ref other => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{op:?}({other:?}, _)"
-                            )))
+                            )));
                         }
                     };
                     TypeResolution::Value(inner)
@@ -696,7 +696,7 @@ impl<'a> ResolveContext<'a> {
                         ref other => {
                             return Err(ResolveError::IncompatibleOperands(format!(
                                 "{fun:?}({other:?})"
-                            )))
+                            )));
                         }
                     }
                 }
@@ -845,7 +845,7 @@ impl<'a> ResolveContext<'a> {
                 ref other => {
                     return Err(ResolveError::IncompatibleOperands(format!(
                         "{other:?} as {kind:?}"
-                    )))
+                    )));
                 }
             },
             crate::Expression::CallResult(function) => {

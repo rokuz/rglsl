@@ -10,8 +10,8 @@ use crate::build::Builder;
 use crate::constants::GLF_SWITCH;
 use crate::context::Context;
 use crate::injection::{
-    apply_edits, choose, contains_top_level_break, declared_variables, injection_points, Edit,
-    InjectionPoint,
+    Edit, InjectionPoint, apply_edits, choose, contains_top_level_break, declared_variables,
+    injection_points,
 };
 use crate::random::Random;
 use crate::scope::Variable;

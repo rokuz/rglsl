@@ -139,13 +139,13 @@ impl Amber {
                 return Err(format!(
                     "amber exited with {code}: {}",
                     first_line(&output.stderr, &output.stdout)
-                ))
+                ));
             }
             Exit::Signal => {
                 return Err(format!(
                     "amber crashed: {}",
                     first_line(&output.stderr, &output.stdout)
-                ))
+                ));
             }
             Exit::Timeout => return Err("amber timed out".into()),
         }

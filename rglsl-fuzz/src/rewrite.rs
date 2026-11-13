@@ -1,14 +1,14 @@
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
     ExpressionKind, ExternalDeclaration, FullySpecifiedType, FunctionIdentifier, FunctionPrototype,
     Initializer, JumpStatement, Node, SingleTypeQualifier, Spanned, Statement, StatementKind,
     StructSpecifier, TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_ast::Span;
-use rglsl_types::stack::{run, Stalled};
+use rglsl_types::stack::{Stalled, run};
 
 use crate::stack::{
-    child_statements, child_statements_mut, take_initializer, take_statement, take_type, Cx,
+    Cx, child_statements, child_statements_mut, take_initializer, take_statement, take_type,
 };
 use std::cell::RefCell;
 
@@ -370,12 +370,11 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
         while let Some(task) = tasks.pop() {
             match task {
                 Rewrite::Visit(mut node) => {
-                    if let ExpressionKind::FunctionCall(call) = &mut node.kind {
-                        if let FunctionIdentifier::Constructor(specifier)
+                    if let ExpressionKind::FunctionCall(call) = &mut node.kind
+                        && let FunctionIdentifier::Constructor(specifier)
                         | FunctionIdentifier::Cast(specifier) = &mut call.function.node
-                        {
-                            self.specifier_in(specifier).await;
-                        }
+                    {
+                        self.specifier_in(specifier).await;
                     }
                     let children: Vec<Expression> = node
                         .kind

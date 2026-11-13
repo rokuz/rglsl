@@ -3,8 +3,10 @@ name = "rglsl-types"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Common types for rglsl"
 repository.workspace = true
+keywords.workspace = true
 license.workspace = true
 
 [package.metadata.docs.rs]

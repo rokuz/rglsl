@@ -1,8 +1,8 @@
 use alloc::string::String;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::StorageQualifier;
 use rglsl_ast::extensions::Request;
-use rglsl_ast::Span;
 
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -266,7 +266,7 @@ impl Analyzer<'_> {
         }
     }
 
-    pub(crate) fn is_tile_image(&self, ty: &crate::types::Type) -> bool {
+    pub(crate) fn is_tile_image(ty: &crate::types::Type) -> bool {
         ty.as_opaque()
             .or_else(|| ty.element_type().and_then(|element| element.as_opaque()))
             .is_some_and(|opaque| opaque.kind == crate::types::OpaqueKind::TileImage)
@@ -285,7 +285,7 @@ impl Analyzer<'_> {
             );
             return;
         }
-        if !self.is_tile_image(ty) {
+        if !Self::is_tile_image(ty) {
             self.error(
                 span,
                 invalid("tileImageEXT", "can only be used with attachmentEXT types"),

@@ -1,7 +1,7 @@
 use alloc::{vec, vec::Vec};
 
-use super::functions::FunctionTracer;
 use super::FunctionMap;
+use super::functions::FunctionTracer;
 use crate::arena::{BadHandle, Handle};
 use crate::compact::handle_set_map::HandleMap;
 
@@ -88,7 +88,7 @@ impl FunctionTracer<'_> {
                         order: _,
                     } => {
                         self.expressions_used.insert(pointer);
-                        self.trace_atomic_function(fun);
+                        self.trace_atomic_function(*fun);
                         self.expressions_used.insert(value);
                         if let Some(result) = result {
                             self.expressions_used.insert(result);
@@ -109,7 +109,7 @@ impl FunctionTracer<'_> {
                         if let Some(array_index) = array_index {
                             self.expressions_used.insert(array_index);
                         }
-                        self.trace_atomic_function(fun);
+                        self.trace_atomic_function(*fun);
                         self.expressions_used.insert(value);
                         if let Some(sample) = sample {
                             self.expressions_used.insert(sample);
@@ -298,9 +298,9 @@ impl FunctionTracer<'_> {
         }
     }
 
-    fn trace_atomic_function(&mut self, fun: &crate::AtomicFunction) {
+    fn trace_atomic_function(&mut self, fun: crate::AtomicFunction) {
         use crate::AtomicFunction as Af;
-        match *fun {
+        match fun {
             Af::Exchange {
                 compare: Some(expr),
             } => {

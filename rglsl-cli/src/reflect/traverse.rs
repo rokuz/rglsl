@@ -10,12 +10,12 @@ use rglsl_ast::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration};
 use rglsl_sema::analyze::is_shader_record;
 use rglsl_sema::scope::{Origin, Storage, SymbolKind};
 use rglsl_sema::{Analysis, SymbolId};
-use rglsl_types::stack::{run, Call, Stack, Stalled};
+use rglsl_types::stack::{Call, Stack, Stalled, run};
 
 use super::database::Object;
-use super::source::{declared_globals, io_name, BlockDefaults};
+use super::source::{BlockDefaults, declared_globals, io_name};
 use super::types::{
-    self, explicit_packing, explicit_row_major, layout_value, Kind, Layouts, Pack, RType,
+    self, Kind, Layouts, Pack, RType, explicit_packing, explicit_row_major, layout_value,
 };
 use super::walk::{self, Event, Key, Op, Operand};
 use super::{Options, Program};
@@ -325,8 +325,8 @@ impl UnitCx<'_, '_, '_> {
         let mut steps = Vec::with_capacity(keys.len());
         for (key, op) in keys.into_iter().rev() {
             let (op, result) = match op {
-                Op::Direct(index) => (StepOp::Direct(index), self.index_type(&left)),
-                Op::Indirect => (StepOp::Indirect, self.index_type(&left)),
+                Op::Direct(index) => (StepOp::Direct(index), Self::index_type(&left)),
+                Op::Indirect => (StepOp::Indirect, Self::index_type(&left)),
                 Op::Field(ref name) => {
                     let index = self.layouts.member_index(&left, name)?;
                     (StepOp::Member(index), self.layouts.member(&left, index)?)
@@ -344,7 +344,7 @@ impl UnitCx<'_, '_, '_> {
         Some((symbol, base_key, steps))
     }
 
-    pub(super) fn index_type(&self, left: &RType) -> RType {
+    pub(super) fn index_type(left: &RType) -> RType {
         let mut element = left.clone();
         element.storage = Storage::None;
         if left.is_array() {
@@ -437,10 +437,8 @@ impl UnitCx<'_, '_, '_> {
                 index
             }
             Some(index) => {
-                if update {
-                    if let Some(object) = blocks.get_mut(index) {
-                        object.stages |= bit;
-                    }
+                if update && let Some(object) = blocks.get_mut(index) {
+                    object.stages |= bit;
                 }
                 index
             }
@@ -601,10 +599,11 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         derefs.reverse();
         unit.mark(base_key);
         let mut array_size = 0;
-        if last.left.granular() && last.left.is_array() {
-            if let StepOp::Direct(index) = last.op {
-                array_size = index + 1;
-            }
+        if last.left.granular()
+            && last.left.is_array()
+            && let StepOp::Direct(index) = last.op
+        {
+            array_size = index + 1;
         }
         let base_name = if anonymous {
             String::new()

@@ -4,11 +4,11 @@ mod samples;
 use std::path::Path;
 
 use rglsl_fuzz::{
-    analyze_shader, generate_variant_with_donors, parse_shader, Donor, EnabledTransformations,
-    GeneratorOptions, Random, ShaderJob, Transformation,
+    Donor, EnabledTransformations, GeneratorOptions, Random, ShaderJob, Transformation,
+    analyze_shader, generate_variant_with_donors, parse_shader,
 };
 use rglsl_types::ShaderStage;
-use samples::{glslang, glslang_accepts, sample_donors, sample_jobs, TestResult};
+use samples::{TestResult, glslang, glslang_accepts, sample_donors, sample_jobs};
 
 fn options(transformation: Transformation) -> GeneratorOptions {
     GeneratorOptions {

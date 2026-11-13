@@ -197,7 +197,7 @@ pub fn vector_sizes() -> impl Iterator<Item = ir::VectorSize> + Clone {
         ir::VectorSize::Quad,
     ];
 
-    SIZES.iter().cloned()
+    SIZES.iter().copied()
 }
 
 const POINTER_SPAN: u32 = 4;
@@ -269,7 +269,7 @@ impl crate::TypeInner {
         loop {
             match *inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } | Ti::Matrix { scalar, .. } => {
-                    return Some(scalar)
+                    return Some(scalar);
                 }
                 Ti::Array { base, .. } => inner = &types[base].inner,
                 _ => return None,
@@ -306,10 +306,7 @@ impl crate::TypeInner {
 
     pub fn is_atomic_pointer(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
         match *self {
-            Self::Pointer { base, .. } => match types[base].inner {
-                Self::Atomic { .. } => true,
-                _ => false,
-            },
+            Self::Pointer { base, .. } => matches!(types[base].inner, Self::Atomic { .. }),
             _ => false,
         }
     }

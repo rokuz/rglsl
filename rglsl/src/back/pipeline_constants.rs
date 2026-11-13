@@ -10,18 +10,14 @@ use thiserror::Error;
 
 use super::PipelineConstants;
 use crate::{
+    Arena, Block, Constant, Expression, Function, Handle, Literal, Module, Override, Range, Scalar,
+    Span, Statement, TypeInner, WithSpan,
     arena::HandleVec,
-    compact::{compact, CompactError, KeepUnused},
+    compact::{CompactError, KeepUnused, compact},
     ir,
     proc::{ConstantEvaluator, ConstantEvaluatorError, Emitter},
     valid::{Capabilities, ModuleInfo, ValidationError, ValidationFlags, Validator},
-    Arena, Block, Constant, Expression, Function, Handle, Literal, Module, Override, Range, Scalar,
-    Span, Statement, TypeInner, WithSpan,
 };
-
-// Possibly unused if not compiled with no_std
-#[allow(unused_imports)]
-use num_traits::float::FloatCore as _;
 
 #[derive(Error, Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -1103,7 +1099,7 @@ fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut S
                 adjust(index);
             }
             adjust(argument);
-            adjust(result)
+            adjust(result);
         }
         Statement::SubgroupFunction {
             ref mut fun,

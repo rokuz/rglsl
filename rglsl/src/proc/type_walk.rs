@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::{arena::Handle, FastHashMap, FastHashSet, Type, TypeInner, UniqueArena};
+use crate::{FastHashMap, FastHashSet, Type, TypeInner, UniqueArena, arena::Handle};
 
 pub fn contains<K: Copy + Eq + core::hash::Hash>(
     root: K,

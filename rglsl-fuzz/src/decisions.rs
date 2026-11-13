@@ -1,6 +1,6 @@
 use crate::donate::Donor;
 use crate::error::Error;
-use crate::generate::{generate_variant_with_donors, prepare_reference, GeneratorOptions};
+use crate::generate::{GeneratorOptions, generate_variant_with_donors, prepare_reference};
 use crate::job::ShaderJob;
 use crate::random::Random;
 

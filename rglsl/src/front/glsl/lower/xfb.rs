@@ -3,7 +3,7 @@ use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use rglsl_ast::ast::{SingleTypeQualifier, Spanned, TypeQualifier};
 use rglsl_sema::scope::Qualifiers;
 
-use super::{internal, semantic, Lowerer, Result};
+use super::{Lowerer, Result, internal, semantic};
 use crate::{GlobalVariable, Handle, Span, Type, TypeInner, UniqueArena, XfbBinding};
 
 #[derive(Debug, Default)]
@@ -379,15 +379,15 @@ impl Lowerer<'_> {
                         )
                     });
             let explicit = self.xfb.strides.get(&buffer).copied();
-            if let Some(explicit) = explicit {
-                if implicit > explicit {
-                    self.errors.push(semantic(
+            if let Some(explicit) = explicit
+                && implicit > explicit
+            {
+                self.errors.push(semantic(
                         format!(
                             "xfb_stride is too small to hold all buffer entries: xfb_buffer {buffer}, xfb_stride {explicit}, minimum stride needed: {implicit}"
                         ),
                         Span::UNDEFINED,
                     ));
-                }
             }
             let stride = explicit.unwrap_or(implicit);
             if widths.wide && !stride.is_multiple_of(8) {
@@ -397,7 +397,9 @@ impl Lowerer<'_> {
                 ));
             } else if widths.normal && !stride.is_multiple_of(4) {
                 self.errors.push(semantic(
-                    format!("xfb_stride must be multiple of 4: xfb_buffer {buffer}, xfb_stride {stride}"),
+                    format!(
+                        "xfb_stride must be multiple of 4: xfb_buffer {buffer}, xfb_stride {stride}"
+                    ),
                     Span::UNDEFINED,
                 ));
             } else if widths.half && !stride.is_multiple_of(2) {

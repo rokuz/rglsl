@@ -2,17 +2,17 @@ use rglsl_ast::Stalled;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rglsl_ast::TranslationUnit;
-use rglsl_sema::{analyze, analyze_with_builtins, Analysis, Builtins, Options};
+use rglsl_sema::{Analysis, Builtins, Options, analyze, analyze_with_builtins};
 use rglsl_types::ShaderStage;
 
 use crate::donate::Donor;
 use crate::error::Error;
 use crate::fuzzer::GenerationParams;
 use crate::job::{
-    add_braces, add_injection_switch_if_not_present, node_count, parse_unit, ShaderJob,
+    ShaderJob, add_braces, add_injection_switch_if_not_present, node_count, parse_unit,
 };
 use crate::macros::{emit, expand_macros};
-use crate::pipeline::{uniform_declarators, UniformType};
+use crate::pipeline::{UniformType, uniform_declarators};
 use crate::random::Random;
 use crate::strip::strip_unused;
 use crate::transformation::{
@@ -59,11 +59,7 @@ fn effective_version(unit: &TranslationUnit) -> u32 {
             },
             _ => None,
         });
-    if version == Some(460) {
-        460
-    } else {
-        450
-    }
+    if version == Some(460) { 460 } else { 450 }
 }
 
 fn cached_builtins(unit: &TranslationUnit, stage: ShaderStage) -> Option<Arc<Builtins>> {
@@ -115,7 +111,10 @@ fn shader_large_enough(
     Ok(node_count(unit)? > usize::try_from(limit).unwrap_or(usize::MAX))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn apply_transformation(
     transformation: Transformation,
     unit: &mut TranslationUnit,
@@ -258,10 +257,10 @@ pub fn generate_variant_with_donors(
     let mut job = reference.clone();
     let prepared = prepare_reference(reference, options.max_uniforms.saturating_sub(1), true)?;
     for name in prepared.pipeline.uniform_names() {
-        if let Some(binding) = prepared.pipeline.binding(&name) {
-            if !job.pipeline.has_binding_or_is_push_constant(&name) {
-                job.pipeline.add_uniform_binding(&name, false, binding);
-            }
+        if let Some(binding) = prepared.pipeline.binding(&name)
+            && !job.pipeline.has_binding_or_is_push_constant(&name)
+        {
+            job.pipeline.add_uniform_binding(&name, false, binding);
         }
     }
     if options.add_injection_switch {

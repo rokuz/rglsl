@@ -3,8 +3,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use rglsl_types::FastHashMap;
 
-use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 
 use crate::constant::Constant;
 use crate::spirv::{SpirvDecoration, SpirvInstruction};

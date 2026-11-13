@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rspirv::dr::Operand;
-use rspirv::grammar::{ext_inst_table, OperandKind, INSTRUCTION_TABLE};
+use rspirv::grammar::{INSTRUCTION_TABLE, OperandKind, ext_inst_table};
 use rspirv::spirv::{
     AccessQualifier, BuiltIn, Capability, Decoration, ExecutionMode, StorageClass,
 };
@@ -65,13 +65,13 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn opencl_capability(&mut self, span: Span, value: u32) {
-        if let Some(capability) = Capability::from_u32(value) {
-            if let Some(reason) = capability_reason(capability) {
-                self.target_limit(
-                    span,
-                    not_supported(format!("capability `{capability:?}`"), reason),
-                );
-            }
+        if let Some(capability) = Capability::from_u32(value)
+            && let Some(reason) = capability_reason(capability)
+        {
+            self.target_limit(
+                span,
+                not_supported(format!("capability `{capability:?}`"), reason),
+            );
         }
     }
 
@@ -92,22 +92,22 @@ impl Analyzer<'_> {
             return;
         };
         self.opencl_operand(span, "decoration", Operand::Decoration(decoration));
-        if decoration == Decoration::BuiltIn {
-            if let Some(builtin) = first_literal.and_then(BuiltIn::from_u32) {
-                self.opencl_operand(span, "built-in", Operand::BuiltIn(builtin));
-            }
+        if decoration == Decoration::BuiltIn
+            && let Some(builtin) = first_literal.and_then(BuiltIn::from_u32)
+        {
+            self.opencl_operand(span, "built-in", Operand::BuiltIn(builtin));
         }
     }
 
     pub(crate) fn opencl_instruction(&mut self, span: Span, set: &str, opcode: u32) {
         if set.is_empty() {
-            if let Some(instruction) = INSTRUCTION_TABLE.lookup_opcode(opcode) {
-                if let Some(reason) = requirement_reason(instruction.capabilities) {
-                    self.target_limit(
-                        span,
-                        not_supported(format!("instruction `Op{}`", instruction.opname), reason),
-                    );
-                }
+            if let Some(instruction) = INSTRUCTION_TABLE.lookup_opcode(opcode)
+                && let Some(reason) = requirement_reason(instruction.capabilities)
+            {
+                self.target_limit(
+                    span,
+                    not_supported(format!("instruction `Op{}`", instruction.opname), reason),
+                );
             }
             return;
         }

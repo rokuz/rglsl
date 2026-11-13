@@ -1,12 +1,12 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{BlockStructure, Spanned, StructDeclaration};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{BlockStructure, Spanned, StructDeclaration};
 
+use super::Analyzer;
 use super::frames::Cx;
 use super::reference::{matrix_of, packing_of};
-use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
 use crate::layout::block_size;
 use crate::scope::{LayoutValue, Qualifiers, Storage, SymbolKind};
@@ -62,16 +62,16 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn heap_object_check(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if let Some(entry) = qualifiers.layout_entry("descriptor_stride") {
-            if !qualifiers.has_layout("descriptor_heap") {
-                self.error(
-                    entry.span,
-                    invalid(
-                        "descriptor_stride",
-                        "must specify 'descriptor_heap' to use 'descriptor_stride'",
-                    ),
-                );
-            }
+        if let Some(entry) = qualifiers.layout_entry("descriptor_stride")
+            && !qualifiers.has_layout("descriptor_heap")
+        {
+            self.error(
+                entry.span,
+                invalid(
+                    "descriptor_stride",
+                    "must specify 'descriptor_heap' to use 'descriptor_stride'",
+                ),
+            );
         }
         if let Some(entry) = qualifiers.layout_entry("heap_offset") {
             let offset = entry.value != LayoutValue::Constant(0);
@@ -112,7 +112,9 @@ impl Analyzer<'_> {
         let reason = if anonymous
             && (block || matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer))
         {
-            Some("layout(descriptor_heap) decorated block should be explicitly declared with a run-time sized array type")
+            Some(
+                "layout(descriptor_heap) decorated block should be explicitly declared with a run-time sized array type",
+            )
         } else if ty
             .as_opaque()
             .or_else(|| ty.element_type().and_then(|element| element.as_opaque()))

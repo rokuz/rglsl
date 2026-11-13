@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-use anyhow::{bail, Context, Result};
-use rglsl_fuzz::decisions::decode;
+use anyhow::{Context, Result, bail};
 use rglsl_fuzz::ShaderJob;
+use rglsl_fuzz::decisions::decode;
 use serde_json::json;
 
 use crate::process::{self, Exit};

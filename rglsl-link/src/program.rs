@@ -2,9 +2,9 @@ use rglsl::object::{PathStep, SymbolKind};
 use rglsl::{AddressSpace, ArraySize, Binding, Handle, Module, ShaderStage, Type, TypeInner};
 
 use crate::error::{LinkError, LinkErrors};
-use crate::merge::{space_class, MergedGlobal, SpaceClass};
+use crate::merge::{MergedGlobal, SpaceClass, space_class};
 use crate::unify::Mismatch;
-use crate::{finish, interface, merge, Linked, Merged, Options};
+use crate::{Linked, Merged, Options, finish, interface, merge};
 
 const fn pipeline_position(stage: ShaderStage) -> Option<u8> {
     match stage {
@@ -451,7 +451,7 @@ pub fn link_program_staged(
         match finish(stage) {
             Ok(result) => linked.push(result),
             Err(failure) => {
-                errors.extend(failure.errors.into_iter().map(|error| (Some(name), error)))
+                errors.extend(failure.errors.into_iter().map(|error| (Some(name), error)));
             }
         }
     }

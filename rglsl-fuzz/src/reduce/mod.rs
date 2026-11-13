@@ -9,7 +9,7 @@ use rglsl_ast::TranslationUnit;
 use crate::constants::GLOBAL_LOOP_BOUNDS;
 use crate::error::Error;
 use crate::generate::analyze_shader;
-use crate::job::{parse_unit, ShaderJob};
+use crate::job::{ShaderJob, parse_unit};
 use crate::macros::{emit, expand_macros};
 
 pub use finders::Pass;
@@ -155,11 +155,11 @@ pub fn reduce(
     let mut bound = None;
     if !options.preserve_semantics && options.guards {
         for candidate in GLOBAL_LOOP_BOUNDS {
-            if let Some(guarded) = add_guards_to_job(&current, candidate)? {
-                if judge(&guarded)? {
-                    bound = Some(candidate);
-                    break;
-                }
+            if let Some(guarded) = add_guards_to_job(&current, candidate)?
+                && judge(&guarded)?
+            {
+                bound = Some(candidate);
+                break;
             }
         }
     }

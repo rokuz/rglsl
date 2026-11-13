@@ -28,10 +28,10 @@ use crate::extensions::{ExtensionState, Feature};
 use crate::keywords::{
     is_opaque_type_keyword, is_reserved_word, is_type_keyword, is_unavailable_word,
 };
-use crate::lexer::{tokenize, Token, TokenKind};
+use crate::lexer::{Token, TokenKind, tokenize};
 use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
-use rglsl_types::stack::{run, Call, Stack};
+use rglsl_types::stack::{Call, Stack, run};
 
 pub const NON_UNIFORM: &str = "nonuniformEXT";
 const NON_UNIFORM_EXTENSION: &str = "GL_EXT_nonuniform_qualifier";
@@ -148,10 +148,10 @@ impl<'a> StructScopes<'a> {
     }
 
     fn declare(&mut self, name: &'a str) {
-        if let Some(scope) = self.scopes.last_mut() {
-            if scope.insert(name) {
-                *self.visible.entry(name).or_default() += 1;
-            }
+        if let Some(scope) = self.scopes.last_mut()
+            && scope.insert(name)
+        {
+            *self.visible.entry(name).or_default() += 1;
         }
     }
 }

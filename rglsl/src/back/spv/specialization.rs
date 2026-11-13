@@ -4,8 +4,8 @@ use spirv::{Op, Word};
 
 use super::{Error, Instruction, LookupType, NumericType, Writer, WriterFlags};
 use crate::{
-    arena::Handle, proc::TypeResolution, valid::ModuleInfo, BinaryOperator, Expression, Literal,
-    Module, Scalar, ScalarKind, TypeInner, UnaryOperator, VectorSize,
+    BinaryOperator, Expression, Literal, Module, Scalar, ScalarKind, TypeInner, UnaryOperator,
+    VectorSize, arena::Handle, proc::TypeResolution, valid::ModuleInfo,
 };
 
 fn literal_words(literal: Literal) -> Vec<Word> {
@@ -247,7 +247,7 @@ impl Writer {
                     Some(_) => {
                         return Err(Error::SpecializationConstant(
                             "a default value that is not a literal",
-                        ))
+                        ));
                     }
                 };
                 let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
@@ -264,10 +264,10 @@ impl Writer {
                 }
                 instruction.to_words(&mut self.logical_layout.declarations);
                 self.decorate(id, spirv::Decoration::SpecId, &[spec_id]);
-                if self.flags.contains(WriterFlags::DEBUG) {
-                    if let Some(ref name) = item.name {
-                        self.debugs.push(Instruction::name(id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && let Some(ref name) = item.name
+                {
+                    self.debugs.push(Instruction::name(id, name));
                 }
                 id
             }
@@ -276,10 +276,11 @@ impl Writer {
                     .init
                     .ok_or(Error::SpecializationConstant("an override without a value"))?;
                 let id = self.write_global_expression(init, module, mod_info)?;
-                if self.flags.contains(WriterFlags::DEBUG) && self.is_override_dependent(init) {
-                    if let Some(ref name) = item.name {
-                        self.debugs.push(Instruction::name(id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && self.is_override_dependent(init)
+                    && let Some(ref name) = item.name
+                {
+                    self.debugs.push(Instruction::name(id, name));
                 }
                 id
             }
@@ -325,10 +326,10 @@ impl Writer {
     }
 
     fn checked_type_id(&mut self, resolution: &TypeResolution) -> Result<Word, Error> {
-        if let TypeResolution::Handle(ty) = *resolution {
-            if !self.lookup_type.contains_key(&LookupType::Handle(ty)) {
-                return Err(Error::Validation("a type is used before it is declared"));
-            }
+        if let TypeResolution::Handle(ty) = *resolution
+            && !self.lookup_type.contains_key(&LookupType::Handle(ty))
+        {
+            return Err(Error::Validation("a type is used before it is declared"));
         }
         self.get_expression_type_id(resolution)
     }
@@ -540,8 +541,9 @@ impl Writer {
                     (BinaryOperator::Modulo, ScalarKind::Sint) => Op::SMod,
                     (BinaryOperator::Modulo, ScalarKind::Uint) => Op::UMod,
                     (BinaryOperator::Equal, ScalarKind::Bool) => Op::LogicalEqual,
-                    (BinaryOperator::NotEqual, ScalarKind::Bool)
-                    | (BinaryOperator::ExclusiveOr, ScalarKind::Bool) => Op::LogicalNotEqual,
+                    (BinaryOperator::NotEqual | BinaryOperator::ExclusiveOr, ScalarKind::Bool) => {
+                        Op::LogicalNotEqual
+                    }
                     (BinaryOperator::Equal, _) => Op::IEqual,
                     (BinaryOperator::NotEqual, _) => Op::INotEqual,
                     (BinaryOperator::Less, _) if signed => Op::SLessThan,

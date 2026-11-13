@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::future::Future;
 
-use rglsl_types::stack::{run, Call, Stack, Stalled};
+use rglsl_types::stack::{Call, Stack, Stalled, run};
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
@@ -125,19 +125,19 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         match &specifier.non_array {
             TypeSpecifierNonArray::Struct(structure) => {
                 self.call(self.clone().members(&structure.declarations))
-                    .await
+                    .await;
             }
             TypeSpecifierNonArray::InlineBlock(declarations) => {
-                self.call(self.clone().members(declarations)).await
+                self.call(self.clone().members(declarations)).await;
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 for parameter in &spirv.parameters {
                     match parameter {
                         SpirvTypeParameter::Constant(value) => {
-                            self.call(self.clone().expression(value)).await
+                            self.call(self.clone().expression(value)).await;
                         }
                         SpirvTypeParameter::Type(ty) => {
-                            self.call(self.clone().specifier(&ty.node)).await
+                            self.call(self.clone().specifier(&ty.node)).await;
                         }
                     }
                 }
@@ -187,7 +187,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn initializer(self, initializer: &'a Initializer) {
         match initializer {
             Initializer::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await
+                self.call(self.clone().expression(expression)).await;
             }
             Initializer::List(items) => {
                 for item in items {
@@ -200,7 +200,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn declaration(self, declaration: &'a Declaration) {
         match &declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
-                self.call(self.clone().prototype(&prototype.node)).await
+                self.call(self.clone().prototype(&prototype.node)).await;
             }
             DeclarationKind::InitDeclaratorList(list) => {
                 self.call(self.clone().fully_specified(&list.ty)).await;
@@ -227,10 +227,10 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             }
             DeclarationKind::Qualifier(qualifier)
             | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => {
-                self.call(self.clone().qualifier(qualifier)).await
+                self.call(self.clone().qualifier(qualifier)).await;
             }
             DeclarationKind::SpirvInstruction { prototype, .. } => {
-                self.call(self.clone().prototype(&prototype.node)).await
+                self.call(self.clone().prototype(&prototype.node)).await;
             }
             DeclarationKind::SpirvExecutionMode(mode) => {
                 if mode.node.kind == SpirvExecutionModeKind::Id {
@@ -245,7 +245,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn condition(self, condition: &'a Condition) {
         match condition {
             Condition::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await
+                self.call(self.clone().expression(expression)).await;
             }
             Condition::Declaration(declaration) => {
                 self.call(self.clone().fully_specified(&declaration.kind.ty))
@@ -264,7 +264,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 }
             }
             StatementKind::Declaration(declaration) => {
-                self.call(self.clone().declaration(declaration)).await
+                self.call(self.clone().declaration(declaration)).await;
             }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
@@ -292,7 +292,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 }
             }
             StatementKind::CaseLabel(CaseLabel::Case(label)) => {
-                self.call(self.clone().expression(label)).await
+                self.call(self.clone().expression(label)).await;
             }
             StatementKind::CaseLabel(CaseLabel::Default) => {}
             StatementKind::While { condition, body } => {
@@ -314,7 +314,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 self.call(self.clone().statement(&statement.body)).await;
             }
             StatementKind::Jump(JumpStatement::Return(Some(value))) => {
-                self.call(self.clone().expression(value)).await
+                self.call(self.clone().expression(value)).await;
             }
             StatementKind::Jump(_) => {}
             StatementKind::Attributed {
@@ -336,12 +336,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let mut pending = Vec::from([expression]);
         while let Some(expression) = pending.pop() {
             self.walker.found.borrow_mut().push(expression);
-            if let ExpressionKind::FunctionCall(call) = &expression.kind {
-                if let FunctionIdentifier::Constructor(specifier)
+            if let ExpressionKind::FunctionCall(call) = &expression.kind
+                && let FunctionIdentifier::Constructor(specifier)
                 | FunctionIdentifier::Cast(specifier) = &call.function.node
-                {
-                    self.call(self.clone().specifier(specifier)).await;
-                }
+            {
+                self.call(self.clone().specifier(specifier)).await;
             }
             pending.extend(expression.kind.children().into_iter().rev());
         }

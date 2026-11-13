@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use core::{fmt, hash, ops};
 
 use super::{
-    handle::{BadHandle, Handle},
     Range,
+    handle::{BadHandle, Handle},
 };
 use crate::{FastIndexSet, Span};
 
@@ -191,7 +191,7 @@ impl<T: Eq + hash::Hash> UniqueArena<T> {
     }
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq)]
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ReplaceError {
     #[error(transparent)]
     BadHandle(#[from] BadHandle),

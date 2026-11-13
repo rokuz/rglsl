@@ -1,5 +1,3 @@
-#![allow(clippy::panic, reason = "tests fail by panicking")]
-
 use std::collections::BTreeMap;
 
 use rglsl_ast::ast::{ExpressionKind, StatementKind, TranslationUnit};
@@ -7,12 +5,12 @@ use rglsl_ast::ast::{ExpressionKind, StatementKind, TranslationUnit};
 use rglsl_fuzz::build::Builder;
 use rglsl_fuzz::injection::{apply_edits, contains_top_level_break, injection_points};
 use rglsl_fuzz::job::{add_braces, node_count};
-use rglsl_fuzz::rename::{rename_all, NameKind};
+use rglsl_fuzz::rename::{NameKind, rename_all};
 use rglsl_fuzz::rewrite::{
     function_statements, rewrite_expressions, rewrite_statements, statement_expression_ids,
 };
 use rglsl_fuzz::scope::find_points;
-use rglsl_sema::{analyze, Options};
+use rglsl_sema::{Options, analyze};
 use rglsl_types::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -70,9 +68,11 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
         let statements = function_statements(&unit).len();
         assert!(statements > DEPTH);
         assert!(node_count(&unit)? > 2 * DEPTH);
-        assert!(function_statements(&unit)
-            .iter()
-            .any(|(_, statement)| contains_top_level_break(statement)));
+        assert!(
+            function_statements(&unit)
+                .iter()
+                .any(|(_, statement)| contains_top_level_break(statement))
+        );
         let (_, deepest) = function_statements(&unit)
             .pop()
             .ok_or("the shader has no statements")?;
@@ -80,10 +80,10 @@ fn walkers_handle_deep_nesting_on_a_small_stack() -> TestResult {
         let mut visited = 0;
         rewrite_expressions(&mut unit, &mut |expression| {
             visited += 1;
-            if let ExpressionKind::Variable(name) = &mut expression.kind {
-                if name == "b" {
-                    *name = String::from("c");
-                }
+            if let ExpressionKind::Variable(name) = &mut expression.kind
+                && name == "b"
+            {
+                *name = String::from("c");
             }
         })?;
         assert!(visited > DEPTH);

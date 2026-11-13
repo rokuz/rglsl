@@ -11,7 +11,7 @@ use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 use rglsl::{Module, ShaderStage};
 
 use crate::args::{
-    Debug, Exit, Macro, Options, VersionDump, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE,
+    Debug, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Macro, Options, VersionDump,
 };
 use crate::output;
 use crate::reflect;
@@ -257,10 +257,10 @@ impl<'a> Session<'a> {
                 continue;
             }
             let index = shift.class.index();
-            if let Some(base) = shift.base {
-                if let Some(slot) = shifts.base.get_mut(index) {
-                    *slot = base;
-                }
+            if let Some(base) = shift.base
+                && let Some(slot) = shifts.base.get_mut(index)
+            {
+                *slot = base;
             }
             if let Some(per_set) = shifts.per_set.get_mut(index) {
                 for &(set, base) in &shift.per_set {
@@ -337,10 +337,10 @@ impl<'a> Session<'a> {
         let shifts = self.shifts(Some(stage));
         for class in ResourceClass::ALL {
             let index = class.index();
-            if let Some(&base) = shifts.base.get(index) {
-                if base != 0 {
-                    processes.push(format!("{} {base}", resource_name(class)));
-                }
+            if let Some(&base) = shifts.base.get(index)
+                && base != 0
+            {
+                processes.push(format!("{} {base}", resource_name(class)));
             }
             for (set, base) in shifts.per_set.get(index).into_iter().flatten() {
                 if *base != 0 {
@@ -460,7 +460,7 @@ impl<'a> Session<'a> {
         }
     }
 
-    fn infolog(&self, log: &Log) -> String {
+    fn infolog(log: &Log) -> String {
         let mut text = String::new();
         for line in &log.notes {
             text.push_str(line);
@@ -486,7 +486,7 @@ impl<'a> Session<'a> {
         if !self.options.quiet {
             output::err!("{}", unit.name);
         }
-        let text = self.infolog(log);
+        let text = Self::infolog(log);
         if !text.is_empty() {
             output::err!("{text}");
         }
@@ -586,7 +586,7 @@ impl<'a> Session<'a> {
                 let parsed = self.parse_log(unit, &errors);
                 log.compile.extend(parsed.compile);
                 log.compile.extend(parsed.link.into_iter().map(|message| {
-                    continued(format!("ERROR: {}: {message}", self.root_name(unit)))
+                    continued(&format!("ERROR: {}: {message}", self.root_name(unit)))
                 }));
                 Compiled { object: None, log }
             }
@@ -613,7 +613,7 @@ impl<'a> Session<'a> {
             let results = if self.options.suppress_info {
                 String::new()
             } else {
-                self.infolog(&compiled.log)
+                Self::infolog(&compiled.log)
             };
             if several || !results.is_empty() {
                 output::out!("{}", unit.name);
@@ -694,15 +694,11 @@ impl<'a> Session<'a> {
             } else {
                 failed = true;
                 if !self.options.suppress_info {
-                    output::err!("{}", self.infolog(&log));
+                    output::err!("{}", Self::infolog(&log));
                 }
             }
         }
-        if failed {
-            EXIT_COMPILE
-        } else {
-            EXIT_SUCCESS
-        }
+        if failed { EXIT_COMPILE } else { EXIT_SUCCESS }
     }
 
     fn compile_and_link(&mut self) -> Result<i32, Exit> {
@@ -717,7 +713,7 @@ impl<'a> Session<'a> {
                 return Err(Exit::detailed(
                     "a library (a .glsl file without a stage) has no entry point; link it with a program, or compile it with --object",
                     unit.name.clone(),
-                ))
+                ));
             }
             _ => self.link(&units)?,
         };
@@ -797,7 +793,7 @@ impl<'a> Session<'a> {
                     .link
                     .iter()
                     .map(|message| {
-                        continued(format!(
+                        continued(&format!(
                             "ERROR: Linking {} stage: {message}",
                             glslang_stage_name(stage)
                         ))
@@ -1101,12 +1097,12 @@ impl<'a> Session<'a> {
     }
 }
 
-fn continued(message: String) -> String {
+fn continued(message: &str) -> String {
     message.replace('\n', "\nERROR: ")
 }
 
 fn link_line(stage: Option<ShaderStage>, error: &rglsl_link::LinkError) -> String {
-    continued(match (stage, error) {
+    continued(&match (stage, error) {
         (_, rglsl_link::LinkError::CrossStage { stages, name, what }) => format!(
             "ERROR: Linking {} stages: {what} of `{name}` must match between stages",
             stages.to_lowercase()

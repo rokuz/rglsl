@@ -1,8 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{Expression, ExpressionKind};
 
 use super::qcom::QcomConversion;
 use super::{Analyzer, Callee, Operand};
@@ -127,19 +127,19 @@ impl Analyzer<'_> {
         span: Span,
         name: &str,
         arguments: &[Expression],
-        operands: Vec<Operand>,
+        operands: &[Operand],
     ) -> Operand {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
         }
         if let Some(conversion) = super::qcom::conversion(name) {
-            return self.qcom_conversion(expression, span, name, conversion, arguments, &operands);
+            return self.qcom_conversion(expression, span, name, conversion, arguments, operands);
         }
         if name == "saturatedConvertEXT" {
-            return self.saturated_convert(expression, span, arguments, &operands);
+            return self.saturated_convert(expression, span, arguments, operands);
         }
         if name.starts_with("coopVec") {
-            return self.cooperative_vector_call(expression, span, name, arguments, &operands);
+            return self.cooperative_vector_call(expression, span, name, arguments, operands);
         }
         let nv = name.ends_with("NV");
         let extension = if nv {
@@ -150,9 +150,9 @@ impl Analyzer<'_> {
         let result = match name {
             "coopMatLoad" | "coopMatLoadNV" | "coopMatStore" | "coopMatStoreNV" => {
                 let load = name.starts_with("coopMatLoad");
-                self.cooperative_memory(span, name, nv, load, arguments, &operands)
+                self.cooperative_memory(span, name, nv, load, arguments, operands)
             }
-            _ => self.cooperative_mul_add(span, name, nv, &operands),
+            _ => self.cooperative_mul_add(span, name, nv, operands),
         };
         let Some((call, result)) = result else {
             return Operand::error();
@@ -579,22 +579,21 @@ impl Analyzer<'_> {
                     );
                 }
                 let first = arguments.first().map_or(span, |argument| argument.span);
-                if let Some(result) = at(0) {
-                    if !self.require_lvalue(first, result) {
-                        return Operand::error();
-                    }
+                if let Some(result) = at(0)
+                    && !self.require_lvalue(first, result)
+                {
+                    return Operand::error();
                 }
-                if let Some(matrix) = at(3) {
-                    if !self.require_storage(span, name, matrix, false, false) {
-                        return Operand::error();
-                    }
+                if let Some(matrix) = at(3)
+                    && !self.require_storage(span, name, matrix, false, false)
+                {
+                    return Operand::error();
                 }
-                if bias {
-                    if let Some(bias) = at(6) {
-                        if !self.require_storage(span, name, bias, false, false) {
-                            return Operand::error();
-                        }
-                    }
+                if bias
+                    && let Some(bias) = at(6)
+                    && !self.require_storage(span, name, bias, false, false)
+                {
+                    return Operand::error();
                 }
                 let constants: &[(usize, &'static str)] = if bias {
                     &[

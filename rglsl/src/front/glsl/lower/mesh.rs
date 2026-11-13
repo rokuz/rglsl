@@ -3,11 +3,11 @@ use alloc::vec::Vec;
 use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::Expression as AstExpression;
-use rglsl_sema::scope::{Qualifiers, Storage};
 use rglsl_sema::SymbolId;
+use rglsl_sema::scope::{Qualifiers, Storage};
 
 use super::function::FunctionLowerer;
-use super::{internal, semantic, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, semantic};
 use crate::{
     AddressSpace, Binding, BuiltIn, GlobalVariable, MemoryDecorations, MeshFunction,
     MeshOutputLayout, MeshOutputTopology, MeshShaderExtension, MeshShaderInfo, ShaderStage, Span,
@@ -201,8 +201,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for argument in arguments {
             values.push({
                 let frame = self.clone().rvalue(argument);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?);
         }
         let function = match (name, values.as_slice()) {

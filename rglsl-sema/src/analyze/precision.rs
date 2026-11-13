@@ -1,12 +1,12 @@
 use alloc::vec::Vec;
 use rglsl_types::{FastHashMap, FastHashSet};
 
+use rglsl_ast::TranslationUnit;
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Condition, Declaration, DeclarationKind, Expression,
     ExpressionKind, ExternalDeclaration, FunctionIdentifier, Initializer, JumpStatement, NodeId,
     PrecisionQualifier, Statement, StatementKind, UnaryOperator,
 };
-use rglsl_ast::TranslationUnit;
 
 use super::{Analysis, Callee};
 use crate::scope::{SymbolId, SymbolKind};
@@ -263,18 +263,16 @@ impl<'a> Pass<'a> {
 
     fn spread(&mut self, mut pending: Vec<(&'a Expression, bool)>, precision: Precision) {
         while let Some((expression, converting)) = pending.pop() {
-            if converting {
-                if let Some(target) = self.converted(expression) {
-                    let current = self
-                        .conversion
-                        .get(&expression.id)
-                        .copied()
-                        .unwrap_or_default();
-                    if current != Precision::None || !participates(target, true) {
-                        continue;
-                    }
-                    self.conversion.insert(expression.id, precision);
+            if converting && let Some(target) = self.converted(expression) {
+                let current = self
+                    .conversion
+                    .get(&expression.id)
+                    .copied()
+                    .unwrap_or_default();
+                if current != Precision::None || !participates(target, true) {
+                    continue;
                 }
+                self.conversion.insert(expression.id, precision);
             }
             let inner = strip(expression);
             if self.own_of(inner) != Precision::None
@@ -588,7 +586,7 @@ impl<'a> Pass<'a> {
             match initializer {
                 Initializer::Expression(expression) => self.expression(expression),
                 Initializer::List(items) => {
-                    pending.extend(items.iter().rev().map(|item| &item.node))
+                    pending.extend(items.iter().rev().map(|item| &item.node));
                 }
             }
         }

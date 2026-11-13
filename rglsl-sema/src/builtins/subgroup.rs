@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{Prototype, ALL_STAGES, COMPUTE, MESH, TASK};
+use super::{ALL_STAGES, COMPUTE, MESH, Prototype, TASK};
 use crate::scope::Direction;
 use crate::types::{Scalar, Type};
 

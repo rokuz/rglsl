@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::ast::{Expression, ExpressionKind, FunctionCall, FunctionIdentifier, NodeId};
-use crate::deep::{deep_clone, deep_eq, drop_owned, Nested};
+use crate::deep::{Nested, deep_clone, deep_eq, drop_owned};
 use crate::span::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

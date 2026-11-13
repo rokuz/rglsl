@@ -1,7 +1,7 @@
 use spirv::{Op, TensorOperands, Word};
 
 use super::{Block, BlockContext, Error, Instruction, Writer};
-use crate::{arena::Handle, CooperativeSize, Expression, Scalar};
+use crate::{CooperativeSize, Expression, Scalar, arena::Handle};
 
 const SPV_ARM_TENSORS: &str = "SPV_ARM_tensors";
 

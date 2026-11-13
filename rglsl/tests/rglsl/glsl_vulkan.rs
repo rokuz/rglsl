@@ -5,10 +5,10 @@
 //! glslang's; see `docs/parity/README.md`.
 
 use rglsl::{
+    ShaderStage,
     back::spv,
     front::glsl,
     valid::{Capabilities, ValidationFlags, Validator},
-    ShaderStage,
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op};
@@ -269,14 +269,16 @@ fn outer_product_shape() -> crate::TestResult {
             o = vec4(m[1], n[2].x);
         }",
     )?;
-    assert!(parse(
-        ShaderStage::Fragment,
-        "#version 450
+    assert!(
+        parse(
+            ShaderStage::Fragment,
+            "#version 450
         layout(location = 0) in vec3 c;
         layout(location = 1) in vec2 r;
         void main() { mat3x2 m = outerProduct(c, r); }",
-    )
-    .is_err());
+        )
+        .is_err()
+    );
     Ok(())
 }
 
@@ -421,13 +423,15 @@ fn gl_names_are_reserved() -> crate::TestResult {
                     "gl_CullDistance"
                 ]
             );
-            assert!(module
-                .types_global_values
-                .iter()
-                .filter(|inst| inst.class.opcode == Op::TypeArray)
-                .map(|inst| constant(&module, &inst.operands[1]))
-                .collect::<crate::TestResult<Vec<_>>>()?
-                .contains(&4));
+            assert!(
+                module
+                    .types_global_values
+                    .iter()
+                    .filter(|inst| inst.class.opcode == Op::TypeArray)
+                    .map(|inst| constant(&module, &inst.operands[1]))
+                    .collect::<crate::TestResult<Vec<_>>>()?
+                    .contains(&4)
+            );
             continue;
         }
         let error = parse(stage, source).err().ok_or("expected an error")?;
@@ -2344,9 +2348,11 @@ fn buffer_textures_and_images_match_glslang() -> crate::TestResult {
         assert_eq!(image.operands[1], Operand::Dim(spirv::Dim::DimBuffer));
     }
     assert_eq!(instructions(&module, Op::ImageFetch).len(), 4);
-    assert!(instructions(&module, Op::ImageFetch)
-        .iter()
-        .all(|inst| inst.operands.len() == 2));
+    assert!(
+        instructions(&module, Op::ImageFetch)
+            .iter()
+            .all(|inst| inst.operands.len() == 2)
+    );
     assert_eq!(instructions(&module, Op::ImageQuerySize).len(), 4);
     assert!(instructions(&module, Op::ImageQuerySizeLod).is_empty());
     assert_eq!(instructions(&module, Op::ImageRead).len(), 2);
@@ -2614,12 +2620,14 @@ fn sixteen_bit_types_need_their_extension() -> crate::TestResult {
         .err()
         .ok_or("expected an error")?;
         assert!(error.contains("cannot be applied"), "{error}");
-        assert!(parse(
-            ShaderStage::Fragment,
-            "#version 450
+        assert!(
+            parse(
+                ShaderStage::Fragment,
+                "#version 450
             void main() { int64_t x = 1l; }",
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         let error = parse(
             ShaderStage::Fragment,
             "#version 450
@@ -2941,9 +2949,11 @@ void main() {
         .collect::<crate::TestResult<_>>()?;
     assert!(lengths.contains(&Op::SpecConstant));
     assert!(lengths.contains(&Op::SpecConstantOp));
-    assert!(lengths
-        .iter()
-        .all(|&op| matches!(op, Op::SpecConstant | Op::SpecConstantOp)));
+    assert!(
+        lengths
+            .iter()
+            .all(|&op| matches!(op, Op::SpecConstant | Op::SpecConstantOp))
+    );
     assert_eq!(spec_ids(&module).len(), 1);
     assert!(spec_operations(&module).contains(&Op::IMul));
     assert!(!function_ops(&module).contains(&Op::ArrayLength));
@@ -3061,10 +3071,11 @@ void main() {
 }
 "#,
     );
-    assert!(case
-        .err()
-        .ok_or("expected an error")?
-        .contains("case label"));
+    assert!(
+        case.err()
+            .ok_or("expected an error")?
+            .contains("case label")
+    );
     let derived = parse(
         ShaderStage::Fragment,
         r#"#version 450
@@ -3074,10 +3085,12 @@ layout(location = 0) out vec4 o;
 void main() { o = vec4(M); }
 "#,
     );
-    assert!(derived
-        .err()
-        .ok_or("expected an error")?
-        .contains("constant_id"));
+    assert!(
+        derived
+            .err()
+            .ok_or("expected an error")?
+            .contains("constant_id")
+    );
     let floating = parse(
         ShaderStage::Fragment,
         r#"#version 450
@@ -3592,7 +3605,9 @@ fn constructed_sampler_from_a_nonuniform_texture_is_not_non_uniform() -> crate::
         non_uniform_ops(&module),
         [Op::Load, Op::AccessChain, Op::Load]
     );
-    assert!(capabilities(&module).contains(&spirv::Capability::SampledImageArrayNonUniformIndexing));
+    assert!(
+        capabilities(&module).contains(&spirv::Capability::SampledImageArrayNonUniformIndexing)
+    );
     assert!(instructions(&module, Op::TypeRuntimeArray).is_empty());
     Ok(())
 }
@@ -3849,12 +3864,14 @@ fn physical_accesses(module: &dr::Module) -> Vec<(Op, u32)> {
                 let Some(operands) = operands else {
                     continue;
                 };
-                if let [Operand::MemoryAccess(access), Operand::LiteralBit32(alignment), ..] =
-                    operands
+                if let [
+                    Operand::MemoryAccess(access),
+                    Operand::LiteralBit32(alignment),
+                    ..,
+                ] = operands
+                    && access.contains(spirv::MemoryAccess::ALIGNED)
                 {
-                    if access.contains(spirv::MemoryAccess::ALIGNED) {
-                        found.push((inst.class.opcode, *alignment));
-                    }
+                    found.push((inst.class.opcode, *alignment));
                 }
             }
         }
@@ -5170,9 +5187,11 @@ void main() {
             .count(),
         4
     );
-    assert!(!instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::Constant as u32 && operands[2] == 5));
+    assert!(
+        !instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::Constant as u32 && operands[2] == 5)
+    );
     Ok(())
 }
 
@@ -5372,16 +5391,20 @@ fn descriptor_heap_buffer_arrays() -> crate::TestResult {
     );
     let strides = module.id_decorations(Op::DecorateId, Decoration::ArrayStrideIdEXT);
     assert_eq!(strides.len(), 3);
-    assert!(strides
-        .iter()
-        .any(|&stride| module.constant(stride) == Some(512)));
+    assert!(
+        strides
+            .iter()
+            .any(|&stride| module.constant(stride) == Some(512))
+    );
     assert_eq!(module.count(Op::ConstantSizeOfEXT), 2);
     let readonly = module.member_decorations(module.named("R")?);
     assert!(readonly.contains(&vec![0, Decoration::NonWritable as u32]));
     let pointers = module.of(Op::BufferPointerEXT);
-    assert!(pointers.iter().any(|operands| module
-        .decorations(operands[1])
-        .contains(&vec![Decoration::NonWritable as u32])));
+    assert!(pointers.iter().any(|operands| {
+        module
+            .decorations(operands[1])
+            .contains(&vec![Decoration::NonWritable as u32])
+    }));
     Ok(())
 }
 
@@ -5528,10 +5551,12 @@ fn descriptor_heap_requested_replaces_non_uniform_decorations() -> crate::TestRe
         layout(location = 0) out vec4 color;
         void main() { color = ubo[nonuniformEXT(index)].data + heap[nonuniformEXT(index)].a; }",
     )?;
-    assert!(!module
-        .of(Op::Decorate)
-        .iter()
-        .any(|operands| operands[1] == Decoration::NonUniform as u32));
+    assert!(
+        !module
+            .of(Op::Decorate)
+            .iter()
+            .any(|operands| operands[1] == Decoration::NonUniform as u32)
+    );
     assert!(module.capability(spirv::Capability::ShaderNonUniform));
     assert!(module.capability(spirv::Capability::DescriptorHeapEXT));
     assert!(module.capability(spirv::Capability::UniformBufferArrayNonUniformIndexing));
@@ -6282,12 +6307,14 @@ fn rotate_partition_and_quad_control_match_glslang() -> crate::TestResult {
     )?;
     let rotates = instructions(&module, Op::GroupNonUniformRotateKHR);
     assert_eq!(rotates.len(), 2);
-    assert!(rotates
-        .iter()
-        .filter(|inst| inst.operands.len() == 4)
-        .map(|inst| constant(&module, &inst.operands[3]))
-        .collect::<crate::TestResult<Vec<_>>>()?
-        .contains(&4));
+    assert!(
+        rotates
+            .iter()
+            .filter(|inst| inst.operands.len() == 4)
+            .map(|inst| constant(&module, &inst.operands[3]))
+            .collect::<crate::TestResult<Vec<_>>>()?
+            .contains(&4)
+    );
     assert_eq!(
         instructions(&module, Op::GroupNonUniformPartitionNV).len(),
         1
@@ -6442,10 +6469,10 @@ fn subgroup_builtins_are_volatile_in_ray_tracing_stages() -> crate::TestResult {
     let module = dr::load_words(words)?;
     let loads = instructions(&module, Op::Load);
     assert_eq!(loads.len(), 2);
-    assert!(loads
-        .iter()
-        .all(|load| load.operands.last()
-            == Some(&Operand::MemoryAccess(spirv::MemoryAccess::VOLATILE))));
+    assert!(
+        loads.iter().all(|load| load.operands.last()
+            == Some(&Operand::MemoryAccess(spirv::MemoryAccess::VOLATILE)))
+    );
     Ok(())
 }
 
@@ -6653,9 +6680,11 @@ void main() {}
         .position(|&word| word == execution_mode_id)
         .ok_or("no OpExecutionModeId")?;
     assert_eq!(words.get(position + 2), Some(&6031));
-    assert!(words
-        .windows(2)
-        .any(|pair| pair == [(2 << 16) | Op::Capability as u32, 6032]));
+    assert!(
+        words
+            .windows(2)
+            .any(|pair| pair == [(2 << 16) | Op::Capability as u32, 6032])
+    );
     Ok(())
 }
 
@@ -7708,9 +7737,11 @@ fn qcom_cooperative_matrix_conversions_match_glslang() -> crate::TestResult {
         assert_eq!(module.all(op).len(), count, "opcode {op}");
     }
     assert!(module.capabilities().contains(&4496));
-    assert!(module
-        .extensions()
-        .contains(&"SPV_QCOM_cooperative_matrix_conversion".to_string()));
+    assert!(
+        module
+            .extensions()
+            .contains(&"SPV_QCOM_cooperative_matrix_conversion".to_string())
+    );
     let indices: Vec<u32> = module
         .all(4542)
         .into_iter()
@@ -7775,9 +7806,11 @@ fn uncalled_functions_are_not_compiled() -> crate::TestResult {
         void main() { color = vec4(used(1.0)); }",
     )?;
     assert_eq!(instructions(&module, Op::Function).len(), 2);
-    assert!(instructions(&module, Op::TypeFloat)
-        .iter()
-        .all(|inst| inst.operands[0] == Operand::LiteralBit32(32)));
+    assert!(
+        instructions(&module, Op::TypeFloat)
+            .iter()
+            .all(|inst| inst.operands[0] == Operand::LiteralBit32(32))
+    );
     let capabilities = capabilities(&module);
     assert!(!capabilities.contains(&spirv::Capability::Float64));
     assert!(!capabilities.contains(&spirv::Capability::Int16));
@@ -7797,12 +7830,16 @@ fn constant_locals_are_folded_and_not_stored() -> crate::TestResult {
         }",
     )?;
     assert!(!capabilities(&module).contains(&spirv::Capability::Float64));
-    assert!(instructions(&module, Op::TypeFloat)
-        .iter()
-        .all(|inst| inst.operands[0] == Operand::LiteralBit32(32)));
-    assert!(instructions(&module, Op::Variable)
-        .iter()
-        .all(|inst| inst.operands[0] != Operand::StorageClass(spirv::StorageClass::Function)));
+    assert!(
+        instructions(&module, Op::TypeFloat)
+            .iter()
+            .all(|inst| inst.operands[0] == Operand::LiteralBit32(32))
+    );
+    assert!(
+        instructions(&module, Op::Variable)
+            .iter()
+            .all(|inst| inst.operands[0] != Operand::StorageClass(spirv::StorageClass::Function))
+    );
     let stores = instructions(&module, Op::Store);
     assert_eq!(stores.len(), 1);
     assert_eq!(
@@ -7924,12 +7961,16 @@ fn tensors_lower_to_spv_arm_tensors() -> crate::TestResult {
         .collect::<crate::TestResult<_>>()?;
     dimensions.sort_unstable();
     assert_eq!(dimensions, [0, 1]);
-    assert!(variable_decorations(&module, "r")?
-        .iter()
-        .any(|(decoration, _)| *decoration == Decoration::NonWritable));
-    assert!(variable_decorations(&module, "w")?
-        .iter()
-        .any(|(decoration, _)| *decoration == Decoration::NonReadable));
+    assert!(
+        variable_decorations(&module, "r")?
+            .iter()
+            .any(|(decoration, _)| *decoration == Decoration::NonWritable)
+    );
+    assert!(
+        variable_decorations(&module, "w")?
+            .iter()
+            .any(|(decoration, _)| *decoration == Decoration::NonReadable)
+    );
     Ok(())
 }
 
@@ -8011,9 +8052,11 @@ fn sixty_four_bit_indices() -> crate::TestResult {
     assert!(has_extension(&module, "SPV_EXT_shader_64bit_indexing"));
     assert!(module.execution_modes.iter().any(|inst| inst.operands[1]
         == Operand::ExecutionMode(spirv::ExecutionMode::Shader64BitIndexingEXT)));
-    assert!(instructions(&module, Op::ArrayLength)
-        .iter()
-        .any(|inst| is_wide_int(&module, inst.result_type)));
+    assert!(
+        instructions(&module, Op::ArrayLength)
+            .iter()
+            .any(|inst| is_wide_int(&module, inst.result_type))
+    );
     assert!(has_wide_constant(&module, 5_000_000_000));
     Ok(())
 }
@@ -8459,12 +8502,20 @@ void main() {
 ";
     let words = message_words(ShaderStage::Vertex, source, (1, 0))?;
     let instructions = raw_instructions(&words);
-    assert!(instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::Load as u32 && operands.len() == 4 && operands[3] == 0));
-    assert!(instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::Store as u32 && operands.len() == 3 && operands[2] == 1));
+    assert!(
+        instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::Load as u32
+                && operands.len() == 4
+                && operands[3] == 0)
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::Store as u32
+                && operands.len() == 3
+                && operands[2] == 1)
+    );
     let imports: Vec<String> = instructions
         .iter()
         .filter(|(op, _)| *op == Op::ExtInstImport as u32)
@@ -8503,18 +8554,24 @@ void main() {
     assert_eq!(modes.len(), 1);
     assert_eq!(modes[0][1], 5077);
     assert_eq!(modes[0].len(), 5);
-    assert!(instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::Capability as u32 && operands[0] == 5067));
-    assert!(instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 0));
-    assert!(instructions
-        .iter()
-        .filter(|(op, operands)| *op == Op::DecorateString as u32 && operands[1] == 5635)
-        .map(|(_, operands)| literal_string(&operands[2..]))
-        .collect::<crate::TestResult<Vec<_>>>()?
-        .contains(&"foobar".to_string()));
+    assert!(
+        instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::Capability as u32 && operands[0] == 5067)
+    );
+    assert!(
+        instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::Decorate as u32 && operands[1] == 0)
+    );
+    assert!(
+        instructions
+            .iter()
+            .filter(|(op, operands)| *op == Op::DecorateString as u32 && operands[1] == 5635)
+            .map(|(_, operands)| literal_string(&operands[2..]))
+            .collect::<crate::TestResult<Vec<_>>>()?
+            .contains(&"foobar".to_string())
+    );
     Ok(())
 }
 
@@ -8531,9 +8588,11 @@ void main() {
 ";
     let words = message_words(ShaderStage::Vertex, source, (1, 0))?;
     let instructions = raw_instructions(&words);
-    assert!(instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::TypeStruct as u32 && operands.len() == 1));
+    assert!(
+        instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::TypeStruct as u32 && operands.len() == 1)
+    );
     let rejected = parse(
         ShaderStage::Vertex,
         "#version 450
@@ -8663,12 +8722,14 @@ fn member_memory_qualifiers_decorate_their_member() -> crate::TestResult {
             (6, Decoration::Coherent),
         ]
     );
-    assert!(variable_decorations(&module, "b")?
-        .iter()
-        .all(|&(decoration, _)| !matches!(
-            decoration,
-            Decoration::Coherent | Decoration::Volatile | Decoration::Restrict
-        )));
+    assert!(
+        variable_decorations(&module, "b")?
+            .iter()
+            .all(|&(decoration, _)| !matches!(
+                decoration,
+                Decoration::Coherent | Decoration::Volatile | Decoration::Restrict
+            ))
+    );
     assert_eq!(
         memory_decorations_of(&module, "C")?,
         [
@@ -8806,10 +8867,12 @@ fn variables_are_initialized_only_when_declared_so() -> crate::TestResult {
         .collect();
     assert_eq!(initialized, Vec::<String>::new());
     assert!(instructions(&module, Op::ControlBarrier).is_empty());
-    assert!(module
-        .debug_names
-        .iter()
-        .all(|inst| inst.operands.get(1) != Some(&Operand::LiteralString("loop_bound".into()))));
+    assert!(
+        module
+            .debug_names
+            .iter()
+            .all(|inst| inst.operands.get(1) != Some(&Operand::LiteralString("loop_bound".into())))
+    );
     Ok(())
 }
 
@@ -9509,8 +9572,8 @@ fn function_attributes_match_glslang() -> crate::TestResult {
         ),
     ] {
         let error = parse(ShaderStage::Fragment, &format!("#version 450\n{source}"))
-        .err()
-        .ok_or("attributes accepted")?;
+            .err()
+            .ok_or("attributes accepted")?;
         assert!(error.contains(expected), "{error}");
     }
     Ok(())
@@ -9602,10 +9665,12 @@ fn microscaling_types_match_glslang() -> crate::TestResult {
         assert!(constants.contains(&value), "{value} in {constants:?}");
     }
     assert_eq!(instructions.iter().filter(|(op, _)| *op == 4195).count(), 1);
-    assert!(instructions
-        .iter()
-        .any(|(op, operands)| *op == Op::Extension as u32
-            && operands.first() == Some(&u32::from_le_bytes(*b"SPV_"))));
+    assert!(
+        instructions
+            .iter()
+            .any(|(op, operands)| *op == Op::Extension as u32
+                && operands.first() == Some(&u32::from_le_bytes(*b"SPV_")))
+    );
     Ok(())
 }
 
@@ -9860,10 +9925,12 @@ void main() {}
         .map(|(offset, _)| offset)
         .collect();
     assert_eq!(offsets, [0, 16, 28, 32, 48]);
-    assert!(parse(ShaderStage::Vertex, HLSL_OFFSETS)
-        .err()
-        .ok_or("expected an error")?
-        .contains("MemberOverlap"));
+    assert!(
+        parse(ShaderStage::Vertex, HLSL_OFFSETS)
+            .err()
+            .ok_or("expected an error")?
+            .contains("MemberOverlap")
+    );
     Ok(())
 }
 
@@ -9878,10 +9945,12 @@ fn programs_resolve_includes() -> crate::TestResult {
         root,
         &mut includer,
     )?;
-    assert!(module
-        .global_variables
-        .iter()
-        .any(|(_, global)| global.name.as_deref() == Some("color")));
+    assert!(
+        module
+            .global_variables
+            .iter()
+            .any(|(_, global)| global.name.as_deref() == Some("color"))
+    );
     Ok(())
 }
 
@@ -10003,11 +10072,13 @@ void main() {
         })
         .map(|inst| inst.operands[0].unwrap_id_ref())
         .collect();
-    assert!(instructions(&module, Op::ConstantComposite)
-        .iter()
-        .all(|inst| inst
-            .result_id
-            .is_some_and(|id| workgroup_size.contains(&id))));
+    assert!(
+        instructions(&module, Op::ConstantComposite)
+            .iter()
+            .all(|inst| inst
+                .result_id
+                .is_some_and(|id| workgroup_size.contains(&id)))
+    );
     Ok(())
 }
 
@@ -10375,9 +10446,11 @@ void main() {
 ",
     )?;
     let b = named(&module, "b")?;
-    assert!(instructions(&module, Op::Store)
-        .iter()
-        .all(|store| store.operands[0].unwrap_id_ref() != b));
+    assert!(
+        instructions(&module, Op::Store)
+            .iter()
+            .all(|store| store.operands[0].unwrap_id_ref() != b)
+    );
     Ok(())
 }
 
@@ -10745,9 +10818,11 @@ fn early_and_late_fragment_tests_become_an_execution_mode() -> crate::TestResult
         layout(location = 0) out vec4 o;
         void main() { o = vec4(1.0); }",
     )?;
-    assert!(execution_modes(&module)
-        .iter()
-        .any(|(mode, _)| *mode == spirv::ExecutionMode::EarlyAndLateFragmentTestsAMD));
+    assert!(
+        execution_modes(&module)
+            .iter()
+            .any(|(mode, _)| *mode == spirv::ExecutionMode::EarlyAndLateFragmentTestsAMD)
+    );
     assert!(has_extension(
         &module,
         "SPV_AMD_shader_early_and_late_fragment_tests"
@@ -11341,7 +11416,7 @@ fn errors_in_dead_code_are_still_reported() {
 
 #[test]
 fn dead_code_leaves_no_debug_lines() -> crate::TestResult {
-    use crate::cooperative::{compile_with, Debug, Glslang, VULKAN_1_3};
+    use crate::cooperative::{Debug, Glslang, VULKAN_1_3, compile_with};
     const DEBUG_LINE: u32 = 103;
     let source = "#version 450
 layout(local_size_x = 1) in;

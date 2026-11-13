@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::cli;
 use crate::corpus::{self, Case, Corpus, Kind};
@@ -553,9 +553,8 @@ impl Environment {
         machine.push(("OS".into(), os_description()));
 
         let mut glslang = Vec::new();
-        let pinned = oracles::load_pins(root)
-            .map(|pins| pins.glslang.commit)
-            .unwrap_or_else(|_| "unknown".into());
+        let pinned =
+            oracles::load_pins(root).map_or_else(|_| "unknown".into(), |pins| pins.glslang.commit);
         glslang.push(("pinned commit (oracles.toml)".into(), pinned));
         if tools.glslang.pinned {
             let cache = oracles::oracles_dir(root)
@@ -582,10 +581,10 @@ impl Environment {
                 "unpinned (not built by `cargo xtask oracles`)".into(),
             ));
         }
-        if let Ok(version) = process::capture(Command::new(&tools.glslang.path).arg("--version")) {
-            if let Some(line) = version.lines().next() {
-                glslang.push(("version".into(), line.trim().to_string()));
-            }
+        if let Ok(version) = process::capture(Command::new(&tools.glslang.path).arg("--version"))
+            && let Some(line) = version.lines().next()
+        {
+            glslang.push(("version".into(), line.trim().to_string()));
         }
         if let Ok(head) = oracles::git_head(glslang_dir) {
             glslang.push(("corpus checkout".into(), head));

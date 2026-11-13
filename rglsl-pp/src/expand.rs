@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 
 use crate::diagnostic::DiagnosticKind;
 use crate::include::FileId;
-use crate::preprocessor::{Input, MacroInput, Preprocessor, Scanned, TokenInput, CPP_STYLE_LINE};
-use crate::token::{operator, At, Kind, Token, MAX_TOKEN_LENGTH};
+use crate::preprocessor::{CPP_STYLE_LINE, Input, MacroInput, Preprocessor, Scanned, TokenInput};
+use crate::token::{At, Kind, MAX_TOKEN_LENGTH, Token, operator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Expand {
@@ -118,31 +118,30 @@ impl Preprocessor<'_> {
             input.prepaste = true;
             pasting = true;
         }
-        if token.kind == Kind::Identifier {
-            if let Some(parameter) = input
+        if token.kind == Kind::Identifier
+            && let Some(parameter) = input
                 .params
                 .iter()
                 .rposition(|parameter| **parameter == *token.text)
-            {
-                let expanded = input.expanded.get(parameter).cloned().flatten();
-                let pre_expanded = expanded.is_some() && !pasting;
-                let stream = match expanded {
-                    Some(expanded) if !pasting => expanded,
-                    _ => input
-                        .args
-                        .get(parameter)
-                        .cloned()
-                        .unwrap_or_else(empty_stream),
-                };
-                let last_pastes = input.prepaste;
-                self.inputs.push(Input::Tokens(TokenInput {
-                    tokens: stream,
-                    pos: 0,
-                    last_pastes,
-                    pre_expanded,
-                }));
-                return Scanned::Retry;
-            }
+        {
+            let expanded = input.expanded.get(parameter).cloned().flatten();
+            let pre_expanded = expanded.is_some() && !pasting;
+            let stream = match expanded {
+                Some(expanded) if !pasting => expanded,
+                _ => input
+                    .args
+                    .get(parameter)
+                    .cloned()
+                    .unwrap_or_else(empty_stream),
+            };
+            let last_pastes = input.prepaste;
+            self.inputs.push(Input::Tokens(TokenInput {
+                tokens: stream,
+                pos: 0,
+                last_pastes,
+                pre_expanded,
+            }));
+            return Scanned::Retry;
         }
         let (file, offset) = input.origin;
         token.at = At {

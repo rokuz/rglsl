@@ -1,15 +1,9 @@
-#![allow(
-    clippy::panic,
-    clippy::unreachable,
-    reason = "test support code fails by panicking"
-)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rglsl_ast::expressions;
-use rglsl_fuzz::{parse, TranslationUnit};
-use rglsl_sema::{analyze, Analysis, Options};
+use rglsl_fuzz::{TranslationUnit, parse};
+use rglsl_sema::{Analysis, Options, analyze};
 use rglsl_types::ShaderStage;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;

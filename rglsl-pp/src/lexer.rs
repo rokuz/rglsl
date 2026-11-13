@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use crate::diagnostic::{DiagnosticKind, Severity};
 use crate::include::FileId;
-use crate::token::{operator, At, Kind, Token, MAX_TOKEN_LENGTH};
+use crate::token::{At, Kind, MAX_TOKEN_LENGTH, Token, operator};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Role {
@@ -386,11 +386,7 @@ impl FileInput {
             }
             _ => false,
         };
-        if matches {
-            offset_u32(end - start)
-        } else {
-            0
-        }
+        if matches { offset_u32(end - start) } else { 0 }
     }
 
     fn block_comment(&mut self, context: &ScanContext, events: &mut Events, at: At) -> bool {

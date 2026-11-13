@@ -235,18 +235,18 @@ impl Annotations {
                         .or_default()
                         .push((decoration, instruction.rest(2).to_vec()));
                 }
-            } else if instruction.is(Op::MemberDecorate) {
-                if let (Some(target), Some(member), Some(decoration)) = (
+            } else if instruction.is(Op::MemberDecorate)
+                && let (Some(target), Some(member), Some(decoration)) = (
                     instruction.word(0),
                     instruction.word(1),
                     instruction.word(2),
-                ) {
-                    annotations
-                        .member
-                        .entry((target, member))
-                        .or_default()
-                        .push((decoration, instruction.rest(3).to_vec()));
-                }
+                )
+            {
+                annotations
+                    .member
+                    .entry((target, member))
+                    .or_default()
+                    .push((decoration, instruction.rest(3).to_vec()));
             }
         }
         annotations
@@ -1162,9 +1162,11 @@ mod tests {
     fn the_expected_differences_file_parses() -> anyhow::Result<()> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let expected = Expected::load(&root)?;
-        assert!(expected
-            .reason("spv.noLocation.vert", "Output location 3")
-            .is_some());
+        assert!(
+            expected
+                .reason("spv.noLocation.vert", "Output location 3")
+                .is_some()
+        );
         Ok(())
     }
 

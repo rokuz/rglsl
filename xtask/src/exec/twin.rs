@@ -1,6 +1,6 @@
 use super::batch::JobResult;
 use super::plan::Plan;
-use super::{compare_outputs, Outcome, SkipReason};
+use super::{Outcome, SkipReason, compare_outputs};
 
 pub const RUNS: usize = 3;
 
@@ -27,9 +27,9 @@ pub fn judge(plan: &Plan, runs: Vec<(JobResult, JobResult)>) -> Outcome {
             Ok(outputs) => theirs.push(outputs),
             Err(error) => {
                 return Outcome::Fail(format!(
-                "glslang's module of the twin fails on the driver on run {}: {error}; fix the twin",
-                run + 1
-            ))
+                    "glslang's module of the twin fails on the driver on run {}: {error}; fix the twin",
+                    run + 1
+                ));
             }
         }
         ours.push(actual);
@@ -53,7 +53,7 @@ pub fn judge(plan: &Plan, runs: Vec<(JobResult, JobResult)>) -> Outcome {
                 return Outcome::Fail(format!(
                     "our module of the twin fails on the driver on run {}: {error}",
                     run + 1
-                ))
+                ));
             }
         };
         match compare_outputs(plan, base, &actual) {
@@ -63,7 +63,7 @@ pub fn judge(plan: &Plan, runs: Vec<(JobResult, JobResult)>) -> Outcome {
                     "{difference} (glslang vs rglsl, twin, run {} of {})",
                     run + 1,
                     theirs.len()
-                ))
+                ));
             }
         }
     }

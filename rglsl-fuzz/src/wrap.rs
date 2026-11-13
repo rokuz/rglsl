@@ -1,5 +1,5 @@
-use rglsl_ast::ast::{BinaryOperator, PostfixOperator, Statement, StatementKind, TranslationUnit};
 use rglsl_ast::Stalled;
+use rglsl_ast::ast::{BinaryOperator, PostfixOperator, Statement, StatementKind, TranslationUnit};
 
 use crate::basic::{self, BOOL, INT};
 use crate::constants::{
@@ -7,8 +7,8 @@ use crate::constants::{
 };
 use crate::context::Context;
 use crate::injection::{
-    apply_edits, choose, contains_top_level_break, contains_top_level_continue, injection_points,
-    Edit, InjectionPoint,
+    Edit, InjectionPoint, apply_edits, choose, contains_top_level_break,
+    contains_top_level_continue, injection_points,
 };
 use crate::random::Random;
 use crate::transformation::PassInput;

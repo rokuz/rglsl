@@ -3,9 +3,9 @@
 //! [`List`]: crate::proc::overloads::list::List
 
 use crate::ir;
+use crate::proc::TypeResolution;
 use crate::proc::overloads::list::List;
 use crate::proc::overloads::rule::{Conclusion, Rule};
-use crate::proc::TypeResolution;
 
 use alloc::vec::Vec;
 

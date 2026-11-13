@@ -5,11 +5,11 @@ Generating SPIR-V for image operations.
 use spirv::Word;
 
 use super::{
+    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
     qcom::{
         CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, CAPABILITY_IMAGE_GATHER_LINEAR_QCOM,
         OP_IMAGE_GATHER_QCOM,
     },
-    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
 };
 use crate::arena::Handle;
 
@@ -232,14 +232,11 @@ impl BlockContext<'_> {
 
         // If there's no array index, the image coordinates are exactly the
         // `coordinate` field of the `Expression::ImageLoad`. No work is needed.
-        let array_index = match array_index {
-            None => {
-                return match *inner_ty {
-                    Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
-                    _ => Err(Error::Validation("coordinate type")),
-                };
-            }
-            Some(ix) => ix,
+        let Some(array_index) = array_index else {
+            return match *inner_ty {
+                Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
+                _ => Err(Error::Validation("coordinate type")),
+            };
         };
 
         // Find the component type of `coordinates`, and figure out the size the
@@ -267,14 +264,14 @@ impl BlockContext<'_> {
         let array_index_id = self.cached.get(array_index)?;
         let ty = &self.fun_info[array_index].ty;
         let inner_ty = ty.inner_with(&self.ir_module.types);
-        let array_index_scalar = match *inner_ty {
-            Ti::Scalar(
-                scalar @ crate::Scalar {
-                    kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                    width: 4,
-                },
-            ) => scalar,
-            _ => return Err(Error::Validation("image array index must be i32 or u32")),
+        let Ti::Scalar(
+            array_index_scalar @ crate::Scalar {
+                kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                width: 4,
+            },
+        ) = *inner_ty
+        else {
+            return Err(Error::Validation("image array index must be i32 or u32"));
         };
         let cast = match (component_scalar.kind, array_index_scalar.kind) {
             (crate::ScalarKind::Sint, crate::ScalarKind::Sint)
@@ -409,7 +406,10 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageLoad` expression.
     ///
     /// The arguments are the components of an `Expression::ImageLoad` variant.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_load(
         &mut self,
         result_type_id: Word,
@@ -423,10 +423,18 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         let image_id = self.get_image_id(image, block)?;
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
-        let (image_class, dim) = match *image_type {
-            crate::TypeInner::Image { class, dim, .. }
-            | crate::TypeInner::SampledImage { class, dim, .. } => (class, dim),
-            _ => return Err(Error::Validation("image type")),
+        let (crate::TypeInner::Image {
+            class: image_class,
+            dim,
+            ..
+        }
+        | crate::TypeInner::SampledImage {
+            class: image_class,
+            dim,
+            ..
+        }) = *image_type
+        else {
+            return Err(Error::Validation("image type"));
         };
         let subpass = dim == crate::ImageDimension::Subpass;
 
@@ -500,7 +508,10 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageSample` expression.
     ///
     /// The arguments are the components of an `Expression::ImageSample` variant.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_sample(
         &mut self,
         sample_expression: Handle<crate::Expression>,
@@ -519,19 +530,18 @@ impl BlockContext<'_> {
     ) -> Result<Word, Error> {
         use super::instructions::SampleLod;
         let handle_id = self.get_non_uniform_handle_id(image, block)?;
-        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
-        {
-            crate::TypeInner::Image {
-                dim,
-                arrayed,
-                class,
-            }
-            | crate::TypeInner::SampledImage {
-                dim,
-                arrayed,
-                class,
-            } => (dim, arrayed, class),
-            _ => return Err(Error::Validation("image type")),
+        let (crate::TypeInner::Image {
+            dim,
+            arrayed,
+            class,
+        }
+        | crate::TypeInner::SampledImage {
+            dim,
+            arrayed,
+            class,
+        }) = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("image type"));
         };
         // SPIR-V doesn't know about our `Depth` class, and it returns
         // `vec4<f32>`, so we need to grab the first component out of it.
@@ -891,21 +901,18 @@ impl BlockContext<'_> {
             return self.write_image_query_lod(result_type_id, image, sampler, coordinate, block);
         }
         let image_id = self.get_image_id(image, block)?;
-        let (dim, arrayed, class) = match *self.fun_info[image].ty.inner_with(&self.ir_module.types)
-        {
-            crate::TypeInner::Image {
-                dim,
-                arrayed,
-                class,
-            }
-            | crate::TypeInner::SampledImage {
-                dim,
-                arrayed,
-                class,
-            } => (dim, arrayed, class),
-            _ => {
-                return Err(Error::Validation("image type"));
-            }
+        let (crate::TypeInner::Image {
+            dim,
+            arrayed,
+            class,
+        }
+        | crate::TypeInner::SampledImage {
+            dim,
+            arrayed,
+            class,
+        }) = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        else {
+            return Err(Error::Validation("image type"));
         };
 
         self.writer
@@ -918,7 +925,7 @@ impl BlockContext<'_> {
                     Id::D2 | Id::Cube => 2,
                     Id::D3 => 3,
                     Id::Subpass | Id::TileImageData => {
-                        return Err(Error::Validation("subpass input query"))
+                        return Err(Error::Validation("subpass input query"));
                     }
                 };
                 let array_coords = usize::from(arrayed);
@@ -1012,7 +1019,7 @@ impl BlockContext<'_> {
                     Id::D2 | Id::Cube => crate::VectorSize::Tri,
                     Id::D3 => crate::VectorSize::Quad,
                     Id::Subpass | Id::TileImageData => {
-                        return Err(Error::Validation("subpass input query"))
+                        return Err(Error::Validation("subpass input query"));
                     }
                 };
                 let extended_size_type_id = self.get_numeric_type_id(NumericType::Vector {
@@ -1081,15 +1088,14 @@ impl BlockContext<'_> {
         let handle_id = self.get_non_uniform_handle_id(image, block)?;
         let sampled_image_id = match sampler {
             Some(sampler) => {
-                let (dim, arrayed, class) =
-                    match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
-                        crate::TypeInner::Image {
-                            dim,
-                            arrayed,
-                            class,
-                        } => (dim, arrayed, class),
-                        _ => return Err(Error::Validation("image type")),
-                    };
+                let crate::TypeInner::Image {
+                    dim,
+                    arrayed,
+                    class,
+                } = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+                else {
+                    return Err(Error::Validation("image type"));
+                };
                 let image_type_id = self.get_localtype_id(LocalType::Image(
                     LocalImageType::from_inner(dim, arrayed, class)?,
                 ));
@@ -1130,7 +1136,10 @@ impl BlockContext<'_> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_store(
         &mut self,
         image: Handle<crate::Expression>,
@@ -1194,7 +1203,10 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_footprint(
         &mut self,
         result_type_id: Word,
@@ -1343,7 +1355,7 @@ impl BlockContext<'_> {
             crate::AtomicFunction::Max if signed => spirv::Op::AtomicSMax,
             crate::AtomicFunction::Max => spirv::Op::AtomicUMax,
             crate::AtomicFunction::Exchange { .. } => {
-                return Err(Error::Validation("Exchange atomics are not supported yet"))
+                return Err(Error::Validation("Exchange atomics are not supported yet"));
             }
         };
         let result_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;

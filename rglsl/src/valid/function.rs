@@ -1,8 +1,8 @@
 use alloc::{format, string::String, vec::Vec};
 
 use super::{
-    analyzer::{UniformityDisruptor, UniformityRequirements},
     ExpressionError, FunctionInfo, ModuleInfo,
+    analyzer::{UniformityDisruptor, UniformityRequirements},
 };
 use crate::arena::{Arena, UniqueArena};
 use crate::arena::{Handle, HandleSet};
@@ -11,7 +11,7 @@ use crate::span::WithSpan;
 use crate::span::{AddSpan as _, MapErrWithSpan as _};
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum CallError {
     #[error("Argument {index} expression is invalid")]
     Argument {
@@ -35,7 +35,7 @@ pub enum CallError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum AtomicError {
     #[error("Pointer {0:?} to atomic is invalid.")]
     InvalidPointer(Handle<crate::Expression>),
@@ -62,7 +62,7 @@ pub enum AtomicError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum SubgroupError {
     #[error("Operand {0:?} has invalid type.")]
     InvalidOperand(Handle<crate::Expression>),
@@ -116,7 +116,7 @@ const fn is_numeric(inner: &crate::TypeInner) -> bool {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum LocalVariableError {
     #[error("Local variable has a type {0:?} that can't be stored in a local variable.")]
     InvalidType(Handle<crate::Type>),
@@ -127,7 +127,7 @@ pub enum LocalVariableError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum FunctionError {
     #[error("internal error: the analysis of a block did not finish")]
     Unfinished,
@@ -148,7 +148,9 @@ pub enum FunctionError {
     InvalidArgumentType { index: usize, name: String },
     #[error("The function's given return type cannot be returned from functions")]
     NonConstructibleReturnType,
-    #[error("Argument '{name}' at index {index} is a pointer of space {space:?}, which can't be passed into functions.")]
+    #[error(
+        "Argument '{name}' at index {index} is a pointer of space {space:?}, which can't be passed into functions."
+    )]
     InvalidArgumentPointerSpace {
         index: usize,
         name: String,
@@ -160,7 +162,9 @@ pub enum FunctionError {
     ContinueOutsideOfLoop,
     #[error("The `return` is called within a `continuing` block")]
     InvalidReturnSpot,
-    #[error("The `return` expression {expression:?} does not match the declared return type {expected_ty:?}")]
+    #[error(
+        "The `return` expression {expression:?} does not match the declared return type {expected_ty:?}"
+    )]
     InvalidReturnType {
         expression: Option<Handle<crate::Expression>>,
         expected_ty: Option<Handle<crate::Type>>,
@@ -239,9 +243,13 @@ pub enum FunctionError {
         Handle<crate::Expression>,
         UniformityDisruptor,
     ),
-    #[error("Functions that are not entry points cannot have `@location` or `@builtin` attributes on their arguments: \"{name}\" has attributes")]
+    #[error(
+        "Functions that are not entry points cannot have `@location` or `@builtin` attributes on their arguments: \"{name}\" has attributes"
+    )]
     PipelineInputRegularFunction { name: String },
-    #[error("Functions that are not entry points cannot have `@location` or `@builtin` attributes on their return value types")]
+    #[error(
+        "Functions that are not entry points cannot have `@location` or `@builtin` attributes on their return value types"
+    )]
     PipelineOutputRegularFunction,
     #[error("Subgroup operation is invalid")]
     InvalidSubgroup(#[from] SubgroupError),
@@ -253,7 +261,9 @@ pub enum FunctionError {
     EmitResult(Handle<crate::Expression>),
     #[error("Expression not visited by the appropriate statement")]
     UnvisitedExpression(Handle<crate::Expression>),
-    #[error("Expression {0:?} in mesh shader intrinsic call should be `u32` (is the expression a signed integer?)")]
+    #[error(
+        "Expression {0:?} in mesh shader intrinsic call should be `u32` (is the expression a signed integer?)"
+    )]
     InvalidMeshFunctionCall(Handle<crate::Expression>),
 
     #[error("Task payload variables differ from {0:?} to {1:?}")]
@@ -262,7 +272,9 @@ pub enum FunctionError {
     InvalidMeshShaderOutputType(Handle<crate::Expression>),
     #[error("The payload type passed to `traceRay` must be a pointer")]
     InvalidPayloadType,
-    #[error("The payload type passed to `traceRay` must be a pointer with an address space of `ray_payload` or `incoming_ray_payload`, instead got {0:?}")]
+    #[error(
+        "The payload type passed to `traceRay` must be a pointer with an address space of `ray_payload` or `incoming_ray_payload`, instead got {0:?}"
+    )]
     InvalidPayloadAddressSpace(crate::AddressSpace),
     #[error("The ray tracing operand {0:?} has the wrong type")]
     InvalidRayOperand(Handle<crate::Expression>),
@@ -567,7 +579,7 @@ impl super::Validator {
                 }
                 _ => {
                     return Err(CallError::ExpressionMismatch(result)
-                        .with_span_handle(expr, context.expressions))
+                        .with_span_handle(expr, context.expressions));
                 }
             }
         } else if fun.result.is_some() {
@@ -768,7 +780,7 @@ impl super::Validator {
     fn validate_atomic(
         &mut self,
         pointer: Handle<crate::Expression>,
-        fun: &crate::AtomicFunction,
+        fun: crate::AtomicFunction,
         value: Handle<crate::Expression>,
         result: Option<Handle<crate::Expression>>,
         span: crate::Span,
@@ -859,13 +871,13 @@ impl super::Validator {
         match pointer_scalar {
             _ if plain_float => {
                 if !matches!(
-                    *fun,
+                    fun,
                     crate::AtomicFunction::Add
                         | crate::AtomicFunction::Min
                         | crate::AtomicFunction::Max
                         | crate::AtomicFunction::Exchange { compare: None }
                 ) {
-                    return Err(AtomicError::InvalidOperator(*fun)
+                    return Err(AtomicError::InvalidOperator(fun)
                         .with_span_handle(value, context.expressions)
                         .into_other());
                 }
@@ -886,10 +898,8 @@ impl super::Validator {
                 } else {
                     // `Capabilities::SHADER_INT64_ATOMIC_MIN_MAX` allows `Min` and
                     // `Max` on operations in `Storage`, without a return value.
-                    if matches!(
-                        *fun,
-                        crate::AtomicFunction::Min | crate::AtomicFunction::Max
-                    ) && matches!(pointer_space, crate::AddressSpace::Storage { .. })
+                    if matches!(fun, crate::AtomicFunction::Min | crate::AtomicFunction::Max)
+                        && matches!(pointer_space, crate::AddressSpace::Storage { .. })
                         && result.is_none()
                     {
                         if !self
@@ -931,13 +941,13 @@ impl super::Validator {
                     .into_other());
                 }
                 if !matches!(
-                    *fun,
+                    fun,
                     crate::AtomicFunction::Add
                         | crate::AtomicFunction::Subtract
                         | crate::AtomicFunction::Exchange { compare: None }
                 ) {
                     log::error!("Float32 atomic operation {fun:?} is not supported");
-                    return Err(AtomicError::InvalidOperator(*fun)
+                    return Err(AtomicError::InvalidOperator(fun)
                         .with_span_handle(value, context.expressions)
                         .into_other());
                 }
@@ -978,7 +988,7 @@ impl super::Validator {
                 // The constraints on the result type depend on the atomic function.
                 if let crate::AtomicFunction::Exchange {
                     compare: Some(compare),
-                } = *fun
+                } = fun
                 {
                     // The comparison value must be a scalar of the same type as the
                     // atomic we're operating on.
@@ -1041,7 +1051,7 @@ impl super::Validator {
 
             None => {
                 // Exchange operations must always produce a value.
-                if let crate::AtomicFunction::Exchange { compare: None } = *fun {
+                if let crate::AtomicFunction::Exchange { compare: None } = fun {
                     log::error!("Atomic exchange's value is unused");
                     return Err(AtomicError::MissingReturnValue
                         .with_span_static(span, "atomic exchange operation")
@@ -1090,11 +1100,11 @@ impl super::Validator {
 
     fn validate_collective_operation(
         &self,
-        collective_op: &crate::CollectiveOperation,
+        collective_op: crate::CollectiveOperation,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         use crate::CollectiveOperation as co;
-        match *collective_op {
+        match collective_op {
             co::Reduce | co::InclusiveScan | co::ExclusiveScan => Ok(()),
             co::ClusteredReduce(size) if size.is_power_of_two() => Ok(()),
             co::ClusteredReduce(_) => Err(SubgroupError::UnknownOperation.with_span().into_other()),
@@ -1108,8 +1118,8 @@ impl super::Validator {
 
     fn validate_subgroup_operation(
         &mut self,
-        op: &crate::SubgroupOperation,
-        collective_op: &crate::CollectiveOperation,
+        op: crate::SubgroupOperation,
+        collective_op: crate::CollectiveOperation,
         argument: Handle<crate::Expression>,
         result: Handle<crate::Expression>,
         context: &BlockContext,
@@ -1130,7 +1140,7 @@ impl super::Validator {
 
         use crate::ScalarKind as sk;
         use crate::SubgroupOperation as sg;
-        match (scalar.kind, *op) {
+        match (scalar.kind, op) {
             (sk::Bool, sg::All | sg::Any) if is_scalar => {}
             (sk::Sint | sk::Uint | sk::Float, sg::Add | sg::Mul | sg::Min | sg::Max) => {}
             (sk::Sint | sk::Uint | sk::Bool, sg::And | sg::Or | sg::Xor) => {}
@@ -1143,8 +1153,7 @@ impl super::Validator {
             }
         };
 
-        if matches!(*op, sg::All | sg::Any) && *collective_op != crate::CollectiveOperation::Reduce
-        {
+        if matches!(op, sg::All | sg::Any) && collective_op != crate::CollectiveOperation::Reduce {
             return Err(SubgroupError::UnknownOperation.with_span().into_other());
         }
         self.validate_collective_operation(collective_op, context)?;
@@ -1167,10 +1176,9 @@ impl super::Validator {
             cluster_size: Some(size),
             ..
         } = *mode
+            && !size.is_power_of_two()
         {
-            if !size.is_power_of_two() {
-                return Err(SubgroupError::UnknownOperation.with_span().into_other());
-            }
+            return Err(SubgroupError::UnknownOperation.with_span().into_other());
         }
         self.subgroup_operand(argument, context, is_scalar_or_vector)?;
         let argument_inner = context
@@ -1308,7 +1316,7 @@ impl super::Validator {
             Some(crate::ScalarKind::Sint) => false,
             _ => {
                 return Err(FunctionError::InvalidSwitchType(selector)
-                    .with_span_handle(selector, context.expressions))
+                    .with_span_handle(selector, context.expressions));
             }
         };
         self.switch_values.clear();
@@ -1352,21 +1360,24 @@ impl super::Validator {
                 FunctionError::MissingDefaultCase.with_span_static(span, "missing default case")
             );
         }
-        if let Some(case) = cases.last() {
-            if case.fall_through {
-                return Err(FunctionError::LastCaseFallTrough.with_span_static(
-                    case.body
-                        .span_iter()
-                        .next()
-                        .map_or(Default::default(), |(_, s)| *s),
-                    "bad switch arm here",
-                ));
-            }
+        if let Some(case) = cases.last()
+            && case.fall_through
+        {
+            return Err(FunctionError::LastCaseFallTrough.with_span_static(
+                case.body
+                    .span_iter()
+                    .next()
+                    .map_or(Default::default(), |(_, s)| *s),
+                "bad switch arm here",
+            ));
         }
         Ok(())
     }
 
-    #[allow(clippy::large_stack_frames)] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "one frame per statement, not per nesting level"
+    )] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
     fn validate_statement(
         &mut self,
         statement: &crate::Statement,
@@ -1645,11 +1656,11 @@ impl super::Validator {
                     FunctionError::InvalidTensorWrite(handle)
                         .with_span_handle(handle, context.expressions)
                 };
-                let (scalar, rank) =
-                    match *context.resolve_type_inner(tensor, &self.valid_expression_set)? {
-                        Ti::Tensor { scalar, rank } => (scalar, rank),
-                        _ => return Err(invalid(tensor)),
-                    };
+                let Ti::Tensor { scalar, rank } =
+                    *context.resolve_type_inner(tensor, &self.valid_expression_set)?
+                else {
+                    return Err(invalid(tensor));
+                };
                 let coordinates_inner =
                     context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
                 match super::expression::tensor_shape(coordinates_inner, context.types) {
@@ -1704,11 +1715,11 @@ impl super::Validator {
                             Some(AddressSpace::PhysicalStorage { .. })
                         ) =>
                         {
-                            break
+                            break;
                         }
                         _ => {
                             return Err(FunctionError::InvalidStorePointer(current)
-                                .with_span_handle(pointer, context.expressions))
+                                .with_span_handle(pointer, context.expressions));
                         }
                     }
                 }
@@ -1751,15 +1762,15 @@ impl super::Validator {
                         .with_handle(value, context.expressions));
                 }
 
-                if let Some(space) = pointer_ty.pointer_space() {
-                    if !space.access().contains(crate::StorageAccess::STORE) {
-                        return Err(
-                            FunctionError::InvalidStorePointer(pointer).with_span_static(
-                                context.expressions.get_span(pointer),
-                                "writing to this location is not permitted",
-                            ),
-                        );
-                    }
+                if let Some(space) = pointer_ty.pointer_space()
+                    && !space.access().contains(crate::StorageAccess::STORE)
+                {
+                    return Err(
+                        FunctionError::InvalidStorePointer(pointer).with_span_static(
+                            context.expressions.get_span(pointer),
+                            "writing to this location is not permitted",
+                        ),
+                    );
                 }
             }
             S::ImageStore {
@@ -1913,19 +1924,19 @@ impl super::Validator {
                 }
 
                 // If present, `array_index` must be a scalar integer type.
-                if let Some(expr) = array_index {
-                    if !matches!(
+                if let Some(expr) = array_index
+                    && !matches!(
                         *context.resolve_type_inner(expr, &self.valid_expression_set)?,
                         Ti::Scalar(crate::Scalar {
                             kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                             width: _,
                         })
-                    ) {
-                        return Err(FunctionError::InvalidImageStore(
-                            ExpressionError::InvalidImageArrayIndexType(expr),
-                        )
-                        .with_span_handle(expr, context.expressions));
-                    }
+                    )
+                {
+                    return Err(FunctionError::InvalidImageStore(
+                        ExpressionError::InvalidImageArrayIndexType(expr),
+                    )
+                    .with_span_handle(expr, context.expressions));
                 }
 
                 let value_ty = crate::TypeInner::Vector {
@@ -1963,7 +1974,7 @@ impl super::Validator {
                     return Err(error.and_then(|error| {
                         FunctionError::InvalidCall { function, error }
                             .with_span_static(span, "invalid function call")
-                    }))
+                    }));
                 }
             },
             S::Atomic {
@@ -1973,7 +1984,7 @@ impl super::Validator {
                 result,
                 order: _,
             } => {
-                self.validate_atomic(pointer, fun, value, result, span, context)?;
+                self.validate_atomic(pointer, *fun, value, result, span, context)?;
             }
             S::ImageAtomic {
                 image,
@@ -2049,12 +2060,10 @@ impl super::Validator {
                 if let crate::AtomicFunction::Exchange {
                     compare: Some(compare),
                 } = fun
+                    && *context.resolve_type_inner(compare, &self.valid_expression_set)? != value_ty
                 {
-                    if *context.resolve_type_inner(compare, &self.valid_expression_set)? != value_ty
-                    {
-                        return Err(FunctionError::InvalidImageAtomicValue(compare)
-                            .with_span_handle(compare, context.expressions));
-                    }
+                    return Err(FunctionError::InvalidImageAtomicValue(compare)
+                        .with_span_handle(compare, context.expressions));
                 }
                 if let Some(result) = result {
                     self.validate_atomic_result(result, format.into(), context)?;
@@ -2128,7 +2137,7 @@ impl super::Validator {
                             }) => {}
                             _ => {
                                 return Err(FunctionError::InvalidHitDistanceType(hit_t)
-                                    .with_span_static(span, "invalid hit_t"))
+                                    .with_span_static(span, "invalid hit_t"));
                             }
                         }
                     }
@@ -2171,8 +2180,8 @@ impl super::Validator {
                 self.emit_expression(result, context)?;
             }
             S::SubgroupCollectiveOperation {
-                ref op,
-                ref collective_op,
+                op,
+                collective_op,
                 argument,
                 result,
             } => {
@@ -2568,7 +2577,7 @@ impl super::Validator {
                         name: argument.name.clone().unwrap_or_default(),
                         space: other,
                     }
-                    .with_span_handle(argument.ty, &module.types))
+                    .with_span_handle(argument.ty, &module.types));
                 }
             }
             // Check for the least informative error last.
@@ -2635,7 +2644,7 @@ impl super::Validator {
                     Ok(stages) => info.available_stages &= stages,
                     Err(source) => {
                         return Err(FunctionError::Expression { handle, source }
-                            .with_span_handle(handle, &fun.expressions))
+                            .with_span_handle(handle, &fun.expressions));
                     }
                 }
             }
@@ -2650,11 +2659,11 @@ impl super::Validator {
                 .stages;
             info.available_stages &= stages;
 
-            if self.flags.contains(super::ValidationFlags::EXPRESSIONS) {
-                if let Some(handle) = self.needs_visit.iter().next() {
-                    return Err(FunctionError::UnvisitedExpression(handle)
-                        .with_span_handle(handle, &fun.expressions));
-                }
+            if self.flags.contains(super::ValidationFlags::EXPRESSIONS)
+                && let Some(handle) = self.needs_visit.iter().next()
+            {
+                return Err(FunctionError::UnvisitedExpression(handle)
+                    .with_span_handle(handle, &fun.expressions));
             }
         }
         Ok(info)
@@ -2909,11 +2918,11 @@ impl super::Validator {
             crate::TypeInner::Pointer { space, .. } if spaces.contains(&space) => {}
             crate::TypeInner::Pointer { space, .. } => {
                 return Err(FunctionError::InvalidPayloadAddressSpace(space)
-                    .with_span_handle(pointer, context.expressions))
+                    .with_span_handle(pointer, context.expressions));
             }
             _ => {
                 return Err(FunctionError::InvalidPayloadType
-                    .with_span_handle(pointer, context.expressions))
+                    .with_span_handle(pointer, context.expressions));
             }
         }
         match context.expressions[pointer] {

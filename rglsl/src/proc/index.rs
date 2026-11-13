@@ -43,7 +43,7 @@ impl GuardedIndex {
     }
 }
 
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq)]
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum IndexableLengthError {
     #[error("Type is not indexable, and has no length (validation error)")]
     TypeNotIndexable,
@@ -78,7 +78,7 @@ impl crate::TypeInner {
                 ..
             } => size.get(),
             Ti::LongVector { .. } | Ti::CooperativeMatrix { .. } => {
-                return Ok(IndexableLength::Dynamic)
+                return Ok(IndexableLength::Dynamic);
             }
             Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
                 return size.to_indexable_length(module);
@@ -99,10 +99,10 @@ impl crate::TypeInner {
                         ..
                     } => size.get(),
                     Ti::LongVector { .. } | Ti::CooperativeMatrix { .. } => {
-                        return Ok(IndexableLength::Dynamic)
+                        return Ok(IndexableLength::Dynamic);
                     }
                     Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
-                        return size.to_indexable_length(module)
+                        return size.to_indexable_length(module);
                     }
                     _ => return Err(IndexableLengthError::TypeNotIndexable),
                 }
@@ -170,10 +170,10 @@ impl crate::TypeInner {
         let length = self.indexable_length(module);
 
         // If the length is override-based, then try to compute its value now.
-        if let Err(IndexableLengthError::Pending(size)) = length {
-            if let IndexableLength::Known(computed) = size.resolve(module.to_ctx())? {
-                return Ok(IndexableLength::Known(computed));
-            }
+        if let Err(IndexableLengthError::Pending(size)) = length
+            && let IndexableLength::Known(computed) = size.resolve(module.to_ctx())?
+        {
+            return Ok(IndexableLength::Known(computed));
         }
         length
     }

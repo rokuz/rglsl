@@ -396,7 +396,7 @@ impl<'a> Stream<'a> {
             }
             self.text(" ");
             match class {
-                Class::Id | Class::Enum(Kind::Scope) | Class::Enum(Kind::MemorySemantics) => {
+                Class::Id | Class::Enum(Kind::Scope | Kind::MemorySemantics) => {
                     self.disassemble_ids(1)?;
                     operands -= 1;
                     if opcode == OP_NAME {

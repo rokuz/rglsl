@@ -197,7 +197,7 @@ impl<'a> Lexer<'a> {
                 Some(b'"') => break,
                 Some(b'\\') if self.byte_at(end + 1).is_some_and(|next| next != b'\n') => end += 2,
                 Some(b'\n') | None => {
-                    return Err(self.error(ParseErrorKind::UnterminatedString, start, end))
+                    return Err(self.error(ParseErrorKind::UnterminatedString, start, end));
                 }
                 Some(_) => end += 1,
             }

@@ -8,14 +8,14 @@ simple and efficient.
 
 */
 
+use crate::UniqueArena;
 use crate::common::{DiagnosticDebug, ForDebugWithTypes};
 use crate::ir;
+use crate::proc::overloads::OverloadSet;
 use crate::proc::overloads::constructor_set::{ConstructorSet, ConstructorSize};
 use crate::proc::overloads::rule::{Conclusion, Rule};
 use crate::proc::overloads::scalar_set::ScalarSet;
-use crate::proc::overloads::OverloadSet;
 use crate::proc::{GlobalCtx, TypeResolution};
-use crate::UniqueArena;
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -186,9 +186,9 @@ fn make_rule(
     conclusion_rule: ConclusionRule,
 ) -> Option<Rule> {
     let inner = size.to_inner(scalar);
-    let arg = TypeResolution::Value(inner.clone());
+    let arg = TypeResolution::Value(inner);
     Some(Rule {
-        arguments: core::iter::repeat_n(arg.clone(), arity).collect(),
+        arguments: core::iter::repeat_n(arg, arity).collect(),
         conclusion: conclusion_rule.conclude(size, scalar)?,
     })
 }

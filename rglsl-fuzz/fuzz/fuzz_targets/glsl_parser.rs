@@ -7,14 +7,14 @@ mod fuzz {
     use arbitrary::Arbitrary;
     use libfuzzer_sys::fuzz_target;
     use rglsl::{
-        front::glsl::{Frontend, Options},
         FastHashMap, ShaderStage,
+        front::glsl::{Frontend, Options},
     };
 
     #[derive(Debug, Arbitrary)]
     struct OptionsProxy {
         pub stage: ShaderStage,
-        pub defines: std::collections::HashMap<String, String>,
+        pub defines: Vec<(String, String)>,
         pub auto_map_bindings: bool,
         pub auto_map_locations: bool,
         pub library: bool,

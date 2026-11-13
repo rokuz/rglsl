@@ -208,10 +208,10 @@ impl Input {
                 continue;
             }
 
-            if let Ok(pat) = std::env::var("RGLSL_SNAPSHOT") {
-                if !file_name.to_string_lossy().contains(&pat) {
-                    continue;
-                }
+            if let Ok(pat) = std::env::var("RGLSL_SNAPSHOT")
+                && !file_name.to_string_lossy().contains(&pat)
+            {
+                continue;
             }
 
             let stem = file_name
@@ -320,7 +320,7 @@ impl Input {
                 .and_then(|extension| extension.to_str())
             {
                 Some("ron" | "vert" | "frag" | "comp") => {
-                    params.targets = Some(Targets::default_targets())
+                    params.targets = Some(Targets::default_targets());
                 }
                 _ => return Err(format!("Unknown extension: {}", input_path.display()).into()),
             }

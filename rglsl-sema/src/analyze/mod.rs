@@ -48,7 +48,7 @@ pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
-use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, StageTables, ALL_STAGE_BITS};
+use crate::builtins::{ALL_STAGE_BITS, BuiltinFunctionId, Builtins, ResourceLimits, StageTables};
 
 use crate::constant::Constant;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -292,13 +292,13 @@ fn version_of(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> Opti
                 kind: DiagnosticKind::UnsupportedVersion(*number),
             });
         }
-        if let Some(profile) = profile {
-            if profile != "core" {
-                diagnostics.push(Diagnostic {
-                    span: directive.span,
-                    kind: DiagnosticKind::UnsupportedProfile(profile.clone()),
-                });
-            }
+        if let Some(profile) = profile
+            && profile != "core"
+        {
+            diagnostics.push(Diagnostic {
+                span: directive.span,
+                kind: DiagnosticKind::UnsupportedProfile(profile.clone()),
+            });
         }
         return Some(*number);
     }
@@ -684,16 +684,16 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Some((DerivativeGroup::Linear, _)) => {
-                if let (Some(x), Some(y), Some(z)) = (size(0), size(1), size(2)) {
-                    if x.wrapping_mul(y).wrapping_mul(z) % 4 != 0 {
-                        self.error(
-                            end,
-                            DiagnosticKind::InvalidQualifier {
-                                qualifier: "derivative_group_linear",
-                                reason: "requires total group size to be multiple of four",
-                            },
-                        );
-                    }
+                if let (Some(x), Some(y), Some(z)) = (size(0), size(1), size(2))
+                    && x.wrapping_mul(y).wrapping_mul(z) % 4 != 0
+                {
+                    self.error(
+                        end,
+                        DiagnosticKind::InvalidQualifier {
+                            qualifier: "derivative_group_linear",
+                            reason: "requires total group size to be multiple of four",
+                        },
+                    );
                 }
             }
             None => {}
@@ -804,18 +804,17 @@ impl<'a> Analyzer<'a> {
                     extensions: names.join(", "),
                 })
         });
-        if let Some(names) = required(self.options.stage) {
-            if let rglsl_ast::extensions::Request::Warned(extension) =
+        if let Some(names) = required(self.options.stage)
+            && let rglsl_ast::extensions::Request::Warned(extension) =
                 self.extensions.request(names)
-            {
-                self.warnings.push(Diagnostic {
-                    span,
-                    kind: DiagnosticKind::ExtensionWarned {
-                        extension,
-                        feature: String::from(what),
-                    },
-                });
-            }
+        {
+            self.warnings.push(Diagnostic {
+                span,
+                kind: DiagnosticKind::ExtensionWarned {
+                    extension,
+                    feature: String::from(what),
+                },
+            });
         }
         !failed
     }
@@ -990,7 +989,7 @@ impl<'a> Analyzer<'a> {
                 match tables.variable(stage, name) {
                     None => self.stage_error(stage, span, undeclared()),
                     Some(description) if Some(description) != described => {
-                        keep &= !crate::builtins::stage_bit(stage)
+                        keep &= !crate::builtins::stage_bit(stage);
                     }
                     Some(_) => {}
                 }

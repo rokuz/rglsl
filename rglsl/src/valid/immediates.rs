@@ -51,7 +51,7 @@ impl ImmediateSlots {
                 } => slots |= Self::from_range(offset, u32::MAX - offset),
                 _ => {
                     slots |=
-                        Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset))
+                        Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset));
                 }
             }
         }
@@ -107,12 +107,12 @@ impl ImmediateSlots {
         match expression_arena[pointer] {
             E::GlobalVariable(_) => Self::from_type(global_ty, 0, types, gctx),
             E::AccessIndex { base, index } => {
-                if let E::GlobalVariable(_) = expression_arena[base] {
-                    if let TypeInner::Struct { ref members, .. } = *global_ty {
-                        let member = &members[index as usize];
-                        let member_ty = &types[member.ty].inner;
-                        return Self::from_type(member_ty, member.offset, types, gctx);
-                    }
+                if let E::GlobalVariable(_) = expression_arena[base]
+                    && let TypeInner::Struct { ref members, .. } = *global_ty
+                {
+                    let member = &members[index as usize];
+                    let member_ty = &types[member.ty].inner;
+                    return Self::from_type(member_ty, member.offset, types, gctx);
                 }
                 Self::from_type(global_ty, 0, types, gctx)
             }

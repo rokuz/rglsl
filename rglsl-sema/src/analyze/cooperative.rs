@@ -1,8 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
 use rglsl_ast::Span;
+use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
 
 use super::frames::Cx;
 use super::{Analyzer, Operand};
@@ -140,7 +140,7 @@ impl Analyzer<'_> {
         kind: ParameterizedType,
         span: Span,
         element: Option<Type>,
-        values: Vec<Parameter>,
+        values: &[Parameter],
     ) -> Type {
         let keyword = kind.keyword();
         let element_scalar = element
@@ -165,7 +165,7 @@ impl Analyzer<'_> {
                 else {
                     return self.parameter_error(span, keyword, "invalid component type");
                 };
-                let [scope, rows, columns, usage] = values.as_slice() else {
+                let [scope, rows, columns, usage] = values else {
                     return self.parameter_error(span, keyword, "expected five type parameters");
                 };
                 let Some(usage) = usage.value().and_then(CooperativeUse::from_value) else {
@@ -186,7 +186,7 @@ impl Analyzer<'_> {
                 if element.is_some() {
                     return self.parameter_error(span, keyword, "expected four type parameters");
                 }
-                let [bits, scope, rows, columns] = values.as_slice() else {
+                let [bits, scope, rows, columns] = values else {
                     return self.parameter_error(span, keyword, "expected four type parameters");
                 };
                 let scalar = match (kind, bits.value()) {
@@ -204,7 +204,7 @@ impl Analyzer<'_> {
                             span,
                             keyword,
                             "invalid number of bits for the first type parameter",
-                        )
+                        );
                     }
                 };
                 self.cooperative_matrix_type(
@@ -231,7 +231,7 @@ impl Analyzer<'_> {
                 if kind == ParameterizedType::CooperativeVectorNv && scalar == Scalar::Bool {
                     return self.parameter_error(span, keyword, "invalid component type");
                 }
-                let [size] = values.as_slice() else {
+                let [size] = values else {
                     return self.parameter_error(
                         span,
                         keyword,
@@ -274,7 +274,7 @@ impl Analyzer<'_> {
                 Type::new(kind)
             }
             ParameterizedType::TensorArm => {
-                let [rank] = values.as_slice() else {
+                let [rank] = values else {
                     return self.parameter_error(
                         span,
                         keyword,
@@ -310,10 +310,10 @@ impl Analyzer<'_> {
                     }
                     _ => None,
                 };
-                if let Some((extension, feature)) = extension {
-                    if !self.require_extension(span, extension, feature) {
-                        return Type::ERROR;
-                    }
+                if let Some((extension, feature)) = extension
+                    && !self.require_extension(span, extension, feature)
+                {
+                    return Type::ERROR;
                 }
                 Type::new(TypeKind::Tensor { scalar, rank })
             }
@@ -335,7 +335,7 @@ impl Analyzer<'_> {
                                 span,
                                 keyword,
                                 "invalid dimension permutation",
-                            )
+                            );
                         }
                     }
                 }
@@ -435,7 +435,7 @@ impl Analyzer<'_> {
             if operand.ty.is_scalar() {
                 let value = match (constant, ty.component_count()) {
                     (true, Some(count)) => {
-                        self.fold_constructor(ty, target, count, core::slice::from_ref(operand))
+                        Self::fold_constructor(ty, target, count, core::slice::from_ref(operand))
                     }
                     _ => None,
                 };
@@ -458,7 +458,7 @@ impl Analyzer<'_> {
             if operand.ty.same_shape(ty) || paired_vectors {
                 let value = match (constant, ty.component_count()) {
                     (true, Some(count)) => {
-                        self.fold_constructor(ty, target, count, core::slice::from_ref(operand))
+                        Self::fold_constructor(ty, target, count, core::slice::from_ref(operand))
                     }
                     _ => None,
                 };
@@ -496,7 +496,7 @@ impl Analyzer<'_> {
             return fail(self, "not enough components");
         }
         let value = if constant && ty.component_count().is_some() {
-            self.fold_constructor(ty, target, needed, operands)
+            Self::fold_constructor(ty, target, needed, operands)
         } else {
             None
         };
@@ -539,8 +539,11 @@ impl Analyzer<'_> {
         for operand in operands {
             let ty = &operand.ty;
             match (ty.kind, ty.is_array()) {
-                (TypeKind::LongVector { scalar, size }, false)
-                | (TypeKind::CooperativeVector { scalar, size }, false) => {
+                (
+                    TypeKind::LongVector { scalar, size }
+                    | TypeKind::CooperativeVector { scalar, size },
+                    false,
+                ) => {
                     let cooperative = ty.is_cooperative_vector();
                     match shape {
                         Some(existing) if existing != (size, cooperative) => {
@@ -581,19 +584,17 @@ impl Analyzer<'_> {
                 Type::new(TypeKind::LongVector { scalar, size })
             }
         };
-        if !cooperative {
-            if let Some(result) = Self::special_long_builtin(name, operands, long) {
-                let Some(result) = result else {
-                    return ambiguous(self);
-                };
-                let id = self.builtins.overloads(name).first().copied();
-                let Some(id) = id else {
-                    return ambiguous(self);
-                };
-                self.builtin_extensions(span, name);
-                self.calls.insert(expression.id, super::Callee::Builtin(id));
-                return Operand::temporary(result);
-            }
+        if !cooperative && let Some(result) = Self::special_long_builtin(name, operands, long) {
+            let Some(result) = result else {
+                return ambiguous(self);
+            };
+            let id = self.builtins.overloads(name).first().copied();
+            let Some(id) = id else {
+                return ambiguous(self);
+            };
+            self.builtin_extensions(span, name);
+            self.calls.insert(expression.id, super::Callee::Builtin(id));
+            return Operand::temporary(result);
         }
         let features = self.numeric_features();
         let convertible = name.starts_with("subgroup");
@@ -814,6 +815,6 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         if failed {
             return Type::ERROR;
         }
-        self.with(|analyzer| analyzer.parameterized_type_with(kind, span, element, values))
+        self.with(|analyzer| analyzer.parameterized_type_with(kind, span, element, &values))
     }
 }

@@ -12,7 +12,7 @@ use core::{cmp::Ordering, fmt, hash, marker::PhantomData};
 /// the same size and representation as `Handle<T>`.
 pub type Index = crate::non_max_u32::NonMaxU32;
 
-#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq)]
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 #[error("Handle {index} of {kind} is either not present, or inaccessible yet")]
 pub struct BadHandle {
     pub kind: &'static str,
@@ -83,7 +83,7 @@ impl<T> fmt::Debug for Handle<T> {
 
 impl<T> hash::Hash for Handle<T> {
     fn hash<H: hash::Hasher>(&self, hasher: &mut H) {
-        self.index.hash(hasher)
+        self.index.hash(hasher);
     }
 }
 

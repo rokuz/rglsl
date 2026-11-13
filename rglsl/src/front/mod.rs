@@ -55,7 +55,7 @@ impl Typifier {
     }
 
     pub fn reset(&mut self) {
-        self.resolutions.clear()
+        self.resolutions.clear();
     }
 
     pub fn get<'a>(

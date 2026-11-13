@@ -12,11 +12,11 @@ representing a type rule's conclusion.
 
 */
 
+use crate::UniqueArena;
 use crate::common::{DiagnosticDebug, ForDebugWithTypes};
 use crate::ir;
-use crate::proc::overloads::constructor_set::ConstructorSize;
 use crate::proc::TypeResolution;
-use crate::UniqueArena;
+use crate::proc::overloads::constructor_set::ConstructorSize;
 
 use alloc::vec::Vec;
 use core::fmt;

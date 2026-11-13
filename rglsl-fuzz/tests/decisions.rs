@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use rglsl_fuzz::decisions::{decode, SEEDS};
 use rglsl_fuzz::Random;
+use rglsl_fuzz::decisions::{SEEDS, decode};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

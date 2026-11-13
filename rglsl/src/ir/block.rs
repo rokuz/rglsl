@@ -33,7 +33,6 @@ impl Block {
         }
     }
 
-    #[allow(unused_variables)]
     pub fn push(&mut self, end: Statement, span: Span) {
         self.body.push(end);
         self.span_info.push(span);
@@ -41,7 +40,7 @@ impl Block {
 
     pub fn extend(&mut self, item: Option<(Statement, Span)>) {
         if let Some((end, span)) = item {
-            self.push(end, span)
+            self.push(end, span);
         }
     }
 

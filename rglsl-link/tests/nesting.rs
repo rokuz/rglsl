@@ -1,11 +1,9 @@
-#![allow(clippy::panic)]
-
+use rglsl::ShaderStage;
 use rglsl::back::spv;
-use rglsl::compact::{compact, KeepUnused};
+use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-use rglsl::ShaderStage;
-use rglsl_link::{decode, encode, link, Options as LinkOptions};
+use rglsl_link::{Options as LinkOptions, decode, encode, link};
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -995,7 +993,7 @@ fn deep_object_files_link_on_a_small_stack(depth: usize) -> TestResult {
             if let Err(error) = rglsl_link::validate_object(&object) {
                 return Outcome::Failed(format!("{error}"));
             }
-            let copy = object.clone();
+            let copy = object;
             let linked = match link(&[copy], &LinkOptions::default()) {
                 Ok(linked) => linked,
                 Err(errors) => return Outcome::Failed(format!("link: {errors}")),
@@ -1123,16 +1121,18 @@ fn run_groups(groups: Vec<Group>) -> TestResult {
     let failures = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
         for _ in 0..WORKERS {
-            scope.spawn(|| loop {
-                let next = match pending.lock() {
-                    Ok(mut pending) => pending.pop(),
-                    Err(_) => None,
-                };
-                let Some((group, depth)) = next else {
-                    break;
-                };
-                if let Err(error) = group(depth) {
-                    if let Ok(mut failures) = failures.lock() {
+            scope.spawn(|| {
+                loop {
+                    let next = match pending.lock() {
+                        Ok(mut pending) => pending.pop(),
+                        Err(_) => None,
+                    };
+                    let Some((group, depth)) = next else {
+                        break;
+                    };
+                    if let Err(error) = group(depth)
+                        && let Ok(mut failures) = failures.lock()
+                    {
                         failures.push(error.to_string());
                     }
                 }

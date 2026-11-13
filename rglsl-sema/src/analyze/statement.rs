@@ -3,11 +3,11 @@ use core::cell::RefCell;
 
 use rglsl_types::stack::run;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Attribute, CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ForStatement,
     JumpStatement, Statement, StatementKind,
 };
-use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::{Analyzer, Operand, SwitchContext};
@@ -298,10 +298,10 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 self.with(|analyzer| analyzer.declaration(declaration));
             }
             StatementKind::Expression(expression) => {
-                if let Some(expression) = expression {
-                    if !self.with(|analyzer| analyzer.names_struct(expression)) {
-                        self.clone().expression(expression).await;
-                    }
+                if let Some(expression) = expression
+                    && !self.with(|analyzer| analyzer.names_struct(expression))
+                {
+                    self.clone().expression(expression).await;
                 }
             }
             StatementKind::Selection {
@@ -447,7 +447,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             } else if generates_code(statement) && !labelled {
                 labelled = true;
                 self.with(|analyzer| {
-                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase)
+                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase);
                 });
             }
             self.call(self.clone().statement(statement)).await;

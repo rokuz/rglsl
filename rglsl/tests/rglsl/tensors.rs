@@ -3,10 +3,10 @@ extern crate alloc;
 use alloc::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
+use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl;
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-use rglsl::ShaderStage;
 use spirv::Op;
 
 use crate::TestResult;
@@ -391,20 +391,20 @@ impl Module {
             }
         }
         for (op, operands) in &self.instructions {
-            if is(*op, Op::Function) {
-                if let Some(&ty) = operands.first() {
-                    shape.results.push(self.describe(ty));
-                }
+            if is(*op, Op::Function)
+                && let Some(&ty) = operands.first()
+            {
+                shape.results.push(self.describe(ty));
             }
-            if is(*op, Op::FunctionParameter) {
-                if let [ty, id, ..] = operands.as_slice() {
-                    let description = self.describe(*ty);
-                    let image = format!("op{}", Op::TypeImage as u32);
-                    if description.contains("tensor") || description.ends_with(&image) {
-                        let mut decorated = decorations.get(id).cloned().unwrap_or_default();
-                        decorated.sort();
-                        shape.parameters.push((description, decorated));
-                    }
+            if is(*op, Op::FunctionParameter)
+                && let [ty, id, ..] = operands.as_slice()
+            {
+                let description = self.describe(*ty);
+                let image = format!("op{}", Op::TypeImage as u32);
+                if description.contains("tensor") || description.ends_with(&image) {
+                    let mut decorated = decorations.get(id).cloned().unwrap_or_default();
+                    decorated.sort();
+                    shape.parameters.push((description, decorated));
                 }
             }
             if !is(*op, Op::Variable) {
@@ -440,7 +440,7 @@ fn matches_glslang_in(stage: ShaderStage, source: &str, target: Target) -> TestR
     match glslang(stage, source, target, false)? {
         Glslang::Missing => {}
         Glslang::Rejected(lines) => {
-            return Err(format!("glslang rejects the shader on lines {lines:?}").into())
+            return Err(format!("glslang rejects the shader on lines {lines:?}").into());
         }
         Glslang::Accepted(words) => {
             let theirs = Module::new(&words)?.shape();
@@ -958,13 +958,28 @@ layout(set = 0, binding = 1) buffer B { uint size; float value; int number; floa
 #[test]
 fn call_errors_on_glslang_lines() -> TestResult {
     let cases = [
-        ("tensorReadARM(t, uint[](0u), b.value);", "number of coordinates"),
-        ("tensorReadARM(t, uint[](0u, 0u), b.number);", "data argument type"),
-        ("tensorWriteARM(t, uint[](0u, 0u), b.number);", "data argument type"),
+        (
+            "tensorReadARM(t, uint[](0u), b.value);",
+            "number of coordinates",
+        ),
+        (
+            "tensorReadARM(t, uint[](0u, 0u), b.number);",
+            "data argument type",
+        ),
+        (
+            "tensorWriteARM(t, uint[](0u, 0u), b.number);",
+            "data argument type",
+        ),
         ("tensorReadARM(t, int[](0, 0), b.value);", "no overload"),
         ("tensorReadARM(t, uint[](0u, 0u), b.values);", "no overload"),
-        ("tensorReadARM(t, uint[](0u, 0u), b.value, 1ul);", "no overload"),
-        ("tensorReadARM(t, uint[](0u, 0u), b.value, 1.0);", "no overload"),
+        (
+            "tensorReadARM(t, uint[](0u, 0u), b.value, 1ul);",
+            "no overload",
+        ),
+        (
+            "tensorReadARM(t, uint[](0u, 0u), b.value, 1.0);",
+            "no overload",
+        ),
         (
             "tensorReadARM(t, uint[](0u, 0u), b.value, b.size);",
             "constant integral",

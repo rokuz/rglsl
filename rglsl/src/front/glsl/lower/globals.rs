@@ -6,15 +6,15 @@ use rglsl_ast::ast::{
     InitDeclarator, InitDeclaratorList, Initializer, InterpolationQualifier, Node,
     SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
 };
+use rglsl_sema::SymbolId;
 use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind, Variable};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
     TypeKind,
 };
-use rglsl_sema::SymbolId;
 
 use super::types::image_dimension;
-use super::{internal, semantic, unsupported, GlobalRef, Initialization, Lowerer, Packing, Result};
+use super::{GlobalRef, Initialization, Lowerer, Packing, Result, internal, semantic, unsupported};
 use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
@@ -757,12 +757,12 @@ impl<'a> Lowerer<'a> {
                 self.globals.insert(symbol, GlobalRef::Override(handle));
                 return Ok(());
             }
-            if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION) {
-                if let Some(initializer) = declarator.kind.initializer.as_ref() {
-                    let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
-                    self.globals.insert(symbol, GlobalRef::Override(handle));
-                    return Ok(());
-                }
+            if qualifiers.flags.contains(QualifierFlags::SPECIALIZATION)
+                && let Some(initializer) = declarator.kind.initializer.as_ref()
+            {
+                let handle = self.specialized_initializer(initializer, ty, Some(name), at)?;
+                self.globals.insert(symbol, GlobalRef::Override(handle));
+                return Ok(());
             }
             if let Some(ref value) = variable.value {
                 let ir = self.ir_type(ty, at)?;
@@ -1062,7 +1062,7 @@ impl<'a> Lowerer<'a> {
                 return Err(semantic(
                     "SPIR-V requires a location for user inputs and outputs",
                     at,
-                ))
+                ));
             }
         };
         let mut interpolation = match qualifiers.per_vertex {
@@ -1226,13 +1226,13 @@ impl<'a> Lowerer<'a> {
                 return self.handle_global(symbol, name, inner, None, at);
             }
             TypeKind::Struct(_) if ty.contains_opaque(&self.analysis.types) => {
-                return Err(internal(at))
+                return Err(internal(at));
             }
             _ => {
                 return Err(semantic(
                     "non-opaque uniforms outside a block are not allowed when targeting Vulkan",
                     at,
-                ))
+                ));
             }
         };
         let inner = if opaque.kind == OpaqueKind::Image {
@@ -1252,7 +1252,7 @@ impl<'a> Lowerer<'a> {
                 },
             }
         } else {
-            self.opaque_inner(
+            Self::opaque_inner(
                 opaque,
                 self.depth.contains(&symbol),
                 self.comparison.contains(&symbol),
@@ -1294,7 +1294,7 @@ impl<'a> Lowerer<'a> {
                 return Err(unsupported(
                     "runtime-sized arrays and arrays of arrays of opaque types",
                     at,
-                ))
+                ));
             }
         }
         let (binding, unbound) = self.binding(qualifiers, at)?;
@@ -1634,13 +1634,13 @@ impl<'a> Lowerer<'a> {
             if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
                 return Err(semantic("invariant can only apply to an output", at));
             }
-            if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer") {
-                if xfb_buffer != Some(buffer) {
-                    return Err(semantic(
-                        "xfb_buffer: member cannot contradict block (or what block inherited from global)",
-                        at,
-                    ));
-                }
+            if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer")
+                && xfb_buffer != Some(buffer)
+            {
+                return Err(semantic(
+                    "xfb_buffer: member cannot contradict block (or what block inherited from global)",
+                    at,
+                ));
             }
             let ty = self.ir_type(&member_ty, at)?;
             self.layouter
@@ -1774,7 +1774,7 @@ impl<'a> Lowerer<'a> {
                     return Err(semantic(
                         "SPIR-V requires a location for user inputs and outputs",
                         at,
-                    ))
+                    ));
                 }
             };
             if members.iter().any(|member| {
@@ -1981,10 +1981,10 @@ impl<'a> Lowerer<'a> {
                     continue;
                 };
                 let mut glsl = builtin.ty.clone();
-                if glsl.outer_size() == Some(GlslArraySize::Unsized) {
-                    if let Some(size) = self.declarator_size(declarator.node.array.as_ref()) {
-                        glsl.set_outer_size(GlslArraySize::Sized(size));
-                    }
+                if glsl.outer_size() == Some(GlslArraySize::Unsized)
+                    && let Some(size) = self.declarator_size(declarator.node.array.as_ref())
+                {
+                    glsl.set_outer_size(GlslArraySize::Sized(size));
                 }
                 let ty = self.ir_type(&glsl, at)?;
                 declared.push((name, ty, offset, stride));
@@ -2203,7 +2203,7 @@ impl<'a> Lowerer<'a> {
                     return Err(semantic(
                         "`pixel_center_integer` is not allowed in Vulkan: the PixelCenterInteger execution mode must not be used",
                         at,
-                    ))
+                    ));
                 }
                 _ => {}
             }
@@ -2216,7 +2216,7 @@ impl<'a> Lowerer<'a> {
                     return Err(unsupported(
                         format!("the layout qualifier `{other}` on `{name}`"),
                         at,
-                    ))
+                    ));
                 }
             };
             if name != "gl_FragDepth" {
@@ -2422,8 +2422,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let frame = self
                     .clone()
                     .variable_ir_type(ty.clone(), qualifiers.clone(), span);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?;
             let global = self.with(|this| this.ray_query_global(name, ty, span))?;
             let found = GlobalRef::Variable(global);
@@ -2446,16 +2445,14 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 }
                 if let Some(handle) = {
                     let frame = self.clone().builtin_override(symbol, variable, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }? {
                     return Ok(handle);
                 }
                 if self.with(|this| this.is_per_vertex_array(symbol))? {
                     return {
                         let frame = self.clone().per_vertex_array(symbol, at);
-                        let result = self.nest(frame).await;
-                        result
+                        self.nest(frame).await
                     };
                 }
                 (
@@ -2493,15 +2490,13 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             Some(value) => {
                 let ir = {
                     let frame = self.clone().ir_type(ty.clone(), at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let init = {
                     let frame = self
                         .clone()
-                        .global_constant(ty.clone(), value.values.to_vec(), at);
-                    let result = self.nest(frame).await;
-                    result
+                        .global_constant(ty.clone(), value.values.clone(), at);
+                    self.nest(frame).await
                 }?;
                 let handle = self.with(|this| {
                     this.module.constants.append(
@@ -2523,8 +2518,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     volatile,
                     at,
                 );
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?),
         };
         self.with(|this| this.globals.insert(symbol, found))?;
@@ -2579,24 +2573,19 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let sized = element.array_of(GlslArraySize::Sized(size));
             {
                 let frame = self.clone().ir_type(sized.clone(), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
             {
-                let frame = self
-                    .clone()
-                    .ir_type((GlslType::vector(Scalar::Uint, 4)).clone(), at);
-                let result = self.nest(frame).await;
-                result
+                let frame = self.clone().ir_type(GlslType::vector(Scalar::Uint, 4), at);
+                self.nest(frame).await
             }?
         } else {
             {
                 let frame = self
                     .clone()
                     .ray_builtin_type(String::from(name), ty.clone(), at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }?
         };
         let memory_decorations = if volatile {

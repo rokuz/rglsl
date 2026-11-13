@@ -1,8 +1,8 @@
 use crate::scope::QualifierFlags;
 use alloc::string::String;
 
-use rglsl_ast::ast::StorageQualifier;
 use rglsl_ast::Span;
+use rglsl_ast::ast::StorageQualifier;
 
 use super::{Analyzer, Operand};
 use crate::constant::Constant;
@@ -332,7 +332,7 @@ impl Analyzer<'_> {
         true
     }
 
-    pub(crate) fn is_ray_query(&self, ty: &Type) -> bool {
+    pub(crate) fn is_ray_query(ty: &Type) -> bool {
         matches!(ty.kind, TypeKind::Opaque(opaque) if opaque.kind == OpaqueKind::RayQuery)
     }
 

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 const OP_STRING: u32 = 7;
 const OP_LINE: u32 = 8;
@@ -152,10 +152,10 @@ pub fn facts(words: &[u32]) -> Result<BTreeSet<String>> {
                 }
             }
             OP_EXT_INST_IMPORT => {
-                if let Some((&id, text)) = operands.split_first() {
-                    if literal_string(text).starts_with(NON_SEMANTIC) {
-                        debug_set = Some(id);
-                    }
+                if let Some((&id, text)) = operands.split_first()
+                    && literal_string(text).starts_with(NON_SEMANTIC)
+                {
+                    debug_set = Some(id);
                 }
             }
             OP_TYPE_INT => {
@@ -164,10 +164,10 @@ pub fn facts(words: &[u32]) -> Result<BTreeSet<String>> {
                 }
             }
             OP_CONSTANT => {
-                if let [ty, id, value, ..] = *operands {
-                    if int_types.contains(&ty) {
-                        module.constants.insert(id, value);
-                    }
+                if let [ty, id, value, ..] = *operands
+                    && int_types.contains(&ty)
+                {
+                    module.constants.insert(id, value);
                 }
             }
             _ => {}
@@ -193,18 +193,19 @@ fn names(
 ) {
     for instruction in instructions {
         let operands = instruction.words;
-        if is_ext_inst(instruction.opcode) && operands.get(2).copied() == debug_set {
-            if let [_, id, _, opcode, ref rest @ ..] = *operands {
-                if opcode == 101 {
-                    if let [debug_function, function, ..] = *rest {
-                        let name = module.name(debug_function);
-                        module.definitions.insert(function, name);
-                    }
-                }
-                let name = describe(module, opcode, rest, facts);
-                if let Some(name) = name {
-                    module.names.insert(id, name);
-                }
+        if is_ext_inst(instruction.opcode)
+            && operands.get(2).copied() == debug_set
+            && let [_, id, _, opcode, ref rest @ ..] = *operands
+        {
+            if opcode == 101
+                && let [debug_function, function, ..] = *rest
+            {
+                let name = module.name(debug_function);
+                module.definitions.insert(function, name);
+            }
+            let name = describe(module, opcode, rest, facts);
+            if let Some(name) = name {
+                module.names.insert(id, name);
             }
         }
     }

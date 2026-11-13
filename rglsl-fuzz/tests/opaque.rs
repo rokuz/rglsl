@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
     clippy::panic,
     clippy::unreachable,
     reason = "test support code fails by panicking"
@@ -15,12 +15,12 @@ use rglsl_fuzz::build::Builder;
 use rglsl_fuzz::fuzzer::{Fuzzer, GenerationParams, Templates};
 use rglsl_fuzz::opaque::{Identity, OpaqueGenerator};
 use rglsl_fuzz::scope::Variable;
-use rglsl_fuzz::{analyze_shader, parse_shader, Random};
+use rglsl_fuzz::{Random, analyze_shader, parse_shader};
 use rglsl_sema::{Builtins, ResourceLimits};
 use rglsl_types::ShaderStage;
 
-use support::eval::{Evaluator, Value};
 use support::TestResult;
+use support::eval::{Evaluator, Value};
 
 struct Setup {
     builtins: Arc<Builtins>,

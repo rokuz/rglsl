@@ -3,8 +3,8 @@ use alloc::vec::Vec;
 use spirv::{Capability, Decoration, Op, Word};
 
 use super::plain_types::CompositeShape;
-use super::{helpers, Block, BlockContext, Error, Instruction, Writer, WriterFlags};
-use crate::{arena::Handle, DebugPrintfArgument, Expression, Type, TypeInner};
+use super::{Block, BlockContext, Error, Instruction, Writer, WriterFlags, helpers};
+use crate::{DebugPrintfArgument, Expression, Type, TypeInner, arena::Handle};
 
 const CAPABILITY_ABORT: Word = 5120;
 const CAPABILITY_CONSTANT_DATA: Word = 5146;
@@ -83,16 +83,15 @@ impl Writer {
                 let element = results
                     .pop()
                     .ok_or(Error::Internal("a laid out copy lost its element"))?;
-                let length = match self
+                let Some(&CompositeShape::Array {
+                    length: Some(length),
+                    ..
+                }) = self
                     .composite_types
                     .get(&normal)
                     .map(|composite| &composite.shape)
-                {
-                    Some(&CompositeShape::Array {
-                        length: Some(length),
-                        ..
-                    }) => length,
-                    _ => return Err(Error::Validation("abort message array")),
+                else {
+                    return Err(Error::Validation("abort message array"));
                 };
                 let id = self.id_gen.next();
                 Instruction::type_array(id, element, length)
@@ -112,10 +111,10 @@ impl Writer {
                 }
                 Instruction::type_struct(id, &member_ids)
                     .to_words(&mut self.logical_layout.declarations);
-                if self.flags.contains(WriterFlags::DEBUG) {
-                    if let Some(ref name) = module.types[ty].name {
-                        self.debugs.push(Instruction::name(id, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && let Some(ref name) = module.types[ty].name
+                {
+                    self.debugs.push(Instruction::name(id, name));
                 }
                 id
             }

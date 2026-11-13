@@ -18,7 +18,9 @@ fn invalid_suffixes_split_like_glslang() {
     assert!(errors(&result).is_empty(), "{:?}", result.diagnostics);
     assert_eq!(
         code(&result.text),
-        ["float", "a", "=", "1.5", "l", "+", "2.5", "h", "+", "3.0fe2m1", ";"]
+        [
+            "float", "a", "=", "1.5", "l", "+", "2.5", "h", "+", "3.0fe2m1", ";"
+        ]
     );
 }
 

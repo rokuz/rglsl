@@ -10,7 +10,7 @@ use crate::lexer::{Events, FileInput, Role, ScanContext};
 use crate::options::Options;
 use crate::output::Output;
 use crate::predefined;
-use crate::source_map::{clamp_line, SourceInfo, SourceMap};
+use crate::source_map::{SourceInfo, SourceMap, clamp_line};
 use crate::token::{At, Kind, Token};
 use crate::version::{self, Profile, Version};
 use rglsl_types::ShaderStage;
@@ -798,11 +798,11 @@ impl Preprocessor<'_> {
             self.last_at = file.current_at();
             if file.role == Role::Included {
                 self.leave_include();
-                if self.options.listing {
-                    if let Some(marker) = self.line_markers.pop() {
-                        self.output
-                            .line_directive(&marker.epilogue, marker.end, marker.resume);
-                    }
+                if self.options.listing
+                    && let Some(marker) = self.line_markers.pop()
+                {
+                    self.output
+                        .line_directive(&marker.epilogue, marker.end, marker.resume);
                 }
             }
         }

@@ -1,10 +1,4 @@
-#![allow(
-    clippy::panic,
-    clippy::unreachable,
-    reason = "test support code fails by panicking"
-)]
-
-use rglsl_fuzz::{analyze_shader, parse_shader, prepare_reference, ShaderJob};
+use rglsl_fuzz::{ShaderJob, analyze_shader, parse_shader, prepare_reference};
 use rglsl_types::ShaderStage;
 use serde_json::Value;
 

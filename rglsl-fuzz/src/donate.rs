@@ -8,28 +8,28 @@ use rglsl_ast::ast::{
     SingleTypeQualifier, Spanned, Statement, StatementKind, StorageQualifier, TranslationUnit,
     TypeSpecifierNonArray,
 };
-use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::Analysis;
+use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_types::ShaderStage;
 
 use crate::basic::{self, INT};
-use crate::build::{unqualified, Builder};
+use crate::build::{Builder, unqualified};
 use crate::constants::{
     DEAD_PREFIX, GLF_FUZZED, GLF_MAKE_IN_BOUNDS_INT, GLF_MAKE_IN_BOUNDS_UINT, INJECTION_SWITCH,
     LIVE_PREFIX,
 };
 use crate::context::Context;
 use crate::error::Error;
-use crate::fuzzer::{random_constant, Fuzzer, GenerationParams, Templates};
+use crate::fuzzer::{Fuzzer, GenerationParams, Templates, random_constant};
 use crate::generate::analyze_shader;
 use crate::identity::hidden_names;
-use crate::injection::{apply_edits, choose, injection_points, Edit, InjectionPoint};
+use crate::injection::{Edit, InjectionPoint, apply_edits, choose, injection_points};
 use crate::job::parse_unit;
 use crate::macros::emit;
 use crate::random::Random;
-use crate::rename::{rename_all, NameKind};
+use crate::rename::{NameKind, rename_all};
 use crate::rewrite::{rewrite_expressions, rewrite_statements, take_expression};
-use crate::scope::{has_storage, Variable};
+use crate::scope::{Variable, has_storage};
 use crate::stack::child_statements;
 use crate::transformation::PassInput;
 
@@ -296,11 +296,11 @@ fn builtin_variables(
         else {
             continue;
         };
-        if let SymbolKind::Variable(variable) = &symbol.kind {
-            if variable.origin == Origin::BuiltIn {
-                let ty = basic::from_sema(&variable.ty).ok_or(Unprepared::Rejected)?;
-                result.insert(name.clone(), ty);
-            }
+        if let SymbolKind::Variable(variable) = &symbol.kind
+            && variable.origin == Origin::BuiltIn
+        {
+            let ty = basic::from_sema(&variable.ty).ok_or(Unprepared::Rejected)?;
+            result.insert(name.clone(), ty);
         }
     }
     Ok(result)
@@ -438,14 +438,13 @@ pub fn in_bounds(unit: &TranslationUnit, analysis: &Analysis) -> Result<Translat
         ) {
             return;
         }
-        if let ExpressionKind::Number(literal) = &index.kind {
-            if literal
+        if let ExpressionKind::Number(literal) = &index.kind
+            && literal
                 .digits()
                 .parse::<u32>()
                 .is_ok_and(|value| value < length)
-            {
-                return;
-            }
+        {
+            return;
         }
         let unsigned = analysis
             .type_of(index.id)
@@ -512,14 +511,15 @@ fn flatten_interface(unit: &mut TranslationUnit, builder: &mut Builder) {
                     list.ty.node.specifier.node.non_array,
                     TypeSpecifierNonArray::Basic(_) | TypeSpecifierNonArray::Opaque(_)
                 );
-                if uniform && !basic_or_opaque {
-                    if let Some(qualifier) = &mut list.ty.node.qualifier {
-                        qualifier.node.qualifiers.retain(|single| {
-                            single.node != SingleTypeQualifier::Storage(StorageQualifier::Uniform)
-                        });
-                        if qualifier.node.qualifiers.is_empty() {
-                            list.ty.node.qualifier = None;
-                        }
+                if uniform
+                    && !basic_or_opaque
+                    && let Some(qualifier) = &mut list.ty.node.qualifier
+                {
+                    qualifier.node.qualifiers.retain(|single| {
+                        single.node != SingleTypeQualifier::Storage(StorageQualifier::Uniform)
+                    });
+                    if qualifier.node.qualifiers.is_empty() {
+                        list.ty.node.qualifier = None;
                     }
                 }
                 let opaque = matches!(
@@ -769,13 +769,13 @@ fn collect_fragments(statement: &Statement, found: &mut Vec<NodeId>, local_struc
             }
             StatementKind::Switch { statements, .. } => pending.extend(statements.iter()),
             StatementKind::Declaration(declaration) => {
-                if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind {
-                    if matches!(
+                if let DeclarationKind::InitDeclaratorList(list) = &declaration.kind
+                    && matches!(
                         list.ty.node.specifier.node.non_array,
                         TypeSpecifierNonArray::Struct(_)
-                    ) {
-                        *local_struct = true;
-                    }
+                    )
+                {
+                    *local_struct = true;
                 }
             }
             StatementKind::Attributed { statement, .. } => pending.push(statement),
@@ -913,10 +913,10 @@ fn rename_in_statement(
     renames: &BTreeMap<String, String>,
 ) -> Result<(), Stalled> {
     crate::rewrite::rewrite_statement_expressions(statement, &mut |expression| {
-        if let ExpressionKind::Variable(name) = &mut expression.kind {
-            if let Some(new) = renames.get(name) {
-                name.clone_from(new);
-            }
+        if let ExpressionKind::Variable(name) = &mut expression.kind
+            && let Some(new) = renames.get(name)
+        {
+            name.clone_from(new);
         }
     })
 }
@@ -1025,11 +1025,9 @@ fn dead_statement(
             .collect();
         let substitute = !candidates.is_empty()
             && random.next_int(100) < input.probabilities.substitute_free_variable;
-        if substitute {
-            if let Some(candidate) = candidates.get(random.next_index(candidates.len())) {
-                renames.insert(variable.name.clone(), candidate.name.clone());
-                continue;
-            }
+        if substitute && let Some(candidate) = candidates.get(random.next_index(candidates.len())) {
+            renames.insert(variable.name.clone(), candidate.name.clone());
+            continue;
         }
         let replacement = format!("{DONOR_REPLACEMENT_PREFIX}{}", variable.name);
         let value = context

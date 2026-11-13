@@ -1,10 +1,8 @@
-#![allow(clippy::panic)]
-
 use std::fs;
 use std::path::Path;
 
-use rglsl::front::glsl::{Frontend, Options};
 use rglsl::ShaderStage;
+use rglsl::front::glsl::{Frontend, Options};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

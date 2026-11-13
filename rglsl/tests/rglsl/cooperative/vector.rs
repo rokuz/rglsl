@@ -4,8 +4,8 @@ use rspirv::dr::Operand;
 use spirv::Op;
 
 use super::{
-    assert_errors, assert_rejected_like_glslang, compile, compile_with, errors, Compiled, Debug,
-    Glslang, Target, VULKAN_1_1, VULKAN_1_3, VULKAN_1_4,
+    Compiled, Debug, Glslang, Target, VULKAN_1_1, VULKAN_1_3, VULKAN_1_4, assert_errors,
+    assert_rejected_like_glslang, compile, compile_with, errors,
 };
 use crate::TestResult;
 
@@ -144,7 +144,9 @@ fn arithmetic_on_every_component_type() -> TestResult {
         if integer {
             operators.extend(["%", "&", "|", "^", "<<", ">>"]);
         }
-        let mut body = String::from("    coopvecNV<C, 5> v, u, r;\n    coopVecLoadNV(v, i, 0);\n    coopVecLoadNV(u, i, 64);\n    C x = i[7];\n");
+        let mut body = String::from(
+            "    coopvecNV<C, 5> v, u, r;\n    coopVecLoadNV(v, i, 0);\n    coopVecLoadNV(u, i, 64);\n    C x = i[7];\n",
+        );
         for (index, operator) in operators.iter().enumerate() {
             body.push_str(&format!("    r = v {operator} u; o[{index}] = r[1];\n"));
             body.push_str(&format!(
@@ -640,9 +642,11 @@ void main() {
         assert_eq!(loads.len(), 6);
         assert!(loads.iter().all(|operands| !operands.is_empty()));
         assert!(stores.iter().all(|operands| !operands.is_empty()));
-        assert!(loads
-            .iter()
-            .any(|operands| operands.get(1).is_some_and(|alignment| alignment == "16")));
+        assert!(
+            loads
+                .iter()
+                .any(|operands| operands.get(1).is_some_and(|alignment| alignment == "16"))
+        );
     }
     Ok(())
 }
@@ -732,9 +736,11 @@ fn shader_64bit_indexing_pragma() -> TestResult {
 ",
     );
     let compiled = compile(&source, VULKAN_1_3)?;
-    assert!(compiled
-        .extensions()
-        .contains("SPV_EXT_shader_64bit_indexing"));
+    assert!(
+        compiled
+            .extensions()
+            .contains("SPV_EXT_shader_64bit_indexing")
+    );
     Ok(())
 }
 
@@ -786,13 +792,34 @@ void main() {
 fn long_vector_constructors_bitcast() -> TestResult {
     let extra = "#extension GL_EXT_long_vector : enable\n";
     let cases = [
-        ("vector<float, 20> v = vector<float, 20>(o[0]);\n    coopvecNV<float, 20> c = coopvecNV<float, 20>(v);\n    coopVecStoreNV(c, o, 0);", 1),
-        ("vector<float, 20> v = vector<float, 20>(o[0]);\n    coopvecNV<float16_t, 20> c = coopvecNV<float16_t, 20>(v);\n    coopVecStoreNV(c, h, 0);", 1),
-        ("coopvecNV<float, 20> d;\n    coopVecLoadNV(d, o, 0);\n    vector<float, 20> w = vector<float, 20>(d);\n    o[1] = w[3];", 1),
-        ("coopvecNV<float, 20> d;\n    coopVecLoadNV(d, o, 0);\n    vector<float16_t, 20> w = vector<float16_t, 20>(d);\n    o[1] = float(w[3]);", 1),
-        ("vector<float, N> v = vector<float, N>(o[0]);\n    coopvecNV<float, N> c = coopvecNV<float, N>(v);\n    coopVecStoreNV(c, o, 0);", 0),
-        ("coopvecNV<float, N> d;\n    coopVecLoadNV(d, o, 0);\n    vector<float, N> w = vector<float, N>(d);\n    o[1] = w[0];", 0),
-        ("vec4 x = vec4(o[2]);\n    coopvecNV<float, 4> e = coopvecNV<float, 4>(x);\n    coopVecStoreNV(e, o, 64);", 0),
+        (
+            "vector<float, 20> v = vector<float, 20>(o[0]);\n    coopvecNV<float, 20> c = coopvecNV<float, 20>(v);\n    coopVecStoreNV(c, o, 0);",
+            1,
+        ),
+        (
+            "vector<float, 20> v = vector<float, 20>(o[0]);\n    coopvecNV<float16_t, 20> c = coopvecNV<float16_t, 20>(v);\n    coopVecStoreNV(c, h, 0);",
+            1,
+        ),
+        (
+            "coopvecNV<float, 20> d;\n    coopVecLoadNV(d, o, 0);\n    vector<float, 20> w = vector<float, 20>(d);\n    o[1] = w[3];",
+            1,
+        ),
+        (
+            "coopvecNV<float, 20> d;\n    coopVecLoadNV(d, o, 0);\n    vector<float16_t, 20> w = vector<float16_t, 20>(d);\n    o[1] = float(w[3]);",
+            1,
+        ),
+        (
+            "vector<float, N> v = vector<float, N>(o[0]);\n    coopvecNV<float, N> c = coopvecNV<float, N>(v);\n    coopVecStoreNV(c, o, 0);",
+            0,
+        ),
+        (
+            "coopvecNV<float, N> d;\n    coopVecLoadNV(d, o, 0);\n    vector<float, N> w = vector<float, N>(d);\n    o[1] = w[0];",
+            0,
+        ),
+        (
+            "vec4 x = vec4(o[2]);\n    coopvecNV<float, 4> e = coopvecNV<float, 4>(x);\n    coopVecStoreNV(e, o, 64);",
+            0,
+        ),
     ];
     for (body, bitcasts) in cases {
         let source = shader_with(
@@ -1012,10 +1039,22 @@ fn rejected_like_glslang() -> TestResult {
             .map_err(|error| format!("{body}: {error}"))?;
     }
     let declarations = [
-        ("layout(binding = 5) buffer B { coopvecNV<float, 4> m; } b;", "member of block"),
-        ("layout(binding = 5) uniform U { coopvecNV<float, 4> m; } u;", "member of block"),
-        ("layout(push_constant) uniform P { coopvecNV<float, 4> m; } p;", "member of block"),
-        ("#extension GL_EXT_buffer_reference : enable\nlayout(buffer_reference) buffer R { coopvecNV<float, 4> u; };", "member of block"),
+        (
+            "layout(binding = 5) buffer B { coopvecNV<float, 4> m; } b;",
+            "member of block",
+        ),
+        (
+            "layout(binding = 5) uniform U { coopvecNV<float, 4> m; } u;",
+            "member of block",
+        ),
+        (
+            "layout(push_constant) uniform P { coopvecNV<float, 4> m; } p;",
+            "member of block",
+        ),
+        (
+            "#extension GL_EXT_buffer_reference : enable\nlayout(buffer_reference) buffer R { coopvecNV<float, 4> u; };",
+            "member of block",
+        ),
         ("layout(location = 0) in coopvecNV<float, 4> m;", ""),
         ("uniform coopvecNV<float, 4> u;", ""),
     ];
@@ -1036,23 +1075,68 @@ void main() { coopvecNV<float, 4> v; }
 #[test]
 fn call_errors_like_glslang() -> TestResult {
     let cases: [(&str, &str); 17] = [
-        ("coopvecNV<float16_t, 16> r; int i = int(o[0]); coopVecMatMulAddNV(r, v, i, m, 0, i, m, 0, i, 16, 8, i, false, 32);", "compile-time constant"),
-        ("coopvecNV<float16_t, 16> r; uint i = uint(o[0]); bool t = o[1] > 0.0; coopVecMatMulAddNV(r, v, 0, m, 0, 0, m, 0, 0, i, i, 0, t, 32);", "compile-time constant"),
-        ("int i = int(o[0]); coopVecOuterProductAccumulateNV(v, v, m, 0, 16, i, i);", "compile-time constant"),
-        ("coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, v, 0, m, 0, 0, 16, 8, 0, 1, 32);", "no overload"),
-        ("coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, v, 0u, m, 0, 0u, 16, 8, 0u, false, 32);", "no overload"),
-        ("coopvecNV<float16_t, 16> r; coopVecMatMulNV(r + r, v, 0, m, 0, 0, 16, 8, 0, false, 32);", "l-value"),
-        ("float16_t r; coopVecMatMulNV(r, v, 0, m, 0, 0, 16, 8, 0, false, 32);", "no overload"),
-        ("f16vec4 w; coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, w, 0, m, 0, 0, 16, 8, 0, false, 32);", "no overload"),
-        ("coopvecNV<double, 8> w; coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, w, 0, m, 0, 0, 16, 8, 0, false, 32);", "no overload"),
-        ("coopvecNV<float16_t, 16> r; coopVecMatMulAddNV(r, v, 0, m, 0, 0, 16, 8, 0, false, 32);", "no overload"),
-        ("coopvecNV<float, 8> u; coopVecOuterProductAccumulateNV(v, u, m, 0, 16, 3, 0);", "basic types must match"),
-        ("vec4 u; coopVecOuterProductAccumulateNV(v, u, m, 0, 16, 3, 0);", "no overload"),
-        ("coopVecOuterProductAccumulateNV(v, v, m, 0, 16, 3);", "no overload"),
-        ("vec4 u; coopVecReduceSumAccumulateNV(u, m, 0);", "no overload"),
+        (
+            "coopvecNV<float16_t, 16> r; int i = int(o[0]); coopVecMatMulAddNV(r, v, i, m, 0, i, m, 0, i, 16, 8, i, false, 32);",
+            "compile-time constant",
+        ),
+        (
+            "coopvecNV<float16_t, 16> r; uint i = uint(o[0]); bool t = o[1] > 0.0; coopVecMatMulAddNV(r, v, 0, m, 0, 0, m, 0, 0, i, i, 0, t, 32);",
+            "compile-time constant",
+        ),
+        (
+            "int i = int(o[0]); coopVecOuterProductAccumulateNV(v, v, m, 0, 16, i, i);",
+            "compile-time constant",
+        ),
+        (
+            "coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, v, 0, m, 0, 0, 16, 8, 0, 1, 32);",
+            "no overload",
+        ),
+        (
+            "coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, v, 0u, m, 0, 0u, 16, 8, 0u, false, 32);",
+            "no overload",
+        ),
+        (
+            "coopvecNV<float16_t, 16> r; coopVecMatMulNV(r + r, v, 0, m, 0, 0, 16, 8, 0, false, 32);",
+            "l-value",
+        ),
+        (
+            "float16_t r; coopVecMatMulNV(r, v, 0, m, 0, 0, 16, 8, 0, false, 32);",
+            "no overload",
+        ),
+        (
+            "f16vec4 w; coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, w, 0, m, 0, 0, 16, 8, 0, false, 32);",
+            "no overload",
+        ),
+        (
+            "coopvecNV<double, 8> w; coopvecNV<float16_t, 16> r; coopVecMatMulNV(r, w, 0, m, 0, 0, 16, 8, 0, false, 32);",
+            "no overload",
+        ),
+        (
+            "coopvecNV<float16_t, 16> r; coopVecMatMulAddNV(r, v, 0, m, 0, 0, 16, 8, 0, false, 32);",
+            "no overload",
+        ),
+        (
+            "coopvecNV<float, 8> u; coopVecOuterProductAccumulateNV(v, u, m, 0, 16, 3, 0);",
+            "basic types must match",
+        ),
+        (
+            "vec4 u; coopVecOuterProductAccumulateNV(v, u, m, 0, 16, 3, 0);",
+            "no overload",
+        ),
+        (
+            "coopVecOuterProductAccumulateNV(v, v, m, 0, 16, 3);",
+            "no overload",
+        ),
+        (
+            "vec4 u; coopVecReduceSumAccumulateNV(u, m, 0);",
+            "no overload",
+        ),
         ("coopVecLoadNV(v * float16_t(2.0), m, 0);", "l-value"),
         ("coopVecLoadNV(v, m, 1.0);", "no overload"),
-        ("coopvecNV<double, 8> w; coopVecStoreNV(w, m, 0);", "no overload"),
+        (
+            "coopvecNV<double, 8> w; coopVecStoreNV(w, m, 0);",
+            "no overload",
+        ),
     ];
     for (body, message) in cases {
         let source = shader(
@@ -1115,9 +1199,11 @@ fn glslang_emits_invalid_spirv_rglsl_rejects() -> TestResult {
     }
     let shared = shader(&[], "shared coopvecNV<float, 4> g;\nvoid main() { }\n");
     let found = errors(&shared, VULKAN_1_3)?;
-    assert!(found
-        .iter()
-        .any(|(line, message)| *line == 6 && message.contains("shared")));
+    assert!(
+        found
+            .iter()
+            .any(|(line, message)| *line == 6 && message.contains("shared"))
+    );
     let packed = shader(
         &[("m", "int8_t"), ("o", "float")],
         "void main() {

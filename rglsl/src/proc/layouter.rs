@@ -81,7 +81,7 @@ impl From<crate::VectorSize> for Alignment {
 }
 
 /// Size and alignment information for a type.
-#[derive(Clone, Copy, Debug, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 pub struct TypeLayout {
@@ -124,7 +124,7 @@ impl ops::Index<Handle<crate::Type>> for Layouter {
 /// When processing WGSL source, only the `TooLarge` error should be
 /// produced by the `Layouter`, as the front-end should not produce IR
 /// that would result in the other errors.
-#[derive(Clone, Copy, Debug, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum LayoutErrorInner {
     #[error("Array element type {0:?} doesn't exist")]
     InvalidArrayElementType(Handle<crate::Type>),
@@ -136,7 +136,7 @@ pub enum LayoutErrorInner {
     TooLarge,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("Error laying out type {ty:?}: {inner}")]
 pub struct LayoutError {
     pub ty: Handle<crate::Type>,
@@ -169,7 +169,7 @@ impl Layouter {
     /// end can call this function at any time, passing its current type and
     /// constant arenas, and then assume that layouts are available for all
     /// types.
-    #[allow(clippy::or_fun_call)]
+    #[expect(clippy::or_fun_call, reason = "the error values are cheap to build")]
     pub fn update(&mut self, gctx: super::GlobalCtx) -> Result<(), LayoutError> {
         use crate::TypeInner as Ti;
 

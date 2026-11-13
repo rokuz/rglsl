@@ -8,10 +8,10 @@ use arrayvec::ArrayVec;
 use spirv::Word;
 
 use super::{
-    index::BoundsCheckResult, Block, BlockContext, Dimension, Error, Instruction, LocalType,
-    LookupType, NumericType, ResultMember, Writer, WriterFlags,
+    Block, BlockContext, Dimension, Error, Instruction, LocalType, LookupType, NumericType,
+    ResultMember, Writer, WriterFlags, index::BoundsCheckResult,
 };
-use crate::{arena::Handle, proc::index::GuardedIndex, Statement};
+use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
@@ -763,7 +763,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Subtract => match *left_ty_inner {
@@ -800,7 +800,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Multiply => {
@@ -834,12 +834,14 @@ impl BlockContext<'_> {
                                 (Dimension::Vector, Dimension::Matrix) => {
                                     spirv::Op::VectorTimesMatrix
                                 }
-                                (Dimension::Matrix, Dimension::Scalar)
-                                | (Dimension::CooperativeMatrix, Dimension::Scalar) => {
-                                    spirv::Op::MatrixTimesScalar
-                                }
-                                (Dimension::Scalar, Dimension::Matrix)
-                                | (Dimension::Scalar, Dimension::CooperativeMatrix) => {
+                                (
+                                    Dimension::Matrix | Dimension::CooperativeMatrix,
+                                    Dimension::Scalar,
+                                ) => spirv::Op::MatrixTimesScalar,
+                                (
+                                    Dimension::Scalar,
+                                    Dimension::Matrix | Dimension::CooperativeMatrix,
+                                ) => {
                                     reverse_operands = true;
                                     spirv::Op::MatrixTimesScalar
                                 }
@@ -866,7 +868,7 @@ impl BlockContext<'_> {
                                 | (_, Dimension::CooperativeMatrix) => {
                                     return Err(Error::FeatureNotImplemented(
                                         "component-wise multiplication of cooperative matrices",
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -877,7 +879,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Modulo => match left_ty_inner.scalar_kind() {
@@ -887,7 +889,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Equal => match left_ty_inner.scalar_kind() {
@@ -899,7 +901,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::NotEqual => match left_ty_inner.scalar_kind() {
@@ -911,7 +913,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Less => match left_ty_inner.scalar_kind() {
@@ -921,7 +923,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::LessEqual => match left_ty_inner.scalar_kind() {
@@ -931,7 +933,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::Greater => match left_ty_inner.scalar_kind() {
@@ -941,7 +943,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::GreaterEqual => match left_ty_inner.scalar_kind() {
@@ -951,7 +953,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                         crate::BinaryOperator::And => match left_ty_inner.scalar_kind() {
@@ -972,7 +974,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "invalid operand type for a binary operator",
-                                ))
+                                ));
                             }
                         },
                     };
@@ -1146,7 +1148,9 @@ impl BlockContext<'_> {
                             return Ok(());
                         }
                         _ => {
-                            return Err(Error::Validation("dot product of an invalid operand type"))
+                            return Err(Error::Validation(
+                                "dot product of an invalid operand type",
+                            ));
                         }
                     },
                     fun @ (Mf::IntegerDot
@@ -1405,7 +1409,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "countTrailingZeros of a non-integer value",
-                                ))
+                                ));
                             }
                         };
 
@@ -1454,7 +1458,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "countLeadingZeros of a non-integer value",
-                                ))
+                                ));
                             }
                         };
 
@@ -1498,7 +1502,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "bitfieldExtract of a non-integer value",
-                                ))
+                                ));
                             }
                         };
                         MathOp::Custom(Instruction::ternary(
@@ -1822,7 +1826,7 @@ impl BlockContext<'_> {
                         id,
                         &self.temp_list,
                     ));
-                    condition_id = id
+                    condition_id = id;
                 }
 
                 let instruction =
@@ -1889,7 +1893,7 @@ impl BlockContext<'_> {
                     {
                         let pointer_id =
                             self.write_access_chain(value, block, AccessTypeAdjustment::None)?;
-                        self.cached.set(value, pointer_id)?
+                        self.cached.set(value, pointer_id)?;
                     }
                 }
                 self.write_physical_pointer(value, result_type_id, block)?
@@ -2070,9 +2074,8 @@ impl BlockContext<'_> {
         if let crate::TypeInner::Pointer { base, .. } = *ty {
             ty = &self.ir_module.types[base].inner;
         }
-        let element = match *ty {
-            crate::TypeInner::BindingArray { base, .. } => base,
-            _ => return Ok(()),
+        let crate::TypeInner::BindingArray { base: element, .. } = *ty else {
+            return Ok(());
         };
         if !matches!(
             self.ir_module.types[element].inner,
@@ -2194,16 +2197,16 @@ impl BlockContext<'_> {
         let ty = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
 
         let small = |kind: crate::ScalarKind| kind.is_encoded_float();
-        if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty {
-            if small(scalar.kind) || small(kind) {
-                return self.write_cooperative_cast(
-                    expr,
-                    scalar,
-                    (kind, convert),
-                    block,
-                    result_type_id,
-                );
-            }
+        if let crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } = *ty
+            && (small(scalar.kind) || small(kind))
+        {
+            return self.write_cooperative_cast(
+                expr,
+                scalar,
+                (kind, convert),
+                block,
+                result_type_id,
+            );
         }
         if let crate::TypeInner::LongVector { scalar, .. }
         | crate::TypeInner::CooperativeMatrix { scalar, .. } = *ty
@@ -2333,7 +2336,7 @@ impl BlockContext<'_> {
                     | Sk::FloatMXINT8 => {
                         return Err(Error::Validation(
                             "conversion to bool from a non-numeric value",
-                        ))
+                        ));
                     }
                 };
                 let zero_scalar_id = self.writer.get_constant_scalar_with(0, src_scalar)?;
@@ -2806,7 +2809,10 @@ impl BlockContext<'_> {
     }
 
     /// Build the instructions for matrix - matrix column operations
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn write_matrix_matrix_column_op(
         &mut self,
         expr_handle: Handle<crate::Expression>,
@@ -2904,7 +2910,7 @@ impl BlockContext<'_> {
             _ => {
                 return Err(Error::Validation(
                     "vector-scalar multiplication of a non-vector",
-                ))
+                ));
             }
         };
 
@@ -3156,7 +3162,7 @@ impl BlockContext<'_> {
                     extracted,
                     offset,
                     eight,
-                )
+                );
             } else {
                 let new_preresult = self.gen_id();
                 block.body.push(Instruction::quaternary(
@@ -3475,10 +3481,10 @@ impl BlockContext<'_> {
         nested: bool,
     ) -> Result<(), Error> {
         let mut block = block;
-        if let BlockExit::Return = exit {
-            if !(nested && super::debug::ends_at_location(&block)) {
-                self.writer.debug_mark_end(&mut block);
-            }
+        if let BlockExit::Return = exit
+            && !(nested && super::debug::ends_at_location(&block))
+        {
+            self.writer.debug_mark_end(&mut block);
         }
         let termination = match exit {
             // We're generating code for the top-level Block of the function, so we
@@ -4104,7 +4110,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4137,7 +4143,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4158,7 +4164,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4179,7 +4185,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4200,7 +4206,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4221,7 +4227,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4242,7 +4248,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
                         Instruction::atomic_binary(
@@ -4278,7 +4284,7 @@ impl BlockContext<'_> {
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
-                                ))
+                                ));
                             }
                         };
 
@@ -4370,15 +4376,12 @@ impl BlockContext<'_> {
             Statement::ReorderThread { kind, hint, bits } => {
                 self.write_reorder_thread(kind, hint, bits, &mut block)?;
             }
-            Statement::SubgroupBallot {
-                result,
-                ref predicate,
-            } => {
+            Statement::SubgroupBallot { result, predicate } => {
                 self.write_subgroup_ballot(predicate, result, &mut block)?;
             }
             Statement::SubgroupCollectiveOperation {
-                ref op,
-                ref collective_op,
+                op,
+                collective_op,
                 argument,
                 result,
             } => {

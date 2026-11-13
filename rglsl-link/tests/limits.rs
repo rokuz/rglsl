@@ -1,7 +1,7 @@
+use rglsl::ShaderStage;
 use rglsl::front::glsl::{ErrorKind, Frontend, Options, ResourceLimits};
 use rglsl::object::ObjectModule;
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-use rglsl::ShaderStage;
 use rglsl_link::LinkError;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -43,12 +43,11 @@ fn object(source: &str, options: &Options) -> TestResult<ObjectModule> {
 
 #[test]
 fn an_implicit_stride_over_the_limit_is_a_link_error_of_a_program() -> TestResult {
-    let errors = match Frontend::default().parse(
+    let Err(errors) = Frontend::default().parse(
         &options(ShaderStage::Vertex, ResourceLimits::default()),
         CAPTURE_PROGRAM,
-    ) {
-        Ok(_) => return Err("the stride of 396 bytes passed the default limit".into()),
-        Err(errors) => errors,
+    ) else {
+        return Err("the stride of 396 bytes passed the default limit".into());
     };
     assert!(errors.errors.iter().any(|error| matches!(
         error.kind,
@@ -73,9 +72,8 @@ fn the_linker_checks_the_merged_stride_against_its_limits() -> TestResult {
         ])
     };
     let objects = compile(ResourceLimits::default())?;
-    let errors = match rglsl_link::link_objects(&objects, &rglsl_link::Options::default()) {
-        Ok(_) => return Err("the merged stride passed the default limit".into()),
-        Err(errors) => errors,
+    let Err(errors) = rglsl_link::link_objects(&objects, &rglsl_link::Options::default()) else {
+        return Err("the merged stride passed the default limit".into());
     };
     assert!(errors.iter().any(|error| *error
         == LinkError::XfbStride {
@@ -104,9 +102,11 @@ fn libraries_see_the_configured_constants() -> TestResult {
         library: true,
         ..options(ShaderStage::Vertex, limits)
     };
-    assert!(Frontend::default()
-        .compile(&library_options(ResourceLimits::default()), library)
-        .is_err());
+    assert!(
+        Frontend::default()
+            .compile(&library_options(ResourceLimits::default()), library)
+            .is_err()
+    );
     let limits = ResourceLimits {
         max_clip_distances: 10,
         ..ResourceLimits::default()
@@ -118,12 +118,14 @@ fn libraries_see_the_configured_constants() -> TestResult {
 #[test]
 fn clip_distances_follow_the_limits() -> TestResult {
     let source = "#version 450\nout float gl_ClipDistance[10];\nvoid main() { gl_ClipDistance[9] = 1.0; gl_Position = vec4(0.0); }\n";
-    assert!(Frontend::default()
-        .parse(
-            &options(ShaderStage::Vertex, ResourceLimits::default()),
-            source
-        )
-        .is_err());
+    assert!(
+        Frontend::default()
+            .parse(
+                &options(ShaderStage::Vertex, ResourceLimits::default()),
+                source
+            )
+            .is_err()
+    );
     let limits = ResourceLimits {
         max_clip_distances: 10,
         ..ResourceLimits::default()

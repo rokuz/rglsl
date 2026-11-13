@@ -82,7 +82,7 @@ bitflags::bitflags! {
 }
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum Disalignment {
     #[error("The struct member[{index}] is not statically sized")]
     UnsizedMember { index: u32 },
@@ -91,7 +91,7 @@ pub enum Disalignment {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TypeError {
     #[error("A tensor rank must be from 1 to 15")]
     InvalidTensorRank,
@@ -160,7 +160,7 @@ pub enum TypeError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum WidthError {
     #[error("The {0:?} scalar width {1} is not supported")]
     Invalid(crate::ScalarKind, crate::Bytes),
@@ -172,7 +172,7 @@ pub enum WidthError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum ImmediateError {
     #[error("The scalar type {0:?} is not supported in immediates")]
     InvalidScalar(crate::Scalar),
@@ -894,10 +894,8 @@ impl super::Validator {
 
                     // The last field may be an unsized array.
                     if !base_info.flags.contains(TypeFlags::SIZED) {
-                        let is_array = match gctx.types[member.ty].inner {
-                            crate::TypeInner::Array { .. } => true,
-                            _ => false,
-                        };
+                        let is_array =
+                            matches!(gctx.types[member.ty].inner, crate::TypeInner::Array { .. });
                         if !is_array || i + 1 != members.len() {
                             let name = member.name.clone().unwrap_or_default();
                             return Err(TypeError::InvalidDynamicArray(name, member.ty));
@@ -1023,8 +1021,7 @@ impl super::Validator {
                     format: crate::StorageFormat::Unknown(scalar),
                     ..
                 } = class
-                {
-                    if !matches!(
+                    && !matches!(
                         scalar,
                         crate::Scalar {
                             kind: crate::ScalarKind::Float
@@ -1035,13 +1032,13 @@ impl super::Validator {
                             kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                             width: 8,
                         }
-                    ) {
-                        return Err(TypeError::UnsupportedImageType {
-                            dim,
-                            arrayed,
-                            class,
-                        });
-                    }
+                    )
+                {
+                    return Err(TypeError::UnsupportedImageType {
+                        dim,
+                        arrayed,
+                        class,
+                    });
                 }
                 if arrayed && matches!(dim, crate::ImageDimension::D3) {
                     return Err(TypeError::UnsupportedImageType {

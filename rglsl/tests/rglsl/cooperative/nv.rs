@@ -1,7 +1,7 @@
 use spirv::Op;
 
 use super::{
-    assert_errors, assert_rejected_like_glslang, compile, compile_with, Debug, Glslang, VULKAN_1_3,
+    Debug, Glslang, VULKAN_1_3, assert_errors, assert_rejected_like_glslang, compile, compile_with,
 };
 use crate::TestResult;
 
@@ -87,7 +87,9 @@ fn load_and_store_buffer_types() -> TestResult {
                 let call = if load {
                     format!("    {{ {matrix} m; coopMatLoadNV(m, x{index}, {index}, 8, true); }}\n")
                 } else {
-                    format!("    {{ {matrix} m = {matrix}(1); coopMatStoreNV(m, x{index}, {index}u, 8u, false); }}\n")
+                    format!(
+                        "    {{ {matrix} m = {matrix}(1); coopMatStoreNV(m, x{index}, {index}u, 8u, false); }}\n"
+                    )
                 };
                 if buffer_allowed(floating, load, buffer) {
                     accepted.push_str(&call);
@@ -262,9 +264,11 @@ void main() {{
     );
     let compiled = compile_with(&source, VULKAN_1_3, Debug::None, Glslang::Accepts)?;
     assert!(compiled.has_capability(spirv::Capability::Float64));
-    assert!(compiled
-        .disassemble()
-        .contains("OpTypeCooperativeMatrixNV %"));
+    assert!(
+        compiled
+            .disassemble()
+            .contains("OpTypeCooperativeMatrixNV %")
+    );
     Ok(())
 }
 

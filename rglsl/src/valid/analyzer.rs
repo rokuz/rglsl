@@ -38,7 +38,7 @@ bitflags::bitflags! {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Uniformity {
     /// A child expression with non-uniform result.
     ///
@@ -268,7 +268,7 @@ impl GlobalOrArgument {
                         | crate::Expression::AccessIndex { base, .. }
                         | crate::Expression::HeapOffset { pointer: base, .. } => current = base,
                         crate::Expression::GlobalVariable(var) => {
-                            break GlobalOrArgument::Global(var)
+                            break GlobalOrArgument::Global(var);
                         }
                         _ => return Err(ExpressionError::ExpectedGlobalOrArgument),
                     }
@@ -395,7 +395,7 @@ impl ops::Index<Handle<crate::Expression>> for FunctionInfo {
 
 /// Disruptor of the uniform control flow.
 #[derive(Clone, Copy, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum UniformityDisruptor {
     #[error("Expression {0:?} produced non-uniform result, and control flow depends on it")]
     Expression(Handle<crate::Expression>),
@@ -526,7 +526,7 @@ impl FunctionInfo {
             let image_storage = match sampling.image {
                 GlobalOrArgument::Global(var) => GlobalOrArgument::Global(var),
                 GlobalOrArgument::Argument(i) => {
-                    let Some(handle) = arguments.get(i as usize).cloned() else {
+                    let Some(handle) = arguments.get(i as usize).copied() else {
                         // Argument count mismatch, will be reported later by validate_call
                         break;
                     };
@@ -542,7 +542,7 @@ impl FunctionInfo {
             let sampler_storage = match sampling.sampler {
                 GlobalOrArgument::Global(var) => GlobalOrArgument::Global(var),
                 GlobalOrArgument::Argument(i) => {
-                    let Some(handle) = arguments.get(i as usize).cloned() else {
+                    let Some(handle) = arguments.get(i as usize).copied() else {
                         // Argument count mismatch, will be reported later by validate_call
                         break;
                     };
@@ -604,7 +604,10 @@ impl FunctionInfo {
     /// [`sampling_set`]: FunctionInfo::sampling_set
     /// [`sampling`]: FunctionInfo::sampling
     /// [`global_uses`]: FunctionInfo::global_uses
-    #[allow(clippy::or_fun_call)]
+    #[expect(
+        clippy::or_fun_call,
+        reason = "add_ref counts every reference, so every call must run"
+    )]
     fn process_expression(
         &mut self,
         handle: Handle<crate::Expression>,
@@ -767,16 +770,16 @@ impl FunctionInfo {
             E::Load { pointer } => {
                 let non_uniform_result = self.add_ref(pointer);
                 // Track which immediate slots this load touches.
-                if let Some(global) = self.expressions[pointer.index()].assignable_global {
-                    if resolve_context.global_vars[global].space == crate::AddressSpace::Immediate {
-                        self.immediate_slots_used |= ImmediateSlots::for_pointer(
-                            pointer,
-                            global,
-                            expression_arena,
-                            resolve_context.global_vars,
-                            resolve_context.types,
-                        );
-                    }
+                if let Some(global) = self.expressions[pointer.index()].assignable_global
+                    && resolve_context.global_vars[global].space == crate::AddressSpace::Immediate
+                {
+                    self.immediate_slots_used |= ImmediateSlots::for_pointer(
+                        pointer,
+                        global,
+                        expression_arena,
+                        resolve_context.global_vars,
+                        resolve_context.types,
+                    );
                 }
                 Uniformity {
                     non_uniform_result,
@@ -1205,7 +1208,10 @@ impl FunctionInfo {
     ///
     /// Returns a `NonUniformControlFlow` error if any of the expressions in the block
     /// require uniformity, but the current flow is non-uniform.
-    #[allow(clippy::or_fun_call)]
+    #[expect(
+        clippy::or_fun_call,
+        reason = "add_ref counts every reference, so every call must run"
+    )]
     fn process_block(
         &mut self,
         statements: &crate::Block,
@@ -1389,7 +1395,7 @@ impl FunctionInfo {
             _ => {
                 return self
                     .process_statement(statement, other_functions, disruptor, expression_arena)
-                    .map(Some)
+                    .map(Some);
             }
         }
         Ok(None)
@@ -1412,11 +1418,10 @@ impl FunctionInfo {
                         .flags
                         .contains(ValidationFlags::CONTROL_FLOW_UNIFORMITY)
                         && !req.is_empty()
+                        && let Some(cause) = disruptor
                     {
-                        if let Some(cause) = disruptor {
-                            return Err(FunctionError::NonUniformControlFlow(req, expr, cause)
-                                .with_span_handle(expr, expression_arena));
-                        }
+                        return Err(FunctionError::NonUniformControlFlow(req, expr, cause)
+                            .with_span_handle(expr, expression_arena));
                     }
                     requirements |= req;
                 }
@@ -1869,10 +1874,10 @@ impl ModuleInfo {
         // assignments used to include a global in the shader's resource
         // interface. https://www.w3.org/TR/WGSL/#phony-assignment-section
         for &handle in fun.named_expressions.keys() {
-            if let Some(global) = info[handle].assignable_global {
-                if info.global_uses[global.index()].is_empty() {
-                    info.global_uses[global.index()] = GlobalUse::QUERY;
-                }
+            if let Some(global) = info[handle].assignable_global
+                && info.global_uses[global.index()].is_empty()
+            {
+                info.global_uses[global.index()] = GlobalUse::QUERY;
             }
         }
 
@@ -2058,7 +2063,7 @@ fn uniform_control_flow() -> crate::TestResult {
     };
     {
         let block_info = info.process_block(
-            &vec![stmt_emit2.clone(), stmt_if_non_uniform.clone()].into(),
+            &vec![stmt_emit2, stmt_if_non_uniform].into(),
             &[],
             None,
             &expressions,

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{BasicType, BinaryOperator, Expression, ScalarType, UnaryOperator};
-use rglsl_sema::scope::Direction;
 use rglsl_sema::Builtins;
+use rglsl_sema::scope::Direction;
 use rglsl_types::ShaderStage;
 
 use crate::basic::{self, BOOL, FLOAT};

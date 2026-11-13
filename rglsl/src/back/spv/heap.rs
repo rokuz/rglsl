@@ -3,10 +3,10 @@ use alloc::{format, vec::Vec};
 use spirv::{Op, Word};
 
 use super::{
-    frames::on_heap, Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType,
-    Writer, WriterFlags,
+    Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType, Writer,
+    WriterFlags, frames::on_heap,
 };
-use crate::{arena::Handle, DescriptorHeap, Module, StorageAccess, TypeInner};
+use crate::{DescriptorHeap, Module, StorageAccess, TypeInner, arena::Handle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Value {
@@ -163,7 +163,7 @@ fn scalar_layout_step(
             ));
         }
         TypeInner::Struct { ref members, .. } => {
-            return Err((LayoutTask::Struct(members), LayoutChildren::Struct(members)))
+            return Err((LayoutTask::Struct(members), LayoutChildren::Struct(members)));
         }
         _ => (0, 1),
     })
@@ -411,10 +411,10 @@ impl Writer {
     }
 
     fn align_to(&mut self, value: Value, alignment: Value) -> Value {
-        if let (Value::Known(value), Value::Known(alignment)) = (value, alignment) {
-            if alignment > 0 {
-                return Value::Known(round_up(value, alignment));
-            }
+        if let (Value::Known(value), Value::Known(alignment)) = (value, alignment)
+            && alignment > 0
+        {
+            return Value::Known(round_up(value, alignment));
         }
         let remainder = self.heap_op(Op::UMod, value, alignment);
         let missing = self.heap_op(Op::ISub, alignment, remainder);
@@ -608,10 +608,10 @@ impl Writer {
                     if self.buffer_blocks.insert(block_id) {
                         self.decorate(block_id, spirv::Decoration::Block, &[]);
                     }
-                    if let crate::AddressSpace::Storage { access } = space {
-                        if self.heap.blocks.insert(block_id) {
-                            self.decorate_buffer_access(module, base, block_id, access);
-                        }
+                    if let crate::AddressSpace::Storage { access } = space
+                        && self.heap.blocks.insert(block_id)
+                    {
+                        self.decorate_buffer_access(module, base, block_id, access);
                     }
                 }
                 _ => {}
@@ -738,12 +738,12 @@ impl Writer {
                     spirv::Decoration::OffsetIdEXT,
                     zero,
                 ));
-                if self.flags.contains(WriterFlags::DEBUG) {
-                    if let Some(ref name) = var.name {
-                        self.debugs
-                            .push(Instruction::name(wrapper, &format!("{name}_heap")));
-                        self.debugs.push(Instruction::member_name(wrapper, 0, name));
-                    }
+                if self.flags.contains(WriterFlags::DEBUG)
+                    && let Some(ref name) = var.name
+                {
+                    self.debugs
+                        .push(Instruction::name(wrapper, &format!("{name}_heap")));
+                    self.debugs.push(Instruction::member_name(wrapper, 0, name));
                 }
                 base_type = wrapper;
             }
@@ -822,10 +822,10 @@ impl BlockContext<'_> {
             base,
             &operands,
         ));
-        if self.writer.flags.contains(WriterFlags::DEBUG) {
-            if let Some(ref name) = var.name {
-                self.writer.debugs.push(Instruction::name(id, name));
-            }
+        if self.writer.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = var.name
+        {
+            self.writer.debugs.push(Instruction::name(id, name));
         }
         Ok(id)
     }

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use std::path::{Path, PathBuf};
 
 use crate::include::{
-    candidates, DirectoryStack, FileId, IncludeError, IncludeKind, IncludedFile, Includer,
+    DirectoryStack, FileId, IncludeError, IncludeKind, IncludedFile, Includer, candidates,
 };
 
 #[derive(Debug, Clone, Default)]

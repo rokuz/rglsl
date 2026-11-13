@@ -1,7 +1,7 @@
 use alloc::string::String;
 
-use rglsl_ast::ast::Expression;
 use rglsl_ast::Span;
+use rglsl_ast::ast::Expression;
 
 use super::cooperative_call::CooperativeCall;
 use super::{Analyzer, Callee, Operand};
@@ -226,11 +226,11 @@ impl Analyzer<'_> {
         if let Some(argument) = arguments.get(1) {
             self.record_conversion(argument, &index.ty, &Type::UINT);
         }
-        if let ArraySize::Sized(length) = target_size {
-            if u64::from(length) * u64::from(target_scalar.bits()) == 32 {
-                self.qcom_error(span, name, "the byte size of the target array must be 32");
-                return None;
-            }
+        if let ArraySize::Sized(length) = target_size
+            && u64::from(length) * u64::from(target_scalar.bits()) == 32
+        {
+            self.qcom_error(span, name, "the byte size of the target array must be 32");
+            return None;
         }
         Some(2)
     }

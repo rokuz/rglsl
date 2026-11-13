@@ -44,15 +44,9 @@ assert_eq!(words[0], 0x0723_0203);
 ```
 */
 
-#![allow(
-    clippy::new_without_default,
-    clippy::unneeded_field_pattern,
-    clippy::match_like_matches_macro,
-    clippy::collapsible_if,
-    clippy::derive_partial_eq_without_eq,
+#![expect(
     clippy::needless_borrowed_reference,
-    clippy::single_match,
-    clippy::enum_variant_names
+    reason = "clippy::pattern_type_mismatch asks for these patterns"
 )]
 #![warn(
     trivial_casts,
@@ -63,7 +57,10 @@ assert_eq!(words[0], 0x0723_0203);
     clippy::match_wildcard_for_single_variants,
     clippy::missing_const_for_fn,
     clippy::pattern_type_mismatch,
-    clippy::rest_pat_in_fully_bound_structs
+    clippy::rest_pat_in_fully_bound_structs,
+    clippy::std_instead_of_alloc,
+    clippy::std_instead_of_core,
+    clippy::alloc_instead_of_core
 )]
 #![deny(clippy::exit)]
 #![cfg_attr(

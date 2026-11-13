@@ -8,7 +8,7 @@ use rglsl::{
 
 use crate::calls::Node;
 use crate::entry::Candidate;
-use crate::error::{internal, LinkError};
+use crate::error::{LinkError, internal};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SpaceClass {
@@ -133,15 +133,15 @@ impl<'a> Builder<'a> {
                 )));
             }
             let ty = self.module.types.insert(ty.clone(), Span::UNDEFINED);
-            if let Some(id) = value.id {
-                if let Some(&existing) = self.overrides.get(&id) {
-                    let previous = &self.module.overrides[existing];
-                    if previous.ty != ty || previous.name != value.name {
-                        self.errors.push(LinkError::SpecializationConstant(id));
-                    }
-                    remap.map_override(handle, existing);
-                    continue;
+            if let Some(id) = value.id
+                && let Some(&existing) = self.overrides.get(&id)
+            {
+                let previous = &self.module.overrides[existing];
+                if previous.ty != ty || previous.name != value.name {
+                    self.errors.push(LinkError::SpecializationConstant(id));
                 }
+                remap.map_override(handle, existing);
+                continue;
             }
             let new = self.module.overrides.append(
                 Override {
@@ -166,10 +166,10 @@ impl<'a> Builder<'a> {
         }
         let mut constants_done = std::collections::BTreeSet::new();
         for (handle, expression) in source.global_expressions.iter() {
-            if let Expression::Constant(constant) = *expression {
-                if constants_done.insert(constant) {
-                    self.add_constant(source, &mut remap, constant)?;
-                }
+            if let Expression::Constant(constant) = *expression
+                && constants_done.insert(constant)
+            {
+                self.add_constant(source, &mut remap, constant)?;
             }
             let mut expression = expression.clone();
             remap
@@ -289,21 +289,21 @@ impl<'a> Builder<'a> {
             .as_ref()
             .map_or(BindingAssignment::Explicit, |symbol| symbol.binding);
         let key = (space_class(global.space), name.clone());
-        if let Some(&position) = self.keys.get(&key) {
-            if let Some(existing) = self.globals.get(position).cloned() {
-                self.merge_global(
-                    position,
-                    &existing,
-                    &Candidate {
-                        global: &global,
-                        implicit: &implicit,
-                        automatic_location,
-                        binding,
-                        instance: symbol.as_ref().and_then(|symbol| symbol.instance.clone()),
-                    },
-                );
-                return existing.handle;
-            }
+        if let Some(&position) = self.keys.get(&key)
+            && let Some(existing) = self.globals.get(position).cloned()
+        {
+            self.merge_global(
+                position,
+                &existing,
+                &Candidate {
+                    global: &global,
+                    implicit: &implicit,
+                    automatic_location,
+                    binding,
+                    instance: symbol.as_ref().and_then(|symbol| symbol.instance.clone()),
+                },
+            );
+            return existing.handle;
         }
         let new = self.module.global_variables.append(global, span);
         self.keys.insert(key, self.globals.len());

@@ -3,11 +3,11 @@
 use core::hash::Hash;
 
 use super::ValidationError;
-use crate::{
-    arena::{BadHandle, BadRangeError},
-    Handle,
-};
 use crate::{Arena, UniqueArena};
+use crate::{
+    Handle,
+    arena::{BadHandle, BadRangeError},
+};
 
 #[cfg(test)]
 use alloc::string::ToString;
@@ -585,7 +585,10 @@ impl super::Validator {
         Ok(max_type)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn validate_expression_handles(
         (handle, expression): (Handle<crate::Expression>, &crate::Expression),
         constants: &Arena<crate::Constant>,
@@ -1308,7 +1311,7 @@ impl From<BadRangeError> for ValidationError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum InvalidHandleError {
     #[error(transparent)]
     BadHandle(#[from] BadHandle),
@@ -1319,7 +1322,7 @@ pub enum InvalidHandleError {
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-#[cfg_attr(test, derive(PartialEq))]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[error(
     "{subject:?} of kind {subject_kind:?} depends on {depends_on:?} of kind {depends_on_kind}, \
     which has not been processed yet"
@@ -1434,14 +1437,16 @@ fn constant_deps() {
         const_exprs.append(Expression::Constant(self_referential_const), nowhere);
 
     for handle_and_expr in const_exprs.iter() {
-        assert!(super::Validator::validate_const_expression_handles(
-            handle_and_expr,
-            &constants,
-            &overrides,
-            &UniqueArena::new(),
-            &Arena::new(),
-        )
-        .is_err());
+        assert!(
+            super::Validator::validate_const_expression_handles(
+                handle_and_expr,
+                &constants,
+                &overrides,
+                &UniqueArena::new(),
+                &Arena::new(),
+            )
+            .is_err()
+        );
     }
 }
 

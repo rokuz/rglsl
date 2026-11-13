@@ -24,14 +24,14 @@ pub use index::{IndexableLength, IndexableLengthError};
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
-pub use resource::{free_binding, BindingShifts, ResourceClass};
+pub use resource::{BindingShifts, ResourceClass, free_binding};
 pub use terminator::ensure_block_returns;
 use thiserror::Error;
 pub use type_methods::{
     concrete_int_scalars, min_max_float_representable_by, vector_size_str, vector_sizes,
 };
 pub use type_walk::{any_type, array_element, contains, contains_type, post_order};
-pub use typifier::{compare_types, ResolveContext, ResolveError, TypeResolution, LSS_ARRAY_LENGTH};
+pub use typifier::{LSS_ARRAY_LENGTH, ResolveContext, ResolveError, TypeResolution, compare_types};
 
 impl From<super::StorageFormat> for super::Scalar {
     fn from(format: super::StorageFormat) -> Self {
@@ -430,16 +430,16 @@ impl super::MathFunction {
 impl crate::Expression {
     /// Returns true if the expression is considered emitted at the start of a function.
     pub const fn needs_pre_emit(&self) -> bool {
-        match *self {
+        matches!(
+            *self,
             Self::Literal(_)
-            | Self::Constant(_)
-            | Self::Override(_)
-            | Self::ZeroValue(_)
-            | Self::FunctionArgument(_)
-            | Self::GlobalVariable(_)
-            | Self::LocalVariable(_) => true,
-            _ => false,
-        }
+                | Self::Constant(_)
+                | Self::Override(_)
+                | Self::ZeroValue(_)
+                | Self::FunctionArgument(_)
+                | Self::GlobalVariable(_)
+                | Self::LocalVariable(_)
+        )
     }
 
     /// Return true if this expression is a dynamic array/vector/matrix index,
@@ -456,10 +456,10 @@ impl crate::Expression {
     /// [`Access`]: crate::Expression::Access
     /// [`ResolveContext`]: crate::proc::ResolveContext
     pub const fn is_dynamic_index(&self) -> bool {
-        match *self {
-            Self::Literal(_) | Self::ZeroValue(_) | Self::Constant(_) => false,
-            _ => true,
-        }
+        !matches!(
+            *self,
+            Self::Literal(_) | Self::ZeroValue(_) | Self::Constant(_)
+        )
     }
 }
 
@@ -677,7 +677,7 @@ impl GlobalCtx<'_> {
     }
 }
 
-#[derive(Error, Debug, Clone, Copy, PartialEq)]
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolveArraySizeError {
     #[error("array element count must be positive (> 0)")]
     ExpectedPositiveArrayLength,
@@ -755,31 +755,28 @@ pub fn flatten_compose<'arenas>(
         is_vector: bool,
         expressions: &'c crate::Arena<crate::Expression>,
     ) -> &'c [crate::Handle<crate::Expression>] {
-        if is_vector {
-            if let crate::Expression::Compose {
+        if is_vector
+            && let crate::Expression::Compose {
                 ty: _,
                 components: ref subcomponents,
             } = expressions[*component]
-            {
-                return subcomponents;
-            }
+        {
+            return subcomponents;
         }
         core::slice::from_ref(component)
     }
 
     /// Flatten `Splat` expressions if `is_vector` is true.
-    fn flatten_splat<'c>(
-        component: &'c crate::Handle<crate::Expression>,
+    fn flatten_splat(
+        component: crate::Handle<crate::Expression>,
         is_vector: bool,
-        expressions: &'c crate::Arena<crate::Expression>,
+        expressions: &crate::Arena<crate::Expression>,
     ) -> impl Iterator<Item = crate::Handle<crate::Expression>> {
-        let mut expr = *component;
+        let mut expr = component;
         let mut count = 1;
-        if is_vector {
-            if let crate::Expression::Splat { size, value } = expressions[expr] {
-                expr = value;
-                count = size as usize;
-            }
+        if is_vector && let crate::Expression::Splat { size, value } = expressions[expr] {
+            expr = value;
+            count = size as usize;
         }
         core::iter::repeat_n(expr, count)
     }
@@ -794,7 +791,7 @@ pub fn flatten_compose<'arenas>(
         .iter()
         .flat_map(move |component| flatten_compose(component, is_vector, expressions))
         .flat_map(move |component| flatten_compose(component, is_vector, expressions))
-        .flat_map(move |component| flatten_splat(component, is_vector, expressions))
+        .flat_map(move |component| flatten_splat(*component, is_vector, expressions))
         .take(size)
 }
 
@@ -834,15 +831,12 @@ impl crate::Module {
             )
         };
         for (_, ty) in self.types.iter() {
-            match ty.inner {
-                crate::TypeInner::Struct { ref members, .. } => {
-                    for binding in members.iter().filter_map(|m| m.binding.as_ref()) {
-                        if binding_uses_mesh(binding) {
-                            return true;
-                        }
+            if let crate::TypeInner::Struct { ref members, .. } = ty.inner {
+                for binding in members.iter().filter_map(|m| m.binding.as_ref()) {
+                    if binding_uses_mesh(binding) {
+                        return true;
                     }
                 }
-                _ => (),
             }
         }
         for ep in &self.entry_points {
@@ -932,10 +926,12 @@ pub fn is_patch_variable(
         crate::TypeInner::Struct { ref members, .. } => members.iter().any(|member| {
             matches!(
                 member.binding,
-                Some(crate::Binding::Location { patch: true, .. })
-                    | Some(crate::Binding::BuiltIn(
-                        crate::BuiltIn::TessLevelOuter | crate::BuiltIn::TessLevelInner
-                    ))
+                Some(
+                    crate::Binding::Location { patch: true, .. }
+                        | crate::Binding::BuiltIn(
+                            crate::BuiltIn::TessLevelOuter | crate::BuiltIn::TessLevelInner
+                        )
+                )
             )
         }),
         _ => false,

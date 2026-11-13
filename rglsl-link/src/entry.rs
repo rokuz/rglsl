@@ -1,11 +1,11 @@
 use rglsl::object::{BindingAssignment, PathStep};
 use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Type};
 
-use crate::calls::{callees, Node, SymbolTable};
-use crate::error::{internal, LinkError};
+use crate::calls::{Node, SymbolTable, callees};
+use crate::error::{LinkError, internal};
 use crate::interface::relocate;
 use crate::merge::{Builder, MergedGlobal};
-use crate::unify::{common_paths, same_expression, unify, Implicit, Mismatch};
+use crate::unify::{Implicit, Mismatch, common_paths, same_expression, unify};
 
 pub(crate) struct Candidate<'c> {
     pub global: &'c GlobalVariable,

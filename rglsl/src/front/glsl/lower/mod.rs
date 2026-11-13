@@ -35,8 +35,8 @@ use alloc::{
 };
 use core::cell::RefCell;
 
-use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node, Spanned};
 use rglsl_ast::TranslationUnit;
+use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node, Spanned};
 use rglsl_sema::scope::{Symbol, SymbolKind, Variable};
 use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
@@ -44,7 +44,7 @@ use rglsl_types::probe::StageProbe;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
-    proc::Layouter, ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, Span, Type,
+    ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, Span, Type, proc::Layouter,
 };
 
 pub(super) type Result<T> = core::result::Result<T, Error>;
@@ -317,15 +317,14 @@ impl StageClass {
             match (start, word) {
                 (None, true) => start = Some(index),
                 (Some(from), false) => {
-                    if let Some(identifier) = text.get(from..index) {
-                        if identifier
+                    if let Some(identifier) = text.get(from..index)
+                        && identifier
                             .chars()
                             .next()
                             .is_some_and(|first| !first.is_ascii_digit())
-                            && !names.contains(identifier)
-                        {
-                            names.insert(String::from(identifier));
-                        }
+                        && !names.contains(identifier)
+                    {
+                        names.insert(String::from(identifier));
                     }
                     start = None;
                 }
@@ -365,7 +364,10 @@ fn lower_parsed_object(
     Ok(object)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn lower(
     options: &Options,
     source: &str,
@@ -595,7 +597,10 @@ fn sema_error(
     (error, location)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn run_lowerer(
     options: &Options,
     source: &str,
@@ -748,10 +753,9 @@ fn debug_info(
                 if let Some(slot) = usize::try_from(position)
                     .ok()
                     .and_then(|position| sources.get_mut(position))
+                    && slot.text.is_none()
                 {
-                    if slot.text.is_none() {
-                        slot.text = text;
-                    }
+                    slot.text = text;
                 }
                 position
             }

@@ -19,14 +19,14 @@ pub type PipelineConstants = hashbrown::HashMap<String, f64>;
 impl crate::TypeInner {
     /// Returns true if a variable of this type is a handle.
     pub const fn is_handle(&self) -> bool {
-        match *self {
+        matches!(
+            *self,
             Self::Image { .. }
-            | Self::SampledImage { .. }
-            | Self::Sampler { .. }
-            | Self::AccelerationStructure { .. }
-            | Self::Tensor { .. } => true,
-            _ => false,
-        }
+                | Self::SampledImage { .. }
+                | Self::Sampler { .. }
+                | Self::AccelerationStructure { .. }
+                | Self::Tensor { .. }
+        )
     }
 }
 

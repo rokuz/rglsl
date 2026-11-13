@@ -34,7 +34,7 @@ impl<T, U> Default for HandleVec<T, U> {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code, reason = "each user takes a part of the helpers")]
 impl<T, U> HandleVec<T, U> {
     pub(crate) const fn new() -> Self {
         Self {
@@ -72,7 +72,7 @@ impl<T, U> HandleVec<T, U> {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.inner.clear()
+        self.inner.clear();
     }
 
     pub(crate) fn resize(&mut self, len: usize, fill: U)

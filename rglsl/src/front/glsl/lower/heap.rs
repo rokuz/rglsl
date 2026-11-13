@@ -1,17 +1,17 @@
 use alloc::{string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, SingleTypeQualifier, Spanned, TypeQualifier};
+use rglsl_sema::SymbolId;
 use rglsl_sema::layout::{block_layout, member_row_major};
 use rglsl_sema::scope::{Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, Member, OpaqueKind, Packing, StructId,
     Type as GlslType, TypeKind,
 };
-use rglsl_sema::SymbolId;
 
 use super::globals::{image_access, image_format, storage_access};
 use super::types::{image_dimension, matrix_layout};
-use super::{internal, unsupported, GlobalRef, Lowerer, Result};
+use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, DescriptorHeap, Expression, GlobalVariable, Handle, HeapMember, ImageClass,
@@ -151,9 +151,9 @@ impl<'a> Lowerer<'a> {
             .module
             .global_expressions
             .append(Expression::Override(handle), at);
-        let scalar = match self.module.types[self.module.overrides[handle].ty].inner {
-            TypeInner::Scalar(scalar) => scalar,
-            _ => return Err(internal(at)),
+        let TypeInner::Scalar(scalar) = self.module.types[self.module.overrides[handle].ty].inner
+        else {
+            return Err(internal(at));
         };
         if scalar.width >= 4 {
             return Ok(HeapOffset::Fixed(value));
@@ -220,7 +220,7 @@ impl<'a> Lowerer<'a> {
                 return Ok(TypeInner::Tensor {
                     scalar: super::types::scalar(scalar),
                     rank: self.tensor_rank(rank, at)?,
-                })
+                });
             }
             _ => return Err(internal(at)),
         };
@@ -249,7 +249,7 @@ impl<'a> Lowerer<'a> {
             | OpaqueKind::HitObjectNv
             | OpaqueKind::HitObjectExt => Err(internal(at)),
             OpaqueKind::Sampler | OpaqueKind::Texture | OpaqueKind::AccelerationStructure => {
-                self.opaque_inner(opaque, false, false, at)
+                Self::opaque_inner(opaque, false, false, at)
             }
         }
     }
@@ -495,8 +495,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             TypeKind::Block(id) => self.with(|this| this.buffer_descriptor(id, at))?,
             TypeKind::Struct(id) => {
                 let frame = self.clone().heap_struct(id, at);
-                let result = self.nest(frame).await;
-                result
+                self.nest(frame).await
             }
             _ => Err(internal(at)),
         }
@@ -512,8 +511,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             let frame = self
                 .clone()
                 .heap_members(None, &structure.members, None, false, at);
-            let result = self.nest(frame).await;
-            result
+            self.nest(frame).await
         }?;
         let handle = self.with(|this| {
             this.module.types.insert(
@@ -556,8 +554,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let element = GlslType::new(member.ty.kind);
                 let leaf = {
                     let frame = self.clone().heap_leaf(element.clone(), qualifiers, at);
-                    let result = self.nest(frame).await;
-                    result
+                    self.nest(frame).await
                 }?;
                 let stride = if member.ty.is_array() {
                     size.unwrap_or(0)
