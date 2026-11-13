@@ -1079,9 +1079,7 @@ pub struct Options<'a> {
 
 impl Default for Options<'_> {
     fn default() -> Self {
-        let mut flags = WriterFlags::ADJUST_COORDINATE_SPACE
-            | WriterFlags::LABEL_VARYINGS
-            | WriterFlags::CLAMP_FRAG_DEPTH;
+        let mut flags = WriterFlags::LABEL_VARYINGS;
         if cfg!(debug_assertions) {
             flags |= WriterFlags::DEBUG;
         }
@@ -1095,7 +1093,7 @@ impl Default for Options<'_> {
             use_storage_input_output_16: true,
             debug_info: None,
             task_dispatch_limits: None,
-            mesh_shader_primitive_indices_clamp: true,
+            mesh_shader_primitive_indices_clamp: false,
         }
     }
 }

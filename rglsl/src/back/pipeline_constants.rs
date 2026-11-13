@@ -219,11 +219,10 @@ pub fn process_overrides<'a>(
             }
             expr => expr,
         };
-        let mut evaluator = ConstantEvaluator::for_wgsl_module(
+        let mut evaluator = ConstantEvaluator::for_glsl_module(
             &mut module,
             &mut global_expression_kind_tracker,
             &mut layouter,
-            false,
         );
         adjust_expr(&adjusted_global_expressions, &mut expr);
         let h = evaluator.try_eval_and_append(expr, span)?;
@@ -442,14 +441,13 @@ fn process_function(
     let mut emitter = Emitter::default();
     let mut block = Block::new();
 
-    let mut evaluator = ConstantEvaluator::for_wgsl_function(
+    let mut evaluator = ConstantEvaluator::for_glsl_function(
         module,
         &mut function.expressions,
         &mut local_expression_kind_tracker,
         layouter,
         &mut emitter,
         &mut block,
-        false,
     );
 
     for (old_h, mut expr, span) in expressions.drain() {

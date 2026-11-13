@@ -1058,7 +1058,6 @@ impl<'a> Session<'a> {
             lang_version: self.options.target_spirv(),
             debug_info,
             flags,
-            mesh_shader_primitive_indices_clamp: false,
             ..spv::Options::default()
         };
         let words = match spv::write_vec(module, info, &spv_options, None) {
