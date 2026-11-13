@@ -9,6 +9,7 @@ use crate::constants::{
     GLF_MAKE_IN_BOUNDS_UINT, GLF_ONE, GLF_SWITCH, GLF_TRUE, GLF_WRAPPED_IF_FALSE,
     GLF_WRAPPED_IF_TRUE, GLF_WRAPPED_LOOP, GLF_ZERO,
 };
+use crate::error::Error;
 use crate::rewrite::{rewrite_expressions, take_expression};
 
 const RECORDING_MACROS: [&str; 5] = [GLF_ZERO, GLF_ONE, GLF_FALSE, GLF_TRUE, GLF_IDENTITY];
@@ -38,10 +39,10 @@ pub fn is_macro(name: &str) -> bool {
         || name == GLF_MAKE_IN_BOUNDS_UINT
 }
 
-pub fn uses_macros(unit: &TranslationUnit) -> bool {
-    expressions(unit)
+pub fn uses_macros(unit: &TranslationUnit) -> Result<bool, Error> {
+    Ok(expressions(unit)?
         .into_iter()
-        .any(|expression| macro_name(expression).is_some())
+        .any(|expression| macro_name(expression).is_some()))
 }
 
 pub fn header() -> String {
@@ -82,10 +83,10 @@ fn is_version_line(line: &str) -> bool {
         .is_some_and(|rest| rest.trim_start().starts_with("version"))
 }
 
-pub fn emit(unit: &TranslationUnit) -> String {
-    let printed = print(unit);
-    if !uses_macros(unit) {
-        return printed;
+pub fn emit(unit: &TranslationUnit) -> Result<String, Error> {
+    let printed = print(unit)?;
+    if !uses_macros(unit)? {
+        return Ok(printed);
     }
     let mut output = String::with_capacity(printed.len() + 1024);
     let mut lines = printed.split_inclusive('\n').peekable();
@@ -99,7 +100,7 @@ pub fn emit(unit: &TranslationUnit) -> String {
     for line in lines {
         output.push_str(line);
     }
-    output
+    Ok(output)
 }
 
 pub fn strip_header(source: &str) -> String {

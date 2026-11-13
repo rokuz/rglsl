@@ -90,7 +90,7 @@ fn read_job(json: &Path) -> Result<ShaderJob> {
 }
 
 fn write_job(job: &ShaderJob, json: &Path) -> Result<()> {
-    let emitted = job.emit();
+    let emitted = job.emit()?;
     fs::write(json, emitted.json)?;
     for (extension, text) in emitted.shaders {
         fs::write(json.with_extension(extension), text)?;
@@ -308,7 +308,7 @@ fn reduce_command(raw: &[String]) -> Result<()> {
         Ok(status.success())
     };
     let reduction = reduce(&job, options, &mut judge)?;
-    let reduced = finalise(&reduction.job);
+    let reduced = finalise(&reduction.job)?;
     let reduced = if judge(&reduced)? {
         reduced
     } else {

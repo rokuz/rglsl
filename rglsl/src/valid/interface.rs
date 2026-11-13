@@ -155,6 +155,8 @@ pub enum VaryingError {
 pub enum EntryPointError {
     #[error("Multiple conflicting entry points")]
     Conflict,
+    #[error("The size of type {0:?} exceeds the limit")]
+    TypeTooLarge(Handle<crate::Type>),
     #[error("an entry point cannot be an imported function")]
     Import,
     #[error("Vertex shaders that return a value must return a position")]
@@ -2398,7 +2400,10 @@ impl super::Validator {
                     return Err(EntryPointError::WrongTaskPayloadUsed
                         .with_span_handle(var_handle, &module.global_variables));
                 }
-                let size = module.types[var.ty].inner.size(module.to_ctx());
+                let Some(size) = module.types[var.ty].inner.try_size(module.to_ctx()) else {
+                    return Err(EntryPointError::TypeTooLarge(var.ty)
+                        .with_span_handle(var_handle, &module.global_variables));
+                };
                 if size < 4 {
                     return Err(EntryPointError::TaskPayloadTooSmall(size)
                         .with_span_handle(var_handle, &module.global_variables));

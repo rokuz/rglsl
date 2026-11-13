@@ -828,8 +828,8 @@ fn test_matrix_size() {
             rows: crate::VectorSize::Tri,
             scalar: crate::Scalar::F32,
         }
-        .size(module.to_ctx()),
-        48,
+        .try_size(module.to_ctx()),
+        Some(48),
     );
 }
 

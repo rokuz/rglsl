@@ -37,7 +37,7 @@ fn data_type(function: &str) -> Option<String> {
 }
 
 pub fn amber_script(job: &ShaderJob) -> Result<String, Error> {
-    let emitted = job.emit();
+    let emitted = job.emit()?;
     let mut fragment = None;
     for (extension, text) in &emitted.shaders {
         match extension.as_str() {

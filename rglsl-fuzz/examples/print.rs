@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         let source = fs::read_to_string(&shader)?;
         match rglsl_fuzz::parse(&source) {
-            Ok(unit) => fs::write(output.join(name), rglsl_fuzz::print(&unit))?,
+            Ok(unit) => fs::write(output.join(name), rglsl_fuzz::print(&unit)?)?,
             Err(error) => eprintln!("{}: {error}", shader.display()),
         }
     }

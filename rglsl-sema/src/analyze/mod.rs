@@ -226,7 +226,7 @@ pub fn analyze_library(
     analyzer.version = version;
     analyzer.unit(unit);
     let mut analysis = analyzer.finish();
-    analysis.no_contraction = precise::no_contraction(unit, &analysis);
+    set_no_contraction(unit, &mut analysis);
     analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
     analysis
 }
@@ -260,9 +260,19 @@ fn run(unit: &TranslationUnit, options: &Options, cached: Option<&Arc<Builtins>>
     analyzer.version = version;
     analyzer.unit(unit);
     let mut analysis = analyzer.finish();
-    analysis.no_contraction = precise::no_contraction(unit, &analysis);
+    set_no_contraction(unit, &mut analysis);
     analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
     analysis
+}
+
+fn set_no_contraction(unit: &TranslationUnit, analysis: &mut Analysis) {
+    match precise::no_contraction(unit, analysis) {
+        Ok(nodes) => analysis.no_contraction = nodes,
+        Err(_) => analysis.diagnostics.push(Diagnostic {
+            span: Span::default(),
+            kind: DiagnosticKind::Internal,
+        }),
+    }
 }
 
 fn version_of(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> Option<u32> {

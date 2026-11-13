@@ -79,7 +79,7 @@ fn read_job(json: &Path) -> Result<ShaderJob> {
 }
 
 fn write_job(job: &ShaderJob, json: &Path) -> Result<PathBuf> {
-    let emitted = job.emit();
+    let emitted = job.emit()?;
     fs::write(json, emitted.json)?;
     let mut shader = json.to_path_buf();
     for (extension, text) in emitted.shaders {
@@ -307,7 +307,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         guards: options.guards,
     };
     let reduction = reduce(&job, reduce_options, &mut adapter)?;
-    let finalised = finalise(&reduction.job);
+    let finalised = finalise(&reduction.job)?;
     let reduced = if adapter(&finalised)? {
         finalised
     } else {

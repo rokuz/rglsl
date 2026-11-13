@@ -14,6 +14,7 @@ use rglsl::{Module, ShaderStage};
 use rglsl_ast::ast::{
     DeclarationKind, ExternalDeclaration, FunctionDefinition, InitDeclaratorList, Node,
 };
+use rglsl_ast::Stalled;
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
 
 use database::Database;
@@ -80,7 +81,7 @@ fn stage_index(stage: ShaderStage) -> usize {
         .unwrap_or(0)
 }
 
-pub fn reflect(settings: Settings, stages: &[StageInput]) -> String {
+pub fn reflect(settings: Settings, stages: &[StageInput]) -> Result<String, Stalled> {
     let mut ordered: Vec<&StageInput> = stages.iter().collect();
     ordered.sort_by_key(|input| stage_index(input.stage));
     let (first, last) = if settings.options.intermediate_io {
@@ -102,9 +103,9 @@ pub fn reflect(settings: Settings, stages: &[StageInput]) -> String {
             first,
             last,
         };
-        program.add_stage(input);
+        program.add_stage(input)?;
     }
-    database.into_inner().dump()
+    Ok(database.into_inner().dump())
 }
 
 struct Program<'d> {
@@ -145,7 +146,7 @@ fn signature(analysis: &Analysis, function: FunctionId) -> String {
 }
 
 impl Program<'_> {
-    fn add_stage(&self, input: &StageInput) {
+    fn add_stage(&self, input: &StageInput) -> Result<(), Stalled> {
         let units: Vec<&Analyzed> = input.units.iter().map(|unit| unit.analyzed).collect();
         let entry_points: usize = units
             .iter()
@@ -164,7 +165,7 @@ impl Program<'_> {
             })
             .sum();
         if entry_points != 1 {
-            return;
+            return Ok(());
         }
         let stage = stage_index(input.stage);
         if input.stage == ShaderStage::Compute {
@@ -239,12 +240,14 @@ impl Program<'_> {
         let heap_bindings = self.heap_bindings(input, &used);
         let mut contexts = Vec::with_capacity(units.len());
         for (index, unit) in units.iter().enumerate() {
+            let expressions = rglsl_ast::expressions(&unit.unit)?;
             contexts.push(UnitCx {
                 program: self,
                 unit: index,
                 source: unit,
                 analysis: &unit.analysis,
-                layouts: Layouts::new(&unit.analysis.types, implicit_sizes(unit)),
+                layouts: Layouts::new(&unit.analysis.types, implicit_sizes(unit, &expressions)),
+                expressions,
                 module: input.module,
                 defaults: defaults.get(index).cloned().unwrap_or_default(),
                 processed: &processed,
@@ -314,6 +317,7 @@ impl Program<'_> {
                 object.stages |= bit;
             }
         }
+        Ok(())
     }
 
     fn heap_bindings(

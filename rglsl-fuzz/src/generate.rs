@@ -106,10 +106,10 @@ fn shader_large_enough(
     unit: &TranslationUnit,
     options: &GeneratorOptions,
     random: &mut Random,
-) -> bool {
+) -> Result<bool, Error> {
     let span = options.max_nodes.saturating_sub(options.min_nodes).max(1);
     let limit = random.next_int(span) + options.min_nodes;
-    node_count(unit) > usize::try_from(limit).unwrap_or(usize::MAX)
+    Ok(node_count(unit)? > usize::try_from(limit).unwrap_or(usize::MAX))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -122,7 +122,7 @@ fn apply_transformation(
     params: GenerationParams,
     donors: &[Donor],
     random: &mut Random,
-) -> bool {
+) -> Result<bool, Error> {
     let analysis = analyze_shader(unit, stage, true, builtins.as_ref());
     if builtins.is_none() {
         *builtins = Some(Arc::clone(&analysis.builtins));
@@ -135,19 +135,19 @@ fn apply_transformation(
         donors,
     };
     let Some(transformed) = transformation::apply(transformation, &input, random) else {
-        return false;
+        return Ok(false);
     };
-    let Ok(mut reparsed) = parse_unit("variant", &emit(&transformed)) else {
-        return false;
+    let Ok(mut reparsed) = parse_unit("variant", &emit(&transformed)?) else {
+        return Ok(false);
     };
     if let Some(stripped) = strip_unused(&reparsed) {
-        match parse_unit("variant", &emit(&stripped)) {
+        match parse_unit("variant", &emit(&stripped)?) {
             Ok(stripped) => reparsed = stripped,
-            Err(_) => return false,
+            Err(_) => return Ok(false),
         }
     }
     *unit = reparsed;
-    true
+    Ok(true)
 }
 
 fn available_transformations(
@@ -174,7 +174,7 @@ pub fn transform_shader(
     options: &GeneratorOptions,
     donors: &[Donor],
     random: &mut Random,
-) -> Vec<&'static str> {
+) -> Result<Vec<&'static str>, Error> {
     let mut params = if options.small {
         GenerationParams::small(stage)
     } else {
@@ -199,7 +199,7 @@ pub fn transform_shader(
     let mut applied = Vec::new();
     let mut next_round = Vec::new();
     let mut builtins = None;
-    while !transformations.is_empty() && !shader_large_enough(unit, options, random) {
+    while !transformations.is_empty() && !shader_large_enough(unit, options, random)? {
         let index = random.next_index(transformations.len());
         let transformation = transformations.remove(index);
         applied.push(transformation.name());
@@ -213,14 +213,14 @@ pub fn transform_shader(
             params,
             donors,
             &mut child,
-        ) {
+        )? {
             next_round.push(transformation);
         }
         if transformations.is_empty() {
             transformations = core::mem::take(&mut next_round);
         }
     }
-    applied
+    Ok(applied)
 }
 
 fn push_constant_candidates(job: &ShaderJob) -> Vec<String> {
@@ -274,7 +274,7 @@ pub fn generate_variant_with_donors(
         };
         job.pipeline.zero_unset_uniforms(&shader.unit)?;
         let stage = shader.stage();
-        transform_shader(&mut shader.unit, stage, options, donors, &mut child);
+        transform_shader(&mut shader.unit, stage, options, donors, &mut child)?;
         let mut uniforms = child.spawn_child();
         job.pipeline
             .randomise_unset_uniforms(&shader.unit, &mut uniforms)?;
@@ -370,7 +370,7 @@ pub fn generate_family(
         ) {
             Ok(variant) => {
                 let too_large = variant
-                    .emit()
+                    .emit()?
                     .shaders
                     .iter()
                     .any(|(_, text)| text.len() > options.max_bytes);

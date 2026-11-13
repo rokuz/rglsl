@@ -217,7 +217,7 @@ fn mutated_shaders_are_analysed_without_panicking() -> TestResult {
             let analysis = analyze_with_builtins(&unit, &Options::new(case.stage), builtins);
             analysed += 1;
             rejected += usize::from(!analysis.is_ok());
-            for expression in rglsl_ast::expressions(&unit) {
+            for expression in rglsl_ast::expressions(&unit)? {
                 if let Some(info) = analysis.expression(expression.id) {
                     assert!(!info.is_lvalue || !info.ty.is_error(), "{text}");
                 }

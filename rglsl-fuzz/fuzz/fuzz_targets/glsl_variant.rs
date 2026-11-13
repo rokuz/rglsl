@@ -90,6 +90,7 @@ mod fuzz {
 
     fn fragment(job: &ShaderJob) -> Option<String> {
         job.emit()
+            .ok()?
             .shaders
             .into_iter()
             .find(|(extension, _)| extension == Seed::EXTENSION)

@@ -27,7 +27,7 @@ fn variant() -> TestResult<(ShaderJob, ShaderJob)> {
 
 fn text(job: &ShaderJob) -> TestResult<String> {
     Ok(job
-        .emit()
+        .emit()?
         .shaders
         .into_iter()
         .next()
@@ -54,12 +54,12 @@ fn a_planted_feature_reduces_to_a_small_reproducer() -> TestResult {
         valid_with_marker(job).map_err(|error| rglsl_fuzz::Error::Generation(error.to_string()))
     };
     let reduction = reduce(&variant, ReduceOptions::default(), &mut judge)?;
-    let reduced = finalise(&reduction.job);
+    let reduced = finalise(&reduction.job)?;
     let reduced_text = text(&reduced)?;
     assert!(valid_with_marker(&reduced)?, "{reduced_text}");
     assert_eq!(reduction.loop_bound, Some(100), "{reduced_text}");
     assert!(
-        !rglsl_fuzz::macros::uses_macros(&parse_shader(&reduced_text)?),
+        !rglsl_fuzz::macros::uses_macros(&parse_shader(&reduced_text)?)?,
         "{reduced_text}"
     );
     assert!(

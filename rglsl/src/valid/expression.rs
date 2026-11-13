@@ -11,6 +11,8 @@ use crate::{
 pub enum ExpressionError {
     #[error("Used by a statement before it was introduced into the scope by any of the dominating blocks")]
     NotInScope,
+    #[error("Depends on {0:?}, which has not been processed yet")]
+    NotYetProcessed(Handle<crate::Expression>),
     #[error("Base type {0:?} is not compatible with this expression")]
     InvalidBaseType(Handle<crate::Expression>),
     #[error("Accessing with index {0:?} can't be done")]
@@ -250,20 +252,17 @@ struct ExpressionTypeResolver<'a> {
     info: &'a FunctionInfo,
 }
 
-impl core::ops::Index<Handle<crate::Expression>> for ExpressionTypeResolver<'_> {
-    type Output = crate::TypeInner;
-
-    #[allow(clippy::panic)]
-    fn index(&self, handle: Handle<crate::Expression>) -> &Self::Output {
+impl ExpressionTypeResolver<'_> {
+    fn resolve(
+        &self,
+        handle: Handle<crate::Expression>,
+    ) -> Result<&crate::TypeInner, ExpressionError> {
         if handle < self.root {
-            self.info[handle].ty.inner_with(self.types)
-        } else {
-            // `Validator::validate_module_handles` should have caught this.
-            panic!(
-                "Depends on {:?}, which has not been processed yet",
-                self.root
-            )
+            if let Some(info) = self.info.expression_info(handle) {
+                return Ok(info.ty.inner_with(self.types));
+            }
         }
+        Err(ExpressionError::NotYetProcessed(handle))
     }
 }
 
@@ -273,8 +272,9 @@ impl super::Validator {
         resolver: &ExpressionTypeResolver,
     ) -> Result<Option<ShaderStages>, ExpressionError> {
         use crate::{Expression as E, TypeInner as Ti};
-        let long = |handle: Handle<crate::Expression>| {
-            let encoded = resolver[handle].scalar_kind().is_some_and(|kind| {
+        let long = |handle: Handle<crate::Expression>| -> Result<bool, ExpressionError> {
+            let inner = resolver.resolve(handle)?;
+            let encoded = inner.scalar_kind().is_some_and(|kind| {
                 matches!(
                     kind,
                     crate::ScalarKind::BFloat
@@ -282,18 +282,16 @@ impl super::Validator {
                         | crate::ScalarKind::FloatE5M2
                 )
             });
-            encoded
-                || matches!(
-                    resolver[handle],
-                    Ti::LongVector { .. } | Ti::CooperativeMatrix { .. }
-                )
+            Ok(encoded || matches!(*inner, Ti::LongVector { .. } | Ti::CooperativeMatrix { .. }))
         };
-        let shape = |handle: Handle<crate::Expression>| match resolver[handle] {
-            Ti::LongVector { size, class, .. } => Some((Some(size), Some(class), None)),
-            Ti::Vector { size, .. } => Some((None, None, Some(size))),
-            Ti::CooperativeMatrix { .. } => Some((None, None, None)),
-            Ti::Scalar(_) => None,
-            _ => Some((None, None, None)),
+        let shape = |handle: Handle<crate::Expression>| {
+            resolver.resolve(handle).map(|inner| match *inner {
+                Ti::LongVector { size, class, .. } => Some((Some(size), Some(class), None)),
+                Ti::Vector { size, .. } => Some((None, None, Some(size))),
+                Ti::CooperativeMatrix { .. } => Some((None, None, None)),
+                Ti::Scalar(_) => None,
+                _ => Some((None, None, None)),
+            })
         };
         let operands: arrayvec::ArrayVec<Handle<crate::Expression>, 4> = match *expression {
             E::Unary { expr, .. }
@@ -314,12 +312,16 @@ impl super::Validator {
                 .collect(),
             _ => return Ok(None),
         };
-        if !operands.iter().any(|&operand| long(operand)) {
+        let mut any_long = false;
+        for &operand in &operands {
+            any_long |= long(operand)?;
+        }
+        if !any_long {
             return Ok(None);
         }
         let mut expected = None;
         for &operand in &operands {
-            let Some(current) = shape(operand) else {
+            let Some(current) = shape(operand)? else {
                 continue;
             };
             match expected {
@@ -383,6 +385,10 @@ impl super::Validator {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "each fallible operand type lookup keeps its own error slot in debug builds; the validator calls this once per expression from a loop, never recursively"
+    )]
     pub(super) fn validate_expression(
         &self,
         root: Handle<crate::Expression>,
@@ -406,7 +412,7 @@ impl super::Validator {
 
         let stages = match *expression {
             E::Access { base, index } => {
-                let base_type = &resolver[base];
+                let base_type = resolver.resolve(base)?;
                 match *base_type {
                     Ti::Matrix { .. }
                     | Ti::Vector { .. }
@@ -421,7 +427,7 @@ impl super::Validator {
                         return Err(ExpressionError::InvalidBaseType(base));
                     }
                 };
-                match resolver[index] {
+                match *resolver.resolve(index)? {
                     //TODO: only allow one of these
                     Ti::Scalar(Sc {
                         kind: Sk::Sint | Sk::Uint,
@@ -507,13 +513,13 @@ impl super::Validator {
                     Ok(limit)
                 }
 
-                let limit = resolve_index_limit(module, base, &resolver[base], true)?;
+                let limit = resolve_index_limit(module, base, resolver.resolve(base)?, true)?;
                 if index >= limit {
                     return Err(ExpressionError::IndexOutOfBounds(base, index));
                 }
                 ShaderStages::all()
             }
-            E::Splat { size: _, value } => match resolver[value] {
+            E::Splat { size: _, value } => match *resolver.resolve(value)? {
                 Ti::Scalar { .. } => ShaderStages::all(),
                 ref other => {
                     log::debug!("Splat scalar type {other:?}");
@@ -525,7 +531,7 @@ impl super::Validator {
                 vector,
                 pattern,
             } => {
-                let vec_size = match resolver[vector] {
+                let vec_size = match *resolver.resolve(vector)? {
                     Ti::Vector { size: vec_size, .. } => vec_size,
                     ref other => {
                         log::debug!("Swizzle vector type {other:?}");
@@ -567,7 +573,7 @@ impl super::Validator {
             E::GlobalVariable(_handle) => ShaderStages::all(),
             E::LocalVariable(_handle) => ShaderStages::all(),
             E::Load { pointer } => {
-                match resolver[pointer] {
+                match *resolver.resolve(pointer)? {
                     Ti::Pointer { base, .. }
                         if self.types[base.index()]
                             .flags
@@ -641,7 +647,7 @@ impl super::Validator {
                             return Err(ExpressionError::InvalidImageArrayIndex);
                         }
                         if let Some(expr) = array_index {
-                            match resolver[expr] {
+                            match *resolver.resolve(expr)? {
                                 Ti::Scalar(Sc {
                                     kind: Sk::Sint | Sk::Uint,
                                     ..
@@ -696,7 +702,7 @@ impl super::Validator {
                         return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate))
                     }
                 };
-                match resolver[coordinate] {
+                match *resolver.resolve(coordinate)? {
                     Ti::Scalar(Sc {
                         kind: Sk::Float, ..
                     }) if num_components == 1 => {}
@@ -712,7 +718,7 @@ impl super::Validator {
 
                 // check constant offset
                 if let Some(const_expr) = offset {
-                    match resolver[const_expr] {
+                    match *resolver.resolve(const_expr)? {
                         Ti::Array {
                             base,
                             size: crate::ArraySize::Constant(size),
@@ -738,7 +744,7 @@ impl super::Validator {
 
                 // check depth reference type
                 if let Some(expr) = depth_ref {
-                    match resolver[expr] {
+                    match *resolver.resolve(expr)? {
                         Ti::Scalar(Sc {
                             kind: Sk::Float, ..
                         }) => {}
@@ -794,7 +800,7 @@ impl super::Validator {
                     );
                     if gather.is_some()
                         || !implicit_or_gradient
-                        || !matches!(resolver[min_lod], Ti::Scalar(Sc::F32))
+                        || !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32))
                     {
                         return Err(ExpressionError::InvalidMinLod(min_lod));
                     }
@@ -883,7 +889,7 @@ impl super::Validator {
                         match class {
                             // WGSL gives depth textures an integer level,
                             // GLSL a float one, like every other texture.
-                            crate::ImageClass::Depth { .. } => match resolver[expr] {
+                            crate::ImageClass::Depth { .. } => match *resolver.resolve(expr)? {
                                 Ti::Scalar(Sc {
                                     kind: Sk::Sint | Sk::Uint | Sk::Float,
                                     ..
@@ -892,7 +898,7 @@ impl super::Validator {
                                     return Err(ExpressionError::InvalidSampleLevelExactType(expr))
                                 }
                             },
-                            _ => match resolver[expr] {
+                            _ => match *resolver.resolve(expr)? {
                                 Ti::Scalar(Sc {
                                     kind: Sk::Float, ..
                                 }) => {}
@@ -904,7 +910,7 @@ impl super::Validator {
                         ShaderStages::all()
                     }
                     crate::SampleLevel::Bias(expr) => {
-                        match resolver[expr] {
+                        match *resolver.resolve(expr)? {
                             Ti::Scalar(Sc {
                                 kind: Sk::Float, ..
                             }) => {}
@@ -921,7 +927,7 @@ impl super::Validator {
                         ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE
                     }
                     crate::SampleLevel::Gradient { x, y } => {
-                        match resolver[x] {
+                        match *resolver.resolve(x)? {
                             Ti::Scalar(Sc {
                                 kind: Sk::Float, ..
                             }) if num_components == 1 => {}
@@ -936,7 +942,7 @@ impl super::Validator {
                                 return Err(ExpressionError::InvalidSampleLevelGradientType(dim, x))
                             }
                         }
-                        match resolver[y] {
+                        match *resolver.resolve(y)? {
                             Ti::Scalar(Sc {
                                 kind: Sk::Float, ..
                             }) if num_components == 1 => {}
@@ -978,14 +984,14 @@ impl super::Validator {
                     return Err(ExpressionError::ExpectedImageType(ty));
                 };
 
-                if !resolver[coordinate].addresses_image(dim) {
+                if !resolver.resolve(coordinate)?.addresses_image(dim) {
                     return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
                 }
                 if super::image_array_index_expected(dim, arrayed, class) != array_index.is_some() {
                     return Err(ExpressionError::InvalidImageArrayIndex);
                 }
                 if let Some(expr) = array_index {
-                    if !matches!(resolver[expr], Ti::Scalar(Sc::I32 | Sc::U32)) {
+                    if !matches!(*resolver.resolve(expr)?, Ti::Scalar(Sc::I32 | Sc::U32)) {
                         return Err(ExpressionError::InvalidImageArrayIndexType(expr));
                     }
                 }
@@ -993,7 +999,7 @@ impl super::Validator {
                 match (sample, class.is_multisampled()) {
                     (None, false) => {}
                     (Some(sample), true) => {
-                        if !matches!(resolver[sample], Ti::Scalar(Sc::I32 | Sc::U32)) {
+                        if !matches!(*resolver.resolve(sample)?, Ti::Scalar(Sc::I32 | Sc::U32)) {
                             return Err(ExpressionError::InvalidImageOtherIndexType(sample));
                         }
                     }
@@ -1007,13 +1013,15 @@ impl super::Validator {
 
                 match (level, class.has_levels(dim), class.has_optional_level(dim)) {
                     (None, false, _) => {}
-                    (Some(level), true, _) | (Some(level), false, true) => match resolver[level] {
-                        Ti::Scalar(Sc {
-                            kind: Sk::Sint | Sk::Uint,
-                            width: _,
-                        }) => {}
-                        _ => return Err(ExpressionError::InvalidImageArrayIndexType(level)),
-                    },
+                    (Some(level), true, _) | (Some(level), false, true) => {
+                        match *resolver.resolve(level)? {
+                            Ti::Scalar(Sc {
+                                kind: Sk::Sint | Sk::Uint,
+                                width: _,
+                            }) => {}
+                            _ => return Err(ExpressionError::InvalidImageArrayIndexType(level)),
+                        }
+                    }
                     (Some(_), false, false) => {
                         return Err(ExpressionError::InvalidImageLevelSelector);
                     }
@@ -1058,7 +1066,7 @@ impl super::Validator {
                             crate::ImageQuery::NumLayers => arrayed,
                             crate::ImageQuery::Size { level: None } => true,
                             crate::ImageQuery::Size { level: Some(level) } => {
-                                match resolver[level] {
+                                match *resolver.resolve(level)? {
                                     Ti::Scalar(Sc::I32 | Sc::U32) => {}
                                     _ => {
                                         return Err(ExpressionError::InvalidImageOtherIndexType(
@@ -1093,7 +1101,7 @@ impl super::Validator {
                                     | crate::ImageDimension::Subpass
                                     | crate::ImageDimension::TileImageData => 0,
                                 };
-                                let coordinate_good = match resolver[coordinate] {
+                                let coordinate_good = match *resolver.resolve(coordinate)? {
                                     Ti::Scalar(Sc::F32) => components == 1,
                                     Ti::Vector {
                                         size,
@@ -1127,14 +1135,14 @@ impl super::Validator {
                 }
             }
             E::ImageSparseResident { code } => {
-                if !matches!(resolver[code], Ti::Scalar(Sc::I32)) {
+                if !matches!(*resolver.resolve(code)?, Ti::Scalar(Sc::I32)) {
                     return Err(ExpressionError::InvalidResidencyCode(code));
                 }
                 ShaderStages::all()
             }
             E::Unary { op, expr } => {
                 use crate::UnaryOperator as Uo;
-                let Some((_, scalar)) = resolver[expr].vector_size_and_scalar() else {
+                let Some((_, scalar)) = resolver.resolve(expr)?.vector_size_and_scalar() else {
                     return Err(ExpressionError::InvalidUnaryOperandType(op, expr));
                 };
                 match (op, scalar.kind) {
@@ -1147,8 +1155,8 @@ impl super::Validator {
             }
             E::Binary { op, left, right } => {
                 use crate::BinaryOperator as Bo;
-                let left_inner = &resolver[left];
-                let right_inner = &resolver[right];
+                let left_inner = resolver.resolve(left)?;
+                let right_inner = resolver.resolve(right)?;
                 let good = match op {
                     Bo::Add | Bo::Subtract => match *left_inner {
                         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
@@ -1419,9 +1427,9 @@ impl super::Validator {
                 accept,
                 reject,
             } => {
-                let accept_inner = &resolver[accept];
-                let reject_inner = &resolver[reject];
-                let condition_ty = &resolver[condition];
+                let accept_inner = resolver.resolve(accept)?;
+                let reject_inner = resolver.resolve(reject)?;
+                let condition_ty = resolver.resolve(condition)?;
                 let condition_good = match *condition_ty {
                     Ti::Scalar(Sc {
                         kind: Sk::Bool,
@@ -1463,7 +1471,7 @@ impl super::Validator {
                 ShaderStages::all()
             }
             E::Derivative { expr, .. } => {
-                let Some((_, scalar)) = resolver[expr].vector_size_and_scalar() else {
+                let Some((_, scalar)) = resolver.resolve(expr)?.vector_size_and_scalar() else {
                     return Err(ExpressionError::InvalidDerivative);
                 };
                 if scalar.kind != Sk::Float || scalar.width < 2 {
@@ -1475,7 +1483,7 @@ impl super::Validator {
             }
             E::Relational { fun, argument } => {
                 use crate::RelationalFunction as Rf;
-                let argument_inner = &resolver[argument];
+                let argument_inner = resolver.resolve(argument)?;
                 match fun {
                     Rf::All | Rf::Any => match *argument_inner {
                         Ti::Vector {
@@ -1527,8 +1535,10 @@ impl super::Validator {
                     _ => return Err(ExpressionError::WrongArgumentCount(fun)),
                 };
 
-                let actual_types: alloc::vec::Vec<_> =
-                    actuals.iter().map(|&arg| &resolver[arg]).collect();
+                let actual_types = actuals
+                    .iter()
+                    .map(|&arg| resolver.resolve(arg))
+                    .collect::<Result<alloc::vec::Vec<_>, _>>()?;
 
                 // Start with the set of all overloads available for `fun`.
                 let mut overloads = fun.overloads();
@@ -1574,7 +1584,7 @@ impl super::Validator {
                 kind,
                 convert,
             } => {
-                let mut base_scalar = match resolver[expr] {
+                let mut base_scalar = match *resolver.resolve(expr)? {
                     crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } => {
                         scalar
                     }
@@ -1610,7 +1620,7 @@ impl super::Validator {
                     return Err(ExpressionError::InvalidWorkGroupUniformLoadResultType(ty));
                 }
             }
-            E::ArrayLength(expr) | E::WideArrayLength(expr) => match resolver[expr] {
+            E::ArrayLength(expr) | E::WideArrayLength(expr) => match *resolver.resolve(expr)? {
                 Ti::Pointer { base, .. } => {
                     let base_ty = &resolver.types[base];
                     if let Ti::Array {
@@ -1636,7 +1646,7 @@ impl super::Validator {
                         ..
                     }
                 );
-                let source = match resolver[value] {
+                let source = match *resolver.resolve(value)? {
                     Ti::Scalar(crate::Scalar::U64) => true,
                     Ti::Vector {
                         size: crate::VectorSize::Bi,
@@ -1657,14 +1667,14 @@ impl super::Validator {
                 }
                 ShaderStages::all()
             }
-            E::PhysicalAddress { pointer, split: _ } => match resolver[pointer] {
+            E::PhysicalAddress { pointer, split: _ } => match *resolver.resolve(pointer)? {
                 Ti::Pointer {
                     space: crate::AddressSpace::PhysicalStorage { .. },
                     ..
                 } => ShaderStages::all(),
                 _ => return Err(ExpressionError::InvalidPhysicalPointer(pointer)),
             },
-            E::BufferPointer { descriptor } => match resolver[descriptor] {
+            E::BufferPointer { descriptor } => match *resolver.resolve(descriptor)? {
                 Ti::Pointer {
                     base,
                     space: crate::AddressSpace::DescriptorHeap(crate::DescriptorHeap::Resource),
@@ -1684,7 +1694,7 @@ impl super::Validator {
                 if !root {
                     return Err(ExpressionError::InvalidHeapPointer(pointer));
                 }
-                match resolver[offset] {
+                match *resolver.resolve(offset)? {
                     Ti::Scalar(Sc {
                         kind: Sk::Sint | Sk::Uint,
                         ..
@@ -1694,7 +1704,7 @@ impl super::Validator {
             }
             E::RayQueryProceedResult => ShaderStages::all(),
             E::RayQueryGet { query, value } => {
-                let is_query = match resolver[query] {
+                let is_query = match *resolver.resolve(query)? {
                     Ti::Pointer { base, .. } => {
                         matches!(resolver.types[base].inner, Ti::RayQuery { .. })
                     }
@@ -1717,7 +1727,7 @@ impl super::Validator {
             E::ReportIntersectionResult => ShaderStages::INTERSECTION,
             E::HitObjectGet { object, value } => {
                 use crate::HitObjectValue as Hv;
-                let kind = match resolver[object] {
+                let kind = match *resolver.resolve(object)? {
                     Ti::Pointer { base, .. } => match resolver.types[base].inner {
                         Ti::HitObject { kind } => Some(kind),
                         _ => None,
@@ -1770,7 +1780,7 @@ impl super::Validator {
                 value: _,
             } => {
                 if !matches!(
-                    resolver[acceleration_structure],
+                    *resolver.resolve(acceleration_structure)?,
                     Ti::AccelerationStructure { .. }
                 ) {
                     return Err(ExpressionError::InvalidMicroTriangleOperand(
@@ -1778,11 +1788,11 @@ impl super::Validator {
                     ));
                 }
                 for index in [instance_id, geometry_index, primitive_index] {
-                    if resolver[index] != Ti::Scalar(Sc::I32) {
+                    if *resolver.resolve(index)? != Ti::Scalar(Sc::I32) {
                         return Err(ExpressionError::InvalidMicroTriangleOperand(index));
                     }
                 }
-                if resolver[barycentric]
+                if *resolver.resolve(barycentric)?
                     != (Ti::Vector {
                         size: crate::VectorSize::Bi,
                         scalar: Sc::I32,
@@ -1792,7 +1802,7 @@ impl super::Validator {
                 }
                 ShaderStages::RAY_GENERATION | ShaderStages::COMPUTE | ShaderStages::MESH
             }
-            E::AccelerationStructureFromAddress { address } => match resolver[address] {
+            E::AccelerationStructureFromAddress { address } => match *resolver.resolve(address)? {
                 Ti::Scalar(crate::Scalar::U64)
                 | Ti::Vector {
                     size: crate::VectorSize::Bi,
@@ -1808,7 +1818,7 @@ impl super::Validator {
             E::IsHelperInvocation => ShaderStages::FRAGMENT,
             E::InterpolateAt { pointer, location } => {
                 if !matches!(
-                    resolver[pointer],
+                    *resolver.resolve(pointer)?,
                     Ti::Pointer {
                         space: crate::AddressSpace::Input,
                         ..
@@ -1822,13 +1832,13 @@ impl super::Validator {
                 match location {
                     crate::InterpolationLocation::Centroid => {}
                     crate::InterpolationLocation::Sample(sample) => {
-                        if !matches!(resolver[sample], Ti::Scalar(Sc::I32)) {
+                        if !matches!(*resolver.resolve(sample)?, Ti::Scalar(Sc::I32)) {
                             return Err(ExpressionError::InvalidImageOtherIndexType(sample));
                         }
                     }
                     crate::InterpolationLocation::Offset(offset) => {
                         if !matches!(
-                            resolver[offset],
+                            *resolver.resolve(offset)?,
                             Ti::Vector {
                                 size: crate::VectorSize::Bi,
                                 scalar: Sc::F32,
@@ -1849,7 +1859,7 @@ impl super::Validator {
                 min_lod,
                 ty,
             } => {
-                let dim = match resolver[image] {
+                let dim = match *resolver.resolve(image)? {
                     Ti::SampledImage {
                         dim,
                         class: crate::ImageClass::Sampled { multi: false, .. },
@@ -1857,9 +1867,9 @@ impl super::Validator {
                     } => dim,
                     _ => return Err(ExpressionError::ExpectedGlobalVariable),
                 };
-                if !resolver[coordinate].addresses_image(dim)
+                if !resolver.resolve(coordinate)?.addresses_image(dim)
                     && !matches!(
-                        resolver[coordinate],
+                        *resolver.resolve(coordinate)?,
                         Ti::Vector {
                             scalar: Sc::F32,
                             ..
@@ -1868,14 +1878,14 @@ impl super::Validator {
                 {
                     return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
                 }
-                if !matches!(resolver[granularity], Ti::Scalar(Sc::I32)) {
+                if !matches!(*resolver.resolve(granularity)?, Ti::Scalar(Sc::I32)) {
                     return Err(ExpressionError::InvalidImageOtherIndexType(granularity));
                 }
-                if !matches!(resolver[coarse], Ti::Scalar(Sc::BOOL)) {
+                if !matches!(*resolver.resolve(coarse)?, Ti::Scalar(Sc::BOOL)) {
                     return Err(ExpressionError::InvalidImageOtherIndexType(coarse));
                 }
                 if let Some(min_lod) = min_lod {
-                    if !matches!(resolver[min_lod], Ti::Scalar(Sc::F32)) {
+                    if !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32)) {
                         return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
                     }
                 }
@@ -1897,7 +1907,7 @@ impl super::Validator {
                 fragment,
             } => {
                 if !matches!(
-                    resolver[image],
+                    *resolver.resolve(image)?,
                     Ti::Image {
                         class: crate::ImageClass::Sampled { multi: true, .. },
                         ..
@@ -1909,7 +1919,7 @@ impl super::Validator {
                     return Err(ExpressionError::ExpectedGlobalVariable);
                 }
                 if !matches!(
-                    resolver[coordinate],
+                    *resolver.resolve(coordinate)?,
                     Ti::Vector {
                         scalar: Sc::I32,
                         ..
@@ -1918,7 +1928,7 @@ impl super::Validator {
                     return Err(ExpressionError::InvalidImageOtherIndexType(coordinate));
                 }
                 if let Some(fragment) = fragment {
-                    if !matches!(resolver[fragment], Ti::Scalar(Sc::U32)) {
+                    if !matches!(*resolver.resolve(fragment)?, Ti::Scalar(Sc::U32)) {
                         return Err(ExpressionError::InvalidImageOtherIndexType(fragment));
                     }
                 }
@@ -1927,7 +1937,7 @@ impl super::Validator {
             E::AttachmentRead { aspect, sample } => {
                 if let crate::AttachmentAspect::Color(image) = aspect {
                     if !matches!(
-                        resolver[image],
+                        *resolver.resolve(image)?,
                         Ti::Image {
                             dim: crate::ImageDimension::TileImageData,
                             ..
@@ -1937,7 +1947,7 @@ impl super::Validator {
                     }
                 }
                 if let Some(sample) = sample {
-                    if !matches!(resolver[sample], Ti::Scalar(Sc::I32 | Sc::U32)) {
+                    if !matches!(*resolver.resolve(sample)?, Ti::Scalar(Sc::I32 | Sc::U32)) {
                         return Err(ExpressionError::InvalidImageOtherIndexType(sample));
                     }
                 }
@@ -1945,7 +1955,8 @@ impl super::Validator {
             }
             E::SpirvInstructionResult { .. } => ShaderStages::all(),
             E::CooperativeLoad { ref data, .. } => {
-                if resolver[data.pointer]
+                if resolver
+                    .resolve(data.pointer)?
                     .pointer_base_type()
                     .and_then(|tr| tr.inner_with(&module.types).scalar())
                     .is_none()
@@ -1961,7 +1972,7 @@ impl super::Validator {
                     crate::CooperativeRole::C,
                 ];
                 for (operand, expected_role) in [a, b, c].into_iter().zip(roles) {
-                    match resolver[operand] {
+                    match *resolver.resolve(operand)? {
                         Ti::CooperativeMatrix {
                             class: crate::CooperativeMatrixClass::Nv,
                             ..
@@ -1980,7 +1991,7 @@ impl super::Validator {
                 _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
             },
             E::CooperativeMatrixResult { .. } | E::TensorCreate { .. } => ShaderStages::all(),
-            E::TensorSet { base, .. } => match resolver[base] {
+            E::TensorSet { base, .. } => match *resolver.resolve(base)? {
                 Ti::TensorLayout { .. } | Ti::TensorView { .. } => ShaderStages::all(),
                 _ => return Err(ExpressionError::InvalidCooperativeOperand(base)),
             },
@@ -2033,13 +2044,15 @@ impl super::Validator {
                     Ok((dim, arrayed, float))
                 };
                 let vector2 = |handle: Handle<crate::Expression>, kind: Sk| {
-                    matches!(
-                        resolver[handle],
-                        Ti::Vector {
-                            size: crate::VectorSize::Bi,
-                            scalar: Sc { kind: found, width: 4 },
-                        } if found == kind
-                    )
+                    resolver.resolve(handle).map(|inner| {
+                        matches!(
+                            *inner,
+                            Ti::Vector {
+                                size: crate::VectorSize::Bi,
+                                scalar: Sc { kind: found, width: 4 },
+                            } if found == kind
+                        )
+                    })
                 };
                 if sampled(image, sampler)? != (crate::ImageDimension::D2, false, true) {
                     return invalid("the source must be a sampled 2D float image");
@@ -2053,7 +2066,7 @@ impl super::Validator {
                         if !float
                             || !arrayed
                             || !matches!(dim, crate::ImageDimension::D1 | crate::ImageDimension::D2)
-                            || !vector2(coordinate, Sk::Float)
+                            || !vector2(coordinate, Sk::Float)?
                             || reference_coordinate.is_some()
                             || size.is_some()
                         {
@@ -2067,8 +2080,8 @@ impl super::Validator {
                         if reference.is_some()
                             || reference_sampler.is_some()
                             || reference_coordinate.is_some()
-                            || !vector2(coordinate, Sk::Float)
-                            || !vector2(size, Sk::Float)
+                            || !vector2(coordinate, Sk::Float)?
+                            || !vector2(size, Sk::Float)?
                         {
                             return invalid("wrong operands");
                         }
@@ -2081,9 +2094,9 @@ impl super::Validator {
                         };
                         if sampled(reference, reference_sampler)?
                             != (crate::ImageDimension::D2, false, true)
-                            || !vector2(coordinate, Sk::Uint)
-                            || !vector2(reference_coordinate, Sk::Uint)
-                            || !vector2(size, Sk::Uint)
+                            || !vector2(coordinate, Sk::Uint)?
+                            || !vector2(reference_coordinate, Sk::Uint)?
+                            || !vector2(size, Sk::Uint)?
                         {
                             return invalid("wrong operands");
                         }
@@ -2103,22 +2116,23 @@ impl super::Validator {
                     Ti::Array { base, .. } => module.types[base].inner.scalar(),
                     _ => None,
                 };
-                let source = &resolver[expr];
+                let source = resolver.resolve(expr)?;
                 let target = &module.types[ty].inner;
                 let valid = match conversion {
                     crate::ArrayConversion::Bitcast => {
                         array_of_scalars(source).is_some() && array_of_scalars(target).is_some()
                     }
                     crate::ArrayConversion::SubArray => {
-                        let index_valid = index.is_some_and(|index| {
-                            matches!(
-                                resolver[index],
+                        let index_valid = match index {
+                            Some(index) => matches!(
+                                *resolver.resolve(index)?,
                                 Ti::Scalar(Sc {
                                     kind: Sk::Uint | Sk::Sint,
                                     ..
                                 })
-                            )
-                        });
+                            ),
+                            None => false,
+                        };
                         index_valid
                             && array_of_scalars(source).is_some()
                             && array_of_scalars(source) == array_of_scalars(target)
@@ -2153,7 +2167,7 @@ impl super::Validator {
                         scalar: target_scalar,
                         ..
                     },
-                ) = (offset, &resolver[expr], &module.types[ty].inner)
+                ) = (offset, resolver.resolve(expr)?, &module.types[ty].inner)
                 {
                     if source_size != target_size
                         || source_scalar.bit_width() != target_scalar.bit_width()
@@ -2174,9 +2188,10 @@ impl super::Validator {
                         _ => None,
                     }
                 };
-                let (Some((source_count, source)), Some((target_count, target))) =
-                    (shape(&resolver[expr]), shape(&module.types[ty].inner))
-                else {
+                let (Some((source_count, source)), Some((target_count, target))) = (
+                    shape(resolver.resolve(expr)?),
+                    shape(&module.types[ty].inner),
+                ) else {
                     return Err(ExpressionError::InvalidBitcast("operands are not numeric"));
                 };
                 match offset {
@@ -2187,7 +2202,7 @@ impl super::Validator {
                     }
                     Some(offset) => {
                         if !matches!(
-                            resolver[offset],
+                            *resolver.resolve(offset)?,
                             Ti::Scalar(Sc {
                                 kind: Sk::Uint | Sk::Sint,
                                 ..
@@ -2204,7 +2219,7 @@ impl super::Validator {
                 ShaderStages::all()
             }
             E::Convert { expr, ty, .. } => {
-                let source = resolver[expr].scalar();
+                let source = resolver.resolve(expr)?.scalar();
                 let target = module.types[ty].inner.scalar();
                 if source.is_none() || target.is_none() {
                     return Err(ExpressionError::InvalidCastArgument);
@@ -2227,11 +2242,11 @@ impl super::Validator {
                 out_of_bounds,
                 ..
             } => {
-                let (scalar, rank) = match resolver[tensor] {
+                let (scalar, rank) = match *resolver.resolve(tensor)? {
                     Ti::Tensor { scalar, rank } => (scalar, rank),
                     _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
                 };
-                match tensor_shape(&resolver[coordinates], &module.types) {
+                match tensor_shape(resolver.resolve(coordinates)?, &module.types) {
                     Some((index, shape))
                         if shape.coordinates_of(rank)
                             && matches!(
@@ -2245,20 +2260,20 @@ impl super::Validator {
                     _ => return Err(ExpressionError::InvalidTensorOperand(root)),
                 }
                 if let Some(value) = out_of_bounds {
-                    if resolver[value] != Ti::Scalar(scalar) {
+                    if *resolver.resolve(value)? != Ti::Scalar(scalar) {
                         return Err(ExpressionError::InvalidTensorOperand(value));
                     }
                 }
                 ShaderStages::all()
             }
-            E::TensorQuerySize { tensor, dimension } => match resolver[tensor] {
+            E::TensorQuerySize { tensor, dimension } => match *resolver.resolve(tensor)? {
                 Ti::Tensor { rank, .. } if rank.known().is_none_or(|rank| dimension < rank) => {
                     ShaderStages::all()
                 }
                 _ => return Err(ExpressionError::InvalidTensorOperand(tensor)),
             },
             E::Expect { value, expected } => {
-                if resolver[value] != resolver[expected] {
+                if *resolver.resolve(value)? != *resolver.resolve(expected)? {
                     return Err(ExpressionError::InvalidCooperativeOperand(expected));
                 }
                 ShaderStages::all()
@@ -2270,7 +2285,7 @@ impl super::Validator {
                     | Ti::Vector { scalar, .. } => scalar,
                     _ => return Err(ExpressionError::InvalidCooperativeOperand(root)),
                 };
-                if resolver[value] != Ti::Scalar(scalar) {
+                if *resolver.resolve(value)? != Ti::Scalar(scalar) {
                     return Err(ExpressionError::InvalidCooperativeOperand(value));
                 }
                 ShaderStages::all()
@@ -2484,4 +2499,40 @@ fn is_sparse_result(
         module.types[code.ty].inner,
         crate::TypeInner::Scalar(crate::Scalar::I32)
     ) && module.types[value.ty].inner == *texel
+}
+
+#[test]
+fn types_of_unprocessed_expressions_are_errors() -> crate::TestResult {
+    use crate::span::Span;
+
+    let mut function = crate::Function::default();
+    let one = function.expressions.append(
+        crate::Expression::Literal(crate::Literal::I32(1)),
+        Span::default(),
+    );
+    let two = function.expressions.append(
+        crate::Expression::Literal(crate::Literal::I32(2)),
+        Span::default(),
+    );
+    let mut module = crate::Module::default();
+    let handle = module.functions.append(function, Span::default());
+    let info = super::Validator::new(
+        super::ValidationFlags::all(),
+        super::Capabilities::default(),
+    )
+    .validate(&module)?;
+    let resolver = ExpressionTypeResolver {
+        root: two,
+        types: &module.types,
+        info: &info[handle],
+    };
+    assert!(matches!(
+        resolver.resolve(one),
+        Ok(&crate::TypeInner::Scalar(crate::Scalar::I32))
+    ));
+    assert!(matches!(
+        resolver.resolve(two),
+        Err(ExpressionError::NotYetProcessed(found)) if found == two
+    ));
+    Ok(())
 }

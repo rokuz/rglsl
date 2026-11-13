@@ -275,9 +275,9 @@ fn collect_names(unit: &TranslationUnit, analysis: &Analysis) -> Names {
 fn builtin_variables(
     unit: &TranslationUnit,
     analysis: &Analysis,
-) -> Option<BTreeMap<String, BasicType>> {
+) -> Result<BTreeMap<String, BasicType>, String> {
     let mut result = BTreeMap::new();
-    for expression in rglsl_ast::expressions(unit) {
+    for expression in rglsl_ast::expressions(unit).map_err(|error| error.to_string())? {
         let ExpressionKind::Variable(name) = &expression.kind else {
             continue;
         };
@@ -290,12 +290,13 @@ fn builtin_variables(
         };
         if let SymbolKind::Variable(variable) = &symbol.kind {
             if variable.origin == Origin::BuiltIn {
-                let ty = basic::from_sema(&variable.ty)?;
+                let ty = basic::from_sema(&variable.ty)
+                    .ok_or_else(|| String::from("a built-in variable of a non-basic type"))?;
                 result.insert(name.clone(), ty);
             }
         }
     }
-    Some(result)
+    Ok(result)
 }
 
 fn usable(unit: &TranslationUnit) -> bool {
@@ -338,8 +339,7 @@ fn prepare(
         return Err(format!("{diagnostic:?}"));
     }
     let names = collect_names(&donor.unit, &analysis);
-    let builtins = builtin_variables(&donor.unit, &analysis)
-        .ok_or_else(|| String::from("a built-in variable of a non-basic type"))?;
+    let builtins = builtin_variables(&donor.unit, &analysis)?;
     let mut unit = in_bounds(&donor.unit, &analysis);
     let mut builder = Builder::new(unit.next_id());
     flatten_interface(&mut unit, &mut builder);
@@ -376,7 +376,7 @@ fn prepare(
         });
     }
     let unit = TranslationUnit::new(unit.external_declarations, builder.next_id());
-    let text = emit(&unit);
+    let text = emit(&unit).map_err(|error| error.to_string())?;
     let unit = parse_unit("donor", &text).map_err(|error| format!("{error}\n{text}"))?;
     let analysis = analyze_shader(&unit, stage, true, None);
     if let Some(diagnostic) = analysis

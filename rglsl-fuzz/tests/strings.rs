@@ -55,7 +55,7 @@ fn variants_keep_debug_printf_formats_literal() -> TestResult {
         let family = generate_family(&job, &options, &mut Random::new(seed))?;
         assert_eq!(family.variants.len(), 4, "{:?}", family.failures);
         for (number, variant) in family.variants.iter().enumerate() {
-            let text = &variant.emit().shaders[0].1;
+            let text = &variant.emit()?.shaders[0].1;
             assert!(
                 text.contains(r#"debugPrintfEXT("step \"%d\"\t%f\n""#),
                 "{text}"

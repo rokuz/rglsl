@@ -126,10 +126,13 @@ pub(super) fn size_key(
     }
 }
 
-pub(super) fn implicit_sizes(unit: &Analyzed) -> types::Implicit {
+pub(super) fn implicit_sizes(
+    unit: &Analyzed,
+    expressions: &[&rglsl_ast::ast::Expression],
+) -> types::Implicit {
     let analysis = &unit.analysis;
     let mut implicit = types::Implicit::default();
-    for expression in rglsl_ast::expressions(&unit.unit) {
+    for &expression in expressions {
         let ExpressionKind::Subscript {
             ref base,
             ref index,

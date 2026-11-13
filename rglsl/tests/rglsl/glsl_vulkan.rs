@@ -3120,6 +3120,86 @@ void main() { tile[0] = M * 2; a = tile[0]; }
 }
 
 #[test]
+fn process_overrides_folds_with_glsl_rules() -> crate::TestResult {
+    let module = parse(
+        ShaderStage::Compute,
+        r#"#version 450
+layout(local_size_x = 1) in;
+layout(constant_id = 3) const uint N = 2u;
+const uint Q = 8u / (N - 1u);
+layout(std430, binding = 0) buffer Out { uint a; };
+void main() { a = Q; }
+"#,
+    )?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let constants = rglsl::back::PipelineConstants::from_iter([("3".to_string(), 1.0)]);
+    let (module, info) =
+        rglsl::back::pipeline_constants::process_overrides(&module, &info, None, &constants)?;
+    let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
+    let module = dr::load_words(words)?;
+    assert!(spec_ids(&module).is_empty());
+    let stored = instructions(&module, Op::Store)
+        .into_iter()
+        .map(|store| constant(&module, &store.operands[1]))
+        .collect::<crate::TestResult<Vec<u32>>>()?;
+    assert_eq!(stored, [u32::MAX]);
+    Ok(())
+}
+
+#[test]
+fn default_writer_options_keep_vulkan_glsl_semantics() {
+    let options = spv::Options::default();
+    assert!(!options.flags.intersects(
+        spv::WriterFlags::ADJUST_COORDINATE_SPACE
+            | spv::WriterFlags::CLAMP_FRAG_DEPTH
+            | spv::WriterFlags::FORCE_POINT_SIZE
+    ));
+    assert!(!options.mesh_shader_primitive_indices_clamp);
+}
+
+#[test]
+fn statement_operands_are_counted_and_their_results_stay_non_uniform() -> crate::TestResult {
+    let module = parse(
+        ShaderStage::Compute,
+        r#"#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) buffer B { uint counter; uint seen; };
+void main() {
+    uint first = atomicAdd(counter, 1u);
+    uint i = 0u;
+    do { i += first; } while (i < 8u);
+    seen = i;
+}
+"#,
+    )?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let entry = module.entry_points.first().ok_or("no entry point")?;
+    let function = info.get_entry_point(0);
+    let mut atomics = 0;
+    for (handle, expression) in entry.function.expressions.iter() {
+        let expression_info = &function[handle];
+        if matches!(*expression, rglsl::Expression::AtomicResult { .. }) {
+            atomics += 1;
+            assert!(expression_info.uniformity.non_uniform_result.is_some());
+        }
+        let used = entry
+            .function
+            .body
+            .walk()
+            .any(|statement| match *statement {
+                rglsl::Statement::Atomic { value, .. } => value == handle,
+                rglsl::Statement::Loop { break_if, .. } => break_if == Some(handle),
+                _ => false,
+            });
+        if used {
+            assert!(expression_info.ref_count > 0, "{expression:?}");
+        }
+    }
+    assert_eq!(atomics, 1);
+    Ok(())
+}
+
+#[test]
 fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
     let source = "#version 450
         layout(local_size_x = 1) in;
@@ -9600,6 +9680,37 @@ fn precise_follows_struct_members_and_compound_assignments() -> crate::TestResul
         decorated_ops(&module, Decoration::NoContraction),
         [Op::FAdd, Op::FAdd, Op::FMul]
     );
+    Ok(())
+}
+
+#[test]
+fn precise_tells_struct_members_apart_past_the_tenth() -> crate::TestResult {
+    for (member, expected) in [("f1", Op::FAdd), ("f10", Op::FMul)] {
+        let module = compile_valid(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                struct T {{
+                    float f0; float f1; float f2; float f3; float f4; float f5;
+                    float f6; float f7; float f8; float f9; float f10;
+                }};
+                layout(location = 0) in float a;
+                layout(location = 0) out float color;
+                void main() {{
+                    T s;
+                    s.f1 = a + 0.2;
+                    s.f10 = a * 0.5;
+                    precise float result = s.{member};
+                    color = result;
+                }}"
+            ),
+        )?;
+        assert_eq!(
+            decorated_ops(&module, Decoration::NoContraction),
+            [expected],
+            "{member}"
+        );
+    }
     Ok(())
 }
 

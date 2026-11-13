@@ -1,7 +1,8 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::{expressions, parse, print};
+use super::{expressions, print};
+use crate::parse;
 
 const STACK: usize = 256 << 10;
 const DEPTHS: [usize; 2] = [10_000, 100_000];

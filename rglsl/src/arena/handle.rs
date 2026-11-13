@@ -100,6 +100,10 @@ impl<T> Handle<T> {
         self.index.get() as usize
     }
 
+    pub(crate) const fn raw_index(self) -> Index {
+        self.index
+    }
+
     /// Convert a `usize` index into a `Handle<T>`.
     #[expect(
         clippy::expect_used,

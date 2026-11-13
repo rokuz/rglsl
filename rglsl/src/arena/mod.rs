@@ -47,7 +47,6 @@ use handle::Index;
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "serialize", serde(transparent))]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct Arena<T> {
     /// Values of this arena.
@@ -199,7 +198,8 @@ impl<T> Arena<T> {
 
     /// Clears the arena keeping all allocations
     pub fn clear(&mut self) {
-        self.data.clear()
+        self.data.clear();
+        self.span_info.clear();
     }
 
     /// Replaces this arena with an empty one, returning the old data.
@@ -305,6 +305,33 @@ where
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl<'a, T: arbitrary::Arbitrary<'a>> arbitrary::Arbitrary<'a> for Arena<T> {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut arena = Self::new();
+        for item in u.arbitrary_iter::<(T, Span)>()? {
+            let (value, span) = item?;
+            arena.data.push(value);
+            arena.span_info.push(span);
+        }
+        Ok(arena)
+    }
+
+    fn arbitrary_take_rest(u: arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut arena = Self::new();
+        for item in u.arbitrary_take_rest_iter::<(T, Span)>()? {
+            let (value, span) = item?;
+            arena.data.push(value);
+            arena.span_info.push(span);
+        }
+        Ok(arena)
+    }
+
+    fn size_hint(depth: usize) -> (usize, Option<usize>) {
+        <Vec<(T, Span)> as arbitrary::Arbitrary>::size_hint(depth)
+    }
+}
+
 impl<T> ops::Index<Handle<T>> for Arena<T> {
     type Output = T;
     fn index(&self, handle: Handle<T>) -> &T {
@@ -328,6 +355,35 @@ impl<T> ops::Index<Range<T>> for Arena<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clear_drops_the_spans_with_the_values() {
+        let mut arena: Arena<u8> = Arena::new();
+        arena.append(0, Span::new(1, 2));
+        arena.append(1, Span::new(3, 4));
+        arena.clear();
+        assert!(arena.span_info.is_empty());
+        let handle = arena.append(2, Span::new(5, 6));
+        assert_eq!(arena.get_span(handle), Span::new(5, 6));
+        assert_eq!(arena.span_info.len(), arena.data.len());
+    }
+
+    #[cfg(feature = "arbitrary")]
+    #[test]
+    fn arbitrary_arenas_keep_one_span_per_value() -> arbitrary::Result<()> {
+        use arbitrary::{Arbitrary as _, Unstructured};
+
+        for seed in 0..=u8::MAX {
+            let bytes: Vec<u8> = (0..64u8)
+                .map(|index| index.wrapping_mul(seed).wrapping_add(seed))
+                .collect();
+            let arena = Arena::<u16>::arbitrary(&mut Unstructured::new(&bytes))?;
+            assert_eq!(arena.span_info.len(), arena.data.len());
+            let arena = Arena::<u16>::arbitrary_take_rest(Unstructured::new(&bytes))?;
+            assert_eq!(arena.span_info.len(), arena.data.len());
+        }
+        Ok(())
+    }
 
     #[test]
     fn append_non_unique() {

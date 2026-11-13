@@ -189,7 +189,11 @@ impl Analyzer<'_> {
             self.error(span, DiagnosticKind::InductiveLoop(BAD_TERMINAL));
             return;
         }
-        let modified = rglsl_ast::statement_expressions(&statement.body)
+        let Ok(expressions) = rglsl_ast::statement_expressions(&statement.body) else {
+            self.stalled(());
+            return;
+        };
+        let modified = expressions
             .into_iter()
             .rfind(|expression| self.modifies(expression, id))
             .map(|expression| expression.span);

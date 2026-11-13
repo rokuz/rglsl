@@ -20,7 +20,7 @@ use crate::ast::{
 
 const INDENT: &str = "    ";
 
-pub fn print(unit: &TranslationUnit) -> String {
+pub fn print(unit: &TranslationUnit) -> Result<String, fmt::Error> {
     let printer = Printer::default();
     let finished = run(|stack| printer.cx(stack).translation_unit(unit));
     printer.finish(finished)
@@ -28,7 +28,7 @@ pub fn print(unit: &TranslationUnit) -> String {
 
 impl fmt::Display for TranslationUnit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&print(self))
+        formatter.write_str(&print(self)?)
     }
 }
 
@@ -36,7 +36,7 @@ impl fmt::Display for Expression {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let printer = Printer::default();
         let finished = run(|stack| printer.cx(stack).expression(self));
-        formatter.write_str(&printer.finish(finished))
+        formatter.write_str(&printer.finish(finished)?)
     }
 }
 
@@ -44,7 +44,7 @@ impl fmt::Display for Statement {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let printer = Printer::default();
         let finished = run(|stack| printer.cx(stack).statement(self));
-        formatter.write_str(&printer.finish(finished))
+        formatter.write_str(&printer.finish(finished)?)
     }
 }
 
@@ -52,7 +52,7 @@ impl fmt::Display for Declaration {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let printer = Printer::default();
         let finished = run(|stack| printer.cx(stack).declaration(self));
-        formatter.write_str(&printer.finish(finished))
+        formatter.write_str(&printer.finish(finished)?)
     }
 }
 
@@ -60,6 +60,7 @@ impl fmt::Display for Declaration {
 struct Printer {
     output: RefCell<String>,
     depth: Cell<usize>,
+    failed: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -114,10 +115,10 @@ impl Printer {
         }
     }
 
-    fn finish(self, finished: Option<()>) -> String {
+    fn finish(self, finished: Option<()>) -> Result<String, fmt::Error> {
         match finished {
-            Some(()) => self.output.into_inner(),
-            None => String::new(),
+            Some(()) if !self.failed.get() => Ok(self.output.into_inner()),
+            _ => Err(fmt::Error),
         }
     }
 
@@ -540,7 +541,9 @@ impl<'b> Cx<'b> {
             TypeSpecifierNonArray::Void => self.write("void"),
             TypeSpecifierNonArray::Basic(basic) => {
                 use fmt::Write as _;
-                let _ = write!(self.output.borrow_mut(), "{basic}");
+                if write!(self.output.borrow_mut(), "{basic}").is_err() {
+                    self.failed.set(true);
+                }
             }
             TypeSpecifierNonArray::Opaque(name) | TypeSpecifierNonArray::TypeName(name) => {
                 self.write(name);
@@ -938,4 +941,23 @@ const fn is_sign(operator: UnaryOperator) -> bool {
 
 const fn starts_with_sign(expression: &Expression) -> bool {
     matches!(expression.kind, ExpressionKind::Unary { operator, .. } if is_sign(operator))
+}
+
+#[cfg(test)]
+mod tests {
+    use core::fmt;
+
+    use super::Printer;
+
+    #[test]
+    fn an_unfinished_print_is_an_error() {
+        assert_eq!(Printer::default().finish(None), Err(fmt::Error));
+        let failed = Printer::default();
+        failed.write("text");
+        failed.failed.set(true);
+        assert_eq!(failed.finish(Some(())), Err(fmt::Error));
+        let printed = Printer::default();
+        printed.write("text");
+        assert_eq!(printed.finish(Some(())).as_deref(), Ok("text"));
+    }
 }

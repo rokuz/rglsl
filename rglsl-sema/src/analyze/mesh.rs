@@ -368,7 +368,10 @@ impl Analyzer<'_> {
         if !self.mesh_ext() || !self.stage_is(Stage::Mesh) {
             return;
         }
-        let expressions = rglsl_ast::expressions(unit);
+        let Ok(expressions) = rglsl_ast::expressions(unit) else {
+            self.stalled(());
+            return;
+        };
         let mut written: BTreeSet<NodeId> = BTreeSet::new();
         for expression in &expressions {
             match &expression.kind {

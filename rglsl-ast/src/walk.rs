@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::future::Future;
 
-use rglsl_types::stack::{run, Call, Stack};
+use rglsl_types::stack::{run, Call, Stack, Stalled};
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
@@ -12,7 +12,7 @@ use crate::ast::{
     TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 
-pub fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
+pub fn expressions(unit: &TranslationUnit) -> Result<Vec<&Expression>, Stalled> {
     let walker = Walker {
         found: RefCell::new(Vec::new()),
     };
@@ -23,13 +23,11 @@ pub fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
         }
         .unit(unit)
     });
-    match finished {
-        Some(()) => walker.found.into_inner(),
-        None => Vec::new(),
-    }
+    finished.ok_or(Stalled)?;
+    Ok(walker.found.into_inner())
 }
 
-pub fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
+pub fn statement_expressions(statement: &Statement) -> Result<Vec<&Expression>, Stalled> {
     let walker = Walker {
         found: RefCell::new(Vec::new()),
     };
@@ -40,10 +38,8 @@ pub fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
         }
         .statement(statement)
     });
-    match finished {
-        Some(()) => walker.found.into_inner(),
-        None => Vec::new(),
-    }
+    finished.ok_or(Stalled)?;
+    Ok(walker.found.into_inner())
 }
 
 struct Walker<'a> {

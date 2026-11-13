@@ -35,9 +35,9 @@ fn check(
                 .map_err(|error| format!("{name}: {error}"))?;
         let again =
             generate_variant_with_donors(reference, &options, donors, &mut Random::new(seed))?;
-        assert_eq!(variant.emit(), again.emit(), "{name}: not deterministic");
+        assert_eq!(variant.emit()?, again.emit()?, "{name}: not deterministic");
         let (extension, text) = variant
-            .emit()
+            .emit()?
             .shaders
             .into_iter()
             .next()

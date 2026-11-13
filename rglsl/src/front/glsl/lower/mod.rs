@@ -590,7 +590,7 @@ fn run_lowerer(
                 included,
             }
         })
-        .map(|mut object| {
+        .and_then(|mut object| {
             if debug {
                 let mut info = debug_info(
                     options,
@@ -599,10 +599,14 @@ fn run_lowerer(
                     &object.debug,
                     analysis.version.unwrap_or(0),
                 );
-                info.anchors = debug_anchors(unit, &preprocessed.text);
+                info.anchors =
+                    debug_anchors(unit, &preprocessed.text).map_err(|_| ParseErrors {
+                        errors: Vec::from([stalled(Span::UNDEFINED)]),
+                        included: Vec::new(),
+                    })?;
                 object.object.module.debug_info = Some(alloc::boxed::Box::new(info));
             }
-            object.object
+            Ok(object.object)
         })
 }
 
@@ -627,7 +631,10 @@ pub(super) struct DebugCollector {
     pub entry: Option<u32>,
 }
 
-fn debug_anchors(unit: &TranslationUnit, text: &str) -> Vec<crate::DebugAnchor> {
+fn debug_anchors(
+    unit: &TranslationUnit,
+    text: &str,
+) -> core::result::Result<Vec<crate::DebugAnchor>, rglsl_types::stack::Stalled> {
     let bytes = text.as_bytes();
     let after = |offset: u32| {
         let mut position = usize::try_from(offset).unwrap_or(usize::MAX);
@@ -639,7 +646,7 @@ fn debug_anchors(unit: &TranslationUnit, text: &str) -> Vec<crate::DebugAnchor> 
         }
         u32::try_from(position).unwrap_or(offset)
     };
-    let mut anchors: Vec<crate::DebugAnchor> = rglsl_ast::expressions(unit)
+    let mut anchors: Vec<crate::DebugAnchor> = rglsl_ast::expressions(unit)?
         .into_iter()
         .filter_map(|expression| {
             let at = match expression.kind {
@@ -661,7 +668,7 @@ fn debug_anchors(unit: &TranslationUnit, text: &str) -> Vec<crate::DebugAnchor> 
         .collect();
     anchors.sort_by_key(|anchor| (anchor.start, anchor.end));
     anchors.dedup_by_key(|anchor| (anchor.start, anchor.end));
-    anchors
+    Ok(anchors)
 }
 
 pub(super) struct Lowered {
@@ -949,6 +956,13 @@ pub(super) fn semantic(message: impl Into<String>, span: Span) -> Error {
 pub(super) const fn internal(span: Span) -> Error {
     Error {
         kind: ErrorKind::InternalError("the analysis does not describe this construct"),
+        meta: span,
+    }
+}
+
+pub(super) const fn stalled(span: Span) -> Error {
+    Error {
+        kind: ErrorKind::InternalError("a walk over the syntax tree stopped before it finished"),
         meta: span,
     }
 }
@@ -1335,7 +1349,8 @@ impl<'a> Lowerer<'a> {
                 ExternalDeclaration::Declaration(_) | ExternalDeclaration::Semicolon(_) => {}
             }
         }
-        self.prepass(&definitions);
+        let result = self.prepass(&definitions);
+        self.report(result);
         if self.options.auto_map_locations {
             self.reserve_explicit_locations();
         }

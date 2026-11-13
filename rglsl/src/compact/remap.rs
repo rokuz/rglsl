@@ -3,8 +3,6 @@ use crate::arena::{BadHandle, Handle, HandleSet};
 use super::handle_set_map::HandleMap;
 use super::{FunctionMap, ModuleMap};
 
-type Index = crate::non_max_u32::NonMaxU32;
-
 #[derive(Debug)]
 pub struct Remap {
     map: ModuleMap,
@@ -17,9 +15,7 @@ impl Default for Remap {
 }
 
 fn record<T>(map: &mut HandleMap<T>, old: Handle<T>, new: Handle<T>) {
-    if let Some(index) = u32::try_from(new.index()).ok().and_then(Index::new) {
-        map.insert(old, index);
-    }
+    map.insert(old, new.raw_index());
 }
 
 impl Remap {
@@ -142,5 +138,36 @@ impl Remap {
         };
         let mut reuse = crate::NamedExpressions::default();
         map.compact(function, &self.map, &mut reuse)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Remap;
+    use crate::{Scalar, Span, Type, TypeInner, UniqueArena};
+
+    #[test]
+    fn every_recorded_handle_is_remapped() -> crate::TestResult {
+        let mut types = UniqueArena::new();
+        let handles: alloc::vec::Vec<_> = [Scalar::F32, Scalar::I32, Scalar::U32]
+            .into_iter()
+            .map(|scalar| {
+                types.insert(
+                    Type {
+                        name: None,
+                        inner: TypeInner::Scalar(scalar),
+                    },
+                    Span::UNDEFINED,
+                )
+            })
+            .collect();
+        let mut remap = Remap::new();
+        for (&old, &new) in handles.iter().zip(handles.iter().rev()) {
+            remap.map_type(old, new);
+        }
+        for (&old, &new) in handles.iter().zip(handles.iter().rev()) {
+            assert_eq!(remap.ty(old)?, new);
+        }
+        Ok(())
     }
 }

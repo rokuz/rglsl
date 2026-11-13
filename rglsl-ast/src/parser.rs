@@ -334,6 +334,13 @@ impl<'a> Parser<'a> {
         Box::new(ParseError::new(kind, span, self.source))
     }
 
+    fn string_literal(&self, index: usize, span: Span) -> Result<String> {
+        self.strings
+            .get(index)
+            .cloned()
+            .ok_or_else(|| self.error(ParseErrorKind::Internal, span))
+    }
+
     fn unexpected(&self, expected: &str) -> Box<ParseError> {
         let token = self.peek();
         let found = match token.kind {
@@ -583,7 +590,7 @@ impl<'a> Parser<'a> {
         let start = token.span.start;
         let kind = match (token.kind, accepted) {
             (TokenKind::String(index), SpirvToken::String | SpirvToken::Any) => {
-                ExpressionKind::String(self.strings.get(index).cloned().unwrap_or_default())
+                ExpressionKind::String(self.string_literal(index, token.span)?)
             }
             (TokenKind::Number { kind, text }, SpirvToken::Int) if kind == NumericKind::Int => {
                 ExpressionKind::Number(NumericLiteral {
@@ -858,7 +865,7 @@ impl<'a> Parser<'a> {
                 text: text.to_owned(),
             }),
             TokenKind::String(index) => {
-                ExpressionKind::String(self.strings.get(index).cloned().unwrap_or_default())
+                ExpressionKind::String(self.string_literal(index, token.span)?)
             }
             TokenKind::Word(word) => ExpressionKind::Bool(word == "true"),
             _ => return Err(self.unexpected("an expression")),

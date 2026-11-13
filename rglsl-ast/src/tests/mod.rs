@@ -15,9 +15,23 @@ use crate::ast::{
     Declaration, Expression, ExpressionKind, ExternalDeclaration, FunctionIdentifier, Statement,
     StatementKind, TranslationUnit,
 };
-use crate::{parse, placeholder, print};
+use crate::{parse, placeholder};
 
 type TestResult<T = ()> = Result<T, alloc::boxed::Box<dyn core::error::Error>>;
+
+fn print(unit: &TranslationUnit) -> String {
+    match crate::print(unit) {
+        Ok(text) => text,
+        Err(error) => panic!("printing failed: {error}"),
+    }
+}
+
+fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
+    match crate::expressions(unit) {
+        Ok(found) => found,
+        Err(error) => panic!("{error}"),
+    }
+}
 
 fn rejected<T, E>(result: Result<T, E>, why: &str) -> TestResult<E> {
     match result {
