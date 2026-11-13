@@ -6,6 +6,7 @@
 //!   writes `PROGRESS.md`.
 
 mod bench;
+mod capi;
 mod cli;
 mod corpus;
 mod debuginfo;
@@ -56,6 +57,8 @@ commands:
       --no-remote-exec    do not run shaders on the remote Windows targets
   snapshots           assemble the SPIR-V snapshots in rglsl/tests/out/spv with spirv-as and
                       validate them with spirv-val for the Vulkan version of their SPIR-V
+  capi-header         generate rglsl-capi/include/rglsl.h with cbindgen
+      --check             only check that the committed header is up to date
   cli                 run glslangValidator command lines with glslang and with the rglsl
                       command-line tool and compare exit codes, messages and outputs
                       (docs/design/cli.md); report in target/xtask/cli/report.tsv
@@ -190,6 +193,11 @@ fn run(args: Vec<String>) -> Result<i32> {
         "snapshots" => {
             args.finish()?;
             snapshots::run(&workspace_root()?)
+        }
+        "capi-header" => {
+            let check = args.flag("--check");
+            args.finish()?;
+            capi::run(&workspace_root()?, check)
         }
         "cli" => {
             let options = cli::Options {

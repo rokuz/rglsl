@@ -10,6 +10,7 @@ members = [
     "rglsl-cli",
     "rglsl-fuzz",
     "rglsl-link",
+    "rglsl-capi",
     "rglsl-fuzz/fuzz",
     "xtask",
     "samples/compile-and-link",
