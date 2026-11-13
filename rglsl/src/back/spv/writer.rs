@@ -98,6 +98,7 @@ impl Writer {
             laid_out_of_plain: crate::FastHashMap::default(),
             physical_types: crate::FastHashMap::default(),
             decorated_blocks: crate::arena::HandleSet::new(),
+            nested_types: crate::arena::HandleSet::new(),
             buffer_blocks: crate::FastHashSet::default(),
             physical_pointees: crate::FastHashMap::default(),
             forward_pointers: crate::FastHashMap::default(),
@@ -263,6 +264,7 @@ impl Writer {
             laid_out_of_plain: take(&mut self.laid_out_of_plain).reclaim(),
             physical_types: take(&mut self.physical_types).reclaim(),
             decorated_blocks: crate::arena::HandleSet::new(),
+            nested_types: crate::arena::HandleSet::new(),
             buffer_blocks: crate::FastHashSet::default(),
             physical_pointees: take(&mut self.physical_pointees).reclaim(),
             forward_pointers: take(&mut self.forward_pointers).reclaim(),
@@ -968,7 +970,7 @@ impl Writer {
                         }
                         gv.access_id = gv.var_id;
                         gv.handle_id = id;
-                    } else if global_needs_wrapper(ir_module, var) {
+                    } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
                         let class = self.storage_class(var.space);
                         let pointer_type_id = self.get_handle_pointer_type_id(var.ty, class)?;
                         let index_id = self.get_index_constant(0);
@@ -3585,8 +3587,9 @@ impl Writer {
         )?;
         let inner_type_id = self.pointee_type_id(inner_type_id, class);
 
+        let needs_wrapper = global_needs_wrapper(ir_module, &self.nested_types, global_variable);
         // generate the wrapping structure if needed
-        let pointer_type_id = if global_needs_wrapper(ir_module, global_variable) {
+        let pointer_type_id = if needs_wrapper {
             let wrapper_type_id = self.id_gen.next();
 
             self.decorate_buffer_block(wrapper_type_id, global_variable)?;
@@ -4068,6 +4071,7 @@ impl Writer {
         self.descriptor_heap = ir_module.descriptor_heap;
 
         self.decorated_blocks = crate::arena::HandleSet::for_arena(&ir_module.types);
+        self.nested_types = super::helpers::nested_types(ir_module);
         self.prepare_overrides(ir_module);
         self.constant_ids
             .resize(ir_module.global_expressions.len(), 0);

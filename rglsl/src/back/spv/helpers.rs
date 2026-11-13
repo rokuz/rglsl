@@ -104,7 +104,11 @@ impl crate::AddressSpace {
 /// See [`back::spv::GlobalVariable`] for details.
 ///
 /// [`back::spv::GlobalVariable`]: super::GlobalVariable
-pub fn global_needs_wrapper(ir_module: &crate::Module, var: &crate::GlobalVariable) -> bool {
+pub fn global_needs_wrapper(
+    ir_module: &crate::Module,
+    nested_types: &crate::arena::HandleSet<crate::Type>,
+    var: &crate::GlobalVariable,
+) -> bool {
     match var.space {
         crate::AddressSpace::Uniform
         | crate::AddressSpace::Storage { .. }
@@ -113,20 +117,26 @@ pub fn global_needs_wrapper(ir_module: &crate::Module, var: &crate::GlobalVariab
         _ => return false,
     };
     match ir_module.types[var.ty].inner {
-        crate::TypeInner::Struct { .. } => is_nested_type(ir_module, var.ty),
+        crate::TypeInner::Struct { .. } => nested_types.contains(var.ty),
         crate::TypeInner::BindingArray { .. } => false,
         _ => true,
     }
 }
 
-fn is_nested_type(ir_module: &crate::Module, ty: Handle<crate::Type>) -> bool {
-    ir_module.types.iter().any(|(_, other)| match other.inner {
-        crate::TypeInner::Array { base, .. } => base == ty,
-        crate::TypeInner::Struct { ref members, .. } => {
-            members.iter().any(|member| member.ty == ty)
+pub fn nested_types(ir_module: &crate::Module) -> crate::arena::HandleSet<crate::Type> {
+    let mut nested = crate::arena::HandleSet::for_arena(&ir_module.types);
+    for (_, ty) in ir_module.types.iter() {
+        match ty.inner {
+            crate::TypeInner::Array { base, .. } => {
+                nested.insert(base);
+            }
+            crate::TypeInner::Struct { ref members, .. } => {
+                nested.insert_iter(members.iter().map(|member| member.ty));
+            }
+            _ => {}
         }
-        _ => false,
-    })
+    }
+    nested
 }
 
 #[derive(Debug)]

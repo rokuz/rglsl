@@ -815,6 +815,7 @@ pub struct Writer {
     laid_out_of_plain: crate::FastHashMap<Word, Word>,
     physical_types: crate::FastHashMap<Word, bool>,
     decorated_blocks: crate::arena::HandleSet<crate::Type>,
+    nested_types: crate::arena::HandleSet<crate::Type>,
     buffer_blocks: crate::FastHashSet<Word>,
     physical_pointees: crate::FastHashMap<Handle<crate::Type>, crate::StorageAccess>,
     forward_pointers: crate::FastHashMap<Handle<crate::Type>, Word>,

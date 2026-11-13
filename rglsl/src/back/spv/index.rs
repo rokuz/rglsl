@@ -178,7 +178,7 @@ impl BlockContext<'_> {
         // struct. Determine this member's index.
         let gvar = self.writer.global_variables[global_handle].clone();
         let global = &self.ir_module.global_variables[global_handle];
-        let needs_wrapper = global_needs_wrapper(self.ir_module, global);
+        let needs_wrapper = global_needs_wrapper(self.ir_module, &self.writer.nested_types, global);
         let (last_member_index, gvar_id) = match (opt_last_member_index, needs_wrapper) {
             (Some(index), false) => {
                 // At the rglsl type level, the runtime-sized array appears as the
