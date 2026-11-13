@@ -86,7 +86,7 @@ extern crate alloc;
 
 mod arena;
 pub mod back;
-pub mod common;
+pub(crate) mod common;
 pub mod compact;
 pub mod error;
 pub mod front;

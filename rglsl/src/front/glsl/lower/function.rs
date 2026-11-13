@@ -27,28 +27,28 @@ pub(super) enum Local {
 }
 
 pub(super) struct FunctionLowerer<'l, 'a> {
-    pub lw: &'l mut Lowerer<'a>,
-    pub expressions: Arena<Expression>,
-    pub locals: Arena<LocalVariable>,
-    pub tracker: ExpressionKindTracker,
-    pub emitter: Emitter,
-    pub block: Block,
-    pub variables: BTreeMap<SymbolId, Local>,
+    pub(super) lw: &'l mut Lowerer<'a>,
+    pub(super) expressions: Arena<Expression>,
+    pub(super) locals: Arena<LocalVariable>,
+    pub(super) tracker: ExpressionKindTracker,
+    pub(super) emitter: Emitter,
+    pub(super) block: Block,
+    pub(super) variables: BTreeMap<SymbolId, Local>,
     unflagged: Vec<SymbolId>,
-    pub purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
-    pub specializing: bool,
-    pub non_uniform: crate::NonUniformExpressions,
-    pub precision: crate::PrecisionExpressions,
-    pub stepped: Option<Handle<Expression>>,
-    pub physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
-    pub argument_types: Vec<Handle<crate::Type>>,
+    pub(super) purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
+    pub(super) specializing: bool,
+    pub(super) non_uniform: crate::NonUniformExpressions,
+    pub(super) precision: crate::PrecisionExpressions,
+    pub(super) stepped: Option<Handle<Expression>>,
+    pub(super) physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
+    pub(super) argument_types: Vec<Handle<crate::Type>>,
     jump_targets: Vec<JumpTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct JumpTarget {
-    pub breaks: usize,
-    pub continues: usize,
+    pub(super) breaks: usize,
+    pub(super) continues: usize,
     innermost_loop: Option<usize>,
 }
 

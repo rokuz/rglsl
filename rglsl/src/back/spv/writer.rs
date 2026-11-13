@@ -18,9 +18,9 @@ use crate::{
     valid::{FunctionInfo, ModuleInfo},
 };
 
-pub struct FunctionInterface<'a> {
-    pub varying_ids: &'a mut Vec<Word>,
-    pub stage: crate::ShaderStage,
+pub(super) struct FunctionInterface<'a> {
+    pub(super) varying_ids: &'a mut Vec<Word>,
+    pub(super) stage: crate::ShaderStage,
 }
 
 impl Function {

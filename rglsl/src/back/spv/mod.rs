@@ -257,7 +257,7 @@ struct LocalImageType {
 bitflags::bitflags! {
     /// Flags corresponding to the boolean(-ish) parameters to OpTypeImage.
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-    pub struct ImageTypeFlags: u8 {
+    pub(super) struct ImageTypeFlags: u8 {
         const DEPTH = 0x1;
         const ARRAYED = 0x2;
         const MULTISAMPLED = 0x4;
