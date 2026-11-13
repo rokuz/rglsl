@@ -37,6 +37,7 @@ const fn extension(stage: ShaderStage) -> &'static str {
         ShaderStage::TessEvaluation => "tese",
         ShaderStage::Geometry => "geom",
         ShaderStage::Fragment => "frag",
+        ShaderStage::RayGeneration => "rgen",
         _ => "comp",
     }
 }
@@ -559,6 +560,36 @@ fn layout_values_need_literals_like_glslang() -> TestResult {
         );
         assert_rejected_like_glslang(stage, &source, name)?;
     }
+    Ok(())
+}
+
+#[test]
+fn local_size_lookalikes_are_rejected_like_glslang() -> TestResult {
+    for (declaration, name) in [
+        ("layout(LOCAL_SIZE_W = 0) in;", "local_size_w"),
+        ("layout(local_size_w = 1) in;", "local_size_w"),
+        ("layout(local_size_xy = 0) in;", "local_size_xy"),
+    ] {
+        let source = format!("#version 450\n{declaration}\nvoid main() {{}}\n");
+        assert_rejected_like_glslang(ShaderStage::Compute, &source, name)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn shaders_of_an_unsupported_version_are_still_analyzed_like_glslang() -> TestResult {
+    let source = "#version 450
+layout(ShaderRecordEXT) buffer Record { float value; } record;
+void main() {}
+";
+    assert_rejected_like_glslang(ShaderStage::RayGeneration, source, "shader record EXT")?;
+    let errors = rglsl_errors(ShaderStage::RayGeneration, source)?;
+    assert!(
+        errors
+            .iter()
+            .any(|(_, message)| message.contains("ray tracing shaders require")),
+        "{errors:?}"
+    );
     Ok(())
 }
 

@@ -2292,6 +2292,11 @@ void main() {}
 layout(triangles) in;
 layout(local_size_x = 2) in;
 void main() {}
+### zero local size of an unknown axis | comp | 2:LayoutValueBelowOne, 3:UnknownLayoutWithValue, 4:UnknownLayoutWithValue
+layout(local_size_w = 0) in;
+layout(local_size_w = 1) in;
+layout(local_size_xy = 0) in;
+void main() {}
 ### index outside fragment shaders | vert | 2:UnknownLayoutWithValue
 layout(location = 0, index = 1) out vec4 a;
 void main() {}

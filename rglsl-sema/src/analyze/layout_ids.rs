@@ -187,6 +187,10 @@ fn literal_name(name: &str) -> &str {
     }
 }
 
+fn is_local_size_axis(name: &str) -> bool {
+    name.len() == "local_size_x".len() && name.starts_with("local_size_")
+}
+
 fn takes_any_value(name: &str) -> bool {
     matches!(name, "heap_offset" | "descriptor_stride")
 }
@@ -211,9 +215,15 @@ impl Analyzer<'_> {
             LayoutValue::Constant(value) if value < 0 => {}
             LayoutValue::Constant(_) | LayoutValue::Invalid => {
                 let stages = value_stages(name);
+                let zero_local_size = is_local_size_axis(name) && entry.value.constant() == Some(0);
                 self.stage_check(entry.span, |stage| {
-                    (!stages.is_some_and(|stages| stages.contains(&stage)))
-                        .then(|| DiagnosticKind::UnknownLayoutWithValue(String::from(name)))
+                    if stages.is_some_and(|stages| stages.contains(&stage)) {
+                        None
+                    } else if zero_local_size && COMPUTE_LIKE.contains(&stage) {
+                        Some(DiagnosticKind::LayoutValueBelowOne(String::from(name)))
+                    } else {
+                        Some(DiagnosticKind::UnknownLayoutWithValue(String::from(name)))
+                    }
                 });
             }
         }

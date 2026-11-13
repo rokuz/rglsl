@@ -391,7 +391,10 @@ fn lower(
             .iter()
             .filter_map(|&(ref error, _)| error.meta.to_range())
             .map(|range| range.start)
-            .min();
+            .min()
+            .or_else(|| {
+                (mode != Mode::Library && only_version_errors(&preprocessed)).then_some(usize::MAX)
+            });
         let mut earlier: Vec<(Error, Option<IncludeLocation>)> = first
             .map(|first| semantic_errors_before(options, &preprocessed, first, class))
             .unwrap_or_default()
@@ -818,6 +821,17 @@ fn sema_options(options: &Options, text: &str) -> rglsl_sema::Options {
     }
 }
 
+fn only_version_errors(preprocessed: &rglsl_pp::Preprocessed) -> bool {
+    matches!(preprocessed.version.number, 450 | 460)
+        && preprocessed.version.profile != Some(rglsl_pp::Profile::Compatibility)
+        && preprocessed.errors().all(|diagnostic| {
+            matches!(
+                diagnostic.kind,
+                rglsl_pp::DiagnosticKind::VersionUnsupported { .. }
+            )
+        })
+}
+
 fn semantic_errors_before(
     options: &Options,
     preprocessed: &rglsl_pp::Preprocessed,
@@ -835,7 +849,7 @@ fn semantic_errors_before(
         .names
         .borrow_mut()
         .extend(analysis.stage_names.iter().cloned());
-    let parsed = failure.map_or(u32::MAX, |error| error.span.start);
+    let parsed = failure.as_ref().map_or(u32::MAX, |error| error.span.start);
     let mut errors: Vec<Error> = analysis
         .diagnostics
         .iter()
@@ -848,6 +862,10 @@ fn semantic_errors_before(
                 )
         })
         .map(|diagnostic| semantic_error(map, text, diagnostic))
+        .chain(failure.filter(|_| end == usize::MAX).map(|error| Error {
+            kind: ErrorKind::Syntax(error.kind.to_string()),
+            meta: original(map, error.span),
+        }))
         .filter(|error| error.meta.to_range().is_some_and(|range| range.start < end))
         .collect();
     errors.sort_by_key(|error| error.meta.to_range().map(|range| range.start));
