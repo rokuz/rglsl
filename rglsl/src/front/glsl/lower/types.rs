@@ -209,7 +209,7 @@ impl Lowerer<'_> {
         feature
             .extensions()
             .iter()
-            .any(|name| self.analysis.extensions.contains(*name))
+            .any(|extension| self.analysis.extensions.contains(extension.name()))
     }
 
     pub(super) fn insert_type(&mut self, inner: TypeInner) -> Handle<Type> {

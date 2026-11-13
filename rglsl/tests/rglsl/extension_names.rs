@@ -146,10 +146,12 @@ fn report(unknown: &BTreeMap<String, BTreeSet<String>>) -> String {
 
 #[test]
 fn glsl_extension_names_are_known() -> TestResult {
-    let unknown = unknown_names("GL_", &GLSL_NOT_EXTENSIONS, rglsl_ast::extensions::is_known)?;
+    let unknown = unknown_names("GL_", &GLSL_NOT_EXTENSIONS, |name| {
+        rglsl_types::extension::Extension::from_name(name).is_some()
+    })?;
     if !unknown.is_empty() {
         return Err(format!(
-            "GLSL extension names missing from the registry in rglsl-ast/src/extensions.rs \
+            "GLSL extension names missing from the registry in rglsl-types/src/extension.rs \
              (a typo, or an extension to register): {}",
             report(&unknown)
         )

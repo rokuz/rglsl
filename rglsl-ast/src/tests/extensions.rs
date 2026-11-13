@@ -5,10 +5,7 @@ use crate::ast::{
     ExternalDeclaration, FunctionIdentifier, NumericKind, ScalarType, SingleTypeQualifier,
     TypeSpecifierNonArray,
 };
-use crate::extensions::{
-    EXPLICIT_ARITHMETIC, EXPLICIT_ARITHMETIC_EXTENSIONS, Extension, ExtensionIssue, ExtensionState,
-    Feature, KNOWN, Request, is_known,
-};
+use crate::extensions::{EXPLICIT_ARITHMETIC, ExtensionIssue, ExtensionState, Feature, Request};
 use crate::{ParseErrorKind, parse};
 
 use super::{TestResult, expression, rejected, round_trip, unit};
@@ -31,31 +28,13 @@ fn declared_types(source: &str) -> Vec<TypeSpecifierNonArray> {
 }
 
 #[test]
-fn the_registry_knows_every_glslang_extension() {
-    assert_eq!(KNOWN.len(), 233);
-    assert!(KNOWN.windows(2).all(|pair| pair[0] < pair[1]));
-    for name in EXPLICIT_ARITHMETIC {
-        assert!(is_known(name), "{name}");
+fn explicit_arithmetic_extensions_turn_on_explicit_arithmetic() {
+    for extension in EXPLICIT_ARITHMETIC {
+        let mut state = ExtensionState::new();
+        assert!(!state.explicit_arithmetic());
+        state.apply(extension.name(), ExtensionBehavior::Enable);
+        assert!(state.explicit_arithmetic(), "{extension:?}");
     }
-    let typed: Vec<&str> = EXPLICIT_ARITHMETIC_EXTENSIONS
-        .into_iter()
-        .map(Extension::name)
-        .collect();
-    assert_eq!(typed, EXPLICIT_ARITHMETIC);
-    assert!(is_known("GL_EXT_shader_16bit_storage"));
-    assert!(is_known("GL_ARB_gpu_shader_int64"));
-    assert!(!is_known("GL_FOO_bar"));
-}
-
-#[test]
-fn every_extension_is_its_registry_entry() {
-    assert_eq!(Extension::ALL.len(), KNOWN.len());
-    for (index, (extension, name)) in Extension::ALL.into_iter().zip(KNOWN).enumerate() {
-        assert_eq!(extension as usize, index);
-        assert_eq!(extension.name(), name);
-        assert_eq!(Extension::from_name(name), Some(extension));
-    }
-    assert_eq!(Extension::from_name("GL_FOO_bar"), None);
 }
 
 #[test]
@@ -98,18 +77,18 @@ fn implied_extensions_follow_the_chain() {
 #[test]
 fn requests_distinguish_enabled_and_warned_extensions() {
     let mut state = ExtensionState::new();
-    let names = Feature::Int64Literal.extensions();
-    assert_eq!(state.request(names), Request::Missing);
+    let extensions = Feature::Int64Literal.extensions();
+    assert_eq!(state.request_any(extensions), Request::Missing);
     state.apply(
         "GL_EXT_shader_explicit_arithmetic_types_int64",
         ExtensionBehavior::Warn,
     );
     assert_eq!(
-        state.request(names),
+        state.request_any(extensions),
         Request::Warned("GL_EXT_shader_explicit_arithmetic_types_int64")
     );
     state.apply("GL_ARB_gpu_shader_int64", ExtensionBehavior::Enable);
-    assert_eq!(state.request(names), Request::Enabled);
+    assert_eq!(state.request_any(extensions), Request::Enabled);
 }
 
 #[test]

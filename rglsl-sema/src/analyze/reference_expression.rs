@@ -3,7 +3,7 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{BinaryOperator, Expression, Identifier};
-use rglsl_ast::extensions::names;
+use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand, Place};
 use crate::constant::{Constant, Value};
@@ -102,7 +102,11 @@ impl Analyzer<'_> {
         index: &Operand,
         index_expression: &Expression,
     ) -> Operand {
-        self.require_extension(span, names::BUFFER_REFERENCE2, "buffer reference indexing");
+        self.require_extension(
+            span,
+            Extension::ExtBufferReference2.name(),
+            "buffer reference indexing",
+        );
         if self.reference_has_unsized_array(block) {
             self.error(
                 span,
@@ -161,7 +165,11 @@ impl Analyzer<'_> {
             return invalid(self);
         }
         if left.ty.is_reference() || right.ty.is_reference() {
-            self.require_extension(span, names::BUFFER_REFERENCE2, "buffer reference math");
+            self.require_extension(
+                span,
+                Extension::ExtBufferReference2.name(),
+                "buffer reference math",
+            );
         }
         let unsized_operand = [left, right].iter().any(|operand| {
             operand
@@ -242,7 +250,7 @@ impl Analyzer<'_> {
         }
         self.require_extension(
             span,
-            names::BUFFER_REFERENCE2,
+            Extension::ExtBufferReference2.name(),
             "+= and -= on a buffer reference",
         );
         let unsized_target = target
@@ -294,7 +302,7 @@ impl Analyzer<'_> {
             } else if from_uvec2 {
                 self.require_extension(
                     span,
-                    names::BUFFER_REFERENCE_UVEC2,
+                    Extension::ExtBufferReferenceUvec2.name(),
                     "uvec2 conversion to reference",
                 );
                 value.and_then(|constant| match constant.values.as_slice() {
@@ -327,7 +335,7 @@ impl Analyzer<'_> {
         } else if *target == Type::vector(Scalar::Uint, 2) {
             self.require_extension(
                 span,
-                names::BUFFER_REFERENCE_UVEC2,
+                Extension::ExtBufferReferenceUvec2.name(),
                 "reference conversion to uvec2",
             );
             address.map(|address| {
