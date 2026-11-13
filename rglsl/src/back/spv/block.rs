@@ -8,9 +8,8 @@ use arrayvec::ArrayVec;
 use spirv::Word;
 
 use super::{
-    index::BoundsCheckResult, selection::Selection, Block, BlockContext, Dimension, Error,
-    IdGenerator, Instruction, LocalType, LookupType, NumericType, ResultMember, WrappedFunction,
-    Writer, WriterFlags,
+    index::BoundsCheckResult, Block, BlockContext, Dimension, Error, IdGenerator, Instruction,
+    LocalType, LookupType, NumericType, ResultMember, WrappedFunction, Writer, WriterFlags,
 };
 use crate::{
     arena::Handle, back::spv::helpers::is_uniform_matcx2_struct_member_access,
@@ -89,26 +88,6 @@ pub(super) enum AccessTypeAdjustment {
     ///
     /// [`AddressSpace::Uniform`]: crate::AddressSpace::Uniform
     UseStd140CompatType,
-}
-
-/// The results of emitting code for a left-hand-side expression.
-///
-/// On success, `write_access_chain` returns one of these.
-pub(super) enum ExpressionPointer {
-    /// The pointer to the expression's value is available, as the value of the
-    /// expression with the given id.
-    Ready { pointer_id: Word },
-
-    /// The access expression must be conditional on the value of `condition`, a boolean
-    /// expression that is true if all indices are in bounds. If `condition` is true, then
-    /// `access` is an `OpAccessChain` instruction that will compute a pointer to the
-    /// expression's value. If `condition` is false, then executing `access` would be
-    /// undefined behavior.
-    Conditional {
-        condition: Word,
-        pointer_id: Word,
-        access: Instruction,
-    },
 }
 
 /// The termination statement to be added to the end of the block
@@ -585,27 +564,13 @@ impl BlockContext<'_> {
                 result_id
             };
 
-        let result_id = match self.write_access_chain(
-            struct_pointer,
-            block,
-            AccessTypeAdjustment::UseStd140CompatType,
-        )? {
-            ExpressionPointer::Ready { pointer_id } => {
-                load_mat_from_struct(pointer_id, &mut self.writer.id_gen, block)
-            }
-            ExpressionPointer::Conditional {
-                condition,
-                pointer_id,
-                access,
-            } => self.write_conditional_indexed_load(
-                matrix_type_id,
-                condition,
+        let result_id = {
+            let pointer_id = self.write_access_chain(
+                struct_pointer,
                 block,
-                |id_gen, block| {
-                    block.body.push(access);
-                    load_mat_from_struct(pointer_id, id_gen, block)
-                },
-            ),
+                AccessTypeAdjustment::UseStd140CompatType,
+            )?;
+            load_mat_from_struct(pointer_id, &mut self.writer.id_gen, block)
         };
 
         Ok(Some(result_id))
@@ -885,18 +850,11 @@ impl BlockContext<'_> {
                     } => {
                         // Only binding arrays in the `Handle` address space will take
                         // this path, since we handled the `Pointer` case above.
-                        let result_id = match self.write_access_chain(
+                        let result_id = self.write_access_chain(
                             expr_handle,
                             block,
                             AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
-                        )? {
-                            ExpressionPointer::Ready { pointer_id } => pointer_id,
-                            ExpressionPointer::Conditional { .. } => {
-                                return Err(Error::FeatureNotImplemented(
-                                    "Texture array out-of-bounds handling",
-                                ));
-                            }
-                        };
+                        )?;
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
                         self.function.handle_pointers.insert(expr_handle, result_id);
@@ -974,18 +932,11 @@ impl BlockContext<'_> {
                     } => {
                         // Only binding arrays in the `Handle` address space will take
                         // this path, since we handled the `Pointer` case above.
-                        let result_id = match self.write_access_chain(
+                        let result_id = self.write_access_chain(
                             expr_handle,
                             block,
                             AccessTypeAdjustment::IntroducePointer(self.handle_class(base)),
-                        )? {
-                            ExpressionPointer::Ready { pointer_id } => pointer_id,
-                            ExpressionPointer::Conditional { .. } => {
-                                return Err(Error::FeatureNotImplemented(
-                                    "Texture array out-of-bounds handling",
-                                ));
-                            }
-                        };
+                        )?;
 
                         let binding_type_id = self.get_handle_type_id(binding_type)?;
                         self.function.handle_pointers.insert(expr_handle, result_id);
@@ -1977,12 +1928,7 @@ impl BlockContext<'_> {
                     &[spirv::Capability::InterpolationFunction],
                 )?;
                 let pointer_id =
-                    match self.write_access_chain(pointer, block, AccessTypeAdjustment::None)? {
-                        ExpressionPointer::Ready { pointer_id } => pointer_id,
-                        ExpressionPointer::Conditional { .. } => {
-                            return Err(Error::FeatureNotImplemented("bounds-checked interpolants"))
-                        }
-                    };
+                    self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?;
                 let (op, operand) = match location {
                     crate::InterpolationLocation::Centroid => {
                         (spirv::GlslStd450Op::InterpolateAtCentroid, None)
@@ -2227,15 +2173,10 @@ impl BlockContext<'_> {
                     self.ir_function.expressions[value],
                     crate::Expression::Access { .. } | crate::Expression::AccessIndex { .. }
                 ) {
-                    match self.write_access_chain(value, block, AccessTypeAdjustment::None)? {
-                        ExpressionPointer::Ready { pointer_id } => {
-                            self.cached.set(value, pointer_id)?
-                        }
-                        ExpressionPointer::Conditional { .. } => {
-                            return Err(Error::Validation(
-                                "a checked access cannot be converted to a physical pointer",
-                            ))
-                        }
+                    {
+                        let pointer_id =
+                            self.write_access_chain(value, block, AccessTypeAdjustment::None)?;
+                        self.cached.set(value, pointer_id)?
                     }
                 }
                 self.write_physical_pointer(value, result_type_id, block)?
@@ -2816,15 +2757,12 @@ impl BlockContext<'_> {
     /// Give the `OpAccessChain` a result type based on `expr_handle`, adjusted
     /// according to `type_adjustment`; see the documentation for
     /// [`AccessTypeAdjustment`] for details.
-    ///
-    /// On success, the return value is an [`ExpressionPointer`] value; see the
-    /// documentation for that type.
     pub(super) fn write_access_chain(
         &mut self,
         mut expr_handle: Handle<crate::Expression>,
         block: &mut Block,
         type_adjustment: AccessTypeAdjustment,
-    ) -> Result<ExpressionPointer, Error> {
+    ) -> Result<Word, Error> {
         let non_uniform_access = self
             .non_uniform(expr_handle)
             .contains(crate::NonUniform::ACCESS);
@@ -2853,11 +2791,6 @@ impl BlockContext<'_> {
                 }
             }
         };
-
-        // The id of the boolean `and` of all dynamic bounds checks up to this point.
-        //
-        // See `extend_bounds_check_condition_chain` for a full explanation.
-        let mut accumulated_checks = None;
 
         // Is true if we are accessing into a binding array with a non-uniform index.
 
@@ -2888,8 +2821,7 @@ impl BlockContext<'_> {
                     self.binding_array_capability(base, non_uniform_index)?;
                     self.tensor_array_capability(base, index, non_uniform_index)?;
                     let index = GuardedIndex::Expression(index);
-                    let index_id =
-                        self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
+                    let index_id = self.write_access_chain_index(index)?;
                     self.temp_list.push(index_id);
 
                     base
@@ -2951,12 +2883,8 @@ impl BlockContext<'_> {
                             // Even though the index value is statically known, `base`
                             // may be a runtime-sized array, so we still need to go
                             // through the bounds check process.
-                            let index_id = self.write_access_chain_index(
-                                base,
-                                GuardedIndex::Known(index),
-                                &mut accumulated_checks,
-                                block,
-                            )?;
+                            let index_id =
+                                self.write_access_chain_index(GuardedIndex::Known(index))?;
                             self.temp_list.push(index_id);
                         }
                     }
@@ -3011,12 +2939,10 @@ impl BlockContext<'_> {
             if non_uniform_access {
                 self.writer.decorate_non_uniform(pointer_id)?;
             }
-            return Ok(ExpressionPointer::Ready { pointer_id });
+            return Ok(pointer_id);
         }
         let expr_pointer = if self.temp_list.is_empty() {
-            ExpressionPointer::Ready {
-                pointer_id: root_id,
-            }
+            root_id
         } else {
             self.temp_list.reverse();
             let pointer_id = self.gen_id();
@@ -3025,102 +2951,19 @@ impl BlockContext<'_> {
             if non_uniform_access {
                 self.writer.decorate_non_uniform(pointer_id)?;
             }
-
-            // If we generated some bounds checks, we need to leave it to our
-            // caller to generate the branch, the access, the load or store, and
-            // the zero value (for loads). Otherwise, we can emit the access
-            // ourselves, and just hand them the id of the pointer.
-            match accumulated_checks {
-                Some(condition) => ExpressionPointer::Conditional {
-                    condition,
-                    pointer_id,
-                    access,
-                },
-                None => {
-                    block.body.push(access);
-                    ExpressionPointer::Ready { pointer_id }
-                }
-            }
+            block.body.push(access);
+            pointer_id
         };
         Ok(expr_pointer)
     }
 
-    /// Compute a single index operand to an `OpAccessChain` instruction.
-    ///
-    /// Given that we are indexing `base` with `index`, apply the appropriate
-    /// bounds check policies, emitting code to `block` to clamp `index` or
-    /// determine whether it's in bounds. Return the SPIR-V instruction id of
-    /// the index value we should actually use.
-    ///
-    /// Extend `accumulated_checks` to include the results of any needed bounds
-    /// checks. See [`BlockContext::extend_bounds_check_condition_chain`].
-    fn write_access_chain_index(
-        &mut self,
-        base: Handle<crate::Expression>,
-        index: GuardedIndex,
-        accumulated_checks: &mut Option<Word>,
-        block: &mut Block,
-    ) -> Result<Word, Error> {
-        match self.write_bounds_check(base, index, block)? {
+    fn write_access_chain_index(&mut self, index: GuardedIndex) -> Result<Word, Error> {
+        match self.write_bounds_check(index)? {
             BoundsCheckResult::KnownInBounds(known_index) => {
-                // Even if the index is known, `OpAccessChain`
-                // requires expression operands, not literals.
                 let scalar = crate::Literal::U32(known_index);
                 Ok(self.writer.get_constant_scalar(scalar))
             }
             BoundsCheckResult::Computed(computed_index_id) => Ok(computed_index_id),
-            BoundsCheckResult::Conditional {
-                condition_id: condition,
-                index_id: index,
-            } => {
-                self.extend_bounds_check_condition_chain(accumulated_checks, condition, block);
-
-                // Use the index from the `Access` expression unchanged.
-                Ok(index)
-            }
-        }
-    }
-
-    /// Add a condition to a chain of bounds checks.
-    ///
-    /// As we build an `OpAccessChain` instruction govered by
-    /// [`BoundsCheckPolicy::ReadZeroSkipWrite`], we accumulate a chain of
-    /// dynamic bounds checks, one for each index in the chain, which must all
-    /// be true for that `OpAccessChain`'s execution to be well-defined. This
-    /// function adds the boolean instruction id `comparison_id` to `chain`.
-    ///
-    /// If `chain` is `None`, that means there are no bounds checks in the chain
-    /// yet. If chain is `Some(id)`, then `id` is the conjunction of all the
-    /// bounds checks in the chain.
-    ///
-    /// When we have multiple bounds checks, we combine them with
-    /// `OpLogicalAnd`, not a short-circuit branch. This means we might do
-    /// comparisons we don't need to, but we expect these checks to almost
-    /// always succeed, and keeping branches to a minimum is essential.
-    ///
-    /// [`BoundsCheckPolicy::ReadZeroSkipWrite`]: crate::proc::BoundsCheckPolicy
-    fn extend_bounds_check_condition_chain(
-        &mut self,
-        chain: &mut Option<Word>,
-        comparison_id: Word,
-        block: &mut Block,
-    ) {
-        match *chain {
-            Some(ref mut prior_checks) => {
-                let combined = self.gen_id();
-                block.body.push(Instruction::binary(
-                    spirv::Op::LogicalAnd,
-                    self.writer.get_bool_type_id(),
-                    combined,
-                    *prior_checks,
-                    comparison_id,
-                ));
-                *prior_checks = combined;
-            }
-            None => {
-                // Start a fresh chain of checks.
-                *chain = Some(comparison_id);
-            }
         }
     }
 
@@ -3194,65 +3037,40 @@ impl BlockContext<'_> {
                 load_type_id
             };
 
-            let load_id = match self.write_access_chain(pointer, block, access_type_adjustment)? {
-                ExpressionPointer::Ready { pointer_id } => {
-                    let id = self.gen_id();
-                    let atomic_space =
-                        match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-                            crate::TypeInner::Pointer { base, space } => {
-                                match self.ir_module.types[base].inner {
-                                    crate::TypeInner::Atomic { .. } => Some(space),
-                                    _ => None,
-                                }
+            let load_id = {
+                let pointer_id = self.write_access_chain(pointer, block, access_type_adjustment)?;
+                let id = self.gen_id();
+                let atomic_space =
+                    match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                        crate::TypeInner::Pointer { base, space } => {
+                            match self.ir_module.types[base].inner {
+                                crate::TypeInner::Atomic { .. } => Some(space),
+                                _ => None,
                             }
-                            _ => None,
-                        };
-                    let instruction = if let Some(space) = atomic_space {
-                        let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                        let scope_constant_id = self.get_scope_constant(scope as u32);
-                        let semantics_id = self.get_index_constant(semantics.bits());
-                        Instruction::atomic_load(
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                        )
-                    } else {
-                        let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
-                        let component = self.physical_component_load;
-                        for operand in self.memory_access(pointer, component, false) {
-                            instruction.add_operand(operand);
                         }
-                        instruction
+                        _ => None,
                     };
-                    block.body.push(instruction);
-                    id
-                }
-                ExpressionPointer::Conditional {
-                    condition,
-                    pointer_id,
-                    access,
-                } => {
-                    //TODO: support atomics?
-                    self.write_conditional_indexed_load(
-                        load_type_id,
-                        condition,
-                        block,
-                        move |id_gen, block| {
-                            // The in-bounds path. Perform the access and the load.
-                            let value_id = id_gen.next();
-                            block.body.push(access);
-                            block.body.push(Instruction::load(
-                                load_type_id,
-                                value_id,
-                                pointer_id,
-                                None,
-                            ));
-                            value_id
-                        },
+                let instruction = if let Some(space) = atomic_space {
+                    let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                    let scope_constant_id = self.get_scope_constant(scope as u32);
+                    let semantics_id = self.get_index_constant(semantics.bits());
+                    Instruction::atomic_load(
+                        result_type_id,
+                        id,
+                        pointer_id,
+                        scope_constant_id,
+                        semantics_id,
                     )
-                }
+                } else {
+                    let mut instruction = Instruction::load(load_type_id, id, pointer_id, None);
+                    let component = self.physical_component_load;
+                    for operand in self.memory_access(pointer, component, false) {
+                        instruction.add_operand(operand);
+                    }
+                    instruction
+                };
+                block.body.push(instruction);
+                id
             };
 
             match wrapped_load {
@@ -4525,60 +4343,41 @@ impl BlockContext<'_> {
                         )?;
                     }
                 }
-                match self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)? {
-                    ExpressionPointer::Ready { pointer_id } => {
-                        let atomic_space =
-                            match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-                                crate::TypeInner::Pointer { base, space } => {
-                                    match self.ir_module.types[base].inner {
-                                        crate::TypeInner::Atomic { .. } => Some(space),
-                                        _ => None,
-                                    }
+                {
+                    let pointer_id =
+                        self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)?;
+                    let atomic_space =
+                        match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                            crate::TypeInner::Pointer { base, space } => {
+                                match self.ir_module.types[base].inner {
+                                    crate::TypeInner::Atomic { .. } => Some(space),
+                                    _ => None,
                                 }
-                                _ => None,
-                            };
-                        let instruction = if let Some(space) = atomic_space {
-                            let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                            let scope_constant_id = self.get_scope_constant(scope as u32);
-                            let semantics_id = self.get_index_constant(semantics.bits());
-                            Instruction::atomic_store(
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                                value_id,
-                            )
-                        } else {
-                            let mut instruction = Instruction::store(pointer_id, value_id, None);
-                            let swizzled = matches!(
-                                self.ir_function.expressions[value],
-                                crate::Expression::Swizzle { .. }
-                            );
-                            for operand in self.memory_access(pointer, swizzled, true) {
-                                instruction.add_operand(operand);
                             }
-                            instruction
+                            _ => None,
                         };
-                        block.body.push(instruction);
-                    }
-                    ExpressionPointer::Conditional {
-                        condition,
-                        pointer_id,
-                        access,
-                    } => {
-                        let mut selection = Selection::start(&mut block, ());
-                        selection.if_true(self, condition, ());
-
-                        // The in-bounds path. Perform the access and the store.
-                        selection.block().body.push(access);
-                        selection
-                            .block()
-                            .body
-                            .push(Instruction::store(pointer_id, value_id, None));
-
-                        // Finish the in-bounds block and start the merge block. This
-                        // is the block we'll leave current on return.
-                        selection.finish(self, ());
-                    }
+                    let instruction = if let Some(space) = atomic_space {
+                        let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                        let scope_constant_id = self.get_scope_constant(scope as u32);
+                        let semantics_id = self.get_index_constant(semantics.bits());
+                        Instruction::atomic_store(
+                            pointer_id,
+                            scope_constant_id,
+                            semantics_id,
+                            value_id,
+                        )
+                    } else {
+                        let mut instruction = Instruction::store(pointer_id, value_id, None);
+                        let swizzled = matches!(
+                            self.ir_function.expressions[value],
+                            crate::Expression::Swizzle { .. }
+                        );
+                        for operand in self.memory_access(pointer, swizzled, true) {
+                            instruction.add_operand(operand);
+                        }
+                        instruction
+                    };
+                    block.body.push(instruction);
                 };
             }
             Statement::ImageStore {
@@ -4619,20 +4418,13 @@ impl BlockContext<'_> {
                                 crate::TypeInner::BindingArray { .. }
                             ) =>
                         {
-                            match self.write_access_chain(
+                            self.write_access_chain(
                                 argument,
                                 &mut block,
                                 AccessTypeAdjustment::IntroducePointer(
                                     spirv::StorageClass::UniformConstant,
                                 ),
-                            )? {
-                                ExpressionPointer::Ready { pointer_id } => pointer_id,
-                                ExpressionPointer::Conditional { .. } => {
-                                    return Err(Error::FeatureNotImplemented(
-                                        "Texture array out-of-bounds handling",
-                                    ));
-                                }
-                            }
+                            )?
                         }
                         _ => self.cached.get(argument)?,
                     };
@@ -4680,18 +4472,8 @@ impl BlockContext<'_> {
                     self.cached.set(result, id)?;
                 }
 
-                let pointer_id = match self.write_access_chain(
-                    pointer,
-                    &mut block,
-                    AccessTypeAdjustment::None,
-                )? {
-                    ExpressionPointer::Ready { pointer_id } => pointer_id,
-                    ExpressionPointer::Conditional { .. } => {
-                        return Err(Error::FeatureNotImplemented(
-                            "Atomics out-of-bounds handling",
-                        ));
-                    }
-                };
+                let pointer_id =
+                    self.write_access_chain(pointer, &mut block, AccessTypeAdjustment::None)?;
 
                 let space = self.fun_info[pointer]
                     .ty

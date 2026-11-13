@@ -4,12 +4,6 @@ capabilities = """
   | STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
 """
 
-[bounds_check_policies]
-index = "ReadZeroSkipWrite"
-buffer = "ReadZeroSkipWrite"
-image = "ReadZeroSkipWrite"
-binding_array = "ReadZeroSkipWrite"
-
 [spv]
 version = [1, 1]
 

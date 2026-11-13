@@ -116,7 +116,6 @@ mod qcom;
 mod ray;
 mod reclaimable;
 mod replicate;
-mod selection;
 mod small_types;
 mod specialization;
 mod stage;
@@ -135,7 +134,7 @@ use spirv::Word;
 use thiserror::Error;
 
 use crate::arena::{Handle, HandleVec};
-use crate::proc::{BoundsCheckPolicies, TypeResolution};
+use crate::proc::TypeResolution;
 
 #[derive(Clone)]
 struct PhysicalLayout {
@@ -905,7 +904,6 @@ pub struct Writer {
     debugs: Vec<Instruction>,
     annotations: Vec<Instruction>,
     flags: WriterFlags,
-    bounds_check_policies: BoundsCheckPolicies,
     vulkan_memory_model: bool,
     device_scope_used: bool,
     void_type: Word,
@@ -1036,10 +1034,6 @@ pub struct Options<'a> {
     /// If this is `None`, all capabilities are permitted.
     pub capabilities: Option<crate::FastHashSet<Capability>>,
 
-    /// How should generate code handle array, vector, matrix, or image texel
-    /// indices that are out of range?
-    pub bounds_check_policies: BoundsCheckPolicies,
-
     pub debug_info: Option<DebugInfo<'a>>,
 }
 
@@ -1055,7 +1049,6 @@ impl Default for Options<'_> {
             fake_missing_bindings: true,
             binding_map: BindingMap::default(),
             capabilities: None,
-            bounds_check_policies: BoundsCheckPolicies::default(),
             debug_info: None,
         }
     }

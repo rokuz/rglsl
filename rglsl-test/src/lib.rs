@@ -70,12 +70,6 @@ where
     Ok(map)
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
-pub struct WriterSharedOptions {
-    pub bounds_checks_policies: rglsl::proc::BoundsCheckPolicies,
-}
-
 #[derive(Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct SpirvOutParameters {
@@ -106,7 +100,6 @@ impl Default for SpirvOutParameters {
 impl SpirvOutParameters {
     pub fn to_options<'a>(
         &'a self,
-        shared_info: &WriterSharedOptions,
         debug_info: Option<rglsl::back::spv::DebugInfo<'a>>,
     ) -> rglsl::back::spv::Options<'a> {
         use rglsl::back::spv;
@@ -126,7 +119,6 @@ impl SpirvOutParameters {
             } else {
                 Some(self.capabilities.clone())
             },
-            bounds_check_policies: shared_info.bounds_checks_policies,
             fake_missing_bindings: true,
             binding_map: self.binding_map.clone(),
             debug_info,
@@ -149,7 +141,6 @@ pub struct Parameters {
     pub targets: Option<Targets>,
 
     // -- General options --
-    pub bounds_check_policies: rglsl::proc::BoundsCheckPolicies,
     pub pipeline_constants: rglsl::back::PipelineConstants,
 
     pub expected_error: Option<String>,

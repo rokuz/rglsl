@@ -20,7 +20,7 @@ pub use constant_evaluator::{
     ConstantEvaluator, ConstantEvaluatorError, ExpressionKind, ExpressionKindTracker,
 };
 pub use emitter::Emitter;
-pub use index::{BoundsCheckPolicies, BoundsCheckPolicy, IndexableLength, IndexableLengthError};
+pub use index::{IndexableLength, IndexableLengthError};
 pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayout};
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;

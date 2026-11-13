@@ -1,4 +1,3 @@
-bounds_check_policies = []
 targets = "SPIRV"
 
 [spv]

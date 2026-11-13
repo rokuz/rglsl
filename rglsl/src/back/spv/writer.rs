@@ -82,7 +82,6 @@ impl Writer {
             debugs: vec![],
             annotations: vec![],
             flags: options.flags,
-            bounds_check_policies: options.bounds_check_policies,
             vulkan_memory_model: false,
             device_scope_used: false,
             void_type,
@@ -144,7 +143,6 @@ impl Writer {
         self.physical_layout = PhysicalLayout::new(major, minor);
         self.capabilities_available = options.capabilities.clone();
         self.flags = options.flags;
-        self.bounds_check_policies = options.bounds_check_policies;
         self.binding_map = options.binding_map.clone();
         self.debug = super::debug::DebugState::new(options.debug_info.as_ref());
         Ok(())
@@ -235,7 +233,6 @@ impl Writer {
         let fresh = Writer {
             // Copied from the old Writer:
             flags: self.flags,
-            bounds_check_policies: self.bounds_check_policies,
             vulkan_memory_model: false,
             device_scope_used: false,
             capabilities_available: take(&mut self.capabilities_available),
@@ -1066,21 +1063,7 @@ impl Writer {
             })
             .collect::<ArrayVec<_, 4>>();
 
-        // Which label we branch to in the default (column index out-of-bounds)
-        // case depends on our bounds check policy.
-        let default_id = match self.bounds_check_policies.index {
-            // For `Restrict`, treat the same as the final column.
-            crate::proc::BoundsCheckPolicy::Restrict => match cases.last() {
-                Some(case) => case.label_id,
-                None => return Err(Error::Validation("matrix has no columns")),
-            },
-            // For `ReadZeroSkipWrite`, branch directly to the merge block. This
-            // will be handled in the `OpPhi` below to produce a zero value.
-            crate::proc::BoundsCheckPolicy::ReadZeroSkipWrite => merge_id,
-            // For `Unchecked` we create a new block containing an
-            // `OpUnreachable`.
-            crate::proc::BoundsCheckPolicy::Unchecked => self.id_gen.next(),
-        };
+        let default_id = self.id_gen.next();
         function.consume(
             block,
             Instruction::switch(column_index_param_id, default_id, &cases),
@@ -1089,7 +1072,7 @@ impl Writer {
         // Emit a block for each case, and produce a list of variable and parent
         // block IDs that will be used in an `OpPhi` below to select the right
         // value.
-        let mut var_parent_pairs = cases
+        let var_parent_pairs = cases
             .into_iter()
             .map(|case| {
                 let mut block = Block::new(case.label_id);
@@ -1106,27 +1089,10 @@ impl Writer {
             // Need capacity for up to 4 columns plus possibly a default case.
             .collect::<ArrayVec<_, 5>>();
 
-        // Emit a block or append the variable and parent `OpPhi` pair for the
-        // column index out-of-bounds case, if required.
-        match self.bounds_check_policies.index {
-            // Don't need to do anything for `Restrict` as we have branched from
-            // the final column case's block.
-            crate::proc::BoundsCheckPolicy::Restrict => {}
-            // For `ReadZeroSkipWrite` we have branched directly from the block
-            // containing the `OpSwitch`. The `OpPhi` should produce a zero
-            // value.
-            crate::proc::BoundsCheckPolicy::ReadZeroSkipWrite => {
-                var_parent_pairs.push((self.get_constant_null(column_type_id), label_id));
-            }
-            // For `Unchecked` create a new block containing `OpUnreachable`.
-            // This does not need to be handled by the `OpPhi`.
-            crate::proc::BoundsCheckPolicy::Unchecked => {
-                function.consume(
-                    Block::new(default_id),
-                    Instruction::new(spirv::Op::Unreachable),
-                );
-            }
-        }
+        function.consume(
+            Block::new(default_id),
+            Instruction::new(spirv::Op::Unreachable),
+        );
 
         let mut block = Block::new(merge_id);
         let result_id = self.id_gen.next();

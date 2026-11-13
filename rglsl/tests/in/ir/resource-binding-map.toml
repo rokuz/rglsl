@@ -1,6 +1,1 @@
 targets = ""
-
-[bounds_check_policies]
-index = "ReadZeroSkipWrite"
-buffer = "ReadZeroSkipWrite"
-image_load = "ReadZeroSkipWrite"

@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use spirv::{Op, Word};
 
-use super::block::{AccessTypeAdjustment, ExpressionPointer};
+use super::block::AccessTypeAdjustment;
 use super::{Block, BlockContext, Error, Instruction, LookupType, Writer};
 use crate::{
     arena::Handle, CooperativeData, CooperativeFamily, CooperativeMatrixClass,
@@ -113,12 +113,7 @@ impl BlockContext<'_> {
         pointer: Handle<Expression>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        match self.write_access_chain(pointer, block, AccessTypeAdjustment::None)? {
-            ExpressionPointer::Ready { pointer_id } => Ok(pointer_id),
-            ExpressionPointer::Conditional { .. } => Err(Error::FeatureNotImplemented(
-                "bounds-checked cooperative memory access",
-            )),
-        }
+        self.write_access_chain(pointer, block, AccessTypeAdjustment::None)
     }
 
     pub(super) fn write_replicate(

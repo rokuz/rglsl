@@ -3,8 +3,7 @@ use alloc::{string::String, vec::Vec};
 use spirv::Word;
 
 use super::{
-    block::{AccessTypeAdjustment, ExpressionPointer},
-    helpers, Block, BlockContext, Error, Instruction, Writer,
+    block::AccessTypeAdjustment, helpers, Block, BlockContext, Error, Instruction, Writer,
 };
 use crate::{
     arena::Handle, Expression, GlobalVariable, Module, SpirvDecoration, SpirvDecorationOperands,
@@ -181,14 +180,7 @@ impl BlockContext<'_> {
                 },
                 SpirvOperand::Literal(literal) => literal,
                 SpirvOperand::Pointer(pointer) => {
-                    match self.write_access_chain(pointer, block, AccessTypeAdjustment::None)? {
-                        ExpressionPointer::Ready { pointer_id } => pointer_id,
-                        ExpressionPointer::Conditional { .. } => {
-                            return Err(Error::Validation(
-                                "a SPIR-V instruction operand needs a bounds check",
-                            ))
-                        }
-                    }
+                    self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?
                 }
             });
         }

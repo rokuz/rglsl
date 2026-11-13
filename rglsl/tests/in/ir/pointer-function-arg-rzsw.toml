@@ -1,4 +1,0 @@
-targets = ""
-
-[bounds_check_policies]
-index = "ReadZeroSkipWrite"
