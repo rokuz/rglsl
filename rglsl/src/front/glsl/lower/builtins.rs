@@ -366,13 +366,18 @@ impl FunctionLowerer<'_, '_> {
                 Ok(value)
             };
         }
-        match name {
-            "isnan" | "isinf" => {
-                let fun = if name == "isnan" {
-                    RelationalFunction::IsNan
-                } else {
-                    RelationalFunction::IsInf
-                };
+        if name == "mix" && types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) {
+            return self.add(
+                Expression::Select {
+                    condition: arg(2)?,
+                    accept: arg(1)?,
+                    reject: arg(0)?,
+                },
+                at,
+            );
+        }
+        match special(name) {
+            Some(Special::Relational(fun)) => {
                 return self.add(
                     Expression::Relational {
                         fun,
@@ -381,21 +386,7 @@ impl FunctionLowerer<'_, '_> {
                     at,
                 );
             }
-            "any" | "all" => {
-                let fun = if name == "any" {
-                    RelationalFunction::Any
-                } else {
-                    RelationalFunction::All
-                };
-                return self.add(
-                    Expression::Relational {
-                        fun,
-                        argument: arg(0)?,
-                    },
-                    at,
-                );
-            }
-            "not" => {
+            Some(Special::Not) => {
                 return self.add(
                     Expression::Unary {
                         op: UnaryOperator::LogicalNot,
@@ -404,54 +395,10 @@ impl FunctionLowerer<'_, '_> {
                     at,
                 );
             }
-            "lessThan" | "lessThanEqual" | "greaterThan" | "greaterThanEqual" | "equal"
-            | "notEqual" => {
-                let op = match name {
-                    "lessThan" => BinaryOperator::Less,
-                    "lessThanEqual" => BinaryOperator::LessEqual,
-                    "greaterThan" => BinaryOperator::Greater,
-                    "greaterThanEqual" => BinaryOperator::GreaterEqual,
-                    "equal" => BinaryOperator::Equal,
-                    _ => BinaryOperator::NotEqual,
-                };
+            Some(Special::Compare(op)) => {
                 return self.binary_op(op, arg(0)?, arg(1)?, at);
             }
-            "floatBitsToInt"
-            | "floatBitsToUint"
-            | "intBitsToFloat"
-            | "uintBitsToFloat"
-            | "doubleBitsToInt64"
-            | "doubleBitsToUint64"
-            | "int64BitsToDouble"
-            | "uint64BitsToDouble"
-            | "halfBitsToInt16"
-            | "halfBitsToUint16"
-            | "float16BitsToInt16"
-            | "float16BitsToUint16"
-            | "int16BitsToFloat16"
-            | "uint16BitsToFloat16"
-            | "int16BitsToHalf"
-            | "uint16BitsToHalf"
-            | "bfloat16BitsToIntEXT"
-            | "bfloat16BitsToUintEXT"
-            | "intBitsToBFloat16EXT"
-            | "uintBitsToBFloat16EXT"
-            | "floate4m3BitsToIntEXT"
-            | "floate4m3BitsToUintEXT"
-            | "intBitsToFloate4m3EXT"
-            | "uintBitsToFloate4m3EXT"
-            | "floate5m2BitsToIntEXT"
-            | "floate5m2BitsToUintEXT"
-            | "intBitsToFloate5m2EXT"
-            | "uintBitsToFloate5m2EXT"
-            | "floatue8m0BitsToIntEXT"
-            | "floatue8m0BitsToUintEXT"
-            | "intBitsToFloatue8m0EXT"
-            | "uintBitsToFloatue8m0EXT"
-            | "floatmxint8BitsToIntEXT"
-            | "floatmxint8BitsToUintEXT"
-            | "intBitsToFloatmxint8EXT"
-            | "uintBitsToFloatmxint8EXT" => {
+            Some(Special::Bitcast) => {
                 let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
                 return self.add(
                     Expression::As {
@@ -462,15 +409,13 @@ impl FunctionLowerer<'_, '_> {
                     at,
                 );
             }
-            "packInt2x32" | "packUint2x32" | "packInt2x16" | "packUint2x16" | "packInt4x16"
-            | "packUint4x16" | "pack16" | "pack32" | "pack64" => {
+            Some(Special::Pack) => {
                 return self.pack_bits(arg(0)?, &first_ty, result, at);
             }
-            "unpackInt2x32" | "unpackUint2x32" | "unpackInt2x16" | "unpackUint2x16"
-            | "unpackInt4x16" | "unpackUint4x16" | "unpack8" | "unpack16" | "unpack32" => {
+            Some(Special::Unpack) => {
                 return self.unpack_bits(arg(0)?, &first_ty, result, at);
             }
-            "mod" => {
+            Some(Special::Modulo) => {
                 let x = arg(0)?;
                 let mut y = arg(1)?;
                 if let (Some(size), true) = (vector, types.get(1).is_some_and(GlslType::is_scalar))
@@ -479,17 +424,7 @@ impl FunctionLowerer<'_, '_> {
                 }
                 return self.binary_op(BinaryOperator::Modulo, x, y, at);
             }
-            "mix" if types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) => {
-                return self.add(
-                    Expression::Select {
-                        condition: arg(2)?,
-                        accept: arg(1)?,
-                        reject: arg(0)?,
-                    },
-                    at,
-                );
-            }
-            "matrixCompMult" => {
+            Some(Special::MatrixCompMult) => {
                 let TypeKind::Matrix { columns, .. } = result.kind else {
                     return Err(internal(at));
                 };
@@ -503,20 +438,19 @@ impl FunctionLowerer<'_, '_> {
                 let ty = self.lw.ir_type(result, at)?;
                 return self.add(Expression::Compose { ty, components }, at);
             }
-            "bitfieldExtract" | "bitfieldInsert" => {
+            Some(Special::Bitfield(fun)) => {
                 let mut converted = values.clone();
-                let start = if name == "bitfieldExtract" { 1 } else { 2 };
+                let start = if fun == MathFunction::ExtractBits {
+                    1
+                } else {
+                    2
+                };
                 for slot in converted.iter_mut().skip(start) {
                     *slot = self.as_kind(*slot, crate::Scalar::U32, at)?;
                 }
-                let fun = if name == "bitfieldExtract" {
-                    MathFunction::ExtractBits
-                } else {
-                    MathFunction::InsertBits
-                };
                 return self.math_call(fun, &converted, at);
             }
-            _ => {}
+            None => {}
         }
         if first_ty.is_scalar() && name == "dot" {
             return self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at);
@@ -901,154 +835,136 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
-        if let Some(result) = {
-            let frame = self.clone().ray_builtin_call(name, arguments, at);
-            self.nest(frame).await
-        }? {
-            return Ok(result);
-        }
-        let call = texture_call(name);
-        if sampling_function(&call.base) {
-            return {
-                let frame =
-                    self.clone()
-                        .sample(call, function, arguments, ImageGatherPattern::Quad, at);
+        let route = route(name, arguments.len())
+            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
+        match route {
+            Route::Ray => {
+                let frame = self.clone().ray_builtin_call(name, arguments, at);
+                self.nest(frame).await
+            }?
+            .ok_or_else(|| internal(at)),
+            Route::Sample => {
+                let frame = self.clone().sample(
+                    texture_call(name),
+                    function,
+                    arguments,
+                    ImageGatherPattern::Quad,
+                    at,
+                );
                 self.nest(frame).await
             }
-            .map(Some);
-        }
-        match name {
-            _ if gather_pattern(name).is_some() => {
+            .map(Some),
+            Route::PatternGather => {
                 let frame = self.clone().gather_call(name, function, arguments, at);
                 self.nest(frame).await
             }
-            "sparseTexelFetchARB" => {
+            Route::SparseFetch => {
                 let frame = self.clone().fetch(function, arguments, false, true, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "sparseTexelFetchOffsetARB" => {
+            Route::SparseFetchOffset => {
                 let frame = self.clone().fetch(function, arguments, true, true, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "sparseImageLoadARB" | "sparseImageLoadLodAMD" => {
+            Route::Image => {
                 let frame = self.clone().image(name, function, arguments, at);
                 self.nest(frame).await
             }
-            "sparseTexelsResidentARB" => {
+            Route::SparseTexelsResident => {
                 let frame = self.clone().sparse_texels_resident_call(arguments, at);
                 self.nest(frame).await
             }
-            "textureQueryLod" | "textureQueryLOD" => {
+            Route::QueryLod => {
                 let frame = self.clone().query_lod(arguments, at);
                 self.nest(frame).await
             }
             .map(Some),
-            _ if image_processing(name).is_some() => {
+            Route::ImageProcessing => {
                 let frame = self.clone().image_processing_call(name, arguments, at);
                 self.nest(frame).await
             }
-            "texelFetch" => {
+            Route::Fetch => {
                 let frame = self.clone().fetch(function, arguments, false, false, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "texelFetchOffset" => {
+            Route::FetchOffset => {
                 let frame = self.clone().fetch(function, arguments, true, false, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize"
-            | "imageSamples" => {
+            Route::Query => {
                 let frame = self.clone().query(name, arguments, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "imageLoad" | "imageStore" | "imageLoadLodAMD" | "imageStoreLodAMD" => {
-                let frame = self.clone().image(name, function, arguments, at);
-                self.nest(frame).await
-            }
-            _ if name.starts_with("imageAtomic") => {
+            Route::ImageAtomic => {
                 let frame = self.clone().image_atomic_call(name, arguments, at);
                 self.nest(frame).await
             }
-            "subpassLoad" => {
+            Route::SubpassLoad => {
                 let frame = self.clone().subpass_load(arguments, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "barrier"
-            | "memoryBarrier"
-            | "memoryBarrierBuffer"
-            | "memoryBarrierShared"
-            | "memoryBarrierImage"
-            | "groupMemoryBarrier"
-            | "controlBarrier"
-            | "controlBarrierArrive"
-            | "controlBarrierWait" => self.with(|this| this.barrier_call(name, arguments, at))?,
-            "beginInvocationInterlockARB" | "endInvocationInterlockARB" => {
-                self.with(|this| this.interlock_call(name, at))?
-            }
-            "helperInvocationEXT" => {
+            Route::Barrier => self.with(|this| this.barrier_call(name, arguments, at))?,
+            Route::Interlock => self.with(|this| this.interlock_call(name, at))?,
+            Route::HelperInvocation => {
                 self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
             }
-            "textureFootprintNV"
-            | "textureFootprintClampNV"
-            | "textureFootprintLodNV"
-            | "textureFootprintGradNV"
-            | "textureFootprintGradClampNV" => {
+            Route::Footprint => {
                 let frame = self.clone().footprint(name, arguments, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "fragmentMaskFetchAMD" | "fragmentFetchAMD" => {
+            Route::FragmentFetch => {
                 let frame = self.clone().fragment_fetch_call(name, arguments, at);
                 self.nest(frame).await
             }
-            "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
+            Route::Interpolate => {
                 let frame = self.clone().interpolate(name, arguments, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
+            Route::AttachmentRead => {
                 let frame = self.clone().attachment_read_call(name, arguments, at);
                 self.nest(frame).await
             }
-            "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
+            Route::Mesh => {
                 let frame = self.clone().mesh_statement_call(name, arguments, at);
                 self.nest(frame).await
             }
-            "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
+            Route::Primitive => {
                 self.with(|this| this.primitive_statement_call(name, arguments, at))?
             }
-            "expectEXT" => {
+            Route::Expect => {
                 let frame = self.clone().expect_call(arguments, at);
                 self.nest(frame).await
             }
-            "assumeEXT" => {
+            Route::Assume => {
                 let frame = self.clone().assume_call(arguments, at);
                 self.nest(frame).await
             }
-            "modf" | "frexp" => {
+            Route::Split => {
                 let frame = self.clone().split(name, arguments, at);
                 self.nest(frame).await
             }
             .map(Some),
-            "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
-            | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => {
+            Route::Atomic => {
                 let frame = self.clone().atomic(name, arguments, at);
                 self.nest(frame).await
             }
-            "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => {
+            Route::Wide => {
                 let frame = self.clone().wide(name, arguments, at);
                 self.nest(frame).await
             }
-            _ if super::subgroup::is_subgroup_function(name) => {
+            Route::Subgroup => {
                 let frame = self.clone().subgroup(name, arguments, at);
                 self.nest(frame).await
             }
-            _ => {
+            Route::Generic => {
                 let frame = self
                     .clone()
                     .generic(name, function, call_type, arguments, at);
@@ -2536,4 +2452,185 @@ fn microscaling_bitcast(name: &str) -> Option<bool> {
     } else {
         None
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Route {
+    Ray,
+    Sample,
+    PatternGather,
+    SparseFetch,
+    SparseFetchOffset,
+    Image,
+    SparseTexelsResident,
+    QueryLod,
+    ImageProcessing,
+    Fetch,
+    FetchOffset,
+    Query,
+    ImageAtomic,
+    SubpassLoad,
+    Barrier,
+    Interlock,
+    HelperInvocation,
+    Footprint,
+    FragmentFetch,
+    Interpolate,
+    AttachmentRead,
+    Mesh,
+    Primitive,
+    Expect,
+    Assume,
+    Split,
+    Atomic,
+    Wide,
+    Subgroup,
+    Generic,
+}
+
+pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
+    if super::ray::is_ray_call(name) {
+        return Some(Route::Ray);
+    }
+    if sampling_function(&texture_call(name).base) {
+        return Some(Route::Sample);
+    }
+    Some(match name {
+        _ if gather_pattern(name).is_some() => Route::PatternGather,
+        "sparseTexelFetchARB" => Route::SparseFetch,
+        "sparseTexelFetchOffsetARB" => Route::SparseFetchOffset,
+        "sparseImageLoadARB" | "sparseImageLoadLodAMD" => Route::Image,
+        "sparseTexelsResidentARB" => Route::SparseTexelsResident,
+        "textureQueryLod" | "textureQueryLOD" => Route::QueryLod,
+        _ if image_processing(name).is_some() => Route::ImageProcessing,
+        "texelFetch" => Route::Fetch,
+        "texelFetchOffset" => Route::FetchOffset,
+        "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize" | "imageSamples" => {
+            Route::Query
+        }
+        "imageLoad" | "imageStore" | "imageLoadLodAMD" | "imageStoreLodAMD" => Route::Image,
+        _ if super::atomic::is_image_atomic(name) => Route::ImageAtomic,
+        "subpassLoad" => Route::SubpassLoad,
+        "barrier"
+        | "memoryBarrier"
+        | "memoryBarrierBuffer"
+        | "memoryBarrierShared"
+        | "memoryBarrierImage"
+        | "groupMemoryBarrier"
+        | "controlBarrier"
+        | "controlBarrierArrive"
+        | "controlBarrierWait" => Route::Barrier,
+        "beginInvocationInterlockARB" | "endInvocationInterlockARB" => Route::Interlock,
+        "helperInvocationEXT" => Route::HelperInvocation,
+        "textureFootprintNV"
+        | "textureFootprintClampNV"
+        | "textureFootprintLodNV"
+        | "textureFootprintGradNV"
+        | "textureFootprintGradClampNV" => Route::Footprint,
+        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Route::FragmentFetch,
+        "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
+            Route::Interpolate
+        }
+        "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
+            Route::AttachmentRead
+        }
+        "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
+            Route::Mesh
+        }
+        "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
+            Route::Primitive
+        }
+        "expectEXT" => Route::Expect,
+        "assumeEXT" => Route::Assume,
+        "modf" | "frexp" => Route::Split,
+        "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
+        | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => Route::Atomic,
+        "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => Route::Wide,
+        _ if super::subgroup::is_subgroup_function(name) => Route::Subgroup,
+        _ if is_generic(name, arguments) => Route::Generic,
+        _ => return None,
+    })
+}
+
+fn is_generic(name: &str, arguments: usize) -> bool {
+    microscaling_bitcast(name).is_some()
+        || derivative(name).is_some()
+        || special(name).is_some()
+        || math(name, arguments).is_some()
+}
+
+#[derive(Clone, Copy)]
+enum Special {
+    Relational(RelationalFunction),
+    Not,
+    Compare(BinaryOperator),
+    Bitcast,
+    Pack,
+    Unpack,
+    Modulo,
+    MatrixCompMult,
+    Bitfield(MathFunction),
+}
+
+fn special(name: &str) -> Option<Special> {
+    Some(match name {
+        "isnan" => Special::Relational(RelationalFunction::IsNan),
+        "isinf" => Special::Relational(RelationalFunction::IsInf),
+        "any" => Special::Relational(RelationalFunction::Any),
+        "all" => Special::Relational(RelationalFunction::All),
+        "not" => Special::Not,
+        "lessThan" => Special::Compare(BinaryOperator::Less),
+        "lessThanEqual" => Special::Compare(BinaryOperator::LessEqual),
+        "greaterThan" => Special::Compare(BinaryOperator::Greater),
+        "greaterThanEqual" => Special::Compare(BinaryOperator::GreaterEqual),
+        "equal" => Special::Compare(BinaryOperator::Equal),
+        "notEqual" => Special::Compare(BinaryOperator::NotEqual),
+        "floatBitsToInt"
+        | "floatBitsToUint"
+        | "intBitsToFloat"
+        | "uintBitsToFloat"
+        | "doubleBitsToInt64"
+        | "doubleBitsToUint64"
+        | "int64BitsToDouble"
+        | "uint64BitsToDouble"
+        | "halfBitsToInt16"
+        | "halfBitsToUint16"
+        | "float16BitsToInt16"
+        | "float16BitsToUint16"
+        | "int16BitsToFloat16"
+        | "uint16BitsToFloat16"
+        | "int16BitsToHalf"
+        | "uint16BitsToHalf"
+        | "bfloat16BitsToIntEXT"
+        | "bfloat16BitsToUintEXT"
+        | "intBitsToBFloat16EXT"
+        | "uintBitsToBFloat16EXT"
+        | "floate4m3BitsToIntEXT"
+        | "floate4m3BitsToUintEXT"
+        | "intBitsToFloate4m3EXT"
+        | "uintBitsToFloate4m3EXT"
+        | "floate5m2BitsToIntEXT"
+        | "floate5m2BitsToUintEXT"
+        | "intBitsToFloate5m2EXT"
+        | "uintBitsToFloate5m2EXT"
+        | "floatue8m0BitsToIntEXT"
+        | "floatue8m0BitsToUintEXT"
+        | "intBitsToFloatue8m0EXT"
+        | "uintBitsToFloatue8m0EXT"
+        | "floatmxint8BitsToIntEXT"
+        | "floatmxint8BitsToUintEXT"
+        | "intBitsToFloatmxint8EXT"
+        | "uintBitsToFloatmxint8EXT" => Special::Bitcast,
+        "packInt2x32" | "packUint2x32" | "packInt2x16" | "packUint2x16" | "packInt4x16"
+        | "packUint4x16" | "pack16" | "pack32" | "pack64" => Special::Pack,
+        "unpackInt2x32" | "unpackUint2x32" | "unpackInt2x16" | "unpackUint2x16"
+        | "unpackInt4x16" | "unpackUint4x16" | "unpack8" | "unpack16" | "unpack32" => {
+            Special::Unpack
+        }
+        "mod" => Special::Modulo,
+        "matrixCompMult" => Special::MatrixCompMult,
+        "bitfieldExtract" => Special::Bitfield(MathFunction::ExtractBits),
+        "bitfieldInsert" => Special::Bitfield(MathFunction::InsertBits),
+        _ => return None,
+    })
 }

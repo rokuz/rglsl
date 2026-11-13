@@ -79,6 +79,9 @@ jobs:
         env:
           SPIRV_VAL: target/oracles/bin/spirv-val
       - run: cargo xtask snapshots
+      - run: cargo test -p rglsl --test rglsl extension_names
+        env:
+          RGLSL_REQUIRE_ORACLES: 1
       - run: cargo xtask test --no-exec
       - run: cargo xtask cli
       - uses: actions/upload-artifact@v4
