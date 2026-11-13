@@ -364,11 +364,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if self.with(|this| this.terminated())? {
                 self.with(|this| this.unreachable_declaration(statement))??;
             } else {
-                {
-                    let frame = self.clone().statement(statement);
-                    let result = self.nest(frame).await;
-                    result
-                }?;
+                self.clone().statement(statement).await?;
             }
         }
         Ok(())
@@ -395,9 +391,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| this.local_declaration(declaration, true))?
             }
             StatementKind::Expression(Some(ref expression)) => {
-                let frame = self.clone().effect(expression);
-                let result = self.nest(frame).await;
-                result
+                self.clone().effect(expression).await
             }
             StatementKind::Expression(None) => Ok(()),
             StatementKind::Selection {

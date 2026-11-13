@@ -300,7 +300,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
                     if !self.with(|analyzer| analyzer.names_struct(expression)) {
-                        self.call(self.clone().expression(expression)).await;
+                        self.clone().expression(expression).await;
                     }
                 }
             }
@@ -309,7 +309,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 then_branch,
                 else_branch,
             } => {
-                let operand = self.call(self.clone().value_expression(condition)).await;
+                let operand = self.clone().value_expression(condition).await;
                 self.with(|analyzer| {
                     analyzer.boolean_condition_with(statement.span, &operand);
                     analyzer.nesting += 1;
@@ -352,7 +352,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 self.call(self.clone().loop_body(body)).await;
                 self.with(|analyzer| analyzer.scopes.pop());
                 let end = statement.span.end;
-                let operand = self.call(self.clone().value_expression(condition)).await;
+                let operand = self.clone().value_expression(condition).await;
                 self.with(|analyzer| {
                     analyzer.loop_limitation(statement.span, "do-while");
                     analyzer

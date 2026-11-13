@@ -2529,11 +2529,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let at = self.with(|this| this.at(initializer.span))?;
         match initializer.node {
             Initializer::Expression(ref expression) => {
-                let (value, from) = {
-                    let frame = self.clone().typed(expression);
-                    let result = self.nest(frame).await;
-                    result
-                }?;
+                let (value, from) = self.clone().typed(expression).await?;
                 if from.dimensions().len() == ty.dimensions().len() && from.kind == ty.kind {
                     return Ok(value);
                 }
