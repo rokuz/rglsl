@@ -222,6 +222,8 @@ pub enum DiagnosticKind {
     WorkGroupSizeNotDeclared,
     #[error("the value of layout qualifier `{0}` must be a constant integer expression")]
     LayoutValueNotConstant(String),
+    #[error("the value of layout qualifier `{0}` must be at least 1")]
+    LayoutValueBelowOne(String),
     #[error("the value of layout qualifier `{0}` needs a literal integer")]
     LayoutValueNotLiteral(String),
     #[error("unrecognized layout identifier `{0}`, or qualifier requires assignment (e.g., binding = 4)")]
