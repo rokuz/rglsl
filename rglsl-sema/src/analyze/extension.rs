@@ -2,13 +2,13 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::ExtensionBehavior;
-use rglsl_ast::extensions::{self, Extension, ExtensionIssue, Feature, Request, names};
+use rglsl_ast::extensions::{ExtensionIssue, Feature, Request, joined_names};
+use rglsl_types::extension::{Extension, Vulkan};
 
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::Storage;
 use crate::types::{NumericFeatures, Scalar, Type, TypeKind};
-use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SmallKind {
@@ -45,17 +45,6 @@ impl SmallKind {
     }
 }
 
-fn joined(names: &[&str]) -> String {
-    let mut text = String::new();
-    for (index, name) in names.iter().enumerate() {
-        if index > 0 {
-            text.push_str(", ");
-        }
-        text.push_str(name);
-    }
-    text
-}
-
 impl Analyzer<'_> {
     pub(crate) fn extension_directive(
         &mut self,
@@ -63,37 +52,8 @@ impl Analyzer<'_> {
         name: &str,
         behavior: ExtensionBehavior,
     ) {
-        self.extension_stage(span, name);
-        let enabling = matches!(
-            behavior,
-            ExtensionBehavior::Require | ExtensionBehavior::Enable
-        );
-        if enabling
-            && let (Some(needed), Some(target)) =
-                (extensions::minimum_spirv(name), self.options.spirv_version)
-            && target < needed
-        {
-            self.error(
-                span,
-                DiagnosticKind::ExtensionSpirvVersion(String::from(name)),
-            );
-        }
-        if let Some(reason) = extensions::unsupported_in_vulkan(name)
-            && behavior != ExtensionBehavior::Disable
-        {
-            self.error(
-                span,
-                DiagnosticKind::ExtensionNotInVulkan {
-                    name: String::from(name),
-                    reason,
-                },
-            );
-        }
-        if extensions::unsupported_with_spirv(name) {
-            self.error(
-                span,
-                DiagnosticKind::ExtensionWithoutSpirv(String::from(name)),
-            );
+        if let Some(extension) = Extension::from_name(name) {
+            self.check_extension(span, extension, behavior);
         }
         for issue in self.extensions.apply(name, behavior) {
             let error = issue.is_error();
@@ -113,27 +73,57 @@ impl Analyzer<'_> {
         }
     }
 
-    fn extension_stage(&mut self, span: Span, name: &str) {
-        let other = match name {
-            names::MESH_SHADER_NV => names::MESH_SHADER_EXT,
-            names::MESH_SHADER_EXT => names::MESH_SHADER_NV,
-            _ => return,
-        };
-        self.stage_check(span, |stage| {
-            (!matches!(
-                stage,
-                ShaderStage::Task | ShaderStage::Mesh | ShaderStage::Fragment
-            ))
-            .then(|| DiagnosticKind::ExtensionStage {
-                extension: String::from(name),
-                stage: stage.name(),
-            })
-        });
-        if self.extensions.is_on(other) {
+    fn check_extension(&mut self, span: Span, extension: Extension, behavior: ExtensionBehavior) {
+        let info = extension.info();
+        let name = extension.name();
+        if !info.only_stages.is_empty() {
+            self.stage_check(span, |stage| {
+                (!info.allowed_in(stage)).then(|| DiagnosticKind::ExtensionStage {
+                    extension: String::from(name),
+                    stage: stage.name(),
+                })
+            });
+        }
+        for &other in info.conflicts {
+            if self.extensions.is_extension_on(other) {
+                self.error(
+                    span,
+                    DiagnosticKind::ConflictingExtensions(String::from(name), other.name()),
+                );
+            }
+        }
+        let enabling = matches!(
+            behavior,
+            ExtensionBehavior::Require | ExtensionBehavior::Enable
+        );
+        if enabling
+            && let (Some(needed), Some(target)) = (info.minimum_spirv, self.options.spirv_version)
+            && target < needed
+        {
             self.error(
                 span,
-                DiagnosticKind::ConflictingExtensions(String::from(name), other),
+                DiagnosticKind::ExtensionSpirvVersion(String::from(name)),
             );
+        }
+        match info.vulkan {
+            Vulkan::Supported => {}
+            Vulkan::Unsupported(reason) => {
+                if behavior != ExtensionBehavior::Disable {
+                    self.error(
+                        span,
+                        DiagnosticKind::ExtensionNotInVulkan {
+                            name: String::from(name),
+                            reason,
+                        },
+                    );
+                }
+            }
+            Vulkan::WithoutSpirv => {
+                self.error(
+                    span,
+                    DiagnosticKind::ExtensionWithoutSpirv(String::from(name)),
+                );
+            }
         }
     }
 
@@ -158,8 +148,8 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn require_feature(&mut self, span: Span, feature: Feature, what: &str) -> bool {
-        let names = feature.extensions();
-        match self.extensions.request(names) {
+        let extensions = feature.extensions();
+        match self.extensions.request_any(extensions) {
             Request::Enabled => true,
             Request::Warned(extension) => {
                 self.warnings.push(Diagnostic {
@@ -176,7 +166,7 @@ impl Analyzer<'_> {
                     span,
                     DiagnosticKind::ExtensionRequired {
                         feature: String::from(what),
-                        extensions: joined(names),
+                        extensions: joined_names(extensions),
                     },
                 );
                 false
@@ -199,7 +189,9 @@ impl Analyzer<'_> {
     pub(crate) fn small_arithmetic_allowed(&self, types: &[&Type]) -> bool {
         SmallKind::ALL.iter().all(|kind| {
             !types.iter().any(|ty| self.contains_small(ty, *kind))
-                || self.extensions.any_on(kind.feature().extensions())
+                || self
+                    .extensions
+                    .any_extension_on(kind.feature().extensions())
         })
     }
 

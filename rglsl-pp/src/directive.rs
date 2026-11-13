@@ -6,11 +6,10 @@ use alloc::vec::Vec;
 use crate::diagnostic::{DiagnosticKind, Redefinition};
 use crate::include::{IncludeKind, IncludedFile};
 use crate::lexer::{FileInput, Role};
-use crate::preprocessor::{
-    CPP_STYLE_LINE, Input, LineMarker, Macro, Preprocessor, SPIRV_INTRINSICS, TRACKED_EXTENSIONS,
-};
+use crate::preprocessor::{Input, LineMarker, Macro, Preprocessor};
 use crate::source_map::SourceInfo;
 use crate::token::{At, Kind, Token};
+use rglsl_types::extension::{Extension, ExtensionSet};
 
 pub(crate) enum Skip {
     Token(Token),
@@ -53,7 +52,7 @@ impl Preprocessor<'_> {
     }
 
     fn reserved_check(&mut self, name: &str, directive: &'static str, at: At) {
-        let spirv = self.extension_on(SPIRV_INTRINSICS);
+        let spirv = self.extension_on(Extension::ExtSpirvIntrinsics);
         if name.starts_with("GL_") && !spirv {
             let name = String::from(name);
             self.report(DiagnosticKind::ReservedGlPrefix { name, directive }, at);
@@ -452,7 +451,9 @@ impl Preprocessor<'_> {
             }
             if token.kind != Kind::Newline {
                 if token.kind == Kind::String {
-                    if !self.extension_on(CPP_STYLE_LINE) && !self.in_included_file() {
+                    if !self.extension_on(Extension::GoogleCppStyleLineDirective)
+                        && !self.in_included_file()
+                    {
                         self.report(
                             DiagnosticKind::ExtensionRequired {
                                 feature: "filename-based #line",
@@ -759,19 +760,19 @@ impl Preprocessor<'_> {
             if matches!(behavior, "require" | "enable") {
                 self.report(DiagnosticKind::ExtensionAllEnabled, at);
             } else {
-                self.extensions = [on; crate::preprocessor::TRACKED_EXTENSIONS.len()];
+                self.extensions = if on {
+                    Extension::PREPROCESSOR
+                } else {
+                    ExtensionSet::EMPTY
+                };
             }
-        } else if let Some(index) = TRACKED_EXTENSIONS.iter().position(|known| *known == name)
-            && let Some(slot) = self.extensions.get_mut(index)
-        {
-            *slot = on;
-        }
-        if matches!(
-            name,
-            "GL_GOOGLE_include_directive" | "GL_ARB_shading_language_include"
-        ) && let Some(slot) = self.extensions.get_mut(CPP_STYLE_LINE)
-        {
-            *slot = on;
+        } else if let Some(extension) = Extension::from_name(name) {
+            let affected = extension
+                .with_implied()
+                .intersection(Extension::PREPROCESSOR);
+            for tracked in affected.iter() {
+                self.extensions.set(tracked, on);
+            }
         }
     }
 }

@@ -24,7 +24,7 @@ use crate::ast::{
     TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
 };
 use crate::error::{ParseError, ParseErrorKind};
-use crate::extensions::{ExtensionState, Feature};
+use crate::extensions::{ExtensionState, Feature, joined_names};
 use crate::keywords::{WordClass, is_reserved_word, is_unavailable_word};
 use crate::lexer::{Token, TokenKind, tokenize};
 use crate::opaque::OpaqueKeyword;
@@ -400,7 +400,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         let extensions = Feature::of_type_keyword(word)
-            .map(|feature| feature.extensions().join(", "))
+            .map(|feature| joined_names(feature.extensions()))
             .unwrap_or_default();
         Err(self.error(
             ParseErrorKind::ExtensionRequired {

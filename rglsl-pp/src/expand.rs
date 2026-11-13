@@ -5,8 +5,9 @@ use alloc::vec::Vec;
 
 use crate::diagnostic::DiagnosticKind;
 use crate::include::FileId;
-use crate::preprocessor::{CPP_STYLE_LINE, Input, MacroInput, Preprocessor, Scanned, TokenInput};
+use crate::preprocessor::{Input, MacroInput, Preprocessor, Scanned, TokenInput};
 use crate::token::{At, Kind, MAX_TOKEN_LENGTH, Token, operator};
+use rglsl_types::extension::Extension;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Expand {
@@ -350,7 +351,7 @@ impl Preprocessor<'_> {
             "__FILE__" => {
                 let current = self.current_at();
                 if self.source_name(current.source).is_some()
-                    && !self.extension_on(CPP_STYLE_LINE)
+                    && !self.extension_on(Extension::GoogleCppStyleLineDirective)
                     && !self.in_included_file()
                 {
                     self.report(

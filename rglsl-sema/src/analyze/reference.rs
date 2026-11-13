@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{BlockStructure, Identifier, Spanned, TypeQualifier};
-use rglsl_ast::extensions::names;
+use rglsl_types::extension::Extension;
 
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -82,11 +82,15 @@ impl Analyzer<'_> {
             if entry.name == "buffer_reference" {
                 reference = true;
                 self.storage_buffer_class = true;
-                self.require_extension(entry.span, names::BUFFER_REFERENCE, "buffer_reference");
+                self.require_extension(
+                    entry.span,
+                    Extension::ExtBufferReference.name(),
+                    "buffer_reference",
+                );
             } else if entry.name == "buffer_reference_align" {
                 self.require_extension(
                     entry.span,
-                    names::BUFFER_REFERENCE,
+                    Extension::ExtBufferReference.name(),
                     "buffer_reference_align",
                 );
                 if let Some(value) = entry.value.constant()
