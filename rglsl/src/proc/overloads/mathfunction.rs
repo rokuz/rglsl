@@ -74,6 +74,7 @@ impl ir::MathFunction {
             Mf::Pack4xU8 => regular!(1, VEC4 of U32 -> U32).into(),
             Mf::Pack4xI8Clamp => regular!(1, VEC4 of I32 -> U32).into(),
             Mf::Pack4xU8Clamp => regular!(1, VEC4 of U32 -> U32).into(),
+            Mf::PackDouble2x32 => regular!(1, VEC2 of U32 -> F64).into(),
 
             // Unpacking functions
             Mf::Unpack4x8snorm | Mf::Unpack4x8unorm => regular!(1, SCALAR of U32 -> Vec4F).into(),
@@ -82,6 +83,7 @@ impl ir::MathFunction {
             }
             Mf::Unpack4xI8 => regular!(1, SCALAR of U32 -> Vec4I).into(),
             Mf::Unpack4xU8 => regular!(1, SCALAR of U32 -> Vec4U).into(),
+            Mf::UnpackDouble2x32 => regular!(1, SCALAR of F64 -> Vec2U).into(),
             Mf::Dot4I8Packed => regular!(2, SCALAR of U32 -> I32).into(),
             Mf::Dot4U8Packed => regular!(2, SCALAR of U32 -> U32).into(),
             Mf::IntegerDot => integer_dot(false).into(),

@@ -1,4 +1,4 @@
-FORMAT_VERSION 17
+FORMAT_VERSION 18
 AddressSpace d34f1902a20913ee
 Arena 283cda9d7570b2b9
 ArrayConversion 0a417e8dd0771234
@@ -94,7 +94,7 @@ LocalVariable bf2dd0e7b87ae890
 LongVectorClass 442ff0404dc0956b
 LoopControl 0d2524a15d80d3ec
 LoopDependency 1d05f6839e140403
-MathFunction 59ca3cef1b003eab
+MathFunction c12fd32a0817773c
 MatrixLayout 9b8e25be92995903
 MemoryDecorations 9996762bf6ee7edb
 MemoryOrder 5a799120efaa18ea
@@ -159,7 +159,7 @@ Statement f7900efa91640388
 StorageAccess 846dd908e622439c
 StorageFormat 89f880f50035ff47
 StructMember 8db3f6819f665f59
-SubgroupFunction e02df1d6f29f6868
+SubgroupFunction e817c7960a83e381
 SubgroupMask 6024f34f301687e6
 SubgroupOperation 4f073a3a9eae761b
 SwitchCase 733388b1b52115f4

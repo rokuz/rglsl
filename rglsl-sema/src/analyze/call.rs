@@ -919,6 +919,9 @@ impl Analyzer<'_> {
         if is_builtin && !failed && subgroup::is_subgroup_operation(name) {
             failed = !self.subgroup_checks(span, name, operands);
         }
+        if is_builtin && !failed {
+            failed = !self.lane_pattern_check(span, name, operands);
+        }
         if failed {
             return Operand::error();
         }
@@ -1114,6 +1117,39 @@ impl Analyzer<'_> {
             self.require_extension(span, extension, name);
         }
         self.texture_extensions(span, name);
+    }
+
+    fn lane_pattern_check(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
+        let (limit, range) = match name {
+            "swizzleInvocationsAMD" => (3, "components must be in the range [0, 3]"),
+            "swizzleInvocationsMaskedAMD" => (31, "components must be in the range [0, 31]"),
+            _ => return true,
+        };
+        let pattern = operands
+            .get(1)
+            .filter(|operand| operand.constant && !operand.specialization)
+            .and_then(|operand| operand.value.as_ref());
+        let reason = match pattern {
+            None => "argument must be a compile-time constant",
+            Some(pattern)
+                if pattern.values.iter().any(|value| {
+                    value
+                        .as_i64()
+                        .is_none_or(|component| !(0..=limit).contains(&component))
+                }) =>
+            {
+                range
+            }
+            Some(_) => return true,
+        };
+        self.error(
+            span,
+            DiagnosticKind::InvalidBuiltinCall {
+                name: String::from(name),
+                reason,
+            },
+        );
+        false
     }
 
     fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {

@@ -89,6 +89,8 @@ pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
         "unpackSnorm4x8" => Mf::Unpack4x8snorm,
         "packHalf2x16" => Mf::Pack2x16float,
         "unpackHalf2x16" => Mf::Unpack2x16float,
+        "packDouble2x32" => Mf::PackDouble2x32,
+        "unpackDouble2x32" => Mf::UnpackDouble2x32,
         _ => return None,
     })
 }

@@ -86,9 +86,9 @@ impl GatherMode {
 }
 
 impl SubgroupFunction {
-    pub const fn operands(&self) -> [Option<Handle<Expression>>; 2] {
+    pub const fn operands(&self) -> [Option<Handle<Expression>>; 3] {
         match *self {
-            Self::Elect => [None, None],
+            Self::Elect => [None, None, None],
             Self::AllEqual(value)
             | Self::QuadAll(value)
             | Self::QuadAny(value)
@@ -101,21 +101,33 @@ impl SubgroupFunction {
             | Self::KhrAll(value)
             | Self::KhrAny(value)
             | Self::KhrAllEqual(value)
+            | Self::AmdMbcnt(value)
             | Self::Group {
                 argument: value, ..
-            } => [Some(value), None],
-            Self::BallotBitExtract { ballot, index } => [Some(ballot), Some(index)],
-            Self::KhrReadInvocation { argument, index } => [Some(argument), Some(index)],
+            }
+            | Self::AmdSwizzle {
+                argument: value, ..
+            }
+            | Self::AmdSwizzleMasked {
+                argument: value, ..
+            } => [Some(value), None, None],
+            Self::BallotBitExtract { ballot, index } => [Some(ballot), Some(index), None],
+            Self::KhrReadInvocation { argument, index } => [Some(argument), Some(index), None],
             Self::BallotBitCount {
                 ballot,
                 ref collective_op,
-            } => [Some(ballot), collective_op.partition()],
+            } => [Some(ballot), collective_op.partition(), None],
+            Self::AmdWriteInvocation {
+                argument,
+                value,
+                index,
+            } => [Some(argument), Some(value), Some(index)],
         }
     }
 
-    pub const fn operands_mut(&mut self) -> [Option<&mut Handle<Expression>>; 2] {
+    pub const fn operands_mut(&mut self) -> [Option<&mut Handle<Expression>>; 3] {
         match *self {
-            Self::Elect => [None, None],
+            Self::Elect => [None, None, None],
             Self::AllEqual(ref mut value)
             | Self::QuadAll(ref mut value)
             | Self::QuadAny(ref mut value)
@@ -128,22 +140,36 @@ impl SubgroupFunction {
             | Self::KhrAll(ref mut value)
             | Self::KhrAny(ref mut value)
             | Self::KhrAllEqual(ref mut value)
+            | Self::AmdMbcnt(ref mut value)
             | Self::Group {
                 argument: ref mut value,
                 ..
-            } => [Some(value), None],
+            }
+            | Self::AmdSwizzle {
+                argument: ref mut value,
+                ..
+            }
+            | Self::AmdSwizzleMasked {
+                argument: ref mut value,
+                ..
+            } => [Some(value), None, None],
             Self::BallotBitExtract {
                 ref mut ballot,
                 ref mut index,
-            } => [Some(ballot), Some(index)],
+            } => [Some(ballot), Some(index), None],
             Self::KhrReadInvocation {
                 ref mut argument,
                 ref mut index,
-            } => [Some(argument), Some(index)],
+            } => [Some(argument), Some(index), None],
             Self::BallotBitCount {
                 ref mut ballot,
                 ref mut collective_op,
-            } => [Some(ballot), collective_op.partition_mut()],
+            } => [Some(ballot), collective_op.partition_mut(), None],
+            Self::AmdWriteInvocation {
+                ref mut argument,
+                ref mut value,
+                ref mut index,
+            } => [Some(argument), Some(value), Some(index)],
         }
     }
 }

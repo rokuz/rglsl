@@ -311,7 +311,7 @@ impl Variant {
         if !self.fetch && (multisample || buffer) {
             return false;
         }
-        if self.grad && (self.lod || self.bias || multisample || buffer) {
+        if self.grad && (self.lod || self.bias || self.fetch || multisample || buffer) {
             return false;
         }
         if self.extra_proj && !self.proj {

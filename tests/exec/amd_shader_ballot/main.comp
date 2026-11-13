@@ -1,0 +1,19 @@
+#version 450
+#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_AMD_shader_ballot : require
+layout(local_size_x = 32) in;
+layout(std430, set = 0, binding = 0) buffer Results { uvec4 results[]; };
+
+void main() {
+  uint lane = gl_LocalInvocationID.x;
+  uint value = lane * 10u + 1u;
+  uint swapped = swizzleInvocationsAMD(value, uvec4(1u, 0u, 3u, 2u));
+  uint masked = swizzleInvocationsMaskedAMD(value, uvec3(0x1cu, 0u, 0u));
+  uint written = writeInvocationAMD(value, 1000u, 5u);
+  uint below = mbcntAMD(0x5555555555555555ul);
+  results[lane * 2u] = uvec4(swapped, masked, written, below);
+  float reversed = swizzleInvocationsAMD(float(lane) * 0.5, uvec4(3u, 2u, 1u, 0u));
+  ivec2 shifted = swizzleInvocationsMaskedAMD(ivec2(lane, -int(lane)), uvec3(0x1fu, 0u, 2u));
+  uvec2 pair = writeInvocationAMD(uvec2(lane, lane + 100u), uvec2(7u, 8u), 31u);
+  results[lane * 2u + 1u] = uvec4(uint(reversed * 2.0), uint(shifted.x - shifted.y), pair);
+}

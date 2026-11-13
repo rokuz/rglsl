@@ -615,6 +615,7 @@ pub fn extension_needs(name: &str) -> &'static [Need] {
         "SPV_KHR_maximal_reconvergence" => &MAXIMAL_RECONVERGENCE,
         "SPV_KHR_subgroup_uniform_control_flow" => &SUBGROUP_UNIFORM_CONTROL_FLOW,
         "SPV_AMD_shader_early_and_late_fragment_tests" => &EARLY_AND_LATE_FRAGMENT_TESTS,
+        "SPV_AMD_shader_ballot" => &[E("VK_AMD_shader_ballot")],
         "SPV_AMD_gpu_shader_half_float" => &[E("VK_AMD_gpu_shader_half_float")],
         "SPV_AMD_gpu_shader_int16" => &[E("VK_AMD_gpu_shader_int16")],
         "SPV_AMD_shader_trinary_minmax" => &[E("VK_AMD_shader_trinary_minmax")],

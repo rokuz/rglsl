@@ -2167,7 +2167,9 @@ impl<'a> ConstantEvaluator<'a> {
             | crate::MathFunction::Unpack2x16unorm
             | crate::MathFunction::Unpack2x16float
             | crate::MathFunction::Unpack4xI8
-            | crate::MathFunction::Unpack4xU8 => Err(ConstantEvaluatorError::NotImplemented(
+            | crate::MathFunction::Unpack4xU8
+            | crate::MathFunction::PackDouble2x32
+            | crate::MathFunction::UnpackDouble2x32 => Err(ConstantEvaluatorError::NotImplemented(
                 format!("{fun:?} built-in function"),
             )),
         }

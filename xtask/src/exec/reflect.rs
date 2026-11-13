@@ -1467,6 +1467,11 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             && let Some((name, _)) = instruction.string(0)
         {
             extensions.insert(name);
+        } else if instruction.is(Op::ExtInstImport)
+            && let Some((name, _)) = instruction.string(1)
+            && name.starts_with("SPV_")
+        {
+            extensions.insert(name);
         }
     }
 
@@ -2737,6 +2742,35 @@ mod tests {
         };
         assert!(*writable);
         assert_eq!(layout.runtime_stride(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn instruction_sets_of_extensions_count_as_extensions() -> anyhow::Result<()> {
+        let mut glsl = vec![1];
+        glsl.extend(string_words("GLSL.std.450"));
+        let mut ballot = vec![2];
+        ballot.extend(string_words("SPV_AMD_shader_ballot"));
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::ExtInstImport, &glsl)?,
+            op(Op::ExtInstImport, &ballot)?,
+            op(Op::EntryPoint, &entry(ExecutionModel::GLCompute))?,
+            op(
+                Op::ExecutionMode,
+                &[1, ExecutionMode::LocalSize as u32, 8, 1, 1],
+            )?,
+        ]);
+        let reflection = reflected(&words)?;
+        assert_eq!(
+            reflection.extensions,
+            BTreeSet::from(["SPV_AMD_shader_ballot".to_string()])
+        );
+        let needs = super::super::plan::requirements(&reflection)
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
+        assert!(needs.contains(&crate::exec::requirements::Need::Extension(
+            "VK_AMD_shader_ballot"
+        )));
         Ok(())
     }
 

@@ -302,7 +302,11 @@ impl super::SubgroupFunction {
             | Self::BallotFindMsb(_)
             | Self::KhrBallot(_)
             | Self::KhrReadInvocation { .. }
-            | Self::KhrReadFirstInvocation(_) => S::BALLOT,
+            | Self::KhrReadFirstInvocation(_)
+            | Self::AmdSwizzle { .. }
+            | Self::AmdSwizzleMasked { .. }
+            | Self::AmdWriteInvocation { .. }
+            | Self::AmdMbcnt(_) => S::BALLOT,
             Self::Partition(_) => S::PARTITIONED,
             Self::Group { .. } => S::ARITHMETIC,
         }

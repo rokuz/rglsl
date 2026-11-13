@@ -74,6 +74,8 @@ pub enum SubgroupError {
     UnknownOperation,
     #[error("Invocation ID must be a const-expression")]
     InvalidInvocationIdExprType(Handle<crate::Expression>),
+    #[error("Lane pattern component {0} is out of range")]
+    LanePatternOutOfRange(u32),
 }
 
 const fn is_bool(inner: &crate::TypeInner) -> bool {
@@ -82,6 +84,19 @@ const fn is_bool(inner: &crate::TypeInner) -> bool {
 
 const fn is_u32(inner: &crate::TypeInner) -> bool {
     matches!(*inner, crate::TypeInner::Scalar(crate::Scalar::U32))
+}
+
+const fn is_u64(inner: &crate::TypeInner) -> bool {
+    matches!(*inner, crate::TypeInner::Scalar(crate::Scalar::U64))
+}
+
+fn lane_pattern(components: &[u32], limit: u32) -> Result<(), WithSpan<FunctionError>> {
+    match components.iter().find(|&&component| component > limit) {
+        Some(&component) => Err(SubgroupError::LanePatternOutOfRange(component)
+            .with_span()
+            .into_other()),
+        None => Ok(()),
+    }
 }
 
 const fn is_ballot(inner: &crate::TypeInner) -> bool {
@@ -1066,7 +1081,7 @@ impl super::Validator {
         &self,
         operand: Handle<crate::Expression>,
         context: &BlockContext,
-        accept: fn(&crate::TypeInner) -> bool,
+        accept: impl Fn(&crate::TypeInner) -> bool,
     ) -> Result<(), WithSpan<FunctionError>> {
         let inner = context.resolve_type_inner(operand, &self.valid_expression_set)?;
         if accept(inner) {
@@ -1282,6 +1297,33 @@ impl super::Validator {
                 self.subgroup_operand(argument, context, is_numeric)?;
                 let expected = same_as(argument)?;
                 self.subgroup_result(result, context, |inner| *inner == expected)
+            }
+            Sf::AmdSwizzle { argument, offset } => {
+                lane_pattern(&offset, 3)?;
+                self.subgroup_operand(argument, context, is_numeric)?;
+                let expected = same_as(argument)?;
+                self.subgroup_result(result, context, |inner| *inner == expected)
+            }
+            Sf::AmdSwizzleMasked { argument, mask } => {
+                lane_pattern(&mask, 31)?;
+                self.subgroup_operand(argument, context, is_numeric)?;
+                let expected = same_as(argument)?;
+                self.subgroup_result(result, context, |inner| *inner == expected)
+            }
+            Sf::AmdWriteInvocation {
+                argument,
+                value,
+                index,
+            } => {
+                self.subgroup_operand(argument, context, is_numeric)?;
+                let expected = same_as(argument)?;
+                self.subgroup_operand(value, context, |inner| *inner == expected)?;
+                self.subgroup_operand(index, context, is_u32)?;
+                self.subgroup_result(result, context, |inner| *inner == expected)
+            }
+            Sf::AmdMbcnt(mask) => {
+                self.subgroup_operand(mask, context, is_u64)?;
+                self.subgroup_result(result, context, is_u32)
             }
         }
     }

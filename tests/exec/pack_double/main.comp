@@ -1,0 +1,12 @@
+#version 450
+layout(local_size_x = 4) in;
+layout(std430, set = 0, binding = 0) buffer Words { uvec2 words[]; };
+layout(std430, set = 0, binding = 1) buffer Doubled { uvec2 doubled[]; };
+layout(std430, set = 0, binding = 2) buffer Flags { uint flags[]; };
+
+void main() {
+  uint i = gl_LocalInvocationID.x;
+  double value = packDouble2x32(words[i]);
+  doubled[i] = unpackDouble2x32(value * 2.0lf);
+  flags[i] = value > 1.0lf ? 1u : 0u;
+}
