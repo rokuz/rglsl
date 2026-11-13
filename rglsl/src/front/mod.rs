@@ -4,7 +4,6 @@ Frontend parsers that consume binary and text shaders and load them into [`Modul
 
 mod type_gen;
 
-#[cfg(feature = "glsl-in")]
 pub mod glsl;
 
 use core::ops;

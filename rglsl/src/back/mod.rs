@@ -4,9 +4,7 @@ The backend: exports shader [`Module`](super::Module)s as SPIR-V.
 
 use alloc::string::String;
 
-#[cfg(spv_out)]
 pub mod pipeline_constants;
-#[cfg(spv_out)]
 pub mod spv;
 
 /// Specifies the values of pipeline-overridable constants in the shader module.

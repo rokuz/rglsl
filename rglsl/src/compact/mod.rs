@@ -39,10 +39,6 @@ impl From<KeepUnused> for bool {
 ///
 /// Unlike [`compact`], this neither changes `module` nor needs it to be valid,
 /// so a frontend can use it while it is still building the module.
-#[cfg_attr(
-    not(feature = "glsl-in"),
-    allow(dead_code, reason = "only the GLSL frontend uses this")
-)]
 pub(crate) fn live_global_variables(module: &crate::Module) -> HandleSet<crate::GlobalVariable> {
     let mut tracer = ModuleTracer::new(module);
     for entry_point in &module.entry_points {

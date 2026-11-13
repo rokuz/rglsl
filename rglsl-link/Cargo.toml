@@ -17,12 +17,7 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-rglsl = { workspace = true, features = [
-    "glsl-in",
-    "spv-out",
-    "serialize",
-    "deserialize",
-] }
+rglsl = { workspace = true, features = ["serialize", "deserialize"] }
 rglsl-pp = { workspace = true, features = ["std"] }
 
 [lints]

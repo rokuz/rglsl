@@ -3,8 +3,6 @@
 //! The modules are built by hand: these tests cover the IR, the validator and
 //! the SPIR-V backend, independently of any front end.
 
-#![cfg(feature = "spv-out")]
-
 use rglsl::{
     back::spv,
     valid::{Capabilities, ValidationFlags, Validator},

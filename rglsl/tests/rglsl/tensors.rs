@@ -1,5 +1,3 @@
-#![cfg(all(feature = "glsl-in", feature = "spv-out"))]
-
 extern crate alloc;
 
 use alloc::collections::{BTreeMap, BTreeSet};

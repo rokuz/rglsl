@@ -17,10 +17,6 @@ pub enum GuardedIndex {
     Expression(Handle<crate::Expression>),
 }
 
-#[cfg_attr(
-    not(spv_out),
-    allow(dead_code, reason = "only the SPIR-V backend uses these")
-)]
 impl GuardedIndex {
     /// Make a `GuardedIndex::Known` from a `GuardedIndex::Expression` if possible.
     ///

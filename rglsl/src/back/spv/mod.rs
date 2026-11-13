@@ -31,7 +31,7 @@ mod subgroup;
 mod tensor;
 mod writer;
 
-pub use nt::spv::*;
+pub use rglsl_types::spv::*;
 
 pub use debug::{DebugEntryPoint, DebugInfo, DebugLevel};
 pub use spirv::{Capability, SourceLanguage};

@@ -11,8 +11,6 @@ use codespan_reporting::files::SimpleFile;
 use codespan_reporting::term;
 use thiserror::Error;
 
-#[cfg(feature = "stderr")]
-use crate::error::ErrorWrite;
 use crate::{error::replace_control_chars, SourceLocation};
 use crate::{proc::ConstantEvaluatorError, Span};
 
@@ -77,59 +75,6 @@ pub struct ParseErrors {
 impl ParseErrors {
     pub fn include_location(&self, index: usize) -> Option<&IncludeLocation> {
         self.included.get(index).and_then(Option::as_ref)
-    }
-
-    #[cfg(feature = "stderr")]
-    pub fn emit_to_writer(
-        &self,
-        writer: &mut impl ErrorWrite,
-        source: &str,
-    ) -> Result<(), codespan_reporting::files::Error> {
-        self.emit_to_writer_with_path(writer, source, "glsl")
-    }
-
-    #[cfg(feature = "stderr")]
-    pub fn emit_to_writer_with_path(
-        &self,
-        writer: &mut impl ErrorWrite,
-        source: &str,
-        path: &str,
-    ) -> Result<(), codespan_reporting::files::Error> {
-        let path = path.to_string();
-        let files = SimpleFile::new(path, replace_control_chars(source));
-        let config = term::Config::default();
-
-        for err in &self.errors {
-            let diagnostic = Self::make_diagnostic(err);
-            crate::error::emit_to_writer(writer, &config, &files, &diagnostic)?;
-        }
-        Ok(())
-    }
-
-    /// Emits a summary of the errors to standard error stream.
-    #[cfg(feature = "stderr")]
-    pub fn emit_to_stderr(&self, source: &str) -> Result<(), codespan_reporting::files::Error> {
-        self.emit_to_stderr_with_path(source, "glsl")
-    }
-
-    /// Emits a summary of the errors to standard error stream.
-    #[cfg(feature = "stderr")]
-    pub fn emit_to_stderr_with_path(
-        &self,
-        source: &str,
-        path: &str,
-    ) -> Result<(), codespan_reporting::files::Error> {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "termcolor")] {
-                let writer = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
-                let mut lock = writer.lock();
-                self.emit_to_writer_with_path(&mut lock, source, path)
-            } else {
-                let writer = std::io::stderr();
-                let mut lock = writer.lock();
-                self.emit_to_writer_with_path(&mut lock, source, path)
-            }
-        }
     }
 
     pub fn emit_to_string(&self, source: &str) -> String {

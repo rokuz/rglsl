@@ -4,8 +4,6 @@
 //! code without reporting an error (or crashed). The expected behaviour is
 //! glslang's; see `docs/parity/README.md`.
 
-#![cfg(all(feature = "glsl-in", feature = "spv-out"))]
-
 use rglsl::{
     back::spv,
     front::glsl,

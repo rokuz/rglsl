@@ -276,46 +276,6 @@ impl<E> WithSpan<E> {
         diagnostic
     }
 
-    /// Emits a summary of the error to standard error stream.
-    #[cfg(feature = "stderr")]
-    pub fn emit_to_stderr(&self, source: &str)
-    where
-        E: Error,
-    {
-        self.emit_to_stderr_with_path(source, "wgsl")
-    }
-
-    /// Emits a summary of the error to standard error stream.
-    #[cfg(feature = "stderr")]
-    pub fn emit_to_stderr_with_path(&self, source: &str, path: &str)
-    where
-        E: Error,
-    {
-        use codespan_reporting::{files, term};
-
-        let files = files::SimpleFile::new(path, replace_control_chars(source));
-        let config = term::Config::default();
-
-        let mut diagnostic = self.diagnostic();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "termcolor")] {
-                let writer = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
-                let mut writer = writer.lock();
-                if term::emit_to_write_style(&mut writer, &config, &files, &diagnostic).is_err() {
-                    diagnostic.labels.clear();
-                    let _ = term::emit_to_write_style(&mut writer, &config, &files, &diagnostic);
-                }
-            } else {
-                let writer = std::io::stderr();
-                let mut writer = writer.lock();
-                if term::emit_to_io_write(&mut writer, &config, &files, &diagnostic).is_err() {
-                    diagnostic.labels.clear();
-                    let _ = term::emit_to_io_write(&mut writer, &config, &files, &diagnostic);
-                }
-            }
-        }
-    }
-
     /// Emits a summary of the error to a string.
     pub fn emit_to_string(&self, source: &str) -> String
     where

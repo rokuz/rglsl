@@ -1,5 +1,3 @@
-#![cfg(all(feature = "glsl-in", feature = "spv-out"))]
-
 use rglsl::{
     back::spv,
     front::glsl,
