@@ -1,4 +1,5 @@
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
@@ -22,6 +23,21 @@ pub(crate) struct Macro {
     pub(crate) function_like: bool,
     pub(crate) busy: bool,
     pub(crate) undef: bool,
+}
+
+impl Macro {
+    pub(crate) fn integer(value: u32) -> Self {
+        let mut token = Token::with_text(Kind::IntConst, &format!("{value}"), At::default());
+        token.value = i64::from(value.cast_signed());
+        token.space = true;
+        Self {
+            params: Rc::from([]),
+            body: Rc::from([token]),
+            function_like: false,
+            busy: false,
+            undef: false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -242,7 +258,11 @@ pub fn preprocess(
     let version_will_be_error = scanned.directive.is_none()
         || (es && version.number >= 300 && scanned.not_first)
         || scanned.not_first_token;
-    let preamble = predefined::preamble(&version, options);
+    let mut macros = MacroTable::default();
+    for (name, value) in predefined::macros(&version, options) {
+        macros.insert(String::from(name), Macro::integer(value), false);
+    }
+    let user_defines = predefined::user_defines(options);
     let mut files = BTreeMap::new();
     if let Some(name) = &options.source_name {
         files.insert(file, name.clone());
@@ -280,12 +300,14 @@ pub fn preprocess(
             index,
         )));
     }
-    inputs.push(Input::File(FileInput::new(
-        file,
-        Rc::from(preamble.as_str()),
-        Role::Preamble,
-        0,
-    )));
+    if !user_defines.is_empty() {
+        inputs.push(Input::File(FileInput::new(
+            file,
+            Rc::from(user_defines.as_str()),
+            Role::Preamble,
+            0,
+        )));
+    }
     let file_inputs = (0..inputs.len()).collect();
     let root_at = At {
         file,
@@ -300,7 +322,7 @@ pub fn preprocess(
         includer,
         inputs,
         file_inputs,
-        macros: MacroTable::default(),
+        macros,
         version_stages,
         diagnostics: Vec::new(),
         events: Vec::new(),
