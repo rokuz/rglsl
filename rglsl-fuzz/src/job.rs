@@ -6,7 +6,7 @@ use rglsl_ast::ast::{
     TranslationUnit, TypeQualifier, TypeSpecifierNonArray,
 };
 use rglsl_ast::{expressions, print, Span};
-use rglsl_sema::Stage;
+use rglsl_types::ShaderStage;
 
 use crate::basic;
 use crate::build::Builder;
@@ -26,8 +26,8 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn stage(&self) -> Stage {
-        Stage::from_extension(&self.extension).unwrap_or(Stage::Fragment)
+    pub fn stage(&self) -> ShaderStage {
+        ShaderStage::from_extension(&self.extension).unwrap_or(ShaderStage::Fragment)
     }
 
     pub fn version(&self) -> Option<u32> {

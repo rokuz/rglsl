@@ -2,6 +2,7 @@ use super::{
     Section, ALL_STAGES, ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE, INTERSECTION, MESH, MISS,
     RAY_GENERATION,
 };
+use rglsl_types::ShaderStage;
 
 const RT_NV: &str = "GL_NV_ray_tracing";
 const RT_EXT: &str = "GL_EXT_ray_tracing";
@@ -313,7 +314,7 @@ pub(super) const UINT_CONSTANTS: [(&str, u32); 31] = [
 
 pub(crate) fn variable_extensions(
     name: &str,
-    stage: super::Stage,
+    stage: ShaderStage,
 ) -> Option<&'static [&'static str]> {
     const NV: &[&str] = &[RT_NV];
     const EXT: &[&str] = &[RT_EXT];

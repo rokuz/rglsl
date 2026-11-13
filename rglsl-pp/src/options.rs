@@ -1,79 +1,24 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Stage {
-    Vertex,
-    TessControl,
-    TessEvaluation,
-    Geometry,
-    Fragment,
-    Compute,
-    RayGeneration,
-    Intersection,
-    AnyHit,
-    ClosestHit,
-    Miss,
-    Callable,
-    Task,
-    Mesh,
-}
+use rglsl_types::ShaderStage;
 
-impl Stage {
-    pub const ALL: [Self; 14] = [
-        Self::Vertex,
-        Self::TessControl,
-        Self::TessEvaluation,
-        Self::Geometry,
-        Self::Fragment,
-        Self::Compute,
-        Self::RayGeneration,
-        Self::Intersection,
-        Self::AnyHit,
-        Self::ClosestHit,
-        Self::Miss,
-        Self::Callable,
-        Self::Task,
-        Self::Mesh,
-    ];
-
-    pub fn from_extension(extension: &str) -> Option<Self> {
-        Some(match extension {
-            "vert" => Self::Vertex,
-            "tesc" => Self::TessControl,
-            "tese" => Self::TessEvaluation,
-            "geom" => Self::Geometry,
-            "frag" => Self::Fragment,
-            "comp" => Self::Compute,
-            "rgen" => Self::RayGeneration,
-            "rint" => Self::Intersection,
-            "rahit" => Self::AnyHit,
-            "rchit" => Self::ClosestHit,
-            "rmiss" => Self::Miss,
-            "rcall" => Self::Callable,
-            "task" => Self::Task,
-            "mesh" => Self::Mesh,
-            _ => return None,
-        })
-    }
-
-    pub(crate) const fn macro_name(self) -> &'static str {
-        match self {
-            Self::Vertex => "GL_VERTEX_SHADER",
-            Self::TessControl => "GL_TESSELLATION_CONTROL_SHADER",
-            Self::TessEvaluation => "GL_TESSELLATION_EVALUATION_SHADER",
-            Self::Geometry => "GL_GEOMETRY_SHADER",
-            Self::Fragment => "GL_FRAGMENT_SHADER",
-            Self::Compute => "GL_COMPUTE_SHADER",
-            Self::RayGeneration => "GL_RAY_GENERATION_SHADER_EXT",
-            Self::Intersection => "GL_INTERSECTION_SHADER_EXT",
-            Self::AnyHit => "GL_ANY_HIT_SHADER_EXT",
-            Self::ClosestHit => "GL_CLOSEST_HIT_SHADER_EXT",
-            Self::Miss => "GL_MISS_SHADER_EXT",
-            Self::Callable => "GL_CALLABLE_SHADER_EXT",
-            Self::Task => "GL_TASK_SHADER_EXT",
-            Self::Mesh => "GL_MESH_SHADER_EXT",
-        }
+pub(crate) const fn macro_name(stage: ShaderStage) -> &'static str {
+    match stage {
+        ShaderStage::Vertex => "GL_VERTEX_SHADER",
+        ShaderStage::TessControl => "GL_TESSELLATION_CONTROL_SHADER",
+        ShaderStage::TessEvaluation => "GL_TESSELLATION_EVALUATION_SHADER",
+        ShaderStage::Geometry => "GL_GEOMETRY_SHADER",
+        ShaderStage::Fragment => "GL_FRAGMENT_SHADER",
+        ShaderStage::Compute => "GL_COMPUTE_SHADER",
+        ShaderStage::RayGeneration => "GL_RAY_GENERATION_SHADER_EXT",
+        ShaderStage::Intersection => "GL_INTERSECTION_SHADER_EXT",
+        ShaderStage::AnyHit => "GL_ANY_HIT_SHADER_EXT",
+        ShaderStage::ClosestHit => "GL_CLOSEST_HIT_SHADER_EXT",
+        ShaderStage::Miss => "GL_MISS_SHADER_EXT",
+        ShaderStage::Callable => "GL_CALLABLE_SHADER_EXT",
+        ShaderStage::Task => "GL_TASK_SHADER_EXT",
+        ShaderStage::Mesh => "GL_MESH_SHADER_EXT",
     }
 }
 
@@ -115,7 +60,7 @@ impl Default for Limits {
 pub struct Options {
     pub defines: Vec<Define>,
     pub vulkan_client_version: Option<u32>,
-    pub stage: Option<Stage>,
+    pub stage: Option<ShaderStage>,
     pub source_name: Option<String>,
     pub default_version: u32,
     pub limits: Limits,

@@ -45,9 +45,8 @@ pub use precision::RelaxedPrecision;
 pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
-use crate::builtins::{
-    BuiltinFunctionId, Builtins, ResourceLimits, Stage, StageTables, ALL_STAGE_BITS,
-};
+use crate::builtins::{BuiltinFunctionId, Builtins, ResourceLimits, StageTables, ALL_STAGE_BITS};
+
 use crate::constant::Constant;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::{
@@ -56,10 +55,11 @@ use crate::scope::{
 };
 use crate::spirv::{SpirvExecutionModes, SpirvRequirements};
 use crate::types::{BlockStorage, Packing, Type, TypeKind, TypeRegistry};
+use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
-    pub stage: Stage,
+    pub stage: ShaderStage,
     pub relaxed_uniforms: bool,
     pub limits: ResourceLimits,
     pub spirv_version: Option<(u8, u8)>,
@@ -69,7 +69,7 @@ pub struct Options {
 }
 
 impl Options {
-    pub fn new(stage: Stage) -> Self {
+    pub fn new(stage: ShaderStage) -> Self {
         Self {
             stage,
             relaxed_uniforms: false,
@@ -112,7 +112,7 @@ pub struct ExpressionInfo {
 #[derive(Debug, Clone)]
 pub struct Analysis {
     pub version: Option<u32>,
-    pub stage: Stage,
+    pub stage: ShaderStage,
     pub builtins: Arc<Builtins>,
     pub types: TypeRegistry,
     pub symbols: Vec<Symbol>,
@@ -152,7 +152,7 @@ pub struct Analysis {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageDiagnostic {
     pub index: usize,
-    pub stage: Stage,
+    pub stage: ShaderStage,
     pub diagnostic: Diagnostic,
     pub trusted: u16,
 }
@@ -368,7 +368,7 @@ pub(crate) struct SwitchContext {
 }
 
 pub(crate) struct Analyzer<'a> {
-    probe: StageProbe<Stage>,
+    probe: StageProbe<ShaderStage>,
     stage_names: RefCell<BTreeSet<String>>,
     pub library: Option<Arc<StageTables>>,
     pub stage_diagnostics: Vec<StageDiagnostic>,
@@ -450,7 +450,7 @@ impl<'a> Analyzer<'a> {
             let _ = scopes.declare(name, id);
         }
         scopes.push();
-        let probe = StageProbe::new(options.stage, &Stage::ALL);
+        let probe = StageProbe::new(options.stage, &ShaderStage::ALL);
         let trust = alloc::vec![ALL_STAGE_BITS; diagnostics.len()];
         Self {
             probe,
@@ -697,15 +697,15 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    pub(crate) fn stage(&self) -> Stage {
+    pub(crate) fn stage(&self) -> ShaderStage {
         self.probe.exact()
     }
 
-    pub(crate) fn stage_is(&self, stage: Stage) -> bool {
+    pub(crate) fn stage_is(&self, stage: ShaderStage) -> bool {
         self.probe.is(stage)
     }
 
-    pub(crate) fn stage_map<T: PartialEq>(&self, answer: impl Fn(Stage) -> T) -> T {
+    pub(crate) fn stage_map<T: PartialEq>(&self, answer: impl Fn(ShaderStage) -> T) -> T {
         self.probe.map(answer)
     }
 
@@ -727,7 +727,7 @@ impl<'a> Analyzer<'a> {
     pub(crate) fn stage_check(
         &mut self,
         span: Span,
-        check: impl Fn(Stage) -> Option<DiagnosticKind>,
+        check: impl Fn(ShaderStage) -> Option<DiagnosticKind>,
     ) -> bool {
         if self.library.is_none() {
             return match self.probe.map(&check) {
@@ -738,7 +738,7 @@ impl<'a> Analyzer<'a> {
                 None => false,
             };
         }
-        let results: Vec<(Stage, Option<DiagnosticKind>)> = Stage::ALL
+        let results: Vec<(ShaderStage, Option<DiagnosticKind>)> = ShaderStage::ALL
             .into_iter()
             .map(|stage| (stage, check(stage)))
             .collect();
@@ -762,14 +762,14 @@ impl<'a> Analyzer<'a> {
                 self.stage_error(stage, span, kind);
             }
         }
-        failing == Stage::ALL.len()
+        failing == ShaderStage::ALL.len()
     }
 
     pub(crate) fn require_stage_extensions(
         &mut self,
         span: Span,
         what: &str,
-        required: impl Fn(Stage) -> Option<&'static [&'static str]>,
+        required: impl Fn(ShaderStage) -> Option<&'static [&'static str]>,
     ) -> bool {
         if !self.is_library() {
             return match self.probe.map(&required) {
@@ -777,7 +777,7 @@ impl<'a> Analyzer<'a> {
                 None => true,
             };
         }
-        let missing: Vec<(Stage, Option<&'static [&'static str]>)> = Stage::ALL
+        let missing: Vec<(ShaderStage, Option<&'static [&'static str]>)> = ShaderStage::ALL
             .into_iter()
             .map(|stage| {
                 (
@@ -817,7 +817,7 @@ impl<'a> Analyzer<'a> {
         !failed
     }
 
-    pub(crate) fn stage_error(&mut self, stage: Stage, span: Span, kind: DiagnosticKind) {
+    pub(crate) fn stage_error(&mut self, stage: ShaderStage, span: Span, kind: DiagnosticKind) {
         self.stage_diagnostics.push(StageDiagnostic {
             index: self.diagnostics.len(),
             stage,
@@ -966,10 +966,10 @@ impl<'a> Analyzer<'a> {
     pub(crate) fn narrow_present(&self, name: &str) {
         if let Some(ref tables) = self.library {
             let own = self.options.stage;
-            let stages = Stage::ALL
+            let stages = ShaderStage::ALL
                 .into_iter()
                 .filter(|&stage| tables.same(own, stage, name) || !tables.declares(stage, name))
-                .fold(0, |bits, stage| bits | stage.bit());
+                .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage));
             self.probe.narrow(stages);
         }
     }
@@ -983,25 +983,27 @@ impl<'a> Analyzer<'a> {
         if found {
             let described = tables.variable(own, name);
             let mut keep = ALL_STAGE_BITS;
-            for stage in Stage::ALL {
+            for stage in ShaderStage::ALL {
                 match tables.variable(stage, name) {
                     None => self.stage_error(stage, span, undeclared()),
-                    Some(description) if Some(description) != described => keep &= !stage.bit(),
+                    Some(description) if Some(description) != described => {
+                        keep &= !crate::builtins::stage_bit(stage)
+                    }
                     Some(_) => {}
                 }
             }
             self.probe.narrow(keep);
             return false;
         }
-        let having = Stage::ALL
+        let having = ShaderStage::ALL
             .into_iter()
             .filter(|&stage| tables.variable(stage, name).is_some())
-            .fold(0, |bits, stage| bits | stage.bit());
+            .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage));
         if having == 0 {
             return false;
         }
-        for stage in Stage::ALL {
-            if having & stage.bit() == 0 {
+        for stage in ShaderStage::ALL {
+            if having & crate::builtins::stage_bit(stage) == 0 {
                 self.stage_error(stage, span, undeclared());
             }
         }

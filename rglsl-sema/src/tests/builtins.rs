@@ -5,14 +5,15 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::TestResult;
-use crate::builtins::{Builtins, ResourceLimits, Stage};
+use crate::builtins::{Builtins, ResourceLimits};
 use crate::scope::{Direction, Storage, SymbolKind};
 use crate::types::{
     ArraySize, NumericFeatures, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type,
     TypeKind, TypeRegistry,
 };
+use rglsl_types::ShaderStage;
 
-fn builtins(version: u32, stage: Stage) -> Builtins {
+fn builtins(version: u32, stage: ShaderStage) -> Builtins {
     Builtins::new(version, stage, &ResourceLimits::default())
 }
 
@@ -54,14 +55,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (Stage::Vertex, 7381, 35, 189, 225),
-        (Stage::TessControl, 7382, 35, 181, 214),
-        (Stage::TessEvaluation, 7381, 35, 189, 222),
-        (Stage::Geometry, 7385, 35, 188, 221),
-        (Stage::Fragment, 7902, 35, 197, 233),
-        (Stage::Compute, 7847, 37, 179, 215),
-        (Stage::Mesh, 7597, 37, 192, 226),
-        (Stage::RayGeneration, 7381, 122, 171, 210),
+        (ShaderStage::Vertex, 7381, 35, 189, 225),
+        (ShaderStage::TessControl, 7382, 35, 181, 214),
+        (ShaderStage::TessEvaluation, 7381, 35, 189, 222),
+        (ShaderStage::Geometry, 7385, 35, 188, 221),
+        (ShaderStage::Fragment, 7902, 35, 197, 233),
+        (ShaderStage::Compute, 7847, 37, 179, 215),
+        (ShaderStage::Mesh, 7597, 37, 192, 226),
+        (ShaderStage::RayGeneration, 7381, 122, 171, 210),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -75,7 +76,7 @@ fn the_tables_have_the_expected_sizes() {
 
 #[test]
 fn overloads_are_unique() {
-    for stage in Stage::ALL {
+    for stage in ShaderStage::ALL {
         let table = builtins(460, stage);
         let mut seen = BTreeSet::new();
         for function in table.functions() {
@@ -95,7 +96,7 @@ fn overloads_are_unique() {
 
 #[test]
 fn generic_prototypes_expand_to_every_size() {
-    let table = builtins(450, Stage::Vertex);
+    let table = builtins(450, ShaderStage::Vertex);
     assert_eq!(
         signatures(&table, "radians"),
         [
@@ -158,7 +159,7 @@ fn generic_prototypes_expand_to_every_size() {
 
 #[test]
 fn trigonometry_has_no_double_overloads() {
-    let table = builtins(460, Stage::Fragment);
+    let table = builtins(460, ShaderStage::Fragment);
     for name in ["sin", "cos", "atan", "pow", "exp", "log", "radians"] {
         assert!(
             signatures(&table, name)
@@ -171,7 +172,7 @@ fn trigonometry_has_no_double_overloads() {
 
 #[test]
 fn texture_functions_follow_the_sampler_type() {
-    let table = builtins(450, Stage::Fragment);
+    let table = builtins(450, ShaderStage::Fragment);
     let texture = signatures(&table, "texture");
     for expected in [
         "vec4 texture(sampler2D, vec2)",
@@ -229,7 +230,7 @@ fn texture_functions_follow_the_sampler_type() {
 
 #[test]
 fn image_functions_follow_the_image_type() {
-    let table = builtins(450, Stage::Compute);
+    let table = builtins(450, ShaderStage::Compute);
     for (name, expected) in [
         ("imageLoad", "vec4 imageLoad(image2D, ivec2)"),
         ("imageLoad", "ivec4 imageLoad(iimage2DMS, ivec2, int)"),
@@ -277,14 +278,17 @@ fn stage_specific_functions_are_gated() {
         "interpolateAtOffset",
         "subpassLoad",
     ];
-    for stage in Stage::ALL {
+    for stage in ShaderStage::ALL {
         let table = builtins(450, stage);
         for name in derivatives {
             assert_eq!(
                 !table.overloads(name).is_empty(),
                 matches!(
                     stage,
-                    Stage::Fragment | Stage::Compute | Stage::Task | Stage::Mesh
+                    ShaderStage::Fragment
+                        | ShaderStage::Compute
+                        | ShaderStage::Task
+                        | ShaderStage::Mesh
                 ),
                 "{stage:?} {name}"
             );
@@ -292,7 +296,7 @@ fn stage_specific_functions_are_gated() {
         for name in fragment_only {
             assert_eq!(
                 !table.overloads(name).is_empty(),
-                stage == Stage::Fragment,
+                stage == ShaderStage::Fragment,
                 "{stage:?} {name}"
             );
         }
@@ -304,7 +308,7 @@ fn stage_specific_functions_are_gated() {
         ] {
             assert_eq!(
                 !table.overloads(name).is_empty(),
-                stage == Stage::Geometry,
+                stage == ShaderStage::Geometry,
                 "{stage:?} {name}"
             );
         }
@@ -312,14 +316,20 @@ fn stage_specific_functions_are_gated() {
             !table.overloads("barrier").is_empty(),
             matches!(
                 stage,
-                Stage::TessControl | Stage::Compute | Stage::Mesh | Stage::Task
+                ShaderStage::TessControl
+                    | ShaderStage::Compute
+                    | ShaderStage::Mesh
+                    | ShaderStage::Task
             ),
             "{stage:?}"
         );
         for name in ["memoryBarrierShared", "groupMemoryBarrier"] {
             assert_eq!(
                 !table.overloads(name).is_empty(),
-                matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task),
+                matches!(
+                    stage,
+                    ShaderStage::Compute | ShaderStage::Mesh | ShaderStage::Task
+                ),
                 "{stage:?} {name}"
             );
         }
@@ -335,7 +345,7 @@ fn stage_specific_functions_are_gated() {
             .contains(&"vec4 texture(sampler2D, vec2, float)".to_string());
         assert_eq!(
             bias,
-            matches!(stage, Stage::Fragment | Stage::Compute),
+            matches!(stage, ShaderStage::Fragment | ShaderStage::Compute),
             "{stage:?}"
         );
     }
@@ -344,14 +354,19 @@ fn stage_specific_functions_are_gated() {
 #[test]
 fn version_specific_functions_are_gated() {
     for name in ["anyInvocation", "allInvocations", "allInvocationsEqual"] {
-        assert!(builtins(450, Stage::Fragment).overloads(name).is_empty());
-        assert_eq!(builtins(460, Stage::Fragment).overloads(name).len(), 1);
+        assert!(builtins(450, ShaderStage::Fragment)
+            .overloads(name)
+            .is_empty());
+        assert_eq!(
+            builtins(460, ShaderStage::Fragment).overloads(name).len(),
+            1
+        );
     }
 }
 
 #[test]
 fn functions_removed_under_vulkan_are_absent() {
-    let table = builtins(460, Stage::Fragment);
+    let table = builtins(460, ShaderStage::Fragment);
     for name in [
         "noise1",
         "noise2",
@@ -373,7 +388,7 @@ fn functions_removed_under_vulkan_are_absent() {
 
 #[test]
 fn every_core_function_name_is_known() {
-    let table = builtins(460, Stage::Fragment);
+    let table = builtins(460, ShaderStage::Fragment);
     let names = "radians degrees sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh
         pow exp log exp2 log2 sqrt inversesqrt
         abs sign floor trunc round roundEven ceil fract mod modf min max clamp mix step smoothstep
@@ -423,7 +438,7 @@ fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {
 
 #[test]
 fn vertex_variables() {
-    let older = variable_names(&builtins(450, Stage::Vertex));
+    let older = variable_names(&builtins(450, ShaderStage::Vertex));
     for name in [
         "gl_VertexIndex",
         "gl_InstanceIndex",
@@ -447,18 +462,18 @@ fn vertex_variables() {
     ] {
         assert!(!older.contains(name), "{name}");
     }
-    let newer = variable_names(&builtins(460, Stage::Vertex));
+    let newer = variable_names(&builtins(460, ShaderStage::Vertex));
     for name in ["gl_BaseVertex", "gl_BaseInstance", "gl_DrawID"] {
         assert!(newer.contains(name), "{name}");
     }
-    let table = builtins(450, Stage::Vertex);
+    let table = builtins(450, ShaderStage::Vertex);
     assert_eq!(storage_of(&table, "gl_VertexIndex"), Some(Storage::In));
     assert_eq!(storage_of(&table, "gl_Position"), Some(Storage::Out));
 }
 
 #[test]
 fn tessellation_and_geometry_variables() {
-    let control = builtins(450, Stage::TessControl);
+    let control = builtins(450, ShaderStage::TessControl);
     let names = variable_names(&control);
     for name in [
         "gl_in",
@@ -493,7 +508,7 @@ fn tessellation_and_geometry_variables() {
         storage_of(&control, "gl_TessLevelOuter"),
         Some(Storage::Out)
     );
-    let evaluation = builtins(450, Stage::TessEvaluation);
+    let evaluation = builtins(450, ShaderStage::TessEvaluation);
     let names = variable_names(&evaluation);
     for name in ["gl_in", "gl_TessCoord", "gl_Position", "gl_TessLevelInner"] {
         assert!(names.contains(name), "{name}");
@@ -503,7 +518,7 @@ fn tessellation_and_geometry_variables() {
         storage_of(&evaluation, "gl_TessLevelOuter"),
         Some(Storage::In)
     );
-    let geometry = builtins(450, Stage::Geometry);
+    let geometry = builtins(450, ShaderStage::Geometry);
     let names = variable_names(&geometry);
     for name in [
         "gl_in",
@@ -522,7 +537,7 @@ fn tessellation_and_geometry_variables() {
 
 #[test]
 fn fragment_and_compute_variables() {
-    let fragment = builtins(450, Stage::Fragment);
+    let fragment = builtins(450, ShaderStage::Fragment);
     let names = variable_names(&fragment);
     for name in [
         "gl_FragCoord",
@@ -554,7 +569,7 @@ fn fragment_and_compute_variables() {
     assert_eq!(storage_of(&fragment, "gl_FragDepth"), Some(Storage::Out));
     assert_eq!(storage_of(&fragment, "gl_SampleMask"), Some(Storage::Out));
     assert_eq!(storage_of(&fragment, "gl_FragCoord"), Some(Storage::In));
-    let compute = builtins(450, Stage::Compute);
+    let compute = builtins(450, ShaderStage::Compute);
     let names = variable_names(&compute);
     for name in [
         "gl_NumWorkGroups",
@@ -579,7 +594,7 @@ fn constants_take_their_values_from_the_resource_limits() {
     assert_eq!(limits.max_compute_work_group_size(), [1024, 1024, 64]);
     assert_eq!(limits.integer_constants().len(), 77);
     limits.max_patch_vertices = 12;
-    let table = Builtins::new(450, Stage::TessControl, &limits);
+    let table = Builtins::new(450, ShaderStage::TessControl, &limits);
     let value = |name: &str| {
         let (_, id) = table.variables().find(|(found, _)| *found == name)?;
         let symbol = table.symbols().get(usize::try_from(id.index()).ok()?)?;

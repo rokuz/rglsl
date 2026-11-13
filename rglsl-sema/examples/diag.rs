@@ -3,7 +3,9 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rglsl_sema::{analyze, Options, Stage};
+use rglsl_sema::{analyze, Options};
+
+use rglsl_types::ShaderStage;
 
 fn main() -> ExitCode {
     let mut status = ExitCode::SUCCESS;
@@ -12,7 +14,7 @@ fn main() -> ExitCode {
         let stage = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .and_then(Stage::from_extension);
+            .and_then(ShaderStage::from_extension);
         let (Ok(source), Some(stage)) = (fs::read_to_string(path), stage) else {
             eprintln!("{file}: cannot read the file or tell its stage from the extension");
             status = ExitCode::FAILURE;

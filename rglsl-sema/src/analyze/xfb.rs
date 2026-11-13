@@ -1,10 +1,10 @@
 use rglsl_ast::Span;
 
 use super::Analyzer;
-use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Qualifiers, Storage};
 use crate::types::{Member, Scalar, Type, TypeRegistry};
+use rglsl_types::ShaderStage;
 
 const CAPTURED_BITS: u32 = 32;
 
@@ -25,7 +25,7 @@ impl Analyzer<'_> {
         let captures = self.stage_map(|stage| {
             matches!(
                 stage,
-                Stage::Vertex | Stage::TessEvaluation | Stage::Geometry
+                ShaderStage::Vertex | ShaderStage::TessEvaluation | ShaderStage::Geometry
             )
         });
         if captures {

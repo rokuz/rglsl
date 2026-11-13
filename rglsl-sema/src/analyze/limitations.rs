@@ -7,10 +7,10 @@ use rglsl_ast::ast::{
 use rglsl_ast::Span;
 
 use super::{Analyzer, Callee, Operand};
-use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Direction, Origin, Storage, SymbolId, SymbolKind};
 use crate::types::{Type, TypeKind};
+use rglsl_types::ShaderStage;
 
 const BAD_INIT: &str =
     "the init-declaration must have the form \"type-specifier loop-index = constant-expression\"";
@@ -39,8 +39,11 @@ impl Analyzer<'_> {
             return;
         }
         self.stage_check(Span::new(0, 0), |stage| {
-            matches!(stage, Stage::TessControl | Stage::TessEvaluation)
-                .then_some(DiagnosticKind::BuiltinArraySize("gl_in"))
+            matches!(
+                stage,
+                ShaderStage::TessControl | ShaderStage::TessEvaluation
+            )
+            .then_some(DiagnosticKind::BuiltinArraySize("gl_in"))
         });
     }
 
@@ -244,7 +247,7 @@ impl Analyzer<'_> {
         let uniform = matches!(storage, Storage::Uniform | Storage::Buffer);
         let constant = operand.constant;
         let folded = constant && operand.value.is_some() && !operand.specialization;
-        let vertex = self.stage() == Stage::Vertex;
+        let vertex = self.stage() == ShaderStage::Vertex;
         let vector_or_matrix = !operand.ty.is_array()
             && matches!(
                 operand.ty.kind,

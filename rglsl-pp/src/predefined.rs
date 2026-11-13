@@ -212,7 +212,7 @@ pub(crate) fn preamble(version: &Version, options: &Options) -> String {
         define(&mut preamble, "VULKAN", &format!("{vulkan}"));
     }
     if let Some(stage) = options.stage {
-        define(&mut preamble, stage.macro_name(), "1");
+        define(&mut preamble, crate::options::macro_name(stage), "1");
     }
     for user in &options.defines {
         preamble.push_str("#define ");

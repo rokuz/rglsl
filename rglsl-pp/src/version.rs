@@ -1,6 +1,8 @@
 use alloc::vec::Vec;
 
-use crate::options::{Options, Stage};
+use crate::options::Options;
+
+use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Profile {
@@ -311,9 +313,9 @@ pub(crate) fn deduce(
         }
     }
     match options.stage {
-        Some(Stage::Geometry | Stage::TessControl | Stage::TessEvaluation) => {
+        Some(ShaderStage::Geometry | ShaderStage::TessControl | ShaderStage::TessEvaluation) => {
             if (es(profile) && number < 310) || (!es(profile) && number < 150) {
-                let geometry = options.stage == Some(Stage::Geometry);
+                let geometry = options.stage == Some(ShaderStage::Geometry);
                 errors.push(if geometry {
                     "#version: geometry shaders require es profile with version 310 or non-es profile with version 150 or above"
                 } else {
@@ -329,32 +331,32 @@ pub(crate) fn deduce(
                 }
             }
         }
-        Some(Stage::Compute) => {
+        Some(ShaderStage::Compute) => {
             if (es(profile) && number < 310) || (!es(profile) && number < 420) {
                 errors.push("#version: compute shaders require es profile with version 310 or above, or non-es profile with version 420 or above");
                 number = if es(profile) { 310 } else { 420 };
             }
         }
         Some(
-            Stage::RayGeneration
-            | Stage::Intersection
-            | Stage::AnyHit
-            | Stage::ClosestHit
-            | Stage::Miss
-            | Stage::Callable,
+            ShaderStage::RayGeneration
+            | ShaderStage::Intersection
+            | ShaderStage::AnyHit
+            | ShaderStage::ClosestHit
+            | ShaderStage::Miss
+            | ShaderStage::Callable,
         ) => {
             if es(profile) || number < 460 {
                 errors.push("#version: ray tracing shaders require non-es profile with version 460 or above");
                 number = 460;
             }
         }
-        Some(Stage::Mesh | Stage::Task) => {
+        Some(ShaderStage::Mesh | ShaderStage::Task) => {
             if (es(profile) && number < 320) || (!es(profile) && number < 450) {
                 errors.push("#version: mesh/task shaders require es profile with version 320 or above, or non-es profile with version 450 or above");
                 number = if es(profile) { 320 } else { 450 };
             }
         }
-        Some(Stage::Vertex | Stage::Fragment) | None => {}
+        Some(ShaderStage::Vertex | ShaderStage::Fragment) | None => {}
     }
     if es(profile) && number >= 300 && scanned.not_first {
         errors.push("#version: statement must appear first in es-profile shader; before comments or newlines");

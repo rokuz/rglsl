@@ -1,9 +1,9 @@
 use rglsl_ast::Span;
 
 use super::Analyzer;
-use crate::builtins::Stage;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Qualifiers, Storage};
+use rglsl_types::ShaderStage;
 
 const PUSH_CONSTANT_BANK: &str = "GL_NV_push_constant_bank";
 
@@ -32,7 +32,7 @@ const BLEND_EQUATIONS: [&str; 16] = [
     "blend_support_all_equations",
 ];
 
-type StageFilter = fn(Stage) -> bool;
+type StageFilter = fn(ShaderStage) -> bool;
 
 struct LayoutExtension {
     feature: &'static str,
@@ -40,20 +40,23 @@ struct LayoutExtension {
     extensions: &'static [&'static str],
 }
 
-const fn compute_like(stage: Stage) -> bool {
-    matches!(stage, Stage::Compute | Stage::Task | Stage::Mesh)
+const fn compute_like(stage: ShaderStage) -> bool {
+    matches!(
+        stage,
+        ShaderStage::Compute | ShaderStage::Task | ShaderStage::Mesh
+    )
 }
 
-const fn mesh_or_task(stage: Stage) -> bool {
-    matches!(stage, Stage::Task | Stage::Mesh)
+const fn mesh_or_task(stage: ShaderStage) -> bool {
+    matches!(stage, ShaderStage::Task | ShaderStage::Mesh)
 }
 
-const fn mesh(stage: Stage) -> bool {
-    matches!(stage, Stage::Mesh)
+const fn mesh(stage: ShaderStage) -> bool {
+    matches!(stage, ShaderStage::Mesh)
 }
 
-const fn fragment(stage: Stage) -> bool {
-    matches!(stage, Stage::Fragment)
+const fn fragment(stage: ShaderStage) -> bool {
+    matches!(stage, ShaderStage::Fragment)
 }
 
 fn layout_extension(name: &str) -> Option<LayoutExtension> {
@@ -77,22 +80,22 @@ fn layout_extension(name: &str) -> Option<LayoutExtension> {
             ),
             "shaderrecordnv" => (
                 "shader record NV",
-                Some(Stage::ray_tracing),
+                Some(ShaderStage::ray_tracing),
                 &["GL_NV_ray_tracing"],
             ),
             "shaderrecordext" => (
                 "shader record EXT",
-                Some(Stage::ray_tracing),
+                Some(ShaderStage::ray_tracing),
                 &["GL_EXT_ray_tracing"],
             ),
             "hitobjectshaderrecordnv" => (
                 "hitobject shader record NV",
-                Some(Stage::ray_tracing),
+                Some(ShaderStage::ray_tracing),
                 &["GL_NV_shader_invocation_reorder"],
             ),
             "hitobjectshaderrecordext" => (
                 "hitobject shader record EXT",
-                Some(Stage::ray_tracing),
+                Some(ShaderStage::ray_tracing),
                 &["GL_EXT_shader_invocation_reorder"],
             ),
             "max_vertices" => ("max_vertices", Some(mesh), &super::mesh::MESH_ANY),
@@ -148,7 +151,10 @@ impl Analyzer<'_> {
         if self.is_library() || !self.main_defined {
             return;
         }
-        for (stage, feature) in [(Stage::Task, "task shaders"), (Stage::Mesh, "mesh shaders")] {
+        for (stage, feature) in [
+            (ShaderStage::Task, "task shaders"),
+            (ShaderStage::Mesh, "mesh shaders"),
+        ] {
             self.require_stage_extensions(end, feature, |known| {
                 (known == stage).then_some(&super::mesh::MESH_ANY[..])
             });
@@ -252,7 +258,7 @@ impl Analyzer<'_> {
             return;
         }
         self.stage_check(span, |stage| {
-            (stage == Stage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
+            (stage == ShaderStage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
                 qualifier: "location",
                 reason: "too large for fragment output",
             })

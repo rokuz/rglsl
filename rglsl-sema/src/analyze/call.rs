@@ -8,11 +8,12 @@ use rglsl_ast::Span;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
-use crate::builtins::{subgroup, Stage};
+use crate::builtins::subgroup;
 use crate::constant::{fold_builtin, Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
 use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
+use rglsl_types::ShaderStage;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Candidate {
@@ -461,7 +462,8 @@ impl Analyzer<'_> {
                     && self.stage_check(name.span, |stage| {
                         matches!(
                             (storage, stage),
-                            (Storage::In, Stage::Geometry) | (Storage::Out, Stage::TessControl)
+                            (Storage::In, ShaderStage::Geometry)
+                                | (Storage::Out, ShaderStage::TessControl)
                         )
                         .then(|| DiagnosticKind::InvalidLength(shown.clone()))
                     });
@@ -625,22 +627,22 @@ impl Analyzer<'_> {
             return false;
         };
         let mut groups: Vec<(Vec<usize>, u16)> = Vec::new();
-        for stage in Stage::ALL {
+        for stage in ShaderStage::ALL {
             let key = tables.overload_indices(stage, name);
             match groups.iter_mut().find(|&&mut (ref known, _)| *known == key) {
-                Some(&mut (_, ref mut stages)) => *stages |= stage.bit(),
-                None => groups.push((key, stage.bit())),
+                Some(&mut (_, ref mut stages)) => *stages |= crate::builtins::stage_bit(stage),
+                None => groups.push((key, crate::builtins::stage_bit(stage))),
             }
         }
         if groups.len() < 2 {
             return false;
         }
         let own = self.options.stage;
-        let own_bit = own.bit();
+        let own_bit = crate::builtins::stage_bit(own);
         let outcome = |analyzer: &Self, stages: u16| {
-            let stage = Stage::ALL
+            let stage = ShaderStage::ALL
                 .into_iter()
-                .find(|&stage| stage.bit() & stages != 0)
+                .find(|&stage| crate::builtins::stage_bit(stage) & stages != 0)
                 .unwrap_or(own);
             analyzer.call_outcome(name, types, &tables.overloads(stage, name))
         };
@@ -662,8 +664,8 @@ impl Analyzer<'_> {
             differs = true;
             match other.error(name) {
                 Some(kind) => {
-                    for stage in Stage::ALL {
-                        if stage.bit() & stages != 0 {
+                    for stage in ShaderStage::ALL {
+                        if crate::builtins::stage_bit(stage) & stages != 0 {
                             self.stage_error(stage, span, kind.clone());
                         }
                     }
@@ -673,8 +675,8 @@ impl Analyzer<'_> {
         }
         let suppressed = match own_outcome.error(name) {
             Some(kind) if differs => {
-                for stage in Stage::ALL {
-                    if stage.bit() & own_stages != 0 {
+                for stage in ShaderStage::ALL {
+                    if crate::builtins::stage_bit(stage) & own_stages != 0 {
                         self.stage_error(stage, span, kind.clone());
                     }
                 }

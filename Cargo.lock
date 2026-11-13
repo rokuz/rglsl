@@ -511,6 +511,9 @@ dependencies = [
 [[package]]
 name = "rglsl-pp"
 version = "0.1.0"
+dependencies = [
+ "rglsl-types",
+]
 
 [[package]]
 name = "rglsl-sema"

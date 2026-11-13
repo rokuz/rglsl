@@ -9,7 +9,8 @@ use rglsl_ast::ast::{
     TypeSpecifierNonArray,
 };
 use rglsl_sema::scope::{Origin, SymbolKind};
-use rglsl_sema::{Analysis, Stage};
+use rglsl_sema::Analysis;
+use rglsl_types::ShaderStage;
 
 use crate::basic::{self, INT};
 use crate::build::{unqualified, Builder};
@@ -55,8 +56,8 @@ impl Donor {
         })
     }
 
-    pub fn stage(&self) -> Stage {
-        Stage::from_extension(&self.extension).unwrap_or(Stage::Fragment)
+    pub fn stage(&self) -> ShaderStage {
+        ShaderStage::from_extension(&self.extension).unwrap_or(ShaderStage::Fragment)
     }
 }
 
@@ -67,10 +68,10 @@ struct Prepared {
     fragments: Vec<(usize, NodeId)>,
 }
 
-fn extension_of(stage: Stage) -> &'static str {
+fn extension_of(stage: ShaderStage) -> &'static str {
     match stage {
-        Stage::Vertex => "vert",
-        Stage::Compute => "comp",
+        ShaderStage::Vertex => "vert",
+        ShaderStage::Compute => "comp",
         _ => "frag",
     }
 }

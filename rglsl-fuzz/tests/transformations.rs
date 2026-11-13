@@ -7,7 +7,7 @@ use rglsl_fuzz::{
     analyze_shader, generate_variant_with_donors, parse_shader, Donor, EnabledTransformations,
     GeneratorOptions, Random, ShaderJob, Transformation,
 };
-use rglsl_sema::Stage;
+use rglsl_types::ShaderStage;
 use samples::{glslang, glslang_accepts, sample_donors, sample_jobs, TestResult};
 
 fn options(transformation: Transformation) -> GeneratorOptions {
@@ -44,7 +44,7 @@ fn check(
             .ok_or_else(|| format!("{name}: the variant has no shaders"))?;
         markers += text.matches(marker).count();
         let unit = parse_shader(&text).map_err(|error| format!("{name}: {error}\n{text}"))?;
-        let analysis = analyze_shader(&unit, Stage::Fragment, false, None)?;
+        let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None)?;
         assert!(
             analysis.diagnostics.is_empty(),
             "{} on {name}: {:?}\n{text}",

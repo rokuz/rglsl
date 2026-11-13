@@ -5,10 +5,10 @@ use rglsl_ast::extensions::{self, names, ExtensionIssue, Feature, Request, EXPLI
 use rglsl_ast::Span;
 
 use super::Analyzer;
-use crate::builtins::Stage;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::Storage;
 use crate::types::{NumericFeatures, Scalar, Type, TypeKind};
+use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SmallKind {
@@ -122,11 +122,13 @@ impl Analyzer<'_> {
             _ => return,
         };
         self.stage_check(span, |stage| {
-            (!matches!(stage, Stage::Task | Stage::Mesh | Stage::Fragment)).then(|| {
-                DiagnosticKind::ExtensionStage {
-                    extension: String::from(name),
-                    stage: stage.name(),
-                }
+            (!matches!(
+                stage,
+                ShaderStage::Task | ShaderStage::Mesh | ShaderStage::Fragment
+            ))
+            .then(|| DiagnosticKind::ExtensionStage {
+                extension: String::from(name),
+                stage: stage.name(),
             })
         });
         if self.extensions.is_on(other) {

@@ -11,8 +11,8 @@ use rglsl_sema::{ResourceLimits, StageTables};
 use rglsl_types::probe::StageProbe;
 
 use super::{
-    link_time, lower_object, preprocess, preprocessor_options, preprocessor_stage, run_lowerer,
-    sema_error, sema_options, stage, Mode, Parsed, StageClass,
+    link_time, lower_object, preprocess, preprocessor_options, run_lowerer, sema_error,
+    sema_options, Mode, Parsed, StageClass,
 };
 use crate::front::glsl::{Error, ErrorKind, Options, ParseErrors};
 use crate::object::{ObjectModule, StageRejection};
@@ -319,16 +319,16 @@ fn choose(
             .map(|&(_, stages)| stages);
         let counts: Vec<usize> = candidates
             .iter()
-            .map(|&candidate| tables.overloads(stage(candidate), identifier).len())
+            .map(|&candidate| tables.overloads(candidate, identifier).len())
             .collect();
         let most = counts.iter().copied().max().unwrap_or(0);
         let varies = counts.iter().any(|&count| count != most);
         for (&candidate, &count) in candidates.iter().zip(&counts) {
             let mut declared = 0;
-            if tables.variable(stage(candidate), identifier).is_some() {
+            if tables.variable(candidate, identifier).is_some() {
                 declared += 1;
             }
-            if layout.is_some_and(|stages| stages.contains(&stage(candidate))) {
+            if layout.is_some_and(|stages| stages.contains(&candidate)) {
                 declared += 1;
             }
             if keyword.is_some_and(|stages| stages.contains(&candidate)) {
@@ -395,10 +395,7 @@ fn once(
             (preprocessed, unit, failure.is_some())
         }
     };
-    if !preprocessed.same_for_stage(preprocessor_stage(first))
-        || preprocessed.has_errors()
-        || failed
-    {
+    if !preprocessed.same_for_stage(first) || preprocessed.has_errors() || failed {
         return None;
     }
     let text = preprocessed.text.as_str();
@@ -501,7 +498,7 @@ impl Context<'_> {
             if self.versioned & bit == 0 {
                 continue;
             }
-            match first_error(&analysis, stage(candidate)) {
+            match first_error(&analysis, candidate) {
                 Some((diagnostic, trusted)) => {
                     if trusted & bit == 0 {
                         run.unknown |= bit;
@@ -579,7 +576,7 @@ impl Context<'_> {
 
 fn first_error(
     analysis: &rglsl_sema::Analysis,
-    candidate: rglsl_sema::Stage,
+    candidate: ShaderStage,
 ) -> Option<(&rglsl_sema::Diagnostic, u16)> {
     let staged = analysis
         .stage_diagnostics
@@ -620,11 +617,11 @@ fn reword(
         | DiagnosticKind::NoMatchingFunction(ref name) => name,
         _ => return None,
     };
-    let declared = !tables.declares(stage(own), name)
+    let declared = !tables.declares(own, name)
         && ShaderStage::ALL
             .into_iter()
             .filter(|&candidate| candidate != own)
-            .any(|candidate| tables.declares(stage(candidate), name));
+            .any(|candidate| tables.declares(candidate, name));
     declared.then(|| format!("`{name}` is not available in {} shaders", own.name()))
 }
 
@@ -704,11 +701,7 @@ impl StageNames {
             if reached & bit == 0 {
                 continue;
             }
-            if candidate == own
-                || names
-                    .iter()
-                    .all(|name| tables.same(stage(own), stage(candidate), name))
-            {
+            if candidate == own || names.iter().all(|name| tables.same(own, candidate, name)) {
                 mask |= bit;
             }
         }

@@ -16,7 +16,6 @@ use rglsl_ast::Span;
 use super::frames::Cx;
 use super::heap::is_heap_storage;
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
-use crate::builtins::Stage;
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
@@ -27,6 +26,7 @@ use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, OpaqueKind, Scalar, SpecializedSize, Type,
     TypeKind,
 };
+use rglsl_types::ShaderStage;
 
 pub(crate) const IMAGE_FORMATS: [&str; 41] = [
     "rgba32f",
@@ -231,7 +231,7 @@ impl Analyzer<'_> {
                 .and_then(|entry| entry.value)
                 .and_then(|value| u32::try_from(value).ok())
             {
-                if self.stage_is(Stage::TessControl) && self.output_array_size.is_none() {
+                if self.stage_is(ShaderStage::TessControl) && self.output_array_size.is_none() {
                     self.output_array_size = Some(vertices);
                     self.resize_interface_arrays(qualifier.span, Storage::Out, vertices);
                 }
@@ -333,7 +333,12 @@ impl Analyzer<'_> {
                 .starts_with("derivative_group_")
         });
         if !relevant
-            || !self.stage_map(|stage| matches!(stage, Stage::Compute | Stage::Task | Stage::Mesh))
+            || !self.stage_map(|stage| {
+                matches!(
+                    stage,
+                    ShaderStage::Compute | ShaderStage::Task | ShaderStage::Mesh
+                )
+            })
         {
             return;
         }
@@ -353,7 +358,7 @@ impl Analyzer<'_> {
                     self.khr_derivative_group = true;
                 }
                 "derivative_group_quadsnv" | "derivative_group_linearnv"
-                    if !self.stage_is(Stage::Compute) =>
+                    if !self.stage_is(ShaderStage::Compute) =>
                 {
                     self.error(
                         entry.span,
@@ -412,7 +417,7 @@ impl Analyzer<'_> {
                 _ => {}
             }
         }
-        if storage == Storage::In && !self.stage_is(Stage::Geometry) {
+        if storage == Storage::In && !self.stage_is(ShaderStage::Geometry) {
             return;
         }
         for name in mismatched {
@@ -437,7 +442,7 @@ impl Analyzer<'_> {
         if !primitives
             .iter()
             .any(|&(name, _)| qualifiers.has_layout(name))
-            || !self.stage_is(Stage::Geometry)
+            || !self.stage_is(ShaderStage::Geometry)
         {
             return;
         }
@@ -758,23 +763,23 @@ impl Analyzer<'_> {
         let ext = self.mesh_ext();
         self.stage_check(span, |stage| {
             let (sizes, reason) = match stage {
-                Stage::Compute => (
+                ShaderStage::Compute => (
                     limits.max_compute_work_group_size(),
                     "too large; see gl_MaxComputeWorkGroupSize",
                 ),
-                Stage::Mesh if ext => (
+                ShaderStage::Mesh if ext => (
                     limits.max_mesh_work_group_size_ext(),
                     "too large, see gl_MaxMeshWorkGroupSizeEXT",
                 ),
-                Stage::Mesh => (
+                ShaderStage::Mesh => (
                     limits.max_mesh_work_group_size_nv(),
                     "too large, see gl_MaxMeshWorkGroupSizeNV",
                 ),
-                Stage::Task if ext => (
+                ShaderStage::Task if ext => (
                     limits.max_task_work_group_size_ext(),
                     "too large, see gl_MaxTaskWorkGroupSizeEXT",
                 ),
-                Stage::Task => (
+                ShaderStage::Task => (
                     limits.max_task_work_group_size_nv(),
                     "too large, see gl_MaxTaskWorkGroupSizeNV",
                 ),
@@ -937,10 +942,12 @@ impl Analyzer<'_> {
                 Some(opaque) => {
                     if opaque.kind == crate::types::OpaqueKind::SubpassInput {
                         self.stage_check(span, |stage| {
-                            (stage != Stage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
-                                qualifier: "subpass input",
-                                reason: "not supported in this stage",
-                            })
+                            (stage != ShaderStage::Fragment).then_some(
+                                DiagnosticKind::InvalidQualifier {
+                                    qualifier: "subpass input",
+                                    reason: "not supported in this stage",
+                                },
+                            )
                         });
                     }
                     Type::opaque(opaque)
@@ -1277,16 +1284,22 @@ impl Analyzer<'_> {
         }
         if qualifiers.storage == Storage::Shared
             && self.stage_check(span, |stage| {
-                (!matches!(stage, Stage::Compute | Stage::Mesh | Stage::Task))
-                    .then(|| invalid("shared", "not supported in this stage"))
+                (!matches!(
+                    stage,
+                    ShaderStage::Compute | ShaderStage::Mesh | ShaderStage::Task
+                ))
+                .then(|| invalid("shared", "not supported in this stage"))
             })
         {
             return;
         }
         if qualifiers.patch
             && self.stage_check(span, |stage| {
-                (!matches!(stage, Stage::TessControl | Stage::TessEvaluation))
-                    .then(|| invalid("patch", "not supported in this stage"))
+                (!matches!(
+                    stage,
+                    ShaderStage::TessControl | ShaderStage::TessEvaluation
+                ))
+                .then(|| invalid("patch", "not supported in this stage"))
             })
         {
             return;
@@ -1326,9 +1339,9 @@ impl Analyzer<'_> {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
                 self.stage_check(span, |stage| match stage {
-                    Stage::Fragment => (!flat && needs_flat && !per_vertex)
+                    ShaderStage::Fragment => (!flat && needs_flat && !per_vertex)
                         .then(|| invalid("in", "integer and double inputs must be `flat`")),
-                    Stage::Vertex => {
+                    ShaderStage::Vertex => {
                         if structure {
                             Some(invalid("in", "a vertex input cannot be a structure"))
                         } else if further || invariant {
@@ -1337,10 +1350,10 @@ impl Analyzer<'_> {
                             None
                         }
                     }
-                    Stage::Compute => {
+                    ShaderStage::Compute => {
                         Some(invalid("in", "a compute shader has no user-defined inputs"))
                     }
-                    Stage::TessControl if patch => Some(invalid(
+                    ShaderStage::TessControl if patch => Some(invalid(
                         "patch",
                         "only outputs can be `patch` in this stage",
                     )),
@@ -1352,14 +1365,14 @@ impl Analyzer<'_> {
                     self.error(span, invalid("patch", "cannot be interpolated"));
                 }
                 self.stage_check(span, |stage| match stage {
-                    Stage::Compute => Some(invalid(
+                    ShaderStage::Compute => Some(invalid(
                         "out",
                         "a compute shader has no user-defined outputs",
                     )),
-                    Stage::TessEvaluation if patch => {
+                    ShaderStage::TessEvaluation if patch => {
                         Some(invalid("patch", "only inputs can be `patch` in this stage"))
                     }
-                    Stage::Fragment => {
+                    ShaderStage::Fragment => {
                         if further {
                             Some(invalid(
                                 "out",
@@ -1385,7 +1398,7 @@ impl Analyzer<'_> {
         let storage = qualifiers.storage;
         if matches!(storage, Storage::In | Storage::Out) && scalar == Some(Scalar::Bool) {
             self.stage_check(span, |stage| {
-                (!(storage == Storage::Out && stage == Stage::Fragment))
+                (!(storage == Storage::Out && stage == ShaderStage::Fragment))
                     .then(|| invalid("in", "an input or output cannot be boolean"))
             });
         }
@@ -1724,7 +1737,7 @@ impl Analyzer<'_> {
         let patch_vertices = u32::try_from(self.options.limits.max_patch_vertices).ok();
         let outer = ty.outer_size();
         let per_vertex = qualifiers.per_vertex.is_some();
-        let outcome = |stage: Stage| -> InterfaceArray {
+        let outcome = |stage: ShaderStage| -> InterfaceArray {
             let invalid = |reason| DiagnosticKind::InvalidInterfaceArray {
                 name: name.node.clone(),
                 reason,
@@ -1743,11 +1756,11 @@ impl Analyzer<'_> {
                 };
             }
             let size = match (storage, stage) {
-                (Storage::In, Stage::Geometry) => input_size,
-                (Storage::In, Stage::TessControl | Stage::TessEvaluation) => {
+                (Storage::In, ShaderStage::Geometry) => input_size,
+                (Storage::In, ShaderStage::TessControl | ShaderStage::TessEvaluation) => {
                     input_size.or(patch_vertices)
                 }
-                (Storage::Out, Stage::TessControl) => output_size,
+                (Storage::Out, ShaderStage::TessControl) => output_size,
                 _ => return InterfaceArray::Unchanged,
             };
             match (outer, size) {
@@ -1755,7 +1768,7 @@ impl Analyzer<'_> {
                 (Some(ArraySize::Unsized), Some(size)) => InterfaceArray::Sized(size),
                 (Some(ArraySize::Sized(declared)), Some(size)) if declared != size => {
                     let reason = match (stage, storage) {
-                        (Stage::Geometry, _) => "its size does not match the input primitive",
+                        (ShaderStage::Geometry, _) => "its size does not match the input primitive",
                         (_, Storage::In) => "its size must be gl_MaxPatchVertices",
                         _ => "its size does not match the number of output vertices",
                     };
@@ -1770,7 +1783,7 @@ impl Analyzer<'_> {
                 InterfaceArray::Invalid(_) => InterfaceArray::Unchanged,
                 ref other => other.clone(),
             };
-            let outcomes: Vec<(Stage, InterfaceArray)> = Stage::ALL
+            let outcomes: Vec<(ShaderStage, InterfaceArray)> = ShaderStage::ALL
                 .into_iter()
                 .map(|stage| (stage, outcome(stage)))
                 .collect();
@@ -1781,7 +1794,7 @@ impl Analyzer<'_> {
                 for (stage, found) in outcomes {
                     match found {
                         InterfaceArray::Invalid(kind) => self.stage_error(stage, name.span, kind),
-                        other if other != followed => keep &= !stage.bit(),
+                        other if other != followed => keep &= !crate::builtins::stage_bit(stage),
                         _ => {}
                     }
                 }
@@ -1878,7 +1891,7 @@ impl Analyzer<'_> {
             let interface = matches!(qualifiers.storage, Storage::In | Storage::Out)
                 && matches!(
                     self.stage(),
-                    Stage::Geometry | Stage::TessControl | Stage::TessEvaluation
+                    ShaderStage::Geometry | ShaderStage::TessControl | ShaderStage::TessEvaluation
                 );
             let resizes = previous.is_some_and(|previous| {
                 previous.kind == ty.kind
@@ -2301,7 +2314,7 @@ impl Analyzer<'_> {
             self.stage_check(block_name.span, |stage| {
                 matches!(
                     stage,
-                    Stage::Geometry | Stage::TessControl | Stage::TessEvaluation
+                    ShaderStage::Geometry | ShaderStage::TessControl | ShaderStage::TessEvaluation
                 )
                 .then(|| DiagnosticKind::InvalidInterfaceArray {
                     name: name.clone(),
@@ -2312,8 +2325,8 @@ impl Analyzer<'_> {
         if matches!(storage, BlockStorage::In | BlockStorage::Out) {
             self.stage_check(block_name.span, |stage| {
                 let unsupported = match storage {
-                    BlockStorage::In => matches!(stage, Stage::Compute | Stage::Vertex),
-                    _ => matches!(stage, Stage::Compute | Stage::Fragment),
+                    BlockStorage::In => matches!(stage, ShaderStage::Compute | ShaderStage::Vertex),
+                    _ => matches!(stage, ShaderStage::Compute | ShaderStage::Fragment),
                 };
                 unsupported.then(|| invalid("this kind of block is not supported in this stage"))
             });
@@ -2433,7 +2446,7 @@ impl Analyzer<'_> {
         else {
             return false;
         };
-        if !self.stage_is(Stage::Mesh) {
+        if !self.stage_is(ShaderStage::Mesh) {
             return false;
         }
         let given = instance.map_or("", |instance| instance.name.node.as_str());

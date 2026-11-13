@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{BasicType, BinaryOperator, Expression, ScalarType, UnaryOperator};
 use rglsl_sema::scope::Direction;
-use rglsl_sema::{Builtins, Stage};
+use rglsl_sema::Builtins;
+use rglsl_types::ShaderStage;
 
 use crate::basic::{self, BOOL, FLOAT};
 use crate::build::Builder;
@@ -13,7 +14,7 @@ use crate::scope::Variable;
 pub struct GenerationParams {
     pub max_depth: u32,
     pub fragment: bool,
-    pub stage: Stage,
+    pub stage: ShaderStage,
     pub max_struct_nesting_depth: u32,
     pub max_struct_fields: u32,
     pub max_donors_per_pass: u32,
@@ -24,10 +25,10 @@ pub struct GenerationParams {
 }
 
 impl GenerationParams {
-    pub const fn normal(stage: Stage) -> Self {
+    pub const fn normal(stage: ShaderStage) -> Self {
         Self {
             max_depth: 3,
-            fragment: matches!(stage, Stage::Fragment),
+            fragment: matches!(stage, ShaderStage::Fragment),
             stage,
             max_struct_nesting_depth: 2,
             max_struct_fields: 8,
@@ -39,10 +40,10 @@ impl GenerationParams {
         }
     }
 
-    pub const fn small(stage: Stage) -> Self {
+    pub const fn small(stage: ShaderStage) -> Self {
         Self {
             max_depth: 2,
-            fragment: matches!(stage, Stage::Fragment),
+            fragment: matches!(stage, ShaderStage::Fragment),
             stage,
             max_struct_nesting_depth: 1,
             max_struct_fields: 3,
@@ -55,11 +56,11 @@ impl GenerationParams {
     }
 
     pub const fn compute(&self) -> bool {
-        matches!(self.stage, Stage::Compute)
+        matches!(self.stage, ShaderStage::Compute)
     }
 
     pub const fn vertex(&self) -> bool {
-        matches!(self.stage, Stage::Vertex)
+        matches!(self.stage, ShaderStage::Vertex)
     }
 }
 

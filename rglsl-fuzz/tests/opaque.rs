@@ -16,7 +16,8 @@ use rglsl_fuzz::fuzzer::{Fuzzer, GenerationParams, Templates};
 use rglsl_fuzz::opaque::{Identity, OpaqueGenerator};
 use rglsl_fuzz::scope::Variable;
 use rglsl_fuzz::{analyze_shader, parse_shader, Random};
-use rglsl_sema::{Builtins, ResourceLimits, Stage};
+use rglsl_sema::{Builtins, ResourceLimits};
+use rglsl_types::ShaderStage;
 
 use support::eval::{Evaluator, Value};
 use support::TestResult;
@@ -31,7 +32,7 @@ impl Setup {
     fn new() -> Self {
         let builtins = Arc::new(Builtins::new(
             450,
-            Stage::Fragment,
+            ShaderStage::Fragment,
             &ResourceLimits::default(),
         ));
         let hidden = BTreeSet::new();
@@ -58,7 +59,7 @@ impl Setup {
             fuzzer: Fuzzer::new(
                 &self.templates,
                 scope,
-                GenerationParams::normal(Stage::Fragment),
+                GenerationParams::normal(ShaderStage::Fragment),
             ),
             builtins: &self.builtins,
             hidden: &self.hidden,
@@ -130,7 +131,7 @@ fn check_in_shader(
         )
     };
     let unit = parse_shader(&source).map_err(|error| format!("{error}\n{source}"))?;
-    let analysis = analyze_shader(&unit, Stage::Fragment, false, None)?;
+    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None)?;
     assert!(
         analysis.diagnostics.is_empty(),
         "{:?}\n{source}",

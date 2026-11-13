@@ -162,26 +162,6 @@ impl Exit {
     }
 }
 
-pub fn stage_from_name(name: &str) -> Option<ShaderStage> {
-    Some(match name {
-        "vert" => ShaderStage::Vertex,
-        "tesc" => ShaderStage::TessControl,
-        "tese" => ShaderStage::TessEvaluation,
-        "geom" => ShaderStage::Geometry,
-        "frag" => ShaderStage::Fragment,
-        "comp" => ShaderStage::Compute,
-        "rgen" => ShaderStage::RayGeneration,
-        "rint" => ShaderStage::Intersection,
-        "rahit" => ShaderStage::AnyHit,
-        "rchit" => ShaderStage::ClosestHit,
-        "rmiss" => ShaderStage::Miss,
-        "rcall" => ShaderStage::Callable,
-        "mesh" => ShaderStage::Mesh,
-        "task" => ShaderStage::Task,
-        _ => return None,
-    })
-}
-
 struct Cursor {
     arguments: Vec<String>,
     index: usize,
@@ -267,7 +247,10 @@ fn binding_base(cursor: &mut Cursor, class: ResourceClass) -> Result<Shift, Exit
         if cursor.remaining() < 3 {
             return Err(Exit::Usage);
         }
-        stage = Some(stage_from_name(cursor.peek(offset).unwrap_or_default()).ok_or(Exit::Usage)?);
+        stage = Some(
+            ShaderStage::from_extension(cursor.peek(offset).unwrap_or_default())
+                .ok_or(Exit::Usage)?,
+        );
         offset += 1;
     }
     let pair_follows = |cursor: &Cursor, offset: usize| {
@@ -312,7 +295,7 @@ fn resource_set_binding(cursor: &mut Cursor) -> Result<ResourceSet, Exit> {
     if cursor.remaining() < 3 {
         return Err(Exit::Usage);
     }
-    let stage = stage_from_name(&first).ok_or(Exit::Usage)?;
+    let stage = ShaderStage::from_extension(&first).ok_or(Exit::Usage)?;
     cursor.index += 1;
     let mut values = Vec::new();
     while let Some(value) = cursor.next() {

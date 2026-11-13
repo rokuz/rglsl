@@ -71,6 +71,45 @@ impl ShaderStage {
         Self::Callable,
     ];
 
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        Some(match extension {
+            "vert" => Self::Vertex,
+            "tesc" => Self::TessControl,
+            "tese" => Self::TessEvaluation,
+            "geom" => Self::Geometry,
+            "frag" => Self::Fragment,
+            "comp" => Self::Compute,
+            "task" => Self::Task,
+            "mesh" => Self::Mesh,
+            "rgen" => Self::RayGeneration,
+            "rint" => Self::Intersection,
+            "rahit" => Self::AnyHit,
+            "rchit" => Self::ClosestHit,
+            "rmiss" => Self::Miss,
+            "rcall" => Self::Callable,
+            _ => return None,
+        })
+    }
+
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Vertex => "vert",
+            Self::TessControl => "tesc",
+            Self::TessEvaluation => "tese",
+            Self::Geometry => "geom",
+            Self::Fragment => "frag",
+            Self::Compute => "comp",
+            Self::Task => "task",
+            Self::Mesh => "mesh",
+            Self::RayGeneration => "rgen",
+            Self::Miss => "rmiss",
+            Self::AnyHit => "rahit",
+            Self::ClosestHit => "rchit",
+            Self::Intersection => "rint",
+            Self::Callable => "rcall",
+        }
+    }
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Vertex => "vertex",

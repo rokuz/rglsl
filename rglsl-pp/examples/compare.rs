@@ -5,8 +5,10 @@ use std::sync::Mutex;
 
 use rglsl_pp::{
     find_version, preprocess, Define, FileSystemIncluder, Options, Phase, Preprocessed, Profile,
-    Severity, Stage,
+    Severity,
 };
+
+use rglsl_types::ShaderStage;
 
 const STAGES: [&str; 14] = [
     "vert", "tesc", "tese", "geom", "frag", "comp", "mesh", "task", "rgen", "rint", "rahit",
@@ -306,7 +308,7 @@ fn compare_file(arguments: &Arguments, name: &str) -> Outcome {
     let source_bytes = std::fs::read(name).unwrap_or_default();
     let source = String::from_utf8_lossy(&source_bytes).into_owned();
     let extension = name.rsplit('.').next().unwrap_or("");
-    let stage = Stage::from_extension(extension);
+    let stage = ShaderStage::from_extension(extension);
     let include_dirs = extra_include_dirs(name);
     let mut command = Command::new(&arguments.glslang);
     command.arg("-E");

@@ -2,7 +2,8 @@ use alloc::string::String;
 use alloc::vec;
 
 use super::{code, errors, expect_code, first_error, lex, run, run_with, warnings};
-use crate::{Define, DiagnosticKind, Options, Redefinition, Stage};
+use crate::{Define, DiagnosticKind, Options, Redefinition};
+use rglsl_types::ShaderStage;
 
 #[test]
 fn object_like_macros_expand() {
@@ -324,7 +325,7 @@ fn file_macro_with_a_source_name_requires_the_extension() {
 #[test]
 fn predefined_macros() {
     let options = Options {
-        stage: Some(Stage::Fragment),
+        stage: Some(ShaderStage::Fragment),
         ..Options::default()
     };
     let result = run_with(

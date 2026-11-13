@@ -5,21 +5,14 @@ use alloc::vec::Vec;
 
 use super::{
     available, expand_prototypes, footprint, variables, BuiltinFunctionId, Builtins, Footprints,
-    ResourceLimits, Stage,
+    ResourceLimits,
 };
+
 use crate::scope::{Function, Symbol, SymbolId, SymbolKind, Variable};
 use crate::types::{Type, TypeKind, TypeRegistry};
+use rglsl_types::ShaderStage;
 
 pub const ALL_STAGE_BITS: u16 = rglsl_types::probe::ALL_STAGES;
-
-impl Stage {
-    pub fn bit(self) -> u16 {
-        Self::ALL
-            .iter()
-            .position(|&candidate| candidate == self)
-            .map_or(0, |index| 1 << index)
-    }
-}
 
 #[derive(Debug, Clone)]
 struct StageVariables {
@@ -112,10 +105,10 @@ fn descriptions(
 }
 
 fn stage_bits(stages: u16) -> u16 {
-    Stage::ALL
+    ShaderStage::ALL
         .into_iter()
         .filter(|&stage| available(stages, stage))
-        .fold(0, |bits, stage| bits | stage.bit())
+        .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage))
 }
 
 impl StageTables {
@@ -145,7 +138,7 @@ impl StageTables {
                 .push(functions.len());
             functions.push((prototype.function(), kept));
         }
-        let variables = Stage::ALL
+        let variables = ShaderStage::ALL
             .into_iter()
             .map(|stage| {
                 let mut types = TypeRegistry::new();
@@ -170,8 +163,8 @@ impl StageTables {
         }
     }
 
-    pub fn builtins(&self, own: Stage) -> Builtins {
-        let bit = own.bit();
+    pub fn builtins(&self, own: ShaderStage) -> Builtins {
+        let bit = crate::builtins::stage_bit(own);
         let mut functions = Vec::new();
         let mut names: BTreeMap<String, Vec<BuiltinFunctionId>> = BTreeMap::new();
         for &(ref function, stages) in &self.functions {
@@ -214,14 +207,14 @@ impl StageTables {
         self.version
     }
 
-    fn index(stage: Stage) -> usize {
-        Stage::ALL
+    fn index(stage: ShaderStage) -> usize {
+        ShaderStage::ALL
             .iter()
             .position(|&candidate| candidate == stage)
             .unwrap_or(0)
     }
 
-    pub fn variable(&self, stage: Stage, name: &str) -> Option<&str> {
+    pub fn variable(&self, stage: ShaderStage, name: &str) -> Option<&str> {
         self.variables
             .get(Self::index(stage))
             .and_then(|table| table.descriptions.get(name))
@@ -240,16 +233,16 @@ impl StageTables {
             })
     }
 
-    pub fn overloads(&self, stage: Stage, name: &str) -> Vec<&Function> {
-        let bit = stage.bit();
+    pub fn overloads(&self, stage: ShaderStage, name: &str) -> Vec<&Function> {
+        let bit = crate::builtins::stage_bit(stage);
         self.entries(name)
             .filter(|&(_, _, stages)| stages & bit != 0)
             .map(|(_, function, _)| function)
             .collect()
     }
 
-    pub fn overload_indices(&self, stage: Stage, name: &str) -> Vec<usize> {
-        let bit = stage.bit();
+    pub fn overload_indices(&self, stage: ShaderStage, name: &str) -> Vec<usize> {
+        let bit = crate::builtins::stage_bit(stage);
         self.entries(name)
             .filter(|&(_, _, stages)| stages & bit != 0)
             .map(|(index, _, _)| index)
@@ -260,23 +253,26 @@ impl StageTables {
         self.names.contains_key(name)
     }
 
-    pub fn declares(&self, stage: Stage, name: &str) -> bool {
+    pub fn declares(&self, stage: ShaderStage, name: &str) -> bool {
         self.variable(stage, name).is_some() || !self.overloads(stage, name).is_empty()
     }
 
-    pub fn same(&self, first: Stage, second: Stage, name: &str) -> bool {
+    pub fn same(&self, first: ShaderStage, second: ShaderStage, name: &str) -> bool {
         if self.variable(first, name) != self.variable(second, name) {
             return false;
         }
-        let (first, second) = (first.bit(), second.bit());
+        let (first, second) = (
+            crate::builtins::stage_bit(first),
+            crate::builtins::stage_bit(second),
+        );
         self.entries(name)
             .all(|(_, _, stages)| (stages & first != 0) == (stages & second != 0))
     }
 
-    pub fn same_stages(&self, own: Stage, name: &str) -> u16 {
-        Stage::ALL
+    pub fn same_stages(&self, own: ShaderStage, name: &str) -> u16 {
+        ShaderStage::ALL
             .into_iter()
             .filter(|&stage| self.same(own, stage, name))
-            .fold(0, |bits, stage| bits | stage.bit())
+            .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage))
     }
 }

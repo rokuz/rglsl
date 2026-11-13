@@ -21,26 +21,6 @@ pub const EXIT_ACCEPTED: i32 = 0;
 pub const EXIT_REJECTED: i32 = 1;
 pub const EXIT_BACKEND_FAILED: i32 = 2;
 
-fn stage_from_extension(ext: &str) -> Option<ShaderStage> {
-    Some(match ext {
-        "vert" => ShaderStage::Vertex,
-        "tesc" => ShaderStage::TessControl,
-        "tese" => ShaderStage::TessEvaluation,
-        "geom" => ShaderStage::Geometry,
-        "frag" => ShaderStage::Fragment,
-        "comp" => ShaderStage::Compute,
-        "task" => ShaderStage::Task,
-        "mesh" => ShaderStage::Mesh,
-        "rgen" => ShaderStage::RayGeneration,
-        "rmiss" => ShaderStage::Miss,
-        "rahit" => ShaderStage::AnyHit,
-        "rchit" => ShaderStage::ClosestHit,
-        "rint" => ShaderStage::Intersection,
-        "rcall" => ShaderStage::Callable,
-        _ => return None,
-    })
-}
-
 fn diagnostic(phase: &str, line: Option<u32>, message: &str) {
     let line = line.map_or_else(|| "-".to_string(), |l| l.to_string());
     let message = message.replace(['\n', '\r'], " ");
@@ -105,7 +85,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
             return EXIT_REJECTED;
         }
     };
-    let Some(stage) = stage_from_extension(stage) else {
+    let Some(stage) = ShaderStage::from_extension(stage) else {
         diagnostic(
             "stage",
             None,
@@ -246,7 +226,7 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
             .unwrap_or_default();
         let library = extension == "glsl";
         let Some(stage) =
-            stage_from_extension(extension).or(library.then_some(ShaderStage::Compute))
+            ShaderStage::from_extension(extension).or(library.then_some(ShaderStage::Compute))
         else {
             diagnostic("stage", None, &format!("no shader stage for `{input}`"));
             return EXIT_REJECTED;
@@ -313,7 +293,7 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
     for stage in &linked {
         let out = options
             .out_dir
-            .join(format!("{}.spv", stage_extension(stage.stage)));
+            .join(format!("{}.spv", stage.stage.extension()));
         let code = write_spirv(
             &stage.module,
             &stage.info,
@@ -335,25 +315,6 @@ fn parse_version(spv_version: &str) -> (u8, u8) {
             _ => (1, 0),
         },
         None => (1, 0),
-    }
-}
-
-pub const fn stage_extension(stage: ShaderStage) -> &'static str {
-    match stage {
-        ShaderStage::Vertex => "vert",
-        ShaderStage::TessControl => "tesc",
-        ShaderStage::TessEvaluation => "tese",
-        ShaderStage::Geometry => "geom",
-        ShaderStage::Fragment => "frag",
-        ShaderStage::Compute => "comp",
-        ShaderStage::Task => "task",
-        ShaderStage::Mesh => "mesh",
-        ShaderStage::RayGeneration => "rgen",
-        ShaderStage::Miss => "rmiss",
-        ShaderStage::AnyHit => "rahit",
-        ShaderStage::ClosestHit => "rchit",
-        ShaderStage::Intersection => "rint",
-        ShaderStage::Callable => "rcall",
     }
 }
 
