@@ -1,5 +1,3 @@
-#![allow(clippy::panic)]
-
 use rglsl_ast::parse;
 use rglsl_sema::{analyze, Options};
 use rglsl_types::ShaderStage;

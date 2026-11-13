@@ -1,5 +1,3 @@
-#![allow(clippy::panic)]
-
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::ShaderStage;

@@ -1066,7 +1066,6 @@ impl Analyzer<'_> {
         qualifiers
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn typed_member(
         &mut self,
         declarator: &Spanned<rglsl_ast::ast::StructDeclarator>,
@@ -2450,7 +2449,10 @@ impl Analyzer<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn redeclare_mesh_block(
         &mut self,
         declaration: &Declaration,

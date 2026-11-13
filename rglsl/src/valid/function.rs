@@ -1366,7 +1366,10 @@ impl super::Validator {
         Ok(())
     }
 
-    #[allow(clippy::large_stack_frames)] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
+    #[expect(
+        clippy::large_stack_frames,
+        reason = "one frame per statement, not per nesting level"
+    )] // TODO(https://github.com/gfx-rs/wgpu/issues/9456)
     fn validate_statement(
         &mut self,
         statement: &crate::Statement,

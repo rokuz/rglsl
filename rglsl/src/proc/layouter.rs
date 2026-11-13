@@ -169,7 +169,7 @@ impl Layouter {
     /// end can call this function at any time, passing its current type and
     /// constant arenas, and then assume that layouts are available for all
     /// types.
-    #[allow(clippy::or_fun_call)]
+    #[expect(clippy::or_fun_call, reason = "the error values are cheap to build")]
     pub fn update(&mut self, gctx: super::GlobalCtx) -> Result<(), LayoutError> {
         use crate::TypeInner as Ti;
 

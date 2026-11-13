@@ -387,7 +387,10 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(in super::super) fn write_fetch_micro_triangle_vertex(
         &mut self,
         acceleration_structure: Handle<crate::Expression>,

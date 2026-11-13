@@ -2806,7 +2806,10 @@ impl BlockContext<'_> {
     }
 
     /// Build the instructions for matrix - matrix column operations
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn write_matrix_matrix_column_op(
         &mut self,
         expr_handle: Handle<crate::Expression>,

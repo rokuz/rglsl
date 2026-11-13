@@ -585,7 +585,10 @@ impl super::Validator {
         Ok(max_type)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn validate_expression_handles(
         (handle, expression): (Handle<crate::Expression>, &crate::Expression),
         constants: &Arena<crate::Constant>,

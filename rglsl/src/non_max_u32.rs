@@ -14,7 +14,7 @@
 //!
 //! [`Handle`]: crate::arena::Handle
 //! [`NonZeroU32`]: core::num::NonZeroU32
-#![allow(dead_code)]
+#![expect(dead_code, reason = "each user takes a part of the helpers")]
 
 use core::num::NonZeroU32;
 

@@ -306,10 +306,7 @@ impl crate::TypeInner {
 
     pub fn is_atomic_pointer(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
         match *self {
-            Self::Pointer { base, .. } => match types[base].inner {
-                Self::Atomic { .. } => true,
-                _ => false,
-            },
+            Self::Pointer { base, .. } => matches!(types[base].inner, Self::Atomic { .. }),
             _ => false,
         }
     }

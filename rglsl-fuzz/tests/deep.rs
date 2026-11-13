@@ -1,5 +1,3 @@
-#![allow(clippy::panic, reason = "tests fail by panicking")]
-
 use std::collections::BTreeMap;
 
 use rglsl_ast::ast::{ExpressionKind, StatementKind, TranslationUnit};

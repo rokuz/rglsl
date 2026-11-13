@@ -378,7 +378,6 @@ impl super::Validator {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::large_stack_frames,
         reason = "each fallible operand type lookup keeps its own error slot in debug builds; the validator calls this once per expression from a loop, never recursively"
@@ -1364,10 +1363,7 @@ impl super::Validator {
                     }) => {
                         // When `condition` is a single boolean, `accept` and
                         // `reject` can be vectors or scalars.
-                        match *accept_inner {
-                            Ti::Scalar { .. } | Ti::Vector { .. } => true,
-                            _ => false,
-                        }
+                        matches!(*accept_inner, Ti::Scalar { .. } | Ti::Vector { .. })
                     }
                     Ti::Vector {
                         size,
@@ -1552,22 +1548,22 @@ impl super::Validator {
                         ..
                     }
                 );
-                let source = match *resolver.resolve(value)? {
-                    Ti::Scalar(crate::Scalar::U64) => true,
-                    Ti::Vector {
-                        size: crate::VectorSize::Bi,
-                        scalar: crate::Scalar::U32,
-                    } => true,
-                    Ti::Pointer {
-                        space: crate::AddressSpace::PhysicalStorage { .. },
-                        ..
-                    }
-                    | Ti::ValuePointer {
-                        space: crate::AddressSpace::PhysicalStorage { .. },
-                        ..
-                    } => true,
-                    _ => false,
-                };
+                let source = matches!(
+                    *resolver.resolve(value)?,
+                    Ti::Scalar(crate::Scalar::U64)
+                        | Ti::Vector {
+                            size: crate::VectorSize::Bi,
+                            scalar: crate::Scalar::U32,
+                        }
+                        | Ti::Pointer {
+                            space: crate::AddressSpace::PhysicalStorage { .. },
+                            ..
+                        }
+                        | Ti::ValuePointer {
+                            space: crate::AddressSpace::PhysicalStorage { .. },
+                            ..
+                        }
+                );
                 if !target || !source {
                     return Err(ExpressionError::InvalidPhysicalPointer(value));
                 }

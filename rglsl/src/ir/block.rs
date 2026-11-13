@@ -33,7 +33,6 @@ impl Block {
         }
     }
 
-    #[allow(unused_variables)]
     pub fn push(&mut self, end: Statement, span: Span) {
         self.body.push(end);
         self.span_info.push(span);

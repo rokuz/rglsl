@@ -1,5 +1,3 @@
-#![allow(clippy::panic)]
-
 use rglsl::back::spv;
 use rglsl::compact::{compact, KeepUnused};
 use rglsl::front::glsl::{Frontend, Options};

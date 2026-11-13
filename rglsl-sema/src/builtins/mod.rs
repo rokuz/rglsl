@@ -488,7 +488,10 @@ impl Builtins {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn assemble(
         version: u32,
         stage: ShaderStage,

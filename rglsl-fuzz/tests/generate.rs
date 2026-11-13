@@ -1,9 +1,3 @@
-#![allow(
-    clippy::panic,
-    clippy::unreachable,
-    reason = "test support code fails by panicking"
-)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 

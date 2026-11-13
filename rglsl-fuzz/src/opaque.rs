@@ -436,7 +436,10 @@ impl OpaqueGenerator<'_> {
         self.builder.call(GLF_FUZZED, vec![expression])
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn binary_identity(
         &mut self,
         expression: Expression,

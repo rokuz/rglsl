@@ -182,7 +182,6 @@ macro_rules! gen_component_wise_extractor {
 
         with_dollar_sign! {
             ($d:tt) => {
-                #[allow(unused)]
                 #[doc = concat!(
                     "A convenience macro for using the same RHS for each [`",
                     stringify!($target),
@@ -283,8 +282,7 @@ enum LiteralVector {
 }
 
 impl LiteralVector {
-    #[allow(clippy::missing_const_for_fn, reason = "MSRV")]
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         match *self {
             LiteralVector::F64(ref v) => v.len(),
             LiteralVector::F32(ref v) => v.len(),
@@ -393,7 +391,6 @@ impl LiteralVector {
         })
     }
 
-    #[allow(dead_code)]
     /// Returns [`ArrayVec`] of [`Literal`]s
     fn to_literal_vec(&self) -> ArrayVec<Literal, { crate::VectorSize::MAX }> {
         macro_rules! decompose_literals {
@@ -421,7 +418,6 @@ impl LiteralVector {
         }
     }
 
-    #[allow(dead_code)]
     /// Puts self into eval's expressions arena and returns handle to it
     fn register_as_evaluated_expr(
         &self,
@@ -801,6 +797,12 @@ pub enum ExpressionKind {
 #[derive(Debug)]
 pub struct ExpressionKindTracker {
     inner: HandleVec<Expression, ExpressionKind>,
+}
+
+impl Default for ExpressionKindTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExpressionKindTracker {

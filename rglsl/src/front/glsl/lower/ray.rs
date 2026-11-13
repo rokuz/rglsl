@@ -241,7 +241,10 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn ray_global(
         &mut self,
         symbol: SymbolId,

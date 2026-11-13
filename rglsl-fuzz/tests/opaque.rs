@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
     clippy::panic,
     clippy::unreachable,
     reason = "test support code fails by panicking"

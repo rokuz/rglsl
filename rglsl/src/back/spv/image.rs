@@ -409,7 +409,10 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageLoad` expression.
     ///
     /// The arguments are the components of an `Expression::ImageLoad` variant.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_load(
         &mut self,
         result_type_id: Word,
@@ -500,7 +503,10 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageSample` expression.
     ///
     /// The arguments are the components of an `Expression::ImageSample` variant.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_sample(
         &mut self,
         sample_expression: Handle<crate::Expression>,
@@ -1130,7 +1136,10 @@ impl BlockContext<'_> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_store(
         &mut self,
         image: Handle<crate::Expression>,
@@ -1194,7 +1203,10 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     pub(super) fn write_image_footprint(
         &mut self,
         result_type_id: Word,

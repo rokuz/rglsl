@@ -19,10 +19,6 @@ use crate::{
     Span, Statement, TypeInner, WithSpan,
 };
 
-// Possibly unused if not compiled with no_std
-#[allow(unused_imports)]
-use num_traits::float::FloatCore as _;
-
 #[derive(Error, Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum PipelineConstantError {

@@ -3665,7 +3665,10 @@ impl Writer {
         Ok(id)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn write_interface_block(
         &mut self,
         ir_module: &crate::Module,

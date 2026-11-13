@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
     dead_code,
     reason = "helpers shared by the cooperative test modules, each uses a part"
 )]

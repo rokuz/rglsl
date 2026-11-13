@@ -1687,8 +1687,8 @@ impl super::Validator {
             }
             crate::AddressSpace::Handle => {
                 match gctx.types[inner_ty].inner {
-                    crate::TypeInner::Image { class, .. } => match class {
-                        crate::ImageClass::Storage {
+                    crate::TypeInner::Image { class, .. } => {
+                        if let crate::ImageClass::Storage {
                             format:
                                 crate::StorageFormat::R16Unorm
                                 | crate::StorageFormat::R16Snorm
@@ -1697,7 +1697,8 @@ impl super::Validator {
                                 | crate::StorageFormat::Rgba16Unorm
                                 | crate::StorageFormat::Rgba16Snorm,
                             ..
-                        } => {
+                        } = class
+                        {
                             if !self
                                 .capabilities
                                 .contains(Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS)
@@ -1707,8 +1708,7 @@ impl super::Validator {
                                 ));
                             }
                         }
-                        _ => {}
-                    },
+                    }
                     crate::TypeInner::Sampler { .. }
                     | crate::TypeInner::SampledImage { .. }
                     | crate::TypeInner::AccelerationStructure { .. }
@@ -1813,10 +1813,11 @@ impl super::Validator {
                     ..
                 }
             );
-        if is_resource != var.binding.is_some() && !located_tile_image {
-            if self.flags.contains(super::ValidationFlags::BINDINGS) {
-                return Err(GlobalVariableError::InvalidBinding);
-            }
+        if is_resource != var.binding.is_some()
+            && !located_tile_image
+            && self.flags.contains(super::ValidationFlags::BINDINGS)
+        {
+            return Err(GlobalVariableError::InvalidBinding);
         }
 
         let is_interface = matches!(

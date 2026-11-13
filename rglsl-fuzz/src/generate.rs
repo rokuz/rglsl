@@ -115,7 +115,10 @@ fn shader_large_enough(
     Ok(node_count(unit)? > usize::try_from(limit).unwrap_or(usize::MAX))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn apply_transformation(
     transformation: Transformation,
     unit: &mut TranslationUnit,

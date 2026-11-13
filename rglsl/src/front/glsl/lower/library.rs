@@ -88,7 +88,10 @@ fn stage_order(hint: Option<ShaderStage>) -> Vec<ShaderStage> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 pub(super) fn compile(
     options: &Options,
     hint: Option<ShaderStage>,
@@ -213,7 +216,10 @@ fn add_stage(object: &mut ObjectModule, stage: ShaderStage) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn per_class(
     options: &Options,
     hint: Option<ShaderStage>,

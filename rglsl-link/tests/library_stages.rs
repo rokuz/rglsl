@@ -1,5 +1,3 @@
-#![allow(clippy::panic)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 

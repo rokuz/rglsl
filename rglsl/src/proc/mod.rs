@@ -430,16 +430,16 @@ impl super::MathFunction {
 impl crate::Expression {
     /// Returns true if the expression is considered emitted at the start of a function.
     pub const fn needs_pre_emit(&self) -> bool {
-        match *self {
+        matches!(
+            *self,
             Self::Literal(_)
-            | Self::Constant(_)
-            | Self::Override(_)
-            | Self::ZeroValue(_)
-            | Self::FunctionArgument(_)
-            | Self::GlobalVariable(_)
-            | Self::LocalVariable(_) => true,
-            _ => false,
-        }
+                | Self::Constant(_)
+                | Self::Override(_)
+                | Self::ZeroValue(_)
+                | Self::FunctionArgument(_)
+                | Self::GlobalVariable(_)
+                | Self::LocalVariable(_)
+        )
     }
 
     /// Return true if this expression is a dynamic array/vector/matrix index,
@@ -456,10 +456,10 @@ impl crate::Expression {
     /// [`Access`]: crate::Expression::Access
     /// [`ResolveContext`]: crate::proc::ResolveContext
     pub const fn is_dynamic_index(&self) -> bool {
-        match *self {
-            Self::Literal(_) | Self::ZeroValue(_) | Self::Constant(_) => false,
-            _ => true,
-        }
+        !matches!(
+            *self,
+            Self::Literal(_) | Self::ZeroValue(_) | Self::Constant(_)
+        )
     }
 }
 
@@ -834,15 +834,12 @@ impl crate::Module {
             )
         };
         for (_, ty) in self.types.iter() {
-            match ty.inner {
-                crate::TypeInner::Struct { ref members, .. } => {
-                    for binding in members.iter().filter_map(|m| m.binding.as_ref()) {
-                        if binding_uses_mesh(binding) {
-                            return true;
-                        }
+            if let crate::TypeInner::Struct { ref members, .. } = ty.inner {
+                for binding in members.iter().filter_map(|m| m.binding.as_ref()) {
+                    if binding_uses_mesh(binding) {
+                        return true;
                     }
                 }
-                _ => (),
             }
         }
         for ep in &self.entry_points {

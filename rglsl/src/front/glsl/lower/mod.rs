@@ -365,7 +365,10 @@ fn lower_parsed_object(
     Ok(object)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn lower(
     options: &Options,
     source: &str,
@@ -595,7 +598,10 @@ fn sema_error(
     (error, location)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the parts of one request"
+)]
 fn run_lowerer(
     options: &Options,
     source: &str,
