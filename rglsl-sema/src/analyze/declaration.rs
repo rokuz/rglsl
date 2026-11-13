@@ -2893,7 +2893,7 @@ impl Analyzer<'_> {
                             "GL_EXT_function_control_attributes",
                             "attribute",
                         );
-                        control.inline = true;
+                        control = control.merge(FunctionControl::Inline);
                     }
                     "noinline" => {
                         self.require_extension(
@@ -2901,7 +2901,7 @@ impl Analyzer<'_> {
                             "GL_EXT_function_control_attributes",
                             "attribute",
                         );
-                        control.dont_inline = true;
+                        control = control.merge(FunctionControl::DontInline);
                     }
                     _ => {}
                 }

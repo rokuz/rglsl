@@ -276,21 +276,26 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct FunctionControl {
-    pub inline: bool,
-    pub dont_inline: bool,
+pub enum FunctionControl {
+    #[default]
+    None,
+    Inline,
+    DontInline,
+    Incompatible,
 }
 
 impl FunctionControl {
     pub const fn merge(self, other: Self) -> Self {
-        Self {
-            inline: self.inline || other.inline,
-            dont_inline: self.dont_inline || other.dont_inline,
+        match (self, other) {
+            (Self::None, control) | (control, Self::None) => control,
+            (Self::Inline, Self::Inline) => Self::Inline,
+            (Self::DontInline, Self::DontInline) => Self::DontInline,
+            _ => Self::Incompatible,
         }
     }
 
     pub const fn is_incompatible(self) -> bool {
-        self.inline && self.dont_inline
+        matches!(self, Self::Incompatible)
     }
 }
 

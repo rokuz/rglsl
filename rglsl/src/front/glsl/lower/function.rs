@@ -718,10 +718,12 @@ impl<'a> Lowerer<'a> {
             let pointer = lowerer.add(Expression::GlobalVariable(initialization.global), span)?;
             lowerer.push(Statement::Store { pointer, value }, span);
         }
-        let control = match (function.control.inline, function.control.dont_inline) {
-            (true, false) => crate::FunctionControl::Inline,
-            (false, true) => crate::FunctionControl::DontInline,
-            (true, true) | (false, false) => crate::FunctionControl::None,
+        let control = match function.control {
+            rglsl_sema::FunctionControl::Inline => crate::FunctionControl::Inline,
+            rglsl_sema::FunctionControl::DontInline => crate::FunctionControl::DontInline,
+            rglsl_sema::FunctionControl::None | rglsl_sema::FunctionControl::Incompatible => {
+                crate::FunctionControl::None
+            }
         };
         lowerer.statements(&definition.body.statements)?;
         let mut lowered = lowerer.finish(result, arguments, name);
