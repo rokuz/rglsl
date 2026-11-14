@@ -11,16 +11,19 @@ impl Writer {
         Ok(())
     }
 
-    pub(super) fn require_hit_objects(&mut self, kind: crate::HitObjectKind) -> Result<(), Error> {
-        match kind {
-            crate::HitObjectKind::Nv => {
+    pub(super) fn require_hit_objects(
+        &mut self,
+        flavor: crate::HitObjectFlavor,
+    ) -> Result<(), Error> {
+        match flavor {
+            crate::HitObjectFlavor::Nv => {
                 self.require_any(
                     "hit objects",
                     &[spirv::Capability::ShaderInvocationReorderNV],
                 )?;
                 self.use_extension("SPV_NV_shader_invocation_reorder");
             }
-            crate::HitObjectKind::Ext => {
+            crate::HitObjectFlavor::Ext => {
                 self.require_any(
                     "hit objects",
                     &[spirv::Capability::ShaderInvocationReorderEXT],

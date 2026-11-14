@@ -51,7 +51,7 @@
                         binding: Some(Location(
                             location: 0,
                             interpolation: Some(PerVertex(
-                                nv: false,
+                                flavor: Khr,
                                 flat: false,
                                 linear: false,
                             )),

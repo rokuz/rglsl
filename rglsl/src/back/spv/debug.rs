@@ -888,9 +888,9 @@ impl Writer {
                     self.debug_opaque("accelerationStructure")
                 }
                 crate::TypeInner::RayQuery => self.debug_opaque("rayQuery"),
-                crate::TypeInner::HitObject { kind } => self.debug_opaque(match kind {
-                    crate::HitObjectKind::Nv => "hitObjectNV",
-                    crate::HitObjectKind::Ext => "hitObjectEXT",
+                crate::TypeInner::HitObject { flavor } => self.debug_opaque(match flavor {
+                    crate::HitObjectFlavor::Nv => "hitObjectNV",
+                    crate::HitObjectFlavor::Ext => "hitObjectEXT",
                 }),
                 crate::TypeInner::BufferDescriptor { base, .. } => self.debug_type(base),
                 crate::TypeInner::CooperativeMatrix {

@@ -286,7 +286,7 @@ pub enum FunctionError {
     #[error("Expression {0:?} is not a pointer to a hit object")]
     InvalidHitObjectExpression(Handle<crate::Expression>),
     #[error("This hit object operation is not available for {0:?} hit objects")]
-    InvalidHitObjectOperation(crate::HitObjectKind),
+    InvalidHitObjectOperation(crate::HitObjectFlavor),
     #[error("The message type {0:?} of an abort does not hold its message and arguments")]
     InvalidAbortMessage(Handle<crate::Type>),
     #[error("Invalid operand {0:?} of a tensor write")]
@@ -2153,18 +2153,19 @@ impl super::Validator {
                 stages &= super::ShaderStages::RAY_GENERATION
                     | super::ShaderStages::CLOSEST_HIT
                     | super::ShaderStages::MISS;
-                let kind = match *context.resolve_type_inner(object, &self.valid_expression_set)? {
-                    Ti::Pointer { base, .. } => match context.types[base].inner {
-                        Ti::HitObject { kind } => Some(kind),
+                let flavor =
+                    match *context.resolve_type_inner(object, &self.valid_expression_set)? {
+                        Ti::Pointer { base, .. } => match context.types[base].inner {
+                            Ti::HitObject { flavor } => Some(flavor),
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
-                };
-                let Some(kind) = kind else {
+                    };
+                let Some(flavor) = flavor else {
                     return Err(FunctionError::InvalidHitObjectExpression(object)
                         .with_span_static(span, "invalid hit object expression"));
                 };
-                self.validate_hit_object_function(kind, fun, span, context)?;
+                self.validate_hit_object_function(flavor, fun, span, context)?;
                 if matches!(
                     *fun,
                     crate::HitObjectFunction::ReorderThread { .. }
@@ -2175,7 +2176,7 @@ impl super::Validator {
                 }
             }
             S::ReorderThread {
-                kind: _,
+                flavor: _,
                 hint,
                 bits,
             } => {
@@ -2617,18 +2618,18 @@ impl super::Validator {
 
     fn validate_hit_object_function(
         &self,
-        kind: crate::HitObjectKind,
+        flavor: crate::HitObjectFlavor,
         fun: &crate::HitObjectFunction,
         span: crate::Span,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
-        use crate::{HitObjectFunction as Hf, HitObjectKind as Hk};
-        let attributes = crate::AddressSpace::HitObjectAttribute { kind };
+        use crate::{HitObjectFlavor as Hk, HitObjectFunction as Hf};
+        let attributes = crate::AddressSpace::HitObjectAttribute { flavor };
         let ext_only = |valid: bool| {
             if valid {
                 Ok(())
             } else {
-                Err(FunctionError::InvalidHitObjectOperation(kind)
+                Err(FunctionError::InvalidHitObjectOperation(flavor)
                     .with_span_static(span, "invalid hit object operation"))
             }
         };
@@ -2668,7 +2669,7 @@ impl super::Validator {
                 trace: ref data,
                 hint: reorder,
             } => {
-                ext_only(kind == Hk::Ext)?;
+                ext_only(flavor == Hk::Ext)?;
                 trace(data)?;
                 hint(reorder)
             }
@@ -2686,7 +2687,7 @@ impl super::Validator {
                 time,
                 attributes: pointer,
             } => {
-                ext_only(kind == Hk::Nv)?;
+                ext_only(flavor == Hk::Nv)?;
                 self.validate_acceleration_structure(acceleration_structure, context)?;
                 for (operand, operand_kind) in [
                     (instance_id, RayOperand::Int),
@@ -2720,7 +2721,7 @@ impl super::Validator {
                 tmax,
                 time,
             } => {
-                ext_only(flags.is_some() == (kind == Hk::Ext))?;
+                ext_only(flags.is_some() == (flavor == Hk::Ext))?;
                 for (operand, operand_kind) in [
                     (miss_index, RayOperand::Uint),
                     (origin, RayOperand::Vector),
@@ -2743,7 +2744,7 @@ impl super::Validator {
                 attributes: pointer,
                 hit_kind,
             } => {
-                ext_only(kind == Hk::Ext)?;
+                ext_only(flavor == Hk::Ext)?;
                 let is_query =
                     match *context.resolve_type_inner(query, &self.valid_expression_set)? {
                         crate::TypeInner::Pointer { base, .. } => {
@@ -2767,7 +2768,7 @@ impl super::Validator {
                 payload,
                 hint: reorder,
             } => {
-                ext_only(kind == Hk::Ext)?;
+                ext_only(flavor == Hk::Ext)?;
                 self.validate_hit_object_pointer(
                     payload,
                     crate::AddressSpace::RayPayload,
@@ -2779,7 +2780,7 @@ impl super::Validator {
                 attributes: pointer,
             } => self.validate_hit_object_pointer(pointer, attributes, context),
             Hf::SetShaderBindingTableRecordIndex { index } => {
-                ext_only(kind == Hk::Ext)?;
+                ext_only(flavor == Hk::Ext)?;
                 self.validate_ray_operand(index, RayOperand::Uint, context)
             }
             Hf::ReorderThread { hint: reorder } => hint(reorder),

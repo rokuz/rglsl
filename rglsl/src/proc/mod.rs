@@ -1154,7 +1154,10 @@ impl crate::RayPipelineFunction {
 
     pub const fn is_terminator(&self) -> bool {
         match *self {
-            Self::IgnoreIntersection { nv } | Self::TerminateRay { nv } => !nv,
+            Self::IgnoreIntersection { flavor } | Self::TerminateRay { flavor } => match flavor {
+                crate::RayTracingFlavor::Khr => true,
+                crate::RayTracingFlavor::Nv => false,
+            },
             Self::TraceRay { .. }
             | Self::ExecuteCallable { .. }
             | Self::ReportIntersection { .. } => false,

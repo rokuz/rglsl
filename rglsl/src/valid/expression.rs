@@ -1627,14 +1627,14 @@ impl super::Validator {
             E::ReportIntersectionResult => ShaderStages::INTERSECTION,
             E::HitObjectGet { object, value } => {
                 use crate::HitObjectValue as Hv;
-                let kind = match *resolver.resolve(object)? {
+                let flavor = match *resolver.resolve(object)? {
                     Ti::Pointer { base, .. } => match resolver.types[base].inner {
-                        Ti::HitObject { kind } => Some(kind),
+                        Ti::HitObject { flavor } => Some(flavor),
                         _ => None,
                     },
                     _ => None,
                 };
-                let Some(kind) = kind else {
+                let Some(flavor) = flavor else {
                     return Err(ExpressionError::InvalidHitObjectType(object));
                 };
                 let required = match value {
@@ -1644,8 +1644,8 @@ impl super::Validator {
                     | Hv::LssPositions
                     | Hv::LssRadii
                     | Hv::IsSphereHit
-                    | Hv::IsLssHit => Some(crate::HitObjectKind::Nv),
-                    Hv::RayFlags | Hv::TriangleVertexPositions => Some(crate::HitObjectKind::Ext),
+                    | Hv::IsLssHit => Some(crate::HitObjectFlavor::Nv),
+                    Hv::RayFlags | Hv::TriangleVertexPositions => Some(crate::HitObjectFlavor::Ext),
                     Hv::IsEmpty
                     | Hv::IsHit
                     | Hv::IsMiss
@@ -1666,7 +1666,7 @@ impl super::Validator {
                     | Hv::ShaderBindingTableRecordIndex
                     | Hv::ShaderRecordBufferHandle => None,
                 };
-                if required.is_some_and(|required| required != kind) {
+                if required.is_some_and(|required| required != flavor) {
                     return Err(ExpressionError::InvalidHitObjectType(object));
                 }
                 ShaderStages::RAY_GENERATION | ShaderStages::CLOSEST_HIT | ShaderStages::MISS

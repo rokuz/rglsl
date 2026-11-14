@@ -204,8 +204,11 @@ impl Writer {
                 }
                 BuiltIn::PrimitiveId
             }
-            Bi::Barycentric { perspective, nv } => {
-                self.require_barycentrics(nv)?;
+            Bi::Barycentric {
+                perspective,
+                flavor,
+            } => {
+                self.require_barycentrics(flavor)?;
                 if perspective {
                     BuiltIn::BaryCoordKHR
                 } else {
@@ -249,17 +252,16 @@ impl Writer {
                 )?;
                 BuiltIn::ShadingRateKHR
             }
-            Bi::FragSize { nv } | Bi::FragInvocationCount { nv } => {
-                self.use_extension(if nv {
-                    "SPV_NV_shading_rate"
-                } else {
-                    "SPV_EXT_fragment_invocation_density"
+            Bi::FragSize(flavor) | Bi::FragInvocationCount(flavor) => {
+                self.use_extension(match flavor {
+                    crate::FragmentDensityFlavor::Ext => "SPV_EXT_fragment_invocation_density",
+                    crate::FragmentDensityFlavor::Nv => "SPV_NV_shading_rate",
                 });
                 self.require_any(
                     "fragment density built-ins",
                     &[spirv::Capability::FragmentDensityEXT],
                 )?;
-                if matches!(built_in, Bi::FragSize { .. }) {
+                if matches!(built_in, Bi::FragSize(_)) {
                     BuiltIn::FragSizeEXT
                 } else {
                     BuiltIn::FragInvocationCountEXT
@@ -515,11 +517,13 @@ impl Writer {
         Ok(BindingDecorations::BuiltIn(built_in, others))
     }
 
-    pub(super) fn require_barycentrics(&mut self, nv: bool) -> Result<(), Error> {
-        self.use_extension(if nv {
-            "SPV_NV_fragment_shader_barycentric"
-        } else {
-            "SPV_KHR_fragment_shader_barycentric"
+    pub(super) fn require_barycentrics(
+        &mut self,
+        flavor: crate::BarycentricFlavor,
+    ) -> Result<(), Error> {
+        self.use_extension(match flavor {
+            crate::BarycentricFlavor::Khr => "SPV_KHR_fragment_shader_barycentric",
+            crate::BarycentricFlavor::Nv => "SPV_NV_fragment_shader_barycentric",
         });
         self.require_any(
             "fragment shader barycentrics",

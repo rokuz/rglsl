@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::ShaderStageMask;
+use crate::flavor::{BarycentricFlavor, FragmentDensityFlavor};
 
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -105,7 +106,7 @@ pub enum BuiltIn {
     /// Read in fragment shaders
     Barycentric {
         perspective: bool,
-        nv: bool,
+        flavor: BarycentricFlavor,
     },
     /// Read in fragment shaders
     SampleIndex,
@@ -117,12 +118,8 @@ pub enum BuiltIn {
     HelperInvocation,
     DeviceIndex,
     ShadingRate,
-    FragSize {
-        nv: bool,
-    },
-    FragInvocationCount {
-        nv: bool,
-    },
+    FragSize(FragmentDensityFlavor),
+    FragInvocationCount(FragmentDensityFlavor),
     FullyCovered,
     FragStencilRef,
 
@@ -438,8 +435,8 @@ impl BuiltIn {
                 },
             ),
             Self::DeviceIndex => input(ALL, INDEX),
-            Self::ShadingRate | Self::FragInvocationCount { .. } => input(FRAGMENT, I32),
-            Self::FragSize { .. } => input(FRAGMENT, IVEC2),
+            Self::ShadingRate | Self::FragInvocationCount(_) => input(FRAGMENT, I32),
+            Self::FragSize(_) => input(FRAGMENT, IVEC2),
             Self::FragStencilRef => output(FRAGMENT, I32),
             Self::GlobalInvocationId
             | Self::LocalInvocationId
@@ -506,7 +503,7 @@ impl BuiltIn {
             Self::Position { .. } => Self::Position { invariant: false },
             Self::Barycentric { perspective, .. } => Self::Barycentric {
                 perspective,
-                nv: false,
+                flavor: BarycentricFlavor::Khr,
             },
             Self::Layer { .. } => Self::Layer {
                 viewport_relative: false,

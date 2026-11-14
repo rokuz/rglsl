@@ -113,7 +113,7 @@ impl Writer {
             legacy_buffer_blocks: false,
             invariant_outputs: false,
             legacy_storage_blocks: crate::FastHashSet::default(),
-            mesh_extension: None,
+            mesh_flavor: None,
             task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             debug_printf: None,
@@ -262,7 +262,7 @@ impl Writer {
             legacy_buffer_blocks: false,
             invariant_outputs: false,
             legacy_storage_blocks: crate::FastHashSet::default(),
-            mesh_extension: None,
+            mesh_flavor: None,
             task_memory_strides: crate::FastHashSet::default(),
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             debug_printf: None,
@@ -379,12 +379,12 @@ impl Writer {
     }
 
     pub(super) fn require_mesh_shading(&mut self) -> Result<(), Error> {
-        match self.mesh_extension {
-            Some(crate::MeshShaderExtension::Nv) => {
+        match self.mesh_flavor {
+            Some(crate::MeshFlavor::Nv) => {
                 self.use_extension("SPV_NV_mesh_shader");
                 self.require_any("NV mesh shaders", &[spirv::Capability::MeshShadingNV])
             }
-            Some(crate::MeshShaderExtension::Ext) | None => {
+            Some(crate::MeshFlavor::Ext) | None => {
                 self.use_extension("SPV_EXT_mesh_shader");
                 self.require_any("mesh shaders", &[spirv::Capability::MeshShadingEXT])?;
                 let lang_version = self.lang_version();
@@ -609,7 +609,7 @@ impl Writer {
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure => LocalType::AccelerationStructure,
             crate::TypeInner::RayQuery => LocalType::RayQuery,
-            crate::TypeInner::HitObject { kind } => LocalType::HitObject(kind),
+            crate::TypeInner::HitObject { flavor } => LocalType::HitObject(flavor),
             crate::TypeInner::BufferDescriptor { space, .. } => LocalType::BufferDescriptor {
                 class: map_storage_class(space),
             },
@@ -1210,9 +1210,9 @@ impl Writer {
                     spirv::ExecutionMode::DerivativeGroupLinearKHR,
                 ),
             };
-            self.use_extension(match group.extension {
-                crate::DerivativeGroupExtension::Khr => "SPV_KHR_compute_shader_derivatives",
-                crate::DerivativeGroupExtension::Nv => "SPV_NV_compute_shader_derivatives",
+            self.use_extension(match group.flavor {
+                crate::DerivativeFlavor::Khr => "SPV_KHR_compute_shader_derivatives",
+                crate::DerivativeFlavor::Nv => "SPV_NV_compute_shader_derivatives",
             });
             self.require_any("compute shader derivatives", &[capability])?;
             self.write_execution_mode(function_id, mode)?;
@@ -1638,8 +1638,8 @@ impl Writer {
             crate::TypeInner::RayQuery => {
                 self.require_ray_queries()?;
             }
-            crate::TypeInner::HitObject { kind } => {
-                self.require_hit_objects(kind)?;
+            crate::TypeInner::HitObject { flavor } => {
+                self.require_hit_objects(flavor)?;
             }
             crate::TypeInner::Atomic(crate::Scalar { width: 8, kind: _ }) => {
                 self.require_any("64 bit integer atomics", &[spirv::Capability::Int64Atomics])?;
@@ -1904,7 +1904,7 @@ impl Writer {
             }
             LocalType::AccelerationStructure => Instruction::type_acceleration_structure(id),
             LocalType::RayQuery => Instruction::type_ray_query(id),
-            LocalType::HitObject(kind) => Instruction::type_hit_object(id, kind),
+            LocalType::HitObject(flavor) => Instruction::type_hit_object(id, flavor),
             LocalType::UntypedPointer { .. } | LocalType::BufferDescriptor { .. } => {
                 self.write_heap_type_local(id, local_ty);
                 return;
@@ -2799,7 +2799,11 @@ impl Writer {
                         Some(crate::Interpolation::Linear) => {
                             others.push(Decoration::NoPerspective);
                         }
-                        Some(crate::Interpolation::PerVertex { nv, flat, linear }) => {
+                        Some(crate::Interpolation::PerVertex {
+                            flavor,
+                            flat,
+                            linear,
+                        }) => {
                             if flat {
                                 others.push(Decoration::Flat);
                             }
@@ -2807,7 +2811,7 @@ impl Writer {
                                 others.push(Decoration::NoPerspective);
                             }
                             others.push(Decoration::PerVertexKHR);
-                            self.require_barycentrics(nv)?;
+                            self.require_barycentrics(flavor)?;
                         }
                     }
                     match sampling {
@@ -2959,9 +2963,9 @@ impl Writer {
             }
         }
 
-        if let crate::AddressSpace::HitObjectAttribute { kind } = global_variable.space {
+        if let crate::AddressSpace::HitObjectAttribute { flavor } = global_variable.space {
             self.require_ray_tracing()?;
-            self.require_hit_objects(kind)?;
+            self.require_hit_objects(flavor)?;
         }
 
         //self.check(class.required_capabilities())?;
@@ -3501,13 +3505,13 @@ impl Writer {
             self.require_ray_queries()?;
         }
         self.write_ray_tracing_features()?;
-        self.mesh_extension = ir_module
+        self.mesh_flavor = ir_module
             .entry_points
             .iter()
             .enumerate()
             .filter(|&(index, _)| ep_index.is_none_or(|selected| selected == index))
-            .find_map(|(_, entry)| entry.mesh_shader.as_ref().map(|info| info.extension));
-        if self.mesh_extension.is_some() || ir_module.uses_mesh_shaders() {
+            .find_map(|(_, entry)| entry.mesh_shader.as_ref().map(|info| info.flavor));
+        if self.mesh_flavor.is_some() || ir_module.uses_mesh_shaders() {
             self.require_mesh_shading()?;
         }
         Instruction::type_void(self.void_type).to_words(&mut self.logical_layout.declarations);

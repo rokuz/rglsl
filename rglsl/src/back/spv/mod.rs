@@ -420,7 +420,7 @@ enum LocalType {
     },
     AccelerationStructure,
     RayQuery,
-    HitObject(crate::HitObjectKind),
+    HitObject(crate::HitObjectFlavor),
     UntypedPointer {
         class: spirv::StorageClass,
     },
@@ -838,7 +838,7 @@ pub struct Writer {
     legacy_buffer_blocks: bool,
     invariant_outputs: bool,
     legacy_storage_blocks: crate::FastHashSet<Word>,
-    mesh_extension: Option<crate::MeshShaderExtension>,
+    mesh_flavor: Option<crate::MeshFlavor>,
     task_memory_strides: crate::FastHashSet<Handle<crate::Type>>,
 
     ray_tracing_features: crate::RayTracingFeatures,

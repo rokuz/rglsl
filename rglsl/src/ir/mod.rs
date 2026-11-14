@@ -242,6 +242,10 @@ pub use debug::{
     shift_module_spans, shift_span,
 };
 pub use rglsl_types::builtin::{BuiltIn, ShaderBallot, ShaderCore, SubgroupMask};
+pub use rglsl_types::flavor::{
+    BarycentricFlavor, DerivativeFlavor, Flavor, FragmentDensityFlavor, HitObjectFlavor,
+    MeshFlavor, RayTracingFlavor,
+};
 pub use rglsl_types::{ResourceBinding, ShaderStage, ShaderStageMask};
 
 /// Explicitly allows early depth/stencil tests.
@@ -370,7 +374,7 @@ pub enum AddressSpace {
     IncomingCallableData,
     ShaderRecord,
     HitObjectAttribute {
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
     },
 
     /// A stage input: a value the previous stage or the pipeline provides.
@@ -544,7 +548,11 @@ pub enum Interpolation {
     Flat,
     /// Indicates the fragment input binding holds an array of per-vertex values.
     /// This is typically used with barycentrics.
-    PerVertex { nv: bool, flat: bool, linear: bool },
+    PerVertex {
+        flavor: BarycentricFlavor,
+        flat: bool,
+        linear: bool,
+    },
 }
 
 /// The sampling qualifiers of a binding or struct field.
@@ -1021,7 +1029,7 @@ pub enum TypeInner {
     RayQuery,
 
     HitObject {
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
     },
 
     /// Array of bindings.
@@ -2043,16 +2051,6 @@ pub enum ArrayConversion {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum CooperativeFamily {
-    Khr,
-    Nv,
-    Ext,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TensorOperation {
     LayoutSetBlockSize,
     LayoutSetDimension,
@@ -2071,19 +2069,19 @@ pub enum TensorOperation {
 pub enum CooperativeMatrixFunction {
     Transpose {
         matrix: Handle<Expression>,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     Reduce {
         matrix: Handle<Expression>,
         mask: u32,
         combine: Handle<Function>,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     PerElement {
         matrix: Handle<Expression>,
         function: Handle<Function>,
         arguments: Vec<Handle<Expression>>,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     GetCoordinate {
         matrix: Handle<Expression>,
@@ -2839,7 +2837,7 @@ pub enum Expression {
         expr: Handle<Expression>,
         ty: Handle<Type>,
         saturating: bool,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     CooperativeMatrixResult {
         ty: Handle<Type>,
@@ -3326,7 +3324,7 @@ pub enum Statement {
         fun: HitObjectFunction,
     },
     ReorderThread {
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
         hint: Handle<Expression>,
         bits: Handle<Expression>,
     },
@@ -3739,7 +3737,7 @@ impl Reconvergence {
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct DerivativeGroup {
     pub shape: DerivativeGroupShape,
-    pub extension: DerivativeGroupExtension,
+    pub flavor: DerivativeFlavor,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -3749,15 +3747,6 @@ pub struct DerivativeGroup {
 pub enum DerivativeGroupShape {
     Quads,
     Linear,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum DerivativeGroupExtension {
-    Nv,
-    Khr,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -3809,15 +3798,6 @@ pub struct TileShading {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum MeshShaderExtension {
-    Ext,
-    Nv,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshOutputLayout {
     pub topology: MeshOutputTopology,
     pub max_vertices: u32,
@@ -3829,7 +3809,7 @@ pub struct MeshOutputLayout {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshShaderInfo {
-    pub extension: MeshShaderExtension,
+    pub flavor: MeshFlavor,
     pub output: Option<MeshOutputLayout>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub task_memory: Vec<Handle<GlobalVariable>>,
@@ -4107,10 +4087,10 @@ pub enum RayPipelineFunction {
         result: Handle<Expression>,
     },
     IgnoreIntersection {
-        nv: bool,
+        flavor: RayTracingFlavor,
     },
     TerminateRay {
-        nv: bool,
+        flavor: RayTracingFlavor,
     },
 }
 
@@ -4166,15 +4146,6 @@ pub enum RayQueryIntersectionValue {
     LssHitValue,
     IsSphereHit,
     IsLssHit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum HitObjectKind {
-    Nv,
-    Ext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

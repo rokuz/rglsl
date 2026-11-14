@@ -357,10 +357,10 @@ impl Lowerer<'_> {
             OpaqueKind::AccelerationStructure => Ok(TypeInner::AccelerationStructure),
             OpaqueKind::RayQuery => Ok(TypeInner::RayQuery),
             OpaqueKind::HitObjectNv => Ok(TypeInner::HitObject {
-                kind: crate::HitObjectKind::Nv,
+                flavor: crate::HitObjectFlavor::Nv,
             }),
             OpaqueKind::HitObjectExt => Ok(TypeInner::HitObject {
-                kind: crate::HitObjectKind::Ext,
+                flavor: crate::HitObjectFlavor::Ext,
             }),
             OpaqueKind::TileImage => Ok(TypeInner::Image {
                 dim: ImageDimension::TileImageData,

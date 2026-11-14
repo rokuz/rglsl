@@ -264,12 +264,11 @@ impl Writer {
             };
             self.write_mode(function_id, topology, &[]);
         }
-        let nv = info.extension == crate::MeshShaderExtension::Nv;
-        Ok(match (entry_point.stage, nv) {
-            (ShaderStage::Task, false) => spirv::ExecutionModel::TaskEXT,
-            (ShaderStage::Task, true) => spirv::ExecutionModel::TaskNV,
-            (_, false) => spirv::ExecutionModel::MeshEXT,
-            (_, true) => spirv::ExecutionModel::MeshNV,
+        Ok(match (entry_point.stage, info.flavor) {
+            (ShaderStage::Task, crate::MeshFlavor::Ext) => spirv::ExecutionModel::TaskEXT,
+            (ShaderStage::Task, crate::MeshFlavor::Nv) => spirv::ExecutionModel::TaskNV,
+            (_, crate::MeshFlavor::Ext) => spirv::ExecutionModel::MeshEXT,
+            (_, crate::MeshFlavor::Nv) => spirv::ExecutionModel::MeshNV,
         })
     }
 }
