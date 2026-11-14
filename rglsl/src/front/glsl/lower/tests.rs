@@ -35,7 +35,7 @@ fn every_builtin_function_is_lowered_explicitly() -> crate::TestResult {
     let prototypes = prototypes();
     let unrouted: Vec<String> = prototypes
         .iter()
-        .filter(|&&(ref name, arity)| route(name, arity).is_none())
+        .filter(|&&(ref name, _)| route(name).is_none())
         .map(|&(ref name, arity)| format!("{name} ({arity} arguments)"))
         .collect();
     if !unrouted.is_empty() {

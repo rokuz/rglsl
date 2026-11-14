@@ -12,8 +12,8 @@ use rglsl_types::extension::Extension;
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::kind::{
-    AmdShaderBallot, BuiltinKind, Collective, Gather, GatherOffsets, Sample, Subgroup,
-    SubgroupFunction, Texture, TextureGather, TextureLevel,
+    AmdShaderBallot, BuiltinKind, Collective, Gather, GatherOffsets, Pure, Relation, Sample,
+    Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
 };
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
@@ -192,79 +192,6 @@ const fn offset_index(kind: BuiltinKind) -> Option<usize> {
 
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
 const ABORT: &str = "abortEXT";
-
-const FOLDED_BUILTINS: [&str; 68] = [
-    "radians",
-    "degrees",
-    "sin",
-    "cos",
-    "tan",
-    "asin",
-    "acos",
-    "atan",
-    "sinh",
-    "cosh",
-    "tanh",
-    "asinh",
-    "acosh",
-    "atanh",
-    "dFdx",
-    "dFdy",
-    "fwidth",
-    "dFdxFine",
-    "dFdyFine",
-    "fwidthFine",
-    "dFdxCoarse",
-    "dFdyCoarse",
-    "fwidthCoarse",
-    "pow",
-    "exp",
-    "log",
-    "exp2",
-    "log2",
-    "sqrt",
-    "inversesqrt",
-    "abs",
-    "sign",
-    "floor",
-    "trunc",
-    "round",
-    "roundEven",
-    "ceil",
-    "fract",
-    "mod",
-    "min",
-    "max",
-    "clamp",
-    "mix",
-    "step",
-    "smoothstep",
-    "isnan",
-    "isinf",
-    "floatBitsToInt",
-    "floatBitsToUint",
-    "intBitsToFloat",
-    "uintBitsToFloat",
-    "length",
-    "distance",
-    "dot",
-    "cross",
-    "normalize",
-    "faceforward",
-    "reflect",
-    "refract",
-    "matrixCompMult",
-    "outerProduct",
-    "lessThan",
-    "lessThanEqual",
-    "greaterThan",
-    "greaterThanEqual",
-    "equal",
-    "notEqual",
-    "any",
-];
-
-const FOLDED_VECTOR_BUILTINS: [&str; 2] = ["all", "not"];
 
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn operands(self, arguments: &'b [Expression]) -> Vec<Operand> {
@@ -991,8 +918,13 @@ impl Analyzer<'_> {
         if failed {
             return Operand::error();
         }
-        let constant = is_builtin
-            && (FOLDED_BUILTINS.contains(&name) || FOLDED_VECTOR_BUILTINS.contains(&name))
+        let folded = entry
+            .filter(|entry| entry.has(BuiltinFlags::FOLD))
+            .and_then(|entry| match entry.kind {
+                BuiltinKind::Pure(pure) => Some(pure),
+                _ => None,
+            });
+        let constant = folded.is_some()
             && operands
                 .iter()
                 .all(|operand| operand.constant && !operand.specialization);
@@ -1005,14 +937,18 @@ impl Analyzer<'_> {
                     operand.value.as_ref().map(|value| value.convert(scalar))
                 })
                 .collect();
-            let result = if matches!(name, "any" | "all") {
+            let result = if matches!(
+                folded,
+                Some(Pure::Relational(Relation::Any | Relation::All))
+            ) {
                 Some(Scalar::Bool)
             } else {
                 function.return_type.base_scalar()
             };
             converted
                 .zip(result)
-                .and_then(|(converted, result)| fold_builtin(name, &converted, result))
+                .zip(folded)
+                .and_then(|((converted, result), pure)| fold_builtin(pure, &converted, result))
         } else {
             None
         };
@@ -1150,21 +1086,6 @@ impl Analyzer<'_> {
                 }
             }
             return;
-        }
-        if matches!(
-            name,
-            "dotEXT" | "dotAccSatEXT" | "dotPacked4x8EXT" | "dotPacked4x8AccSatEXT"
-        ) {
-            self.require_extension(span, Extension::ExtIntegerDotProduct, name);
-        }
-        if matches!(name, "expectEXT" | "assumeEXT") {
-            self.require_extension(span, Extension::ExtExpectAssume, name);
-        }
-        if let Some(&(_, extension)) = SMALL_FLOAT_FUNCTIONS
-            .iter()
-            .find(|&&(part, _)| contains_ignore_ascii_case(name, part))
-        {
-            self.require_extension(span, extension, name);
         }
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::fragment::function_extension(name) {
@@ -1980,23 +1901,4 @@ fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
         && operands
             .iter()
             .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
-}
-
-const SMALL_FLOAT_FUNCTIONS: [(&str, Extension); 8] = [
-    ("bfloat16", Extension::ExtBfloat16),
-    ("floate4m3", Extension::ExtFloatE4m3),
-    ("floate5m2", Extension::ExtFloatE5m2),
-    ("fe2m1", Extension::ExtFloatE2m1),
-    ("fe3m2", Extension::ExtFloatE3m2),
-    ("fe2m3", Extension::ExtFloatE2m3),
-    ("floatue8m0", Extension::ExtFloatUe8m0),
-    ("floatmxint8", Extension::ExtFloatMxint8),
-];
-
-fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
-    needle.is_empty()
-        || text
-            .as_bytes()
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }

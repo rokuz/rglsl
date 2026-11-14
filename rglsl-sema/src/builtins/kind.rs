@@ -1,6 +1,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinKind {
     Named,
+    Pure(Pure),
+    Decompose(Decompose),
+    Wide(Wide),
+    Expect,
+    Assume,
     Subgroup(Subgroup),
     Ray(Ray),
     Texture(Texture),
@@ -10,9 +15,170 @@ impl BuiltinKind {
     pub const fn requirements_gate_call(self) -> bool {
         match self {
             Self::Ray(_) => true,
-            Self::Named | Self::Subgroup(_) | Self::Texture(_) => false,
+            Self::Named
+            | Self::Pure(_)
+            | Self::Decompose(_)
+            | Self::Wide(_)
+            | Self::Expect
+            | Self::Assume
+            | Self::Subgroup(_)
+            | Self::Texture(_) => false,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Pure {
+    Math(Math),
+    Bits(BitOperation),
+    Relational(Relation),
+    Compare(Comparison),
+    Not,
+    Select,
+    Modulo,
+    MatrixCompMult,
+    Bitcast,
+    PackBits,
+    UnpackBits,
+    PackedBitcast { extract: bool },
+    Derivative(Axis, Control),
+}
+
+impl Pure {
+    pub const fn replicates_scalars(self) -> bool {
+        matches!(
+            self,
+            Self::Modulo
+                | Self::Math(
+                    Math::Min | Math::Max | Math::Clamp | Math::Mix | Math::Step | Math::SmoothStep
+                )
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Math {
+    Radians,
+    Degrees,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Sinh,
+    Cosh,
+    Tanh,
+    Asinh,
+    Acosh,
+    Atanh,
+    Pow,
+    Exp,
+    Log,
+    Exp2,
+    Log2,
+    Sqrt,
+    InverseSqrt,
+    Abs,
+    Sign,
+    Floor,
+    Trunc,
+    Round,
+    RoundEven,
+    Ceil,
+    Fract,
+    Min,
+    Max,
+    Clamp,
+    Mix,
+    Step,
+    SmoothStep,
+    Fma,
+    Ldexp,
+    Length,
+    Distance,
+    Dot,
+    IntegerDot,
+    IntegerDotAccSat,
+    PackedIntegerDot4x8,
+    PackedIntegerDot4x8AccSat,
+    Cross,
+    Normalize,
+    FaceForward,
+    Reflect,
+    Refract,
+    Outer,
+    Transpose,
+    Determinant,
+    Inverse,
+    Pack2x16unorm,
+    Pack2x16snorm,
+    Pack4x8unorm,
+    Pack4x8snorm,
+    Unpack2x16unorm,
+    Unpack2x16snorm,
+    Unpack4x8unorm,
+    Unpack4x8snorm,
+    Pack2x16float,
+    Unpack2x16float,
+    PackDouble2x32,
+    UnpackDouble2x32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BitOperation {
+    Extract,
+    Insert,
+    Reverse,
+    Count,
+    FindLsb,
+    FindMsb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Relation {
+    IsNan,
+    IsInf,
+    Any,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Comparison {
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+    NotEqual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Axis {
+    X,
+    Y,
+    Width,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Control {
+    Plain,
+    Fine,
+    Coarse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Decompose {
+    Modf,
+    Frexp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Wide {
+    AddCarry,
+    SubBorrow,
+    MulExtended { signed: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

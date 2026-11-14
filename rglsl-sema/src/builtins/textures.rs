@@ -43,9 +43,10 @@ fn sparse(
 }
 
 const fn texture(emitter: &Emitter<'_>) -> Option<Texture> {
-    match emitter.kind() {
-        BuiltinKind::Texture(texture) => Some(texture),
-        BuiltinKind::Named | BuiltinKind::Subgroup(_) | BuiltinKind::Ray(_) => None,
+    if let BuiltinKind::Texture(texture) = emitter.kind() {
+        Some(texture)
+    } else {
+        None
     }
 }
 

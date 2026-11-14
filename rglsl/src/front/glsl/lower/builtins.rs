@@ -2,8 +2,9 @@ use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
 use rglsl_sema::builtins::kind::{
-    self, AtomicOperation, BuiltinKind, GatherOffsets, GatherPattern, ImageProcessing, Sample,
-    Texture, TextureGather, TextureLevel, TextureQuery,
+    self, AtomicOperation, Axis, BitOperation, BuiltinKind, Comparison, Control, Decompose,
+    GatherOffsets, GatherPattern, ImageProcessing, Math, Pure, Relation, Sample, Texture,
+    TextureGather, TextureLevel, TextureQuery, Wide,
 };
 use rglsl_sema::scope::Function;
 use rglsl_sema::types::{
@@ -22,81 +23,132 @@ use crate::{
     Statement, SwizzleComponent, UnaryOperator,
 };
 
-pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
+pub(super) const fn math_function(math: Math) -> MathFunction {
     use MathFunction as Mf;
-    Some(match name {
-        "radians" => Mf::Radians,
-        "degrees" => Mf::Degrees,
-        "sin" => Mf::Sin,
-        "cos" => Mf::Cos,
-        "tan" => Mf::Tan,
-        "asin" => Mf::Asin,
-        "acos" => Mf::Acos,
-        "atan" if arguments == 2 => Mf::Atan2,
-        "atan" => Mf::Atan,
-        "sinh" => Mf::Sinh,
-        "cosh" => Mf::Cosh,
-        "tanh" => Mf::Tanh,
-        "asinh" => Mf::Asinh,
-        "acosh" => Mf::Acosh,
-        "atanh" => Mf::Atanh,
-        "pow" => Mf::Pow,
-        "exp" => Mf::Exp,
-        "log" => Mf::Log,
-        "exp2" => Mf::Exp2,
-        "log2" => Mf::Log2,
-        "sqrt" => Mf::Sqrt,
-        "inversesqrt" => Mf::InverseSqrt,
-        "abs" => Mf::Abs,
-        "sign" => Mf::Sign,
-        "floor" => Mf::Floor,
-        "trunc" => Mf::Trunc,
-        "round" => Mf::Round,
-        "roundEven" => Mf::RoundEven,
-        "ceil" => Mf::Ceil,
-        "fract" => Mf::Fract,
-        "min" => Mf::Min,
-        "max" => Mf::Max,
-        "clamp" => Mf::Clamp,
-        "mix" => Mf::Mix,
-        "step" => Mf::Step,
-        "smoothstep" => Mf::SmoothStep,
-        "fma" => Mf::Fma,
-        "ldexp" => Mf::Ldexp,
-        "length" => Mf::Length,
-        "distance" => Mf::Distance,
-        "dot" => Mf::Dot,
-        "dotEXT" => Mf::IntegerDot,
-        "dotAccSatEXT" => Mf::IntegerDotAccSat,
-        "dotPacked4x8EXT" => Mf::PackedIntegerDot4x8,
-        "dotPacked4x8AccSatEXT" => Mf::PackedIntegerDot4x8AccSat,
-        "cross" => Mf::Cross,
-        "normalize" => Mf::Normalize,
-        "faceforward" => Mf::FaceForward,
-        "reflect" => Mf::Reflect,
-        "refract" => Mf::Refract,
-        "outerProduct" => Mf::Outer,
-        "transpose" => Mf::Transpose,
-        "determinant" => Mf::Determinant,
-        "inverse" => Mf::Inverse,
-        "bitfieldReverse" => Mf::ReverseBits,
-        "bitCount" => Mf::CountOneBits,
-        "findLSB" => Mf::FirstTrailingBit,
-        "findMSB" => Mf::FirstLeadingBit,
-        "packUnorm2x16" => Mf::Pack2x16unorm,
-        "packSnorm2x16" => Mf::Pack2x16snorm,
-        "packUnorm4x8" => Mf::Pack4x8unorm,
-        "packSnorm4x8" => Mf::Pack4x8snorm,
-        "unpackUnorm2x16" => Mf::Unpack2x16unorm,
-        "unpackSnorm2x16" => Mf::Unpack2x16snorm,
-        "unpackUnorm4x8" => Mf::Unpack4x8unorm,
-        "unpackSnorm4x8" => Mf::Unpack4x8snorm,
-        "packHalf2x16" => Mf::Pack2x16float,
-        "unpackHalf2x16" => Mf::Unpack2x16float,
-        "packDouble2x32" => Mf::PackDouble2x32,
-        "unpackDouble2x32" => Mf::UnpackDouble2x32,
-        _ => return None,
-    })
+    match math {
+        Math::Radians => Mf::Radians,
+        Math::Degrees => Mf::Degrees,
+        Math::Sin => Mf::Sin,
+        Math::Cos => Mf::Cos,
+        Math::Tan => Mf::Tan,
+        Math::Asin => Mf::Asin,
+        Math::Acos => Mf::Acos,
+        Math::Atan => Mf::Atan,
+        Math::Atan2 => Mf::Atan2,
+        Math::Sinh => Mf::Sinh,
+        Math::Cosh => Mf::Cosh,
+        Math::Tanh => Mf::Tanh,
+        Math::Asinh => Mf::Asinh,
+        Math::Acosh => Mf::Acosh,
+        Math::Atanh => Mf::Atanh,
+        Math::Pow => Mf::Pow,
+        Math::Exp => Mf::Exp,
+        Math::Log => Mf::Log,
+        Math::Exp2 => Mf::Exp2,
+        Math::Log2 => Mf::Log2,
+        Math::Sqrt => Mf::Sqrt,
+        Math::InverseSqrt => Mf::InverseSqrt,
+        Math::Abs => Mf::Abs,
+        Math::Sign => Mf::Sign,
+        Math::Floor => Mf::Floor,
+        Math::Trunc => Mf::Trunc,
+        Math::Round => Mf::Round,
+        Math::RoundEven => Mf::RoundEven,
+        Math::Ceil => Mf::Ceil,
+        Math::Fract => Mf::Fract,
+        Math::Min => Mf::Min,
+        Math::Max => Mf::Max,
+        Math::Clamp => Mf::Clamp,
+        Math::Mix => Mf::Mix,
+        Math::Step => Mf::Step,
+        Math::SmoothStep => Mf::SmoothStep,
+        Math::Fma => Mf::Fma,
+        Math::Ldexp => Mf::Ldexp,
+        Math::Length => Mf::Length,
+        Math::Distance => Mf::Distance,
+        Math::Dot => Mf::Dot,
+        Math::IntegerDot => Mf::IntegerDot,
+        Math::IntegerDotAccSat => Mf::IntegerDotAccSat,
+        Math::PackedIntegerDot4x8 => Mf::PackedIntegerDot4x8,
+        Math::PackedIntegerDot4x8AccSat => Mf::PackedIntegerDot4x8AccSat,
+        Math::Cross => Mf::Cross,
+        Math::Normalize => Mf::Normalize,
+        Math::FaceForward => Mf::FaceForward,
+        Math::Reflect => Mf::Reflect,
+        Math::Refract => Mf::Refract,
+        Math::Outer => Mf::Outer,
+        Math::Transpose => Mf::Transpose,
+        Math::Determinant => Mf::Determinant,
+        Math::Inverse => Mf::Inverse,
+        Math::Pack2x16unorm => Mf::Pack2x16unorm,
+        Math::Pack2x16snorm => Mf::Pack2x16snorm,
+        Math::Pack4x8unorm => Mf::Pack4x8unorm,
+        Math::Pack4x8snorm => Mf::Pack4x8snorm,
+        Math::Unpack2x16unorm => Mf::Unpack2x16unorm,
+        Math::Unpack2x16snorm => Mf::Unpack2x16snorm,
+        Math::Unpack4x8unorm => Mf::Unpack4x8unorm,
+        Math::Unpack4x8snorm => Mf::Unpack4x8snorm,
+        Math::Pack2x16float => Mf::Pack2x16float,
+        Math::Unpack2x16float => Mf::Unpack2x16float,
+        Math::PackDouble2x32 => Mf::PackDouble2x32,
+        Math::UnpackDouble2x32 => Mf::UnpackDouble2x32,
+    }
+}
+
+pub(super) const fn bit_function(operation: BitOperation) -> MathFunction {
+    match operation {
+        BitOperation::Extract => MathFunction::ExtractBits,
+        BitOperation::Insert => MathFunction::InsertBits,
+        BitOperation::Reverse => MathFunction::ReverseBits,
+        BitOperation::Count => MathFunction::CountOneBits,
+        BitOperation::FindLsb => MathFunction::FirstTrailingBit,
+        BitOperation::FindMsb => MathFunction::FirstLeadingBit,
+    }
+}
+
+pub(super) const fn relational_function(relation: Relation) -> RelationalFunction {
+    match relation {
+        Relation::IsNan => RelationalFunction::IsNan,
+        Relation::IsInf => RelationalFunction::IsInf,
+        Relation::Any => RelationalFunction::Any,
+        Relation::All => RelationalFunction::All,
+    }
+}
+
+pub(super) const fn comparison_operator(comparison: Comparison) -> BinaryOperator {
+    match comparison {
+        Comparison::Less => BinaryOperator::Less,
+        Comparison::LessEqual => BinaryOperator::LessEqual,
+        Comparison::Greater => BinaryOperator::Greater,
+        Comparison::GreaterEqual => BinaryOperator::GreaterEqual,
+        Comparison::Equal => BinaryOperator::Equal,
+        Comparison::NotEqual => BinaryOperator::NotEqual,
+    }
+}
+
+pub(super) const fn derivative(
+    axis: Axis,
+    control: Control,
+) -> (DerivativeAxis, DerivativeControl) {
+    let axis = match axis {
+        Axis::X => DerivativeAxis::X,
+        Axis::Y => DerivativeAxis::Y,
+        Axis::Width => DerivativeAxis::Width,
+    };
+    let control = match control {
+        Control::Plain => DerivativeControl::None,
+        Control::Fine => DerivativeControl::Fine,
+        Control::Coarse => DerivativeControl::Coarse,
+    };
+    (axis, control)
+}
+
+const fn wide_function(wide: Wide) -> MathFunction {
+    match wide {
+        Wide::AddCarry => MathFunction::AddCarry,
+        Wide::SubBorrow => MathFunction::SubBorrow,
+        Wide::MulExtended { .. } => MathFunction::MulExtended,
+    }
 }
 
 const fn gather_pattern(pattern: GatherPattern) -> ImageGatherPattern {
@@ -182,25 +234,6 @@ enum ImageAccess {
     Store,
 }
 
-pub(super) fn derivative(name: &str) -> Option<(DerivativeAxis, DerivativeControl)> {
-    let (axis, rest) = if let Some(rest) = name.strip_prefix("dFdx") {
-        (DerivativeAxis::X, rest)
-    } else if let Some(rest) = name.strip_prefix("dFdy") {
-        (DerivativeAxis::Y, rest)
-    } else if let Some(rest) = name.strip_prefix("fwidth") {
-        (DerivativeAxis::Width, rest)
-    } else {
-        return None;
-    };
-    let control = match rest {
-        "" => DerivativeControl::None,
-        "Fine" => DerivativeControl::Fine,
-        "Coarse" => DerivativeControl::Coarse,
-        _ => return None,
-    };
-    Some((axis, control))
-}
-
 struct Sampled {
     image: Handle<Expression>,
     sampler: Option<Handle<Expression>>,
@@ -284,14 +317,15 @@ impl FunctionLowerer<'_, '_> {
 
     fn generic_values(
         &mut self,
-        name: &str,
+        pure: Pure,
         function: &Function,
         call_type: &GlslType,
         at: Span,
         mut values: Vec<Handle<Expression>>,
         types: Vec<GlslType>,
     ) -> Result<Handle<Expression>> {
-        if let Some(extract) = microscaling_bitcast(name) {
+        let name = function.name.as_str();
+        if let Pure::PackedBitcast { extract } = pure {
             let ty = self.lw.ir_type(call_type, at)?;
             let expr = values.first().copied().ok_or_else(|| internal(at))?;
             let offset = if extract {
@@ -313,7 +347,9 @@ impl FunctionLowerer<'_, '_> {
             .find(|ty| ty.sized_vector_length().is_some())
             .cloned();
         if let Some(ref shape) = long_shape {
-            return self.long_generic(name, call_type, shape, values, &types, at);
+            return self
+                .long_generic(pure, call_type, shape, values, &types, at)?
+                .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at));
         }
         let result = &function.return_type;
         let first_ty = types.first().cloned().unwrap_or(GlslType::VOID);
@@ -325,98 +361,84 @@ impl FunctionLowerer<'_, '_> {
         let narrow = first_ty
             .base_scalar()
             .filter(|element| element.is_integer() && element.bits() < 32);
-        if let (Some(element), true) = (
-            narrow,
-            matches!(
-                name,
-                "findMSB"
-                    | "findLSB"
-                    | "bitCount"
-                    | "bitfieldReverse"
-                    | "bitfieldExtract"
-                    | "bitfieldInsert"
-            ),
-        ) {
-            return self.narrow_bit_operation(name, &values, element, result, vector, at);
+        if let (Some(element), Pure::Bits(operation)) = (narrow, pure) {
+            return self.narrow_bit_operation(operation, &values, element, result, vector, at);
         }
         let wide = first_ty
             .base_scalar()
             .filter(|element| element.is_integer() && element.bits() == 64);
-        if let (Some(element), true) = (wide, matches!(name, "findMSB" | "findLSB" | "bitCount")) {
-            return self.wide_bit_operation(name, arg(0)?, element, result, vector, at);
+        if let (
+            Some(element),
+            Pure::Bits(
+                operation @ (BitOperation::Count | BitOperation::FindLsb | BitOperation::FindMsb),
+            ),
+        ) = (wide, pure)
+        {
+            return self.wide_bit_operation(operation, arg(0)?, element, result, vector, at);
         }
-        if let Some((axis, ctrl)) = derivative(name) {
-            let half = first_ty.base_scalar() == Some(GlslScalar::Float16);
-            let mut expr = arg(0)?;
-            if half {
-                expr = self.as_kind(expr, crate::Scalar::F32, at)?;
+        match pure {
+            Pure::Derivative(axis, control) => {
+                let (axis, ctrl) = derivative(axis, control);
+                let half = first_ty.base_scalar() == Some(GlslScalar::Float16);
+                let mut expr = arg(0)?;
+                if half {
+                    expr = self.as_kind(expr, crate::Scalar::F32, at)?;
+                }
+                let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
+                if half {
+                    self.as_kind(value, crate::Scalar::F16, at)
+                } else {
+                    Ok(value)
+                }
             }
-            let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
-            return if half {
-                self.as_kind(value, crate::Scalar::F16, at)
-            } else {
-                Ok(value)
-            };
-        }
-        if name == "mix" && types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) {
-            return self.add(
+            Pure::Select => self.add(
                 Expression::Select {
                     condition: arg(2)?,
                     accept: arg(1)?,
                     reject: arg(0)?,
                 },
                 at,
-            );
-        }
-        match special(name) {
-            Some(Special::Relational(fun)) => {
-                return self.add(
-                    Expression::Relational {
-                        fun,
-                        argument: arg(0)?,
-                    },
-                    at,
-                );
+            ),
+            Pure::Relational(relation) => self.add(
+                Expression::Relational {
+                    fun: relational_function(relation),
+                    argument: arg(0)?,
+                },
+                at,
+            ),
+            Pure::Not => self.add(
+                Expression::Unary {
+                    op: UnaryOperator::LogicalNot,
+                    expr: arg(0)?,
+                },
+                at,
+            ),
+            Pure::Compare(comparison) => {
+                self.binary_op(comparison_operator(comparison), arg(0)?, arg(1)?, at)
             }
-            Some(Special::Not) => {
-                return self.add(
-                    Expression::Unary {
-                        op: UnaryOperator::LogicalNot,
-                        expr: arg(0)?,
-                    },
-                    at,
-                );
-            }
-            Some(Special::Compare(op)) => {
-                return self.binary_op(op, arg(0)?, arg(1)?, at);
-            }
-            Some(Special::Bitcast) => {
+            Pure::Bitcast => {
                 let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
-                return self.add(
+                self.add(
                     Expression::As {
                         expr: arg(0)?,
                         kind,
                         convert: None,
                     },
                     at,
-                );
+                )
             }
-            Some(Special::Pack) => {
-                return self.pack_bits(arg(0)?, &first_ty, result, at);
-            }
-            Some(Special::Unpack) => {
-                return self.unpack_bits(arg(0)?, &first_ty, result, at);
-            }
-            Some(Special::Modulo) => {
+            Pure::PackBits => self.pack_bits(arg(0)?, &first_ty, result, at),
+            Pure::UnpackBits => self.unpack_bits(arg(0)?, &first_ty, result, at),
+            Pure::Modulo => {
                 let x = arg(0)?;
                 let mut y = arg(1)?;
                 if let (Some(size), true) = (vector, types.get(1).is_some_and(GlslType::is_scalar))
                 {
                     y = self.splat(y, size, at)?;
                 }
-                return self.binary_op(BinaryOperator::Modulo, x, y, at);
+                self.binary_op(BinaryOperator::Modulo, x, y, at)
             }
-            Some(Special::MatrixCompMult) => {
+            Pure::MatrixCompMult => {
                 let TypeKind::Matrix { columns, .. } = result.kind else {
                     return Err(internal(at));
                 };
@@ -428,11 +450,11 @@ impl FunctionLowerer<'_, '_> {
                     components.push(self.binary_op(BinaryOperator::Multiply, l, r, at)?);
                 }
                 let ty = self.lw.ir_type(result, at)?;
-                return self.add(Expression::Compose { ty, components }, at);
+                self.add(Expression::Compose { ty, components }, at)
             }
-            Some(Special::Bitfield(fun)) => {
+            Pure::Bits(operation @ (BitOperation::Extract | BitOperation::Insert)) => {
                 let mut converted = values.clone();
-                let start = if fun == MathFunction::ExtractBits {
+                let start = if operation == BitOperation::Extract {
                     1
                 } else {
                     2
@@ -440,49 +462,53 @@ impl FunctionLowerer<'_, '_> {
                 for slot in converted.iter_mut().skip(start) {
                     *slot = self.as_kind(*slot, crate::Scalar::U32, at)?;
                 }
-                return self.math_call(fun, &converted, at);
+                self.math_call(bit_function(operation), &converted, at)
             }
-            None => {}
-        }
-        if first_ty.is_scalar() && name == "dot" {
-            return self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at);
-        }
-        let fun = math(name, values.len())
-            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        if name == "ldexp" {
-            let narrow = types
-                .get(1)
-                .and_then(GlslType::base_scalar)
-                .is_some_and(|exponent| exponent.bits() < 32);
-            if narrow && let Some(exponent) = values.get_mut(1) {
-                *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
+            Pure::Bits(
+                operation @ (BitOperation::Reverse
+                | BitOperation::Count
+                | BitOperation::FindLsb
+                | BitOperation::FindMsb),
+            ) => {
+                let value = self.math_call(bit_function(operation), &values, at)?;
+                let unsigned_input = first_ty.base_scalar().is_some_and(GlslScalar::is_unsigned);
+                if operation != BitOperation::Reverse && unsigned_input {
+                    let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
+                    return self.as_kind(value, target, at);
+                }
+                Ok(value)
             }
-        }
-        if let Some(size) = vector {
-            let splatted = matches!(
-                name,
-                "min" | "max" | "clamp" | "mix" | "step" | "smoothstep"
-            );
-            if splatted {
-                for (value, ty) in values.iter_mut().zip(&types) {
-                    if ty.is_scalar() {
-                        *value = self.splat(*value, size, at)?;
+            Pure::Math(Math::Dot) if first_ty.is_scalar() => {
+                self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at)
+            }
+            Pure::Math(math) => {
+                if math == Math::Ldexp {
+                    let narrow = types
+                        .get(1)
+                        .and_then(GlslType::base_scalar)
+                        .is_some_and(|exponent| exponent.bits() < 32);
+                    if narrow && let Some(exponent) = values.get_mut(1) {
+                        *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
                     }
                 }
+                if let Some(size) = vector
+                    && pure.replicates_scalars()
+                {
+                    for (value, ty) in values.iter_mut().zip(&types) {
+                        if ty.is_scalar() {
+                            *value = self.splat(*value, size, at)?;
+                        }
+                    }
+                }
+                self.math_call(math_function(math), &values, at)
             }
+            Pure::PackedBitcast { .. } => Err(internal(at)),
         }
-        let value = self.math_call(fun, &values, at)?;
-        let unsigned_input = first_ty.base_scalar().is_some_and(GlslScalar::is_unsigned);
-        if matches!(name, "bitCount" | "findLSB" | "findMSB") && unsigned_input {
-            let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
-            return self.as_kind(value, target, at);
-        }
-        Ok(value)
     }
 
     fn wide_bit_operation(
         &mut self,
-        name: &str,
+        operation: BitOperation,
         value: Handle<Expression>,
         element: GlslScalar,
         result: &GlslType,
@@ -497,8 +523,9 @@ impl FunctionLowerer<'_, '_> {
                 None => Ok(value),
             }
         };
+        let msb = operation == BitOperation::FindMsb;
         let mut source = value;
-        if name == "findMSB" && element.is_signed() {
+        if msb && element.is_signed() {
             let amount = filled(self, Literal::U32(63))?;
             let sign = self.binary_op(BinaryOperator::ShiftRight, source, amount, at)?;
             source = self.binary_op(BinaryOperator::ExclusiveOr, source, sign, at)?;
@@ -508,60 +535,53 @@ impl FunctionLowerer<'_, '_> {
         let amount = filled(self, Literal::U32(32))?;
         let shifted = self.binary_op(BinaryOperator::ShiftRight, unsigned, amount, at)?;
         let high = self.as_kind(shifted, crate::Scalar::U32, at)?;
-        let combined = match name {
-            "bitCount" => {
-                let low = self.math_call(MathFunction::CountOneBits, &[low], at)?;
-                let high = self.math_call(MathFunction::CountOneBits, &[high], at)?;
-                self.binary_op(BinaryOperator::Add, low, high, at)?
-            }
-            _ => {
-                let fun = if name == "findMSB" {
-                    MathFunction::FirstLeadingBit
-                } else {
-                    MathFunction::FirstTrailingBit
-                };
-                let low_bit = self.math_call(fun, &[low], at)?;
-                let high_bit = self.math_call(fun, &[high], at)?;
-                let thirty_two = filled(self, Literal::U32(32))?;
-                let high_bit = self.binary_op(BinaryOperator::Add, high_bit, thirty_two, at)?;
-                let zero = filled(self, Literal::U32(0))?;
-                let (tested, chosen, other) = if name == "findMSB" {
-                    (high, high_bit, low_bit)
-                } else {
-                    (low, low_bit, high_bit)
-                };
-                let condition = self.binary_op(BinaryOperator::NotEqual, tested, zero, at)?;
-                let fallback = if name == "findMSB" {
-                    other
-                } else {
-                    let none = filled(self, Literal::U32(u32::MAX))?;
-                    let high_zero = self.binary_op(BinaryOperator::Equal, high, zero, at)?;
-                    self.add(
-                        Expression::Select {
-                            condition: high_zero,
-                            accept: none,
-                            reject: other,
-                        },
-                        at,
-                    )?
-                };
-                let selected = self.add(
+        let combined = if operation == BitOperation::Count {
+            let low = self.math_call(MathFunction::CountOneBits, &[low], at)?;
+            let high = self.math_call(MathFunction::CountOneBits, &[high], at)?;
+            self.binary_op(BinaryOperator::Add, low, high, at)?
+        } else {
+            let fun = bit_function(operation);
+            let low_bit = self.math_call(fun, &[low], at)?;
+            let high_bit = self.math_call(fun, &[high], at)?;
+            let thirty_two = filled(self, Literal::U32(32))?;
+            let high_bit = self.binary_op(BinaryOperator::Add, high_bit, thirty_two, at)?;
+            let zero = filled(self, Literal::U32(0))?;
+            let (tested, chosen, other) = if msb {
+                (high, high_bit, low_bit)
+            } else {
+                (low, low_bit, high_bit)
+            };
+            let condition = self.binary_op(BinaryOperator::NotEqual, tested, zero, at)?;
+            let fallback = if msb {
+                other
+            } else {
+                let none = filled(self, Literal::U32(u32::MAX))?;
+                let high_zero = self.binary_op(BinaryOperator::Equal, high, zero, at)?;
+                self.add(
                     Expression::Select {
-                        condition,
-                        accept: chosen,
-                        reject: fallback,
+                        condition: high_zero,
+                        accept: none,
+                        reject: other,
                     },
                     at,
-                )?;
-                self.bitcast(selected, crate::ScalarKind::Sint, at)?
-            }
+                )?
+            };
+            let selected = self.add(
+                Expression::Select {
+                    condition,
+                    accept: chosen,
+                    reject: fallback,
+                },
+                at,
+            )?;
+            self.bitcast(selected, crate::ScalarKind::Sint, at)?
         };
         self.as_kind(combined, result_scalar, at)
     }
 
     fn narrow_bit_operation(
         &mut self,
-        name: &str,
+        operation: BitOperation,
         values: &[Handle<Expression>],
         element: GlslScalar,
         result: &GlslType,
@@ -579,24 +599,19 @@ impl FunctionLowerer<'_, '_> {
             width: 4,
         };
         let result_scalar = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
-        match name {
-            "findMSB" | "findLSB" => {
+        match operation {
+            BitOperation::FindMsb | BitOperation::FindLsb => {
                 let extended = self.as_kind(arg(0)?, wide, at)?;
-                let fun = if name == "findMSB" {
-                    MathFunction::FirstLeadingBit
-                } else {
-                    MathFunction::FirstTrailingBit
-                };
-                let found = self.math_call(fun, &[extended], at)?;
+                let found = self.math_call(bit_function(operation), &[extended], at)?;
                 self.as_kind(found, result_scalar, at)
             }
-            "bitCount" => {
+            BitOperation::Count => {
                 let unsigned = self.bitcast(arg(0)?, crate::ScalarKind::Uint, at)?;
                 let extended = self.as_kind(unsigned, crate::Scalar::U32, at)?;
                 let counted = self.math_call(MathFunction::CountOneBits, &[extended], at)?;
                 self.as_kind(counted, result_scalar, at)
             }
-            "bitfieldReverse" => {
+            BitOperation::Reverse => {
                 let unsigned = self.bitcast(arg(0)?, crate::ScalarKind::Uint, at)?;
                 let extended = self.as_kind(unsigned, crate::Scalar::U32, at)?;
                 let reversed = self.math_call(MathFunction::ReverseBits, &[extended], at)?;
@@ -609,7 +624,7 @@ impl FunctionLowerer<'_, '_> {
                 let truncated = self.as_kind(shifted, unsigned_narrow, at)?;
                 self.bitcast(truncated, narrow.kind, at)
             }
-            "bitfieldExtract" => {
+            BitOperation::Extract => {
                 let extended = self.as_kind(arg(0)?, wide, at)?;
                 let offset = self.as_kind(arg(1)?, crate::Scalar::U32, at)?;
                 let count = self.as_kind(arg(2)?, crate::Scalar::U32, at)?;
@@ -617,7 +632,7 @@ impl FunctionLowerer<'_, '_> {
                     self.math_call(MathFunction::ExtractBits, &[extended, offset, count], at)?;
                 self.as_kind(extracted, narrow, at)
             }
-            _ => {
+            BitOperation::Insert => {
                 let base = self.as_kind(arg(0)?, wide, at)?;
                 let insert = self.as_kind(arg(1)?, wide, at)?;
                 let offset = self.as_kind(arg(2)?, crate::Scalar::U32, at)?;
@@ -840,9 +855,31 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().texture_call(kind, function, arguments, at);
                 return self.nest(frame).await;
             }
+            BuiltinKind::Pure(pure) => {
+                let frame = self
+                    .clone()
+                    .generic(pure, name, function, call_type, arguments, at);
+                return self.nest(frame).await.map(Some);
+            }
+            BuiltinKind::Decompose(decompose) => {
+                let frame = self.clone().split(decompose, arguments, at);
+                return self.nest(frame).await.map(Some);
+            }
+            BuiltinKind::Wide(wide) => {
+                let frame = self.clone().wide(wide, arguments, at);
+                return self.nest(frame).await;
+            }
+            BuiltinKind::Expect => {
+                let frame = self.clone().expect_call(arguments, at);
+                return self.nest(frame).await;
+            }
+            BuiltinKind::Assume => {
+                let frame = self.clone().assume_call(arguments, at);
+                return self.nest(frame).await;
+            }
             BuiltinKind::Named => {}
         }
-        let route = route(name, arguments.len())
+        let route = route(name)
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
         match route {
             Route::Barrier => self.with(|this| this.barrier_call(name, arguments, at))?,
@@ -866,34 +903,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Route::Primitive => {
                 self.with(|this| this.primitive_statement_call(name, arguments, at))?
             }
-            Route::Expect => {
-                let frame = self.clone().expect_call(arguments, at);
-                self.nest(frame).await
-            }
-            Route::Assume => {
-                let frame = self.clone().assume_call(arguments, at);
-                self.nest(frame).await
-            }
-            Route::Split => {
-                let frame = self.clone().split(name, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
             Route::Atomic => {
                 let frame = self.clone().atomic(name, arguments, at);
                 self.nest(frame).await
             }
-            Route::Wide => {
-                let frame = self.clone().wide(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Generic => {
-                let frame = self
-                    .clone()
-                    .generic(name, function, call_type, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
         }
     }
 
@@ -1163,6 +1176,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn generic(
         self,
+        pure: Pure,
         name: &'b str,
         function: &'b Function,
         call_type: &'b GlslType,
@@ -1186,12 +1200,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             values.push(value);
             types.push(ty);
         }
-        self.with(|this| this.generic_values(name, function, call_type, at, values, types))?
+        self.with(|this| this.generic_values(pure, function, call_type, at, values, types))?
     }
 
     async fn split(
         self,
-        name: &'b str,
+        decompose: Decompose,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -1207,22 +1221,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             TypeKind::Vector { size, .. } => vector_size(size),
             _ => None,
         };
-        let (special, fun) = if name == "modf" {
-            (
+        let (special, fun) = match decompose {
+            Decompose::Modf => (
                 PredeclaredType::ModfResult {
                     size,
                     scalar: scalar(base),
                 },
                 MathFunction::Modf,
-            )
-        } else {
-            (
+            ),
+            Decompose::Frexp => (
                 PredeclaredType::FrexpResult {
                     size,
                     scalar: scalar(base),
                 },
                 MathFunction::Frexp,
-            )
+            ),
         };
         if ty.sized_vector_length().is_some() {
             self.with(|this| this.long_math_result(fun, &ty, at))??;
@@ -1253,10 +1266,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self.clone().place(output);
             self.nest(frame).await
         }?;
-        let other_ty = if name == "modf" {
-            ty.clone()
-        } else {
-            ty.with_scalar(GlslScalar::Int)
+        let other_ty = match decompose {
+            Decompose::Modf => ty.clone(),
+            Decompose::Frexp => ty.with_scalar(GlslScalar::Int),
         };
         let other = self.with(|this| this.convert(other, &other_ty, &output_ty, at))??;
         self.with(|this| this.store(&place, other, at))??;
@@ -1265,7 +1277,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn wide(
         self,
-        name: &'b str,
+        wide: Wide,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1285,11 +1297,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             TypeKind::Vector { size, .. } => vector_size(size),
             _ => None,
         };
-        let fun = match name {
-            "uaddCarry" => MathFunction::AddCarry,
-            "usubBorrow" => MathFunction::SubBorrow,
-            _ => MathFunction::MulExtended,
-        };
+        let fun = wide_function(wide);
         if ty.sized_vector_length().is_some() {
             self.with(|this| this.long_math_result(fun, &ty, at))??;
         } else {
@@ -2412,25 +2420,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     }
 }
 
-fn microscaling_bitcast(name: &str) -> Option<bool> {
-    if matches!(name, "packFloat2x16" | "unpackFloat2x16") {
-        return Some(false);
-    }
-    let microscaling = ["fe2m1EXT", "fe3m2EXT", "fe2m3EXT"]
-        .iter()
-        .any(|suffix| name.ends_with(suffix));
-    if !microscaling {
-        return None;
-    }
-    if name.starts_with("bitcastExtract") {
-        Some(true)
-    } else if name.starts_with("packFloat") || name.starts_with("unpackFloat") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Route {
     Barrier,
@@ -2440,15 +2429,10 @@ pub(super) enum Route {
     AttachmentRead,
     Mesh,
     Primitive,
-    Expect,
-    Assume,
-    Split,
     Atomic,
-    Wide,
-    Generic,
 }
 
-pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
+pub(super) fn route(name: &str) -> Option<Route> {
     Some(match name {
         "barrier"
         | "memoryBarrier"
@@ -2473,96 +2457,8 @@ pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
         "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
             Route::Primitive
         }
-        "expectEXT" => Route::Expect,
-        "assumeEXT" => Route::Assume,
-        "modf" | "frexp" => Route::Split,
         "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
         | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => Route::Atomic,
-        "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => Route::Wide,
-        _ if is_generic(name, arguments) => Route::Generic,
-        _ => return None,
-    })
-}
-
-fn is_generic(name: &str, arguments: usize) -> bool {
-    microscaling_bitcast(name).is_some()
-        || derivative(name).is_some()
-        || special(name).is_some()
-        || math(name, arguments).is_some()
-}
-
-#[derive(Clone, Copy)]
-enum Special {
-    Relational(RelationalFunction),
-    Not,
-    Compare(BinaryOperator),
-    Bitcast,
-    Pack,
-    Unpack,
-    Modulo,
-    MatrixCompMult,
-    Bitfield(MathFunction),
-}
-
-fn special(name: &str) -> Option<Special> {
-    Some(match name {
-        "isnan" => Special::Relational(RelationalFunction::IsNan),
-        "isinf" => Special::Relational(RelationalFunction::IsInf),
-        "any" => Special::Relational(RelationalFunction::Any),
-        "all" => Special::Relational(RelationalFunction::All),
-        "not" => Special::Not,
-        "lessThan" => Special::Compare(BinaryOperator::Less),
-        "lessThanEqual" => Special::Compare(BinaryOperator::LessEqual),
-        "greaterThan" => Special::Compare(BinaryOperator::Greater),
-        "greaterThanEqual" => Special::Compare(BinaryOperator::GreaterEqual),
-        "equal" => Special::Compare(BinaryOperator::Equal),
-        "notEqual" => Special::Compare(BinaryOperator::NotEqual),
-        "floatBitsToInt"
-        | "floatBitsToUint"
-        | "intBitsToFloat"
-        | "uintBitsToFloat"
-        | "doubleBitsToInt64"
-        | "doubleBitsToUint64"
-        | "int64BitsToDouble"
-        | "uint64BitsToDouble"
-        | "halfBitsToInt16"
-        | "halfBitsToUint16"
-        | "float16BitsToInt16"
-        | "float16BitsToUint16"
-        | "int16BitsToFloat16"
-        | "uint16BitsToFloat16"
-        | "int16BitsToHalf"
-        | "uint16BitsToHalf"
-        | "bfloat16BitsToIntEXT"
-        | "bfloat16BitsToUintEXT"
-        | "intBitsToBFloat16EXT"
-        | "uintBitsToBFloat16EXT"
-        | "floate4m3BitsToIntEXT"
-        | "floate4m3BitsToUintEXT"
-        | "intBitsToFloate4m3EXT"
-        | "uintBitsToFloate4m3EXT"
-        | "floate5m2BitsToIntEXT"
-        | "floate5m2BitsToUintEXT"
-        | "intBitsToFloate5m2EXT"
-        | "uintBitsToFloate5m2EXT"
-        | "floatue8m0BitsToIntEXT"
-        | "floatue8m0BitsToUintEXT"
-        | "intBitsToFloatue8m0EXT"
-        | "uintBitsToFloatue8m0EXT"
-        | "floatmxint8BitsToIntEXT"
-        | "floatmxint8BitsToUintEXT"
-        | "intBitsToFloatmxint8EXT"
-        | "uintBitsToFloatmxint8EXT" => Special::Bitcast,
-        "packInt2x32" | "packUint2x32" | "packInt2x16" | "packUint2x16" | "packInt4x16"
-        | "packUint4x16" | "pack16" | "pack32" | "pack64" => Special::Pack,
-        "unpackInt2x32" | "unpackUint2x32" | "unpackInt2x16" | "unpackUint2x16"
-        | "unpackInt4x16" | "unpackUint4x16" | "unpack8" | "unpack16" | "unpack32" => {
-            Special::Unpack
-        }
-        "mod" => Special::Modulo,
-        "matrixCompMult" => Special::MatrixCompMult,
-        "bitfieldExtract" => Special::Bitfield(MathFunction::ExtractBits),
-        "bitfieldInsert" => Special::Bitfield(MathFunction::InsertBits),
         _ => return None,
     })
 }

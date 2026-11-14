@@ -14,17 +14,9 @@ use rglsl_types::stack::{Stalled, run};
 
 use super::frames::Cx;
 use super::{Analysis, Callee};
+use crate::builtins::BuiltinFlags;
 use crate::scope::{SymbolId, SymbolKind};
 use crate::types::{Scalar, TypeKind};
-
-const ARITHMETIC_BUILTINS: [&str; 6] = [
-    "dot",
-    "mod",
-    "dotEXT",
-    "dotPacked4x8EXT",
-    "dotAccSatEXT",
-    "dotPacked4x8AccSatEXT",
-];
 
 #[derive(Clone, Copy)]
 enum Definition<'a> {
@@ -445,10 +437,8 @@ impl<'a> Precise<'a> {
                     let arithmetic = self
                         .analysis
                         .builtins
-                        .function(*id)
-                        .is_some_and(|function| {
-                            ARITHMETIC_BUILTINS.contains(&function.name.as_str())
-                        });
+                        .entry(*id)
+                        .is_some_and(|entry| entry.has(BuiltinFlags::PRECISE_ARITHMETIC));
                     if arithmetic {
                         self.result.insert(expression.id);
                     }

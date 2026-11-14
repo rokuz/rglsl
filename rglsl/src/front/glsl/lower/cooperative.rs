@@ -1,21 +1,23 @@
-use alloc::{format, vec::Vec};
+use alloc::vec::Vec;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 use rglsl_sema::{Callee, CooperativeCall, MatrixCall, QcomConversion, TensorCall};
 use rglsl_types::extension::Extension;
 
-use super::builtins::{derivative, math};
+use rglsl_sema::builtins::kind::{BitOperation, Pure};
+
+use super::builtins::{
+    bit_function, comparison_operator, derivative, math_function, relational_function,
+};
 use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{Result, internal, unsupported};
 use crate::{
     ArrayConversion, BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
     CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Handle,
-    MathFunction, RelationalFunction, Span, Statement, TensorOperation, UnaryOperator,
+    MathFunction, Span, Statement, TensorOperation, UnaryOperator,
 };
-
-const REPLICATED: [&str; 7] = ["min", "max", "clamp", "mix", "step", "smoothstep", "mod"];
 
 impl FunctionLowerer<'_, '_> {
     fn spread(
@@ -34,142 +36,139 @@ impl FunctionLowerer<'_, '_> {
 
     pub(super) fn long_generic(
         &mut self,
-        name: &str,
+        pure: Pure,
         result: &GlslType,
         shape: &GlslType,
         mut values: Vec<Handle<Expression>>,
         types: &[GlslType],
         at: Span,
-    ) -> Result<Handle<Expression>> {
+    ) -> Result<Option<Handle<Expression>>> {
         let arg = |values: &[Handle<Expression>], index: usize| {
             values.get(index).copied().ok_or_else(|| internal(at))
         };
         let first = types.first().cloned().unwrap_or(GlslType::VOID);
-        if let Some((axis, ctrl)) = derivative(name) {
-            let half = first.base_scalar() == Some(GlslScalar::Float16);
-            let mut expr = arg(&values, 0)?;
-            if half {
-                expr = self.as_kind(expr, crate::Scalar::F32, at)?;
-            }
-            let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
-            return if half {
-                self.as_kind(value, crate::Scalar::F16, at)
-            } else {
-                Ok(value)
-            };
-        }
-        let relational = match name {
-            "isnan" => Some(RelationalFunction::IsNan),
-            "isinf" => Some(RelationalFunction::IsInf),
-            "any" => Some(RelationalFunction::Any),
-            "all" => Some(RelationalFunction::All),
-            _ => None,
-        };
-        if let Some(fun) = relational {
-            let argument = arg(&values, 0)?;
-            return self.add(Expression::Relational { fun, argument }, at);
-        }
-        let comparison = match name {
-            "lessThan" => Some(BinaryOperator::Less),
-            "lessThanEqual" => Some(BinaryOperator::LessEqual),
-            "greaterThan" => Some(BinaryOperator::Greater),
-            "greaterThanEqual" => Some(BinaryOperator::GreaterEqual),
-            "equal" => Some(BinaryOperator::Equal),
-            "notEqual" => Some(BinaryOperator::NotEqual),
-            _ => None,
-        };
-        if let Some(op) = comparison {
-            return self.binary_op(op, arg(&values, 0)?, arg(&values, 1)?, at);
-        }
-        if name == "not" {
-            let expr = arg(&values, 0)?;
-            return self.add(
-                Expression::Unary {
-                    op: UnaryOperator::LogicalNot,
-                    expr,
-                },
-                at,
-            );
-        }
-        if name.contains("BitsTo") {
-            let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
-            let expr = arg(&values, 0)?;
-            return self.add(
-                Expression::As {
-                    expr,
-                    kind,
-                    convert: None,
-                },
-                at,
-            );
-        }
         let element = first.base_scalar();
-        let bit_operation = matches!(
-            name,
-            "findMSB"
-                | "findLSB"
-                | "bitCount"
-                | "bitfieldReverse"
-                | "bitfieldExtract"
-                | "bitfieldInsert"
-        );
-        if let (Some(element), true) = (element, bit_operation) {
+        if let (Some(element), Pure::Bits(operation)) = (element, pure) {
             if element.is_integer() && element.bits() < 32 {
-                return self.long_narrow_bits(name, element, result, shape, &values, at);
+                return self
+                    .long_narrow_bits(operation, element, result, shape, &values, at)
+                    .map(Some);
             }
-            if element.is_integer() && element.bits() == 64 && name == "bitCount" {
-                return self.long_wide_bit_count(element, result, shape, &values, at);
+            if element.is_integer() && element.bits() == 64 && operation == BitOperation::Count {
+                return self
+                    .long_wide_bit_count(element, result, shape, &values, at)
+                    .map(Some);
             }
         }
-        if REPLICATED.contains(&name) && !(name == "mix" && types.get(2).is_some_and(is_bool)) {
+        if pure.replicates_scalars() {
             for (value, ty) in values.iter_mut().zip(types) {
                 *value = self.spread(*value, ty, shape, at)?;
             }
         }
-        match name {
-            "mod" => {
-                let x = arg(&values, 0)?;
-                let y = arg(&values, 1)?;
-                return self.binary_op(BinaryOperator::Modulo, x, y, at);
+        let value = match pure {
+            Pure::Derivative(axis, control) => {
+                let (axis, ctrl) = derivative(axis, control);
+                let half = first.base_scalar() == Some(GlslScalar::Float16);
+                let mut expr = arg(&values, 0)?;
+                if half {
+                    expr = self.as_kind(expr, crate::Scalar::F32, at)?;
+                }
+                let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
+                if half {
+                    self.as_kind(value, crate::Scalar::F16, at)
+                } else {
+                    Ok(value)
+                }
             }
-            "mix" if types.get(2).is_some_and(is_bool) => {
-                return self.add(
-                    Expression::Select {
-                        condition: arg(&values, 2)?,
-                        accept: arg(&values, 1)?,
-                        reject: arg(&values, 0)?,
+            Pure::Relational(relation) => {
+                let argument = arg(&values, 0)?;
+                self.add(
+                    Expression::Relational {
+                        fun: relational_function(relation),
+                        argument,
                     },
                     at,
-                );
+                )
             }
-            "bitfieldExtract" | "bitfieldInsert" => {
-                let start = if name == "bitfieldExtract" { 1 } else { 2 };
+            Pure::Compare(comparison) => self.binary_op(
+                comparison_operator(comparison),
+                arg(&values, 0)?,
+                arg(&values, 1)?,
+                at,
+            ),
+            Pure::Not => {
+                let expr = arg(&values, 0)?;
+                self.add(
+                    Expression::Unary {
+                        op: UnaryOperator::LogicalNot,
+                        expr,
+                    },
+                    at,
+                )
+            }
+            Pure::Bitcast => {
+                let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
+                let expr = arg(&values, 0)?;
+                self.add(
+                    Expression::As {
+                        expr,
+                        kind,
+                        convert: None,
+                    },
+                    at,
+                )
+            }
+            Pure::Modulo => {
+                let x = arg(&values, 0)?;
+                let y = arg(&values, 1)?;
+                self.binary_op(BinaryOperator::Modulo, x, y, at)
+            }
+            Pure::Select => self.add(
+                Expression::Select {
+                    condition: arg(&values, 2)?,
+                    accept: arg(&values, 1)?,
+                    reject: arg(&values, 0)?,
+                },
+                at,
+            ),
+            Pure::Bits(operation @ (BitOperation::Extract | BitOperation::Insert)) => {
+                let start = if operation == BitOperation::Extract {
+                    1
+                } else {
+                    2
+                };
                 for slot in values.iter_mut().skip(start) {
                     *slot = self.as_kind(*slot, crate::Scalar::U32, at)?;
                 }
-                let fun = if name == "bitfieldExtract" {
-                    MathFunction::ExtractBits
-                } else {
-                    MathFunction::InsertBits
-                };
-                return self.math_call(fun, &values, at);
+                self.math_call(bit_function(operation), &values, at)
             }
-            _ => {}
-        }
-        let fun = math(name, values.len())
-            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        let value = self.math_call(fun, &values, at)?;
-        let unsigned_input = first.base_scalar().is_some_and(GlslScalar::is_unsigned);
-        if matches!(name, "bitCount" | "findLSB" | "findMSB") && unsigned_input {
-            let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
-            return self.as_kind(value, target, at);
-        }
-        Ok(value)
+            Pure::Bits(
+                operation @ (BitOperation::Reverse
+                | BitOperation::Count
+                | BitOperation::FindLsb
+                | BitOperation::FindMsb),
+            ) => {
+                let value = self.math_call(bit_function(operation), &values, at)?;
+                let unsigned_input = first.base_scalar().is_some_and(GlslScalar::is_unsigned);
+                if operation != BitOperation::Reverse && unsigned_input {
+                    let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
+                    self.as_kind(value, target, at)
+                } else {
+                    Ok(value)
+                }
+            }
+            Pure::Math(math) => self.math_call(math_function(math), &values, at),
+            Pure::MatrixCompMult
+            | Pure::PackBits
+            | Pure::UnpackBits
+            | Pure::PackedBitcast { .. } => return Ok(None),
+        };
+        value.map(Some)
     }
 
     fn long_narrow_bits(
         &mut self,
-        name: &str,
+        operation: BitOperation,
         element: GlslScalar,
         result: &GlslType,
         shape: &GlslType,
@@ -200,9 +199,13 @@ impl FunctionLowerer<'_, '_> {
             lowerer.as_kind(unsigned, crate::Scalar::U32, at)
         };
         let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
-        let value = match name {
-            "bitfieldExtract" | "bitfieldInsert" => {
-                let start = if name == "bitfieldExtract" { 1 } else { 2 };
+        let value = match operation {
+            BitOperation::Extract | BitOperation::Insert => {
+                let start = if operation == BitOperation::Extract {
+                    1
+                } else {
+                    2
+                };
                 let mut converted = Vec::with_capacity(values.len());
                 for (index, &value) in values.iter().enumerate() {
                     converted.push(if index < start {
@@ -211,14 +214,9 @@ impl FunctionLowerer<'_, '_> {
                         self.as_kind(value, crate::Scalar::U32, at)?
                     });
                 }
-                let fun = if name == "bitfieldExtract" {
-                    MathFunction::ExtractBits
-                } else {
-                    MathFunction::InsertBits
-                };
-                self.math_call(fun, &converted, at)?
+                self.math_call(bit_function(operation), &converted, at)?
             }
-            "bitfieldReverse" => {
+            BitOperation::Reverse => {
                 let value = zero_extend(self, arg(0)?)?;
                 let reversed = self.math_call(MathFunction::ReverseBits, &[value], at)?;
                 let amount =
@@ -226,18 +224,15 @@ impl FunctionLowerer<'_, '_> {
                 let amount = self.replicate(amount, &shape.with_scalar(GlslScalar::Uint), at)?;
                 self.binary_op(BinaryOperator::ShiftRight, reversed, amount, at)?
             }
-            _ => {
-                let value = if name == "findMSB" && source.kind == crate::ScalarKind::Sint {
+            BitOperation::Count | BitOperation::FindLsb | BitOperation::FindMsb => {
+                let value = if operation == BitOperation::FindMsb
+                    && source.kind == crate::ScalarKind::Sint
+                {
                     widen(self, arg(0)?)?
                 } else {
                     zero_extend(self, arg(0)?)?
                 };
-                let fun = match name {
-                    "bitCount" => MathFunction::CountOneBits,
-                    "findLSB" => MathFunction::FirstTrailingBit,
-                    _ => MathFunction::FirstLeadingBit,
-                };
-                self.math_call(fun, &[value], at)?
+                self.math_call(bit_function(operation), &[value], at)?
             }
         };
         self.as_kind(value, target, at)
@@ -965,8 +960,4 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             layout,
         })
     }
-}
-
-fn is_bool(ty: &GlslType) -> bool {
-    ty.base_scalar() == Some(GlslScalar::Bool)
 }
