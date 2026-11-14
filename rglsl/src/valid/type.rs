@@ -494,7 +494,24 @@ impl super::Validator {
                 if !base_info.flags.contains(TypeFlags::SIZED) {
                     match space {
                         As::Storage { .. } => {}
-                        _ => {
+                        As::Function
+                        | As::Private
+                        | As::WorkGroup
+                        | As::Uniform
+                        | As::Handle
+                        | As::Immediate
+                        | As::TaskPayload
+                        | As::RayPayload
+                        | As::IncomingRayPayload
+                        | As::HitAttribute
+                        | As::CallableData
+                        | As::IncomingCallableData
+                        | As::ShaderRecord
+                        | As::HitObjectAttribute { .. }
+                        | As::Input
+                        | As::Output
+                        | As::PhysicalStorage { .. }
+                        | As::DescriptorHeap(_) => {
                             return Err(TypeError::InvalidPointerToUnsized { base, space });
                         }
                     }
@@ -982,11 +999,31 @@ impl super::Validator {
                 let base_info = &self.types[base.index()];
 
                 if base_info.flags.contains(TypeFlags::DATA) {
-                    // Currently rglsl only supports binding arrays of structs for non-handle types.
-                    // `validate_global_var` relies on ray queries (which are `DATA`) being rejected here
                     match gctx.types[base].inner {
                         crate::TypeInner::Struct { .. } => {}
-                        _ => return Err(TypeError::BindingArrayBaseTypeNotStruct(base)),
+                        crate::TypeInner::Scalar(_)
+                        | crate::TypeInner::Vector { .. }
+                        | crate::TypeInner::Matrix { .. }
+                        | crate::TypeInner::CooperativeMatrix { .. }
+                        | crate::TypeInner::LongVector { .. }
+                        | crate::TypeInner::TensorLayout { .. }
+                        | crate::TypeInner::TensorView { .. }
+                        | crate::TypeInner::Tensor { .. }
+                        | crate::TypeInner::Atomic(_)
+                        | crate::TypeInner::Pointer { .. }
+                        | crate::TypeInner::ValuePointer { .. }
+                        | crate::TypeInner::Array { .. }
+                        | crate::TypeInner::Image { .. }
+                        | crate::TypeInner::Sampler { .. }
+                        | crate::TypeInner::SampledImage { .. }
+                        | crate::TypeInner::AccelerationStructure
+                        | crate::TypeInner::RayQuery
+                        | crate::TypeInner::HitObject { .. }
+                        | crate::TypeInner::BindingArray { .. }
+                        | crate::TypeInner::BufferDescriptor { .. }
+                        | crate::TypeInner::Spirv { .. } => {
+                            return Err(TypeError::BindingArrayBaseTypeNotStruct(base));
+                        }
                     };
                 }
 

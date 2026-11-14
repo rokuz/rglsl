@@ -117,20 +117,31 @@ impl crate::AddressSpace {
         self,
     ) -> (spirv::MemorySemantics, spirv::Scope) {
         match self {
-            Self::Storage { .. } => (spirv::MemorySemantics::empty(), spirv::Scope::Device),
+            Self::Storage { .. } | Self::Uniform | Self::Handle => {
+                (spirv::MemorySemantics::empty(), spirv::Scope::Device)
+            }
             Self::WorkGroup => (spirv::MemorySemantics::empty(), spirv::Scope::Workgroup),
-            Self::Uniform => (spirv::MemorySemantics::empty(), spirv::Scope::Device),
-            Self::Handle => (spirv::MemorySemantics::empty(), spirv::Scope::Device),
-            _ => (spirv::MemorySemantics::empty(), spirv::Scope::Invocation),
+            Self::Function
+            | Self::Private
+            | Self::Immediate
+            | Self::TaskPayload
+            | Self::RayPayload
+            | Self::IncomingRayPayload
+            | Self::HitAttribute
+            | Self::CallableData
+            | Self::IncomingCallableData
+            | Self::ShaderRecord
+            | Self::HitObjectAttribute { .. }
+            | Self::Input
+            | Self::Output
+            | Self::PhysicalStorage { .. }
+            | Self::DescriptorHeap(_) => {
+                (spirv::MemorySemantics::empty(), spirv::Scope::Invocation)
+            }
         }
     }
 }
 
-/// Return true if the global requires a type decorated with `Block`.
-///
-/// See [`back::spv::GlobalVariable`] for details.
-///
-/// [`back::spv::GlobalVariable`]: super::GlobalVariable
 pub fn global_needs_wrapper(
     ir_module: &crate::Module,
     nested_types: &crate::arena::HandleSet<crate::Type>,
@@ -141,12 +152,45 @@ pub fn global_needs_wrapper(
         | crate::AddressSpace::Storage { .. }
         | crate::AddressSpace::ShaderRecord
         | crate::AddressSpace::Immediate => {}
-        _ => return false,
-    };
+        crate::AddressSpace::Function
+        | crate::AddressSpace::Private
+        | crate::AddressSpace::WorkGroup
+        | crate::AddressSpace::Handle
+        | crate::AddressSpace::TaskPayload
+        | crate::AddressSpace::RayPayload
+        | crate::AddressSpace::IncomingRayPayload
+        | crate::AddressSpace::HitAttribute
+        | crate::AddressSpace::CallableData
+        | crate::AddressSpace::IncomingCallableData
+        | crate::AddressSpace::HitObjectAttribute { .. }
+        | crate::AddressSpace::Input
+        | crate::AddressSpace::Output
+        | crate::AddressSpace::PhysicalStorage { .. }
+        | crate::AddressSpace::DescriptorHeap(_) => return false,
+    }
     match ir_module.types[var.ty].inner {
         crate::TypeInner::Struct { .. } => nested_types.contains(var.ty),
         crate::TypeInner::BindingArray { .. } => false,
-        _ => true,
+        crate::TypeInner::Scalar(_)
+        | crate::TypeInner::Vector { .. }
+        | crate::TypeInner::Matrix { .. }
+        | crate::TypeInner::CooperativeMatrix { .. }
+        | crate::TypeInner::LongVector { .. }
+        | crate::TypeInner::TensorLayout { .. }
+        | crate::TypeInner::TensorView { .. }
+        | crate::TypeInner::Tensor { .. }
+        | crate::TypeInner::Atomic(_)
+        | crate::TypeInner::Pointer { .. }
+        | crate::TypeInner::ValuePointer { .. }
+        | crate::TypeInner::Array { .. }
+        | crate::TypeInner::Image { .. }
+        | crate::TypeInner::Sampler { .. }
+        | crate::TypeInner::SampledImage { .. }
+        | crate::TypeInner::AccelerationStructure
+        | crate::TypeInner::RayQuery
+        | crate::TypeInner::HitObject { .. }
+        | crate::TypeInner::BufferDescriptor { .. }
+        | crate::TypeInner::Spirv { .. } => true,
     }
 }
 
@@ -160,7 +204,26 @@ pub fn nested_types(ir_module: &crate::Module) -> crate::arena::HandleSet<crate:
             crate::TypeInner::Struct { ref members, .. } => {
                 nested.insert_iter(members.iter().map(|member| member.ty));
             }
-            _ => {}
+            crate::TypeInner::Scalar(_)
+            | crate::TypeInner::Vector { .. }
+            | crate::TypeInner::Matrix { .. }
+            | crate::TypeInner::CooperativeMatrix { .. }
+            | crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
+            | crate::TypeInner::Tensor { .. }
+            | crate::TypeInner::Atomic(_)
+            | crate::TypeInner::Pointer { .. }
+            | crate::TypeInner::ValuePointer { .. }
+            | crate::TypeInner::Image { .. }
+            | crate::TypeInner::Sampler { .. }
+            | crate::TypeInner::SampledImage { .. }
+            | crate::TypeInner::AccelerationStructure
+            | crate::TypeInner::RayQuery
+            | crate::TypeInner::HitObject { .. }
+            | crate::TypeInner::BindingArray { .. }
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => {}
         }
     }
     nested

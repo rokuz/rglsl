@@ -9,6 +9,61 @@ use crate::{
     VectorSize, arena::Handle, proc::TypeResolution, valid::ModuleInfo, visit::Visitor,
 };
 
+#[derive(Clone, Copy)]
+pub(super) enum SpecComposite<'a> {
+    Compose {
+        ty: Handle<crate::Type>,
+        components: &'a [Handle<Expression>],
+    },
+    Splat {
+        size: VectorSize,
+        value: Handle<Expression>,
+    },
+    Replicate {
+        ty: Handle<crate::Type>,
+        value: Handle<Expression>,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum SpecOperation {
+    CooperativeMatrixLength {
+        ty: Handle<crate::Type>,
+    },
+    Unary {
+        op: UnaryOperator,
+        expr: Handle<Expression>,
+    },
+    Binary {
+        op: BinaryOperator,
+        left: Handle<Expression>,
+        right: Handle<Expression>,
+    },
+    As {
+        expr: Handle<Expression>,
+        kind: ScalarKind,
+        convert: Option<u8>,
+    },
+    Select {
+        condition: Handle<Expression>,
+        accept: Handle<Expression>,
+        reject: Handle<Expression>,
+    },
+    Swizzle {
+        size: VectorSize,
+        vector: Handle<Expression>,
+        pattern: [crate::SwizzleComponent; 4],
+    },
+    AccessIndex {
+        base: Handle<Expression>,
+        index: u32,
+    },
+    Access {
+        base: Handle<Expression>,
+        index: Handle<Expression>,
+    },
+}
+
 fn literal_words(literal: Literal) -> Vec<Word> {
     match literal {
         Literal::F64(value) => {
@@ -289,16 +344,20 @@ impl Writer {
                 };
                 let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
                 let id = self.id_gen.next();
-                let mut instruction = match literal {
-                    Literal::Bool(true) => Instruction::new(Op::SpecConstantTrue),
-                    Literal::Bool(false) => Instruction::new(Op::SpecConstantFalse),
-                    _ => Instruction::new(Op::SpecConstant),
+                let (op, words) = if let Literal::Bool(value) = literal {
+                    let op = if value {
+                        Op::SpecConstantTrue
+                    } else {
+                        Op::SpecConstantFalse
+                    };
+                    (op, Vec::new())
+                } else {
+                    (Op::SpecConstant, literal_words(literal))
                 };
+                let mut instruction = Instruction::new(op);
                 instruction.set_type(type_id);
                 instruction.set_result(id);
-                if !matches!(literal, Literal::Bool(_)) {
-                    instruction.add_operands(literal_words(literal));
-                }
+                instruction.add_operands(words);
                 instruction.to_words(&mut self.logical_layout.declarations);
                 self.decorate(id, spirv::Decoration::SpecId, &[spec_id]);
                 if self.flags.contains(WriterFlags::DEBUG)
@@ -392,14 +451,13 @@ impl Writer {
         parts: &mut Vec<Word>,
     ) -> Result<(), Error> {
         let id = self.written(handle)?;
-        match *resolution_inner(module, &mod_info[handle]) {
-            TypeInner::Vector { size, scalar } => {
-                let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
-                for index in 0..size as u32 {
-                    parts.push(self.spec_op(type_id, Op::CompositeExtract, &[id, index]));
-                }
+        if let TypeInner::Vector { size, scalar } = *resolution_inner(module, &mod_info[handle]) {
+            let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
+            for index in 0..size as u32 {
+                parts.push(self.spec_op(type_id, Op::CompositeExtract, &[id, index]));
             }
-            _ => parts.push(id),
+        } else {
+            parts.push(id);
         }
         Ok(())
     }
@@ -407,6 +465,7 @@ impl Writer {
     pub(super) fn write_spec_composite(
         &mut self,
         handle: Handle<Expression>,
+        composite: SpecComposite<'_>,
         module: &Module,
         mod_info: &ModuleInfo,
     ) -> Result<Word, Error> {
@@ -416,8 +475,8 @@ impl Writer {
             TypeInner::Vector { .. }
         );
         let mut parts = Vec::new();
-        match module.global_expressions[handle] {
-            Expression::Compose { ty, ref components } => {
+        match composite {
+            SpecComposite::Compose { ty, components } => {
                 let flattened: Vec<_> = crate::proc::flatten_compose(
                     ty,
                     components,
@@ -433,11 +492,11 @@ impl Writer {
                     }
                 }
             }
-            Expression::Splat { size, value } => {
+            SpecComposite::Splat { size, value } => {
                 let id = self.written(value)?;
                 parts.extend(core::iter::repeat_n(id, size as usize));
             }
-            Expression::Replicate { ty, value } => {
+            SpecComposite::Replicate { ty, value } => {
                 let id = self.written(value)?;
                 match super::cooperative::replicate_shape(&module.types[ty].inner)? {
                     super::cooperative::ReplicateShape::Copies(count) => {
@@ -448,7 +507,6 @@ impl Writer {
                     }
                 }
             }
-            _ => return Err(Error::Validation("not a composite")),
         }
         Ok(self.write_spec_constant_composite(type_id, &parts))
     }
@@ -474,9 +532,10 @@ impl Writer {
         }
         .ok_or(Error::SpecializationConstant("this conversion"))?;
         let id = self.get_constant_scalar(literal);
-        Ok(match *inner {
-            TypeInner::Vector { size, .. } => self.splat(id, size, scalar, false),
-            _ => id,
+        Ok(if let TypeInner::Vector { size, .. } = *inner {
+            self.splat(id, size, scalar, false)
+        } else {
+            id
         })
     }
 
@@ -498,15 +557,17 @@ impl Writer {
         }
         .ok_or(Error::SpecializationConstant("this conversion"))?;
         let id = self.get_constant_scalar(literal);
-        Ok(match *inner {
-            TypeInner::Vector { size, .. } => self.splat(id, size, scalar, false),
-            _ => id,
+        Ok(if let TypeInner::Vector { size, .. } = *inner {
+            self.splat(id, size, scalar, false)
+        } else {
+            id
         })
     }
 
     pub(super) fn write_spec_operation(
         &mut self,
         handle: Handle<Expression>,
+        operation: SpecOperation,
         module: &Module,
         mod_info: &ModuleInfo,
     ) -> Result<Word, Error> {
@@ -518,19 +579,19 @@ impl Writer {
             (inner, scalar)
         };
         let not_allowed = Error::SpecializationConstant;
-        let id = match module.global_expressions[handle] {
-            Expression::CooperativeMatrixLength { ty } => {
+        let id = match operation {
+            SpecOperation::CooperativeMatrixLength { ty } => {
                 let matrix_type = self.get_handle_type_id(ty)?;
-                let opcode = match module.types[ty].inner {
-                    TypeInner::CooperativeMatrix {
-                        class: crate::CooperativeMatrixClass::Nv,
-                        ..
-                    } => Op::CooperativeMatrixLengthNV,
-                    _ => Op::CooperativeMatrixLengthKHR,
+                let TypeInner::CooperativeMatrix { class, .. } = module.types[ty].inner else {
+                    return Err(Error::Validation("not a cooperative matrix"));
+                };
+                let opcode = match class {
+                    crate::CooperativeMatrixClass::Nv => Op::CooperativeMatrixLengthNV,
+                    crate::CooperativeMatrixClass::Khr => Op::CooperativeMatrixLengthKHR,
                 };
                 self.spec_op(type_id, opcode, &[matrix_type])
             }
-            Expression::Unary { op, expr } => {
+            SpecOperation::Unary { op, expr } => {
                 let operand = self.written(expr)?;
                 let (_, scalar) = operand_inner(expr);
                 let kind = scalar.map(|scalar| scalar.kind);
@@ -547,7 +608,7 @@ impl Writer {
                 };
                 self.spec_op(type_id, opcode, &[operand])
             }
-            Expression::Binary { op, left, right } => {
+            SpecOperation::Binary { op, left, right } => {
                 let mut left_id = self.written(left)?;
                 let mut right_id = self.written(right)?;
                 let (left_inner, left_scalar) = operand_inner(left);
@@ -607,7 +668,7 @@ impl Writer {
                 };
                 self.spec_op(type_id, opcode, &[left_id, right_id])
             }
-            Expression::As {
+            SpecOperation::As {
                 expr,
                 kind,
                 convert,
@@ -664,7 +725,7 @@ impl Writer {
                     _ => return Err(not_allowed("this conversion")),
                 }
             }
-            Expression::Select {
+            SpecOperation::Select {
                 condition,
                 accept,
                 reject,
@@ -681,7 +742,7 @@ impl Writer {
                 }
                 self.spec_op(type_id, Op::Select, &[condition_id, accept_id, reject_id])
             }
-            Expression::Swizzle {
+            SpecOperation::Swizzle {
                 size,
                 vector,
                 pattern,
@@ -696,75 +757,42 @@ impl Writer {
                 );
                 self.spec_op(type_id, Op::VectorShuffle, &operands)
             }
-            Expression::AccessIndex { base, index } => {
+            SpecOperation::AccessIndex { base, index } => {
                 let base_id = self.written(base)?;
                 self.spec_op(type_id, Op::CompositeExtract, &[base_id, index])
             }
-            Expression::Access { base, index } => {
+            SpecOperation::Access { base, index } => {
                 let base_id = self.written(base)?;
-                let index = match module.global_expressions[index] {
-                    Expression::Literal(Literal::I32(value)) => u32::try_from(value).ok(),
-                    Expression::Literal(Literal::U32(value)) => Some(value),
-                    _ => None,
-                }
-                .ok_or(not_allowed("an index that is not a constant"))?;
+                let index =
+                    if let Expression::Literal(literal) = module.global_expressions[index] {
+                        match literal {
+                            Literal::I32(value) => u32::try_from(value).ok(),
+                            Literal::U32(value) => Some(value),
+                            Literal::F64(_)
+                            | Literal::F32(_)
+                            | Literal::F16(_)
+                            | Literal::U8(_)
+                            | Literal::I8(_)
+                            | Literal::U16(_)
+                            | Literal::I16(_)
+                            | Literal::U64(_)
+                            | Literal::I64(_)
+                            | Literal::Bool(_)
+                            | Literal::BF16(_)
+                            | Literal::FE4M3(_)
+                            | Literal::FE5M2(_)
+                            | Literal::FE2M1(_)
+                            | Literal::FE3M2(_)
+                            | Literal::FE2M3(_)
+                            | Literal::FUE8M0(_)
+                            | Literal::FMXINT8(_) => None,
+                        }
+                    } else {
+                        None
+                    }
+                    .ok_or(not_allowed("an index that is not a constant"))?;
                 self.spec_op(type_id, Op::CompositeExtract, &[base_id, index])
             }
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::ZeroValue(_)
-            | Expression::Compose { .. }
-            | Expression::Splat { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => return Err(not_allowed("this expression")),
         };
         Ok(id)
     }

@@ -51,7 +51,26 @@ impl Writer {
                         tasks.push((ty, Some(normal)));
                         tasks.extend(members.iter().rev().map(|member| (member.ty, None)));
                     }
-                    _ => {
+                    TypeInner::Scalar(_)
+                    | TypeInner::Vector { .. }
+                    | TypeInner::Matrix { .. }
+                    | TypeInner::CooperativeMatrix { .. }
+                    | TypeInner::LongVector { .. }
+                    | TypeInner::TensorLayout { .. }
+                    | TypeInner::TensorView { .. }
+                    | TypeInner::Tensor { .. }
+                    | TypeInner::Atomic(_)
+                    | TypeInner::Pointer { .. }
+                    | TypeInner::ValuePointer { .. }
+                    | TypeInner::Image { .. }
+                    | TypeInner::Sampler { .. }
+                    | TypeInner::SampledImage { .. }
+                    | TypeInner::AccelerationStructure
+                    | TypeInner::RayQuery
+                    | TypeInner::HitObject { .. }
+                    | TypeInner::BindingArray { .. }
+                    | TypeInner::BufferDescriptor { .. }
+                    | TypeInner::Spirv { .. } => {
                         self.laid_out_copies.insert(ty, normal);
                         results.push(normal);
                     }
@@ -114,7 +133,26 @@ impl Writer {
                 }
                 id
             }
-            _ => normal,
+            TypeInner::Scalar(_)
+            | TypeInner::Vector { .. }
+            | TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Pointer { .. }
+            | TypeInner::ValuePointer { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => normal,
         })
     }
 }

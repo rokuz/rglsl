@@ -97,7 +97,17 @@ impl Writer {
                             "`gl_PointSize` in a tessellation shader",
                             &[spirv::Capability::TessellationPointSize],
                         )?,
-                    _ => {}
+                    crate::ShaderStage::Vertex
+                    | crate::ShaderStage::Task
+                    | crate::ShaderStage::Mesh
+                    | crate::ShaderStage::Fragment
+                    | crate::ShaderStage::Compute
+                    | crate::ShaderStage::RayGeneration
+                    | crate::ShaderStage::Miss
+                    | crate::ShaderStage::AnyHit
+                    | crate::ShaderStage::ClosestHit
+                    | crate::ShaderStage::Intersection
+                    | crate::ShaderStage::Callable => {}
                 }
                 BuiltIn::PointSize
             }
@@ -330,24 +340,32 @@ impl Writer {
             Bi::ShaderCore(core) => self.shader_core_builtin(core)?,
             Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
             Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
-            Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
-                if built_in == Bi::LayerPerViewNV && mesh_output {
+            Bi::ClipDistancePerViewNV => {
+                others.push(Decoration::PerViewNV);
+                BuiltIn::ClipDistancePerViewNV
+            }
+            Bi::CullDistancePerViewNV => {
+                others.push(Decoration::PerViewNV);
+                BuiltIn::CullDistancePerViewNV
+            }
+            Bi::LayerPerViewNV => {
+                if mesh_output {
                     others.push(Decoration::PerPrimitiveEXT);
                 }
                 others.push(Decoration::PerViewNV);
-                match built_in {
-                    Bi::ClipDistancePerViewNV => BuiltIn::ClipDistancePerViewNV,
-                    Bi::CullDistancePerViewNV => BuiltIn::CullDistancePerViewNV,
-                    _ => BuiltIn::LayerPerViewNV,
-                }
+                BuiltIn::LayerPerViewNV
             }
-            Bi::TileOffset | Bi::TileDimension | Bi::TileApronSize => {
+            Bi::TileOffset => {
                 self.require(&feature::TILE_SHADING)?;
-                match built_in {
-                    Bi::TileOffset => BuiltIn::TileOffsetQCOM,
-                    Bi::TileDimension => BuiltIn::TileDimensionQCOM,
-                    _ => BuiltIn::TileApronSizeQCOM,
-                }
+                BuiltIn::TileOffsetQCOM
+            }
+            Bi::TileDimension => {
+                self.require(&feature::TILE_SHADING)?;
+                BuiltIn::TileDimensionQCOM
+            }
+            Bi::TileApronSize => {
+                self.require(&feature::TILE_SHADING)?;
+                BuiltIn::TileApronSizeQCOM
             }
             Bi::PointIndex => BuiltIn::PrimitivePointIndicesEXT,
             Bi::LineIndices => BuiltIn::PrimitiveLineIndicesEXT,
@@ -392,49 +410,50 @@ impl Writer {
                 self.require(&feature::CLUSTER_ACCELERATION_STRUCTURE)?;
                 BuiltIn::ClusterIDNV
             }
-            Bi::HitMicroTriangleVertexPositions
-            | Bi::HitMicroTriangleVertexBarycentrics
-            | Bi::HitKindFrontFacingMicroTriangle
-            | Bi::HitKindBackFacingMicroTriangle => {
+            Bi::HitMicroTriangleVertexPositions => {
                 self.require(&feature::DISPLACEMENT_MICROMAP)?;
-                match built_in {
-                    Bi::HitMicroTriangleVertexPositions => {
-                        BuiltIn::HitMicroTriangleVertexPositionsNV
-                    }
-                    Bi::HitMicroTriangleVertexBarycentrics => {
-                        BuiltIn::HitMicroTriangleVertexBarycentricsNV
-                    }
-                    Bi::HitKindFrontFacingMicroTriangle => {
-                        BuiltIn::HitKindFrontFacingMicroTriangleNV
-                    }
-                    _ => BuiltIn::HitKindBackFacingMicroTriangleNV,
-                }
+                BuiltIn::HitMicroTriangleVertexPositionsNV
             }
-            Bi::HitIsSphere | Bi::HitSpherePosition | Bi::HitSphereRadius => {
+            Bi::HitMicroTriangleVertexBarycentrics => {
+                self.require(&feature::DISPLACEMENT_MICROMAP)?;
+                BuiltIn::HitMicroTriangleVertexBarycentricsNV
+            }
+            Bi::HitKindFrontFacingMicroTriangle => {
+                self.require(&feature::DISPLACEMENT_MICROMAP)?;
+                BuiltIn::HitKindFrontFacingMicroTriangleNV
+            }
+            Bi::HitKindBackFacingMicroTriangle => {
+                self.require(&feature::DISPLACEMENT_MICROMAP)?;
+                BuiltIn::HitKindBackFacingMicroTriangleNV
+            }
+            Bi::HitIsSphere => {
                 self.require(&feature::SPHERE_GEOMETRY)?;
-                match built_in {
-                    Bi::HitIsSphere => BuiltIn::HitIsSphereNV,
-                    Bi::HitSpherePosition => BuiltIn::HitSpherePositionNV,
-                    _ => BuiltIn::HitSphereRadiusNV,
-                }
+                BuiltIn::HitIsSphereNV
             }
-            Bi::HitIsLss | Bi::HitLssPositions | Bi::HitLssRadii => {
+            Bi::HitSpherePosition => {
+                self.require(&feature::SPHERE_GEOMETRY)?;
+                BuiltIn::HitSpherePositionNV
+            }
+            Bi::HitSphereRadius => {
+                self.require(&feature::SPHERE_GEOMETRY)?;
+                BuiltIn::HitSphereRadiusNV
+            }
+            Bi::HitIsLss => {
                 self.require(&feature::LSS_GEOMETRY)?;
-                match built_in {
-                    Bi::HitIsLss => BuiltIn::HitIsLSSNV,
-                    Bi::HitLssPositions => BuiltIn::HitLSSPositionsNV,
-                    _ => BuiltIn::HitLSSRadiiNV,
-                }
+                BuiltIn::HitIsLSSNV
+            }
+            Bi::HitLssPositions => {
+                self.require(&feature::LSS_GEOMETRY)?;
+                BuiltIn::HitLSSPositionsNV
+            }
+            Bi::HitLssRadii => {
+                self.require(&feature::LSS_GEOMETRY)?;
+                BuiltIn::HitLSSRadiiNV
             }
         };
 
         use crate::ScalarKind as Sk;
 
-        // Per the Vulkan spec, `VUID-StandaloneSpirv-Flat-04744`:
-        //
-        // > Any variable with integer or double-precision floating-
-        // > point type and with Input storage class in a fragment
-        // > shader, must be decorated Flat
         if class == spirv::StorageClass::Input && stage == crate::ShaderStage::Fragment {
             let mut element = ty;
             while let crate::TypeInner::Array { base, .. } = ir_module.types[element].inner {
@@ -456,7 +475,26 @@ impl Writer {
                         | Sk::FloatMXINT8 => false,
                     }
                 }
-                _ => false,
+                crate::TypeInner::Matrix { .. }
+                | crate::TypeInner::CooperativeMatrix { .. }
+                | crate::TypeInner::LongVector { .. }
+                | crate::TypeInner::TensorLayout { .. }
+                | crate::TypeInner::TensorView { .. }
+                | crate::TypeInner::Tensor { .. }
+                | crate::TypeInner::Atomic(_)
+                | crate::TypeInner::Pointer { .. }
+                | crate::TypeInner::ValuePointer { .. }
+                | crate::TypeInner::Array { .. }
+                | crate::TypeInner::Struct { .. }
+                | crate::TypeInner::Image { .. }
+                | crate::TypeInner::Sampler { .. }
+                | crate::TypeInner::SampledImage { .. }
+                | crate::TypeInner::AccelerationStructure
+                | crate::TypeInner::RayQuery
+                | crate::TypeInner::HitObject { .. }
+                | crate::TypeInner::BindingArray { .. }
+                | crate::TypeInner::BufferDescriptor { .. }
+                | crate::TypeInner::Spirv { .. } => false,
             };
 
             if is_flat {

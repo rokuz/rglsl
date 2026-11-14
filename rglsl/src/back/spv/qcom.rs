@@ -93,13 +93,12 @@ impl BlockContext<'_> {
     }
 
     pub(super) fn handle_class(&self, base: Handle<Expression>) -> StorageClass {
-        match self.ir_function.expressions[base] {
-            Expression::GlobalVariable(handle)
-                if self.ir_module.global_variables[handle].tile_attachment =>
-            {
-                StorageClass::TileAttachmentQCOM
-            }
-            _ => StorageClass::UniformConstant,
+        if let Expression::GlobalVariable(handle) = self.ir_function.expressions[base]
+            && self.ir_module.global_variables[handle].tile_attachment
+        {
+            StorageClass::TileAttachmentQCOM
+        } else {
+            StorageClass::UniformConstant
         }
     }
 
@@ -109,7 +108,66 @@ impl BlockContext<'_> {
             Expression::Access { .. } | Expression::AccessIndex { .. } => {
                 self.function.handle_pointers.get(&expression).copied()
             }
-            _ => None,
+            Expression::Literal(_)
+            | Expression::Constant(_)
+            | Expression::Override(_)
+            | Expression::ZeroValue(_)
+            | Expression::Compose { .. }
+            | Expression::Splat { .. }
+            | Expression::Replicate { .. }
+            | Expression::Swizzle { .. }
+            | Expression::FunctionArgument(_)
+            | Expression::LocalVariable(_)
+            | Expression::Load { .. }
+            | Expression::ImageSample { .. }
+            | Expression::ImageLoad { .. }
+            | Expression::ImageQuery { .. }
+            | Expression::Unary { .. }
+            | Expression::Binary { .. }
+            | Expression::Select { .. }
+            | Expression::Derivative { .. }
+            | Expression::Relational { .. }
+            | Expression::Math { .. }
+            | Expression::As { .. }
+            | Expression::CallResult(_)
+            | Expression::AtomicResult { .. }
+            | Expression::ArrayLength(_)
+            | Expression::WideArrayLength(_)
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. }
+            | Expression::RayQueryProceedResult
+            | Expression::RayQueryGet { .. }
+            | Expression::ReportIntersectionResult
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. }
+            | Expression::SubgroupBallotResult
+            | Expression::SubgroupOperationResult { .. }
+            | Expression::SpirvInstructionResult { .. }
+            | Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::CooperativeMatrixLength { .. }
+            | Expression::Expect { .. }
+            | Expression::ImageSparseResident { .. }
+            | Expression::IsHelperInvocation
+            | Expression::ReadClock { .. }
+            | Expression::InterpolateAt { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. }
+            | Expression::AttachmentRead { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::ImageProcessing { .. }
+            | Expression::ArrayConversion { .. }
+            | Expression::Bitcast { .. }
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => None,
         }
     }
 

@@ -30,22 +30,56 @@ pub(super) struct OrderIds {
 pub(super) fn collect_texel_images(block: &crate::Block, images: &mut HandleSet<Expression>) {
     for statement in block.walk() {
         match *statement {
-            Statement::ImageAtomic {
-                image,
-                order: Some(_),
-                ..
+            Statement::ImageAtomic { image, order, .. } => {
+                if order.is_some() {
+                    images.insert(image);
+                }
             }
-            | Statement::AtomicLoad {
-                location: AtomicLocation::Texel(Texel { image, .. }),
-                ..
+            Statement::AtomicLoad { ref location, .. }
+            | Statement::AtomicStore { ref location, .. } => {
+                if let AtomicLocation::Texel(Texel { image, .. }) = *location {
+                    images.insert(image);
+                }
             }
-            | Statement::AtomicStore {
-                location: AtomicLocation::Texel(Texel { image, .. }),
-                ..
-            } => {
-                images.insert(image);
-            }
-            _ => {}
+            Statement::Emit(_)
+            | Statement::Block(_)
+            | Statement::If { .. }
+            | Statement::Switch { .. }
+            | Statement::Loop { .. }
+            | Statement::Break
+            | Statement::Continue
+            | Statement::Return { .. }
+            | Statement::Kill
+            | Statement::Demote
+            | Statement::BeginInvocationInterlock
+            | Statement::EndInvocationInterlock
+            | Statement::EmitVertex { .. }
+            | Statement::EndPrimitive { .. }
+            | Statement::ControlBarrier(_)
+            | Statement::MemoryBarrier(_)
+            | Statement::ScopedBarrier { .. }
+            | Statement::SplitBarrier { .. }
+            | Statement::Store { .. }
+            | Statement::ImageStore { .. }
+            | Statement::Atomic { .. }
+            | Statement::Call { .. }
+            | Statement::RayQuery { .. }
+            | Statement::RayPipelineFunction(_)
+            | Statement::HitObject { .. }
+            | Statement::ReorderThread { .. }
+            | Statement::MeshFunction(_)
+            | Statement::SubgroupBallot { .. }
+            | Statement::SubgroupGather { .. }
+            | Statement::SubgroupCollectiveOperation { .. }
+            | Statement::SubgroupFunction { .. }
+            | Statement::CooperativeStore { .. }
+            | Statement::DebugPrintf { .. }
+            | Statement::Assume { .. }
+            | Statement::CooperativeVector(_)
+            | Statement::CooperativeMatrix { .. }
+            | Statement::Abort { .. }
+            | Statement::TensorWrite { .. }
+            | Statement::SpirvInstruction { .. } => {}
         }
     }
 }
@@ -92,7 +126,12 @@ impl super::Writer {
         let op = match fun {
             crate::AtomicFunction::Min => spirv::Op::AtomicFMinEXT,
             crate::AtomicFunction::Max => spirv::Op::AtomicFMaxEXT,
-            _ => spirv::Op::AtomicFAddEXT,
+            crate::AtomicFunction::Add
+            | crate::AtomicFunction::Subtract
+            | crate::AtomicFunction::And
+            | crate::AtomicFunction::ExclusiveOr
+            | crate::AtomicFunction::InclusiveOr
+            | crate::AtomicFunction::Exchange { .. } => spirv::Op::AtomicFAddEXT,
         };
         if vector {
             return Ok(op);
@@ -173,7 +212,67 @@ impl BlockContext<'_> {
                     spirv::StorageClass::UniformConstant,
                 ),
             ),
-            _ => Err(Error::Validation("Unexpected image expression")),
+            Expression::Literal(_)
+            | Expression::Constant(_)
+            | Expression::Override(_)
+            | Expression::ZeroValue(_)
+            | Expression::Compose { .. }
+            | Expression::Splat { .. }
+            | Expression::Swizzle { .. }
+            | Expression::LocalVariable(_)
+            | Expression::Load { .. }
+            | Expression::ImageSample { .. }
+            | Expression::ImageLoad { .. }
+            | Expression::ImageQuery { .. }
+            | Expression::Unary { .. }
+            | Expression::Binary { .. }
+            | Expression::Select { .. }
+            | Expression::Derivative { .. }
+            | Expression::Relational { .. }
+            | Expression::Math { .. }
+            | Expression::As { .. }
+            | Expression::CallResult(_)
+            | Expression::AtomicResult { .. }
+            | Expression::ArrayLength(_)
+            | Expression::WideArrayLength(_)
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. }
+            | Expression::RayQueryProceedResult
+            | Expression::RayQueryGet { .. }
+            | Expression::ReportIntersectionResult
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. }
+            | Expression::SubgroupBallotResult
+            | Expression::SubgroupOperationResult { .. }
+            | Expression::SpirvInstructionResult { .. }
+            | Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::CooperativeMatrixLength { .. }
+            | Expression::Replicate { .. }
+            | Expression::Expect { .. }
+            | Expression::ImageSparseResident { .. }
+            | Expression::IsHelperInvocation
+            | Expression::ReadClock { .. }
+            | Expression::InterpolateAt { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. }
+            | Expression::AttachmentRead { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::ImageProcessing { .. }
+            | Expression::ArrayConversion { .. }
+            | Expression::Bitcast { .. }
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => {
+                Err(Error::Validation("Unexpected image expression"))
+            }
         }
     }
 
@@ -235,13 +334,56 @@ impl BlockContext<'_> {
                             crate::TypeInner::Scalar(scalar) | crate::TypeInner::Atomic(scalar) => {
                                 scalar
                             }
-                            _ => return Err(Error::Validation("Invalid atomic pointer")),
+                            crate::TypeInner::Vector { .. }
+                            | crate::TypeInner::Matrix { .. }
+                            | crate::TypeInner::CooperativeMatrix { .. }
+                            | crate::TypeInner::LongVector { .. }
+                            | crate::TypeInner::TensorLayout { .. }
+                            | crate::TypeInner::TensorView { .. }
+                            | crate::TypeInner::Tensor { .. }
+                            | crate::TypeInner::Pointer { .. }
+                            | crate::TypeInner::ValuePointer { .. }
+                            | crate::TypeInner::Array { .. }
+                            | crate::TypeInner::Struct { .. }
+                            | crate::TypeInner::Image { .. }
+                            | crate::TypeInner::Sampler { .. }
+                            | crate::TypeInner::SampledImage { .. }
+                            | crate::TypeInner::AccelerationStructure
+                            | crate::TypeInner::RayQuery
+                            | crate::TypeInner::HitObject { .. }
+                            | crate::TypeInner::BindingArray { .. }
+                            | crate::TypeInner::BufferDescriptor { .. }
+                            | crate::TypeInner::Spirv { .. } => {
+                                return Err(Error::Validation("Invalid atomic pointer"));
+                            }
                         }
                     }
                     crate::TypeInner::ValuePointer {
                         size: None, scalar, ..
                     } => scalar,
-                    _ => return Err(Error::Validation("Invalid atomic pointer")),
+                    crate::TypeInner::Scalar(_)
+                    | crate::TypeInner::Vector { .. }
+                    | crate::TypeInner::Matrix { .. }
+                    | crate::TypeInner::CooperativeMatrix { .. }
+                    | crate::TypeInner::LongVector { .. }
+                    | crate::TypeInner::TensorLayout { .. }
+                    | crate::TypeInner::TensorView { .. }
+                    | crate::TypeInner::Tensor { .. }
+                    | crate::TypeInner::Atomic(_)
+                    | crate::TypeInner::ValuePointer { size: Some(_), .. }
+                    | crate::TypeInner::Array { .. }
+                    | crate::TypeInner::Struct { .. }
+                    | crate::TypeInner::Image { .. }
+                    | crate::TypeInner::Sampler { .. }
+                    | crate::TypeInner::SampledImage { .. }
+                    | crate::TypeInner::AccelerationStructure
+                    | crate::TypeInner::RayQuery
+                    | crate::TypeInner::HitObject { .. }
+                    | crate::TypeInner::BindingArray { .. }
+                    | crate::TypeInner::BufferDescriptor { .. }
+                    | crate::TypeInner::Spirv { .. } => {
+                        return Err(Error::Validation("Invalid atomic pointer"));
+                    }
                 };
                 self.atomic_scalar(scalar);
                 let pointer_id = self.write_access_chain(

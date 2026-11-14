@@ -92,51 +92,100 @@ impl BlockContext<'_> {
                     crate::Expression::AccessIndex {
                         base: base_outer,
                         index: index_outer,
-                    } => match self.ir_function.expressions[base_outer] {
-                        // An `AccessIndex` of an `AccessIndex` must be a
-                        // binding array holding structs whose last members are
-                        // runtime-sized arrays.
-                        crate::Expression::GlobalVariable(handle) => {
-                            let index_id = self.get_index_constant(index_outer);
-                            binding_array_index_id = Some(index_id);
-                            global_handle = handle;
-                            opt_last_member_index = Some(index);
-                        }
-                        _ => {
+                    } => {
+                        let crate::Expression::GlobalVariable(handle) =
+                            self.ir_function.expressions[base_outer]
+                        else {
                             return Err(Error::Validation(
                                 "array length expression: AccessIndex(AccessIndex(Global))",
                             ));
-                        }
-                    },
+                        };
+                        let index_id = self.get_index_constant(index_outer);
+                        binding_array_index_id = Some(index_id);
+                        global_handle = handle;
+                        opt_last_member_index = Some(index);
+                    }
                     crate::Expression::Access {
                         base: base_outer,
                         index: index_outer,
-                    } => match self.ir_function.expressions[base_outer] {
-                        // Similarly, an `AccessIndex` of an `Access` must be a
-                        // binding array holding structs whose last members are
-                        // runtime-sized arrays.
-                        crate::Expression::GlobalVariable(handle) => {
-                            let index_id = self.cached.get(index_outer)?;
-                            binding_array_index_id = Some(index_id);
-                            global_handle = handle;
-                            opt_last_member_index = Some(index);
-                        }
-                        _ => {
+                    } => {
+                        let crate::Expression::GlobalVariable(handle) =
+                            self.ir_function.expressions[base_outer]
+                        else {
                             return Err(Error::Validation(
                                 "array length expression: AccessIndex(Access(Global))",
                             ));
-                        }
-                    },
+                        };
+                        let index_id = self.cached.get(index_outer)?;
+                        binding_array_index_id = Some(index_id);
+                        global_handle = handle;
+                        opt_last_member_index = Some(index);
+                    }
                     crate::Expression::GlobalVariable(handle) => {
-                        // An outer `AccessIndex` applied directly to a
-                        // `GlobalVariable`. Since binding arrays can only contain
-                        // structs, this must be referring to the last member of a
-                        // struct that is a runtime-sized array.
                         binding_array_index_id = None;
                         global_handle = handle;
                         opt_last_member_index = Some(index);
                     }
-                    _ => {
+                    crate::Expression::Literal(_)
+                    | crate::Expression::Constant(_)
+                    | crate::Expression::Override(_)
+                    | crate::Expression::ZeroValue(_)
+                    | crate::Expression::Compose { .. }
+                    | crate::Expression::Splat { .. }
+                    | crate::Expression::Swizzle { .. }
+                    | crate::Expression::FunctionArgument(_)
+                    | crate::Expression::LocalVariable(_)
+                    | crate::Expression::Load { .. }
+                    | crate::Expression::ImageSample { .. }
+                    | crate::Expression::ImageLoad { .. }
+                    | crate::Expression::ImageQuery { .. }
+                    | crate::Expression::Unary { .. }
+                    | crate::Expression::Binary { .. }
+                    | crate::Expression::Select { .. }
+                    | crate::Expression::Derivative { .. }
+                    | crate::Expression::Relational { .. }
+                    | crate::Expression::Math { .. }
+                    | crate::Expression::As { .. }
+                    | crate::Expression::CallResult(_)
+                    | crate::Expression::AtomicResult { .. }
+                    | crate::Expression::ArrayLength(_)
+                    | crate::Expression::WideArrayLength(_)
+                    | crate::Expression::PhysicalPointer { .. }
+                    | crate::Expression::PhysicalAddress { .. }
+                    | crate::Expression::BufferPointer { .. }
+                    | crate::Expression::HeapOffset { .. }
+                    | crate::Expression::RayQueryProceedResult
+                    | crate::Expression::RayQueryGet { .. }
+                    | crate::Expression::ReportIntersectionResult
+                    | crate::Expression::AccelerationStructureFromAddress { .. }
+                    | crate::Expression::HitObjectGet { .. }
+                    | crate::Expression::FetchMicroTriangleVertex { .. }
+                    | crate::Expression::SubgroupBallotResult
+                    | crate::Expression::SubgroupOperationResult { .. }
+                    | crate::Expression::SpirvInstructionResult { .. }
+                    | crate::Expression::CooperativeLoad { .. }
+                    | crate::Expression::CooperativeMultiplyAdd { .. }
+                    | crate::Expression::CooperativeMatrixLength { .. }
+                    | crate::Expression::Replicate { .. }
+                    | crate::Expression::Expect { .. }
+                    | crate::Expression::ImageSparseResident { .. }
+                    | crate::Expression::IsHelperInvocation
+                    | crate::Expression::ReadClock { .. }
+                    | crate::Expression::InterpolateAt { .. }
+                    | crate::Expression::FragmentFetch { .. }
+                    | crate::Expression::ImageFootprint { .. }
+                    | crate::Expression::AttachmentRead { .. }
+                    | crate::Expression::CooperativeVectorLoad { .. }
+                    | crate::Expression::CooperativeVectorMatMul { .. }
+                    | crate::Expression::Convert { .. }
+                    | crate::Expression::CooperativeMatrixResult { .. }
+                    | crate::Expression::TensorCreate { .. }
+                    | crate::Expression::ImageProcessing { .. }
+                    | crate::Expression::ArrayConversion { .. }
+                    | crate::Expression::Bitcast { .. }
+                    | crate::Expression::TensorSet { .. }
+                    | crate::Expression::TensorRead { .. }
+                    | crate::Expression::TensorQuerySize { .. } => {
                         return Err(Error::Validation(
                             "array length expression: AccessIndex(<unexpected>)",
                         ));
@@ -144,14 +193,74 @@ impl BlockContext<'_> {
                 }
             }
             crate::Expression::GlobalVariable(handle) => {
-                // A direct reference to a global variable. This must hold the
-                // runtime-sized array directly.
                 binding_array_index_id = None;
                 global_handle = handle;
                 opt_last_member_index = None;
             }
-            _ => return Err(Error::Validation("array length expression case-4")),
-        };
+            crate::Expression::Literal(_)
+            | crate::Expression::Constant(_)
+            | crate::Expression::Override(_)
+            | crate::Expression::ZeroValue(_)
+            | crate::Expression::Compose { .. }
+            | crate::Expression::Access { .. }
+            | crate::Expression::Splat { .. }
+            | crate::Expression::Swizzle { .. }
+            | crate::Expression::FunctionArgument(_)
+            | crate::Expression::LocalVariable(_)
+            | crate::Expression::Load { .. }
+            | crate::Expression::ImageSample { .. }
+            | crate::Expression::ImageLoad { .. }
+            | crate::Expression::ImageQuery { .. }
+            | crate::Expression::Unary { .. }
+            | crate::Expression::Binary { .. }
+            | crate::Expression::Select { .. }
+            | crate::Expression::Derivative { .. }
+            | crate::Expression::Relational { .. }
+            | crate::Expression::Math { .. }
+            | crate::Expression::As { .. }
+            | crate::Expression::CallResult(_)
+            | crate::Expression::AtomicResult { .. }
+            | crate::Expression::ArrayLength(_)
+            | crate::Expression::WideArrayLength(_)
+            | crate::Expression::PhysicalPointer { .. }
+            | crate::Expression::PhysicalAddress { .. }
+            | crate::Expression::BufferPointer { .. }
+            | crate::Expression::HeapOffset { .. }
+            | crate::Expression::RayQueryProceedResult
+            | crate::Expression::RayQueryGet { .. }
+            | crate::Expression::ReportIntersectionResult
+            | crate::Expression::AccelerationStructureFromAddress { .. }
+            | crate::Expression::HitObjectGet { .. }
+            | crate::Expression::FetchMicroTriangleVertex { .. }
+            | crate::Expression::SubgroupBallotResult
+            | crate::Expression::SubgroupOperationResult { .. }
+            | crate::Expression::SpirvInstructionResult { .. }
+            | crate::Expression::CooperativeLoad { .. }
+            | crate::Expression::CooperativeMultiplyAdd { .. }
+            | crate::Expression::CooperativeMatrixLength { .. }
+            | crate::Expression::Replicate { .. }
+            | crate::Expression::Expect { .. }
+            | crate::Expression::ImageSparseResident { .. }
+            | crate::Expression::IsHelperInvocation
+            | crate::Expression::ReadClock { .. }
+            | crate::Expression::InterpolateAt { .. }
+            | crate::Expression::FragmentFetch { .. }
+            | crate::Expression::ImageFootprint { .. }
+            | crate::Expression::AttachmentRead { .. }
+            | crate::Expression::CooperativeVectorLoad { .. }
+            | crate::Expression::CooperativeVectorMatMul { .. }
+            | crate::Expression::Convert { .. }
+            | crate::Expression::CooperativeMatrixResult { .. }
+            | crate::Expression::TensorCreate { .. }
+            | crate::Expression::ImageProcessing { .. }
+            | crate::Expression::ArrayConversion { .. }
+            | crate::Expression::Bitcast { .. }
+            | crate::Expression::TensorSet { .. }
+            | crate::Expression::TensorRead { .. }
+            | crate::Expression::TensorQuerySize { .. } => {
+                return Err(Error::Validation("array length expression case-4"));
+            }
+        }
 
         // The verifier should have checked this, but make sure the inspection above
         // agrees with the type about whether a binding array is involved.
@@ -200,16 +309,15 @@ impl BlockContext<'_> {
         };
 
         let structure_id = match binding_array_index_id {
-            // We are indexing inside a binding array, generate the access op.
             Some(index_id) => {
-                let element_type_id = match self.ir_module.types[global.ty].inner {
-                    crate::TypeInner::BindingArray { base, size: _ } => {
-                        let base_id = self.get_handle_type_id(base)?;
-                        let class = self.writer.storage_class(global.space);
-                        self.get_pointer_type_id(base_id, class)
-                    }
-                    _ => return Err(Error::Validation("array length expression case-5")),
+                let crate::TypeInner::BindingArray { base, size: _ } =
+                    self.ir_module.types[global.ty].inner
+                else {
+                    return Err(Error::Validation("array length expression case-5"));
                 };
+                let base_id = self.get_handle_type_id(base)?;
+                let class = self.writer.storage_class(global.space);
+                let element_type_id = self.get_pointer_type_id(base_id, class);
                 let structure_id = self.gen_id();
                 block.body.push(Instruction::access_chain(
                     element_type_id,

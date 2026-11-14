@@ -176,7 +176,9 @@ impl BlockContext<'_> {
                 "subgroup vote",
                 &[Capability::GroupNonUniform, Capability::GroupNonUniformVote],
             )?,
-            _ => self.require_collective(collective_op)?,
+            sg::Add | sg::Mul | sg::Min | sg::Max | sg::And | sg::Or | sg::Xor => {
+                self.require_collective(collective_op)?;
+            }
         }
 
         let result_type_id = self.result_type_id(result)?;
@@ -190,7 +192,25 @@ impl BlockContext<'_> {
             TypeInner::Vector { scalar: kind, .. } | TypeInner::LongVector { scalar: kind, .. } => {
                 (false, kind)
             }
-            _ => {
+            TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Pointer { .. }
+            | TypeInner::ValuePointer { .. }
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Spirv { .. } => {
                 return Err(Error::Validation(
                     "subgroup operation result is not a scalar or vector",
                 ));
@@ -399,7 +419,26 @@ impl BlockContext<'_> {
                 ));
             }
             TypeInner::Vector { size, scalar } => (size, scalar),
-            _ => {
+            TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Pointer { .. }
+            | TypeInner::ValuePointer { .. }
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Spirv { .. } => {
                 return Err(Error::Validation(
                     "subgroup invocation operand is not a scalar or vector",
                 ));
@@ -463,6 +502,18 @@ impl BlockContext<'_> {
             .body
             .push(Instruction::ext_inst(set, op, result_type_id, id, operands));
         Ok(id)
+    }
+
+    fn write_subgroup_op(
+        &mut self,
+        result: Handle<Expression>,
+        op: Op,
+        scope: Scope,
+        operands: &[Word],
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        let result_type_id = self.result_type_id(result)?;
+        Ok(self.push_group_instruction(op, result_type_id, scope, operands, block))
     }
 
     pub(super) fn write_subgroup_function(
@@ -591,95 +642,112 @@ impl BlockContext<'_> {
                     block,
                 )?
             }
-            _ => {
+            Sf::Elect => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformElect,
+                Scope::Subgroup,
+                &[],
+                block,
+            )?,
+            Sf::AllEqual(value) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformAllEqual,
+                Scope::Subgroup,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::QuadAll(value) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformQuadAllKHR,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::QuadAny(value) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformQuadAnyKHR,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::InverseBallot(ballot) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformInverseBallot,
+                Scope::Subgroup,
+                &[self.cached.get(ballot)?],
+                block,
+            )?,
+            Sf::BallotBitExtract { ballot, index } => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformBallotBitExtract,
+                Scope::Subgroup,
+                &[self.cached.get(ballot)?, self.cached.get(index)?],
+                block,
+            )?,
+            Sf::BallotBitCount {
+                ballot,
+                ref collective_op,
+            } => {
                 let result_type_id = self.result_type_id(result)?;
-                let (op, scope, operands) = match *fun {
-                    Sf::Elect => (Op::GroupNonUniformElect, Scope::Subgroup, vec![]),
-                    Sf::AllEqual(value) => (
-                        Op::GroupNonUniformAllEqual,
-                        Scope::Subgroup,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::QuadAll(value) => (
-                        Op::GroupNonUniformQuadAllKHR,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::QuadAny(value) => (
-                        Op::GroupNonUniformQuadAnyKHR,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::InverseBallot(ballot) => (
-                        Op::GroupNonUniformInverseBallot,
-                        Scope::Subgroup,
-                        vec![self.cached.get(ballot)?],
-                    ),
-                    Sf::BallotBitExtract { ballot, index } => (
-                        Op::GroupNonUniformBallotBitExtract,
-                        Scope::Subgroup,
-                        vec![self.cached.get(ballot)?, self.cached.get(index)?],
-                    ),
-                    Sf::BallotBitCount {
-                        ballot,
-                        ref collective_op,
-                    } => {
-                        let (group_op, _) = self.group_operation(*collective_op)?;
-                        (
-                            Op::GroupNonUniformBallotBitCount,
-                            Scope::Subgroup,
-                            vec![group_op as u32, self.cached.get(ballot)?],
-                        )
-                    }
-                    Sf::BallotFindLsb(ballot) => (
-                        Op::GroupNonUniformBallotFindLSB,
-                        Scope::Subgroup,
-                        vec![self.cached.get(ballot)?],
-                    ),
-                    Sf::BallotFindMsb(ballot) => (
-                        Op::GroupNonUniformBallotFindMSB,
-                        Scope::Subgroup,
-                        vec![self.cached.get(ballot)?],
-                    ),
-                    Sf::Partition(value) => (
-                        Op::GroupNonUniformPartitionNV,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::KhrBallot(value) => (
-                        Op::SubgroupBallotKHR,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::KhrAll(value) => (
-                        Op::SubgroupAllKHR,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::KhrAny(value) => (
-                        Op::SubgroupAnyKHR,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::KhrAllEqual(value) => (
-                        Op::SubgroupAllEqualKHR,
-                        Scope::None,
-                        vec![self.cached.get(value)?],
-                    ),
-                    Sf::KhrReadInvocation { .. }
-                    | Sf::KhrReadFirstInvocation(_)
-                    | Sf::Group { .. }
-                    | Sf::AmdSwizzle { .. }
-                    | Sf::AmdSwizzleMasked { .. }
-                    | Sf::AmdWriteInvocation { .. }
-                    | Sf::AmdMbcnt(_) => {
-                        return Err(Error::Validation(
-                            "subgroup invocation function handled above",
-                        ));
-                    }
-                };
-                self.push_group_instruction(op, result_type_id, scope, &operands, block)
+                let (group_op, _) = self.group_operation(*collective_op)?;
+                let operands = [group_op as u32, self.cached.get(ballot)?];
+                self.push_group_instruction(
+                    Op::GroupNonUniformBallotBitCount,
+                    result_type_id,
+                    Scope::Subgroup,
+                    &operands,
+                    block,
+                )
             }
+            Sf::BallotFindLsb(ballot) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformBallotFindLSB,
+                Scope::Subgroup,
+                &[self.cached.get(ballot)?],
+                block,
+            )?,
+            Sf::BallotFindMsb(ballot) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformBallotFindMSB,
+                Scope::Subgroup,
+                &[self.cached.get(ballot)?],
+                block,
+            )?,
+            Sf::Partition(value) => self.write_subgroup_op(
+                result,
+                Op::GroupNonUniformPartitionNV,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::KhrBallot(value) => self.write_subgroup_op(
+                result,
+                Op::SubgroupBallotKHR,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::KhrAll(value) => self.write_subgroup_op(
+                result,
+                Op::SubgroupAllKHR,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::KhrAny(value) => self.write_subgroup_op(
+                result,
+                Op::SubgroupAnyKHR,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
+            Sf::KhrAllEqual(value) => self.write_subgroup_op(
+                result,
+                Op::SubgroupAllEqualKHR,
+                Scope::None,
+                &[self.cached.get(value)?],
+                block,
+            )?,
         };
         self.cached.set(result, id)?;
         Ok(())

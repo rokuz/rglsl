@@ -11,16 +11,18 @@ fn physical_qualifiers(
 ) -> Option<PointerQualifiers> {
     let element = crate::proc::array_element(types, ty);
     match types[element].inner {
-        TypeInner::Pointer {
-            space: AddressSpace::PhysicalStorage { qualifiers, .. },
-            ..
-        } => Some(qualifiers),
+        TypeInner::Pointer { space, .. } => {
+            if let AddressSpace::PhysicalStorage { qualifiers, .. } = space {
+                Some(qualifiers)
+            } else {
+                None
+            }
+        }
         TypeInner::Struct { .. } => {
             crate::proc::any_type(types, element, |inner, children| match *inner {
-                TypeInner::Pointer {
-                    space: AddressSpace::PhysicalStorage { .. },
-                    ..
-                } => true,
+                TypeInner::Pointer { space, .. } => {
+                    matches!(space, AddressSpace::PhysicalStorage { .. })
+                }
                 TypeInner::Array { base, .. } => {
                     children.push(base);
                     false
@@ -29,11 +31,48 @@ fn physical_qualifiers(
                     children.extend(members.iter().map(|member| member.ty));
                     false
                 }
-                _ => false,
+                TypeInner::Scalar(_)
+                | TypeInner::Vector { .. }
+                | TypeInner::Matrix { .. }
+                | TypeInner::CooperativeMatrix { .. }
+                | TypeInner::LongVector { .. }
+                | TypeInner::TensorLayout { .. }
+                | TypeInner::TensorView { .. }
+                | TypeInner::Tensor { .. }
+                | TypeInner::Atomic(_)
+                | TypeInner::ValuePointer { .. }
+                | TypeInner::Image { .. }
+                | TypeInner::Sampler { .. }
+                | TypeInner::SampledImage { .. }
+                | TypeInner::AccelerationStructure
+                | TypeInner::RayQuery
+                | TypeInner::HitObject { .. }
+                | TypeInner::BindingArray { .. }
+                | TypeInner::BufferDescriptor { .. }
+                | TypeInner::Spirv { .. } => false,
             })
             .then_some(PointerQualifiers::empty())
         }
-        _ => None,
+        TypeInner::Scalar(_)
+        | TypeInner::Vector { .. }
+        | TypeInner::Matrix { .. }
+        | TypeInner::CooperativeMatrix { .. }
+        | TypeInner::LongVector { .. }
+        | TypeInner::TensorLayout { .. }
+        | TypeInner::TensorView { .. }
+        | TypeInner::Tensor { .. }
+        | TypeInner::Atomic(_)
+        | TypeInner::ValuePointer { .. }
+        | TypeInner::Array { .. }
+        | TypeInner::Image { .. }
+        | TypeInner::Sampler { .. }
+        | TypeInner::SampledImage { .. }
+        | TypeInner::AccelerationStructure
+        | TypeInner::RayQuery
+        | TypeInner::HitObject { .. }
+        | TypeInner::BindingArray { .. }
+        | TypeInner::BufferDescriptor { .. }
+        | TypeInner::Spirv { .. } => None,
     }
 }
 
@@ -158,17 +197,38 @@ impl BlockContext<'_> {
             TypeInner::Pointer { space, .. } | TypeInner::ValuePointer { space, .. } => {
                 matches!(space, AddressSpace::PhysicalStorage { .. }).then_some(space)
             }
-            _ => None,
+            TypeInner::Scalar(_)
+            | TypeInner::Vector { .. }
+            | TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => None,
         }
     }
 
     fn pointer_alignment(&self, ty: Handle<crate::Type>) -> Option<u32> {
-        match self.ir_module.types[ty].inner {
-            TypeInner::Pointer {
-                space: AddressSpace::PhysicalStorage { alignment, .. },
-                ..
-            } => Some(alignment),
-            _ => None,
+        if let TypeInner::Pointer {
+            space: AddressSpace::PhysicalStorage { alignment, .. },
+            ..
+        } = self.ir_module.types[ty].inner
+        {
+            Some(alignment)
+        } else {
+            None
         }
     }
 
@@ -189,23 +249,63 @@ impl BlockContext<'_> {
             return false;
         };
         let same = match *self.fun_info[value].ty.inner_with(types) {
-            TypeInner::Pointer {
-                base,
-                space: AddressSpace::PhysicalStorage { .. },
-            } => base == target,
+            TypeInner::Pointer { base, space } => {
+                matches!(space, AddressSpace::PhysicalStorage { .. }) && base == target
+            }
             TypeInner::ValuePointer {
                 size,
                 scalar,
-                space: AddressSpace::PhysicalStorage { .. },
-            } => match types[target].inner {
-                TypeInner::Scalar(other) => size.is_none() && other == scalar,
-                TypeInner::Vector {
-                    size: other_size,
-                    scalar: other,
-                } => size == Some(other_size) && other == scalar,
-                _ => false,
-            },
-            _ => false,
+                space,
+            } => {
+                matches!(space, AddressSpace::PhysicalStorage { .. })
+                    && match types[target].inner {
+                        TypeInner::Scalar(other) => size.is_none() && other == scalar,
+                        TypeInner::Vector {
+                            size: other_size,
+                            scalar: other,
+                        } => size == Some(other_size) && other == scalar,
+                        TypeInner::Matrix { .. }
+                        | TypeInner::CooperativeMatrix { .. }
+                        | TypeInner::LongVector { .. }
+                        | TypeInner::TensorLayout { .. }
+                        | TypeInner::TensorView { .. }
+                        | TypeInner::Tensor { .. }
+                        | TypeInner::Atomic(_)
+                        | TypeInner::Pointer { .. }
+                        | TypeInner::ValuePointer { .. }
+                        | TypeInner::Array { .. }
+                        | TypeInner::Struct { .. }
+                        | TypeInner::Image { .. }
+                        | TypeInner::Sampler { .. }
+                        | TypeInner::SampledImage { .. }
+                        | TypeInner::AccelerationStructure
+                        | TypeInner::RayQuery
+                        | TypeInner::HitObject { .. }
+                        | TypeInner::BindingArray { .. }
+                        | TypeInner::BufferDescriptor { .. }
+                        | TypeInner::Spirv { .. } => false,
+                    }
+            }
+            TypeInner::Scalar(_)
+            | TypeInner::Vector { .. }
+            | TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => false,
         };
         same && !matches!(
             self.ir_function.expressions[value],
@@ -226,18 +326,86 @@ impl BlockContext<'_> {
         let mut current = pointer;
         loop {
             match expressions[current] {
-                Expression::AccessIndex { base, index } if self.physical_space(base).is_some() => {
+                Expression::AccessIndex { base, index } => {
+                    if self.physical_space(base).is_none() {
+                        break;
+                    }
                     steps.push(Step::Constant(index));
                     current = base;
                 }
-                Expression::Access { base, .. } if self.physical_space(base).is_some() => {
+                Expression::Access { base, .. } => {
+                    if self.physical_space(base).is_none() {
+                        break;
+                    }
                     steps.push(Step::Dynamic);
                     current = base;
                 }
-                Expression::PhysicalPointer { value, ty } if self.requalifies(value, ty) => {
+                Expression::PhysicalPointer { value, ty } => {
+                    if !self.requalifies(value, ty) {
+                        break;
+                    }
                     current = value;
                 }
-                _ => break,
+                Expression::Literal(_)
+                | Expression::Constant(_)
+                | Expression::Override(_)
+                | Expression::ZeroValue(_)
+                | Expression::Compose { .. }
+                | Expression::Splat { .. }
+                | Expression::Swizzle { .. }
+                | Expression::FunctionArgument(_)
+                | Expression::GlobalVariable(_)
+                | Expression::LocalVariable(_)
+                | Expression::Load { .. }
+                | Expression::ImageSample { .. }
+                | Expression::ImageLoad { .. }
+                | Expression::ImageQuery { .. }
+                | Expression::Unary { .. }
+                | Expression::Binary { .. }
+                | Expression::Select { .. }
+                | Expression::Derivative { .. }
+                | Expression::Relational { .. }
+                | Expression::Math { .. }
+                | Expression::As { .. }
+                | Expression::CallResult(_)
+                | Expression::AtomicResult { .. }
+                | Expression::ArrayLength(_)
+                | Expression::WideArrayLength(_)
+                | Expression::PhysicalAddress { .. }
+                | Expression::BufferPointer { .. }
+                | Expression::HeapOffset { .. }
+                | Expression::RayQueryProceedResult
+                | Expression::RayQueryGet { .. }
+                | Expression::ReportIntersectionResult
+                | Expression::AccelerationStructureFromAddress { .. }
+                | Expression::HitObjectGet { .. }
+                | Expression::FetchMicroTriangleVertex { .. }
+                | Expression::SubgroupBallotResult
+                | Expression::SubgroupOperationResult { .. }
+                | Expression::SpirvInstructionResult { .. }
+                | Expression::CooperativeLoad { .. }
+                | Expression::CooperativeMultiplyAdd { .. }
+                | Expression::CooperativeMatrixLength { .. }
+                | Expression::Replicate { .. }
+                | Expression::Expect { .. }
+                | Expression::ImageSparseResident { .. }
+                | Expression::IsHelperInvocation
+                | Expression::ReadClock { .. }
+                | Expression::InterpolateAt { .. }
+                | Expression::FragmentFetch { .. }
+                | Expression::ImageFootprint { .. }
+                | Expression::AttachmentRead { .. }
+                | Expression::CooperativeVectorLoad { .. }
+                | Expression::CooperativeVectorMatMul { .. }
+                | Expression::Convert { .. }
+                | Expression::CooperativeMatrixResult { .. }
+                | Expression::TensorCreate { .. }
+                | Expression::ImageProcessing { .. }
+                | Expression::ArrayConversion { .. }
+                | Expression::Bitcast { .. }
+                | Expression::TensorSet { .. }
+                | Expression::TensorRead { .. }
+                | Expression::TensorQuerySize { .. } => break,
             }
         }
         let TypeInner::Pointer {
@@ -291,7 +459,24 @@ impl BlockContext<'_> {
                     accumulated |= u32::from(scalar.width);
                     return Some(lowest_bit(accumulated).max(1));
                 }
-                _ => return None,
+                TypeInner::Scalar(_)
+                | TypeInner::CooperativeMatrix { .. }
+                | TypeInner::LongVector { .. }
+                | TypeInner::TensorLayout { .. }
+                | TypeInner::TensorView { .. }
+                | TypeInner::Tensor { .. }
+                | TypeInner::Atomic(_)
+                | TypeInner::Pointer { .. }
+                | TypeInner::ValuePointer { .. }
+                | TypeInner::Image { .. }
+                | TypeInner::Sampler { .. }
+                | TypeInner::SampledImage { .. }
+                | TypeInner::AccelerationStructure
+                | TypeInner::RayQuery
+                | TypeInner::HitObject { .. }
+                | TypeInner::BindingArray { .. }
+                | TypeInner::BufferDescriptor { .. }
+                | TypeInner::Spirv { .. } => return None,
             }
         }
         if let Some(scalar) = scalar_component {
@@ -328,13 +513,17 @@ impl BlockContext<'_> {
         let mut members = PointerQualifiers::empty();
         loop {
             match self.ir_function.expressions[current] {
-                Expression::AccessIndex { base, index }
-                    if self.physical_space(current).is_none() =>
-                {
+                Expression::AccessIndex { base, index } => {
+                    if self.physical_space(current).is_some() {
+                        return (PointerQualifiers::empty(), None);
+                    }
                     members |= self.member_qualifiers(base, index);
                     current = base;
                 }
-                Expression::Access { base, .. } if self.physical_space(current).is_none() => {
+                Expression::Access { base, .. } => {
+                    if self.physical_space(current).is_some() {
+                        return (PointerQualifiers::empty(), None);
+                    }
                     current = base;
                 }
                 Expression::GlobalVariable(handle) => {
@@ -347,16 +536,76 @@ impl BlockContext<'_> {
                 }
                 Expression::LocalVariable(handle) => {
                     let ty = self.ir_function.local_variables[handle].ty;
-                    let qualifiers = match self.ir_module.types[ty].inner {
-                        TypeInner::Pointer {
-                            space: AddressSpace::PhysicalStorage { qualifiers, .. },
-                            ..
-                        } => qualifiers & PointerQualifiers::VOLATILE,
-                        _ => PointerQualifiers::empty(),
+                    let qualifiers = if let TypeInner::Pointer {
+                        space: AddressSpace::PhysicalStorage { qualifiers, .. },
+                        ..
+                    } = self.ir_module.types[ty].inner
+                    {
+                        qualifiers & PointerQualifiers::VOLATILE
+                    } else {
+                        PointerQualifiers::empty()
                     };
                     return (qualifiers, Some(AddressSpace::Function));
                 }
-                _ => return (PointerQualifiers::empty(), None),
+                Expression::Literal(_)
+                | Expression::Constant(_)
+                | Expression::Override(_)
+                | Expression::ZeroValue(_)
+                | Expression::Compose { .. }
+                | Expression::Splat { .. }
+                | Expression::Swizzle { .. }
+                | Expression::FunctionArgument(_)
+                | Expression::Load { .. }
+                | Expression::ImageSample { .. }
+                | Expression::ImageLoad { .. }
+                | Expression::ImageQuery { .. }
+                | Expression::Unary { .. }
+                | Expression::Binary { .. }
+                | Expression::Select { .. }
+                | Expression::Derivative { .. }
+                | Expression::Relational { .. }
+                | Expression::Math { .. }
+                | Expression::As { .. }
+                | Expression::CallResult(_)
+                | Expression::AtomicResult { .. }
+                | Expression::ArrayLength(_)
+                | Expression::WideArrayLength(_)
+                | Expression::PhysicalPointer { .. }
+                | Expression::PhysicalAddress { .. }
+                | Expression::BufferPointer { .. }
+                | Expression::HeapOffset { .. }
+                | Expression::RayQueryProceedResult
+                | Expression::RayQueryGet { .. }
+                | Expression::ReportIntersectionResult
+                | Expression::AccelerationStructureFromAddress { .. }
+                | Expression::HitObjectGet { .. }
+                | Expression::FetchMicroTriangleVertex { .. }
+                | Expression::SubgroupBallotResult
+                | Expression::SubgroupOperationResult { .. }
+                | Expression::SpirvInstructionResult { .. }
+                | Expression::CooperativeLoad { .. }
+                | Expression::CooperativeMultiplyAdd { .. }
+                | Expression::CooperativeMatrixLength { .. }
+                | Expression::Replicate { .. }
+                | Expression::Expect { .. }
+                | Expression::ImageSparseResident { .. }
+                | Expression::IsHelperInvocation
+                | Expression::ReadClock { .. }
+                | Expression::InterpolateAt { .. }
+                | Expression::FragmentFetch { .. }
+                | Expression::ImageFootprint { .. }
+                | Expression::AttachmentRead { .. }
+                | Expression::CooperativeVectorLoad { .. }
+                | Expression::CooperativeVectorMatMul { .. }
+                | Expression::Convert { .. }
+                | Expression::CooperativeMatrixResult { .. }
+                | Expression::TensorCreate { .. }
+                | Expression::ImageProcessing { .. }
+                | Expression::ArrayConversion { .. }
+                | Expression::Bitcast { .. }
+                | Expression::TensorSet { .. }
+                | Expression::TensorRead { .. }
+                | Expression::TensorQuerySize { .. } => return (PointerQualifiers::empty(), None),
             }
         }
     }
@@ -367,15 +616,15 @@ impl BlockContext<'_> {
         else {
             return PointerQualifiers::empty();
         };
-        match types[pointee].inner {
-            TypeInner::Struct { ref members, .. } => usize::try_from(index)
-                .ok()
-                .and_then(|index| members.get(index))
-                .map_or(PointerQualifiers::empty(), |member| {
-                    global_qualifiers(member.memory_decorations)
-                }),
-            _ => PointerQualifiers::empty(),
-        }
+        let TypeInner::Struct { ref members, .. } = types[pointee].inner else {
+            return PointerQualifiers::empty();
+        };
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| members.get(index))
+            .map_or(PointerQualifiers::empty(), |member| {
+                global_qualifiers(member.memory_decorations)
+            })
     }
 
     fn coherent_scope(&mut self, qualifiers: PointerQualifiers) -> spirv::Scope {
@@ -408,12 +657,72 @@ impl BlockContext<'_> {
         let global = match self.ir_function.expressions[image] {
             Expression::GlobalVariable(handle) => Some(handle),
             Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
-                match self.ir_function.expressions[base] {
-                    Expression::GlobalVariable(handle) => Some(handle),
-                    _ => None,
+                if let Expression::GlobalVariable(handle) = self.ir_function.expressions[base] {
+                    Some(handle)
+                } else {
+                    None
                 }
             }
-            _ => None,
+            Expression::Literal(_)
+            | Expression::Constant(_)
+            | Expression::Override(_)
+            | Expression::ZeroValue(_)
+            | Expression::Compose { .. }
+            | Expression::Splat { .. }
+            | Expression::Swizzle { .. }
+            | Expression::FunctionArgument(_)
+            | Expression::LocalVariable(_)
+            | Expression::Load { .. }
+            | Expression::ImageSample { .. }
+            | Expression::ImageLoad { .. }
+            | Expression::ImageQuery { .. }
+            | Expression::Unary { .. }
+            | Expression::Binary { .. }
+            | Expression::Select { .. }
+            | Expression::Derivative { .. }
+            | Expression::Relational { .. }
+            | Expression::Math { .. }
+            | Expression::As { .. }
+            | Expression::CallResult(_)
+            | Expression::AtomicResult { .. }
+            | Expression::ArrayLength(_)
+            | Expression::WideArrayLength(_)
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. }
+            | Expression::RayQueryProceedResult
+            | Expression::RayQueryGet { .. }
+            | Expression::ReportIntersectionResult
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. }
+            | Expression::SubgroupBallotResult
+            | Expression::SubgroupOperationResult { .. }
+            | Expression::SpirvInstructionResult { .. }
+            | Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::CooperativeMatrixLength { .. }
+            | Expression::Replicate { .. }
+            | Expression::Expect { .. }
+            | Expression::ImageSparseResident { .. }
+            | Expression::IsHelperInvocation
+            | Expression::ReadClock { .. }
+            | Expression::InterpolateAt { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. }
+            | Expression::AttachmentRead { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::ImageProcessing { .. }
+            | Expression::ArrayConversion { .. }
+            | Expression::Bitcast { .. }
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => None,
         };
         let Some(global) = global else {
             return (spirv::ImageOperands::empty(), None);
@@ -534,14 +843,36 @@ impl BlockContext<'_> {
         pointer: Handle<Expression>,
     ) -> Option<(spirv::MemorySemantics, spirv::Scope)> {
         let scalar = match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-            TypeInner::Pointer { base, .. } => match self.ir_module.types[base].inner {
-                TypeInner::Scalar(scalar) => scalar,
-                _ => return None,
-            },
+            TypeInner::Pointer { base, .. } => {
+                let TypeInner::Scalar(scalar) = self.ir_module.types[base].inner else {
+                    return None;
+                };
+                scalar
+            }
             TypeInner::ValuePointer {
                 size: None, scalar, ..
             } => scalar,
-            _ => return None,
+            TypeInner::Scalar(_)
+            | TypeInner::Vector { .. }
+            | TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::ValuePointer { size: Some(_), .. }
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => return None,
         };
         if scalar.width == 8 && scalar.kind != crate::ScalarKind::Float {
             self.writer
@@ -588,7 +919,26 @@ impl BlockContext<'_> {
         let op = match *self.fun_info[value].ty.inner_with(&self.ir_module.types) {
             TypeInner::Scalar(_) => Op::ConvertUToPtr,
             TypeInner::Vector { .. } => Op::Bitcast,
-            _ => {
+            TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Pointer { .. }
+            | TypeInner::ValuePointer { .. }
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => {
                 let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;
                 if value_type_id == result_type_id {
                     return Ok(value_id);

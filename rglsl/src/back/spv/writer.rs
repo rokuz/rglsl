@@ -157,11 +157,10 @@ impl Writer {
     }
 
     pub(super) const fn storage_class(&self, space: crate::AddressSpace) -> spirv::StorageClass {
-        match space {
-            crate::AddressSpace::Storage { .. } if self.legacy_buffer_blocks => {
-                spirv::StorageClass::Uniform
-            }
-            _ => map_storage_class(space),
+        if self.legacy_buffer_blocks && matches!(space, crate::AddressSpace::Storage { .. }) {
+            spirv::StorageClass::Uniform
+        } else {
+            map_storage_class(space)
         }
     }
 
@@ -176,7 +175,23 @@ impl Writer {
                 crate::AddressSpace::ShaderRecord => {
                     global.block == Some(crate::BlockDeclaration::Buffer)
                 }
-                _ => false,
+                crate::AddressSpace::Function
+                | crate::AddressSpace::Private
+                | crate::AddressSpace::WorkGroup
+                | crate::AddressSpace::Uniform
+                | crate::AddressSpace::Handle
+                | crate::AddressSpace::Immediate
+                | crate::AddressSpace::TaskPayload
+                | crate::AddressSpace::RayPayload
+                | crate::AddressSpace::IncomingRayPayload
+                | crate::AddressSpace::HitAttribute
+                | crate::AddressSpace::CallableData
+                | crate::AddressSpace::IncomingCallableData
+                | crate::AddressSpace::HitObjectAttribute { .. }
+                | crate::AddressSpace::Input
+                | crate::AddressSpace::Output
+                | crate::AddressSpace::PhysicalStorage { .. }
+                | crate::AddressSpace::DescriptorHeap(_) => false,
             };
         if !self.buffer_blocks.insert(id) {
             if legacy != self.legacy_storage_blocks.contains(&id) {
@@ -913,41 +928,36 @@ impl Writer {
                 }
             }
 
-            match ir_module.types[var.ty].inner {
-                // Any that are binding arrays we skip as we cannot load the array, we must load the result after indexing.
-                crate::TypeInner::BindingArray { .. } => {
-                    gv.access_id = gv.var_id;
+            if matches!(
+                ir_module.types[var.ty].inner,
+                crate::TypeInner::BindingArray { .. }
+            ) {
+                gv.access_id = gv.var_id;
+            } else if var.space == crate::AddressSpace::Handle {
+                let var_type_id = self.get_handle_type_id(var.ty)?;
+                let id = self.id_gen.next();
+                prelude
+                    .body
+                    .push(Instruction::load(var_type_id, id, gv.var_id, None));
+                if var.relaxed_precision {
+                    self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
                 }
-                _ => {
-                    // Handle globals are pre-emitted and should be loaded automatically.
-                    if var.space == crate::AddressSpace::Handle {
-                        let var_type_id = self.get_handle_type_id(var.ty)?;
-                        let id = self.id_gen.next();
-                        prelude
-                            .body
-                            .push(Instruction::load(var_type_id, id, gv.var_id, None));
-                        if var.relaxed_precision {
-                            self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
-                        }
-                        gv.access_id = gv.var_id;
-                        gv.handle_id = id;
-                    } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
-                        let class = self.storage_class(var.space);
-                        let pointer_type_id = self.get_handle_pointer_type_id(var.ty, class)?;
-                        let index_id = self.get_index_constant(0);
-                        let id = self.id_gen.next();
-                        prelude.body.push(Instruction::access_chain(
-                            pointer_type_id,
-                            id,
-                            gv.var_id,
-                            &[index_id],
-                        ));
-                        gv.access_id = id;
-                    } else {
-                        // by default, the variable ID is accessed as is
-                        gv.access_id = gv.var_id;
-                    };
-                }
+                gv.access_id = gv.var_id;
+                gv.handle_id = id;
+            } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
+                let class = self.storage_class(var.space);
+                let pointer_type_id = self.get_handle_pointer_type_id(var.ty, class)?;
+                let index_id = self.get_index_constant(0);
+                let id = self.id_gen.next();
+                prelude.body.push(Instruction::access_chain(
+                    pointer_type_id,
+                    id,
+                    gv.var_id,
+                    &[index_id],
+                ));
+                gv.access_id = id;
+            } else {
+                gv.access_id = gv.var_id;
             }
 
             // work around borrow checking in the presence of `self.xxx()` calls
@@ -1039,17 +1049,72 @@ impl Writer {
         for (handle, expr) in ir_function.expressions.iter() {
             match *expr {
                 crate::Expression::LocalVariable(_) => {
-                    // Cache the `OpVariable` instruction we generated above as
-                    // the value of this expression.
                     context.cache_expression_value(handle, &mut prelude)?;
                 }
                 crate::Expression::Access { base, .. }
                 | crate::Expression::AccessIndex { base, .. } => {
-                    // Count references to `base` by `Access` and `AccessIndex`
-                    // instructions. See `access_uses` for details.
                     *context.function.access_uses.entry(base).or_insert(0) += 1;
                 }
-                _ => {}
+                crate::Expression::Literal(_)
+                | crate::Expression::Constant(_)
+                | crate::Expression::Override(_)
+                | crate::Expression::ZeroValue(_)
+                | crate::Expression::Compose { .. }
+                | crate::Expression::Splat { .. }
+                | crate::Expression::Swizzle { .. }
+                | crate::Expression::FunctionArgument(_)
+                | crate::Expression::GlobalVariable(_)
+                | crate::Expression::Load { .. }
+                | crate::Expression::ImageSample { .. }
+                | crate::Expression::ImageLoad { .. }
+                | crate::Expression::ImageQuery { .. }
+                | crate::Expression::Unary { .. }
+                | crate::Expression::Binary { .. }
+                | crate::Expression::Select { .. }
+                | crate::Expression::Derivative { .. }
+                | crate::Expression::Relational { .. }
+                | crate::Expression::Math { .. }
+                | crate::Expression::As { .. }
+                | crate::Expression::CallResult(_)
+                | crate::Expression::AtomicResult { .. }
+                | crate::Expression::ArrayLength(_)
+                | crate::Expression::WideArrayLength(_)
+                | crate::Expression::PhysicalPointer { .. }
+                | crate::Expression::PhysicalAddress { .. }
+                | crate::Expression::BufferPointer { .. }
+                | crate::Expression::HeapOffset { .. }
+                | crate::Expression::RayQueryProceedResult
+                | crate::Expression::RayQueryGet { .. }
+                | crate::Expression::ReportIntersectionResult
+                | crate::Expression::AccelerationStructureFromAddress { .. }
+                | crate::Expression::HitObjectGet { .. }
+                | crate::Expression::FetchMicroTriangleVertex { .. }
+                | crate::Expression::SubgroupBallotResult
+                | crate::Expression::SubgroupOperationResult { .. }
+                | crate::Expression::SpirvInstructionResult { .. }
+                | crate::Expression::CooperativeLoad { .. }
+                | crate::Expression::CooperativeMultiplyAdd { .. }
+                | crate::Expression::CooperativeMatrixLength { .. }
+                | crate::Expression::Expect { .. }
+                | crate::Expression::ImageSparseResident { .. }
+                | crate::Expression::IsHelperInvocation
+                | crate::Expression::ReadClock { .. }
+                | crate::Expression::InterpolateAt { .. }
+                | crate::Expression::FragmentFetch { .. }
+                | crate::Expression::ImageFootprint { .. }
+                | crate::Expression::AttachmentRead { .. }
+                | crate::Expression::Replicate { .. }
+                | crate::Expression::CooperativeVectorLoad { .. }
+                | crate::Expression::CooperativeVectorMatMul { .. }
+                | crate::Expression::Convert { .. }
+                | crate::Expression::CooperativeMatrixResult { .. }
+                | crate::Expression::TensorCreate { .. }
+                | crate::Expression::ImageProcessing { .. }
+                | crate::Expression::ArrayConversion { .. }
+                | crate::Expression::Bitcast { .. }
+                | crate::Expression::TensorSet { .. }
+                | crate::Expression::TensorRead { .. }
+                | crate::Expression::TensorQuerySize { .. } => {}
             }
         }
 
@@ -1462,26 +1527,17 @@ impl Writer {
                 Some(Instruction::type_float(id, bits))
             }
             Sk::Bool => Some(Instruction::type_bool(id)),
-            Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => {
-                let encoding = match scalar.kind {
-                    Sk::BFloat => {
-                        self.use_feature(&feature::BFLOAT16_TYPE);
-                        spirv::FPEncoding::BFloat16KHR
-                    }
-                    Sk::FloatE4M3 => {
-                        self.use_feature(&feature::FLOAT8_TYPE);
-                        spirv::FPEncoding::Float8E4M3EXT
-                    }
-                    _ => {
-                        self.use_feature(&feature::FLOAT8_TYPE);
-                        spirv::FPEncoding::Float8E5M2EXT
-                    }
-                };
-                let mut instruction = Instruction::new(spirv::Op::TypeFloat);
-                instruction.set_result(id);
-                instruction.add_operand(bits);
-                instruction.add_operand(encoding as u32);
-                Some(instruction)
+            Sk::BFloat => {
+                self.use_feature(&feature::BFLOAT16_TYPE);
+                encoded_float_type(id, bits, spirv::FPEncoding::BFloat16KHR)
+            }
+            Sk::FloatE4M3 => {
+                self.use_feature(&feature::FLOAT8_TYPE);
+                encoded_float_type(id, bits, spirv::FPEncoding::Float8E4M3EXT)
+            }
+            Sk::FloatE5M2 => {
+                self.use_feature(&feature::FLOAT8_TYPE);
+                encoded_float_type(id, bits, spirv::FPEncoding::Float8E5M2EXT)
             }
             Sk::FloatE2M1 | Sk::FloatE3M2 | Sk::FloatE2M3 | Sk::FloatUE8M0 | Sk::FloatMXINT8 => {
                 self.microscaling_type(id, scalar)
@@ -1505,7 +1561,15 @@ impl Writer {
                     "float8 cooperative matrices",
                     &[spirv::Capability::Float8CooperativeMatrixEXT],
                 )?,
-                _ => {}
+                crate::ScalarKind::Sint
+                | crate::ScalarKind::Uint
+                | crate::ScalarKind::Float
+                | crate::ScalarKind::Bool
+                | crate::ScalarKind::FloatE2M1
+                | crate::ScalarKind::FloatE3M2
+                | crate::ScalarKind::FloatE2M3
+                | crate::ScalarKind::FloatUE8M0
+                | crate::ScalarKind::FloatMXINT8 => {}
             }
         }
         match *inner {
@@ -1578,7 +1642,9 @@ impl Writer {
                             )?;
                         }
                     }
-                    _ => {}
+                    crate::ImageDimension::D2
+                    | crate::ImageDimension::D3
+                    | crate::ImageDimension::Cube => {}
                 }
             }
             crate::TypeInner::AccelerationStructure => {
@@ -1594,50 +1660,39 @@ impl Writer {
             crate::TypeInner::HitObject { flavor } => {
                 self.require_hit_objects(flavor)?;
             }
-            crate::TypeInner::Atomic(crate::Scalar { width: 8, kind: _ }) => {
-                self.require_any("64 bit integer atomics", &[spirv::Capability::Int64Atomics])?;
+            crate::TypeInner::Atomic(scalar) => {
+                if scalar.width == 8 {
+                    self.require_any("64 bit integer atomics", &[spirv::Capability::Int64Atomics])?;
+                } else if scalar.width == 4 && scalar.kind == crate::ScalarKind::Float {
+                    self.require(&feature::ATOMIC_FLOAT32_ADD)?;
+                }
             }
-            crate::TypeInner::Atomic(crate::Scalar {
-                width: 4,
-                kind: crate::ScalarKind::Float,
-            }) => {
-                self.require(&feature::ATOMIC_FLOAT32_ADD)?;
+            crate::TypeInner::Matrix { scalar, .. } => {
+                if scalar == crate::Scalar::F16
+                    && !self
+                        .flags
+                        .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)
+                {
+                    self.require(&feature::FLOAT16_WITH_STORAGE)?;
+                }
             }
-            // 16 bit floating-point support requires Float16 capability
-            crate::TypeInner::Matrix {
-                scalar: crate::Scalar::F16,
-                ..
-            }
-            | crate::TypeInner::Vector {
-                scalar: crate::Scalar::F16,
-                ..
-            }
-            | crate::TypeInner::Scalar(crate::Scalar::F16)
+            crate::TypeInner::Vector { scalar, .. } | crate::TypeInner::Scalar(scalar) => {
                 if !self
                     .flags
-                    .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE) =>
-            {
-                self.require(&feature::FLOAT16_WITH_STORAGE)?;
+                    .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)
+                {
+                    if scalar == crate::Scalar::F16 {
+                        self.require(&feature::FLOAT16_WITH_STORAGE)?;
+                    } else if scalar.width == 2
+                        && matches!(
+                            scalar.kind,
+                            crate::ScalarKind::Sint | crate::ScalarKind::Uint
+                        )
+                    {
+                        self.require(&feature::INT16_WITH_STORAGE)?;
+                    }
+                }
             }
-            // 16 bit integer support requires Int16 capability
-            crate::TypeInner::Vector {
-                scalar:
-                    crate::Scalar {
-                        kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                        width: 2,
-                    },
-                ..
-            }
-            | crate::TypeInner::Scalar(crate::Scalar {
-                kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                width: 2,
-            }) if !self
-                .flags
-                .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE) =>
-            {
-                self.require(&feature::INT16_WITH_STORAGE)?;
-            }
-            // Cooperative types and ops
             crate::TypeInner::CooperativeMatrix { class, .. } => self.require(match class {
                 crate::CooperativeMatrixClass::Khr => &feature::COOPERATIVE_MATRIX_KHR,
                 crate::CooperativeMatrixClass::Nv => &feature::COOPERATIVE_MATRIX_NV,
@@ -1646,7 +1701,17 @@ impl Writer {
                 crate::LongVectorClass::Plain => &feature::LONG_VECTOR,
                 crate::LongVectorClass::CooperativeNv => &feature::COOPERATIVE_VECTOR,
             })?,
-            _ => {}
+            crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
+            | crate::TypeInner::Tensor { .. }
+            | crate::TypeInner::Pointer { .. }
+            | crate::TypeInner::ValuePointer { .. }
+            | crate::TypeInner::Array { .. }
+            | crate::TypeInner::Struct { .. }
+            | crate::TypeInner::Sampler { .. }
+            | crate::TypeInner::BindingArray { .. }
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => {}
         }
         Ok(())
     }
@@ -1856,7 +1921,23 @@ impl Writer {
             } => [Some(columns), Some(rows), Some(scope)],
             crate::TypeInner::LongVector { size, .. }
             | crate::TypeInner::Tensor { rank: size, .. } => [Some(size), None, None],
-            _ => [None, None, None],
+            crate::TypeInner::Scalar(_)
+            | crate::TypeInner::Vector { .. }
+            | crate::TypeInner::Matrix { .. }
+            | crate::TypeInner::Atomic(_)
+            | crate::TypeInner::Pointer { .. }
+            | crate::TypeInner::ValuePointer { .. }
+            | crate::TypeInner::Array { .. }
+            | crate::TypeInner::Struct { .. }
+            | crate::TypeInner::Image { .. }
+            | crate::TypeInner::Sampler { .. }
+            | crate::TypeInner::SampledImage { .. }
+            | crate::TypeInner::AccelerationStructure
+            | crate::TypeInner::RayQuery
+            | crate::TypeInner::HitObject { .. }
+            | crate::TypeInner::BindingArray { .. }
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => [None, None, None],
         };
         for size in pending.into_iter().flatten() {
             if let crate::CooperativeSize::Pending(handle) = size {
@@ -2394,6 +2475,8 @@ impl Writer {
         ir_module: &crate::Module,
         mod_info: &ModuleInfo,
     ) -> Result<Word, Error> {
+        use super::specialization::{SpecComposite, SpecOperation};
+
         let id = match ir_module.global_expressions[handle] {
             crate::Expression::Literal(literal) => self.get_constant_scalar(literal),
             crate::Expression::Constant(constant) => {
@@ -2404,55 +2487,138 @@ impl Writer {
                 let type_id = self.get_handle_type_id(ty)?;
                 self.get_constant_null(type_id)
             }
-            crate::Expression::Compose { .. }
-            | crate::Expression::Splat { .. }
-            | crate::Expression::Replicate { .. }
-                if self.is_override_dependent(handle) =>
-            {
-                self.write_spec_composite(handle, ir_module, mod_info)?
-            }
             crate::Expression::Compose { ty, ref components } => {
-                let component_ids: Vec<_> = crate::proc::flatten_compose(
-                    ty,
-                    components,
-                    &ir_module.global_expressions,
-                    &ir_module.types,
-                )
-                .map(|component| self.constant_ids[component])
-                .collect();
-                self.get_constant_composite(LookupType::Handle(ty), component_ids.as_slice())?
+                if self.is_override_dependent(handle) {
+                    self.write_spec_composite(
+                        handle,
+                        SpecComposite::Compose { ty, components },
+                        ir_module,
+                        mod_info,
+                    )?
+                } else {
+                    let component_ids: Vec<_> = crate::proc::flatten_compose(
+                        ty,
+                        components,
+                        &ir_module.global_expressions,
+                        &ir_module.types,
+                    )
+                    .map(|component| self.constant_ids[component])
+                    .collect();
+                    self.get_constant_composite(LookupType::Handle(ty), component_ids.as_slice())?
+                }
             }
             crate::Expression::Splat { size, value } => {
-                let value_id = self.constant_ids[value];
-                let component_ids = &[value_id; 4][..size as usize];
-
-                let ty = self.get_expression_lookup_type(&mod_info[handle])?;
-
-                self.get_constant_composite(ty, component_ids)?
+                if self.is_override_dependent(handle) {
+                    self.write_spec_composite(
+                        handle,
+                        SpecComposite::Splat { size, value },
+                        ir_module,
+                        mod_info,
+                    )?
+                } else {
+                    let value_id = self.constant_ids[value];
+                    let component_ids = &[value_id; 4][..size as usize];
+                    let ty = self.get_expression_lookup_type(&mod_info[handle])?;
+                    self.get_constant_composite(ty, component_ids)?
+                }
             }
             crate::Expression::Replicate { ty, value } => {
-                let value_id = self.constant_ids[value];
-                let inner = ir_module.types[ty].inner.clone();
-                self.write_constant_replicate(ty, value_id, &inner)?
+                if self.is_override_dependent(handle) {
+                    self.write_spec_composite(
+                        handle,
+                        SpecComposite::Replicate { ty, value },
+                        ir_module,
+                        mod_info,
+                    )?
+                } else {
+                    let value_id = self.constant_ids[value];
+                    let inner = ir_module.types[ty].inner.clone();
+                    self.write_constant_replicate(ty, value_id, &inner)?
+                }
             }
             crate::Expression::Override(item) => self.write_override(item, ir_module, mod_info)?,
-            crate::Expression::Access { .. }
-            | crate::Expression::AccessIndex { .. }
-            | crate::Expression::Swizzle { .. }
-            | crate::Expression::FunctionArgument(_)
+            crate::Expression::CooperativeMatrixLength { ty } => self.write_spec_operation(
+                handle,
+                SpecOperation::CooperativeMatrixLength { ty },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::Unary { op, expr } => self.write_spec_operation(
+                handle,
+                SpecOperation::Unary { op, expr },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::Binary { op, left, right } => self.write_spec_operation(
+                handle,
+                SpecOperation::Binary { op, left, right },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::As {
+                expr,
+                kind,
+                convert,
+            } => self.write_spec_operation(
+                handle,
+                SpecOperation::As {
+                    expr,
+                    kind,
+                    convert,
+                },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::Select {
+                condition,
+                accept,
+                reject,
+            } => self.write_spec_operation(
+                handle,
+                SpecOperation::Select {
+                    condition,
+                    accept,
+                    reject,
+                },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::Swizzle {
+                size,
+                vector,
+                pattern,
+            } => self.write_spec_operation(
+                handle,
+                SpecOperation::Swizzle {
+                    size,
+                    vector,
+                    pattern,
+                },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::AccessIndex { base, index } => self.write_spec_operation(
+                handle,
+                SpecOperation::AccessIndex { base, index },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::Access { base, index } => self.write_spec_operation(
+                handle,
+                SpecOperation::Access { base, index },
+                ir_module,
+                mod_info,
+            )?,
+            crate::Expression::FunctionArgument(_)
             | crate::Expression::GlobalVariable(_)
             | crate::Expression::LocalVariable(_)
             | crate::Expression::Load { .. }
             | crate::Expression::ImageSample { .. }
             | crate::Expression::ImageLoad { .. }
             | crate::Expression::ImageQuery { .. }
-            | crate::Expression::Unary { .. }
-            | crate::Expression::Binary { .. }
-            | crate::Expression::Select { .. }
             | crate::Expression::Derivative { .. }
             | crate::Expression::Relational { .. }
             | crate::Expression::Math { .. }
-            | crate::Expression::As { .. }
             | crate::Expression::CallResult(_)
             | crate::Expression::AtomicResult { .. }
             | crate::Expression::ArrayLength(_)
@@ -2472,7 +2638,6 @@ impl Writer {
             | crate::Expression::SpirvInstructionResult { .. }
             | crate::Expression::CooperativeLoad { .. }
             | crate::Expression::CooperativeMultiplyAdd { .. }
-            | crate::Expression::CooperativeMatrixLength { .. }
             | crate::Expression::Expect { .. }
             | crate::Expression::ImageSparseResident { .. }
             | crate::Expression::IsHelperInvocation
@@ -2492,7 +2657,7 @@ impl Writer {
             | crate::Expression::TensorSet { .. }
             | crate::Expression::TensorRead { .. }
             | crate::Expression::TensorQuerySize { .. } => {
-                self.write_spec_operation(handle, ir_module, mod_info)?
+                return Err(Error::SpecializationConstant("this expression"));
             }
         };
 
@@ -2966,15 +3131,17 @@ impl Writer {
             self.debugs.push(Instruction::name(id, name));
         }
 
-        let storage_access = match global_variable.space {
-            crate::AddressSpace::Storage { access } => Some(access),
-            _ => match ir_module.types[global_variable.ty].inner {
-                crate::TypeInner::Image {
-                    class: crate::ImageClass::Storage { access, .. },
-                    ..
-                } => Some(access),
-                _ => None,
-            },
+        let storage_access = if let crate::AddressSpace::Storage { access } = global_variable.space
+        {
+            Some(access)
+        } else if let crate::TypeInner::Image {
+            class: crate::ImageClass::Storage { access, .. },
+            ..
+        } = ir_module.types[global_variable.ty].inner
+        {
+            Some(access)
+        } else {
+            None
         };
         for (flag, decoration) in [
             (crate::MemoryDecorations::RESTRICT, Decoration::Restrict),
@@ -3082,11 +3249,30 @@ impl Writer {
         } else {
             let block_struct = match ir_module.types[global_variable.ty].inner {
                 crate::TypeInner::Struct { .. } => Some(global_variable.ty),
-                crate::TypeInner::BindingArray { base, .. } => match ir_module.types[base].inner {
-                    crate::TypeInner::Struct { .. } => Some(base),
-                    _ => None,
-                },
-                _ => None,
+                crate::TypeInner::BindingArray { base, .. } => {
+                    matches!(ir_module.types[base].inner, crate::TypeInner::Struct { .. })
+                        .then_some(base)
+                }
+                crate::TypeInner::Scalar(_)
+                | crate::TypeInner::Vector { .. }
+                | crate::TypeInner::Matrix { .. }
+                | crate::TypeInner::CooperativeMatrix { .. }
+                | crate::TypeInner::LongVector { .. }
+                | crate::TypeInner::TensorLayout { .. }
+                | crate::TypeInner::TensorView { .. }
+                | crate::TypeInner::Tensor { .. }
+                | crate::TypeInner::Atomic(_)
+                | crate::TypeInner::Pointer { .. }
+                | crate::TypeInner::ValuePointer { .. }
+                | crate::TypeInner::Array { .. }
+                | crate::TypeInner::Image { .. }
+                | crate::TypeInner::Sampler { .. }
+                | crate::TypeInner::SampledImage { .. }
+                | crate::TypeInner::AccelerationStructure
+                | crate::TypeInner::RayQuery
+                | crate::TypeInner::HitObject { .. }
+                | crate::TypeInner::BufferDescriptor { .. }
+                | crate::TypeInner::Spirv { .. } => None,
             };
             if let (Some(structure), Some(crate::BlockDeclaration::RayTracing)) =
                 (block_struct, global_variable.block)
@@ -3188,31 +3374,116 @@ impl Writer {
                 continue;
             };
             let unused_distance = match *binding {
-                crate::Binding::BuiltIn(crate::BuiltIn::ClipDistances) => {
-                    Some(spirv::BuiltIn::ClipDistance)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::CullDistance) => {
-                    Some(spirv::BuiltIn::CullDistance)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::PointSize) => {
-                    Some(spirv::BuiltIn::PointSize)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::ViewportMaskNV) => {
-                    Some(spirv::BuiltIn::ViewportMaskNV)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::SecondaryPositionNV) => {
-                    Some(spirv::BuiltIn::SecondaryPositionNV)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::SecondaryViewportMaskNV) => {
-                    Some(spirv::BuiltIn::SecondaryViewportMaskNV)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::PositionPerViewNV) => {
-                    Some(spirv::BuiltIn::PositionPerViewNV)
-                }
-                crate::Binding::BuiltIn(crate::BuiltIn::ViewportMaskPerViewNV) => {
-                    Some(spirv::BuiltIn::ViewportMaskPerViewNV)
-                }
-                _ => None,
+                crate::Binding::BuiltIn(built_in) => match built_in {
+                    crate::BuiltIn::ClipDistances => Some(spirv::BuiltIn::ClipDistance),
+                    crate::BuiltIn::CullDistance => Some(spirv::BuiltIn::CullDistance),
+                    crate::BuiltIn::PointSize => Some(spirv::BuiltIn::PointSize),
+                    crate::BuiltIn::ViewportMaskNV => Some(spirv::BuiltIn::ViewportMaskNV),
+                    crate::BuiltIn::SecondaryPositionNV => {
+                        Some(spirv::BuiltIn::SecondaryPositionNV)
+                    }
+                    crate::BuiltIn::SecondaryViewportMaskNV => {
+                        Some(spirv::BuiltIn::SecondaryViewportMaskNV)
+                    }
+                    crate::BuiltIn::PositionPerViewNV => Some(spirv::BuiltIn::PositionPerViewNV),
+                    crate::BuiltIn::ViewportMaskPerViewNV => {
+                        Some(spirv::BuiltIn::ViewportMaskPerViewNV)
+                    }
+                    crate::BuiltIn::PrimitiveIndex
+                    | crate::BuiltIn::Position { .. }
+                    | crate::BuiltIn::ViewIndex
+                    | crate::BuiltIn::BaseInstance
+                    | crate::BuiltIn::BaseVertex
+                    | crate::BuiltIn::InstanceIndex
+                    | crate::BuiltIn::VertexIndex
+                    | crate::BuiltIn::DrawIndex
+                    | crate::BuiltIn::InvocationId
+                    | crate::BuiltIn::PatchVertices
+                    | crate::BuiltIn::TessCoord
+                    | crate::BuiltIn::TessLevelOuter
+                    | crate::BuiltIn::TessLevelInner
+                    | crate::BuiltIn::Layer { .. }
+                    | crate::BuiltIn::ViewportIndex
+                    | crate::BuiltIn::FragDepth
+                    | crate::BuiltIn::PointCoord
+                    | crate::BuiltIn::FrontFacing
+                    | crate::BuiltIn::Barycentric { .. }
+                    | crate::BuiltIn::AmdBarycentric(_)
+                    | crate::BuiltIn::SampleIndex
+                    | crate::BuiltIn::SampleMask { .. }
+                    | crate::BuiltIn::SamplePosition
+                    | crate::BuiltIn::HelperInvocation
+                    | crate::BuiltIn::DeviceIndex
+                    | crate::BuiltIn::ShadingRate
+                    | crate::BuiltIn::FragSize(_)
+                    | crate::BuiltIn::FragInvocationCount(_)
+                    | crate::BuiltIn::FullyCovered
+                    | crate::BuiltIn::FragStencilRef
+                    | crate::BuiltIn::GlobalInvocationId
+                    | crate::BuiltIn::LocalInvocationId
+                    | crate::BuiltIn::LocalInvocationIndex
+                    | crate::BuiltIn::WorkGroupId
+                    | crate::BuiltIn::WorkGroupSize
+                    | crate::BuiltIn::NumWorkGroups
+                    | crate::BuiltIn::NumSubgroups
+                    | crate::BuiltIn::SubgroupId
+                    | crate::BuiltIn::SubgroupSize
+                    | crate::BuiltIn::SubgroupInvocationId
+                    | crate::BuiltIn::SubgroupMask(_)
+                    | crate::BuiltIn::ShaderBallot(_)
+                    | crate::BuiltIn::TileOffset
+                    | crate::BuiltIn::TileDimension
+                    | crate::BuiltIn::TileApronSize
+                    | crate::BuiltIn::ShaderCore(_)
+                    | crate::BuiltIn::MeshTaskSize
+                    | crate::BuiltIn::CullPrimitive
+                    | crate::BuiltIn::PointIndex
+                    | crate::BuiltIn::LineIndices
+                    | crate::BuiltIn::TriangleIndices
+                    | crate::BuiltIn::VertexCount
+                    | crate::BuiltIn::Vertices
+                    | crate::BuiltIn::PrimitiveCount
+                    | crate::BuiltIn::Primitives
+                    | crate::BuiltIn::PrimitiveShadingRate
+                    | crate::BuiltIn::TaskCountNV
+                    | crate::BuiltIn::PrimitiveCountNV
+                    | crate::BuiltIn::PrimitiveIndicesNV
+                    | crate::BuiltIn::MeshViewCountNV
+                    | crate::BuiltIn::MeshViewIndicesNV
+                    | crate::BuiltIn::ClipDistancePerViewNV
+                    | crate::BuiltIn::CullDistancePerViewNV
+                    | crate::BuiltIn::LayerPerViewNV
+                    | crate::BuiltIn::RayInvocationId
+                    | crate::BuiltIn::NumRayInvocations
+                    | crate::BuiltIn::InstanceCustomData
+                    | crate::BuiltIn::GeometryIndex
+                    | crate::BuiltIn::WorldRayOrigin
+                    | crate::BuiltIn::WorldRayDirection
+                    | crate::BuiltIn::ObjectRayOrigin
+                    | crate::BuiltIn::ObjectRayDirection
+                    | crate::BuiltIn::RayTmin
+                    | crate::BuiltIn::RayTCurrentMax
+                    | crate::BuiltIn::ObjectToWorld
+                    | crate::BuiltIn::WorldToObject
+                    | crate::BuiltIn::HitKind
+                    | crate::BuiltIn::InstanceId
+                    | crate::BuiltIn::IncomingRayFlags
+                    | crate::BuiltIn::CullMask
+                    | crate::BuiltIn::HitTriangleVertexPositions
+                    | crate::BuiltIn::CurrentRayTime
+                    | crate::BuiltIn::ClusterId
+                    | crate::BuiltIn::HitMicroTriangleVertexPositions
+                    | crate::BuiltIn::HitMicroTriangleVertexBarycentrics
+                    | crate::BuiltIn::HitKindFrontFacingMicroTriangle
+                    | crate::BuiltIn::HitKindBackFacingMicroTriangle
+                    | crate::BuiltIn::HitIsSphere
+                    | crate::BuiltIn::HitIsLss
+                    | crate::BuiltIn::HitSpherePosition
+                    | crate::BuiltIn::HitSphereRadius
+                    | crate::BuiltIn::HitLssPositions
+                    | crate::BuiltIn::HitLssRadii => None,
+                },
+                crate::Binding::Location { .. } => None,
             }
             .filter(|_| {
                 usize::try_from(index)
@@ -3259,7 +3530,11 @@ impl Writer {
                         ));
                     }
                 }
-                decorations => self.write_binding_struct_member(struct_id, index, decorations),
+                BindingDecorations::BuiltIn(..)
+                | BindingDecorations::Location { .. }
+                | BindingDecorations::None => {
+                    self.write_binding_struct_member(struct_id, index, decorations);
+                }
             }
             for (decoration, operands) in self.builtin_qualifier_decorations(binding)? {
                 self.annotations.push(Instruction::member_decorate(
@@ -3276,28 +3551,130 @@ impl Writer {
     ) -> Result<ArrayVec<(spirv::Decoration, ArrayVec<Word, 1>), 2>, Error> {
         let mut decorations = ArrayVec::new();
         match *binding {
-            crate::Binding::BuiltIn(crate::BuiltIn::Layer {
-                viewport_relative,
-                secondary_view_offset,
-            }) => {
-                if viewport_relative {
-                    self.require(&feature::VIEWPORT_MASK)?;
-                    decorations.push((spirv::Decoration::ViewportRelativeNV, ArrayVec::new()));
+            crate::Binding::BuiltIn(built_in) => match built_in {
+                crate::BuiltIn::Layer {
+                    viewport_relative,
+                    secondary_view_offset,
+                } => {
+                    if viewport_relative {
+                        self.require(&feature::VIEWPORT_MASK)?;
+                        decorations.push((spirv::Decoration::ViewportRelativeNV, ArrayVec::new()));
+                    }
+                    if let Some(offset) = secondary_view_offset {
+                        self.require(&feature::STEREO_VIEW)?;
+                        let mut operands = ArrayVec::new();
+                        operands.push(offset.cast_unsigned());
+                        decorations
+                            .push((spirv::Decoration::SecondaryViewportRelativeNV, operands));
+                    }
                 }
-                if let Some(offset) = secondary_view_offset {
-                    self.require(&feature::STEREO_VIEW)?;
-                    let mut operands = ArrayVec::new();
-                    operands.push(offset.cast_unsigned());
-                    decorations.push((spirv::Decoration::SecondaryViewportRelativeNV, operands));
+                crate::BuiltIn::SampleMask { override_coverage } => {
+                    if override_coverage {
+                        self.require(&feature::SAMPLE_MASK_OVERRIDE_COVERAGE)?;
+                        decorations.push((spirv::Decoration::OverrideCoverageNV, ArrayVec::new()));
+                    }
                 }
-            }
-            crate::Binding::BuiltIn(crate::BuiltIn::SampleMask {
-                override_coverage: true,
-            }) => {
-                self.require(&feature::SAMPLE_MASK_OVERRIDE_COVERAGE)?;
-                decorations.push((spirv::Decoration::OverrideCoverageNV, ArrayVec::new()));
-            }
-            _ => {}
+                crate::BuiltIn::PrimitiveIndex
+                | crate::BuiltIn::Position { .. }
+                | crate::BuiltIn::ViewIndex
+                | crate::BuiltIn::BaseInstance
+                | crate::BuiltIn::BaseVertex
+                | crate::BuiltIn::ClipDistances
+                | crate::BuiltIn::CullDistance
+                | crate::BuiltIn::InstanceIndex
+                | crate::BuiltIn::PointSize
+                | crate::BuiltIn::VertexIndex
+                | crate::BuiltIn::DrawIndex
+                | crate::BuiltIn::InvocationId
+                | crate::BuiltIn::PatchVertices
+                | crate::BuiltIn::TessCoord
+                | crate::BuiltIn::TessLevelOuter
+                | crate::BuiltIn::TessLevelInner
+                | crate::BuiltIn::ViewportIndex
+                | crate::BuiltIn::ViewportMaskNV
+                | crate::BuiltIn::SecondaryPositionNV
+                | crate::BuiltIn::SecondaryViewportMaskNV
+                | crate::BuiltIn::PositionPerViewNV
+                | crate::BuiltIn::ViewportMaskPerViewNV
+                | crate::BuiltIn::FragDepth
+                | crate::BuiltIn::PointCoord
+                | crate::BuiltIn::FrontFacing
+                | crate::BuiltIn::Barycentric { .. }
+                | crate::BuiltIn::AmdBarycentric(_)
+                | crate::BuiltIn::SampleIndex
+                | crate::BuiltIn::SamplePosition
+                | crate::BuiltIn::HelperInvocation
+                | crate::BuiltIn::DeviceIndex
+                | crate::BuiltIn::ShadingRate
+                | crate::BuiltIn::FragSize(_)
+                | crate::BuiltIn::FragInvocationCount(_)
+                | crate::BuiltIn::FullyCovered
+                | crate::BuiltIn::FragStencilRef
+                | crate::BuiltIn::GlobalInvocationId
+                | crate::BuiltIn::LocalInvocationId
+                | crate::BuiltIn::LocalInvocationIndex
+                | crate::BuiltIn::WorkGroupId
+                | crate::BuiltIn::WorkGroupSize
+                | crate::BuiltIn::NumWorkGroups
+                | crate::BuiltIn::NumSubgroups
+                | crate::BuiltIn::SubgroupId
+                | crate::BuiltIn::SubgroupSize
+                | crate::BuiltIn::SubgroupInvocationId
+                | crate::BuiltIn::SubgroupMask(_)
+                | crate::BuiltIn::ShaderBallot(_)
+                | crate::BuiltIn::TileOffset
+                | crate::BuiltIn::TileDimension
+                | crate::BuiltIn::TileApronSize
+                | crate::BuiltIn::ShaderCore(_)
+                | crate::BuiltIn::MeshTaskSize
+                | crate::BuiltIn::CullPrimitive
+                | crate::BuiltIn::PointIndex
+                | crate::BuiltIn::LineIndices
+                | crate::BuiltIn::TriangleIndices
+                | crate::BuiltIn::VertexCount
+                | crate::BuiltIn::Vertices
+                | crate::BuiltIn::PrimitiveCount
+                | crate::BuiltIn::Primitives
+                | crate::BuiltIn::PrimitiveShadingRate
+                | crate::BuiltIn::TaskCountNV
+                | crate::BuiltIn::PrimitiveCountNV
+                | crate::BuiltIn::PrimitiveIndicesNV
+                | crate::BuiltIn::MeshViewCountNV
+                | crate::BuiltIn::MeshViewIndicesNV
+                | crate::BuiltIn::ClipDistancePerViewNV
+                | crate::BuiltIn::CullDistancePerViewNV
+                | crate::BuiltIn::LayerPerViewNV
+                | crate::BuiltIn::RayInvocationId
+                | crate::BuiltIn::NumRayInvocations
+                | crate::BuiltIn::InstanceCustomData
+                | crate::BuiltIn::GeometryIndex
+                | crate::BuiltIn::WorldRayOrigin
+                | crate::BuiltIn::WorldRayDirection
+                | crate::BuiltIn::ObjectRayOrigin
+                | crate::BuiltIn::ObjectRayDirection
+                | crate::BuiltIn::RayTmin
+                | crate::BuiltIn::RayTCurrentMax
+                | crate::BuiltIn::ObjectToWorld
+                | crate::BuiltIn::WorldToObject
+                | crate::BuiltIn::HitKind
+                | crate::BuiltIn::InstanceId
+                | crate::BuiltIn::IncomingRayFlags
+                | crate::BuiltIn::CullMask
+                | crate::BuiltIn::HitTriangleVertexPositions
+                | crate::BuiltIn::CurrentRayTime
+                | crate::BuiltIn::ClusterId
+                | crate::BuiltIn::HitMicroTriangleVertexPositions
+                | crate::BuiltIn::HitMicroTriangleVertexBarycentrics
+                | crate::BuiltIn::HitKindFrontFacingMicroTriangle
+                | crate::BuiltIn::HitKindBackFacingMicroTriangle
+                | crate::BuiltIn::HitIsSphere
+                | crate::BuiltIn::HitIsLss
+                | crate::BuiltIn::HitSpherePosition
+                | crate::BuiltIn::HitSphereRadius
+                | crate::BuiltIn::HitLssPositions
+                | crate::BuiltIn::HitLssRadii => {}
+            },
+            crate::Binding::Location { .. } => {}
         }
         Ok(decorations)
     }
@@ -3957,7 +4334,14 @@ impl Writer {
     }
 }
 
-/// Adds `ty` and every type it contains to `laid_out`.
+fn encoded_float_type(id: Word, bits: u32, encoding: spirv::FPEncoding) -> Option<Instruction> {
+    let mut instruction = Instruction::new(spirv::Op::TypeFloat);
+    instruction.set_result(id);
+    instruction.add_operand(bits);
+    instruction.add_operand(encoding as u32);
+    Some(instruction)
+}
+
 pub(super) fn mark_laid_out(
     types: &UniqueArena<crate::Type>,
     laid_out: &mut crate::arena::HandleSet<crate::Type>,
@@ -3975,7 +4359,25 @@ pub(super) fn mark_laid_out(
             crate::TypeInner::Struct { ref members, .. } => {
                 pending.extend(members.iter().map(|member| member.ty));
             }
-            _ => {}
+            crate::TypeInner::Scalar(_)
+            | crate::TypeInner::Vector { .. }
+            | crate::TypeInner::Matrix { .. }
+            | crate::TypeInner::CooperativeMatrix { .. }
+            | crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
+            | crate::TypeInner::Tensor { .. }
+            | crate::TypeInner::Atomic(_)
+            | crate::TypeInner::Pointer { .. }
+            | crate::TypeInner::ValuePointer { .. }
+            | crate::TypeInner::Image { .. }
+            | crate::TypeInner::Sampler { .. }
+            | crate::TypeInner::SampledImage { .. }
+            | crate::TypeInner::AccelerationStructure
+            | crate::TypeInner::RayQuery
+            | crate::TypeInner::HitObject { .. }
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => {}
         }
     }
 }
@@ -4011,18 +4413,81 @@ fn interface_member_used(
         };
         for (_, expression) in function.expressions.iter() {
             match *expression {
-                crate::Expression::AccessIndex { base, index } if is_block(base) => {
-                    if index == member {
+                crate::Expression::AccessIndex { base, index } => {
+                    if is_block(base) && index == member {
                         return true;
                     }
                 }
-                crate::Expression::Load { pointer } if is_global(pointer) || is_block(pointer) => {
-                    return true;
+                crate::Expression::Load { pointer } => {
+                    if is_global(pointer) || is_block(pointer) {
+                        return true;
+                    }
                 }
-                crate::Expression::Access { base, .. } if !arrayed && is_global(base) => {
-                    return true;
+                crate::Expression::Access { base, .. } => {
+                    if !arrayed && is_global(base) {
+                        return true;
+                    }
                 }
-                _ => {}
+                crate::Expression::Literal(_)
+                | crate::Expression::Constant(_)
+                | crate::Expression::Override(_)
+                | crate::Expression::ZeroValue(_)
+                | crate::Expression::Compose { .. }
+                | crate::Expression::Splat { .. }
+                | crate::Expression::Swizzle { .. }
+                | crate::Expression::FunctionArgument(_)
+                | crate::Expression::GlobalVariable(_)
+                | crate::Expression::LocalVariable(_)
+                | crate::Expression::ImageSample { .. }
+                | crate::Expression::ImageLoad { .. }
+                | crate::Expression::ImageQuery { .. }
+                | crate::Expression::Unary { .. }
+                | crate::Expression::Binary { .. }
+                | crate::Expression::Select { .. }
+                | crate::Expression::Derivative { .. }
+                | crate::Expression::Relational { .. }
+                | crate::Expression::Math { .. }
+                | crate::Expression::As { .. }
+                | crate::Expression::CallResult(_)
+                | crate::Expression::AtomicResult { .. }
+                | crate::Expression::ArrayLength(_)
+                | crate::Expression::WideArrayLength(_)
+                | crate::Expression::PhysicalPointer { .. }
+                | crate::Expression::PhysicalAddress { .. }
+                | crate::Expression::BufferPointer { .. }
+                | crate::Expression::HeapOffset { .. }
+                | crate::Expression::RayQueryProceedResult
+                | crate::Expression::RayQueryGet { .. }
+                | crate::Expression::ReportIntersectionResult
+                | crate::Expression::AccelerationStructureFromAddress { .. }
+                | crate::Expression::HitObjectGet { .. }
+                | crate::Expression::FetchMicroTriangleVertex { .. }
+                | crate::Expression::SubgroupBallotResult
+                | crate::Expression::SubgroupOperationResult { .. }
+                | crate::Expression::SpirvInstructionResult { .. }
+                | crate::Expression::CooperativeLoad { .. }
+                | crate::Expression::CooperativeMultiplyAdd { .. }
+                | crate::Expression::CooperativeMatrixLength { .. }
+                | crate::Expression::Expect { .. }
+                | crate::Expression::ImageSparseResident { .. }
+                | crate::Expression::IsHelperInvocation
+                | crate::Expression::ReadClock { .. }
+                | crate::Expression::InterpolateAt { .. }
+                | crate::Expression::FragmentFetch { .. }
+                | crate::Expression::ImageFootprint { .. }
+                | crate::Expression::AttachmentRead { .. }
+                | crate::Expression::Replicate { .. }
+                | crate::Expression::CooperativeVectorLoad { .. }
+                | crate::Expression::CooperativeVectorMatMul { .. }
+                | crate::Expression::Convert { .. }
+                | crate::Expression::CooperativeMatrixResult { .. }
+                | crate::Expression::TensorCreate { .. }
+                | crate::Expression::ImageProcessing { .. }
+                | crate::Expression::ArrayConversion { .. }
+                | crate::Expression::Bitcast { .. }
+                | crate::Expression::TensorSet { .. }
+                | crate::Expression::TensorRead { .. }
+                | crate::Expression::TensorQuerySize { .. } => {}
             }
         }
     }

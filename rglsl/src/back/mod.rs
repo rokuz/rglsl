@@ -1,3 +1,5 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+
 /*!
 The backend: exports shader [`Module`](super::Module)s as SPIR-V.
 */
@@ -19,14 +21,30 @@ pub type PipelineConstants = hashbrown::HashMap<String, f64>;
 impl crate::TypeInner {
     /// Returns true if a variable of this type is a handle.
     pub const fn is_handle(&self) -> bool {
-        matches!(
-            *self,
+        match *self {
             Self::Image { .. }
-                | Self::SampledImage { .. }
-                | Self::Sampler { .. }
-                | Self::AccelerationStructure { .. }
-                | Self::Tensor { .. }
-        )
+            | Self::SampledImage { .. }
+            | Self::Sampler { .. }
+            | Self::AccelerationStructure
+            | Self::Tensor { .. } => true,
+            Self::Scalar(_)
+            | Self::Vector { .. }
+            | Self::Matrix { .. }
+            | Self::CooperativeMatrix { .. }
+            | Self::LongVector { .. }
+            | Self::TensorLayout { .. }
+            | Self::TensorView { .. }
+            | Self::Atomic(_)
+            | Self::Pointer { .. }
+            | Self::ValuePointer { .. }
+            | Self::Array { .. }
+            | Self::Struct { .. }
+            | Self::RayQuery
+            | Self::HitObject { .. }
+            | Self::BindingArray { .. }
+            | Self::BufferDescriptor { .. }
+            | Self::Spirv { .. } => false,
+        }
     }
 }
 

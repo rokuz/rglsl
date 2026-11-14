@@ -24,15 +24,37 @@ pub fn validate_compose(
         Ti::Vector { size, scalar } => {
             let mut total = 0;
             for (index, comp_res) in component_resolutions.enumerate() {
-                total += match *comp_res.inner_with(gctx.types) {
+                let comp_inner = comp_res.inner_with(gctx.types);
+                total += match *comp_inner {
                     Ti::Scalar(comp_scalar) if comp_scalar == scalar => 1,
                     Ti::Vector {
                         size: comp_size,
                         scalar: comp_scalar,
                     } if comp_scalar == scalar => comp_size as u32,
-                    ref other => {
+                    Ti::Scalar(_)
+                    | Ti::Vector { .. }
+                    | Ti::Matrix { .. }
+                    | Ti::CooperativeMatrix { .. }
+                    | Ti::LongVector { .. }
+                    | Ti::TensorLayout { .. }
+                    | Ti::TensorView { .. }
+                    | Ti::Tensor { .. }
+                    | Ti::Atomic(_)
+                    | Ti::Pointer { .. }
+                    | Ti::ValuePointer { .. }
+                    | Ti::Array { .. }
+                    | Ti::Struct { .. }
+                    | Ti::Image { .. }
+                    | Ti::Sampler { .. }
+                    | Ti::SampledImage { .. }
+                    | Ti::AccelerationStructure
+                    | Ti::RayQuery
+                    | Ti::HitObject { .. }
+                    | Ti::BindingArray { .. }
+                    | Ti::BufferDescriptor { .. }
+                    | Ti::Spirv { .. } => {
                         log::error!(
-                            "Vector component[{index}] type {other:?}, building {scalar:?}"
+                            "Vector component[{index}] type {comp_inner:?}, building {scalar:?}"
                         );
                         return Err(ComposeError::ComponentType {
                             index: index as u32,
@@ -122,7 +144,27 @@ pub fn validate_compose(
                 }
             }
         }
-        ref other => {
+        ref other @ (Ti::Scalar(_)
+        | Ti::CooperativeMatrix { .. }
+        | Ti::TensorLayout { .. }
+        | Ti::TensorView { .. }
+        | Ti::Tensor { .. }
+        | Ti::Atomic(_)
+        | Ti::Pointer { .. }
+        | Ti::ValuePointer { .. }
+        | Ti::Array {
+            size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
+            ..
+        }
+        | Ti::Image { .. }
+        | Ti::Sampler { .. }
+        | Ti::SampledImage { .. }
+        | Ti::AccelerationStructure
+        | Ti::RayQuery
+        | Ti::HitObject { .. }
+        | Ti::BindingArray { .. }
+        | Ti::BufferDescriptor { .. }
+        | Ti::Spirv { .. }) => {
             log::error!("Composing of {other:?}");
             return Err(ComposeError::Type(self_ty_handle));
         }

@@ -150,7 +150,11 @@ impl Module {
         for _ in 0..=self.types.len() {
             match *self.info(id)? {
                 TypeInfo::Element(element) | TypeInfo::Pointer(_, element) => id = element,
-                ref other => return Some(other),
+                ref other @ (TypeInfo::Int(_)
+                | TypeInfo::Float(_)
+                | TypeInfo::EncodedFloat(_)
+                | TypeInfo::Struct(_)
+                | TypeInfo::Other) => return Some(other),
             }
         }
         None
@@ -158,9 +162,10 @@ impl Module {
 
     fn storage_class(&self, pointer: Word) -> Option<Word> {
         let ty = self.value_types.get(&pointer)?;
-        match *self.info(*ty)? {
-            TypeInfo::Pointer(class, _) => Some(class),
-            _ => None,
+        if let TypeInfo::Pointer(class, _) = *self.info(*ty)? {
+            Some(class)
+        } else {
+            None
         }
     }
 }
@@ -406,7 +411,11 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         module.types.values().any(|info| match *info {
             TypeInfo::Int(found) => !float && found == width,
             TypeInfo::Float(found) => float && found == width,
-            _ => false,
+            TypeInfo::EncodedFloat(_)
+            | TypeInfo::Struct(_)
+            | TypeInfo::Element(_)
+            | TypeInfo::Pointer(..)
+            | TypeInfo::Other => false,
         })
     };
     let covered = |capabilities: &FastIndexSet<Capability>, candidates: &[Capability]| {

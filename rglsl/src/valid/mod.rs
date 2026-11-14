@@ -1,3 +1,4 @@
+#![warn(clippy::wildcard_enum_match_arm)]
 /*!
 Shader validator.
 */
@@ -291,7 +292,6 @@ impl crate::TypeInner {
         }
     }
 
-    /// Return the `ImageDimension` for which `self` is an appropriate coordinate.
     fn addresses_image(&self, dim: crate::ImageDimension) -> bool {
         let dim = match dim {
             crate::ImageDimension::Buffer => crate::ImageDimension::D1,
@@ -306,34 +306,75 @@ impl crate::TypeInner {
                     }
                 );
             }
-            other => other,
+            crate::ImageDimension::D1 | crate::ImageDimension::D2 | crate::ImageDimension::D3 => {
+                dim
+            }
         };
         self.image_storage_coordinates() == Some(dim)
     }
 
     const fn image_storage_coordinates(&self) -> Option<crate::ImageDimension> {
         match *self {
-            Self::Scalar(crate::Scalar {
-                kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                ..
-            }) => Some(crate::ImageDimension::D1),
+            Self::Scalar(crate::Scalar { kind, .. }) => match kind {
+                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                    Some(crate::ImageDimension::D1)
+                }
+                crate::ScalarKind::Float
+                | crate::ScalarKind::Bool
+                | crate::ScalarKind::BFloat
+                | crate::ScalarKind::FloatE4M3
+                | crate::ScalarKind::FloatE5M2
+                | crate::ScalarKind::FloatE2M1
+                | crate::ScalarKind::FloatE3M2
+                | crate::ScalarKind::FloatE2M3
+                | crate::ScalarKind::FloatUE8M0
+                | crate::ScalarKind::FloatMXINT8 => None,
+            },
             Self::Vector {
-                size: crate::VectorSize::Bi,
-                scalar:
-                    crate::Scalar {
-                        kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                        ..
-                    },
-            } => Some(crate::ImageDimension::D2),
-            Self::Vector {
-                size: crate::VectorSize::Tri,
-                scalar:
-                    crate::Scalar {
-                        kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                        ..
-                    },
-            } => Some(crate::ImageDimension::D3),
-            _ => None,
+                size,
+                scalar: crate::Scalar { kind, .. },
+            } => match (size, kind) {
+                (crate::VectorSize::Bi, crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
+                    Some(crate::ImageDimension::D2)
+                }
+                (crate::VectorSize::Tri, crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
+                    Some(crate::ImageDimension::D3)
+                }
+                (crate::VectorSize::Quad, crate::ScalarKind::Sint | crate::ScalarKind::Uint)
+                | (
+                    crate::VectorSize::Bi | crate::VectorSize::Tri | crate::VectorSize::Quad,
+                    crate::ScalarKind::Float
+                    | crate::ScalarKind::Bool
+                    | crate::ScalarKind::BFloat
+                    | crate::ScalarKind::FloatE4M3
+                    | crate::ScalarKind::FloatE5M2
+                    | crate::ScalarKind::FloatE2M1
+                    | crate::ScalarKind::FloatE3M2
+                    | crate::ScalarKind::FloatE2M3
+                    | crate::ScalarKind::FloatUE8M0
+                    | crate::ScalarKind::FloatMXINT8,
+                ) => None,
+            },
+            Self::Matrix { .. }
+            | Self::CooperativeMatrix { .. }
+            | Self::LongVector { .. }
+            | Self::TensorLayout { .. }
+            | Self::TensorView { .. }
+            | Self::Tensor { .. }
+            | Self::Atomic(_)
+            | Self::Pointer { .. }
+            | Self::ValuePointer { .. }
+            | Self::Array { .. }
+            | Self::Struct { .. }
+            | Self::Image { .. }
+            | Self::Sampler { .. }
+            | Self::SampledImage { .. }
+            | Self::AccelerationStructure
+            | Self::RayQuery
+            | Self::HitObject { .. }
+            | Self::BindingArray { .. }
+            | Self::BufferDescriptor { .. }
+            | Self::Spirv { .. } => None,
         }
     }
 }
@@ -435,12 +476,27 @@ impl Validator {
             crate::TypeInner::Scalar(scalar) => Some(scalar),
             crate::TypeInner::Vector { scalar, .. }
             | crate::TypeInner::Matrix { scalar, .. }
-            | crate::TypeInner::CooperativeMatrix { scalar, .. }
-                if o.id.is_none() =>
-            {
-                Some(scalar)
+            | crate::TypeInner::CooperativeMatrix { scalar, .. } => {
+                o.id.is_none().then_some(scalar)
             }
-            _ => None,
+            crate::TypeInner::LongVector { .. }
+            | crate::TypeInner::TensorLayout { .. }
+            | crate::TypeInner::TensorView { .. }
+            | crate::TypeInner::Tensor { .. }
+            | crate::TypeInner::Atomic(_)
+            | crate::TypeInner::Pointer { .. }
+            | crate::TypeInner::ValuePointer { .. }
+            | crate::TypeInner::Array { .. }
+            | crate::TypeInner::Struct { .. }
+            | crate::TypeInner::Image { .. }
+            | crate::TypeInner::Sampler { .. }
+            | crate::TypeInner::SampledImage { .. }
+            | crate::TypeInner::AccelerationStructure
+            | crate::TypeInner::RayQuery
+            | crate::TypeInner::HitObject { .. }
+            | crate::TypeInner::BindingArray { .. }
+            | crate::TypeInner::BufferDescriptor { .. }
+            | crate::TypeInner::Spirv { .. } => None,
         };
         let composite = o.id.is_none()
             && matches!(

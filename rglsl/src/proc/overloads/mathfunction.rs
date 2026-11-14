@@ -200,7 +200,17 @@ fn integer_dot(accumulate: bool) -> List {
         let other = ir::Scalar {
             kind: match left.kind {
                 ir::ScalarKind::Uint => ir::ScalarKind::Sint,
-                _ => ir::ScalarKind::Uint,
+                ir::ScalarKind::Sint
+                | ir::ScalarKind::Float
+                | ir::ScalarKind::Bool
+                | ir::ScalarKind::BFloat
+                | ir::ScalarKind::FloatE4M3
+                | ir::ScalarKind::FloatE5M2
+                | ir::ScalarKind::FloatE2M1
+                | ir::ScalarKind::FloatE3M2
+                | ir::ScalarKind::FloatE2M3
+                | ir::ScalarKind::FloatUE8M0
+                | ir::ScalarKind::FloatMXINT8 => ir::ScalarKind::Uint,
             },
             width: left.width,
         };
