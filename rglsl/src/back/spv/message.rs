@@ -1,16 +1,12 @@
 use alloc::vec::Vec;
 
-use spirv::{Capability, Decoration, Op, Word};
+use spirv::{Decoration, Op, Word};
 
 use super::plain_types::CompositeShape;
-use super::{Block, BlockContext, Error, Instruction, Writer, WriterFlags, helpers};
+use super::{
+    Block, BlockContext, Error, Instruction, Writer, WriterFlags, feature, grammar, helpers,
+};
 use crate::{DebugPrintfArgument, Expression, Type, TypeInner, arena::Handle};
-
-const CAPABILITY_ABORT: Word = 5120;
-const CAPABILITY_CONSTANT_DATA: Word = 5146;
-const DECORATION_UTF_ENCODED: Word = 5145;
-const OP_ABORT: u32 = 5121;
-const OP_CONSTANT_DATA: u32 = 5147;
 
 impl Writer {
     pub(super) fn debug_string(&mut self, text: &str) -> Word {
@@ -27,7 +23,7 @@ impl Writer {
         if self.utf_encoded.insert(id) {
             let mut instruction = Instruction::new(Op::Decorate);
             instruction.add_operand(id);
-            instruction.add_operand(DECORATION_UTF_ENCODED);
+            instruction.add_operand(grammar::decoration::UTFEncodedKHR);
             self.annotations.push(instruction);
         }
     }
@@ -149,13 +145,7 @@ impl BlockContext<'_> {
         ty: Handle<Type>,
         arguments: &[Handle<Expression>],
     ) -> Result<(), Error> {
-        self.writer.capabilities_used.insert(Capability::Int8);
-        self.writer.raw_capabilities.insert(CAPABILITY_ABORT);
-        self.writer
-            .raw_capabilities
-            .insert(CAPABILITY_CONSTANT_DATA);
-        self.writer.use_extension("SPV_KHR_abort");
-        self.writer.use_extension("SPV_KHR_constant_data");
+        self.writer.use_feature(&feature::ABORT);
 
         let module = self.ir_module;
         let TypeInner::Struct { ref members, .. } = module.types[ty].inner else {
@@ -173,7 +163,7 @@ impl BlockContext<'_> {
         self.writer.utf_encoded(laid_out_text);
 
         let data = self.gen_id();
-        let mut constant = Instruction::raw(OP_CONSTANT_DATA);
+        let mut constant = Instruction::raw(grammar::op::ConstantDataKHR);
         constant.set_type(packed);
         constant.set_result(data);
         constant.add_operands(helpers::string_to_words(message));
@@ -201,7 +191,7 @@ impl BlockContext<'_> {
         block
             .body
             .push(Instruction::composite_construct(value_type, value, &values));
-        let mut abort = Instruction::raw(OP_ABORT);
+        let mut abort = Instruction::raw(grammar::op::AbortKHR);
         abort.add_operand(message_type);
         abort.add_operand(value);
         self.function.consume(block, abort);

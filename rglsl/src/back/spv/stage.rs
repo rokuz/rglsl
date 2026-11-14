@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use super::{Block, BlockContext, Error, Instruction, Writer};
+use super::{Block, BlockContext, Error, Instruction, Writer, feature};
 use crate::{
     GeometryInfo, GeometryInputPrimitive, GeometryOutputPrimitive, Handle, ShaderStage,
     TessellationInfo, TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
@@ -29,11 +29,7 @@ impl Writer {
                         self.require_any("`gl_ViewportIndex`", &[Capability::ShaderViewportIndex])
                     }
                 } else {
-                    self.use_extension("SPV_EXT_shader_viewport_index_layer");
-                    self.require_any(
-                        "`gl_Layer` or `gl_ViewportIndex` before rasterization",
-                        &[Capability::ShaderViewportIndexLayerEXT],
-                    )
+                    self.require(&feature::SHADER_VIEWPORT_INDEX_LAYER)
                 }
             }
             ShaderStage::Mesh
@@ -150,11 +146,7 @@ impl Writer {
         if passthrough.is_empty() {
             return Ok(());
         }
-        self.require_any(
-            "geometry shader passthrough",
-            &[Capability::GeometryShaderPassthroughNV],
-        )?;
-        self.use_extension("SPV_NV_geometry_shader_passthrough");
+        self.require(&feature::GEOMETRY_SHADER_PASSTHROUGH)?;
         for &handle in passthrough {
             let id = self.global_variables[handle].var_id;
             if id != 0 {

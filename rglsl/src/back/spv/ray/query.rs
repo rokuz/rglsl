@@ -1,6 +1,6 @@
 use spirv::Op;
 
-use super::super::{Block, BlockContext, Error, Instruction};
+use super::super::{Block, BlockContext, Error, Instruction, feature};
 use crate::arena::Handle;
 
 impl BlockContext<'_> {
@@ -10,7 +10,7 @@ impl BlockContext<'_> {
         function: &crate::RayQueryFunction,
         block: &mut Block,
     ) -> Result<(), Error> {
-        self.writer.require_ray_queries()?;
+        self.writer.require(&feature::RAY_QUERY)?;
         let query_id = self.cached.get(query)?;
         match *function {
             crate::RayQueryFunction::Initialize {
@@ -75,7 +75,7 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<spirv::Word, Error> {
         use crate::RayQueryIntersectionValue as Iv;
-        self.writer.require_ray_queries()?;
+        self.writer.require(&feature::RAY_QUERY)?;
         let query_id = self.cached.get(query)?;
         let (op, committed) = match value {
             crate::RayQueryValue::RayFlags => (Op::RayQueryGetRayFlagsKHR, None),
@@ -103,12 +103,13 @@ impl BlockContext<'_> {
                     Iv::ObjectToWorld => Op::RayQueryGetIntersectionObjectToWorldKHR,
                     Iv::WorldToObject => Op::RayQueryGetIntersectionWorldToObjectKHR,
                     Iv::ClusterId => {
-                        self.writer.require_cluster_acceleration_structure()?;
+                        self.writer
+                            .require(&feature::CLUSTER_ACCELERATION_STRUCTURE)?;
                         Op::RayQueryGetIntersectionClusterIdNV
                     }
                     Iv::SpherePosition | Iv::SphereRadius | Iv::IsSphereHit => {
-                        self.writer.require_sphere_geometry()?;
-                        self.writer.require_lss_geometry()?;
+                        self.writer.require(&feature::SPHERE_GEOMETRY)?;
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
                         match value {
                             Iv::SpherePosition => Op::RayQueryGetIntersectionSpherePositionNV,
                             Iv::SphereRadius => Op::RayQueryGetIntersectionSphereRadiusNV,
@@ -116,7 +117,7 @@ impl BlockContext<'_> {
                         }
                     }
                     Iv::LssPositions | Iv::LssRadii | Iv::LssHitValue | Iv::IsLssHit => {
-                        self.writer.require_lss_geometry()?;
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
                         match value {
                             Iv::LssPositions => Op::RayQueryGetIntersectionLSSPositionsNV,
                             Iv::LssRadii => Op::RayQueryGetIntersectionLSSRadiiNV,
@@ -125,12 +126,7 @@ impl BlockContext<'_> {
                         }
                     }
                     Iv::TriangleVertexPositions => {
-                        self.writer.require_any(
-                            "ray query vertex positions",
-                            &[spirv::Capability::RayQueryPositionFetchKHR],
-                        )?;
-                        self.writer
-                            .use_extension("SPV_KHR_ray_tracing_position_fetch");
+                        self.writer.require(&feature::RAY_QUERY_POSITION_FETCH)?;
                         Op::RayQueryGetIntersectionTriangleVertexPositionsKHR
                     }
                 };

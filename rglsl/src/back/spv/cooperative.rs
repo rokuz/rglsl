@@ -3,22 +3,11 @@ use alloc::vec::Vec;
 use spirv::{Op, Word};
 
 use super::block::AccessTypeAdjustment;
-use super::{Block, BlockContext, Error, Instruction, LookupType, Writer};
+use super::{Block, BlockContext, Error, Instruction, LookupType, Writer, feature, grammar};
 use crate::{
     CooperativeData, CooperativeMatrixClass, CooperativeMatrixFunction, CooperativeSize,
     Expression, Flavor, LongVectorClass, ScalarKind, TensorOperation, TypeInner, arena::Handle,
 };
-
-const SPV_EXT_REPLICATED_COMPOSITES: &str = "SPV_EXT_replicated_composites";
-const SPV_NV_COOPERATIVE_MATRIX2: &str = "SPV_NV_cooperative_matrix2";
-const SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1: &str = "SPV_EXT_cooperative_matrix_maintenance1";
-const SPV_NV_COOPERATIVE_MATRIX_DECODE_VECTOR: &str = "SPV_NV_cooperative_matrix_decode_vector";
-const CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT: Word = 5429;
-const CAPABILITY_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5438;
-const CAPABILITY_COOPERATIVE_MATRIX_DECODE_VECTOR_NV: Word = 5447;
-const OP_COOPERATIVE_MATRIX_GET_COORDINATE_EXT: Word = 5363;
-const DECORATION_COOPERATIVE_MATRIX_TRANSPOSE_EXT: Word = 5440;
-const TENSOR_ADDRESSING_DECODE_VECTOR_FUNC: Word = 0x4;
 
 #[derive(Clone, Copy)]
 pub(super) enum ReplicateShape {
@@ -48,21 +37,12 @@ fn vector_memory_operands(mut memory: Vec<Word>) -> Vec<Word> {
 }
 
 impl Writer {
-    pub(super) fn require_replicated_composites(&mut self) -> Result<(), Error> {
-        self.require_any(
-            "replicated composites",
-            &[spirv::Capability::ReplicatedCompositesEXT],
-        )?;
-        self.use_extension(SPV_EXT_REPLICATED_COMPOSITES);
-        Ok(())
-    }
-
     pub(super) fn write_spec_constant_replicate(
         &mut self,
         type_id: Word,
         value_id: Word,
     ) -> Result<Word, Error> {
-        self.require_replicated_composites()?;
+        self.require(&feature::REPLICATED_COMPOSITES)?;
         let id = self.id_gen.next();
         let mut instruction = Instruction::new(Op::SpecConstantCompositeReplicateEXT);
         instruction.set_type(type_id);
@@ -91,7 +71,7 @@ impl Writer {
                 if let Some(&id) = self.cached_constants.get(&key) {
                     return Ok(id);
                 }
-                self.require_replicated_composites()?;
+                self.require(&feature::REPLICATED_COMPOSITES)?;
                 let type_id = self.get_handle_type_id(ty)?;
                 let id = self.id_gen.next();
                 let mut instruction = Instruction::new(Op::ConstantCompositeReplicateEXT);
@@ -141,7 +121,7 @@ impl BlockContext<'_> {
                 ));
             }
             ReplicateShape::Replicated => {
-                self.writer.require_replicated_composites()?;
+                self.writer.require(&feature::REPLICATED_COMPOSITES)?;
                 let mut instruction = Instruction::new(Op::CompositeConstructReplicateEXT);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
@@ -165,13 +145,14 @@ impl BlockContext<'_> {
             Expression::Literal(crate::Literal::U32(value)) => i64::from(value),
             _ => return Ok(()),
         };
-        if matches!(value, 4202 | 4203) {
-            self.writer.require_any(
-                "blocked interleaved cooperative matrix layouts",
-                &[spirv::Capability::CooperativeMatrixLayoutsARM],
-            )?;
+        let blocked_interleaved = [
+            spirv::CooperativeMatrixLayout::RowBlockedInterleavedARM,
+            spirv::CooperativeMatrixLayout::ColumnBlockedInterleavedARM,
+        ]
+        .map(|layout| i64::from(layout as u32));
+        if blocked_interleaved.contains(&value) {
             self.writer
-                .use_extension("SPV_ARM_cooperative_matrix_layouts");
+                .require(&feature::COOPERATIVE_MATRIX_LAYOUTS_ARM)?;
         }
         Ok(())
     }
@@ -352,7 +333,7 @@ impl BlockContext<'_> {
                 self.writer.get_constant_composite(lookup, &parts)
             }
             ReplicateShape::Replicated => {
-                self.writer.require_replicated_composites()?;
+                self.writer.require(&feature::REPLICATED_COMPOSITES)?;
                 let type_id = self.get_type_id(lookup)?;
                 let id = self.gen_id();
                 let mut instruction = Instruction::new(Op::ConstantCompositeReplicateEXT);
@@ -509,13 +490,6 @@ impl BlockContext<'_> {
         }
     }
 
-    fn require_expect_assume(&mut self) -> Result<(), Error> {
-        self.writer
-            .require_any("expect and assume", &[spirv::Capability::ExpectAssumeKHR])?;
-        self.writer.use_extension("SPV_KHR_expect_assume");
-        Ok(())
-    }
-
     pub(super) fn write_expect(
         &mut self,
         value: Handle<Expression>,
@@ -523,7 +497,7 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        self.require_expect_assume()?;
+        self.writer.require(&feature::EXPECT_ASSUME)?;
         let value_id = self.cached.get(value)?;
         let expected_id = self.cached.get(expected)?;
         let id = self.gen_id();
@@ -542,7 +516,7 @@ impl BlockContext<'_> {
         condition: Handle<Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
-        self.require_expect_assume()?;
+        self.writer.require(&feature::EXPECT_ASSUME)?;
         let condition_id = self.cached.get(condition)?;
         let mut instruction = Instruction::new(Op::AssumeTrueKHR);
         instruction.add_operand(condition_id);
@@ -659,7 +633,7 @@ impl BlockContext<'_> {
                 layout,
                 interpretation,
             } => {
-                self.require_cooperative_vector_training()?;
+                self.writer.require(&feature::COOPERATIVE_VECTOR_TRAINING)?;
                 let pointer_id = self.cooperative_pointer(matrix, block)?;
                 let mut instruction =
                     Instruction::new(Op::CooperativeVectorOuterProductAccumulateNV);
@@ -674,7 +648,7 @@ impl BlockContext<'_> {
                 pointer,
                 offset,
             } => {
-                self.require_cooperative_vector_training()?;
+                self.writer.require(&feature::COOPERATIVE_VECTOR_TRAINING)?;
                 let pointer_id = self.cooperative_pointer(pointer, block)?;
                 let mut instruction = Instruction::new(Op::CooperativeVectorReduceSumAccumulateNV);
                 instruction.add_operand(pointer_id);
@@ -683,15 +657,6 @@ impl BlockContext<'_> {
                 block.body.push(instruction);
             }
         }
-        Ok(())
-    }
-
-    fn require_cooperative_vector_training(&mut self) -> Result<(), Error> {
-        self.writer.require_any(
-            "cooperative vector training",
-            &[spirv::Capability::CooperativeVectorTrainingNV],
-        )?;
-        self.writer.use_extension("SPV_NV_cooperative_vector");
         Ok(())
     }
 
@@ -750,38 +715,13 @@ impl BlockContext<'_> {
         match flavor {
             Flavor::Ext => {
                 self.writer
-                    .raw_capabilities
-                    .insert(CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT);
-                self.writer
-                    .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
+                    .use_feature(&feature::COOPERATIVE_MATRIX_CONVERSIONS_EXT);
+                Ok(())
             }
-            Flavor::Khr | Flavor::Nv => {
-                self.writer.require_any(
-                    "cooperative matrix conversions",
-                    &[spirv::Capability::CooperativeMatrixConversionsNV],
-                )?;
-                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
-            }
-        }
-        Ok(())
-    }
-
-    fn require_family(
-        &mut self,
-        flavor: Flavor,
-        capability: spirv::Capability,
-    ) -> Result<(), Error> {
-        self.writer
-            .require_any("cooperative matrix operation", &[capability])?;
-        match flavor {
-            Flavor::Ext => self
+            Flavor::Khr | Flavor::Nv => self
                 .writer
-                .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1),
-            Flavor::Khr | Flavor::Nv => {
-                self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
-            }
+                .require(&feature::COOPERATIVE_MATRIX_CONVERSIONS_NV),
         }
-        Ok(())
     }
 
     pub(super) fn write_tensor_create(
@@ -955,17 +895,8 @@ impl BlockContext<'_> {
     fn decorate_transpose(&mut self, id: Word) {
         let mut decoration = Instruction::new(Op::Decorate);
         decoration.add_operand(id);
-        decoration.add_operand(DECORATION_COOPERATIVE_MATRIX_TRANSPOSE_EXT);
+        decoration.add_operand(grammar::decoration::CooperativeMatrixTransposeEXT);
         self.writer.annotations.push(decoration);
-    }
-
-    fn require_tensor_access(&mut self) -> Result<(), Error> {
-        self.writer.require_any(
-            "cooperative matrix tensor addressing",
-            &[spirv::Capability::CooperativeMatrixTensorAddressingNV],
-        )?;
-        self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
-        Ok(())
     }
 
     pub(super) fn write_cooperative_matrix_function(
@@ -1004,7 +935,10 @@ impl BlockContext<'_> {
                 combine,
                 flavor,
             } => {
-                self.require_family(flavor, spirv::Capability::CooperativeMatrixReductionsNV)?;
+                self.writer.require(match flavor {
+                    Flavor::Ext => &feature::COOPERATIVE_MATRIX_REDUCTIONS_EXT,
+                    Flavor::Khr | Flavor::Nv => &feature::COOPERATIVE_MATRIX_REDUCTIONS_NV,
+                })?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixReduceNV);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
@@ -1019,10 +953,10 @@ impl BlockContext<'_> {
                 ref arguments,
                 flavor,
             } => {
-                self.require_family(
-                    flavor,
-                    spirv::Capability::CooperativeMatrixPerElementOperationsNV,
-                )?;
+                self.writer.require(match flavor {
+                    Flavor::Ext => &feature::COOPERATIVE_MATRIX_PER_ELEMENT_EXT,
+                    Flavor::Khr | Flavor::Nv => &feature::COOPERATIVE_MATRIX_PER_ELEMENT_NV,
+                })?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixPerElementOpNV);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
@@ -1035,11 +969,9 @@ impl BlockContext<'_> {
             }
             CooperativeMatrixFunction::GetCoordinate { matrix, index } => {
                 self.writer
-                    .raw_capabilities
-                    .insert(CAPABILITY_COOPERATIVE_MATRIX_GET_COORDINATE_EXT);
-                self.writer
-                    .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
-                let mut instruction = Instruction::raw(OP_COOPERATIVE_MATRIX_GET_COORDINATE_EXT);
+                    .use_feature(&feature::COOPERATIVE_MATRIX_GET_COORDINATE);
+                let mut instruction =
+                    Instruction::raw(grammar::op::CooperativeMatrixGetCoordinateEXT);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
                 instruction.add_operand(self.cached.get(matrix)?);
@@ -1054,7 +986,8 @@ impl BlockContext<'_> {
                 decode,
                 decode_vector,
             } => {
-                self.require_tensor_access()?;
+                self.writer
+                    .require(&feature::COOPERATIVE_MATRIX_TENSOR_ADDRESSING)?;
                 let mut memory = self.memory_access(pointer, false, false);
                 if memory.is_empty() {
                     memory.push(0);
@@ -1083,11 +1016,8 @@ impl BlockContext<'_> {
                 }
                 if let Some(decode_vector) = decode_vector {
                     self.writer
-                        .raw_capabilities
-                        .insert(CAPABILITY_COOPERATIVE_MATRIX_DECODE_VECTOR_NV);
-                    self.writer
-                        .use_extension(SPV_NV_COOPERATIVE_MATRIX_DECODE_VECTOR);
-                    mask |= TENSOR_ADDRESSING_DECODE_VECTOR_FUNC;
+                        .use_feature(&feature::COOPERATIVE_MATRIX_DECODE_VECTOR);
+                    mask |= grammar::tensor_addressing_operands::DecodeVectorFunc;
                     extra.push(self.function_id(decode_vector)?);
                 }
                 instruction.add_operand(mask);
@@ -1100,7 +1030,8 @@ impl BlockContext<'_> {
                 layout,
                 view,
             } => {
-                self.require_tensor_access()?;
+                self.writer
+                    .require(&feature::COOPERATIVE_MATRIX_TENSOR_ADDRESSING)?;
                 let mut memory = self.memory_access(pointer, false, true);
                 if memory.is_empty() {
                     memory.push(0);

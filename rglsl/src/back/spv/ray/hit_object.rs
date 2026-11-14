@@ -3,33 +3,13 @@ use alloc::vec::Vec;
 use spirv::Op;
 
 use crate::arena::Handle;
-use crate::back::spv::{Block, BlockContext, Error, Instruction, Writer};
+use crate::back::spv::{Block, BlockContext, Error, Instruction, feature};
 use crate::{HitObjectFlavor, HitObjectFunction, HitObjectValue, ReorderHint};
 
 const fn pick(flavor: HitObjectFlavor, nv: Op, ext: Op) -> Op {
     match flavor {
         HitObjectFlavor::Nv => nv,
         HitObjectFlavor::Ext => ext,
-    }
-}
-
-impl Writer {
-    fn require_motion_blur(&mut self) -> Result<(), Error> {
-        self.require_any(
-            "ray tracing motion blur",
-            &[spirv::Capability::RayTracingMotionBlurNV],
-        )?;
-        self.use_extension("SPV_NV_ray_tracing_motion_blur");
-        Ok(())
-    }
-
-    pub(in super::super) fn require_micromap_fetch(&mut self) -> Result<(), Error> {
-        self.require_any(
-            "displacement micromap fetches",
-            &[spirv::Capability::DisplacementMicromapNV],
-        )?;
-        self.use_extension("SPV_NV_displacement_micromap");
-        Ok(())
     }
 }
 
@@ -100,7 +80,7 @@ impl BlockContext<'_> {
             HitObjectFunction::TraceRay(ref trace) => {
                 operands.extend(self.trace_ids(trace)?);
                 if trace.time.is_some() {
-                    self.writer.require_motion_blur()?;
+                    self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                     pick(
                         flavor,
                         Op::HitObjectTraceRayMotionNV,
@@ -114,7 +94,7 @@ impl BlockContext<'_> {
                 operands.extend(self.trace_ids(trace)?);
                 operands.extend(self.hint_ids(hint)?);
                 if trace.time.is_some() {
-                    self.writer.require_motion_blur()?;
+                    self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                     Op::HitObjectTraceMotionReorderExecuteEXT
                 } else {
                     Op::HitObjectTraceReorderExecuteEXT
@@ -142,7 +122,7 @@ impl BlockContext<'_> {
                 rest.push(attributes);
                 operands.extend(self.ids(&rest)?);
                 if time.is_some() {
-                    self.writer.require_motion_blur()?;
+                    self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                 }
                 match (sbt_record, time) {
                     (&crate::HitObjectSbtRecord::OffsetStride { .. }, None) => {
@@ -175,7 +155,7 @@ impl BlockContext<'_> {
                     .collect();
                 operands.extend(self.ids(&rest)?);
                 if time.is_some() {
-                    self.writer.require_motion_blur()?;
+                    self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                     pick(
                         flavor,
                         Op::HitObjectRecordMissMotionNV,
@@ -200,7 +180,7 @@ impl BlockContext<'_> {
                 attributes,
                 hit_kind,
             } => {
-                self.writer.require_ray_queries()?;
+                self.writer.require(&feature::RAY_QUERY)?;
                 let rest: Vec<_> = [query, sbt_record_index, attributes]
                     .into_iter()
                     .chain(hit_kind)
@@ -347,7 +327,7 @@ impl BlockContext<'_> {
                 Op::HitObjectGetHitKindEXT,
             ),
             Hv::CurrentTime => {
-                self.writer.require_motion_blur()?;
+                self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                 pick(
                     flavor,
                     Op::HitObjectGetCurrentTimeNV,
@@ -365,11 +345,12 @@ impl BlockContext<'_> {
                 Op::HitObjectGetShaderRecordBufferHandleEXT,
             ),
             Hv::ClusterId => {
-                self.writer.require_cluster_acceleration_structure()?;
+                self.writer
+                    .require(&feature::CLUSTER_ACCELERATION_STRUCTURE)?;
                 Op::HitObjectGetClusterIdNV
             }
             Hv::SpherePosition | Hv::SphereRadius | Hv::IsSphereHit => {
-                self.writer.require_sphere_geometry()?;
+                self.writer.require(&feature::SPHERE_GEOMETRY)?;
                 match value {
                     Hv::SpherePosition => Op::HitObjectGetSpherePositionNV,
                     Hv::SphereRadius => Op::HitObjectGetSphereRadiusNV,
@@ -377,7 +358,7 @@ impl BlockContext<'_> {
                 }
             }
             Hv::LssPositions | Hv::LssRadii | Hv::IsLssHit => {
-                self.writer.require_lss_geometry()?;
+                self.writer.require(&feature::LSS_GEOMETRY)?;
                 match value {
                     Hv::LssPositions => Op::HitObjectGetLSSPositionsNV,
                     Hv::LssRadii => Op::HitObjectGetLSSRadiiNV,
@@ -385,12 +366,7 @@ impl BlockContext<'_> {
                 }
             }
             Hv::TriangleVertexPositions => {
-                self.writer.require_any(
-                    "hit object vertex positions",
-                    &[spirv::Capability::RayTracingPositionFetchKHR],
-                )?;
-                self.writer
-                    .use_extension("SPV_KHR_ray_tracing_position_fetch");
+                self.writer.require(&feature::RAY_TRACING_POSITION_FETCH)?;
                 Op::HitObjectGetIntersectionTriangleVertexPositionsEXT
             }
         };
@@ -419,7 +395,7 @@ impl BlockContext<'_> {
         result_type_id: spirv::Word,
         block: &mut Block,
     ) -> Result<spirv::Word, Error> {
-        self.writer.require_micromap_fetch()?;
+        self.writer.require(&feature::DISPLACEMENT_MICROMAP_FETCH)?;
         let mut operands = alloc::vec![self.get_handle_id(acceleration_structure)?];
         operands.extend(self.ids(&[instance_id, geometry_index, primitive_index, barycentric])?);
         let op = match value {

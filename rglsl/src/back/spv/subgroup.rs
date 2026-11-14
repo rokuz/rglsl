@@ -2,23 +2,8 @@ use alloc::{vec, vec::Vec};
 
 use spirv::{Capability, GroupOperation, Op, Word};
 
-use super::{Block, BlockContext, Error, Instruction, LocalType, NumericType};
+use super::{Block, BlockContext, Error, Instruction, LocalType, NumericType, feature, grammar};
 use crate::{CollectiveOperation, Expression, SubgroupFunction, TypeInner, arena::Handle};
-
-const SPV_KHR_SHADER_BALLOT: &str = "SPV_KHR_shader_ballot";
-const SPV_KHR_SUBGROUP_VOTE: &str = "SPV_KHR_subgroup_vote";
-const SPV_KHR_SUBGROUP_ROTATE: &str = "SPV_KHR_subgroup_rotate";
-const SPV_KHR_QUAD_CONTROL: &str = "SPV_KHR_quad_control";
-const SPV_NV_SHADER_SUBGROUP_PARTITIONED: &str = "SPV_NV_shader_subgroup_partitioned";
-const SPV_AMD_SHADER_BALLOT: &str = "SPV_AMD_shader_ballot";
-
-#[derive(Clone, Copy)]
-enum AmdShaderBallotOp {
-    SwizzleInvocations = 1,
-    SwizzleInvocationsMasked = 2,
-    WriteInvocation = 3,
-    Mbcnt = 4,
-}
 
 const fn group_op(
     op: crate::SubgroupOperation,
@@ -85,12 +70,7 @@ impl BlockContext<'_> {
             CollectiveOperation::PartitionedReduce(_)
             | CollectiveOperation::PartitionedInclusiveScan(_)
             | CollectiveOperation::PartitionedExclusiveScan(_) => {
-                self.writer
-                    .use_extension(SPV_NV_SHADER_SUBGROUP_PARTITIONED);
-                self.require_subgroup(
-                    "partitioned subgroup operation",
-                    &[Capability::GroupNonUniformPartitionedNV],
-                )
+                self.writer.require(&feature::SUBGROUP_PARTITIONED)
             }
         }
     }
@@ -312,8 +292,7 @@ impl BlockContext<'_> {
                 &[Capability::GroupNonUniform, Capability::GroupNonUniformQuad],
             )?,
             Gm::Rotate { .. } => {
-                self.writer.use_extension(SPV_KHR_SUBGROUP_ROTATE);
-                self.require_subgroup("subgroup rotate", &[Capability::GroupNonUniformRotateKHR])?;
+                self.writer.require(&feature::SUBGROUP_ROTATE)?;
             }
         }
 
@@ -472,21 +451,17 @@ impl BlockContext<'_> {
 
     fn write_amd_shader_ballot(
         &mut self,
-        op: AmdShaderBallotOp,
+        op: Word,
         result: Handle<Expression>,
         operands: &[Word],
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let set = self.writer.spirv_ext_import(SPV_AMD_SHADER_BALLOT);
+        let set = self.writer.spirv_ext_import(feature::AMD_SHADER_BALLOT_SET);
         let result_type_id = self.result_type_id(result)?;
         let id = self.gen_id();
-        block.body.push(Instruction::ext_inst(
-            set,
-            op as u32,
-            result_type_id,
-            id,
-            operands,
-        ));
+        block
+            .body
+            .push(Instruction::ext_inst(set, op, result_type_id, id, operands));
         Ok(id)
     }
 
@@ -506,35 +481,22 @@ impl BlockContext<'_> {
             Sf::Elect => self.require_subgroup("subgroup elect", &[Capability::GroupNonUniform])?,
             Sf::AllEqual(_) => self.require_subgroup("subgroup vote", VOTE)?,
             Sf::QuadAll(_) | Sf::QuadAny(_) => {
-                self.writer.use_extension(SPV_KHR_QUAD_CONTROL);
                 self.require_subgroup("subgroup vote", VOTE)?;
-                self.require_subgroup("quad control", &[Capability::QuadControlKHR])?;
+                self.writer.require(&feature::QUAD_CONTROL)?;
             }
             Sf::InverseBallot(_)
             | Sf::BallotBitExtract { .. }
             | Sf::BallotBitCount { .. }
             | Sf::BallotFindLsb(_)
             | Sf::BallotFindMsb(_) => self.require_subgroup("subgroup ballot", BALLOT)?,
-            Sf::Partition(_) => {
-                self.writer
-                    .use_extension(SPV_NV_SHADER_SUBGROUP_PARTITIONED);
-                self.require_subgroup(
-                    "subgroup partition",
-                    &[Capability::GroupNonUniformPartitionedNV],
-                )?;
-            }
+            Sf::Partition(_) => self.writer.require(&feature::SUBGROUP_PARTITIONED)?,
             Sf::KhrBallot(_) | Sf::KhrReadInvocation { .. } | Sf::KhrReadFirstInvocation(_) => {
-                self.writer.use_extension(SPV_KHR_SHADER_BALLOT);
-                self.require_subgroup("shader ballot", &[Capability::SubgroupBallotKHR])?;
+                self.writer.require(&feature::SHADER_BALLOT)?;
             }
             Sf::KhrAll(_) | Sf::KhrAny(_) | Sf::KhrAllEqual(_) => {
-                self.writer.use_extension(SPV_KHR_SUBGROUP_VOTE);
-                self.require_subgroup("subgroup vote", &[Capability::SubgroupVoteKHR])?;
+                self.writer.require(&feature::SUBGROUP_VOTE)?;
             }
-            Sf::Group { .. } => {
-                self.writer.use_extension(SPV_AMD_SHADER_BALLOT);
-                self.require_subgroup("group operation", &[Capability::Groups])?;
-            }
+            Sf::Group { .. } => self.writer.require(&feature::AMD_SHADER_BALLOT)?,
             Sf::AmdSwizzle { .. }
             | Sf::AmdSwizzleMasked { .. }
             | Sf::AmdWriteInvocation { .. }
@@ -585,7 +547,7 @@ impl BlockContext<'_> {
                     self.lane_pattern(&offset, crate::VectorSize::Quad),
                 ];
                 self.write_amd_shader_ballot(
-                    AmdShaderBallotOp::SwizzleInvocations,
+                    grammar::amd_shader_ballot::SwizzleInvocationsAMD,
                     result,
                     &operands,
                     block,
@@ -597,7 +559,7 @@ impl BlockContext<'_> {
                     self.lane_pattern(&mask, crate::VectorSize::Tri),
                 ];
                 self.write_amd_shader_ballot(
-                    AmdShaderBallotOp::SwizzleInvocationsMasked,
+                    grammar::amd_shader_ballot::SwizzleInvocationsMaskedAMD,
                     result,
                     &operands,
                     block,
@@ -614,7 +576,7 @@ impl BlockContext<'_> {
                     self.cached.get(index)?,
                 ];
                 self.write_amd_shader_ballot(
-                    AmdShaderBallotOp::WriteInvocation,
+                    grammar::amd_shader_ballot::WriteInvocationAMD,
                     result,
                     &operands,
                     block,
@@ -622,7 +584,12 @@ impl BlockContext<'_> {
             }
             Sf::AmdMbcnt(mask) => {
                 let operands = [self.cached.get(mask)?];
-                self.write_amd_shader_ballot(AmdShaderBallotOp::Mbcnt, result, &operands, block)?
+                self.write_amd_shader_ballot(
+                    grammar::amd_shader_ballot::MbcntAMD,
+                    result,
+                    &operands,
+                    block,
+                )?
             }
             _ => {
                 let result_type_id = self.result_type_id(result)?;

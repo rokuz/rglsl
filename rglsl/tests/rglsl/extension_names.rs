@@ -15,7 +15,7 @@ const GLSL_OUTSIDE_REGISTRY: [(&str, &str); 4] = [
 ];
 
 const SPIRV_NOT_EXTENSIONS: [(&str, &str); 1] = [(
-    "rglsl-cli/src/disassemble/ext.rs",
+    "rglsl-cli/src/disassemble/glslang_tables.rs",
     "SPV_ARB_shader_viewport_layer_array",
 )];
 

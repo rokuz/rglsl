@@ -1,33 +1,30 @@
 use std::collections::BTreeMap;
 
-use super::ext;
-use super::tables::{self, Class, Kind};
+use super::tables::{
+    self, Class, DECORATION_BUILT_IN, FLOAT4_E2M1, FLOAT6_E2M3, FLOAT6_E3M2, FLOAT8_E4M3,
+    FLOAT8_E5M2, FLOAT8_UNSIGNED_E8M0, Kind, MEMORY_ACCESS_ALIGNED,
+    MEMORY_ACCESS_MAKE_POINTER_AVAILABLE, MEMORY_ACCESS_MAKE_POINTER_VISIBLE, MX_INT8,
+    OP_BRANCH_CONDITIONAL, OP_DECORATE, OP_EXT_INST, OP_EXT_INST_IMPORT, OP_LOOP_MERGE,
+    OP_MEMBER_DECORATE, OP_NAME, OP_SELECTION_MERGE, OP_SWITCH, OP_TYPE_BOOL, OP_TYPE_FLOAT,
+    OP_TYPE_IMAGE, OP_TYPE_INT, OP_TYPE_POINTER, OP_TYPE_STRUCT, OP_TYPE_UNTYPED_POINTER_KHR,
+    OP_TYPE_VECTOR,
+};
 
 const MAGIC_NUMBER: u32 = 0x0723_0203;
 const WORD_COUNT_SHIFT: u32 = 16;
 const OPCODE_MASK: u32 = 0xffff;
 
-const OP_NAME: u32 = 5;
-const OP_EXT_INST_IMPORT: u32 = 11;
-const OP_EXT_INST: u32 = 12;
-const OP_TYPE_BOOL: u32 = 20;
-const OP_TYPE_INT: u32 = 21;
-const OP_TYPE_FLOAT: u32 = 22;
-const OP_TYPE_VECTOR: u32 = 23;
-const OP_TYPE_IMAGE: u32 = 25;
-const OP_TYPE_STRUCT: u32 = 30;
-const OP_TYPE_POINTER: u32 = 32;
-const OP_DECORATE: u32 = 71;
-const OP_MEMBER_DECORATE: u32 = 72;
-const OP_LOOP_MERGE: u32 = 246;
-const OP_SELECTION_MERGE: u32 = 247;
-const OP_BRANCH_CONDITIONAL: u32 = 250;
-const OP_SWITCH: u32 = 251;
-const OP_TYPE_UNTYPED_POINTER_KHR: u32 = 4417;
+const MEMORY_ACCESS_POINTER_IDS: u32 =
+    MEMORY_ACCESS_MAKE_POINTER_AVAILABLE | MEMORY_ACCESS_MAKE_POINTER_VISIBLE;
 
-const DECORATION_BUILT_IN: u32 = 11;
-const MEMORY_ACCESS_ALIGNED: u32 = 0x2;
-const MEMORY_ACCESS_POINTER_IDS: u32 = 0x8 | 0x10;
+const NV_EXT_INST_SETS: [&[u8]; 6] = [
+    b"SPV_NV_sample_mask_override_coverage",
+    b"SPV_NV_geometry_shader_passthrough",
+    b"SPV_NV_viewport_array2",
+    b"SPV_NVX_multiview_per_view_attributes",
+    b"SPV_NV_fragment_shader_barycentric",
+    b"SPV_NV_mesh_shader",
+];
 
 const BAD_ID: &str = "Bad <id>";
 const RUNS_OFF_THE_END: &str = "instruction runs off the end of the stream";
@@ -253,7 +250,7 @@ impl<'a> Stream<'a> {
         let class = tables::enum_class(kind);
         for bit in 0..class.ceiling.min(32) {
             if mask & (1 << bit) != 0 {
-                self.text((class.name)(bit));
+                self.text(tables::name(class.names, bit));
                 self.text(" ");
             }
         }
@@ -317,13 +314,13 @@ impl<'a> Stream<'a> {
             },
             OP_TYPE_FLOAT => match self.peek(0)? {
                 4 | 6 | 8 | 16 if operands > 1 => match self.peek(1)? {
-                    4214 => b"floate4m3_t".to_vec(),
-                    4215 => b"floate5m2_t".to_vec(),
-                    4225 => b"floate2m1_t".to_vec(),
-                    4224 => b"floate3m2_t".to_vec(),
-                    4223 => b"floate2m3_t".to_vec(),
-                    4226 => b"floatue8m0_t".to_vec(),
-                    4227 => b"floatmxint8_t".to_vec(),
+                    FLOAT8_E4M3 => b"floate4m3_t".to_vec(),
+                    FLOAT8_E5M2 => b"floate5m2_t".to_vec(),
+                    FLOAT4_E2M1 => b"floate2m1_t".to_vec(),
+                    FLOAT6_E3M2 => b"floate3m2_t".to_vec(),
+                    FLOAT6_E2M3 => b"floate2m3_t".to_vec(),
+                    FLOAT8_UNSIGNED_E8M0 => b"floatue8m0_t".to_vec(),
+                    MX_INT8 => b"floatmxint8_t".to_vec(),
                     _ => b"bfloat16_t".to_vec(),
                 },
                 4 | 6 | 8 | 16 => b"float16_t".to_vec(),
@@ -363,7 +360,7 @@ impl<'a> Stream<'a> {
     }
 
     fn disassemble_instruction(&mut self, result_id: u32, opcode: u32, mut operands: i64) -> Step {
-        let name = tables::opcode(opcode);
+        let name = tables::instruction(opcode).name;
         self.text(name.get(2..).unwrap_or(""));
 
         match opcode {
@@ -417,7 +414,7 @@ impl<'a> Stream<'a> {
                         && self.previous(1) == DECORATION_BUILT_IN
                     {
                         let value = self.read()?;
-                        self.text(tables::built_in(value));
+                        self.text(tables::name(tables::BUILT_IN, value));
                         operands -= 1;
                     }
                     return self.disassemble_immediates(operands);
@@ -493,7 +490,7 @@ impl<'a> Stream<'a> {
                     if class.bitmask {
                         self.output_mask(kind, value);
                     } else {
-                        self.text((class.name)(value));
+                        self.text(tables::name(class.names, value));
                     }
                     operands -= 1;
                 }
@@ -515,7 +512,7 @@ impl<'a> Stream<'a> {
         self.disassemble_ids(1)?;
         self.text(" ");
         let dimension = self.read()?;
-        self.text(tables::dimension(dimension));
+        self.text(tables::enum_name(Kind::Dimensionality, dimension));
         if self.read()? != 0 {
             self.text(" depth");
         }
@@ -533,11 +530,11 @@ impl<'a> Stream<'a> {
         }
         self.text(" format:");
         let format = self.read()?;
-        self.text(tables::image_format(format));
+        self.text(tables::enum_name(Kind::SamplerImageFormat, format));
         if operands == 8 {
             self.text(" ");
             let qualifier = self.read()?;
-            self.text(tables::access_qualifier(qualifier));
+            self.text(tables::enum_name(Kind::AccessQualifier, qualifier));
         }
         Ok(())
     }
@@ -548,8 +545,8 @@ impl<'a> Stream<'a> {
             b"NonSemantic.DebugPrintf" => ExtSet::DebugPrintf,
             b"NonSemantic.DebugBreak" => ExtSet::DebugBreak,
             _ if name.starts_with(b"NonSemantic.Shader.DebugInfo.") => ExtSet::ShaderDebugInfo,
-            _ if ext::AMD_SETS.contains(&name) => ExtSet::Amd,
-            _ if ext::NV_SETS.contains(&name) => ExtSet::Nv,
+            _ if tables::AMD.iter().any(|&(set, _)| set == name) => ExtSet::Amd,
+            _ if NV_EXT_INST_SETS.contains(&name) => ExtSet::Nv,
             _ => ExtSet::Glsl450,
         }
     }
@@ -559,13 +556,25 @@ impl<'a> Stream<'a> {
         let entry = self.previous(1);
         let name = self.descriptor(set).to_vec();
         let text = match Self::ext_inst_set(&name) {
-            ExtSet::Glsl450 if entry < ext::GLSL_STD_450_COUNT => ext::glsl_std_450(entry),
-            ExtSet::Glsl450 | ExtSet::OpenCl => return,
-            ExtSet::Amd => ext::amd(&name, entry),
-            ExtSet::Nv => ext::nv(&name, entry),
+            ExtSet::Glsl450 => match usize::try_from(entry)
+                .ok()
+                .and_then(|entry| tables::GLSL_STD_450.get(entry))
+            {
+                Some(name) => name,
+                None => return,
+            },
+            ExtSet::OpenCl => return,
+            ExtSet::Amd => tables::AMD
+                .iter()
+                .find(|&&(set, _)| set == name.as_slice())
+                .map_or("Bad", |&(_, names)| tables::name(names, entry)),
+            ExtSet::Nv if tables::NV_SETS.contains(&name.as_slice()) => {
+                tables::name(tables::NV, entry)
+            }
+            ExtSet::Nv => "Bad",
             ExtSet::DebugPrintf => "DebugPrintf",
             ExtSet::DebugBreak => "DebugBreak",
-            ExtSet::ShaderDebugInfo => ext::shader_debug_info(entry),
+            ExtSet::ShaderDebugInfo => tables::name(tables::SHADER_DEBUG_INFO, entry),
         };
         self.text("(");
         self.text(text);

@@ -1,9 +1,7 @@
 use spirv::{Op, TensorOperands, Word};
 
-use super::{Block, BlockContext, Error, Instruction, Writer};
+use super::{Block, BlockContext, Error, Instruction, Writer, feature};
 use crate::{CooperativeSize, Expression, Scalar, arena::Handle};
-
-const SPV_ARM_TENSORS: &str = "SPV_ARM_tensors";
 
 impl Writer {
     pub(super) fn write_tensor_type(
@@ -12,7 +10,7 @@ impl Writer {
         scalar: Scalar,
         rank: CooperativeSize,
     ) -> Result<Instruction, Error> {
-        self.require_tensors()?;
+        self.require(&feature::TENSORS_ARM)?;
         let element = self.get_numeric_type_id(super::NumericType::Scalar(scalar));
         let rank = self.cooperative_size_id(rank);
         let mut instruction = Instruction::new(Op::TypeTensorARM);
@@ -20,11 +18,6 @@ impl Writer {
         instruction.add_operand(element);
         instruction.add_operand(rank);
         Ok(instruction)
-    }
-
-    fn require_tensors(&mut self) -> Result<(), Error> {
-        self.use_extension(SPV_ARM_TENSORS);
-        self.require_any("tensors", &[spirv::Capability::TensorsARM])
     }
 }
 

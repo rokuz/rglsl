@@ -9,18 +9,9 @@ use spirv::Word;
 
 use super::{
     Block, BlockContext, Dimension, Error, Instruction, LocalType, LookupType, NumericType,
-    ResultMember, Writer, WriterFlags, index::BoundsCheckResult,
+    ResultMember, Writer, WriterFlags, feature, grammar, index::BoundsCheckResult,
 };
 use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
-
-const SPV_AMD_GPU_SHADER_HALF_FLOAT: &str = "SPV_AMD_gpu_shader_half_float";
-const SPV_AMD_SHADER_TRINARY_MINMAX: &str = "SPV_AMD_shader_trinary_minmax";
-const SPV_AMD_GCN_SHADER: &str = "SPV_AMD_gcn_shader";
-const AMD_CUBE_FACE_INDEX: Word = 1;
-const AMD_CUBE_FACE_COORD: Word = 2;
-const AMD_TIME: Word = 3;
-const SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER: &str = "SPV_AMD_shader_explicit_vertex_parameter";
-const AMD_INTERPOLATE_AT_VERTEX: Word = 1;
 
 const fn integer_functions2(
     fun: crate::MathFunction,
@@ -55,15 +46,15 @@ const fn trinary_minmax(
     use crate::MathFunction as Mf;
     use crate::ScalarKind as Sk;
     Ok(match (fun, kind) {
-        (Mf::Min3, Some(Sk::Float)) => 1,
-        (Mf::Min3, Some(Sk::Uint)) => 2,
-        (Mf::Min3, Some(Sk::Sint)) => 3,
-        (Mf::Max3, Some(Sk::Float)) => 4,
-        (Mf::Max3, Some(Sk::Uint)) => 5,
-        (Mf::Max3, Some(Sk::Sint)) => 6,
-        (Mf::Mid3, Some(Sk::Float)) => 7,
-        (Mf::Mid3, Some(Sk::Uint)) => 8,
-        (Mf::Mid3, Some(Sk::Sint)) => 9,
+        (Mf::Min3, Some(Sk::Float)) => grammar::amd_shader_trinary_minmax::FMin3AMD,
+        (Mf::Min3, Some(Sk::Uint)) => grammar::amd_shader_trinary_minmax::UMin3AMD,
+        (Mf::Min3, Some(Sk::Sint)) => grammar::amd_shader_trinary_minmax::SMin3AMD,
+        (Mf::Max3, Some(Sk::Float)) => grammar::amd_shader_trinary_minmax::FMax3AMD,
+        (Mf::Max3, Some(Sk::Uint)) => grammar::amd_shader_trinary_minmax::UMax3AMD,
+        (Mf::Max3, Some(Sk::Sint)) => grammar::amd_shader_trinary_minmax::SMax3AMD,
+        (Mf::Mid3, Some(Sk::Float)) => grammar::amd_shader_trinary_minmax::FMid3AMD,
+        (Mf::Mid3, Some(Sk::Uint)) => grammar::amd_shader_trinary_minmax::UMid3AMD,
+        (Mf::Mid3, Some(Sk::Sint)) => grammar::amd_shader_trinary_minmax::SMid3AMD,
         _ => return Err(Error::Validation("trinary min/max of a non-numeric value")),
     })
 }
@@ -1140,12 +1131,7 @@ impl BlockContext<'_> {
                     | Mf::AverageRounded
                     | Mf::Multiply32x16 => {
                         let op = integer_functions2(fun, arg_scalar_kind)?;
-                        self.writer
-                            .use_extension("SPV_INTEL_shader_integer_functions2");
-                        self.writer.require_any(
-                            "integer functions 2",
-                            &[spirv::Capability::IntegerFunctions2INTEL],
-                        )?;
+                        self.writer.require(&feature::INTEGER_FUNCTIONS_2)?;
                         MathOp::Custom(if fun.argument_count() == 1 {
                             Instruction::unary(op, result_type_id, id, arg0_id)
                         } else {
@@ -1154,11 +1140,11 @@ impl BlockContext<'_> {
                     }
                     Mf::CubeFaceIndex | Mf::CubeFaceCoord => {
                         let op = if fun == Mf::CubeFaceIndex {
-                            AMD_CUBE_FACE_INDEX
+                            grammar::amd_gcn_shader::CubeFaceIndexAMD
                         } else {
-                            AMD_CUBE_FACE_COORD
+                            grammar::amd_gcn_shader::CubeFaceCoordAMD
                         };
-                        let set = self.writer.spirv_ext_import(SPV_AMD_GCN_SHADER);
+                        let set = self.writer.spirv_ext_import(feature::AMD_GCN_SHADER_SET);
                         MathOp::Custom(Instruction::ext_inst(
                             set,
                             op,
@@ -1169,7 +1155,9 @@ impl BlockContext<'_> {
                     }
                     Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
                         let op = trinary_minmax(fun, arg_scalar_kind)?;
-                        let set = self.writer.spirv_ext_import(SPV_AMD_SHADER_TRINARY_MINMAX);
+                        let set = self
+                            .writer
+                            .spirv_ext_import(feature::AMD_SHADER_TRINARY_MINMAX_SET);
                         MathOp::Custom(Instruction::ext_inst(
                             set,
                             op,
@@ -1283,8 +1271,8 @@ impl BlockContext<'_> {
                         else {
                             return Err(Error::Validation("integer dot product operands"));
                         };
-                        let input = if packed {
-                            spirv::Capability::DotProductInput4x8BitPacked
+                        let feature = if packed {
+                            &feature::DOT_PRODUCT_INPUT_4X8_BIT_PACKED
                         } else if left_scalar.width == 1
                             && matches!(
                                 *arg_ty,
@@ -1294,16 +1282,11 @@ impl BlockContext<'_> {
                                 }
                             )
                         {
-                            spirv::Capability::DotProductInput4x8Bit
+                            &feature::DOT_PRODUCT_INPUT_4X8_BIT
                         } else {
-                            spirv::Capability::DotProductInputAll
+                            &feature::DOT_PRODUCT_INPUT_ALL
                         };
-                        self.writer
-                            .require_any("integer dot product", &[spirv::Capability::DotProduct])?;
-                        self.writer.require_any("integer dot product", &[input])?;
-                        if self.writer.lang_version() < (1, 6) {
-                            self.writer.use_extension("SPV_KHR_integer_dot_product");
-                        }
+                        self.writer.require(feature)?;
                         let left_signed = left_scalar.kind == crate::ScalarKind::Sint;
                         let right_signed = right_scalar.kind == crate::ScalarKind::Sint;
                         let (op, first, second) = match (left_signed, right_signed, accumulate) {
@@ -1332,20 +1315,8 @@ impl BlockContext<'_> {
                         let signed = matches!(fun, Mf::Dot4I8Packed);
                         if self
                             .writer
-                            .require_all(&[
-                                spirv::Capability::DotProduct,
-                                spirv::Capability::DotProductInput4x8BitPacked,
-                            ])
-                            .is_ok()
+                            .try_require(&feature::DOT_PRODUCT_INPUT_4X8_BIT_PACKED)
                         {
-                            // Write optimized code using `PackedVectorFormat4x8Bit`.
-                            if self.writer.lang_version() < (1, 6) {
-                                // SPIR-V 1.6 supports the required capabilities natively, so the extension
-                                // is only required for earlier versions. See right column of
-                                // <https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#OpSDot>.
-                                self.writer.use_extension("SPV_KHR_integer_dot_product");
-                            }
-
                             let op = if signed {
                                 spirv::Op::SDot
                             } else {
@@ -1758,17 +1729,17 @@ impl BlockContext<'_> {
                 let pointer_id =
                     self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?;
                 if self.is_half(expr_handle) {
-                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
+                    self.writer.use_feature(&feature::AMD_GPU_SHADER_HALF_FLOAT);
                 }
                 self.writer
-                    .use_extension(SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
+                    .use_feature(&feature::AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
                 let set = self
                     .writer
-                    .spirv_ext_import(SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
+                    .spirv_ext_import(feature::AMD_SHADER_EXPLICIT_VERTEX_PARAMETER_SET);
                 let id = self.gen_id();
                 block.body.push(Instruction::ext_inst(
                     set,
-                    AMD_INTERPOLATE_AT_VERTEX,
+                    grammar::amd_shader_explicit_vertex_parameter::InterpolateAtVertexAMD,
                     result_type_id,
                     id,
                     &[pointer_id, self.cached.get(vertex)?],
@@ -1809,7 +1780,7 @@ impl BlockContext<'_> {
                     .flatten()
                     .any(|handle| self.is_half(handle))
                 {
-                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
+                    self.writer.use_feature(&feature::AMD_GPU_SHADER_HALF_FLOAT);
                 }
                 let id = self.gen_id();
                 let mut operands = alloc::vec![pointer_id];
@@ -1846,9 +1817,7 @@ impl BlockContext<'_> {
                 coordinate,
                 fragment,
             } => {
-                self.writer.use_extension("SPV_AMD_shader_fragment_mask");
-                self.writer
-                    .require_any("fragment mask", &[spirv::Capability::FragmentMaskAMD])?;
+                self.writer.require(&feature::AMD_FRAGMENT_MASK)?;
                 let image_id = self.get_image_id(image, block)?;
                 let id = self.gen_id();
                 let mut instruction = Instruction::new(match fragment {
@@ -1877,9 +1846,7 @@ impl BlockContext<'_> {
                 };
                 match scope {
                     Some(scope) => {
-                        self.writer.use_extension("SPV_KHR_shader_clock");
-                        self.writer
-                            .require_any("clock reads", &[spirv::Capability::ShaderClockKHR])?;
+                        self.writer.require(&feature::SHADER_CLOCK)?;
                         let scope_id = self.get_scope_constant(scope as u32);
                         let mut instruction = Instruction::new(spirv::Op::ReadClockKHR);
                         instruction.set_type(result_type_id);
@@ -1888,10 +1855,10 @@ impl BlockContext<'_> {
                         block.body.push(instruction);
                     }
                     None => {
-                        let set = self.writer.spirv_ext_import(SPV_AMD_GCN_SHADER);
+                        let set = self.writer.spirv_ext_import(feature::AMD_GCN_SHADER_SET);
                         block.body.push(Instruction::ext_inst(
                             set,
-                            AMD_TIME,
+                            grammar::amd_gcn_shader::TimeAMD,
                             result_type_id,
                             id,
                             &[],
@@ -1901,7 +1868,7 @@ impl BlockContext<'_> {
                 id
             }
             crate::Expression::IsHelperInvocation => {
-                self.writer.require_demote()?;
+                self.writer.require(&feature::DEMOTE_TO_HELPER_INVOCATION)?;
                 let id = self.gen_id();
                 block
                     .body
@@ -2030,7 +1997,7 @@ impl BlockContext<'_> {
                     Ctrl::None => {}
                 }
                 if self.is_half(expr) {
-                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
+                    self.writer.use_feature(&feature::AMD_GPU_SHADER_HALF_FLOAT);
                 }
                 let id = self.gen_id();
                 let expr_id = self.cached.get(expr)?;
@@ -4043,7 +4010,7 @@ impl BlockContext<'_> {
                 return Ok(None);
             }
             Statement::Demote => {
-                self.writer.require_demote()?;
+                self.writer.require(&feature::DEMOTE_TO_HELPER_INVOCATION)?;
                 block.body.push(Instruction::demote_to_helper_invocation());
             }
             Statement::BeginInvocationInterlock => {
@@ -4294,12 +4261,7 @@ impl BlockContext<'_> {
                     }
                 };
                 if vector {
-                    self.writer
-                        .use_extension("SPV_NV_shader_atomic_fp16_vector");
-                    self.writer.require_any(
-                        "half-precision vector atomics",
-                        &[spirv::Capability::AtomicFloat16VectorNV],
-                    )?;
+                    self.writer.require(&feature::ATOMIC_FLOAT16_VECTOR)?;
                 }
 
                 let instruction = match *fun {

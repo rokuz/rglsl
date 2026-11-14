@@ -1,4 +1,5 @@
-mod ext;
+#[rustfmt::skip]
+mod glslang_tables;
 mod stream;
 mod tables;
 

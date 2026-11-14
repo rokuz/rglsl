@@ -72,6 +72,7 @@ jobs:
           path: target/oracles
           key: oracles-${{ runner.os }}-${{ hashFiles('oracles.toml', 'xtask/src/oracles.rs') }}
       - run: cargo xtask oracles --no-exec
+      - run: cargo xtask gen-spirv --check
       - run: sh samples/run.sh
         env:
           SPIRV_VAL: target/oracles/bin/spirv-val

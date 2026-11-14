@@ -1,4 +1,4 @@
-use super::{Block, BlockContext, Error, Instruction, NumericType, Word};
+use super::{Block, BlockContext, Error, Instruction, NumericType, Word, feature};
 use crate::arena::{Handle, HandleSet};
 use crate::{
     AtomicLocation, Expression, MemoryOrder, MemoryScope, MemorySemantics, Statement, Texel,
@@ -54,7 +54,7 @@ impl super::Writer {
     pub(super) fn write_memory_scope(&mut self, scope: MemoryScope) -> Word {
         match scope {
             MemoryScope::QueueFamily => {
-                self.use_vulkan_memory_model_capability();
+                self.use_feature(&feature::VULKAN_MEMORY_MODEL);
             }
             MemoryScope::Device => {
                 self.device_scope_used = true;
@@ -70,17 +70,9 @@ impl super::Writer {
 
     pub(super) fn write_memory_semantics(&mut self, semantics: MemorySemantics) -> Word {
         if semantics.intersects(MODEL_SEMANTICS) {
-            self.use_vulkan_memory_model_capability();
+            self.use_feature(&feature::VULKAN_MEMORY_MODEL);
         }
         self.get_constant_scalar(crate::Literal::U32(semantics.bits()))
-    }
-
-    fn use_vulkan_memory_model_capability(&mut self) {
-        self.capabilities_used
-            .insert(spirv::Capability::VulkanMemoryModel);
-        if self.lang_version() < (1, 5) {
-            self.use_extension("SPV_KHR_vulkan_memory_model");
-        }
     }
 
     pub(super) fn write_memory_order(&mut self, order: MemoryOrder) -> OrderIds {
@@ -97,7 +89,6 @@ impl super::Writer {
         scalar: crate::Scalar,
         vector: bool,
     ) -> Result<spirv::Op, Error> {
-        use spirv::Capability as C;
         let op = match fun {
             crate::AtomicFunction::Min => spirv::Op::AtomicFMinEXT,
             crate::AtomicFunction::Max => spirv::Op::AtomicFMaxEXT,
@@ -107,23 +98,14 @@ impl super::Writer {
             return Ok(op);
         }
         let add = matches!(fun, crate::AtomicFunction::Add);
-        let capability = match (add, scalar.width) {
-            (true, 2) => C::AtomicFloat16AddEXT,
-            (true, 4) => C::AtomicFloat32AddEXT,
-            (true, _) => C::AtomicFloat64AddEXT,
-            (false, 2) => C::AtomicFloat16MinMaxEXT,
-            (false, 4) => C::AtomicFloat32MinMaxEXT,
-            (false, _) => C::AtomicFloat64MinMaxEXT,
-        };
-        if add {
-            self.use_extension("SPV_EXT_shader_atomic_float_add");
-            if scalar.width == 2 {
-                self.use_extension("SPV_EXT_shader_atomic_float16_add");
-            }
-        } else {
-            self.use_extension("SPV_EXT_shader_atomic_float_min_max");
-        }
-        self.require_any("floating-point atomics", &[capability])?;
+        self.require(match (add, scalar.width) {
+            (true, 2) => &feature::ATOMIC_FLOAT16_ADD,
+            (true, 4) => &feature::ATOMIC_FLOAT32_ADD,
+            (true, _) => &feature::ATOMIC_FLOAT64_ADD,
+            (false, 2) => &feature::ATOMIC_FLOAT16_MIN_MAX,
+            (false, 4) => &feature::ATOMIC_FLOAT32_MIN_MAX,
+            (false, _) => &feature::ATOMIC_FLOAT64_MIN_MAX,
+        })?;
         Ok(op)
     }
 
@@ -135,8 +117,7 @@ impl super::Writer {
         semantics: MemorySemantics,
         block: &mut Block,
     ) -> Result<(), Error> {
-        self.use_extension("SPV_EXT_split_barrier");
-        self.require_any("split barriers", &[spirv::Capability::SplitBarrierINTEL])?;
+        self.require(&feature::SPLIT_BARRIER)?;
         let execution_id = self.write_memory_scope(execution);
         let memory_id = self.write_memory_scope(memory);
         let semantics_id = self.write_memory_semantics(semantics);

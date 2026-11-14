@@ -1,3 +1,4 @@
+use super::tables::{self, Kind};
 use super::{disassemble, disassemble_bytes};
 
 const FRAGMENT: [u32; 82] = [
@@ -216,6 +217,51 @@ fn malformed_streams_fail_like_glslang() {
 fn unknown_opcodes_print_like_glslang() {
     let text = disassemble(&module(4, &[instruction(9, &[0, 1])]));
     assert_eq!(body(&text), ["               1:             d"]);
+}
+
+#[test]
+fn generated_tables_are_sorted_for_binary_search() {
+    let increasing = |values: Vec<u32>| values.windows(2).all(|pair| pair[0] < pair[1]);
+    assert!(increasing(
+        tables::INSTRUCTIONS
+            .iter()
+            .map(|instruction| instruction.opcode)
+            .collect()
+    ));
+    let kinds = [
+        Kind::Source,
+        Kind::ExecutionModel,
+        Kind::Addressing,
+        Kind::Memory,
+        Kind::ExecutionMode,
+        Kind::Storage,
+        Kind::Dimensionality,
+        Kind::SamplerAddressingMode,
+        Kind::SamplerFilterMode,
+        Kind::SamplerImageFormat,
+        Kind::ImageOperands,
+        Kind::AccessQualifier,
+        Kind::Decoration,
+        Kind::Select,
+        Kind::Loop,
+        Kind::Function,
+        Kind::MemorySemantics,
+        Kind::MemoryAccess,
+        Kind::Scope,
+        Kind::GroupOperation,
+        Kind::Capability,
+        Kind::CooperativeMatrixOperands,
+        Kind::TensorAddressingOperands,
+    ];
+    let mut names: Vec<tables::Names> = kinds
+        .iter()
+        .map(|&kind| tables::enum_class(kind).names)
+        .collect();
+    names.extend([tables::BUILT_IN, tables::NV, tables::SHADER_DEBUG_INFO]);
+    names.extend(tables::AMD.iter().map(|&(_, names)| names));
+    for names in names {
+        assert!(increasing(names.iter().map(|&(value, _)| value).collect()));
+    }
 }
 
 #[test]

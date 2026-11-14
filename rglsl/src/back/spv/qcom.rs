@@ -1,21 +1,14 @@
 use alloc::vec::Vec;
 
-use spirv::{Capability, Decoration, Op, StorageClass, Word};
+use spirv::{Decoration, Op, StorageClass, Word};
 
-use super::{Block, BlockContext, Error, Instruction, LocalImageType, LocalType, Writer};
+use super::{
+    Block, BlockContext, Error, Instruction, LocalImageType, LocalType, Writer, feature, grammar,
+};
 use crate::arena::Handle;
 use crate::{
     ArrayConversion, BlockMatchMetric, BlockMatchSearch, Expression, ImageProcessingOperation,
 };
-
-pub(super) const CAPABILITY_IMAGE_GATHER_LINEAR_QCOM: Word = 4543;
-pub(super) const CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM: Word = 4544;
-pub(super) const OP_IMAGE_GATHER_QCOM: u32 = 4545;
-const LOOP_CONTROL_MULTIPLE_WAIT_QUEUES_QCOM: Word = 0x1000_0000;
-
-const SPV_QCOM_IMAGE_PROCESSING: &str = "SPV_QCOM_image_processing";
-const SPV_QCOM_IMAGE_PROCESSING2: &str = "SPV_QCOM_image_processing2";
-const SPV_QCOM_COOPERATIVE_MATRIX_CONVERSION: &str = "SPV_QCOM_cooperative_matrix_conversion";
 
 pub(super) struct ImageProcessingOperands {
     pub(super) operation: ImageProcessingOperation,
@@ -36,12 +29,6 @@ enum Marking {
 }
 
 impl Writer {
-    pub(super) fn require_tile_shading(&mut self) -> Result<(), Error> {
-        self.require_any("tile shading", &[Capability::TileShadingQCOM])?;
-        self.use_extension("SPV_QCOM_tile_shading");
-        Ok(())
-    }
-
     fn decorate_once(&mut self, id: Word, decoration: Decoration) {
         if self.qcom_decorations.insert((id, decoration)) {
             self.decorate(id, decoration, &[]);
@@ -92,7 +79,7 @@ impl BlockContext<'_> {
         }
         set(
             control.multiple_wait_queues.is_some(),
-            LOOP_CONTROL_MULTIPLE_WAIT_QUEUES_QCOM,
+            grammar::loop_control::MultipleWaitQueuesQCOM,
             control.multiple_wait_queues,
         );
         let mut instruction = Instruction::new(Op::LoopMerge);
@@ -199,17 +186,15 @@ impl BlockContext<'_> {
             size,
         } = operands;
         let missing = Error::Validation("image processing operand");
-        let (op, capability, extension, marking) = match operation {
+        let (op, feature, marking) = match operation {
             ImageProcessingOperation::SampleWeighted => (
                 Op::ImageSampleWeightedQCOM,
-                Capability::TextureSampleWeightedQCOM,
-                SPV_QCOM_IMAGE_PROCESSING,
+                &feature::TEXTURE_SAMPLE_WEIGHTED_QCOM,
                 None,
             ),
             ImageProcessingOperation::BoxFilter => (
                 Op::ImageBoxFilterQCOM,
-                Capability::TextureBoxFilterQCOM,
-                SPV_QCOM_IMAGE_PROCESSING,
+                &feature::TEXTURE_BOX_FILTER_QCOM,
                 None,
             ),
             ImageProcessingOperation::BlockMatch { metric, search } => {
@@ -239,18 +224,14 @@ impl BlockContext<'_> {
                 };
                 (
                     op,
-                    Capability::TextureBlockMatchQCOM,
-                    SPV_QCOM_IMAGE_PROCESSING,
+                    &feature::TEXTURE_BLOCK_MATCH_QCOM,
                     Some((marking, search != BlockMatchSearch::Block)),
                 )
             }
         };
-        self.writer.require_any("image processing", &[capability])?;
-        self.writer.use_extension(extension);
+        self.writer.require(feature)?;
         if let Some((_, true)) = marking {
-            self.writer
-                .require_any("image processing", &[Capability::TextureBlockMatch2QCOM])?;
-            self.writer.use_extension(SPV_QCOM_IMAGE_PROCESSING2);
+            self.writer.require(&feature::TEXTURE_BLOCK_MATCH_2_QCOM)?;
         }
         let source_id = self.sampled_operand(image, sampler, block)?;
         let coordinate_id = self.cached.get(coordinate)?;
@@ -298,12 +279,8 @@ impl BlockContext<'_> {
         index: Option<Handle<Expression>>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        self.writer.require_any(
-            "cooperative matrix conversion",
-            &[Capability::CooperativeMatrixConversionQCOM],
-        )?;
         self.writer
-            .use_extension(SPV_QCOM_COOPERATIVE_MATRIX_CONVERSION);
+            .require(&feature::COOPERATIVE_MATRIX_CONVERSION_QCOM)?;
         let op = match conversion {
             ArrayConversion::Bitcast => Op::BitCastArrayQCOM,
             ArrayConversion::SubArray => Op::ExtractSubArrayQCOM,

@@ -3,7 +3,7 @@ use alloc::{string::String, vec::Vec};
 use spirv::Word;
 
 use super::{
-    Block, BlockContext, Error, Instruction, Writer, block::AccessTypeAdjustment, helpers,
+    Block, BlockContext, Error, Instruction, Writer, block::AccessTypeAdjustment, grammar, helpers,
 };
 use crate::{
     Expression, GlobalVariable, Module, SpirvDecoration, SpirvDecorationOperands,
@@ -12,11 +12,12 @@ use crate::{
 
 const GLSL_STD_450: &str = "GLSL.std.450";
 const DEBUG_INFO_SETS: [&str; 2] = ["OpenCL.DebugInfo.100", "NonSemantic.Shader.DebugInfo.100"];
-const FUNCTION_DEBUG_INFO: [u32; 4] = [23, 24, 28, 29];
-const OP_EXECUTION_MODE_ID: u32 = 331;
-const OP_DECORATE_ID: u32 = 332;
-const OP_DECORATE_STRING: u32 = 5632;
-const OP_MEMBER_DECORATE_STRING: u32 = 5633;
+const FUNCTION_DEBUG_INFO: [u32; 4] = [
+    grammar::shader_debug_info::DebugScope,
+    grammar::shader_debug_info::DebugNoScope,
+    grammar::shader_debug_info::DebugDeclare,
+    grammar::shader_debug_info::DebugValue,
+];
 
 impl Writer {
     pub(super) fn use_spirv_requirements(&mut self, module: &Module) {
@@ -65,7 +66,7 @@ impl Writer {
                     instruction
                 }
                 SpirvExecutionModeOperands::Ids(ref ids) => {
-                    let mut instruction = Instruction::raw(OP_EXECUTION_MODE_ID);
+                    let mut instruction = Instruction::new(spirv::Op::ExecutionModeId);
                     instruction.add_operand(function_id);
                     instruction.add_operand(mode.mode);
                     for &id in ids {
@@ -117,10 +118,12 @@ impl Writer {
             (&SpirvDecorationOperands::Literals(_), Some(_)) => {
                 Instruction::new(spirv::Op::MemberDecorate)
             }
-            (&SpirvDecorationOperands::Ids(_), _) => Instruction::raw(OP_DECORATE_ID),
-            (&SpirvDecorationOperands::Strings(_), None) => Instruction::raw(OP_DECORATE_STRING),
+            (&SpirvDecorationOperands::Ids(_), _) => Instruction::new(spirv::Op::DecorateId),
+            (&SpirvDecorationOperands::Strings(_), None) => {
+                Instruction::new(spirv::Op::DecorateString)
+            }
             (&SpirvDecorationOperands::Strings(_), Some(_)) => {
-                Instruction::raw(OP_MEMBER_DECORATE_STRING)
+                Instruction::new(spirv::Op::MemberDecorateString)
             }
         };
         instruction.add_operand(id);

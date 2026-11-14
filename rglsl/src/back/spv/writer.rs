@@ -9,6 +9,7 @@ use super::{
     EntryPointContext, Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction,
     LocalImageType, LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType,
     NumericType, Options, PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags,
+    feature, grammar,
     helpers::{
         contains_builtin, global_needs_wrapper, map_storage_class, references_builtin_output,
     },
@@ -371,35 +372,11 @@ impl Writer {
         Ok(())
     }
 
-    /// Indicate that the code uses the given extension.
-    pub(super) fn require_demote(&mut self) -> Result<(), Error> {
-        self.use_extension("SPV_EXT_demote_to_helper_invocation");
-        self.require_any(
-            "demote to helper invocation",
-            &[spirv::Capability::DemoteToHelperInvocation],
-        )
-    }
-
     pub(super) fn require_mesh_shading(&mut self) -> Result<(), Error> {
-        match self.mesh_flavor {
-            Some(crate::MeshFlavor::Nv) => {
-                self.use_extension("SPV_NV_mesh_shader");
-                self.require_any("NV mesh shaders", &[spirv::Capability::MeshShadingNV])
-            }
-            Some(crate::MeshFlavor::Ext) | None => {
-                self.use_extension("SPV_EXT_mesh_shader");
-                self.require_any("mesh shaders", &[spirv::Capability::MeshShadingEXT])?;
-                let lang_version = self.lang_version();
-                if lang_version.0 <= 1 && lang_version.1 < 4 {
-                    return Err(Error::SpirvVersionTooLow(1, 4));
-                }
-                Ok(())
-            }
-        }
-    }
-
-    pub(super) fn use_extension(&mut self, extension: &'static str) {
-        self.extensions_used.insert(extension);
+        self.require(match self.mesh_flavor {
+            Some(crate::MeshFlavor::Nv) => &feature::MESH_SHADING_NV,
+            Some(crate::MeshFlavor::Ext) | None => &feature::MESH_SHADING_EXT,
+        })
     }
 
     pub(super) fn get_type_id(&mut self, lookup_ty: LookupType) -> Result<Word, Error> {
@@ -1164,11 +1141,7 @@ impl Writer {
         self.write_opacity_micromap_mode(function_id, entry_point)?;
         self.write_spirv_execution_modes(function_id, entry_point)?;
         if ir_module.shader_64bit_indexing {
-            self.use_extension("SPV_EXT_shader_64bit_indexing");
-            self.require_any(
-                "64-bit indexing",
-                &[spirv::Capability::Shader64BitIndexingEXT],
-            )?;
+            self.require(&feature::SHADER_64BIT_INDEXING)?;
             self.write_execution_mode(function_id, spirv::ExecutionMode::Shader64BitIndexingEXT)?;
         }
 
@@ -1183,45 +1156,50 @@ impl Writer {
             ),
         ] {
             if enabled {
-                self.use_extension("SPV_KHR_quad_control");
-                self.require_any("quad control", &[spirv::Capability::QuadControlKHR])?;
+                self.require(&feature::QUAD_CONTROL)?;
                 self.write_execution_mode(function_id, mode)?;
             }
         }
 
         if entry_point.reconvergence.subgroup_uniform_control_flow {
-            self.use_extension("SPV_KHR_subgroup_uniform_control_flow");
+            self.use_feature(&feature::SUBGROUP_UNIFORM_CONTROL_FLOW);
             self.write_execution_mode(
                 function_id,
                 spirv::ExecutionMode::SubgroupUniformControlFlowKHR,
             )?;
         }
         if entry_point.reconvergence.maximally_reconverges {
-            self.use_extension("SPV_KHR_maximal_reconvergence");
+            self.use_feature(&feature::MAXIMAL_RECONVERGENCE);
             self.write_execution_mode(function_id, spirv::ExecutionMode::MaximallyReconvergesKHR)?;
         }
 
         if let Some(group) = entry_point.derivative_group {
-            let (capability, mode) = match group.shape {
-                crate::DerivativeGroupShape::Quads => (
-                    spirv::Capability::ComputeDerivativeGroupQuadsKHR,
+            use crate::DerivativeFlavor as Df;
+            use crate::DerivativeGroupShape as Ds;
+            let (feature, mode) = match (group.flavor, group.shape) {
+                (Df::Khr, Ds::Quads) => (
+                    &feature::DERIVATIVE_GROUP_QUADS_KHR,
                     spirv::ExecutionMode::DerivativeGroupQuadsKHR,
                 ),
-                crate::DerivativeGroupShape::Linear => (
-                    spirv::Capability::ComputeDerivativeGroupLinearKHR,
+                (Df::Khr, Ds::Linear) => (
+                    &feature::DERIVATIVE_GROUP_LINEAR_KHR,
+                    spirv::ExecutionMode::DerivativeGroupLinearKHR,
+                ),
+                (Df::Nv, Ds::Quads) => (
+                    &feature::DERIVATIVE_GROUP_QUADS_NV,
+                    spirv::ExecutionMode::DerivativeGroupQuadsKHR,
+                ),
+                (Df::Nv, Ds::Linear) => (
+                    &feature::DERIVATIVE_GROUP_LINEAR_NV,
                     spirv::ExecutionMode::DerivativeGroupLinearKHR,
                 ),
             };
-            self.use_extension(match group.flavor {
-                crate::DerivativeFlavor::Khr => "SPV_KHR_compute_shader_derivatives",
-                crate::DerivativeFlavor::Nv => "SPV_NV_compute_shader_derivatives",
-            });
-            self.require_any("compute shader derivatives", &[capability])?;
+            self.require(feature)?;
             self.write_execution_mode(function_id, mode)?;
         }
 
         if entry_point.tile_shading.non_coherent_attachment_read {
-            self.require_tile_shading()?;
+            self.require(&feature::TILE_SHADING)?;
             self.write_execution_mode(
                 function_id,
                 spirv::ExecutionMode::NonCoherentTileAttachmentReadQCOM,
@@ -1280,43 +1258,38 @@ impl Writer {
                 }
                 let modes = entry_point.fragment_modes;
                 if modes.early_and_late_fragment_tests {
-                    self.use_extension("SPV_AMD_shader_early_and_late_fragment_tests");
+                    self.use_feature(&feature::AMD_EARLY_AND_LATE_FRAGMENT_TESTS);
                     self.write_execution_mode(
                         function_id,
                         spirv::ExecutionMode::EarlyAndLateFragmentTestsAMD,
                     )?;
                 }
                 if modes.post_depth_coverage {
-                    self.use_extension("SPV_KHR_post_depth_coverage");
-                    self.require_any(
-                        "post_depth_coverage",
-                        &[spirv::Capability::SampleMaskPostDepthCoverage],
-                    )?;
+                    self.require(&feature::POST_DEPTH_COVERAGE)?;
                     self.write_execution_mode(
                         function_id,
                         spirv::ExecutionMode::PostDepthCoverage,
                     )?;
                 }
-                for (enabled, capability, mode) in [
+                for (enabled, feature, mode) in [
                     (
                         modes.non_coherent_color_attachment_read,
-                        spirv::Capability::TileImageColorReadAccessEXT,
+                        &feature::TILE_IMAGE_COLOR_READ,
                         spirv::ExecutionMode::NonCoherentColorAttachmentReadEXT,
                     ),
                     (
                         modes.non_coherent_depth_attachment_read,
-                        spirv::Capability::TileImageDepthReadAccessEXT,
+                        &feature::TILE_IMAGE_DEPTH_READ,
                         spirv::ExecutionMode::NonCoherentDepthAttachmentReadEXT,
                     ),
                     (
                         modes.non_coherent_stencil_attachment_read,
-                        spirv::Capability::TileImageStencilReadAccessEXT,
+                        &feature::TILE_IMAGE_STENCIL_READ,
                         spirv::ExecutionMode::NonCoherentStencilAttachmentReadEXT,
                     ),
                 ] {
                     if enabled {
-                        self.use_extension("SPV_EXT_shader_tile_image");
-                        self.require_any("tile image reads", &[capability])?;
+                        self.require(feature)?;
                         self.write_execution_mode(function_id, mode)?;
                     }
                 }
@@ -1347,34 +1320,29 @@ impl Writer {
                 if let Some(interlock) = modes.interlock {
                     use crate::InterlockScope as Is;
                     use spirv::ExecutionMode as Em;
-                    let (mode, capability) = match (interlock.scope, interlock.ordered) {
-                        (Is::Pixel, true) => (
-                            Em::PixelInterlockOrderedEXT,
-                            spirv::Capability::FragmentShaderPixelInterlockEXT,
-                        ),
-                        (Is::Pixel, false) => (
-                            Em::PixelInterlockUnorderedEXT,
-                            spirv::Capability::FragmentShaderPixelInterlockEXT,
-                        ),
-                        (Is::Sample, true) => (
-                            Em::SampleInterlockOrderedEXT,
-                            spirv::Capability::FragmentShaderSampleInterlockEXT,
-                        ),
-                        (Is::Sample, false) => (
-                            Em::SampleInterlockUnorderedEXT,
-                            spirv::Capability::FragmentShaderSampleInterlockEXT,
-                        ),
+                    let (mode, feature) = match (interlock.scope, interlock.ordered) {
+                        (Is::Pixel, true) => {
+                            (Em::PixelInterlockOrderedEXT, &feature::PIXEL_INTERLOCK)
+                        }
+                        (Is::Pixel, false) => {
+                            (Em::PixelInterlockUnorderedEXT, &feature::PIXEL_INTERLOCK)
+                        }
+                        (Is::Sample, true) => {
+                            (Em::SampleInterlockOrderedEXT, &feature::SAMPLE_INTERLOCK)
+                        }
+                        (Is::Sample, false) => {
+                            (Em::SampleInterlockUnorderedEXT, &feature::SAMPLE_INTERLOCK)
+                        }
                         (Is::ShadingRate, true) => (
                             Em::ShadingRateInterlockOrderedEXT,
-                            spirv::Capability::FragmentShaderShadingRateInterlockEXT,
+                            &feature::SHADING_RATE_INTERLOCK,
                         ),
                         (Is::ShadingRate, false) => (
                             Em::ShadingRateInterlockUnorderedEXT,
-                            spirv::Capability::FragmentShaderShadingRateInterlockEXT,
+                            &feature::SHADING_RATE_INTERLOCK,
                         ),
                     };
-                    self.use_extension("SPV_EXT_fragment_shader_interlock");
-                    self.require_any("fragment shader interlock", &[capability])?;
+                    self.require(feature)?;
                     self.write_execution_mode(function_id, mode)?;
                 }
                 spirv::ExecutionModel::Fragment
@@ -1384,7 +1352,7 @@ impl Writer {
                     entry_point.workgroup_size_overrides.is_some() && self.lang_version() >= (1, 6);
                 match entry_point.tile_shading.rate {
                     Some(rate) if !size_id => {
-                        self.require_tile_shading()?;
+                        self.require(&feature::TILE_SHADING)?;
                         Instruction::execution_mode(
                             function_id,
                             spirv::ExecutionMode::TileShadingRateQCOM,
@@ -1497,19 +1465,15 @@ impl Writer {
             Sk::BFloat | Sk::FloatE4M3 | Sk::FloatE5M2 => {
                 let encoding = match scalar.kind {
                     Sk::BFloat => {
-                        self.capabilities_used
-                            .insert(spirv::Capability::BFloat16TypeKHR);
-                        self.use_extension("SPV_KHR_bfloat16");
+                        self.use_feature(&feature::BFLOAT16_TYPE);
                         spirv::FPEncoding::BFloat16KHR
                     }
                     Sk::FloatE4M3 => {
-                        self.capabilities_used.insert(spirv::Capability::Float8EXT);
-                        self.use_extension("SPV_EXT_float8");
+                        self.use_feature(&feature::FLOAT8_TYPE);
                         spirv::FPEncoding::Float8E4M3EXT
                     }
                     _ => {
-                        self.capabilities_used.insert(spirv::Capability::Float8EXT);
-                        self.use_extension("SPV_EXT_float8");
+                        self.use_feature(&feature::FLOAT8_TYPE);
                         spirv::FPEncoding::Float8E5M2EXT
                     }
                 };
@@ -1621,11 +1585,11 @@ impl Writer {
                 if self.has_ray_tracing_pipeline {
                     self.require_ray_tracing()?;
                 } else if !self.micromap_acceleration_structures {
-                    self.require_ray_queries()?;
+                    self.require(&feature::RAY_QUERY)?;
                 }
             }
             crate::TypeInner::RayQuery => {
-                self.require_ray_queries()?;
+                self.require(&feature::RAY_QUERY)?;
             }
             crate::TypeInner::HitObject { flavor } => {
                 self.require_hit_objects(flavor)?;
@@ -1637,11 +1601,7 @@ impl Writer {
                 width: 4,
                 kind: crate::ScalarKind::Float,
             }) => {
-                self.require_any(
-                    "32 bit floating-point atomics",
-                    &[spirv::Capability::AtomicFloat32AddEXT],
-                )?;
-                self.use_extension("SPV_EXT_shader_atomic_float_add");
+                self.require(&feature::ATOMIC_FLOAT32_ADD)?;
             }
             // 16 bit floating-point support requires Float16 capability
             crate::TypeInner::Matrix {
@@ -1657,8 +1617,7 @@ impl Writer {
                     .flags
                     .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE) =>
             {
-                self.require_any("16 bit floating-point", &[spirv::Capability::Float16])?;
-                self.use_extension("SPV_KHR_16bit_storage");
+                self.require(&feature::FLOAT16_WITH_STORAGE)?;
             }
             // 16 bit integer support requires Int16 capability
             crate::TypeInner::Vector {
@@ -1676,40 +1635,17 @@ impl Writer {
                 .flags
                 .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE) =>
             {
-                self.require_any("16 bit integer", &[spirv::Capability::Int16])?;
-                self.use_extension("SPV_KHR_16bit_storage");
+                self.require(&feature::INT16_WITH_STORAGE)?;
             }
             // Cooperative types and ops
-            crate::TypeInner::CooperativeMatrix { class, .. } => match class {
-                crate::CooperativeMatrixClass::Khr => {
-                    self.require_any(
-                        "cooperative matrix",
-                        &[spirv::Capability::CooperativeMatrixKHR],
-                    )?;
-                    self.use_extension("SPV_KHR_cooperative_matrix");
-                }
-                crate::CooperativeMatrixClass::Nv => {
-                    self.require_any(
-                        "cooperative matrix",
-                        &[spirv::Capability::CooperativeMatrixNV],
-                    )?;
-                    self.use_extension("SPV_NV_cooperative_matrix");
-                }
-            },
-            crate::TypeInner::LongVector { size, class, .. } => match class {
-                crate::LongVectorClass::Plain => {
-                    self.require_any("long vector", &[spirv::Capability::LongVectorEXT])?;
-                    self.use_extension("SPV_EXT_long_vector");
-                    let _ = size;
-                }
-                crate::LongVectorClass::CooperativeNv => {
-                    self.require_any(
-                        "cooperative vector",
-                        &[spirv::Capability::CooperativeVectorNV],
-                    )?;
-                    self.use_extension("SPV_NV_cooperative_vector");
-                }
-            },
+            crate::TypeInner::CooperativeMatrix { class, .. } => self.require(match class {
+                crate::CooperativeMatrixClass::Khr => &feature::COOPERATIVE_MATRIX_KHR,
+                crate::CooperativeMatrixClass::Nv => &feature::COOPERATIVE_MATRIX_NV,
+            })?,
+            crate::TypeInner::LongVector { class, .. } => self.require(match class {
+                crate::LongVectorClass::Plain => &feature::LONG_VECTOR,
+                crate::LongVectorClass::CooperativeNv => &feature::COOPERATIVE_VECTOR,
+            })?,
             _ => {}
         }
         Ok(())
@@ -1740,15 +1676,6 @@ impl Writer {
         };
 
         instruction.to_words(&mut self.logical_layout.declarations);
-    }
-
-    fn require_tensor_addressing(&mut self) -> Result<(), Error> {
-        self.require_any(
-            "tensor addressing",
-            &[spirv::Capability::TensorAddressingNV],
-        )?;
-        self.use_extension("SPV_NV_tensor_addressing");
-        Ok(())
     }
 
     fn write_cooperative_size(
@@ -2015,7 +1942,7 @@ impl Writer {
                     dimensions,
                     clamp_mode,
                 } => {
-                    self.require_tensor_addressing()?;
+                    self.require(&feature::TENSOR_ADDRESSING)?;
                     let dimensions = self.write_cooperative_size(dimensions, module, mod_info)?;
                     let clamp_mode = match clamp_mode {
                         Some(clamp_mode) => {
@@ -2034,7 +1961,7 @@ impl Writer {
                     has_dimensions,
                     ref permutation,
                 } => {
-                    self.require_tensor_addressing()?;
+                    self.require(&feature::TENSOR_ADDRESSING)?;
                     let dimensions = self.write_cooperative_size(dimensions, module, mod_info)?;
                     let has_dimensions =
                         self.get_constant_scalar(crate::Literal::Bool(has_dimensions));
@@ -2237,13 +2164,7 @@ impl Writer {
                 "storage image format",
                 &[spirv::Capability::StorageImageExtendedFormats],
             ),
-            If::R64ui | If::R64i => {
-                self.use_extension("SPV_EXT_shader_image_int64");
-                self.require_any(
-                    "64-bit integer storage image format",
-                    &[spirv::Capability::Int64ImageEXT],
-                )
-            }
+            If::R64ui | If::R64i => self.require(&feature::IMAGE_INT64),
             If::Unknown
             | If::Rgba32f
             | If::Rgba16f
@@ -2426,7 +2347,7 @@ impl Writer {
         if rest.iter().any(|&id| id != first) {
             return None;
         }
-        self.require_replicated_composites().ok()?;
+        self.require(&feature::REPLICATED_COMPOSITES).ok()?;
         Some(first)
     }
 
@@ -2846,7 +2767,7 @@ impl Writer {
                             others.push(Decoration::NoPerspective);
                         }
                         Some(crate::Interpolation::ExplicitVertexAmd) => {
-                            self.use_extension("SPV_AMD_shader_explicit_vertex_parameter");
+                            self.use_feature(&feature::AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
                             others.push(Decoration::ExplicitInterpAMD);
                         }
                         Some(crate::Interpolation::PerVertex {
@@ -2938,7 +2859,7 @@ impl Writer {
             self.decorate(id, Decoration::RelaxedPrecision, &[]);
         }
         let class = if global_variable.tile_attachment {
-            self.require_tile_shading()?;
+            self.require(&feature::TILE_SHADING)?;
             spirv::StorageClass::TileAttachmentQCOM
         } else if crate::proc::is_tile_image(ir_module, global_variable) {
             spirv::StorageClass::TileImageEXT
@@ -3107,11 +3028,7 @@ impl Writer {
             self.decorate(id, Decoration::InputAttachmentIndex, &[index]);
         }
         if let Some(bank) = global_variable.immediate_bank {
-            self.require_any(
-                "push constant banks",
-                &[spirv::Capability::PushConstantBanksNV],
-            )?;
-            self.use_extension("SPV_NV_push_constant_bank");
+            self.require(&feature::PUSH_CONSTANT_BANKS)?;
             if let Some(offset) = bank.member_offset {
                 self.decorate(id, Decoration::MemberOffsetNV, &[offset]);
             }
@@ -3364,19 +3281,11 @@ impl Writer {
                 secondary_view_offset,
             }) => {
                 if viewport_relative {
-                    self.use_extension("SPV_NV_viewport_array2");
-                    self.require_any(
-                        "`viewport_relative`",
-                        &[spirv::Capability::ShaderViewportMaskNV],
-                    )?;
+                    self.require(&feature::VIEWPORT_MASK)?;
                     decorations.push((spirv::Decoration::ViewportRelativeNV, ArrayVec::new()));
                 }
                 if let Some(offset) = secondary_view_offset {
-                    self.use_extension("SPV_NV_stereo_view_rendering");
-                    self.require_any(
-                        "`secondary_view_offset`",
-                        &[spirv::Capability::ShaderStereoViewNV],
-                    )?;
+                    self.require(&feature::STEREO_VIEW)?;
                     let mut operands = ArrayVec::new();
                     operands.push(offset.cast_unsigned());
                     decorations.push((spirv::Decoration::SecondaryViewportRelativeNV, operands));
@@ -3385,11 +3294,7 @@ impl Writer {
             crate::Binding::BuiltIn(crate::BuiltIn::SampleMask {
                 override_coverage: true,
             }) => {
-                self.use_extension("SPV_NV_sample_mask_override_coverage");
-                self.require_any(
-                    "`override_coverage`",
-                    &[spirv::Capability::SampleMaskOverrideCoverageNV],
-                )?;
+                self.require(&feature::SAMPLE_MASK_OVERRIDE_COVERAGE)?;
                 decorations.push((spirv::Decoration::OverrideCoverageNV, ArrayVec::new()));
             }
             _ => {}
@@ -3548,11 +3453,11 @@ impl Writer {
 
         if self.physical_layout.version < 0x10300 && has_storage_buffers {
             // enable the storage buffer class on < SPV-1.3
-            Instruction::extension("SPV_KHR_storage_buffer_storage_class")
+            Instruction::extension(feature::KHR_STORAGE_BUFFER_STORAGE_CLASS)
                 .to_words(&mut self.logical_layout.extensions);
         }
         if has_ray_query {
-            self.require_ray_queries()?;
+            self.require(&feature::RAY_QUERY)?;
         }
         self.write_ray_tracing_features()?;
         self.mesh_flavor = ir_module
@@ -3578,11 +3483,7 @@ impl Writer {
         self.vulkan_memory_model = ir_module.vulkan_memory_model;
         self.device_scope_used = false;
         if self.vulkan_memory_model {
-            self.capabilities_used
-                .insert(spirv::Capability::VulkanMemoryModel);
-            if self.lang_version() < (1, 5) {
-                self.use_extension("SPV_KHR_vulkan_memory_model");
-            }
+            self.use_feature(&feature::VULKAN_MEMORY_MODEL);
         }
         for (_, ty) in ir_module.types.iter() {
             if let crate::TypeInner::Pointer {
@@ -3598,11 +3499,7 @@ impl Writer {
             }
         }
         if !self.physical_pointees.is_empty() {
-            self.capabilities_used
-                .insert(spirv::Capability::PhysicalStorageBufferAddresses);
-            if self.lang_version() < (1, 5) {
-                self.use_extension("SPV_KHR_physical_storage_buffer");
-            }
+            self.use_feature(&feature::PHYSICAL_STORAGE_BUFFER);
         }
         for (_, var) in ir_module.global_variables.iter() {
             if let crate::AddressSpace::Uniform
@@ -3753,9 +3650,7 @@ impl Writer {
                 &mut self.logical_layout.function_definitions,
             );
             if declarations || functions {
-                self.capabilities_used
-                    .insert(spirv::Capability::ReplicatedCompositesEXT);
-                self.use_extension("SPV_EXT_replicated_composites");
+                self.use_feature(&feature::REPLICATED_COMPOSITES);
             }
         }
         if self
@@ -3774,15 +3669,8 @@ impl Writer {
             for capability in usage.capabilities {
                 self.capabilities_used.insert(capability);
             }
-            let incorporated = self.lang_version() >= (1, 3);
-            for extension in usage.extensions {
-                let core = match extension {
-                    "SPV_KHR_16bit_storage" => incorporated,
-                    _ => self.lang_version() >= (1, 5),
-                };
-                if !core {
-                    self.use_extension(extension);
-                }
+            for feature in usage.features {
+                self.use_feature(feature);
             }
         }
         if self.device_scope_used
@@ -3928,8 +3816,7 @@ impl Writer {
         self.require_any("NonUniform", &[spirv::Capability::ShaderNonUniform])?;
         self.use_descriptor_indexing();
         if self.descriptor_heap {
-            self.require_any("NonUniform", &[spirv::Capability::DescriptorHeapEXT])?;
-            self.use_extension("SPV_EXT_descriptor_heap");
+            self.require(&feature::NON_UNIFORM_DESCRIPTOR_HEAP)?;
         } else {
             self.decorate(id, spirv::Decoration::NonUniform, &[]);
         }
@@ -3937,9 +3824,7 @@ impl Writer {
     }
 
     pub(super) fn use_descriptor_indexing(&mut self) {
-        if self.lang_version() < (1, 5) {
-            self.use_extension("SPV_EXT_descriptor_indexing");
-        }
+        self.use_feature(&feature::DESCRIPTOR_INDEXING);
     }
 
     pub(super) fn require_descriptor_indexing(
@@ -3961,7 +3846,7 @@ impl Writer {
         let import_id = match self.debug_printf {
             Some(import_id) => import_id,
             None => {
-                self.use_extension("SPV_KHR_non_semantic_info");
+                self.use_feature(&feature::NON_SEMANTIC_INFO);
                 let import_id = self.id_gen.next();
                 Instruction::ext_inst_import(import_id, "NonSemantic.DebugPrintf")
                     .to_words(&mut self.logical_layout.ext_inst_imports);
@@ -3979,7 +3864,7 @@ impl Writer {
         let print_id = self.id_gen.next();
         block.body.push(Instruction::ext_inst(
             import_id,
-            1,
+            grammar::debug_printf::DebugPrintf,
             self.void_type,
             print_id,
             &operands,
