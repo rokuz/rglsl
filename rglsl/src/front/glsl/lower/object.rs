@@ -310,12 +310,31 @@ impl Lowerer<'_> {
         layout
     }
 
-    fn defer_invalid_functions(&mut self) -> Vec<(Handle<Function>, String)> {
-        let reachable = self.reachable.as_ref();
+    pub(super) fn is_deferrable(&self, id: FunctionId) -> bool {
+        self.object
+            && self
+                .reachable
+                .as_ref()
+                .is_none_or(|reachable| !reachable.contains(&id))
+    }
+
+    pub(super) fn defer_function(&mut self, handle: Handle<Function>, message: String) {
+        let function = self.module.functions.get_mut(handle);
+        *function = Function {
+            name: function.name.take(),
+            arguments: core::mem::take(&mut function.arguments),
+            result: function.result.take(),
+            linkage: Linkage::Import,
+            ..Function::default()
+        };
+        self.deferred.push((handle, message));
+    }
+
+    fn defer_invalid_functions(&mut self) {
         let deferrable: BTreeSet<Handle<Function>> = self
             .functions
             .iter()
-            .filter(|&(id, _)| reachable.is_none_or(|reachable| !reachable.contains(id)))
+            .filter(|&(&id, _)| self.is_deferrable(id))
             .map(|(_, &handle)| handle)
             .filter(|&handle| {
                 self.module
@@ -324,21 +343,22 @@ impl Lowerer<'_> {
                     .is_ok_and(|function| function.linkage.is_definition())
             })
             .collect();
-        let mut deferred: Vec<(Handle<Function>, String)> = Vec::new();
         if deferrable.is_empty() {
-            return deferred;
+            return;
         }
         loop {
             let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
             validator.mode(ValidationMode::Object);
             let Err(error) = validator.validate(&self.module) else {
-                return deferred;
+                return;
             };
             let ValidationError::Function { handle, .. } = *error.as_inner() else {
-                return deferred;
+                return;
             };
-            if !deferrable.contains(&handle) || deferred.iter().any(|&(done, _)| done == handle) {
-                return deferred;
+            if !deferrable.contains(&handle)
+                || self.deferred.iter().any(|&(done, _)| done == handle)
+            {
+                return;
             }
             let mut message = error.as_inner().to_string();
             let mut source = core::error::Error::source(error.as_inner());
@@ -347,20 +367,13 @@ impl Lowerer<'_> {
                 message.push_str(&inner.to_string());
                 source = inner.source();
             }
-            deferred.push((handle, message));
-            let function = self.module.functions.get_mut(handle);
-            *function = Function {
-                name: function.name.take(),
-                arguments: core::mem::take(&mut function.arguments),
-                result: function.result.take(),
-                linkage: Linkage::Import,
-                ..Function::default()
-            };
+            self.defer_function(handle, message);
         }
     }
 
     pub(super) fn into_object(mut self) -> ObjectModule {
-        let deferred = self.defer_invalid_functions();
+        self.defer_invalid_functions();
+        let deferred = core::mem::take(&mut self.deferred);
         let mut functions = self.function_symbols();
         for symbol in &mut functions {
             symbol.invalid = deferred

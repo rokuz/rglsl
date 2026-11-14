@@ -1066,6 +1066,7 @@ pub(super) struct Lowerer<'a> {
     pub(super) interface: Vec<Handle<GlobalVariable>>,
     pub(super) on_use_globals: BTreeSet<Handle<GlobalVariable>>,
     pub(super) reachable: Option<BTreeSet<FunctionId>>,
+    pub(super) deferred: Vec<(Handle<crate::Function>, String)>,
     pub(super) outputs: BTreeMap<String, Handle<GlobalVariable>>,
     pub(super) inputs: BTreeSet<String>,
     pub(super) builtins: BTreeMap<String, Handle<GlobalVariable>>,
@@ -1168,6 +1169,7 @@ impl<'a> Lowerer<'a> {
             interface: Vec::new(),
             on_use_globals: BTreeSet::new(),
             reachable: None,
+            deferred: Vec::new(),
             outputs: BTreeMap::new(),
             inputs: BTreeSet::new(),
             builtins: BTreeMap::new(),
@@ -1450,8 +1452,21 @@ impl<'a> Lowerer<'a> {
         }
         let declared_globals = self.module.global_variables.len();
         for &(id, definition) in &order {
+            let before = self.errors.len();
             let result = self.define_function(id, definition);
             self.report(result);
+            if self.errors.len() > before
+                && self.is_deferrable(id)
+                && let Some(&handle) = self.functions.get(&id)
+            {
+                let message = self
+                    .errors
+                    .drain(before..)
+                    .map(|error| error.kind.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                self.defer_function(handle, message);
+            }
         }
         self.on_use_globals = self.globals_on_use(declared_globals);
         let entry = definitions.iter().find(|definition| {

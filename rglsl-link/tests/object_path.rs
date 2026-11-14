@@ -447,3 +447,76 @@ void main() { color = vec4(1.0); }
     only_stage(&[ignoring, library])?;
     Ok(())
 }
+
+const DOUBLE_DERIVATIVE: &str = "#extension GL_ARB_gpu_shader_fp64 : enable
+layout(location = 1) in flat dvec2 slope;
+double steepness() { return dFdx(slope.x); }
+";
+
+#[test]
+fn functions_nobody_calls_that_do_not_lower_link() -> TestResult {
+    assert_same(
+        ShaderStage::Fragment,
+        &format!(
+            "#version 450
+{DOUBLE_DERIVATIVE}layout(location = 0) out vec4 color;
+void main() {{ color = vec4(1.0); }}
+"
+        ),
+        false,
+    )
+}
+
+#[test]
+fn functions_that_do_not_lower_are_reported_when_linked_code_calls_them() -> TestResult {
+    let library = compile(
+        ShaderStage::Fragment,
+        true,
+        &format!("#version 450\n{DOUBLE_DERIVATIVE}"),
+    )?;
+    let calling = compile(
+        ShaderStage::Fragment,
+        false,
+        "#version 450
+#extension GL_ARB_gpu_shader_fp64 : enable
+layout(location = 0) out vec4 color;
+double steepness();
+void main() { color = vec4(float(steepness())); }
+",
+    )?;
+    let errors = match link_objects(&[calling, library], &LinkOptions::default()) {
+        Ok(_) => return Err("linking succeeded".into()),
+        Err(errors) => errors.errors,
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [LinkError::InvalidFunction { signature, message }]
+                if signature == "steepness()" && message.contains("is not supported")
+        ),
+        "{errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn functions_main_calls_report_lowering_errors_when_compiled() -> TestResult {
+    let source = format!(
+        "#version 450
+{DOUBLE_DERIVATIVE}layout(location = 0) out vec4 color;
+void main() {{ color = vec4(float(steepness())); }}
+"
+    );
+    let options = frontend_options(ShaderStage::Fragment, false);
+    let Err(direct) = Frontend::default().parse(&options, &source) else {
+        return Err("the direct path accepted the shader".into());
+    };
+    let Err(object) = Frontend::default().compile(&options, &source) else {
+        return Err("the object path accepted the shader".into());
+    };
+    let messages = |errors: &rglsl::front::glsl::ParseErrors| -> Vec<String> {
+        errors.errors.iter().map(ToString::to_string).collect()
+    };
+    assert_eq!(messages(&direct), messages(&object));
+    Ok(())
+}
