@@ -6719,3 +6719,15 @@ void main() {}
 out float gl_PointSize;
 out int gl_VertexIndex;
 void main() {}
+### half interpolants take half offsets like glslang | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(location = 0) in f16vec2 v;
+void main() {
+    f16vec2 a = interpolateAtOffset(v, f16vec2(0.25));
+}
+### a half offset with a single interpolant is ambiguous like in glslang | frag | 5:AmbiguousCall
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(location = 0) in vec2 v;
+void main() {
+    vec2 a = interpolateAtOffset(v, f16vec2(0.25));
+}
