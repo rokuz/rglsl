@@ -59,7 +59,7 @@ pub(crate) struct Builder<'a> {
     pub remaps: Vec<Remap>,
     pub globals: Vec<MergedGlobal>,
     keys: BTreeMap<(SpaceClass, String), usize>,
-    overrides: BTreeMap<u32, Handle<Override>>,
+    overrides: BTreeMap<u32, Vec<(usize, Handle<Override>)>>,
     pub functions: BTreeMap<Node, Handle<Function>>,
     pub library_functions: Vec<Handle<Function>>,
     pub warnings: Vec<String>,
@@ -129,37 +129,23 @@ impl<'a> Builder<'a> {
         for (handle, value) in source.overrides.iter() {
             let ty = &source.types[value.ty];
             if has_handles(&ty.inner) {
-                return Err(LinkError::Unsupported(String::from(
-                    "a specialization constant of a composite type in a linked module",
-                )));
-            }
-            let ty = self.module.types.insert(ty.clone(), Span::UNDEFINED);
-            if let Some(id) = value.id
-                && let Some(&existing) = self.overrides.get(&id)
-            {
-                let previous = &self.module.overrides[existing];
-                if previous.ty != ty || previous.name != value.name {
-                    self.errors.push(LinkError::SpecializationConstant(id));
-                }
-                remap.map_override(handle, existing);
                 continue;
             }
-            let new = self.module.overrides.append(
-                Override {
-                    name: value.name.clone(),
-                    id: value.id,
-                    ty,
-                    init: None,
-                },
-                Span::UNDEFINED,
-            );
-            if let Some(id) = value.id {
-                self.overrides.insert(id, new);
+            let ty = self.module.types.insert(ty.clone(), Span::UNDEFINED);
+            if let Some(new) = self.add_override(index, value, ty, &mut remap, handle) {
+                pending_overrides.push((handle, new));
             }
-            remap.map_override(handle, new);
-            pending_overrides.push((handle, new));
         }
         self.add_types(source, &mut remap)?;
+        for (handle, value) in source.overrides.iter() {
+            if !has_handles(&source.types[value.ty].inner) {
+                continue;
+            }
+            let ty = remap.ty(value.ty).map_err(internal)?;
+            if let Some(new) = self.add_override(index, value, ty, &mut remap, handle) {
+                pending_overrides.push((handle, new));
+            }
+        }
         let mut constants_done = std::collections::BTreeSet::new();
         for (handle, expression) in source.global_expressions.iter() {
             if let Expression::Constant(constant) = *expression
@@ -233,6 +219,56 @@ impl<'a> Builder<'a> {
             }
         }
         Ok(remap)
+    }
+
+    fn add_override(
+        &mut self,
+        object: usize,
+        value: &Override,
+        ty: Handle<Type>,
+        remap: &mut Remap,
+        handle: Handle<Override>,
+    ) -> Option<Handle<Override>> {
+        if let Some(id) = value.id {
+            let earlier: Vec<Handle<Override>> = self
+                .overrides
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .filter(|&&(defining, _)| defining != object)
+                .map(|&(_, existing)| existing)
+                .collect();
+            let same = earlier.iter().copied().find(|&existing| {
+                let previous = &self.module.overrides[existing];
+                previous.ty == ty && previous.name == value.name
+            });
+            match (same, earlier.first()) {
+                (Some(existing), _) => {
+                    remap.map_override(handle, existing);
+                    return None;
+                }
+                (None, Some(&existing)) => {
+                    self.errors.push(LinkError::SpecializationConstant(id));
+                    remap.map_override(handle, existing);
+                    return None;
+                }
+                (None, None) => {}
+            }
+        }
+        let new = self.module.overrides.append(
+            Override {
+                name: value.name.clone(),
+                id: value.id,
+                ty,
+                init: None,
+            },
+            Span::UNDEFINED,
+        );
+        if let Some(id) = value.id {
+            self.overrides.entry(id).or_default().push((object, new));
+        }
+        remap.map_override(handle, new);
+        Some(new)
     }
 
     fn add_types(&mut self, source: &Module, remap: &mut Remap) -> Result<(), LinkError> {

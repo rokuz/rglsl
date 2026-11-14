@@ -212,11 +212,7 @@ fn workgroup_size_overrides(module: &mut Module, ids: [Option<u32>; 3], entry: &
         let (None, Some(id)) = (*slot, id) else {
             continue;
         };
-        let existing = module
-            .overrides
-            .iter()
-            .find(|&(_, candidate)| candidate.id == Some(id))
-            .map(|(handle, _)| handle);
+        let existing = workgroup_size_override(module, id);
         let handle = existing.unwrap_or_else(|| {
             let ty = module.types.insert(
                 Type {
@@ -247,17 +243,23 @@ fn workgroup_size_overrides(module: &mut Module, ids: [Option<u32>; 3], entry: &
     entry.workgroup_size_overrides = Some(overrides);
 }
 
+fn workgroup_size_override(module: &Module, id: u32) -> Option<Handle<Override>> {
+    module
+        .overrides
+        .iter()
+        .find(|&(_, candidate)| {
+            candidate.id == Some(id)
+                && module.types[candidate.ty].inner == TypeInner::Scalar(Scalar::U32)
+        })
+        .map(|(handle, _)| handle)
+}
+
 fn workgroup_size_defaults(module: &mut Module, layout: &StageLayout) {
     for (&id, &size) in layout.local_size_ids.iter().zip(&layout.local_size) {
         let (Some(id), Some(size)) = (id, size) else {
             continue;
         };
-        let Some(handle) = module
-            .overrides
-            .iter()
-            .find(|&(_, candidate)| candidate.id == Some(id))
-            .map(|(handle, _)| handle)
-        else {
+        let Some(handle) = workgroup_size_override(module, id) else {
             continue;
         };
         let Some(init) = module.overrides[handle].init else {

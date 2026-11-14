@@ -227,3 +227,37 @@ uint unrelated() {{ return 1u; }}
     spv::write_vec(&stage.module, &stage.info, &writer_options(), None)?;
     Ok(())
 }
+
+#[test]
+fn a_constant_id_shared_with_the_local_size_links() -> TestResult {
+    assert_same(
+        ShaderStage::Compute,
+        "#version 450
+layout(constant_id = 0) const int DIM = 1;
+layout(local_size_x_id = 0, local_size_y_id = 0) in;
+layout(std430, binding = 0) buffer Out { int value; } result;
+void main() { result.value = DIM * int(gl_WorkGroupSize.x); }
+",
+        false,
+    )
+}
+
+#[test]
+fn composite_specialization_constants_link() -> TestResult {
+    assert_same(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_spec_constant_composites : enable
+layout(local_size_x = 1) in;
+layout(constant_id = 1) const int six = 6;
+struct S { int a; int b; };
+const S pair = S(six, six);
+layout(constant_id = 2) const float spec = 3.0;
+const vec4 splat = vec4(spec);
+const int list[2] = { six, six };
+layout(std430, binding = 0) buffer Out { vec4 v; int i; } result;
+void main() { result.v = splat; result.i = pair.b + list[1]; }
+",
+        false,
+    )
+}
