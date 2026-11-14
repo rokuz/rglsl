@@ -2369,13 +2369,17 @@ impl<'a> Lowerer<'a> {
         }
         unbound.sort_by_key(|&(_, set)| set.is_none());
         let mut live = crate::compact::live_global_variables(&self.module);
-        let functions = self
-            .module
-            .functions
-            .iter()
-            .map(|(_, function)| function)
-            .chain(self.module.entry_points.iter().map(|entry| &entry.function));
-        for function in functions {
+        let functions: Vec<&crate::Function> = if self.object && self.reachable.is_some() {
+            self.reachable_functions().collect()
+        } else {
+            self.module
+                .functions
+                .iter()
+                .map(|(_, function)| function)
+                .collect()
+        };
+        let entries = self.module.entry_points.iter().map(|entry| &entry.function);
+        for function in functions.into_iter().chain(entries) {
             for (_, expression) in function.expressions.iter() {
                 if let crate::Expression::GlobalVariable(global) = *expression {
                     live.insert(global);

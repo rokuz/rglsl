@@ -368,3 +368,20 @@ void main() { color = vec4(depth()); }
     assert_eq!(interface_names(&stage), ["color", "gl_FragCoord"]);
     Ok(())
 }
+
+#[test]
+fn automatic_bindings_skip_resources_of_uncalled_functions() -> TestResult {
+    assert_same(
+        ShaderStage::Fragment,
+        "#version 450
+uniform sampler unused_sampler;
+uniform texture1D unused_texture;
+uniform sampler used_sampler;
+uniform texture1D used_texture;
+layout(location = 0) out vec4 color;
+vec4 uncalled() { return texture(sampler1D(unused_texture, unused_sampler), 0.5); }
+void main() { color = texture(sampler1D(used_texture, used_sampler), 0.5); }
+",
+        true,
+    )
+}
