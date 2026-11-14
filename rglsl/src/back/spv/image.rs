@@ -6,10 +6,7 @@ use spirv::Word;
 
 use super::{
     Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
-    qcom::{
-        CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, CAPABILITY_IMAGE_GATHER_LINEAR_QCOM,
-        OP_IMAGE_GATHER_QCOM,
-    },
+    feature, grammar,
 };
 use crate::arena::Handle;
 
@@ -456,7 +453,7 @@ impl BlockContext<'_> {
         if matches!(image_class, crate::ImageClass::Storage { .. }) {
             access.memory = self.texel_memory(image, false);
             if level.is_some() && !subpass {
-                self.require_storage_image_lod()?;
+                self.writer.require(&feature::AMD_STORAGE_IMAGE_LOD)?;
             }
         }
         if let crate::ImageClass::Storage {
@@ -686,11 +683,7 @@ impl BlockContext<'_> {
                     | crate::SampleLevel::Gradient { .. } => None,
                 };
                 if level_id.is_some() {
-                    self.writer.use_extension("SPV_AMD_texture_gather_bias_lod");
-                    self.writer.require_any(
-                        "gather with a level of detail or bias",
-                        &[spirv::Capability::ImageGatherBiasLodAMD],
-                    )?;
+                    self.writer.require(&feature::AMD_TEXTURE_GATHER_BIAS_LOD)?;
                 }
                 if !mask.is_empty() {
                     inst.add_operand(mask.bits());
@@ -701,28 +694,22 @@ impl BlockContext<'_> {
                 inst
             }
             (_, Some((component, pattern))) => {
-                let (capability, mode) = match pattern {
-                    crate::ImageGatherPattern::Linear4x1 => {
-                        (CAPABILITY_IMAGE_GATHER_LINEAR_QCOM, 0)
-                    }
-                    crate::ImageGatherPattern::Diagonal => {
-                        (CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, 1)
-                    }
-                    crate::ImageGatherPattern::Horizontal2 => {
-                        (CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, 2)
-                    }
+                let extended = &feature::IMAGE_GATHER_EXTENDED_MODES_QCOM;
+                let (feature, mode) = match pattern {
+                    crate::ImageGatherPattern::Linear4x1 => (&feature::IMAGE_GATHER_LINEAR_QCOM, 0),
+                    crate::ImageGatherPattern::Diagonal => (extended, 1),
+                    crate::ImageGatherPattern::Horizontal2 => (extended, 2),
                     crate::ImageGatherPattern::Vertical2 | crate::ImageGatherPattern::Quad => {
-                        (CAPABILITY_IMAGE_GATHER_EXTENDED_MODES_QCOM, 3)
+                        (extended, 3)
                     }
                 };
                 if depth_id.is_some() {
                     return Err(Error::Validation("a gather pattern with a depth reference"));
                 }
-                self.writer.raw_capabilities.insert(capability);
-                self.writer.use_extension("SPV_QCOM_image_processing3");
+                self.writer.use_feature(feature);
                 let component_id = self.get_index_constant(component as u32);
                 let mode_id = self.get_index_constant(mode);
-                let mut inst = Instruction::raw(OP_IMAGE_GATHER_QCOM);
+                let mut inst = Instruction::raw(grammar::op::ImageGatherQCOM);
                 inst.set_type(sample_result_type_id);
                 inst.set_result(id);
                 inst.add_operand(sampled_image_id);
@@ -1127,15 +1114,6 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    fn require_storage_image_lod(&mut self) -> Result<(), Error> {
-        self.writer
-            .use_extension("SPV_AMD_shader_image_load_store_lod");
-        self.writer.require_any(
-            "storage image access with a level of detail",
-            &[spirv::Capability::ImageReadWriteLodAMD],
-        )
-    }
-
     #[expect(
         clippy::too_many_arguments,
         reason = "the arguments are the parts of one request"
@@ -1156,7 +1134,7 @@ impl BlockContext<'_> {
         let sample_id = sample.map(|expr| self.cached.get(expr)).transpose()?;
         let level_id = level.map(|expr| self.cached.get(expr)).transpose()?;
         if level_id.is_some() {
-            self.require_storage_image_lod()?;
+            self.writer.require(&feature::AMD_STORAGE_IMAGE_LOD)?;
         }
 
         let memory = self.texel_memory(image, true);
@@ -1218,9 +1196,7 @@ impl BlockContext<'_> {
         min_lod: Option<Handle<crate::Expression>>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        self.writer.use_extension("SPV_NV_shader_image_footprint");
-        self.writer
-            .require_any("texture footprints", &[spirv::Capability::ImageFootprintNV])?;
+        self.writer.require(&feature::IMAGE_FOOTPRINT)?;
         let image_id = self.get_handle_id(image)?;
         let id = self.gen_id();
         let mut instruction = Instruction::new(spirv::Op::ImageSampleFootprintNV);
@@ -1275,25 +1251,24 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let (op, capability, image) = match aspect {
+        let (op, feature, image) = match aspect {
             crate::AttachmentAspect::Color(image) => (
                 spirv::Op::ColorAttachmentReadEXT,
-                spirv::Capability::TileImageColorReadAccessEXT,
+                &feature::TILE_IMAGE_COLOR_READ,
                 Some(image),
             ),
             crate::AttachmentAspect::Depth => (
                 spirv::Op::DepthAttachmentReadEXT,
-                spirv::Capability::TileImageDepthReadAccessEXT,
+                &feature::TILE_IMAGE_DEPTH_READ,
                 None,
             ),
             crate::AttachmentAspect::Stencil => (
                 spirv::Op::StencilAttachmentReadEXT,
-                spirv::Capability::TileImageStencilReadAccessEXT,
+                &feature::TILE_IMAGE_STENCIL_READ,
                 None,
             ),
         };
-        self.writer.use_extension("SPV_EXT_shader_tile_image");
-        self.writer.require_any("tile image reads", &[capability])?;
+        self.writer.require(feature)?;
         let id = self.gen_id();
         let mut instruction = Instruction::new(op);
         instruction.set_type(result_type_id);

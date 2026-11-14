@@ -3,7 +3,7 @@ use alloc::vec;
 use arrayvec::ArrayVec;
 use spirv::BuiltIn;
 
-use super::{Error, Writer, helpers::BindingDecorations};
+use super::{Error, Writer, feature, helpers::BindingDecorations};
 use crate::arena::Handle;
 
 impl Writer {
@@ -59,21 +59,12 @@ impl Writer {
                 }
             }
             Bi::ViewIndex => {
-                if self.lang_version() < (1, 3) {
-                    self.use_extension("SPV_KHR_multiview");
-                }
-                self.require_any("`view_index` built-in", &[spirv::Capability::MultiView])?;
+                self.require(&feature::MULTIVIEW)?;
                 BuiltIn::ViewIndex
             }
             // vertex
             Bi::BaseInstance | Bi::BaseVertex => {
-                if self.lang_version() < (1, 3) {
-                    self.use_extension("SPV_KHR_shader_draw_parameters");
-                }
-                self.require_any(
-                    "draw parameter built-ins",
-                    &[spirv::Capability::DrawParameters],
-                )?;
+                self.require(&feature::DRAW_PARAMETERS)?;
                 if built_in == Bi::BaseInstance {
                     BuiltIn::BaseInstance
                 } else {
@@ -136,22 +127,14 @@ impl Writer {
                 BuiltIn::ViewportIndex
             }
             Bi::ViewportMaskNV => {
-                self.use_extension("SPV_NV_viewport_array2");
-                self.require_any(
-                    "`gl_ViewportMask`",
-                    &[spirv::Capability::ShaderViewportMaskNV],
-                )?;
+                self.require(&feature::VIEWPORT_MASK)?;
                 if mesh_output {
                     others.push(Decoration::PerPrimitiveEXT);
                 }
                 BuiltIn::ViewportMaskNV
             }
             Bi::SecondaryPositionNV | Bi::SecondaryViewportMaskNV => {
-                self.use_extension("SPV_NV_stereo_view_rendering");
-                self.require_any(
-                    "stereo view rendering built-ins",
-                    &[spirv::Capability::ShaderStereoViewNV],
-                )?;
+                self.require(&feature::STEREO_VIEW)?;
                 if built_in == Bi::SecondaryPositionNV {
                     BuiltIn::SecondaryPositionNV
                 } else {
@@ -159,11 +142,7 @@ impl Writer {
                 }
             }
             Bi::PositionPerViewNV | Bi::ViewportMaskPerViewNV => {
-                self.use_extension("SPV_NVX_multiview_per_view_attributes");
-                self.require_any(
-                    "per-view attribute built-ins",
-                    &[spirv::Capability::PerViewAttributesNV],
-                )?;
+                self.require(&feature::PER_VIEW_ATTRIBUTES)?;
                 if stage == crate::ShaderStage::Mesh {
                     if mesh_output && built_in == Bi::ViewportMaskPerViewNV {
                         others.push(Decoration::PerPrimitiveEXT);
@@ -178,10 +157,7 @@ impl Writer {
             }
             Bi::VertexIndex => BuiltIn::VertexIndex,
             Bi::DrawIndex => {
-                if self.lang_version() < (1, 3) {
-                    self.use_extension("SPV_KHR_shader_draw_parameters");
-                }
-                self.require_any("`draw_index built-in", &[spirv::Capability::DrawParameters])?;
+                self.require(&feature::DRAW_PARAMETERS)?;
                 BuiltIn::DrawIndex
             }
             // fragment
@@ -217,7 +193,7 @@ impl Writer {
             }
             Bi::AmdBarycentric(barycentric) => {
                 use rglsl_types::builtin::AmdBarycentric as Amd;
-                self.use_extension("SPV_AMD_shader_explicit_vertex_parameter");
+                self.use_feature(&feature::AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
                 match barycentric {
                     Amd::NoPerspective => BuiltIn::BaryCoordNoPerspAMD,
                     Amd::NoPerspectiveCentroid => BuiltIn::BaryCoordNoPerspCentroidAMD,
@@ -251,29 +227,18 @@ impl Writer {
                 BuiltIn::HelperInvocation
             }
             Bi::DeviceIndex => {
-                if self.lang_version() < (1, 3) {
-                    self.use_extension("SPV_KHR_device_group");
-                }
-                self.require_any("`gl_DeviceIndex`", &[spirv::Capability::DeviceGroup])?;
+                self.require(&feature::DEVICE_GROUP)?;
                 BuiltIn::DeviceIndex
             }
             Bi::ShadingRate => {
-                self.use_extension("SPV_KHR_fragment_shading_rate");
-                self.require_any(
-                    "`gl_ShadingRateEXT`",
-                    &[spirv::Capability::FragmentShadingRateKHR],
-                )?;
+                self.require(&feature::FRAGMENT_SHADING_RATE)?;
                 BuiltIn::ShadingRateKHR
             }
             Bi::FragSize(flavor) | Bi::FragInvocationCount(flavor) => {
-                self.use_extension(match flavor {
-                    crate::FragmentDensityFlavor::Ext => "SPV_EXT_fragment_invocation_density",
-                    crate::FragmentDensityFlavor::Nv => "SPV_NV_shading_rate",
-                });
-                self.require_any(
-                    "fragment density built-ins",
-                    &[spirv::Capability::FragmentDensityEXT],
-                )?;
+                self.require(match flavor {
+                    crate::FragmentDensityFlavor::Ext => &feature::FRAGMENT_DENSITY_EXT,
+                    crate::FragmentDensityFlavor::Nv => &feature::FRAGMENT_DENSITY_NV,
+                })?;
                 if matches!(built_in, Bi::FragSize(_)) {
                     BuiltIn::FragSizeEXT
                 } else {
@@ -281,19 +246,11 @@ impl Writer {
                 }
             }
             Bi::FullyCovered => {
-                self.use_extension("SPV_EXT_fragment_fully_covered");
-                self.require_any(
-                    "`gl_FragFullyCoveredNV`",
-                    &[spirv::Capability::FragmentFullyCoveredEXT],
-                )?;
+                self.require(&feature::FRAGMENT_FULLY_COVERED)?;
                 BuiltIn::FullyCoveredEXT
             }
             Bi::FragStencilRef => {
-                self.use_extension("SPV_EXT_shader_stencil_export");
-                self.require_any(
-                    "`gl_FragStencilRefARB`",
-                    &[spirv::Capability::StencilExportEXT],
-                )?;
+                self.require(&feature::STENCIL_EXPORT)?;
                 BuiltIn::FragStencilRefEXT
             }
             // compute
@@ -349,11 +306,7 @@ impl Writer {
                 subgroup_mask(mask)
             }
             Bi::ShaderBallot(ballot) => {
-                self.use_extension("SPV_KHR_shader_ballot");
-                self.require_any(
-                    "shader ballot built-in",
-                    &[spirv::Capability::SubgroupBallotKHR],
-                )?;
+                self.require(&feature::SHADER_BALLOT)?;
                 match ballot {
                     crate::ShaderBallot::Size => BuiltIn::SubgroupSize,
                     crate::ShaderBallot::InvocationId => BuiltIn::SubgroupLocalInvocationId,
@@ -365,11 +318,7 @@ impl Writer {
                 BuiltIn::CullPrimitiveEXT
             }
             Bi::PrimitiveShadingRate => {
-                self.use_extension("SPV_KHR_fragment_shading_rate");
-                self.require_any(
-                    "`gl_PrimitiveShadingRateEXT`",
-                    &[spirv::Capability::FragmentShadingRateKHR],
-                )?;
+                self.require(&feature::FRAGMENT_SHADING_RATE)?;
                 if mesh_output {
                     others.push(Decoration::PerPrimitiveEXT);
                 }
@@ -393,7 +342,7 @@ impl Writer {
                 }
             }
             Bi::TileOffset | Bi::TileDimension | Bi::TileApronSize => {
-                self.require_tile_shading()?;
+                self.require(&feature::TILE_SHADING)?;
                 match built_in {
                     Bi::TileOffset => BuiltIn::TileOffsetQCOM,
                     Bi::TileDimension => BuiltIn::TileDimensionQCOM,
@@ -428,39 +377,26 @@ impl Writer {
             Bi::InstanceId => BuiltIn::InstanceId,
             Bi::IncomingRayFlags => BuiltIn::IncomingRayFlagsKHR,
             Bi::CullMask => {
-                self.require_any("`gl_CullMaskEXT`", &[spirv::Capability::RayCullMaskKHR])?;
-                self.use_extension("SPV_KHR_ray_cull_mask");
+                self.require(&feature::RAY_CULL_MASK)?;
                 BuiltIn::CullMaskKHR
             }
             Bi::HitTriangleVertexPositions => {
-                self.require_any(
-                    "`gl_HitTriangleVertexPositionsEXT`",
-                    &[spirv::Capability::RayTracingPositionFetchKHR],
-                )?;
-                self.use_extension("SPV_KHR_ray_tracing_position_fetch");
+                self.require(&feature::RAY_TRACING_POSITION_FETCH)?;
                 BuiltIn::HitTriangleVertexPositionsKHR
             }
             Bi::CurrentRayTime => {
-                self.require_any(
-                    "`gl_CurrentRayTimeNV`",
-                    &[spirv::Capability::RayTracingMotionBlurNV],
-                )?;
-                self.use_extension("SPV_NV_ray_tracing_motion_blur");
+                self.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                 BuiltIn::CurrentRayTimeNV
             }
             Bi::ClusterId => {
-                self.require_cluster_acceleration_structure()?;
+                self.require(&feature::CLUSTER_ACCELERATION_STRUCTURE)?;
                 BuiltIn::ClusterIDNV
             }
             Bi::HitMicroTriangleVertexPositions
             | Bi::HitMicroTriangleVertexBarycentrics
             | Bi::HitKindFrontFacingMicroTriangle
             | Bi::HitKindBackFacingMicroTriangle => {
-                self.require_any(
-                    "displacement micromaps",
-                    &[spirv::Capability::RayTracingDisplacementMicromapNV],
-                )?;
-                self.use_extension("SPV_NV_displacement_micromap");
+                self.require(&feature::DISPLACEMENT_MICROMAP)?;
                 match built_in {
                     Bi::HitMicroTriangleVertexPositions => {
                         BuiltIn::HitMicroTriangleVertexPositionsNV
@@ -475,7 +411,7 @@ impl Writer {
                 }
             }
             Bi::HitIsSphere | Bi::HitSpherePosition | Bi::HitSphereRadius => {
-                self.require_sphere_geometry()?;
+                self.require(&feature::SPHERE_GEOMETRY)?;
                 match built_in {
                     Bi::HitIsSphere => BuiltIn::HitIsSphereNV,
                     Bi::HitSpherePosition => BuiltIn::HitSpherePositionNV,
@@ -483,7 +419,7 @@ impl Writer {
                 }
             }
             Bi::HitIsLss | Bi::HitLssPositions | Bi::HitLssRadii => {
-                self.require_lss_geometry()?;
+                self.require(&feature::LSS_GEOMETRY)?;
                 match built_in {
                     Bi::HitIsLss => BuiltIn::HitIsLSSNV,
                     Bi::HitLssPositions => BuiltIn::HitLSSPositionsNV,
@@ -534,42 +470,28 @@ impl Writer {
         &mut self,
         flavor: crate::BarycentricFlavor,
     ) -> Result<(), Error> {
-        self.use_extension(match flavor {
-            crate::BarycentricFlavor::Khr => "SPV_KHR_fragment_shader_barycentric",
-            crate::BarycentricFlavor::Nv => "SPV_NV_fragment_shader_barycentric",
-        });
-        self.require_any(
-            "fragment shader barycentrics",
-            &[spirv::Capability::FragmentBarycentricKHR],
-        )
+        self.require(match flavor {
+            crate::BarycentricFlavor::Khr => &feature::BARYCENTRICS_KHR,
+            crate::BarycentricFlavor::Nv => &feature::BARYCENTRICS_NV,
+        })
     }
 
     fn shader_core_builtin(&mut self, core: crate::ShaderCore) -> Result<BuiltIn, Error> {
         use crate::ShaderCore as Sc;
-        let (built_in, nv) = match core {
-            Sc::WarpsPerSmNv => (BuiltIn::WarpsPerSMNV, true),
-            Sc::SmCountNv => (BuiltIn::SMCountNV, true),
-            Sc::WarpIdNv => (BuiltIn::WarpIDNV, true),
-            Sc::SmIdNv => (BuiltIn::SMIDNV, true),
-            Sc::CoreIdArm => (BuiltIn::CoreIDARM, false),
-            Sc::CoreCountArm => (BuiltIn::CoreCountARM, false),
-            Sc::CoreMaxIdArm => (BuiltIn::CoreMaxIDARM, false),
-            Sc::WarpIdArm => (BuiltIn::WarpIDARM, false),
-            Sc::WarpMaxIdArm => (BuiltIn::WarpMaxIDARM, false),
+        let nv = &feature::SHADER_SM_BUILTINS;
+        let arm = &feature::CORE_BUILTINS_ARM;
+        let (built_in, feature) = match core {
+            Sc::WarpsPerSmNv => (BuiltIn::WarpsPerSMNV, nv),
+            Sc::SmCountNv => (BuiltIn::SMCountNV, nv),
+            Sc::WarpIdNv => (BuiltIn::WarpIDNV, nv),
+            Sc::SmIdNv => (BuiltIn::SMIDNV, nv),
+            Sc::CoreIdArm => (BuiltIn::CoreIDARM, arm),
+            Sc::CoreCountArm => (BuiltIn::CoreCountARM, arm),
+            Sc::CoreMaxIdArm => (BuiltIn::CoreMaxIDARM, arm),
+            Sc::WarpIdArm => (BuiltIn::WarpIDARM, arm),
+            Sc::WarpMaxIdArm => (BuiltIn::WarpMaxIDARM, arm),
         };
-        if nv {
-            self.use_extension("SPV_NV_shader_sm_builtins");
-            self.require_any(
-                "shader SM built-ins",
-                &[spirv::Capability::ShaderSMBuiltinsNV],
-            )?;
-        } else {
-            self.use_extension("SPV_ARM_core_builtins");
-            self.require_any(
-                "shader core built-ins",
-                &[spirv::Capability::CoreBuiltinsARM],
-            )?;
-        }
+        self.require(feature)?;
         Ok(built_in)
     }
 }

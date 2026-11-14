@@ -1,6 +1,6 @@
 use spirv::Op;
 
-use crate::back::spv::{Block, BlockContext, Error, Instruction};
+use crate::back::spv::{Block, BlockContext, Error, Instruction, feature};
 
 impl BlockContext<'_> {
     fn ray_tracing_data_id(&mut self, data: crate::RayTracingData) -> Result<spirv::Word, Error> {
@@ -50,11 +50,7 @@ impl BlockContext<'_> {
                 operands.push(self.ray_tracing_data_id(payload)?);
                 let op = match (time, payload) {
                     (Some(_), _) => {
-                        self.writer.require_any(
-                            "ray tracing motion blur",
-                            &[spirv::Capability::RayTracingMotionBlurNV],
-                        )?;
-                        self.writer.use_extension("SPV_NV_ray_tracing_motion_blur");
+                        self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                         Op::TraceRayMotionNV
                     }
                     (None, crate::RayTracingData::Pointer(_)) => Op::TraceRayKHR,

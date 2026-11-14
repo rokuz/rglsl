@@ -4,7 +4,7 @@ use spirv::{Op, Word};
 
 use super::{
     Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType, Writer,
-    WriterFlags, frames::on_heap,
+    WriterFlags, feature, frames::on_heap,
 };
 use crate::{DescriptorHeap, Module, StorageAccess, TypeInner, arena::Handle};
 
@@ -272,8 +272,8 @@ impl Writer {
         let instruction = match local {
             LocalType::UntypedPointer { class } => Instruction::type_untyped_pointer(id, class),
             LocalType::BufferDescriptor { class } => {
-                if class == spirv::StorageClass::StorageBuffer && self.lang_version() < (1, 3) {
-                    self.use_extension("SPV_KHR_storage_buffer_storage_class");
+                if class == spirv::StorageClass::StorageBuffer {
+                    self.use_feature(&feature::STORAGE_BUFFER_STORAGE_CLASS);
                 }
                 self.debug.buffer_type = true;
                 Instruction::type_buffer(id, class)
@@ -284,11 +284,7 @@ impl Writer {
     }
 
     fn use_heaps(&mut self) -> Result<(), Error> {
-        self.require_any("descriptor heaps", &[spirv::Capability::UntypedPointersKHR])?;
-        self.require_any("descriptor heaps", &[spirv::Capability::DescriptorHeapEXT])?;
-        self.use_extension("SPV_EXT_descriptor_heap");
-        self.use_extension("SPV_KHR_untyped_pointers");
-        Ok(())
+        self.require(&feature::DESCRIPTOR_HEAP)
     }
 
     pub(super) fn heap_variable(&mut self, heap: DescriptorHeap) -> Result<Word, Error> {

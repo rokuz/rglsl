@@ -16,6 +16,7 @@ mod fuzz;
 mod fuzz_exec;
 mod fuzz_libfuzzer;
 mod fuzz_reduce;
+mod gen_spirv;
 mod groups;
 mod interface;
 mod object_path;
@@ -61,6 +62,14 @@ commands:
                       validate them with spirv-val for the Vulkan version of their SPIR-V
   capi-header         generate rglsl-capi/include/rglsl.h with cbindgen
       --check             only check that the committed header is up to date
+  gen-spirv           generate the SPIR-V tables from the pinned sources in target/oracles:
+                      rglsl/src/back/spv/grammar.rs (enumerants the `spirv` crate lacks, from
+                      SPIRV-Headers' grammar, else glslang's headers) and
+                      rglsl-cli/src/disassemble/glslang_tables.rs (the -H tables of glslang's
+                      SPIRV/doc.cpp and disassemble.cpp)
+      --glslang-dir DIR   glslang checkout to read (default: target/oracles/src/glslang;
+                          its HEAD must be the pinned commit)
+      --check             only check that the committed files are up to date
   builtins            compile a minimal shader for every prototype of a built-in function and
                       every built-in variable in rglsl-sema's tables and in glslang's symbol
                       table (--dump-builtin-symbols), for GLSL 450 (Vulkan 1.1) and 460
@@ -223,6 +232,12 @@ fn run(args: Vec<String>) -> Result<i32> {
             let check = args.flag("--check");
             args.finish()?;
             capi::run(&workspace_root()?, check)
+        }
+        "gen-spirv" => {
+            let glslang_dir = args.value("--glslang-dir")?.map(PathBuf::from);
+            let check = args.flag("--check");
+            args.finish()?;
+            gen_spirv::run(&workspace_root()?, glslang_dir.as_deref(), check)
         }
         "builtins" => {
             let versions = match args.parsed::<u32>("--version")? {

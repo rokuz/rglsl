@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use spirv::{Capability, Op, StorageClass, Word};
 
+use super::feature::{self, Feature};
 use crate::{FastHashMap, FastHashSet, FastIndexSet};
 
 #[derive(Clone, Debug)]
@@ -108,7 +109,7 @@ fn is_literal(code: u32, index: usize) -> bool {
 #[derive(Default)]
 pub(super) struct Usage {
     pub capabilities: Vec<Capability>,
-    pub extensions: Vec<&'static str>,
+    pub features: Vec<&'static Feature>,
 }
 
 struct Module {
@@ -184,7 +185,12 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         }
     }
     let mut capabilities: FastIndexSet<Capability> = FastIndexSet::default();
-    let mut extensions: FastIndexSet<&'static str> = FastIndexSet::default();
+    let mut features: Vec<&'static Feature> = Vec::new();
+    let mut add_feature = |feature: &'static Feature| {
+        if !features.iter().any(|&known| core::ptr::eq(known, feature)) {
+            features.push(feature);
+        }
+    };
     let mut variables = Vec::new();
     let mut constants = Vec::new();
     for instruction in instructions(declarations) {
@@ -306,7 +312,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             };
             match storage_capability {
                 Some(capability) => {
-                    extensions.insert("SPV_KHR_16bit_storage");
+                    add_feature(&feature::STORAGE_16BIT);
                     add(capability);
                 }
                 None => {
@@ -333,7 +339,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             };
             match storage_capability {
                 Some(capability) => {
-                    extensions.insert("SPV_KHR_8bit_storage");
+                    add_feature(&feature::STORAGE_8BIT);
                     add(capability);
                 }
                 None => add(Capability::Int8),
@@ -425,7 +431,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
     }
     Usage {
         capabilities: capabilities.into_iter().collect(),
-        extensions: extensions.into_iter().collect(),
+        features,
     }
 }
 

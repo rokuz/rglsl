@@ -2,7 +2,7 @@ use alloc::{format, string::String, vec::Vec};
 
 use spirv::Word;
 
-use super::{Block, Function, Instruction, Writer, helpers};
+use super::{Block, Function, Instruction, Writer, feature, grammar, helpers};
 use crate::{FastHashMap, arena::Handle};
 
 const MARKER: u32 = u32::MAX;
@@ -14,45 +14,7 @@ const MARK_SCOPE: Word = 3;
 const NON_SEMANTIC_SET: &str = "NonSemantic.Shader.DebugInfo.100";
 const NON_SEMANTIC_SET_101: &str = "NonSemantic.Shader.DebugInfo.101";
 const NON_SEMANTIC_SET_102: &str = "NonSemantic.Shader.DebugInfo.102";
-const DEBUG_ENTRY_POINT: Word = 107;
-const OP_EXT_INST_WITH_FORWARD_REFS: u32 = 4433;
 const MAX_STRING_BYTES: usize = 4 * (0xFFFF - 4) - 1;
-
-const DEBUG_INFO_NONE: Word = 0;
-const DEBUG_COMPILATION_UNIT: Word = 1;
-const DEBUG_TYPE_BASIC: Word = 2;
-const DEBUG_TYPE_POINTER: Word = 3;
-const DEBUG_TYPE_ARRAY: Word = 5;
-const DEBUG_TYPE_VECTOR: Word = 6;
-const DEBUG_TYPE_FUNCTION: Word = 8;
-const DEBUG_TYPE_COMPOSITE: Word = 10;
-const DEBUG_TYPE_MEMBER: Word = 11;
-const DEBUG_GLOBAL_VARIABLE: Word = 18;
-const DEBUG_FUNCTION: Word = 20;
-const DEBUG_LEXICAL_BLOCK: Word = 21;
-const DEBUG_SCOPE: Word = 23;
-const DEBUG_LOCAL_VARIABLE: Word = 26;
-const DEBUG_DECLARE: Word = 28;
-const DEBUG_VALUE: Word = 29;
-const DEBUG_EXPRESSION: Word = 31;
-const DEBUG_SOURCE: Word = 35;
-const DEBUG_FUNCTION_DEFINITION: Word = 101;
-const DEBUG_SOURCE_CONTINUED: Word = 102;
-const DEBUG_LINE: Word = 103;
-const DEBUG_TYPE_MATRIX: Word = 108;
-const DEBUG_TYPE_COOPERATIVE_MATRIX: Word = 110;
-
-const FLAG_IS_PUBLIC: Word = 3;
-const FLAG_IS_LOCAL: Word = 4;
-const FLAG_IS_DEFINITION: Word = 8;
-
-const ENCODING_BOOLEAN: Word = 2;
-const ENCODING_FLOAT: Word = 3;
-const ENCODING_SIGNED: Word = 4;
-const ENCODING_UNSIGNED: Word = 6;
-
-const TAG_STRUCTURE: Word = 1;
-const LANGUAGE_GLSL: Word = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DebugLevel {
@@ -252,7 +214,7 @@ const fn kind_prefix(kind: crate::ScalarKind) -> &'static str {
 fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
     let bits = u32::from(scalar.width) * 8;
     match scalar.kind {
-        crate::ScalarKind::Bool => ("bool", ENCODING_BOOLEAN),
+        crate::ScalarKind::Bool => ("bool", grammar::debug_base_type_attribute_encoding::Boolean),
         crate::ScalarKind::Sint => (
             match bits {
                 8 => "int8_t",
@@ -260,7 +222,7 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
                 64 => "int64_t",
                 _ => "int",
             },
-            ENCODING_SIGNED,
+            grammar::debug_base_type_attribute_encoding::Signed,
         ),
         crate::ScalarKind::Uint => (
             match bits {
@@ -269,7 +231,7 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
                 64 => "uint64_t",
                 _ => "uint",
             },
-            ENCODING_UNSIGNED,
+            grammar::debug_base_type_attribute_encoding::Unsigned,
         ),
         crate::ScalarKind::Float => (
             match bits {
@@ -277,16 +239,40 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
                 64 => "double",
                 _ => "float",
             },
-            ENCODING_FLOAT,
+            grammar::debug_base_type_attribute_encoding::Float,
         ),
-        crate::ScalarKind::BFloat => ("bfloat16_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatE4M3 => ("floate4m3_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatE5M2 => ("floate5m2_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatE2M1 => ("floate2m1_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatE3M2 => ("floate3m2_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatE2M3 => ("floate2m3_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatUE8M0 => ("floatue8m0_t", ENCODING_FLOAT),
-        crate::ScalarKind::FloatMXINT8 => ("floatmxint8_t", ENCODING_FLOAT),
+        crate::ScalarKind::BFloat => (
+            "bfloat16_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatE4M3 => (
+            "floate4m3_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatE5M2 => (
+            "floate5m2_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatE2M1 => (
+            "floate2m1_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatE3M2 => (
+            "floate3m2_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatE2M3 => (
+            "floate2m3_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatUE8M0 => (
+            "floatue8m0_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
+        crate::ScalarKind::FloatMXINT8 => (
+            "floatmxint8_t",
+            grammar::debug_base_type_attribute_encoding::Float,
+        ),
     }
 }
 
@@ -382,7 +368,7 @@ impl Writer {
                 NON_SEMANTIC_SET
             };
             self.debug.set = self.spirv_ext_import(set);
-            self.use_extension("SPV_KHR_non_semantic_info");
+            self.use_feature(&feature::NON_SEMANTIC_INFO);
         }
     }
 
@@ -456,14 +442,15 @@ impl Writer {
 
     fn debug_none(&mut self) -> Word {
         if self.debug.none == 0 {
-            self.debug.none = self.debug_ext(DEBUG_INFO_NONE, &[]);
+            self.debug.none = self.debug_ext(grammar::shader_debug_info::DebugInfoNone, &[]);
         }
         self.debug.none
     }
 
     fn debug_expression(&mut self) -> Word {
         if self.debug.expression == 0 {
-            self.debug.expression = self.debug_ext(DEBUG_EXPRESSION, &[]);
+            self.debug.expression =
+                self.debug_ext(grammar::shader_debug_info::DebugExpression, &[]);
         }
         self.debug.expression
     }
@@ -570,9 +557,9 @@ impl Writer {
                     }
                 }
             }
-            let id = self.debug_ext(DEBUG_SOURCE, &operands);
+            let id = self.debug_ext(grammar::shader_debug_info::DebugSource, &operands);
             for chunk in continued {
-                self.debug_ext(DEBUG_SOURCE_CONTINUED, &[chunk]);
+                self.debug_ext(grammar::shader_debug_info::DebugSourceContinued, &[chunk]);
             }
             self.debug.files.push(id);
         }
@@ -580,8 +567,11 @@ impl Writer {
             let version = self.debug_uint(1);
             let dwarf = self.debug_uint(4);
             let source = self.debug_file(unit.source);
-            let language = self.debug_uint(LANGUAGE_GLSL);
-            let id = self.debug_ext(DEBUG_COMPILATION_UNIT, &[version, dwarf, source, language]);
+            let language = self.debug_uint(spirv::SourceLanguage::GLSL as Word);
+            let id = self.debug_ext(
+                grammar::shader_debug_info::DebugCompilationUnit,
+                &[version, dwarf, source, language],
+            );
             self.debug.units.push(id);
         }
     }
@@ -599,7 +589,10 @@ impl Writer {
         });
         let encoding = self.debug_uint(encoding);
         let flags = self.debug_uint(0);
-        let id = self.debug_ext(DEBUG_TYPE_BASIC, &[name, size, encoding, flags]);
+        let id = self.debug_ext(
+            grammar::shader_debug_info::DebugTypeBasic,
+            &[name, size, encoding, flags],
+        );
         self.debug.basics.insert(scalar, id);
         id
     }
@@ -609,7 +602,10 @@ impl Writer {
             return id;
         }
         let size = self.debug_uint(count);
-        let id = self.debug_ext(DEBUG_TYPE_VECTOR, &[component, size]);
+        let id = self.debug_ext(
+            grammar::shader_debug_info::DebugTypeVector,
+            &[component, size],
+        );
         self.debug.vectors.insert((component, count), id);
         id
     }
@@ -621,7 +617,10 @@ impl Writer {
         }
         let class = self.debug_uint(class as u32);
         let flags = self.debug_uint(0);
-        let id = self.debug_ext(DEBUG_TYPE_POINTER, &[base, class, flags]);
+        let id = self.debug_ext(
+            grammar::shader_debug_info::DebugTypePointer,
+            &[base, class, flags],
+        );
         self.debug.pointers.insert(key, id);
         id
     }
@@ -631,7 +630,7 @@ impl Writer {
             return id;
         }
         let name_id = self.debug_info_string(name);
-        let tag = self.debug_uint(TAG_STRUCTURE);
+        let tag = self.debug_uint(grammar::debug_composite_type::Structure);
         let source_index = 0;
         let source = self.debug_file(source_index);
         let line = self.debug_line(source_index, 0);
@@ -639,9 +638,9 @@ impl Writer {
         let unit = self.debug_unit(0);
         let linkage = self.debug_info_string(&format!("@{name}"));
         let size = self.debug_none();
-        let flags = self.debug_uint(FLAG_IS_PUBLIC);
+        let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
         let id = self.debug_ext(
-            DEBUG_TYPE_COMPOSITE,
+            grammar::shader_debug_info::DebugTypeComposite,
             &[
                 name_id, tag, source, line, column, unit, linkage, size, flags,
             ],
@@ -675,14 +674,14 @@ impl Writer {
         let id = self.id_gen.next();
         let mut instruction = Instruction::ext_inst(
             self.debug.set,
-            DEBUG_TYPE_POINTER,
+            grammar::shader_debug_info::DebugTypePointer,
             self.void_type,
             id,
             &[base_id, class, flags],
         );
-        instruction.op = OP_EXT_INST_WITH_FORWARD_REFS;
+        instruction.op = grammar::op::ExtInstWithForwardRefsKHR;
         self.debug.declarations.push(instruction);
-        self.use_extension("SPV_KHR_relaxed_extended_instruction");
+        self.use_feature(&feature::RELAXED_EXTENDED_INSTRUCTION);
         id
     }
 
@@ -710,7 +709,7 @@ impl Writer {
             let mut id = base;
             for &size in sizes.iter().rev() {
                 let count = self.debug_array_size(size);
-                id = self.debug_ext(DEBUG_TYPE_ARRAY, &[id, count]);
+                id = self.debug_ext(grammar::shader_debug_info::DebugTypeArray, &[id, count]);
             }
             return id;
         }
@@ -796,13 +795,16 @@ impl Writer {
                     let column = self.debug_vector(component, rows as u32);
                     let count = self.debug_uint(columns as u32);
                     let column_major = self.get_constant_scalar(crate::Literal::Bool(true));
-                    self.debug_ext(DEBUG_TYPE_MATRIX, &[column, count, column_major])
+                    self.debug_ext(
+                        grammar::shader_debug_info::DebugTypeMatrix,
+                        &[column, count, column_major],
+                    )
                 }
                 crate::TypeInner::Array { base, size, .. }
                 | crate::TypeInner::BindingArray { base, size } => {
                     let base = self.debug_type(base);
                     let count = self.debug_array_size(size);
-                    self.debug_ext(DEBUG_TYPE_ARRAY, &[base, count])
+                    self.debug_ext(grammar::shader_debug_info::DebugTypeArray, &[base, count])
                 }
                 crate::TypeInner::Pointer { base, space } => {
                     let class = helpers::map_storage_class(space);
@@ -908,7 +910,7 @@ impl Writer {
                     let role =
                         self.get_index_constant(spirv::CooperativeMatrixUse::from(role) as u32);
                     self.debug_ext(
-                        DEBUG_TYPE_COOPERATIVE_MATRIX,
+                        grammar::shader_debug_info::DebugTypeCooperativeMatrixKHR,
                         &[component, scope, rows, columns, role],
                     )
                 }
@@ -996,20 +998,20 @@ impl Writer {
             let column = self.debug_column(position);
             let offset = self.debug_uint(0);
             let size = self.debug_uint(0);
-            let flags = self.debug_uint(FLAG_IS_PUBLIC);
+            let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
             member_ids.push(self.debug_ext(
-                DEBUG_TYPE_MEMBER,
+                grammar::shader_debug_info::DebugTypeMember,
                 &[name, ty, source, line, column, offset, size, flags],
             ));
         }
         let name_id = self.debug_info_string(name);
-        let tag = self.debug_uint(TAG_STRUCTURE);
+        let tag = self.debug_uint(grammar::debug_composite_type::Structure);
         let source_index = at.source;
         let source = self.debug_file(source_index);
         let line = self.debug_line(source_index, at.line);
         let column = self.debug_uint(0);
         let size = self.debug_uint(0);
-        let flags = self.debug_uint(FLAG_IS_PUBLIC);
+        let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
         let mut operands = alloc::vec![
             name_id, tag, source, line, column, unit_id, name_id, size, flags
         ];
@@ -1018,7 +1020,7 @@ impl Writer {
             Some(id) => {
                 self.debug.declarations.push(Instruction::ext_inst(
                     self.debug.set,
-                    DEBUG_TYPE_COMPOSITE,
+                    grammar::shader_debug_info::DebugTypeComposite,
                     self.void_type,
                     id,
                     &operands,
@@ -1026,7 +1028,7 @@ impl Writer {
                 self.debug.pending.remove(&id);
                 id
             }
-            None => self.debug_ext(DEBUG_TYPE_COMPOSITE, &operands),
+            None => self.debug_ext(grammar::shader_debug_info::DebugTypeComposite, &operands),
         })
     }
 
@@ -1049,9 +1051,9 @@ impl Writer {
             let line = self.debug_line(source_index, position.map_or(0, |position| position.line));
             let column = self.debug_uint(0);
             let scope = self.debug_unit(0);
-            let flags = self.debug_uint(FLAG_IS_DEFINITION);
+            let flags = self.debug_uint(grammar::debug_info_flags::FlagIsDefinition);
             self.debug_ext(
-                DEBUG_GLOBAL_VARIABLE,
+                grammar::shader_debug_info::DebugGlobalVariable,
                 &[name, ty, source, line, column, scope, name, id, flags],
             );
         }
@@ -1083,12 +1085,12 @@ impl Writer {
             let line = self.debug_line(source_index, position.map_or(0, |position| position.line));
             let column = self.debug_uint(0);
             let scope = self.debug_unit(unit);
-            let flags = self.debug_uint(FLAG_IS_DEFINITION);
+            let flags = self.debug_uint(grammar::debug_info_flags::FlagIsDefinition);
             let aliases = builtin_aliases(ir_module, variable);
             for name in core::iter::once(variable_name).chain(aliases.iter().copied()) {
                 let name = self.debug_info_string(name);
                 self.debug_ext(
-                    DEBUG_GLOBAL_VARIABLE,
+                    grammar::shader_debug_info::DebugGlobalVariable,
                     &[name, ty, source, line, column, scope, name, id, flags],
                 );
             }
@@ -1134,9 +1136,9 @@ impl Writer {
             let line = self.debug_line(source_index, line.map_or(0, |line| line.line));
             let column = self.debug_uint(0);
             let scope = self.debug_unit(unit);
-            let flags = self.debug_uint(FLAG_IS_DEFINITION);
+            let flags = self.debug_uint(grammar::debug_info_flags::FlagIsDefinition);
             self.debug_ext(
-                DEBUG_GLOBAL_VARIABLE,
+                grammar::shader_debug_info::DebugGlobalVariable,
                 &[name, ty, source, line, column, scope, name, target, flags],
             );
         }
@@ -1199,9 +1201,9 @@ impl Writer {
         let line = self.debug_line(source_index, position.line);
         let column = self.debug_uint(0);
         let scope = self.debug_unit(0);
-        let flags = self.debug_uint(FLAG_IS_DEFINITION);
+        let flags = self.debug_uint(grammar::debug_info_flags::FlagIsDefinition);
         self.debug_ext(
-            DEBUG_GLOBAL_VARIABLE,
+            grammar::shader_debug_info::DebugGlobalVariable,
             &[name, ty, source, line, column, scope, name, id, flags],
         );
     }
@@ -1287,10 +1289,11 @@ impl Writer {
             let function_type = match self.debug.function_types.get(&signature) {
                 Some(&id) => id,
                 None => {
-                    let flags = self.debug_uint(FLAG_IS_PUBLIC);
+                    let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
                     let mut operands = alloc::vec![flags];
                     operands.extend(signature.iter().copied());
-                    let id = self.debug_ext(DEBUG_TYPE_FUNCTION, &operands);
+                    let id =
+                        self.debug_ext(grammar::shader_debug_info::DebugTypeFunction, &operands);
                     self.debug.function_types.insert(signature, id);
                     id
                 }
@@ -1301,9 +1304,9 @@ impl Writer {
             let line = self.debug_line(source_index, record.at.line);
             let column = self.debug_uint(0);
             let unit_id = self.debug_unit(unit);
-            let flags = self.debug_uint(FLAG_IS_PUBLIC);
+            let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
             let scope = self.debug_ext(
-                DEBUG_FUNCTION,
+                grammar::shader_debug_info::DebugFunction,
                 &[
                     name,
                     function_type,
@@ -1329,7 +1332,7 @@ impl Writer {
                 if let Some(directory) = directory {
                     operands.push(self.debug_info_string(&directory));
                 }
-                self.debug_ext(DEBUG_ENTRY_POINT, &operands);
+                self.debug_ext(grammar::shader_debug_info::DebugEntryPoint, &operands);
             }
             state.scope = scope;
             state.unit = unit_id;
@@ -1363,7 +1366,10 @@ impl Writer {
                 let source = self.debug_file(source_index);
                 let line = self.debug_line(source_index, scope_record.at.line);
                 let column = self.debug_column(scope_record.at);
-                let id = self.debug_ext(DEBUG_LEXICAL_BLOCK, &[source, line, column, parent]);
+                let id = self.debug_ext(
+                    grammar::shader_debug_info::DebugLexicalBlock,
+                    &[source, line, column, parent],
+                );
                 if let Some(slot) = self.debug.scopes.get_mut(index) {
                     *slot = id;
                 }
@@ -1381,10 +1387,10 @@ impl Writer {
                 let source = self.debug_file(source_index);
                 let line = self.debug_line(source_index, record.at.line);
                 let column = self.debug_uint(0);
-                let flags = self.debug_uint(FLAG_IS_LOCAL);
+                let flags = self.debug_uint(grammar::debug_info_flags::FlagIsLocal);
                 let argument_number = self.debug_uint(number.saturating_add(1));
                 let variable = self.debug_ext(
-                    DEBUG_LOCAL_VARIABLE,
+                    grammar::shader_debug_info::DebugLocalVariable,
                     &[
                         name,
                         ty,
@@ -1402,16 +1408,22 @@ impl Writer {
                 let instruction = match copy {
                     Some((local, pointer)) => {
                         copied.insert(local);
-                        self.debug_local_ext(DEBUG_DECLARE, &[variable, pointer, expression])
+                        self.debug_local_ext(
+                            grammar::shader_debug_info::DebugDeclare,
+                            &[variable, pointer, expression],
+                        )
                     }
-                    None => self.debug_local_ext(DEBUG_VALUE, &[variable, parameter, expression]),
+                    None => self.debug_local_ext(
+                        grammar::shader_debug_info::DebugValue,
+                        &[variable, parameter, expression],
+                    ),
                 };
                 state.prelude.push(instruction);
             }
             let definition = self.id_gen.next();
             state.prelude.push(Instruction::ext_inst(
                 self.debug.set,
-                DEBUG_FUNCTION_DEFINITION,
+                grammar::shader_debug_info::DebugFunctionDefinition,
                 self.void_type,
                 definition,
                 &[scope, function_id],
@@ -1450,9 +1462,9 @@ impl Writer {
                 let source = self.debug_file(source_index);
                 let line_id = self.debug_line(source_index, line.line);
                 let column = self.debug_uint(0);
-                let flags = self.debug_uint(FLAG_IS_LOCAL);
+                let flags = self.debug_uint(grammar::debug_info_flags::FlagIsLocal);
                 let variable = self.debug_ext(
-                    DEBUG_LOCAL_VARIABLE,
+                    grammar::shader_debug_info::DebugLocalVariable,
                     &[name, ty, source, line_id, column, local_scope, flags],
                 );
                 state.declares.push(Declare {
@@ -1501,9 +1513,9 @@ impl Writer {
                 let source = self.debug_file(source_index);
                 let line_id = self.debug_line(source_index, line.line);
                 let column = self.debug_uint(0);
-                let flags = self.debug_uint(FLAG_IS_LOCAL);
+                let flags = self.debug_uint(grammar::debug_info_flags::FlagIsLocal);
                 let variable = self.debug_ext(
-                    DEBUG_LOCAL_VARIABLE,
+                    grammar::shader_debug_info::DebugLocalVariable,
                     &[name, ty, source, line_id, column, local_scope, flags],
                 );
                 state.declares.push(Declare {
@@ -1546,9 +1558,9 @@ impl Writer {
                 let source = self.debug_file(source_index);
                 let line_id = self.debug_line(source_index, line.line);
                 let column = self.debug_uint(0);
-                let flags = self.debug_uint(FLAG_IS_LOCAL);
+                let flags = self.debug_uint(grammar::debug_info_flags::FlagIsLocal);
                 let variable = self.debug_ext(
-                    DEBUG_LOCAL_VARIABLE,
+                    grammar::shader_debug_info::DebugLocalVariable,
                     &[name, ty, source, line_id, column, local_scope, flags],
                 );
                 state.declares.push(Declare {
@@ -1704,9 +1716,9 @@ impl Writer {
     fn debug_declare(&mut self, declare: Declare) -> Instruction {
         let expression = self.debug_expression();
         let opcode = if declare.value {
-            DEBUG_VALUE
+            grammar::shader_debug_info::DebugValue
         } else {
-            DEBUG_DECLARE
+            grammar::shader_debug_info::DebugDeclare
         };
         self.debug_local_ext(opcode, &[declare.variable, declare.target, expression])
     }
@@ -1729,7 +1741,8 @@ impl Writer {
             }
             DebugLevel::NonSemantic => {
                 if *emitted_scope != Some(location.scope) {
-                    let instruction = self.debug_local_ext(DEBUG_SCOPE, &[location.scope]);
+                    let instruction = self
+                        .debug_local_ext(grammar::shader_debug_info::DebugScope, &[location.scope]);
                     out.push(instruction);
                     *emitted_scope = Some(location.scope);
                 }
@@ -1738,8 +1751,10 @@ impl Writer {
                     let source = self.debug_file(source_index);
                     let line = self.debug_line(source_index, location.line.max(1));
                     let zero = self.debug_uint(0);
-                    let instruction =
-                        self.debug_local_ext(DEBUG_LINE, &[source, line, line, zero, zero]);
+                    let instruction = self.debug_local_ext(
+                        grammar::shader_debug_info::DebugLine,
+                        &[source, line, line, zero, zero],
+                    );
                     out.push(instruction);
                     *emitted_line = Some((location.source, location.line));
                 }
