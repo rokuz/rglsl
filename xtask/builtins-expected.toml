@@ -1,0 +1,195 @@
+[[divergence]]
+name = "dot*EXT"
+versions = [460]
+verdicts = ["extensions-differ"]
+reason = "intentional: integer dot products are core in SPIR-V 1.6, so SPV_KHR_integer_dot_product is not declared"
+
+[[divergence]]
+name = "interpolateAtOffset"
+signature = "16"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: a float16 offset is rejected by the IR validator (the offset must be a 32-bit float vector in the IR)"
+
+[[divergence]]
+name = "interpolateAtCentroid"
+signature = "16"
+verdicts = ["rglsl-invalid"]
+reason = "bug: InterpolateAtCentroid on float16 interpolants is emitted without a conversion and fails spirv-val"
+
+[[divergence]]
+name = "interpolateAtSample"
+signature = "16"
+verdicts = ["rglsl-invalid"]
+reason = "bug: InterpolateAtSample on float16 interpolants is emitted without a conversion and fails spirv-val"
+
+[[divergence]]
+name = "textureFootprint*NV"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the implicit-LOD footprint queries are rejected by the IR validator outside fragment shaders, glslang compiles them"
+
+[[divergence]]
+name = "packFloat*xfe*EXT"
+verdicts = ["only-rglsl-accepts-invalid"]
+reason = "bug: packing OCP sub-byte floats from a vector built by a non-constant constructor becomes an FConvert to a microscaling type, which Vulkan forbids; glslang rejects the constructor"
+
+[[divergence]]
+name = "*GatherLodOffsetsAMD"
+verdicts = ["rglsl-backend-failed"]
+reason = "bug: gather offsets that are not constant are not lowered"
+
+[[divergence]]
+name = "texelFetch"
+signature = "amplerBuffer"
+versions = [460]
+verdicts = ["rglsl-invalid"]
+reason = "bug: SPIR-V 1.6 forbids a sampled image of a buffer; the texel buffer must be fetched through its image"
+
+[[divergence]]
+name = "textureSize"
+signature = "amplerBuffer"
+versions = [460]
+verdicts = ["rglsl-invalid"]
+reason = "bug: SPIR-V 1.6 forbids a sampled image of a buffer; the size must be queried on the image"
+
+[[divergence]]
+name = "dFdx*"
+signature = "16"
+verdicts = ["extensions-differ"]
+reason = "bug: float16 derivatives are computed in 32 bits through FConvert, glslang keeps them 16-bit with SPV_AMD_gpu_shader_half_float"
+
+[[divergence]]
+name = "dFdy*"
+signature = "16"
+verdicts = ["extensions-differ"]
+reason = "bug: float16 derivatives are computed in 32 bits through FConvert, glslang keeps them 16-bit with SPV_AMD_gpu_shader_half_float"
+
+[[divergence]]
+name = "fwidth*"
+signature = "16"
+verdicts = ["extensions-differ"]
+reason = "bug: float16 derivatives are computed in 32 bits through FConvert, glslang keeps them 16-bit with SPV_AMD_gpu_shader_half_float"
+
+[[divergence]]
+name = "frexp"
+signature = "16"
+verdicts = ["extensions-differ"]
+reason = "bug: the int16 exponent of frexp is computed in 32 bits through SConvert, glslang uses SPV_AMD_gpu_shader_int16"
+
+[[divergence]]
+name = "ldexp"
+signature = "16"
+verdicts = ["capabilities-differ"]
+reason = "bug: the int16 exponent of ldexp is widened through SConvert and the Int16 capability is not declared"
+
+[[divergence]]
+name = "findLSB"
+verdicts = ["capabilities-differ"]
+reason = "bug: 8- and 16-bit findLSB is widened through SConvert and the Int8/Int16 capability is not declared"
+
+[[divergence]]
+name = "pack*"
+signature = "8vec"
+verdicts = ["capabilities-differ"]
+reason = "bug: packing of 8- and 16-bit vectors is done with shifts instead of a Bitcast, and the Int8/Int16 capability is not declared"
+
+[[divergence]]
+name = "pack*"
+signature = "16vec"
+verdicts = ["capabilities-differ"]
+reason = "bug: packing of 8- and 16-bit vectors is done with shifts instead of a Bitcast, and the Int8/Int16 capability is not declared"
+
+[[divergence]]
+name = "fetchMicroTriangleVertex*NV"
+verdicts = ["extensions-differ"]
+reason = "bug: the acceleration structure operand adds RayQueryKHR and SPV_KHR_ray_query outside ray tracing stages, glslang declares neither"
+
+[[divergence]]
+name = "gl_Mesh*NV.gl_*PerViewNV"
+verdicts = ["extensions-differ"]
+reason = "bug: per-view mesh outputs add PerViewAttributesNV and SPV_NVX_multiview_per_view_attributes, glslang declares neither"
+
+[[divergence]]
+name = "absoluteDifference"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
+
+[[divergence]]
+name = "addSaturate"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
+
+[[divergence]]
+name = "subtractSaturate"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
+
+[[divergence]]
+name = "average*"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
+
+[[divergence]]
+name = "count*Zeros"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
+
+[[divergence]]
+name = "multiply32x16"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
+
+[[divergence]]
+name = "*Thread*NV"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_NV_gpu_shader5 votes allThreadsNV, anyThreadNV and allThreadsEqualNV are not declared"
+
+[[divergence]]
+name = "clock*ARB"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_ARB_shader_clock built-ins are not declared"
+
+[[divergence]]
+name = "clockRealtime*EXT"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_EXT_shader_realtime_clock built-ins are not declared"
+
+[[divergence]]
+name = "cubeFace*AMD"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
+
+[[divergence]]
+name = "timeAMD"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
+
+[[divergence]]
+name = "gl_SIMDGroupSizeAMD"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
+
+[[divergence]]
+name = "m*3"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_AMD_shader_trinary_minmax built-ins min3, max3 and mid3 are not declared"
+
+[[divergence]]
+name = "gl_BaryCoord*AMD"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the GL_AMD_shader_explicit_vertex_parameter built-in variables are not declared"
+
+[[divergence]]
+name = "gl_ViewID_OVR"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: gl_ViewID_OVR of GL_OVR_multiview is not declared"
+
+[[divergence]]
+name = "gl_HitKind*MicroTriangleNV"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the micro-triangle hit kind constants are declared only in ray tracing stages, glslang declares them in every stage"
+
+[[divergence]]
+name = "atomic*"
+signature = "f16vec"
+verdicts = ["only-glslang-accepts"]
+reason = "bug: the f16vec2 and f16vec4 atomics of GL_NV_shader_atomic_fp16_vector are not declared"

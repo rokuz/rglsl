@@ -6,6 +6,7 @@
 //!   writes `PROGRESS.md`.
 
 mod bench;
+mod builtins;
 mod capi;
 mod cli;
 mod corpus;
@@ -59,6 +60,24 @@ commands:
                       validate them with spirv-val for the Vulkan version of their SPIR-V
   capi-header         generate rglsl-capi/include/rglsl.h with cbindgen
       --check             only check that the committed header is up to date
+  builtins            compile a minimal shader for every prototype of a built-in function and
+                      every built-in variable in rglsl-sema's tables and in glslang's symbol
+                      table (--dump-builtin-symbols), for GLSL 450 (Vulkan 1.1) and 460
+                      (Vulkan 1.3) and every stage, with glslang and rglsl, and compare
+                      acceptance, spirv-val, and the SPIR-V capabilities, extensions and
+                      operations; known divergences are listed in xtask/builtins-expected.toml;
+                      report in target/xtask/builtins.tsv, built-ins declared by one side only
+                      in target/xtask/builtins-coverage.tsv; exits with 1 on an unexpected
+                      divergence or, on a full run, on an expectation that no longer diverges
+      --filter TEXT       only built-ins whose name contains TEXT (or one of the
+                          comma-separated TEXTs)
+      --version N         only GLSL version N (450 or 460)
+      --stage EXT         only the stages with these file extensions (comma-separated)
+      --all-overloads     every overload in every stage; by default every overload is
+                          compiled as a fragment shader and, in the other stages, the first
+                          overload of each name and the overloads a fragment shader lacks
+      --jobs N            number of parallel jobs (default: number of CPUs)
+      --timeout SECS      per-process timeout (default: 30)
   cli                 run glslangValidator command lines with glslang and with the rglsl
                       command-line tool and compare exit codes, messages and outputs
                       (docs/design/cli.md); report in target/xtask/cli/report.tsv
@@ -198,6 +217,25 @@ fn run(args: Vec<String>) -> Result<i32> {
             let check = args.flag("--check");
             args.finish()?;
             capi::run(&workspace_root()?, check)
+        }
+        "builtins" => {
+            let versions = match args.parsed::<u32>("--version")? {
+                Some(version) if builtins::VERSIONS.contains(&version) => vec![version],
+                Some(version) => bail!("--version must be 450 or 460, not {version}"),
+                None => builtins::VERSIONS.to_vec(),
+            };
+            let options = builtins::Options {
+                filter: args.value("--filter")?,
+                versions,
+                stages: args
+                    .value("--stage")?
+                    .map(|stages| stages.split(',').map(String::from).collect()),
+                all_overloads: args.flag("--all-overloads"),
+                jobs: args.parsed("--jobs")?,
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+            };
+            args.finish()?;
+            builtins::run(&workspace_root()?, &options)
         }
         "cli" => {
             let options = cli::Options {
