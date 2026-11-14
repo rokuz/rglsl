@@ -1,4 +1,3 @@
-capabilities = "PRIMITIVE_INDEX"
 targets = "SPIRV"
 
 [spv]

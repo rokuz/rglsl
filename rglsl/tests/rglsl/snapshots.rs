@@ -19,26 +19,6 @@ fn check_targets(
         .targets
         .ok_or_else(|| format!("{name}: no snapshot targets"))?;
 
-    let mut capabilities = params.capabilities.unwrap_or_default();
-    {
-        let mut allowed_capabilities = rglsl::valid::Capabilities::all();
-        if targets.contains(Targets::SPIRV) {
-            allowed_capabilities &= rglsl::back::spv::supported_capabilities();
-        }
-        if capabilities == rglsl::valid::Capabilities::all() {
-            capabilities = allowed_capabilities;
-        } else {
-            let diff = capabilities - allowed_capabilities;
-            if !diff.is_empty() {
-                return Err(format!(
-                    "Invalid capabilities for backends on shader {name}: used {diff:?} which aren't supported by one of the targets.
-Note: this is an issue with snapshot configuration, not code. If you added a new capability, add it to `supported_capabilities()` in each backend where it is supported"
-                )
-                .into());
-            }
-        }
-    }
-
     {
         if targets.contains(Targets::IR) {
             let config = ron::ser::PrettyConfig::default().new_line("\n".to_string());
@@ -53,7 +33,7 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
         rglsl::valid::ValidationFlags::all()
     };
 
-    let info = rglsl::valid::Validator::new(validation_flags, capabilities)
+    let info = rglsl::valid::Validator::new(validation_flags)
         .validate(module)
         .map_err(|err| format!("rglsl module validation failed on test `{name}`:\n{err:?}"))?;
 
@@ -75,7 +55,7 @@ Note: this is an issue with snapshot configuration, not code. If you added a new
             }
         }
 
-        rglsl::valid::Validator::new(validation_flags, capabilities)
+        rglsl::valid::Validator::new(validation_flags)
             .validate(module)
             .map_err(|err| {
                 format!("Post-compaction module validation failed on test '{name}':\n<{err:?}")
@@ -254,12 +234,9 @@ fn validate_with_pinned_spirv_val(input: &Input, module: &rglsl::Module) -> Test
         return Ok(());
     }
     let name = input.file_name.display().to_string();
-    let info = rglsl::valid::Validator::new(
-        rglsl::valid::ValidationFlags::all(),
-        rglsl::valid::Capabilities::all(),
-    )
-    .validate(module)
-    .map_err(|error| format!("{name}: {:?}", error.into_inner()))?;
+    let info = rglsl::valid::Validator::new(rglsl::valid::ValidationFlags::all())
+        .validate(module)
+        .map_err(|error| format!("{name}: {:?}", error.into_inner()))?;
     let words =
         rglsl::back::spv::write_vec(module, &info, &rglsl::back::spv::Options::default(), None)
             .map_err(|error| format!("{name}: {error}"))?;

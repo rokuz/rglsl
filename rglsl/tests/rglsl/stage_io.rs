@@ -7,7 +7,7 @@ use rglsl::{
     AddressSpace, Binding, BuiltIn, EntryPoint, Expression, Function, GlobalVariable, Handle,
     Module, Scalar, ShaderStage, Span, Statement, StructMember, Type, TypeInner, VectorSize,
     back::spv,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op, StorageClass};
@@ -300,7 +300,7 @@ pub(crate) fn spirv_val_in(words: &[u32], arguments: &[&str]) -> TestResult {
 }
 
 fn validate(module: &Module) -> Result<rglsl::valid::ModuleInfo, String> {
-    Validator::new(ValidationFlags::all(), Capabilities::all())
+    Validator::new(ValidationFlags::all())
         .validate(module)
         .map_err(|error| format!("{:?}", error.into_inner()))
 }

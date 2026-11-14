@@ -32,8 +32,8 @@ impl TypeTracer<'_> {
             | Ti::Image { .. }
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
-            | Ti::AccelerationStructure { .. }
-            | Ti::RayQuery { .. }
+            | Ti::AccelerationStructure
+            | Ti::RayQuery
             | Ti::HitObject { .. } => {}
 
             Ti::Tensor { rank, .. } => self.trace_cooperative_size(rank),
@@ -115,8 +115,8 @@ impl ModuleMap {
             | Ti::Image { .. }
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
-            | Ti::AccelerationStructure { .. }
-            | Ti::RayQuery { .. }
+            | Ti::AccelerationStructure
+            | Ti::RayQuery
             | Ti::HitObject { .. } => {}
 
             Ti::Tensor { ref mut rank, .. } => {

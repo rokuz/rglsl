@@ -9,7 +9,7 @@ mod fuzz {
     use rglsl::ShaderStage;
     use rglsl::back::spv;
     use rglsl::front::glsl::{Frontend, Options};
-    use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+    use rglsl::valid::{ValidationFlags, Validator};
     use rglsl_fuzz::ShaderJob;
     use rglsl_fuzz::decisions::{Seed, decode};
 
@@ -38,7 +38,7 @@ mod fuzz {
         let module = Frontend::default()
             .parse(&options(), source)
             .map_err(|errors| format!("parse: {errors}"))?;
-        let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        let info = Validator::new(ValidationFlags::all())
             .validate(&module)
             .map_err(|error| format!("validate: {}", error.as_inner()))?;
         write_spirv(&module, &info)?;

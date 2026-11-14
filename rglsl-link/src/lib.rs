@@ -14,7 +14,7 @@ mod unify;
 mod workgroup;
 
 use rglsl::compact::{KeepUnused, compact};
-use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, ValidationMode, Validator};
+use rglsl::valid::{ModuleInfo, ValidationFlags, ValidationMode, Validator};
 use rglsl::{
     AddressSpace, ArraySize, Binding, Expression, Function, GeometryInputPrimitive, Handle, Module,
     SampleLevel, TypeInner,
@@ -78,7 +78,7 @@ pub fn link(objects: &[ObjectModule], options: &Options) -> Result<Linked, LinkE
 }
 
 pub fn validate_object(object: &ObjectModule) -> Result<ModuleInfo, LinkErrors> {
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     validator.mode(ValidationMode::Object);
     for variant in object
         .library()
@@ -409,7 +409,7 @@ pub(crate) fn finish(merged: Merged) -> Result<Linked, LinkErrors> {
     } = merged;
     compact(&mut module, KeepUnused::Declarations)
         .map_err(|error| LinkError::Internal(message(&error)))?;
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     validator.mode(ValidationMode::Executable);
     let info = validator
         .validate(&module)

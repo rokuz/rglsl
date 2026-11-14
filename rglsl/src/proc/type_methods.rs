@@ -557,14 +557,14 @@ impl crate::TypeInner {
             | Ti::Image { .. }
             | Ti::SampledImage { .. }
             | Ti::Sampler { .. }
-            | Ti::AccelerationStructure { .. }
+            | Ti::AccelerationStructure
             | Ti::Tensor { .. }
             | Ti::BindingArray { .. }
             | Ti::BufferDescriptor { .. } => false,
             Ti::Scalar(_)
             | Ti::Vector { .. }
             | Ti::Matrix { .. }
-            | Ti::RayQuery { .. }
+            | Ti::RayQuery
             | Ti::HitObject { .. }
             | Ti::CooperativeMatrix { .. }
             | Ti::LongVector { .. }
@@ -624,9 +624,9 @@ impl crate::TypeInner {
             | crate::TypeInner::Image { .. }
             | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::AccelerationStructure { .. }
+            | crate::TypeInner::AccelerationStructure
             | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::RayQuery { .. }
+            | crate::TypeInner::RayQuery
             | crate::TypeInner::HitObject { .. }
             | crate::TypeInner::BindingArray { .. }
             | crate::TypeInner::BufferDescriptor { .. }

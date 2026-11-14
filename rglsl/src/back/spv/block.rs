@@ -2028,8 +2028,8 @@ impl BlockContext<'_> {
                 expr,
                 ty,
                 saturating,
-                family,
-            } => self.write_convert(expr, ty, (saturating, family), result_type_id, block)?,
+                flavor,
+            } => self.write_convert(expr, ty, (saturating, flavor), result_type_id, block)?,
             crate::Expression::CooperativeMatrixResult { .. } => self.cached.get(expr_handle)?,
             crate::Expression::ImageProcessing {
                 operation,
@@ -4452,8 +4452,8 @@ impl BlockContext<'_> {
             Statement::HitObject { object, ref fun } => {
                 self.write_hit_object_function(object, fun, &mut block)?;
             }
-            Statement::ReorderThread { kind, hint, bits } => {
-                self.write_reorder_thread(kind, hint, bits, &mut block)?;
+            Statement::ReorderThread { flavor, hint, bits } => {
+                self.write_reorder_thread(flavor, hint, bits, &mut block)?;
             }
             Statement::SubgroupBallot { result, predicate } => {
                 self.write_subgroup_ballot(predicate, result, &mut block)?;

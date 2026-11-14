@@ -1,4 +1,3 @@
-capabilities = "MEMORY_DECORATION_COHERENT"
 targets = "SPIRV"
 
 [spv]

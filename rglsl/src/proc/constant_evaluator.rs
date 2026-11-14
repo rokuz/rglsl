@@ -856,44 +856,67 @@ impl ExpressionKindTracker {
             Expression::Override(_) | Expression::CooperativeMatrixLength { .. } => {
                 ExpressionKind::Override
             }
-            Expression::Compose { ref components, .. } => {
-                let mut expr_type = ExpressionKind::Const;
-                for component in components {
-                    expr_type = expr_type.max(self.type_of(*component));
-                }
-                expr_type
+            Expression::Compose { .. }
+            | Expression::Splat { .. }
+            | Expression::Replicate { .. }
+            | Expression::AccessIndex { .. }
+            | Expression::Access { .. }
+            | Expression::Swizzle { .. }
+            | Expression::Unary { .. }
+            | Expression::Binary { .. }
+            | Expression::Math { .. }
+            | Expression::As { .. }
+            | Expression::Select { .. }
+            | Expression::Relational { .. }
+            | Expression::ArrayLength(_)
+            | Expression::WideArrayLength(_) => {
+                let mut kind = ExpressionKind::Const;
+                expr.for_each_operand(|operand| kind = kind.max(self.type_of(operand)));
+                kind
             }
-            Expression::Splat { value, .. } | Expression::Replicate { value, .. } => {
-                self.type_of(value)
-            }
-            Expression::AccessIndex { base, .. } => self.type_of(base),
-            Expression::Access { base, index } => self.type_of(base).max(self.type_of(index)),
-            Expression::Swizzle { vector, .. } => self.type_of(vector),
-            Expression::Unary { expr, .. } => self.type_of(expr),
-            Expression::Binary { left, right, .. } => self.type_of(left).max(self.type_of(right)),
-            Expression::Math {
-                arg,
-                arg1,
-                arg2,
-                arg3,
-                ..
-            } => self
-                .type_of(arg)
-                .max(arg1.map_or(ExpressionKind::Const, |arg| self.type_of(arg)))
-                .max(arg2.map_or(ExpressionKind::Const, |arg| self.type_of(arg)))
-                .max(arg3.map_or(ExpressionKind::Const, |arg| self.type_of(arg))),
-            Expression::As { expr, .. } => self.type_of(expr),
-            Expression::Select {
-                condition,
-                accept,
-                reject,
-            } => self
-                .type_of(condition)
-                .max(self.type_of(accept))
-                .max(self.type_of(reject)),
-            Expression::Relational { argument, .. } => self.type_of(argument),
-            Expression::ArrayLength(expr) | Expression::WideArrayLength(expr) => self.type_of(expr),
-            _ => ExpressionKind::Runtime,
+            Expression::FunctionArgument(_)
+            | Expression::GlobalVariable(_)
+            | Expression::LocalVariable(_)
+            | Expression::Load { .. }
+            | Expression::ImageSample { .. }
+            | Expression::ImageLoad { .. }
+            | Expression::ImageQuery { .. }
+            | Expression::Derivative { .. }
+            | Expression::CallResult(_)
+            | Expression::AtomicResult { .. }
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. }
+            | Expression::RayQueryProceedResult
+            | Expression::RayQueryGet { .. }
+            | Expression::ReportIntersectionResult
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. }
+            | Expression::SubgroupBallotResult
+            | Expression::SubgroupOperationResult { .. }
+            | Expression::SpirvInstructionResult { .. }
+            | Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::Expect { .. }
+            | Expression::ImageSparseResident { .. }
+            | Expression::IsHelperInvocation
+            | Expression::InterpolateAt { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. }
+            | Expression::AttachmentRead { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::ImageProcessing { .. }
+            | Expression::ArrayConversion { .. }
+            | Expression::Bitcast { .. }
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => ExpressionKind::Runtime,
         }
     }
 }

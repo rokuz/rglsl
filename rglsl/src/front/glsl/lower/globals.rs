@@ -75,7 +75,10 @@ const fn per_vertex_interpolation(
     interpolation: Option<InterpolationQualifier>,
 ) -> Interpolation {
     Interpolation::PerVertex {
-        nv: matches!(per_vertex, PerVertex::Nv),
+        flavor: match per_vertex {
+            PerVertex::Nv => crate::BarycentricFlavor::Nv,
+            PerVertex::Ext => crate::BarycentricFlavor::Khr,
+        },
         flat: matches!(interpolation, Some(InterpolationQualifier::Flat)),
         linear: matches!(interpolation, Some(InterpolationQualifier::Noperspective)),
     }

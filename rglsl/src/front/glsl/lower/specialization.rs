@@ -26,26 +26,71 @@ pub(super) fn is_direct(expression: &AstExpression) -> bool {
     }
 }
 
-fn operands(expression: &Expression) -> Option<Vec<Handle<Expression>>> {
-    Some(match *expression {
+const fn specializable(expression: &Expression) -> bool {
+    match *expression {
         Expression::Literal(_)
         | Expression::Constant(_)
         | Expression::Override(_)
         | Expression::ZeroValue(_)
-        | Expression::CooperativeMatrixLength { .. } => Vec::new(),
-        Expression::Compose { ref components, .. } => components.clone(),
-        Expression::Splat { value, .. } | Expression::Replicate { value, .. } => vec![value],
-        Expression::Swizzle { vector, .. } => vec![vector],
-        Expression::AccessIndex { base, .. } => vec![base],
-        Expression::Unary { expr, .. } | Expression::As { expr, .. } => vec![expr],
-        Expression::Binary { left, right, .. } => vec![left, right],
-        Expression::Select {
-            condition,
-            accept,
-            reject,
-        } => vec![condition, accept, reject],
-        _ => return None,
-    })
+        | Expression::CooperativeMatrixLength { .. }
+        | Expression::Compose { .. }
+        | Expression::Splat { .. }
+        | Expression::Replicate { .. }
+        | Expression::Swizzle { .. }
+        | Expression::AccessIndex { .. }
+        | Expression::Unary { .. }
+        | Expression::As { .. }
+        | Expression::Binary { .. }
+        | Expression::Select { .. } => true,
+        Expression::Access { .. }
+        | Expression::FunctionArgument(_)
+        | Expression::GlobalVariable(_)
+        | Expression::LocalVariable(_)
+        | Expression::Load { .. }
+        | Expression::ImageSample { .. }
+        | Expression::ImageLoad { .. }
+        | Expression::ImageQuery { .. }
+        | Expression::Derivative { .. }
+        | Expression::Relational { .. }
+        | Expression::Math { .. }
+        | Expression::CallResult(_)
+        | Expression::AtomicResult { .. }
+        | Expression::ArrayLength(_)
+        | Expression::WideArrayLength(_)
+        | Expression::PhysicalPointer { .. }
+        | Expression::PhysicalAddress { .. }
+        | Expression::BufferPointer { .. }
+        | Expression::HeapOffset { .. }
+        | Expression::RayQueryProceedResult
+        | Expression::RayQueryGet { .. }
+        | Expression::ReportIntersectionResult
+        | Expression::AccelerationStructureFromAddress { .. }
+        | Expression::HitObjectGet { .. }
+        | Expression::FetchMicroTriangleVertex { .. }
+        | Expression::SubgroupBallotResult
+        | Expression::SubgroupOperationResult { .. }
+        | Expression::SpirvInstructionResult { .. }
+        | Expression::CooperativeLoad { .. }
+        | Expression::CooperativeMultiplyAdd { .. }
+        | Expression::Expect { .. }
+        | Expression::ImageSparseResident { .. }
+        | Expression::IsHelperInvocation
+        | Expression::InterpolateAt { .. }
+        | Expression::FragmentFetch { .. }
+        | Expression::ImageFootprint { .. }
+        | Expression::AttachmentRead { .. }
+        | Expression::CooperativeVectorLoad { .. }
+        | Expression::CooperativeVectorMatMul { .. }
+        | Expression::Convert { .. }
+        | Expression::CooperativeMatrixResult { .. }
+        | Expression::TensorCreate { .. }
+        | Expression::ImageProcessing { .. }
+        | Expression::ArrayConversion { .. }
+        | Expression::Bitcast { .. }
+        | Expression::TensorSet { .. }
+        | Expression::TensorRead { .. }
+        | Expression::TensorQuerySize { .. } => false,
+    }
 }
 
 fn remap(
@@ -53,70 +98,19 @@ fn remap(
     map: &[Option<Handle<Expression>>],
     span: Span,
 ) -> Result<Expression> {
-    let get = |handle: Handle<Expression>| -> Result<Handle<Expression>> {
-        map.get(handle.index())
-            .copied()
-            .flatten()
-            .ok_or_else(|| internal(span))
-    };
-    Ok(match *expression {
-        Expression::Compose { ty, ref components } => Expression::Compose {
-            ty,
-            components: components
-                .iter()
-                .map(|&component| get(component))
-                .collect::<Result<Vec<_>>>()?,
+    let mut remapped = expression.clone();
+    let mut complete = true;
+    remapped.for_each_operand_mut(
+        |operand| match map.get(operand.index()).copied().flatten() {
+            Some(mapped) => *operand = mapped,
+            None => complete = false,
         },
-        Expression::Splat { size, value } => Expression::Splat {
-            size,
-            value: get(value)?,
-        },
-        Expression::Replicate { ty, value } => Expression::Replicate {
-            ty,
-            value: get(value)?,
-        },
-        Expression::Swizzle {
-            size,
-            vector,
-            pattern,
-        } => Expression::Swizzle {
-            size,
-            vector: get(vector)?,
-            pattern,
-        },
-        Expression::AccessIndex { base, index } => Expression::AccessIndex {
-            base: get(base)?,
-            index,
-        },
-        Expression::Unary { op, expr } => Expression::Unary {
-            op,
-            expr: get(expr)?,
-        },
-        Expression::As {
-            expr,
-            kind,
-            convert,
-        } => Expression::As {
-            expr: get(expr)?,
-            kind,
-            convert,
-        },
-        Expression::Binary { op, left, right } => Expression::Binary {
-            op,
-            left: get(left)?,
-            right: get(right)?,
-        },
-        Expression::Select {
-            condition,
-            accept,
-            reject,
-        } => Expression::Select {
-            condition: get(condition)?,
-            accept: get(accept)?,
-            reject: get(reject)?,
-        },
-        ref other => other.clone(),
-    })
+    );
+    if complete {
+        Ok(remapped)
+    } else {
+        Err(internal(span))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -186,10 +180,16 @@ impl<'a> Lowerer<'a> {
             if !needed.get(handle.index()).copied().unwrap_or(false) {
                 continue;
             }
-            for operand in operands(expression).ok_or_else(|| not_specializable(span))? {
-                *needed
-                    .get_mut(operand.index())
-                    .ok_or_else(|| internal(span))? = true;
+            if !specializable(expression) {
+                return Err(not_specializable(span));
+            }
+            let mut complete = true;
+            expression.for_each_operand(|operand| match needed.get_mut(operand.index()) {
+                Some(slot) => *slot = true,
+                None => complete = false,
+            });
+            if !complete {
+                return Err(internal(span));
             }
         }
         let mut map: Vec<Option<Handle<Expression>>> = vec![None; source.len()];

@@ -6,7 +6,7 @@ use std::process::Command;
 use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl;
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 use spirv::Op;
 
 use crate::TestResult;
@@ -73,7 +73,7 @@ fn compile_with(
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+    let info = Validator::new(ValidationFlags::all())
         .validate(&module)
         .map_err(|error| format!("{:?}", error.into_inner()))?;
     let debug_info = debug.then_some(spv::DebugInfo {

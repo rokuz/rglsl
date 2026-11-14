@@ -4,7 +4,7 @@ use bit_set::BitSet;
 use rglsl_types::builtin::{ArrayLength, BuiltInType, BuiltInValue, Component, MeshAccess};
 
 use super::{
-    Capabilities, Disalignment, FunctionError, ImmediateError, ModuleInfo,
+    Disalignment, FunctionError, ImmediateError, ModuleInfo,
     analyzer::{FunctionInfo, GlobalUse},
 };
 use crate::arena::{Handle, UniqueArena};
@@ -26,8 +26,6 @@ pub enum GlobalVariableError {
         required: super::TypeFlags,
         seen: super::TypeFlags,
     },
-    #[error("Capability {0:?} is not supported")]
-    UnsupportedCapability(Capabilities),
     #[error("Binding decoration is missing or not applicable")]
     InvalidBinding,
     #[error("Alignment requirements for address space {0:?} are not met by {1:?}")]
@@ -50,10 +48,6 @@ pub enum GlobalVariableError {
         "Memory decorations (`@coherent`, `@volatile`) are only valid for variables in the `storage` address space"
     )]
     InvalidMemoryDecorationsAddressSpace,
-    #[error("`@coherent` requires the MEMORY_DECORATION_COHERENT capability")]
-    CoherentNotSupported,
-    #[error("`@volatile` requires the MEMORY_DECORATION_VOLATILE capability")]
-    VolatileNotSupported,
     #[error("Transform feedback decorations are only valid for stage outputs")]
     InvalidTransformFeedback,
     #[error("An input attachment index is only valid for subpass inputs")]
@@ -99,8 +93,6 @@ pub enum VaryingError {
     BindingCollisionBlendSrc { blend_src: u32 },
     #[error("Built-in {0:?} is present more than once")]
     DuplicateBuiltIn(crate::BuiltIn),
-    #[error("Capability {0:?} is not supported")]
-    UnsupportedCapability(Capabilities),
     #[error("The attribute {0:?} is only valid as an output for stage {1:?}")]
     InvalidInputAttributeInStage(&'static str, crate::ShaderStage),
     #[error("The attribute {0:?} is not valid for stage {1:?}")]
@@ -198,8 +190,6 @@ pub enum EntryPointError {
     Result(#[from] VaryingError),
     #[error(transparent)]
     Function(#[from] FunctionError),
-    #[error("Capability {0:?} is not supported")]
-    UnsupportedCapability(Capabilities),
 
     #[error("A geometry entry point needs its primitives and vertex count")]
     ExpectedGeometryInfo,
@@ -271,7 +261,6 @@ struct VaryingContext<'a> {
     location_mask: &'a mut BitSet,
     dual_source_blending: Option<&'a mut bool>,
     built_ins: &'a mut crate::FastHashSet<crate::BuiltIn>,
-    capabilities: Capabilities,
     flags: super::ValidationFlags,
     has_task_payload: bool,
     /// The binding belongs to a global variable in the `Input` or `Output`
@@ -518,7 +507,6 @@ impl VaryingContext<'_> {
 
     fn validate_impl(
         &mut self,
-        ep: &crate::EntryPoint,
         ty: Handle<crate::Type>,
         binding: &crate::Binding,
     ) -> Result<(), VaryingError> {
@@ -532,26 +520,6 @@ impl VaryingContext<'_> {
                     return Err(VaryingError::DuplicateBuiltIn(built_in));
                 }
                 self.built_ins.insert(canonical);
-
-                let required = match built_in {
-                    Bi::ClipDistances => Capabilities::CLIP_DISTANCES,
-                    Bi::CullDistance => Capabilities::CULL_DISTANCE,
-                    Bi::PrimitiveIndex if !ep.stage.ray_tracing() => Capabilities::PRIMITIVE_INDEX,
-                    Bi::Barycentric { .. } => Capabilities::SHADER_BARYCENTRICS,
-                    Bi::ViewIndex => Capabilities::MULTIVIEW,
-                    Bi::SampleIndex => Capabilities::MULTISAMPLED_SHADING,
-                    Bi::NumSubgroups
-                    | Bi::SubgroupId
-                    | Bi::SubgroupSize
-                    | Bi::SubgroupInvocationId
-                    | Bi::SubgroupMask(_)
-                    | Bi::ShaderBallot(_) => Capabilities::SUBGROUP,
-                    Bi::DrawIndex => Capabilities::DRAW_INDEX,
-                    _ => Capabilities::empty(),
-                };
-                if !self.capabilities.contains(required) {
-                    return Err(VaryingError::UnsupportedCapability(required));
-                }
 
                 let info = built_in.info();
                 let stages = if self.output {
@@ -578,13 +546,7 @@ impl VaryingContext<'_> {
                     | Bi::VertexCount
                     | Bi::PrimitiveCount
                     | Bi::Vertices
-                    | Bi::Primitives => {
-                        if !self.capabilities.contains(Capabilities::MESH_SHADER) {
-                            return Err(VaryingError::UnsupportedCapability(
-                                Capabilities::MESH_SHADER,
-                            ));
-                        }
-                    }
+                    | Bi::Primitives => {}
                     _ => (),
                 }
 
@@ -621,11 +583,6 @@ impl VaryingContext<'_> {
                 {
                     return Err(VaryingError::InvalidAttributeInStage("patch", self.stage));
                 }
-                if per_primitive && !self.capabilities.contains(Capabilities::MESH_SHADER) {
-                    return Err(VaryingError::UnsupportedCapability(
-                        Capabilities::MESH_SHADER,
-                    ));
-                }
                 let per_vertex =
                     matches!(interpolation, Some(crate::Interpolation::PerVertex { .. }));
                 if let Some(per_vertex @ crate::Interpolation::PerVertex { .. }) = interpolation {
@@ -633,11 +590,6 @@ impl VaryingContext<'_> {
                         return Err(VaryingError::InvalidInterpolationInStage(
                             per_vertex,
                             crate::ShaderStage::Fragment,
-                        ));
-                    }
-                    if !self.capabilities.contains(Capabilities::PER_VERTEX) {
-                        return Err(VaryingError::UnsupportedCapability(
-                            Capabilities::PER_VERTEX,
                         ));
                     }
                     if sampling.is_some_and(|e| e != crate::Sampling::Center) {
@@ -730,14 +682,6 @@ impl VaryingContext<'_> {
                                 blend_src: index,
                             });
                         }
-                        if !self
-                            .capabilities
-                            .contains(Capabilities::DUAL_SOURCE_BLENDING)
-                        {
-                            return Err(VaryingError::UnsupportedCapability(
-                                Capabilities::DUAL_SOURCE_BLENDING,
-                            ));
-                        }
                         if index == 1
                             && let Some(dual_source_blending) = self.dual_source_blending.as_mut()
                         {
@@ -816,14 +760,6 @@ impl VaryingContext<'_> {
                 // qualifiers, so we won't complain about that here.
                 let _ = sampling;
 
-                let required = match sampling {
-                    Some(crate::Sampling::Sample) => Capabilities::MULTISAMPLED_SHADING,
-                    _ => Capabilities::empty(),
-                };
-                if !self.capabilities.contains(required) {
-                    return Err(VaryingError::UnsupportedCapability(required));
-                }
-
                 if !per_vertex {
                     // Integers and doubles cannot be interpolated: where they
                     // enter the fragment stage they must be `flat` (Vulkan
@@ -855,14 +791,13 @@ impl VaryingContext<'_> {
 
     fn validate(
         &mut self,
-        ep: &crate::EntryPoint,
         ty: Handle<crate::Type>,
         binding: Option<&crate::Binding>,
     ) -> Result<(), WithSpan<VaryingError>> {
         let span_context = self.types.get_span_context(ty);
         match binding {
             Some(binding) => self
-                .validate_impl(ep, ty, binding)
+                .validate_impl(ty, binding)
                 .map_err(|e| e.with_span_context(span_context)),
             None => {
                 let crate::TypeInner::Struct { ref members, .. } = self.types[ty].inner else {
@@ -914,7 +849,7 @@ impl VaryingContext<'_> {
                                 }
                             }
                             Some(ref binding) => self
-                                .validate_impl(ep, member.ty, binding)
+                                .validate_impl(member.ty, binding)
                                 .map_err(|e| e.with_span_context(span_context))?,
                         }
                     }
@@ -963,11 +898,6 @@ impl VaryingContext<'_> {
                 crate::ShaderStage::Fragment,
             ));
         }
-        if !self.capabilities.contains(Capabilities::PER_VERTEX) {
-            return fail(VaryingError::UnsupportedCapability(
-                Capabilities::PER_VERTEX,
-            ));
-        }
         if !matches!(size, crate::ArraySize::Constant(length) if length.get() == 3) {
             return fail(VaryingError::PerVertexNotArrayOfThree);
         }
@@ -984,15 +914,14 @@ impl VaryingContext<'_> {
 
     fn validate_interface(
         &mut self,
-        ep: &crate::EntryPoint,
         ty: Handle<crate::Type>,
         io: Option<&crate::Binding>,
     ) -> Result<(), WithSpan<VaryingError>> {
         if let Some((element, binding)) = self.per_vertex_block(ty, io)? {
-            return self.validate_interface(ep, element, Some(&binding));
+            return self.validate_interface(element, Some(&binding));
         }
         let Some(block) = crate::proc::interface_block(self.types, ty) else {
-            return self.validate(ep, ty, io);
+            return self.validate(ty, io);
         };
         let span_context = self.types.get_span_context(ty);
         let fail = |error: VaryingError| error.with_span_context(span_context.clone());
@@ -1021,7 +950,7 @@ impl VaryingContext<'_> {
             }
             for member in members {
                 if let Some(ref binding) = member.binding {
-                    self.validate_impl(ep, member.ty, binding).map_err(&fail)?;
+                    self.validate_impl(member.ty, binding).map_err(&fail)?;
                 }
             }
             return Ok(());
@@ -1085,7 +1014,7 @@ impl VaryingContext<'_> {
                     patch,
                     per_view,
                 };
-                self.validate_impl(ep, member.ty, &binding).map_err(&fail)?;
+                self.validate_impl(member.ty, &binding).map_err(&fail)?;
                 let shape =
                     LocationShape::of(self.types, view_element(self.types, member.ty, per_view))
                         .ok_or_else(|| fail(VaryingError::NotIOShareableType(member.ty)))?;
@@ -1131,74 +1060,19 @@ impl super::Validator {
             // series of individually bound resources, so we can (mostly)
             // validate a `binding_array<T>` as if it were just a plain `T`.
             crate::TypeInner::BindingArray { base, .. } => match var.space {
-                crate::AddressSpace::Storage { .. } => {
-                    if !self
-                        .capabilities
-                        .contains(Capabilities::STORAGE_BUFFER_BINDING_ARRAY)
-                    {
-                        return Err(GlobalVariableError::UnsupportedCapability(
-                            Capabilities::STORAGE_BUFFER_BINDING_ARRAY,
-                        ));
-                    }
-                    base
-                }
-                crate::AddressSpace::Uniform => {
-                    if !self
-                        .capabilities
-                        .contains(Capabilities::BUFFER_BINDING_ARRAY)
-                    {
-                        return Err(GlobalVariableError::UnsupportedCapability(
-                            Capabilities::BUFFER_BINDING_ARRAY,
-                        ));
-                    }
-                    base
-                }
+                crate::AddressSpace::Storage { .. } => base,
+                crate::AddressSpace::Uniform => base,
                 crate::AddressSpace::Handle => {
                     match gctx.types[base].inner {
                         crate::TypeInner::Image { class, .. } => match class {
-                            crate::ImageClass::Storage { .. } => {
-                                if !self
-                                    .capabilities
-                                    .contains(Capabilities::STORAGE_TEXTURE_BINDING_ARRAY)
-                                {
-                                    return Err(GlobalVariableError::UnsupportedCapability(
-                                        Capabilities::STORAGE_TEXTURE_BINDING_ARRAY,
-                                    ));
-                                }
-                            }
+                            crate::ImageClass::Storage { .. } => {}
                             crate::ImageClass::Sampled { .. } | crate::ImageClass::Depth { .. } => {
-                                if !self
-                                    .capabilities
-                                    .contains(Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY)
-                                {
-                                    return Err(GlobalVariableError::UnsupportedCapability(
-                                        Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY,
-                                    ));
-                                }
                             }
                         },
                         crate::TypeInner::Sampler { .. }
-                        | crate::TypeInner::SampledImage { .. } => {
-                            if !self
-                                .capabilities
-                                .contains(Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY)
-                            {
-                                return Err(GlobalVariableError::UnsupportedCapability(
-                                    Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY,
-                                ));
-                            }
-                        }
-                        crate::TypeInner::AccelerationStructure { .. } => {
-                            if !self
-                                .capabilities
-                                .contains(Capabilities::ACCELERATION_STRUCTURE_BINDING_ARRAY)
-                            {
-                                return Err(GlobalVariableError::UnsupportedCapability(
-                                    Capabilities::ACCELERATION_STRUCTURE_BINDING_ARRAY,
-                                ));
-                            }
-                        }
-                        crate::TypeInner::RayQuery { .. } => {
+                        | crate::TypeInner::SampledImage { .. } => {}
+                        crate::TypeInner::AccelerationStructure => {}
+                        crate::TypeInner::RayQuery => {
                             // This should have been rejected in `validate_type`.
                             return Err(GlobalVariableError::InvalidType(var.space));
                         }
@@ -1267,32 +1141,13 @@ impl super::Validator {
             }
             crate::AddressSpace::Handle => {
                 match gctx.types[inner_ty].inner {
-                    crate::TypeInner::Image { class, .. } => {
-                        if let crate::ImageClass::Storage {
-                            format:
-                                crate::StorageFormat::R16Unorm
-                                | crate::StorageFormat::R16Snorm
-                                | crate::StorageFormat::Rg16Unorm
-                                | crate::StorageFormat::Rg16Snorm
-                                | crate::StorageFormat::Rgba16Unorm
-                                | crate::StorageFormat::Rgba16Snorm,
-                            ..
-                        } = class
-                            && !self
-                                .capabilities
-                                .contains(Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS)
-                        {
-                            return Err(GlobalVariableError::UnsupportedCapability(
-                                Capabilities::STORAGE_TEXTURE_16BIT_NORM_FORMATS,
-                            ));
-                        }
-                    }
+                    crate::TypeInner::Image { .. } => {}
                     crate::TypeInner::Sampler { .. }
                     | crate::TypeInner::SampledImage { .. }
-                    | crate::TypeInner::AccelerationStructure { .. }
+                    | crate::TypeInner::AccelerationStructure
                     | crate::TypeInner::Tensor { .. }
                     | crate::TypeInner::Spirv { .. }
-                    | crate::TypeInner::RayQuery { .. } => {}
+                    | crate::TypeInner::RayQuery => {}
                     _ => {
                         return Err(GlobalVariableError::InvalidType(var.space));
                     }
@@ -1313,20 +1168,8 @@ impl super::Validator {
                 false,
             ),
             crate::AddressSpace::WorkGroup => (TypeFlags::DATA | TypeFlags::SIZED, false),
-            crate::AddressSpace::TaskPayload => {
-                if !self.capabilities.contains(Capabilities::MESH_SHADER) {
-                    return Err(GlobalVariableError::UnsupportedCapability(
-                        Capabilities::MESH_SHADER,
-                    ));
-                }
-                (TypeFlags::DATA | TypeFlags::SIZED, false)
-            }
+            crate::AddressSpace::TaskPayload => (TypeFlags::DATA | TypeFlags::SIZED, false),
             crate::AddressSpace::Immediate => {
-                if !self.capabilities.contains(Capabilities::IMMEDIATES) {
-                    return Err(GlobalVariableError::UnsupportedCapability(
-                        Capabilities::IMMEDIATES,
-                    ));
-                }
                 if let Err(ref err) = type_info.immediates_compatibility {
                     return Err(GlobalVariableError::InvalidImmediateType(err.clone()));
                 }
@@ -1344,30 +1187,12 @@ impl super::Validator {
             | crate::AddressSpace::CallableData
             | crate::AddressSpace::IncomingCallableData
             | crate::AddressSpace::HitObjectAttribute { .. } => {
-                if !self
-                    .capabilities
-                    .contains(Capabilities::RAY_TRACING_PIPELINE)
-                {
-                    return Err(GlobalVariableError::UnsupportedCapability(
-                        Capabilities::RAY_TRACING_PIPELINE,
-                    ));
-                }
                 (TypeFlags::DATA | TypeFlags::SIZED, false)
             }
-            crate::AddressSpace::ShaderRecord => {
-                if !self
-                    .capabilities
-                    .contains(Capabilities::RAY_TRACING_PIPELINE)
-                {
-                    return Err(GlobalVariableError::UnsupportedCapability(
-                        Capabilities::RAY_TRACING_PIPELINE,
-                    ));
-                }
-                (
-                    TypeFlags::DATA | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED,
-                    false,
-                )
-            }
+            crate::AddressSpace::ShaderRecord => (
+                TypeFlags::DATA | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED,
+                false,
+            ),
             // What the variable is bound to is validated for each entry point
             // that lists it, since it depends on the stage.
             crate::AddressSpace::Input | crate::AddressSpace::Output => {
@@ -1449,24 +1274,6 @@ impl super::Validator {
             )
         {
             return Err(GlobalVariableError::InvalidMemoryDecorationsAddressSpace);
-        }
-        if var
-            .memory_decorations
-            .contains(crate::MemoryDecorations::COHERENT)
-            && !self
-                .capabilities
-                .contains(Capabilities::MEMORY_DECORATION_COHERENT)
-        {
-            return Err(GlobalVariableError::CoherentNotSupported);
-        }
-        if var
-            .memory_decorations
-            .contains(crate::MemoryDecorations::VOLATILE)
-            && !self
-                .capabilities
-                .contains(Capabilities::MEMORY_DECORATION_VOLATILE)
-        {
-            return Err(GlobalVariableError::VolatileNotSupported);
         }
 
         if let Some(init) = var.init {
@@ -1563,41 +1370,8 @@ impl super::Validator {
         module: &crate::Module,
         mod_info: &ModuleInfo,
     ) -> Result<FunctionInfo, WithSpan<EntryPointError>> {
-        match ep.stage {
-            crate::ShaderStage::Task | crate::ShaderStage::Mesh
-                if !self.capabilities.contains(Capabilities::MESH_SHADER) =>
-            {
-                return Err(
-                    EntryPointError::UnsupportedCapability(Capabilities::MESH_SHADER).with_span(),
-                );
-            }
-            crate::ShaderStage::RayGeneration
-            | crate::ShaderStage::AnyHit
-            | crate::ShaderStage::ClosestHit
-            | crate::ShaderStage::Miss
-                if !self
-                    .capabilities
-                    .contains(Capabilities::RAY_TRACING_PIPELINE) =>
-            {
-                return Err(EntryPointError::UnsupportedCapability(
-                    Capabilities::RAY_TRACING_PIPELINE,
-                )
-                .with_span());
-            }
-            _ => {}
-        }
-        if ep.early_depth_test.is_some() {
-            let required = Capabilities::EARLY_DEPTH_TEST;
-            if !self.capabilities.contains(required) {
-                return Err(
-                    EntryPointError::Result(VaryingError::UnsupportedCapability(required))
-                        .with_span(),
-                );
-            }
-
-            if ep.stage != crate::ShaderStage::Fragment {
-                return Err(EntryPointError::UnexpectedEarlyDepthTest.with_span());
-            }
+        if ep.early_depth_test.is_some() && ep.stage != crate::ShaderStage::Fragment {
+            return Err(EntryPointError::UnexpectedEarlyDepthTest.with_span());
         }
 
         if ep.stage.compute_like() {
@@ -1713,12 +1487,11 @@ impl super::Validator {
                 location_mask: &mut self.location_mask,
                 dual_source_blending: Some(&mut info.dual_source_blending),
                 built_ins: &mut argument_built_ins,
-                capabilities: self.capabilities,
                 flags: self.flags,
                 has_task_payload: ep.task_payload.is_some(),
                 interface: false,
             };
-            ctx.validate(ep, fa.ty, fa.binding.as_ref())
+            ctx.validate(fa.ty, fa.binding.as_ref())
                 .map_err_inner(|e| EntryPointError::Argument(index as u32, e).with_span())?;
         }
 
@@ -1733,12 +1506,11 @@ impl super::Validator {
                 location_mask: &mut self.location_mask,
                 dual_source_blending: Some(&mut info.dual_source_blending),
                 built_ins: &mut result_built_ins,
-                capabilities: self.capabilities,
                 flags: self.flags,
                 has_task_payload: ep.task_payload.is_some(),
                 interface: false,
             };
-            ctx.validate(ep, fr.ty, fr.binding.as_ref())
+            ctx.validate(fr.ty, fr.binding.as_ref())
                 .map_err_inner(|e| EntryPointError::Result(e).with_span())?;
             if ep.stage == crate::ShaderStage::Vertex
                 && !result_built_ins.contains(&crate::BuiltIn::Position { invariant: false })
@@ -1832,16 +1604,14 @@ impl super::Validator {
                     } else {
                         &mut input_built_ins
                     },
-                    capabilities: self.capabilities,
                     flags: self.flags,
                     has_task_payload: ep.task_payload.is_some(),
                     interface: true,
                 };
-                ctx.validate_interface(ep, ty, var.io.as_ref())
-                    .map_err(|e| {
-                        EntryPointError::InterfaceVariable(handle, e.into_inner())
-                            .with_span_handle(handle, &module.global_variables)
-                    })?;
+                ctx.validate_interface(ty, var.io.as_ref()).map_err(|e| {
+                    EntryPointError::InterfaceVariable(handle, e.into_inner())
+                        .with_span_handle(handle, &module.global_variables)
+                })?;
             }
         }
 

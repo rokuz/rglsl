@@ -65,25 +65,26 @@ impl FunctionLowerer<'_, '_> {
     }
 
     fn jump(&mut self, jump: &JumpStatement, at: crate::Span) -> Result<()> {
-        let statement =
-            match *jump {
-                JumpStatement::Break => IrStatement::Break,
-                JumpStatement::Continue => IrStatement::Continue,
-                JumpStatement::Discard => IrStatement::Kill,
-                JumpStatement::Demote => IrStatement::Demote,
-                JumpStatement::TerminateRay => {
-                    IrStatement::RayPipelineFunction(crate::RayPipelineFunction::TerminateRay {
-                        nv: false,
-                    })
-                }
-                JumpStatement::IgnoreIntersection => IrStatement::RayPipelineFunction(
-                    crate::RayPipelineFunction::IgnoreIntersection { nv: false },
-                ),
-                JumpStatement::Return(None) => IrStatement::Return { value: None },
-                JumpStatement::Return(Some(ref value)) => IrStatement::Return {
-                    value: Some(self.rvalue(value)?),
-                },
-            };
+        let statement = match *jump {
+            JumpStatement::Break => IrStatement::Break,
+            JumpStatement::Continue => IrStatement::Continue,
+            JumpStatement::Discard => IrStatement::Kill,
+            JumpStatement::Demote => IrStatement::Demote,
+            JumpStatement::TerminateRay => {
+                IrStatement::RayPipelineFunction(crate::RayPipelineFunction::TerminateRay {
+                    flavor: crate::RayTracingFlavor::Khr,
+                })
+            }
+            JumpStatement::IgnoreIntersection => {
+                IrStatement::RayPipelineFunction(crate::RayPipelineFunction::IgnoreIntersection {
+                    flavor: crate::RayTracingFlavor::Khr,
+                })
+            }
+            JumpStatement::Return(None) => IrStatement::Return { value: None },
+            JumpStatement::Return(Some(ref value)) => IrStatement::Return {
+                value: Some(self.rvalue(value)?),
+            },
+        };
         self.count_jump(&statement);
         self.push(statement, at);
         Ok(())

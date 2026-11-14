@@ -1,4 +1,3 @@
-capabilities = "FLOAT64"
 targets = "SPIRV"
 
 [spv]

@@ -167,8 +167,6 @@ pub enum ExpressionError {
     WrongArgumentCount(crate::MathFunction),
     #[error("Argument [{1}] to {0:?} as expression {2:?} has an invalid type.")]
     InvalidArgumentType(crate::MathFunction, u32, Handle<crate::Expression>),
-    #[error("Shader requires capability {0:?}")]
-    MissingCapabilities(super::Capabilities),
     #[error(transparent)]
     Literal(#[from] LiteralError),
     #[error(
@@ -376,11 +374,67 @@ impl super::Validator {
                 crate::TypeInner::Scalar { .. } => {}
                 _ => return Err(ConstExpressionError::InvalidSplatType(value)),
             },
-            _ if global_expr_kind.is_const(handle) || self.overrides_resolved => {
-                return Err(ConstExpressionError::NonFullyEvaluatedConst);
+            E::Override(_)
+            | E::Access { .. }
+            | E::AccessIndex { .. }
+            | E::Swizzle { .. }
+            | E::FunctionArgument(_)
+            | E::GlobalVariable(_)
+            | E::LocalVariable(_)
+            | E::Load { .. }
+            | E::ImageSample { .. }
+            | E::ImageLoad { .. }
+            | E::ImageQuery { .. }
+            | E::Unary { .. }
+            | E::Binary { .. }
+            | E::Select { .. }
+            | E::Derivative { .. }
+            | E::Relational { .. }
+            | E::Math { .. }
+            | E::As { .. }
+            | E::CallResult(_)
+            | E::AtomicResult { .. }
+            | E::ArrayLength(_)
+            | E::WideArrayLength(_)
+            | E::PhysicalPointer { .. }
+            | E::PhysicalAddress { .. }
+            | E::BufferPointer { .. }
+            | E::HeapOffset { .. }
+            | E::RayQueryProceedResult
+            | E::RayQueryGet { .. }
+            | E::ReportIntersectionResult
+            | E::AccelerationStructureFromAddress { .. }
+            | E::HitObjectGet { .. }
+            | E::FetchMicroTriangleVertex { .. }
+            | E::SubgroupBallotResult
+            | E::SubgroupOperationResult { .. }
+            | E::SpirvInstructionResult { .. }
+            | E::CooperativeLoad { .. }
+            | E::CooperativeMultiplyAdd { .. }
+            | E::CooperativeMatrixLength { .. }
+            | E::Replicate { .. }
+            | E::Expect { .. }
+            | E::ImageSparseResident { .. }
+            | E::IsHelperInvocation
+            | E::InterpolateAt { .. }
+            | E::FragmentFetch { .. }
+            | E::ImageFootprint { .. }
+            | E::AttachmentRead { .. }
+            | E::CooperativeVectorLoad { .. }
+            | E::CooperativeVectorMatMul { .. }
+            | E::Convert { .. }
+            | E::CooperativeMatrixResult { .. }
+            | E::TensorCreate { .. }
+            | E::ImageProcessing { .. }
+            | E::ArrayConversion { .. }
+            | E::Bitcast { .. }
+            | E::TensorSet { .. }
+            | E::TensorRead { .. }
+            | E::TensorQuerySize { .. } => {
+                if global_expr_kind.is_const(handle) || self.overrides_resolved {
+                    return Err(ConstExpressionError::NonFullyEvaluatedConst);
+                }
             }
-            // the constant evaluator will report errors about override-expressions
-            _ => {}
         }
 
         Ok(())
@@ -587,7 +641,7 @@ impl super::Validator {
                         module.types[base].inner,
                         Ti::Image { .. }
                             | Ti::Sampler { .. }
-                            | Ti::AccelerationStructure { .. }
+                            | Ti::AccelerationStructure
                             | Ti::Tensor { .. }
                     ) => {}
                     Ti::ValuePointer { .. } => {}
@@ -1449,18 +1503,6 @@ impl super::Validator {
                 arg2,
                 arg3,
             } => {
-                if matches!(
-                    fun,
-                    crate::MathFunction::Pack2x16float | crate::MathFunction::Unpack2x16float
-                ) && !self
-                    .capabilities
-                    .contains(crate::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32)
-                {
-                    return Err(ExpressionError::MissingCapabilities(
-                        crate::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
-                    ));
-                }
-
                 let actuals: &[_] = match (arg1, arg2, arg3) {
                     (None, None, None) => &[arg],
                     (Some(arg1), None, None) => &[arg, arg1],
@@ -1522,7 +1564,7 @@ impl super::Validator {
                 if let Some(width) = convert {
                     base_scalar.width = width;
                 }
-                if self.check_width(base_scalar).is_err() {
+                if Self::check_width(base_scalar).is_err() {
                     return Err(ExpressionError::InvalidCastArgument);
                 }
                 ShaderStages::all()
@@ -1621,7 +1663,7 @@ impl super::Validator {
             E::RayQueryGet { query, value } => {
                 let is_query = match *resolver.resolve(query)? {
                     Ti::Pointer { base, .. } => {
-                        matches!(resolver.types[base].inner, Ti::RayQuery { .. })
+                        matches!(resolver.types[base].inner, Ti::RayQuery)
                     }
                     _ => false,
                 };
@@ -1641,14 +1683,14 @@ impl super::Validator {
             E::ReportIntersectionResult => ShaderStages::INTERSECTION,
             E::HitObjectGet { object, value } => {
                 use crate::HitObjectValue as Hv;
-                let kind = match *resolver.resolve(object)? {
+                let flavor = match *resolver.resolve(object)? {
                     Ti::Pointer { base, .. } => match resolver.types[base].inner {
-                        Ti::HitObject { kind } => Some(kind),
+                        Ti::HitObject { flavor } => Some(flavor),
                         _ => None,
                     },
                     _ => None,
                 };
-                let Some(kind) = kind else {
+                let Some(flavor) = flavor else {
                     return Err(ExpressionError::InvalidHitObjectType(object));
                 };
                 let required = match value {
@@ -1658,8 +1700,8 @@ impl super::Validator {
                     | Hv::LssPositions
                     | Hv::LssRadii
                     | Hv::IsSphereHit
-                    | Hv::IsLssHit => Some(crate::HitObjectKind::Nv),
-                    Hv::RayFlags | Hv::TriangleVertexPositions => Some(crate::HitObjectKind::Ext),
+                    | Hv::IsLssHit => Some(crate::HitObjectFlavor::Nv),
+                    Hv::RayFlags | Hv::TriangleVertexPositions => Some(crate::HitObjectFlavor::Ext),
                     Hv::IsEmpty
                     | Hv::IsHit
                     | Hv::IsMiss
@@ -1680,7 +1722,7 @@ impl super::Validator {
                     | Hv::ShaderBindingTableRecordIndex
                     | Hv::ShaderRecordBufferHandle => None,
                 };
-                if required.is_some_and(|required| required != kind) {
+                if required.is_some_and(|required| required != flavor) {
                     return Err(ExpressionError::InvalidHitObjectType(object));
                 }
                 ShaderStages::RAY_GENERATION | ShaderStages::CLOSEST_HIT | ShaderStages::MISS
@@ -1695,7 +1737,7 @@ impl super::Validator {
             } => {
                 if !matches!(
                     *resolver.resolve(acceleration_structure)?,
-                    Ti::AccelerationStructure { .. }
+                    Ti::AccelerationStructure
                 ) {
                     return Err(ExpressionError::InvalidMicroTriangleOperand(
                         acceleration_structure,
@@ -1728,7 +1770,7 @@ impl super::Validator {
                     ));
                 }
             },
-            E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => self.subgroup_stages,
+            E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => ShaderStages::all(),
             E::IsHelperInvocation => ShaderStages::FRAGMENT,
             E::InterpolateAt { pointer, location } => {
                 if !matches!(
@@ -2249,7 +2291,7 @@ impl super::Validator {
     }
 
     pub fn validate_literal(&self, literal: crate::Literal) -> Result<(), LiteralError> {
-        let _ = self.check_width(literal.scalar())?;
+        let _ = Self::check_width(literal.scalar())?;
         Ok(())
     }
 }
@@ -2277,10 +2319,8 @@ pub const fn check_literal_value(literal: crate::Literal) -> Result<(), LiteralE
 }
 
 #[cfg(test)]
-/// Validate a module containing the given expression, expecting an error.
 fn validate_with_expression(
     expr: crate::Expression,
-    caps: super::Capabilities,
 ) -> Result<ModuleInfo, crate::span::WithSpan<super::ValidationError>> {
     use crate::span::Span;
 
@@ -2294,91 +2334,38 @@ fn validate_with_expression(
     let mut module = crate::Module::default();
     module.functions.append(function, Span::default());
 
-    let mut validator = super::Validator::new(super::ValidationFlags::EXPRESSIONS, caps);
+    let mut validator = super::Validator::new(super::ValidationFlags::EXPRESSIONS);
 
     validator.validate(&module)
 }
 
 #[cfg(test)]
-/// Validate a module containing the given constant expression, expecting an error.
 fn validate_with_const_expression(
     expr: crate::Expression,
-    caps: super::Capabilities,
 ) -> Result<ModuleInfo, crate::span::WithSpan<super::ValidationError>> {
     use crate::span::Span;
 
     let mut module = crate::Module::default();
     module.global_expressions.append(expr, Span::default());
 
-    let mut validator = super::Validator::new(super::ValidationFlags::CONSTANTS, caps);
+    let mut validator = super::Validator::new(super::ValidationFlags::CONSTANTS);
 
     validator.validate(&module)
 }
 
-/// Using F64 in a function's expression arena is forbidden.
 #[test]
 fn f64_runtime_literals() -> crate::TestResult {
-    let result = validate_with_expression(
-        crate::Expression::Literal(crate::Literal::F64(0.57721_56649)),
-        super::Capabilities::default(),
-    );
-    let Err(error) = result else {
-        return Err("the f64 literal was accepted".into());
-    };
-    let error = error.into_inner();
-    assert!(matches!(
-        error,
-        crate::valid::ValidationError::Function {
-            source: super::FunctionError::Expression {
-                source: ExpressionError::Literal(LiteralError::Width(
-                    super::r#type::WidthError::MissingCapability {
-                        name: "f64",
-                        flag: "FLOAT64",
-                    }
-                ),),
-                ..
-            },
-            ..
-        }
-    ));
-
-    let result = validate_with_expression(
-        crate::Expression::Literal(crate::Literal::F64(0.57721_56649)),
-        super::Capabilities::default() | super::Capabilities::FLOAT64,
-    );
-    assert!(result.is_ok());
+    validate_with_expression(crate::Expression::Literal(crate::Literal::F64(
+        0.57721_56649,
+    )))?;
     Ok(())
 }
 
-/// Using F64 in a module's constant expression arena is forbidden.
 #[test]
 fn f64_const_literals() -> crate::TestResult {
-    let result = validate_with_const_expression(
-        crate::Expression::Literal(crate::Literal::F64(0.57721_56649)),
-        super::Capabilities::default(),
-    );
-    let Err(error) = result else {
-        return Err("the f64 literal was accepted".into());
-    };
-    let error = error.into_inner();
-    assert!(matches!(
-        error,
-        crate::valid::ValidationError::ConstExpression {
-            source: ConstExpressionError::Literal(LiteralError::Width(
-                super::r#type::WidthError::MissingCapability {
-                    name: "f64",
-                    flag: "FLOAT64",
-                }
-            )),
-            ..
-        }
-    ));
-
-    let result = validate_with_const_expression(
-        crate::Expression::Literal(crate::Literal::F64(0.57721_56649)),
-        super::Capabilities::default() | super::Capabilities::FLOAT64,
-    );
-    assert!(result.is_ok());
+    validate_with_const_expression(crate::Expression::Literal(crate::Literal::F64(
+        0.57721_56649,
+    )))?;
     Ok(())
 }
 
@@ -2431,11 +2418,7 @@ fn types_of_unprocessed_expressions_are_errors() -> crate::TestResult {
     );
     let mut module = crate::Module::default();
     let handle = module.functions.append(function, Span::default());
-    let info = super::Validator::new(
-        super::ValidationFlags::all(),
-        super::Capabilities::default(),
-    )
-    .validate(&module)?;
+    let info = super::Validator::new(super::ValidationFlags::all()).validate(&module)?;
     let resolver = ExpressionTypeResolver {
         root: two,
         types: &module.types,

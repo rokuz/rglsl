@@ -16,7 +16,7 @@ use crate::object::{
     BindingAssignment, CompiledUnit, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
     ObjectTarget, ParameterQualifier, PathStep, StageLayout, SymbolKind,
 };
-use crate::valid::{Capabilities, ValidationError, ValidationFlags, ValidationMode, Validator};
+use crate::valid::{ValidationError, ValidationFlags, ValidationMode, Validator};
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
 
 impl Lowerer<'_> {
@@ -347,7 +347,7 @@ impl Lowerer<'_> {
             return;
         }
         loop {
-            let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+            let mut validator = Validator::new(ValidationFlags::all());
             validator.mode(ValidationMode::Object);
             let Err(error) = validator.validate(&self.module) else {
                 return;

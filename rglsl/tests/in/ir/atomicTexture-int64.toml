@@ -1,4 +1,3 @@
-capabilities = "SHADER_INT64 | TEXTURE_INT64_ATOMIC"
 targets = "SPIRV"
 
 [spv]

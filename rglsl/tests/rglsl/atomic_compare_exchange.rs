@@ -16,10 +16,7 @@ fn atomic_compare_exchange_writes_spirv() -> crate::TestResult {
     let source = include_str!("../in/ir/atomicCompareExchange.ron");
     let module: rglsl::Module = ron::de::from_str(source)?;
 
-    let mut validator = rglsl::valid::Validator::new(
-        rglsl::valid::ValidationFlags::all(),
-        rglsl::valid::Capabilities::empty(),
-    );
+    let mut validator = rglsl::valid::Validator::new(rglsl::valid::ValidationFlags::all());
     let info = validator.validate(&module)?;
 
     let pipeline_options = rglsl::back::spv::PipelineOptions {

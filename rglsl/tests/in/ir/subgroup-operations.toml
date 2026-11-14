@@ -1,4 +1,2 @@
-capabilities = "SUBGROUP"
-
 [spv]
 version = [1, 3]

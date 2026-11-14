@@ -6,10 +6,13 @@ extern crate std;
 
 pub mod builtin;
 pub mod extension;
+pub mod flavor;
 pub mod probe;
 pub mod small_float;
 pub mod spv;
 pub mod stack;
+
+pub use flavor::Flavor;
 
 /// Stage of the programmable pipeline.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]

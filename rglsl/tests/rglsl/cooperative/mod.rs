@@ -12,7 +12,7 @@ use rglsl::{
     ShaderStage,
     back::spv,
     front::glsl,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::binary::Disassemble;
 use rspirv::dr;
@@ -332,7 +332,7 @@ fn ours(source: &str, target: Target, debug: Debug) -> Result<Vec<u32>, Vec<(u32
                 .map(|error| (line_of(source, error.meta), message(error)))
                 .collect::<Vec<_>>()
         })?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+    let info = Validator::new(ValidationFlags::all())
         .validate(&module)
         .map_err(|error| {
             let line = error

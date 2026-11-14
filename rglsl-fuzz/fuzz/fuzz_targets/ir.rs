@@ -9,8 +9,7 @@ mod fuzz {
         // Check if the module validates without errors.
         //TODO: may also fuzz the flags and capabilities
         let mut module = module;
-        let mut validator =
-            v::Validator::new(v::ValidationFlags::all(), v::Capabilities::default());
+        let mut validator = v::Validator::new(v::ValidationFlags::all());
         if validator.validate(&module).is_err() {
             return;
         }

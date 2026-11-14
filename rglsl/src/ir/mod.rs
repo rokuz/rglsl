@@ -221,6 +221,7 @@ An override expression can be evaluated at pipeline creation time.
 
 mod block;
 mod debug;
+pub mod visit;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 
@@ -242,6 +243,10 @@ pub use debug::{
     shift_module_spans, shift_span,
 };
 pub use rglsl_types::builtin::{BuiltIn, ShaderBallot, ShaderCore, SubgroupMask};
+pub use rglsl_types::flavor::{
+    BarycentricFlavor, DerivativeFlavor, Flavor, FragmentDensityFlavor, HitObjectFlavor,
+    MeshFlavor, RayTracingFlavor,
+};
 pub use rglsl_types::{ResourceBinding, ShaderStage, ShaderStageMask};
 
 /// Explicitly allows early depth/stencil tests.
@@ -350,13 +355,10 @@ pub enum AddressSpace {
     /// but by `SetImmediates` pass commands, allowing the CPU to
     /// establish different values for each draw/dispatch.
     ///
-    /// `Immediate` variables may not contain `f16` values, even if
-    /// the [`SHADER_FLOAT16`] capability is enabled.
+    /// `Immediate` variables may not contain `f16` values.
     ///
     /// Backends generally place tight limits on the size of
     /// `Immediate` variables.
-    ///
-    /// [`SHADER_FLOAT16`]: crate::valid::Capabilities::SHADER_FLOAT16
     Immediate,
     /// Task shader to mesh shader payload
     TaskPayload,
@@ -373,7 +375,7 @@ pub enum AddressSpace {
     IncomingCallableData,
     ShaderRecord,
     HitObjectAttribute {
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
     },
 
     /// A stage input: a value the previous stage or the pipeline provides.
@@ -547,7 +549,11 @@ pub enum Interpolation {
     Flat,
     /// Indicates the fragment input binding holds an array of per-vertex values.
     /// This is typically used with barycentrics.
-    PerVertex { nv: bool, flat: bool, linear: bool },
+    PerVertex {
+        flavor: BarycentricFlavor,
+        flat: bool,
+        linear: bool,
+    },
 }
 
 /// The sampling qualifiers of a binding or struct field.
@@ -1018,17 +1024,13 @@ pub enum TypeInner {
     },
 
     /// Opaque object representing an acceleration structure of geometry.
-    AccelerationStructure {
-        vertex_return: bool,
-    },
+    AccelerationStructure,
 
     /// Locally used handle for ray queries.
-    RayQuery {
-        vertex_return: bool,
-    },
+    RayQuery,
 
     HitObject {
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
     },
 
     /// Array of bindings.
@@ -1627,27 +1629,6 @@ pub enum AtomicLocation {
     Texel(Texel),
 }
 
-impl Texel {
-    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        [self.image, self.coordinate]
-            .into_iter()
-            .chain(self.array_index)
-            .chain(self.sample)
-    }
-}
-
-impl AtomicLocation {
-    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        let (pointer, texel) = match *self {
-            Self::Pointer(pointer) => (Some(pointer), None),
-            Self::Texel(texel) => (None, Some(texel)),
-        };
-        pointer
-            .into_iter()
-            .chain(texel.into_iter().flat_map(|texel| texel.expressions()))
-    }
-}
-
 /// Hint at which precision to compute a derivative.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -2053,16 +2034,6 @@ pub enum ArrayConversion {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum CooperativeFamily {
-    Khr,
-    Nv,
-    Ext,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TensorOperation {
     LayoutSetBlockSize,
     LayoutSetDimension,
@@ -2081,19 +2052,19 @@ pub enum TensorOperation {
 pub enum CooperativeMatrixFunction {
     Transpose {
         matrix: Handle<Expression>,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     Reduce {
         matrix: Handle<Expression>,
         mask: u32,
         combine: Handle<Function>,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     PerElement {
         matrix: Handle<Expression>,
         function: Handle<Function>,
         arguments: Vec<Handle<Expression>>,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     GetCoordinate {
         matrix: Handle<Expression>,
@@ -2113,116 +2084,6 @@ pub enum CooperativeMatrixFunction {
         layout: Handle<Expression>,
         view: Option<Handle<Expression>>,
     },
-}
-
-impl CooperativeMatrixFunction {
-    pub fn operands(&self) -> Vec<Handle<Expression>> {
-        match *self {
-            Self::Transpose { matrix, .. } | Self::Reduce { matrix, .. } => alloc::vec![matrix],
-            Self::PerElement {
-                matrix,
-                ref arguments,
-                ..
-            } => core::iter::once(matrix)
-                .chain(arguments.iter().copied())
-                .collect(),
-            Self::GetCoordinate { matrix, index } => alloc::vec![matrix, index],
-            Self::LoadTensor {
-                pointer,
-                object,
-                layout,
-                view,
-                ..
-            } => [Some(pointer), Some(object), Some(layout), view]
-                .into_iter()
-                .flatten()
-                .collect(),
-            Self::StoreTensor {
-                pointer,
-                value,
-                layout,
-                view,
-            } => [Some(pointer), Some(value), Some(layout), view]
-                .into_iter()
-                .flatten()
-                .collect(),
-        }
-    }
-
-    pub fn operands_mut(&mut self) -> Vec<&mut Handle<Expression>> {
-        match *self {
-            Self::Transpose { ref mut matrix, .. } | Self::Reduce { ref mut matrix, .. } => {
-                alloc::vec![matrix]
-            }
-            Self::PerElement {
-                ref mut matrix,
-                ref mut arguments,
-                ..
-            } => core::iter::once(matrix)
-                .chain(arguments.iter_mut())
-                .collect(),
-            Self::GetCoordinate {
-                ref mut matrix,
-                ref mut index,
-            } => alloc::vec![matrix, index],
-            Self::LoadTensor {
-                ref mut pointer,
-                ref mut object,
-                ref mut layout,
-                ref mut view,
-                ..
-            } => [Some(pointer), Some(object), Some(layout), view.as_mut()]
-                .into_iter()
-                .flatten()
-                .collect(),
-            Self::StoreTensor {
-                ref mut pointer,
-                ref mut value,
-                ref mut layout,
-                ref mut view,
-            } => [Some(pointer), Some(value), Some(layout), view.as_mut()]
-                .into_iter()
-                .flatten()
-                .collect(),
-        }
-    }
-
-    pub fn functions(&self) -> Vec<Handle<Function>> {
-        match *self {
-            Self::Reduce { combine, .. } => alloc::vec![combine],
-            Self::PerElement { function, .. } => alloc::vec![function],
-            Self::LoadTensor {
-                decode,
-                decode_vector,
-                ..
-            } => [decode, decode_vector].into_iter().flatten().collect(),
-            Self::Transpose { .. } | Self::GetCoordinate { .. } | Self::StoreTensor { .. } => {
-                Vec::new()
-            }
-        }
-    }
-
-    pub fn functions_mut(&mut self) -> Vec<&mut Handle<Function>> {
-        match *self {
-            Self::Reduce {
-                ref mut combine, ..
-            } => alloc::vec![combine],
-            Self::PerElement {
-                ref mut function, ..
-            } => alloc::vec![function],
-            Self::LoadTensor {
-                ref mut decode,
-                ref mut decode_vector,
-                ..
-            } => [decode.as_mut(), decode_vector.as_mut()]
-                .into_iter()
-                .flatten()
-                .collect(),
-            Self::Transpose { .. } | Self::GetCoordinate { .. } | Self::StoreTensor { .. } => {
-                Vec::new()
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
@@ -2253,52 +2114,6 @@ pub struct CooperativeVectorMatMul {
     pub stride: Handle<Expression>,
 }
 
-impl CooperativeVectorMatMul {
-    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        let bias = self
-            .bias
-            .map(|bias| [bias.pointer, bias.offset, bias.interpretation]);
-        [
-            self.input,
-            self.input_interpretation,
-            self.matrix,
-            self.matrix_offset,
-            self.matrix_interpretation,
-            self.rows,
-            self.columns,
-            self.layout,
-            self.transpose,
-            self.stride,
-        ]
-        .into_iter()
-        .chain(bias.into_iter().flatten())
-    }
-
-    pub fn operands_mut(&mut self) -> impl Iterator<Item = &mut Handle<Expression>> {
-        let bias = self.bias.as_mut().map(|bias| {
-            [
-                &mut bias.pointer,
-                &mut bias.offset,
-                &mut bias.interpretation,
-            ]
-        });
-        [
-            &mut self.input,
-            &mut self.input_interpretation,
-            &mut self.matrix,
-            &mut self.matrix_offset,
-            &mut self.matrix_interpretation,
-            &mut self.rows,
-            &mut self.columns,
-            &mut self.layout,
-            &mut self.transpose,
-            &mut self.stride,
-        ]
-        .into_iter()
-        .chain(bias.into_iter().flatten())
-    }
-}
-
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -2326,54 +2141,6 @@ pub enum CooperativeVectorFunction {
 }
 
 impl CooperativeVectorFunction {
-    pub fn operands(&self) -> Vec<Handle<Expression>> {
-        match *self {
-            Self::Store {
-                value,
-                pointer,
-                offset,
-            }
-            | Self::ReduceSumAccumulate {
-                value,
-                pointer,
-                offset,
-            } => alloc::vec![value, pointer, offset],
-            Self::OuterProductAccumulate {
-                a,
-                b,
-                matrix,
-                offset,
-                stride,
-                layout,
-                interpretation,
-            } => alloc::vec![a, b, matrix, offset, stride, layout, interpretation],
-        }
-    }
-
-    pub fn operands_mut(&mut self) -> Vec<&mut Handle<Expression>> {
-        match *self {
-            Self::Store {
-                ref mut value,
-                ref mut pointer,
-                ref mut offset,
-            }
-            | Self::ReduceSumAccumulate {
-                ref mut value,
-                ref mut pointer,
-                ref mut offset,
-            } => alloc::vec![value, pointer, offset],
-            Self::OuterProductAccumulate {
-                ref mut a,
-                ref mut b,
-                ref mut matrix,
-                ref mut offset,
-                ref mut stride,
-                ref mut layout,
-                ref mut interpretation,
-            } => alloc::vec![a, b, matrix, offset, stride, layout, interpretation],
-        }
-    }
-
     pub const fn writes(&self) -> Handle<Expression> {
         match *self {
             Self::Store { pointer, .. } | Self::ReduceSumAccumulate { pointer, .. } => pointer,
@@ -2390,24 +2157,6 @@ pub struct CooperativeData {
     pub pointer: Handle<Expression>,
     pub stride: Option<Handle<Expression>>,
     pub layout: Handle<Expression>,
-}
-
-impl CooperativeData {
-    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        [Some(self.pointer), self.stride, Some(self.layout)]
-            .into_iter()
-            .flatten()
-    }
-
-    pub fn operands_mut(&mut self) -> impl Iterator<Item = &mut Handle<Expression>> {
-        [
-            Some(&mut self.pointer),
-            self.stride.as_mut(),
-            Some(&mut self.layout),
-        ]
-        .into_iter()
-        .flatten()
-    }
 }
 
 /// An expression that can be evaluated to obtain a value.
@@ -2849,7 +2598,7 @@ pub enum Expression {
         expr: Handle<Expression>,
         ty: Handle<Type>,
         saturating: bool,
-        family: CooperativeFamily,
+        flavor: Flavor,
     },
     CooperativeMatrixResult {
         ty: Handle<Type>,
@@ -3199,20 +2948,12 @@ pub enum Statement {
         /// Pointer to an atomic value.
         ///
         /// This must be a [`Pointer`] to an [`Atomic`] value. The atomic's
-        /// scalar type may be [`I32`] or [`U32`].
-        ///
-        /// If [`SHADER_INT64_ATOMIC_MIN_MAX`] or [`SHADER_INT64_ATOMIC_ALL_OPS`] are
-        /// enabled, this may also be [`I64`] or [`U64`].
-        ///
-        /// If [`SHADER_FLOAT32_ATOMIC`] is enabled, this may be [`F32`].
+        /// scalar type may be [`I32`], [`U32`], [`I64`], [`U64`] or [`F32`].
         ///
         /// [`Pointer`]: TypeInner::Pointer
         /// [`Atomic`]: TypeInner::Atomic
         /// [`I32`]: Scalar::I32
         /// [`U32`]: Scalar::U32
-        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
-        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
-        /// [`SHADER_FLOAT32_ATOMIC`]: crate::valid::Capabilities::SHADER_FLOAT32_ATOMIC
         /// [`I64`]: Scalar::I64
         /// [`U64`]: Scalar::U64
         /// [`F32`]: Scalar::F32
@@ -3220,30 +2961,12 @@ pub enum Statement {
 
         /// Function to run on the atomic value.
         ///
-        /// If [`pointer`] refers to a 64-bit atomic value, then:
-        ///
-        /// - The [`SHADER_INT64_ATOMIC_ALL_OPS`] capability allows any [`AtomicFunction`]
-        ///   value here.
-        ///
-        /// - The [`SHADER_INT64_ATOMIC_MIN_MAX`] capability allows
-        ///   [`AtomicFunction::Min`] and [`AtomicFunction::Max`]
-        ///   in the [`Storage`] address space here.
-        ///
-        /// - If neither of those capabilities are present, then 64-bit scalar
-        ///   atomics are not allowed.
-        ///
-        /// If [`pointer`] refers to a 32-bit floating-point atomic value, then:
-        ///
-        /// - The [`SHADER_FLOAT32_ATOMIC`] capability allows [`AtomicFunction::Add`],
-        ///   [`AtomicFunction::Subtract`], and [`AtomicFunction::Exchange { compare: None }`]
-        ///   in the [`Storage`] address space here.
+        /// If [`pointer`] refers to a 32-bit floating-point atomic value, this
+        /// is [`AtomicFunction::Add`], [`AtomicFunction::Subtract`] or
+        /// [`AtomicFunction::Exchange { compare: None }`].
         ///
         /// [`AtomicFunction::Exchange { compare: None }`]: AtomicFunction::Exchange
         /// [`pointer`]: Statement::Atomic::pointer
-        /// [`Storage`]: AddressSpace::Storage
-        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
-        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
-        /// [`SHADER_FLOAT32_ATOMIC`]: crate::valid::Capabilities::SHADER_FLOAT32_ATOMIC
         fun: AtomicFunction,
 
         /// Value to use in the function.
@@ -3261,15 +2984,10 @@ pub enum Statement {
         ///
         /// Otherwise, this may be `None` if the return value of the operation is not needed.
         ///
-        /// If `pointer` refers to a 64-bit atomic value, [`SHADER_INT64_ATOMIC_MIN_MAX`]
-        /// is enabled, and [`SHADER_INT64_ATOMIC_ALL_OPS`] is not, this must be `None`.
-        ///
         /// [`AtomicResult`]: crate::Expression::AtomicResult
         /// [`fun`]: Statement::Atomic::fun
         /// [`Store`]: Statement::Store
         /// [`Exchange { compare: None }`]: AtomicFunction::Exchange
-        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
-        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
         result: Option<Handle<Expression>>,
 
         #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
@@ -3367,7 +3085,7 @@ pub enum Statement {
         fun: HitObjectFunction,
     },
     ReorderThread {
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
         hint: Handle<Expression>,
         bits: Handle<Expression>,
     },
@@ -3780,7 +3498,7 @@ impl Reconvergence {
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct DerivativeGroup {
     pub shape: DerivativeGroupShape,
-    pub extension: DerivativeGroupExtension,
+    pub flavor: DerivativeFlavor,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -3790,15 +3508,6 @@ pub struct DerivativeGroup {
 pub enum DerivativeGroupShape {
     Quads,
     Linear,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum DerivativeGroupExtension {
-    Nv,
-    Khr,
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -3850,15 +3559,6 @@ pub struct TileShading {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum MeshShaderExtension {
-    Ext,
-    Nv,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshOutputLayout {
     pub topology: MeshOutputTopology,
     pub max_vertices: u32,
@@ -3870,7 +3570,7 @@ pub struct MeshOutputLayout {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshShaderInfo {
-    pub extension: MeshShaderExtension,
+    pub flavor: MeshFlavor,
     pub output: Option<MeshOutputLayout>,
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub task_memory: Vec<Handle<GlobalVariable>>,
@@ -4148,10 +3848,10 @@ pub enum RayPipelineFunction {
         result: Handle<Expression>,
     },
     IgnoreIntersection {
-        nv: bool,
+        flavor: RayTracingFlavor,
     },
     TerminateRay {
-        nv: bool,
+        flavor: RayTracingFlavor,
     },
 }
 
@@ -4207,15 +3907,6 @@ pub enum RayQueryIntersectionValue {
     LssHitValue,
     IsSphereHit,
     IsLssHit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[cfg_attr(feature = "serialize", derive(Serialize))]
-#[cfg_attr(feature = "deserialize", derive(Deserialize))]
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
-pub enum HitObjectKind {
-    Nv,
-    Ext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

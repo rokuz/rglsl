@@ -8,7 +8,7 @@ use rglsl::{
     ShaderStage,
     back::spv,
     front::glsl,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op};
@@ -23,7 +23,7 @@ fn parse(stage: ShaderStage, source: &str) -> Result<rglsl::Module, String> {
                 .first()
                 .map_or_else(String::new, |e| e.kind.to_string())
         })?;
-    Validator::new(ValidationFlags::all(), Capabilities::all())
+    Validator::new(ValidationFlags::all())
         .validate(&module)
         .map_err(|e| format!("{:?}", e.into_inner()))?;
     Ok(module)
@@ -32,7 +32,7 @@ fn parse(stage: ShaderStage, source: &str) -> Result<rglsl::Module, String> {
 /// Compiles `source` to SPIR-V with the options the conformance runner uses.
 fn compile(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
@@ -525,7 +525,7 @@ fn automatic_bindings_match_glslang() -> crate::TestResult {
         ..glsl::Options::from(ShaderStage::Fragment)
     };
     let module = glsl::Frontend::default().parse(&options, source)?;
-    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    Validator::new(ValidationFlags::all()).validate(&module)?;
 
     let mut bindings: Vec<(&str, u32, u32)> = module
         .global_variables
@@ -623,7 +623,7 @@ fn automatic_locations_skip_explicit_ones() -> crate::TestResult {
         ..glsl::Options::from(ShaderStage::Fragment)
     };
     let module = glsl::Frontend::default().parse(&options, source)?;
-    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    Validator::new(ValidationFlags::all()).validate(&module)?;
 
     let locations = |space| -> crate::TestResult<Vec<(&str, u32)>> {
         let mut locations = module.entry_points[0]
@@ -1328,7 +1328,7 @@ fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
 
 fn compile_valid(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS
@@ -2128,7 +2128,7 @@ fn combined_samplers_match_glslang() -> crate::TestResult {
         ..glsl::Options::from(ShaderStage::Fragment)
     };
     let module = glsl::Frontend::default().parse(&options, source)?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let mut bindings: Vec<(&str, u32, u32)> = module
         .global_variables
         .iter()
@@ -2476,7 +2476,7 @@ fn buffer_textures_and_images_match_glslang() -> crate::TestResult {
 
 fn compile_with_offsets(stage: ShaderStage, source: &str) -> crate::TestResult<dr::Module> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
     crate::stage_io::spirv_val_in(
         &words,
@@ -2817,7 +2817,7 @@ fn compile_words(
     lang_version: (u8, u8),
 ) -> crate::TestResult<Vec<u32>> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         ..spv::Options::default()
@@ -2842,7 +2842,7 @@ fn compile_for(
     lang_version: (u8, u8),
 ) -> crate::TestResult<dr::Module> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG | spv::WriterFlags::LABEL_VARYINGS,
@@ -3231,7 +3231,7 @@ layout(std430, binding = 0) buffer Out { int a; };
 void main() { tile[0] = M * 2; a = tile[0]; }
 "#,
     )?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let constants = rglsl::back::PipelineConstants::from_iter([("3".to_string(), 7.0)]);
     let (module, info) =
         rglsl::back::pipeline_constants::process_overrides(&module, &info, None, &constants)?;
@@ -3256,7 +3256,7 @@ layout(std430, binding = 0) buffer Out { uint a; };
 void main() { a = Q; }
 "#,
     )?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let constants = rglsl::back::PipelineConstants::from_iter([("3".to_string(), 1.0)]);
     let (module, info) =
         rglsl::back::pipeline_constants::process_overrides(&module, &info, None, &constants)?;
@@ -3296,7 +3296,7 @@ void main() {
 }
 "#,
     )?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let entry = module.entry_points.first().ok_or("no entry point")?;
     let function = info.get_entry_point(0);
     let mut atomics = 0;
@@ -3344,7 +3344,7 @@ fn arrays_of_buffer_blocks_match_glslang() -> crate::TestResult {
         ..glsl::Options::from(ShaderStage::Compute)
     };
     let module = glsl::Frontend::default().parse(&options, source)?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let words = spv::write_vec(
         &module,
         &info,
@@ -3397,7 +3397,7 @@ fn function_variables_have_no_explicit_layout() -> crate::TestResult {
         }",
     )
     .map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version: (1, 6),
         flags: spv::WriterFlags::DEBUG,
@@ -3458,7 +3458,7 @@ fn layout_free_copies_before_spirv_1_4() -> crate::TestResult {
         }";
     let module =
         parse(ShaderStage::Compute, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     for (lang_version, env) in [((1, 0), "vulkan1.0"), ((1, 6), "vulkan1.3")] {
         let options = spv::Options {
             lang_version,
@@ -4387,7 +4387,7 @@ fn reference_strides_agree_with_block_layouts() -> crate::TestResult {
         );
         let module = parse(ShaderStage::Fragment, &source)
             .map_err(|e| format!("{packing}: shader rejected: {e}"))?;
-        let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+        let info = Validator::new(ValidationFlags::all()).validate(&module)?;
         let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
         crate::stage_io::spirv_val_in(
             &words,
@@ -4635,7 +4635,7 @@ fn compile_words_with_names(
     lang_version: (u8, u8),
 ) -> crate::TestResult<Vec<u32>> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG
@@ -5035,7 +5035,7 @@ fn message_words(
     lang_version: (u8, u8),
 ) -> crate::TestResult<Vec<u32>> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version,
         flags: spv::WriterFlags::DEBUG
@@ -5457,7 +5457,7 @@ fn string_operand(words: &[u32]) -> String {
 
 fn compile_heap(stage: ShaderStage, source: &str) -> crate::TestResult<Words> {
     let module = parse(stage, source).map_err(|e| format!("shader rejected: {e}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version: (1, 4),
         flags: spv::WriterFlags::DEBUG
@@ -6865,7 +6865,7 @@ void main() {}
     )
     .map_err(|e| format!("shader rejected: {e}"))?;
     assert!(module.entry_points[0].opacity_micromap.is_some());
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
     let execution_mode_id = (4 << 16) | Op::ExecutionModeId as u32;
     let position = words
@@ -9189,7 +9189,7 @@ fn select_keeps_a_scalar_condition_from_spirv_1_4() -> crate::TestResult {
         layout(location = 0) out vec3 o;
         void main() { o = i > 1 ? a : vec3(2.0); }";
     let module = parse(ShaderStage::Fragment, source)?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let select_conditions = |lang_version| -> crate::TestResult<Vec<bool>> {
         let options = spv::Options {
             lang_version,
@@ -9970,7 +9970,7 @@ fn reconvergence_attributes_become_execution_modes() -> crate::TestResult {
 
 fn microscaling_words(source: &str) -> crate::TestResult<Vec<u32>> {
     let module = parse(ShaderStage::Compute, source)?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         lang_version: (1, 6),
         flags: spv::WriterFlags::DEBUG | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
@@ -10294,7 +10294,7 @@ fn hlsl_offsets_pack_vectors_like_glslang() -> crate::TestResult {
         },
         HLSL_OFFSETS,
     )?;
-    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    Validator::new(ValidationFlags::all()).validate(&module)?;
     let offsets: Vec<u32> = block_layout(&module, "block")?
         .into_iter()
         .map(|(offset, _)| offset)
@@ -11132,7 +11132,7 @@ void main() {
         ..glsl::Options::from(ShaderStage::Fragment)
     };
     let module = glsl::Frontend::default().parse(&options, source)?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG,
         ..spv::Options::default()

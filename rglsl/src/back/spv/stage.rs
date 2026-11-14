@@ -203,9 +203,10 @@ impl BlockContext<'_> {
         function: &crate::MeshFunction,
     ) -> Result<Option<Block>, Error> {
         let mut operands = Vec::new();
-        for operand in function.operands() {
+        function.try_for_each_operand(|operand| {
             operands.push(self.cached.get(operand)?);
-        }
+            Ok::<(), Error>(())
+        })?;
         let op = match *function {
             crate::MeshFunction::SetMeshOutputs { .. } => spirv::Op::SetMeshOutputsEXT,
             crate::MeshFunction::EmitMeshTasks { .. } => spirv::Op::EmitMeshTasksEXT,
@@ -264,12 +265,11 @@ impl Writer {
             };
             self.write_mode(function_id, topology, &[]);
         }
-        let nv = info.extension == crate::MeshShaderExtension::Nv;
-        Ok(match (entry_point.stage, nv) {
-            (ShaderStage::Task, false) => spirv::ExecutionModel::TaskEXT,
-            (ShaderStage::Task, true) => spirv::ExecutionModel::TaskNV,
-            (_, false) => spirv::ExecutionModel::MeshEXT,
-            (_, true) => spirv::ExecutionModel::MeshNV,
+        Ok(match (entry_point.stage, info.flavor) {
+            (ShaderStage::Task, crate::MeshFlavor::Ext) => spirv::ExecutionModel::TaskEXT,
+            (ShaderStage::Task, crate::MeshFlavor::Nv) => spirv::ExecutionModel::TaskNV,
+            (_, crate::MeshFlavor::Ext) => spirv::ExecutionModel::MeshEXT,
+            (_, crate::MeshFlavor::Nv) => spirv::ExecutionModel::MeshNV,
         })
     }
 }

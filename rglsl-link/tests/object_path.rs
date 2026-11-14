@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rglsl::back::spv;
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 use rglsl::{AddressSpace, ShaderStage, TypeInner};
 use rglsl_link::{
     LinkError, Linked, Options as LinkOptions, decode, encode, link_objects, validate_object,
@@ -42,7 +42,7 @@ fn direct(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult<Vec<u3
     let module = Frontend::default()
         .parse(&frontend_options(stage, auto_map), source)
         .map_err(|errors| format!("{errors:?}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     Ok(spv::write_vec(&module, &info, &writer_options(), None)?)
 }
 

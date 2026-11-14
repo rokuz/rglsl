@@ -354,17 +354,13 @@ impl Lowerer<'_> {
                 "storage images outside uniform declarations",
                 span,
             )),
-            OpaqueKind::AccelerationStructure => Ok(TypeInner::AccelerationStructure {
-                vertex_return: false,
-            }),
-            OpaqueKind::RayQuery => Ok(TypeInner::RayQuery {
-                vertex_return: false,
-            }),
+            OpaqueKind::AccelerationStructure => Ok(TypeInner::AccelerationStructure),
+            OpaqueKind::RayQuery => Ok(TypeInner::RayQuery),
             OpaqueKind::HitObjectNv => Ok(TypeInner::HitObject {
-                kind: crate::HitObjectKind::Nv,
+                flavor: crate::HitObjectFlavor::Nv,
             }),
             OpaqueKind::HitObjectExt => Ok(TypeInner::HitObject {
-                kind: crate::HitObjectKind::Ext,
+                flavor: crate::HitObjectFlavor::Ext,
             }),
             OpaqueKind::TileImage => Ok(TypeInner::Image {
                 dim: ImageDimension::TileImageData,

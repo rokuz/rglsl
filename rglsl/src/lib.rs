@@ -23,10 +23,7 @@ let module: rglsl::Module = frontend
 
 // Validate the module.
 let module_info: rglsl::valid::ModuleInfo =
-    rglsl::valid::Validator::new(
-        rglsl::valid::ValidationFlags::all(),
-        rglsl::valid::Capabilities::all(),
-    )
+    rglsl::valid::Validator::new(rglsl::valid::ValidationFlags::all())
     .validate(&module)?;
 
 // Translate the module.

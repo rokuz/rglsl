@@ -1,2 +1,1 @@
-capabilities = "CLIP_DISTANCES"
 targets = "SPIRV"

@@ -1,4 +1,3 @@
-capabilities = "SHADER_INT16 | SHADER_FLOAT16 | SUBGROUP"
 targets = "SPIRV"
 
 [spv]

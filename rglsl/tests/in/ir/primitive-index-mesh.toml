@@ -1,4 +1,3 @@
 # Tests on GLES
 
-capabilities = "PRIMITIVE_INDEX"
 targets = ""

@@ -286,9 +286,9 @@ impl Layouter {
                 Ti::Image { .. }
                 | Ti::SampledImage { .. }
                 | Ti::Sampler { .. }
-                | Ti::AccelerationStructure { .. }
+                | Ti::AccelerationStructure
                 | Ti::Tensor { .. }
-                | Ti::RayQuery { .. }
+                | Ti::RayQuery
                 | Ti::HitObject { .. }
                 | Ti::BindingArray { .. }
                 | Ti::BufferDescriptor { .. } => TypeLayout {
