@@ -607,8 +607,8 @@ impl Writer {
                 }
             }
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
-            crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,
-            crate::TypeInner::RayQuery { .. } => LocalType::RayQuery,
+            crate::TypeInner::AccelerationStructure => LocalType::AccelerationStructure,
+            crate::TypeInner::RayQuery => LocalType::RayQuery,
             crate::TypeInner::HitObject { kind } => LocalType::HitObject(kind),
             crate::TypeInner::BufferDescriptor { space, .. } => LocalType::BufferDescriptor {
                 class: map_storage_class(space),
@@ -1628,14 +1628,14 @@ impl Writer {
                     _ => {}
                 }
             }
-            crate::TypeInner::AccelerationStructure { .. } => {
+            crate::TypeInner::AccelerationStructure => {
                 if self.has_ray_tracing_pipeline {
                     self.require_ray_tracing()?;
                 } else if !self.micromap_acceleration_structures {
                     self.require_ray_queries()?;
                 }
             }
-            crate::TypeInner::RayQuery { .. } => {
+            crate::TypeInner::RayQuery => {
                 self.require_ray_queries()?;
             }
             crate::TypeInner::HitObject { kind } => {
@@ -2176,8 +2176,8 @@ impl Writer {
                 | crate::TypeInner::Image { .. }
                 | crate::TypeInner::SampledImage { .. }
                 | crate::TypeInner::Sampler { .. }
-                | crate::TypeInner::AccelerationStructure { .. }
-                | crate::TypeInner::RayQuery { .. }
+                | crate::TypeInner::AccelerationStructure
+                | crate::TypeInner::RayQuery
                 | crate::TypeInner::HitObject { .. }
                 | crate::TypeInner::BufferDescriptor { .. } => {
                     return Err(Error::Validation("a non-aggregate type has no local type"));

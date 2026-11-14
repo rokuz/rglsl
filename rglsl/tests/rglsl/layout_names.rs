@@ -5,7 +5,7 @@ use rglsl::{
     ShaderStage,
     back::spv,
     front::glsl,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, Op};
@@ -66,7 +66,7 @@ fn rglsl_words(stage: ShaderStage, source: &str) -> TestResult<Vec<u32>> {
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+    let info = Validator::new(ValidationFlags::all())
         .validate(&module)
         .map_err(|error| format!("{:?}", error.into_inner()))?;
     let options = spv::Options {

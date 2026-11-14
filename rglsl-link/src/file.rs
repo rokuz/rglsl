@@ -1,5 +1,5 @@
 use rglsl::object::{CompiledUnit, FORMAT_VERSION, ObjectModule, ObjectTarget};
-use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
+use rglsl::valid::{ValidationFlags, ValidationMode, Validator};
 use rglsl::{Block, Span, Statement};
 
 #[derive(Debug, thiserror::Error)]
@@ -127,7 +127,7 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
         .unwrap_or_default();
     while let Some(unit) = pending.pop() {
         let module = &unit.module;
-        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        let mut validator = Validator::new(ValidationFlags::all());
         validator.mode(ValidationMode::Object);
         validator
             .validate(module)

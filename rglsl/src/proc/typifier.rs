@@ -1013,9 +1013,7 @@ impl<'a> ResolveContext<'a> {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
             crate::Expression::AccelerationStructureFromAddress { .. } => {
-                TypeResolution::Value(Ti::AccelerationStructure {
-                    vertex_return: false,
-                })
+                TypeResolution::Value(Ti::AccelerationStructure)
             }
             crate::Expression::IsHelperInvocation => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))

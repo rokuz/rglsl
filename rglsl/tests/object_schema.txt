@@ -1,4 +1,4 @@
-FORMAT_VERSION 20
+FORMAT_VERSION 21
 AddressSpace d34f1902a20913ee
 Arena 283cda9d7570b2b9
 ArrayConversion 0a417e8dd0771234
@@ -174,7 +174,7 @@ TessellationVertexOrder 66a165d1c1550cd5
 Texel 6429e66d3d3cb752
 TileShading 9bf5b806746c7b39
 Type 9cdff414d89ae9f4
-TypeInner 3d9e83ca4d113f83
+TypeInner 9cefac335fe24beb
 UnaryOperator 90dc9c7e4925d128
 UniqueArena c039f4aedcc0ad6c
 VectorSize 3c2151df6b76a5d6

@@ -2,7 +2,7 @@ use rglsl::back::spv;
 use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
-use rglsl::valid::{Capabilities, ValidationFlags, ValidationMode, Validator};
+use rglsl::valid::{ValidationFlags, ValidationMode, Validator};
 use rglsl::{AddressSpace, ArraySize, Linkage, ShaderStage, TypeInner};
 use rglsl_link::{LinkError, Linked, Options as LinkOptions, decode, encode, link, link_objects};
 
@@ -108,7 +108,7 @@ fn modules_without_main_and_prototype_only_modules_compile() -> TestResult {
 #[test]
 fn executable_validation_and_the_backend_refuse_imports() -> TestResult {
     let main = object(ShaderStage::Fragment, MAIN)?;
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     assert!(validator.validate(&main.unit.module).is_err());
     validator.mode(ValidationMode::Object);
     let info = validator.validate(&main.unit.module)?;

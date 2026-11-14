@@ -55,8 +55,6 @@ pub enum AtomicError {
     ResultTypeMismatch(Handle<crate::Expression>),
     #[error("Exchange operations must return a value")]
     MissingReturnValue,
-    #[error("Capability {0:?} is required")]
-    MissingCapability(super::Capabilities),
     #[error("Result expression {0:?} is populated by multiple `Atomic` statements")]
     ResultAlreadyPopulated(Handle<crate::Expression>),
 }
@@ -68,8 +66,6 @@ pub enum SubgroupError {
     InvalidOperand(Handle<crate::Expression>),
     #[error("Result type for {0:?} doesn't match the statement")]
     ResultTypeMismatch(Handle<crate::Expression>),
-    #[error("Support for subgroup operation {0:?} is required")]
-    UnsupportedOperation(super::SubgroupOperationSet),
     #[error("Unknown operation")]
     UnknownOperation,
     #[error("Invocation ID must be a const-expression")]
@@ -236,20 +232,12 @@ pub enum FunctionError {
     InvalidRayQueryExpression(Handle<crate::Expression>),
     #[error("Acceleration structure {0:?} is not a matching expression")]
     InvalidAccelerationStructure(Handle<crate::Expression>),
-    #[error(
-        "Acceleration structure {0:?} is missing flag vertex_return while Ray Query {1:?} does"
-    )]
-    MissingAccelerationStructureVertexReturn(Handle<crate::Expression>, Handle<crate::Expression>),
-    #[error("Ray Query {0:?} is missing flag vertex_return")]
-    MissingRayQueryVertexReturn(Handle<crate::Expression>),
     #[error("Ray descriptor {0:?} is not a matching expression")]
     InvalidRayDescriptor(Handle<crate::Expression>),
     #[error("Ray Query {0:?} does not have a matching type")]
     InvalidRayQueryType(Handle<crate::Type>),
     #[error("Hit distance {0:?} must be an f32")]
     InvalidHitDistanceType(Handle<crate::Expression>),
-    #[error("Shader requires capability {0:?}")]
-    MissingCapability(super::Capabilities),
     #[error(
         "Required uniformity of control flow for {0:?} in {1:?} is not fulfilled because of {2:?}"
     )]
@@ -897,64 +885,9 @@ impl super::Validator {
                         .into_other());
                 }
             }
-            // Check for the special restrictions on 64-bit atomic operations.
-            //
-            // We don't need to consider other widths here: this function has already checked
-            // that `pointer`'s type is an `Atomic`, and `validate_type` has already checked
-            // that `Atomic` type has a permitted scalar width.
-            crate::Scalar::I64 | crate::Scalar::U64 => {
-                // `Capabilities::SHADER_INT64_ATOMIC_ALL_OPS` enables all sorts of 64-bit
-                // atomic operations.
-                if self
-                    .capabilities
-                    .contains(super::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS)
-                {
-                    // okay
-                } else {
-                    // `Capabilities::SHADER_INT64_ATOMIC_MIN_MAX` allows `Min` and
-                    // `Max` on operations in `Storage`, without a return value.
-                    if matches!(fun, crate::AtomicFunction::Min | crate::AtomicFunction::Max)
-                        && matches!(pointer_space, crate::AddressSpace::Storage { .. })
-                        && result.is_none()
-                    {
-                        if !self
-                            .capabilities
-                            .contains(super::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX)
-                        {
-                            log::error!("Int64 min-max atomic operations are not supported");
-                            return Err(AtomicError::MissingCapability(
-                                super::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX,
-                            )
-                            .with_span_handle(value, context.expressions)
-                            .into_other());
-                        }
-                    } else {
-                        // Otherwise, we require the full 64-bit atomic capability.
-                        log::error!("Int64 atomic operations are not supported");
-                        return Err(AtomicError::MissingCapability(
-                            super::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS,
-                        )
-                        .with_span_handle(value, context.expressions)
-                        .into_other());
-                    }
-                }
-            }
+            crate::Scalar::I64 | crate::Scalar::U64 => {}
             // Check for the special restrictions on 32-bit floating-point atomic operations.
             crate::Scalar::F32 => {
-                // `Capabilities::SHADER_FLOAT32_ATOMIC` allows 32-bit floating-point
-                // atomic operations `Add`, `Subtract`, and `Exchange`
-                // in the `Storage` address space.
-                if !self
-                    .capabilities
-                    .contains(super::Capabilities::SHADER_FLOAT32_ATOMIC)
-                {
-                    log::error!("Float32 atomic operations are not supported");
-                    return Err(AtomicError::MissingCapability(
-                        super::Capabilities::SHADER_FLOAT32_ATOMIC,
-                    )
-                    .with_span_handle(value, context.expressions)
-                    .into_other());
-                }
                 if !matches!(
                     fun,
                     crate::AtomicFunction::Add
@@ -1722,25 +1655,7 @@ impl super::Validator {
             }
             S::ControlBarrier(barrier) | S::MemoryBarrier(barrier) => {
                 stages &= super::ShaderStages::COMPUTE_LIKE;
-                if barrier.contains(crate::Barrier::SUB_GROUP) {
-                    if !self.capabilities.contains(
-                        super::Capabilities::SUBGROUP | super::Capabilities::SUBGROUP_BARRIER,
-                    ) {
-                        return Err(FunctionError::MissingCapability(
-                            super::Capabilities::SUBGROUP | super::Capabilities::SUBGROUP_BARRIER,
-                        )
-                        .with_span_static(span, "missing capability for this operation"));
-                    }
-                    if !self
-                        .subgroup_operations
-                        .contains(super::SubgroupOperationSet::BASIC)
-                    {
-                        return Err(FunctionError::InvalidSubgroup(
-                            SubgroupError::UnsupportedOperation(super::SubgroupOperationSet::BASIC),
-                        )
-                        .with_span_static(span, "support for this operation is not present"));
-                    }
-                }
+                if barrier.contains(crate::Barrier::SUB_GROUP) {}
             }
             S::Store { pointer, value } => {
                 let mut current = pointer;
@@ -2053,27 +1968,9 @@ impl super::Validator {
                 }
                 let supported = match format {
                     crate::StorageFormat::R64Uint | crate::StorageFormat::R64Sint => {
-                        if !self
-                            .capabilities
-                            .intersects(super::Capabilities::TEXTURE_INT64_ATOMIC)
-                        {
-                            return Err(FunctionError::MissingCapability(
-                                super::Capabilities::TEXTURE_INT64_ATOMIC,
-                            )
-                            .with_span_static(span, "missing capability for this operation"));
-                        }
                         !matches!(fun, crate::AtomicFunction::Subtract)
                     }
                     crate::StorageFormat::R32Sint | crate::StorageFormat::R32Uint => {
-                        if !self
-                            .capabilities
-                            .intersects(super::Capabilities::TEXTURE_ATOMIC)
-                        {
-                            return Err(FunctionError::MissingCapability(
-                                super::Capabilities::TEXTURE_ATOMIC,
-                            )
-                            .with_span_static(span, "missing capability for this operation"));
-                        }
                         !matches!(fun, crate::AtomicFunction::Subtract)
                     }
                     crate::StorageFormat::R32Float => matches!(
@@ -2138,7 +2035,7 @@ impl super::Validator {
                 let is_query =
                     match *context.resolve_type_inner(query, &self.valid_expression_set)? {
                         Ti::Pointer { base, .. } => {
-                            matches!(context.types[base].inner, Ti::RayQuery { .. })
+                            matches!(context.types[base].inner, Ti::RayQuery)
                         }
                         _ => false,
                     };
@@ -2188,22 +2085,6 @@ impl super::Validator {
                 }
             }
             S::SubgroupBallot { result, predicate } => {
-                stages &= self.subgroup_stages;
-                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                    return Err(
-                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
-                            .with_span_static(span, "missing capability for this operation"),
-                    );
-                }
-                if !self
-                    .subgroup_operations
-                    .contains(super::SubgroupOperationSet::BALLOT)
-                {
-                    return Err(FunctionError::InvalidSubgroup(
-                        SubgroupError::UnsupportedOperation(super::SubgroupOperationSet::BALLOT),
-                    )
-                    .with_span_static(span, "support for this operation is not present"));
-                }
                 if let Some(predicate) = predicate {
                     let predicate_inner =
                         context.resolve_type_inner(predicate, &self.valid_expression_set)?;
@@ -2227,20 +2108,6 @@ impl super::Validator {
                 argument,
                 result,
             } => {
-                stages &= self.subgroup_stages;
-                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                    return Err(
-                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
-                            .with_span_static(span, "missing capability for this operation"),
-                    );
-                }
-                let operation = op.required_operations() | collective_op.required_operations();
-                if !self.subgroup_operations.contains(operation) {
-                    return Err(FunctionError::InvalidSubgroup(
-                        SubgroupError::UnsupportedOperation(operation),
-                    )
-                    .with_span_static(span, "support for this operation is not present"));
-                }
                 self.validate_subgroup_operation(op, collective_op, argument, result, context)?;
             }
             S::SubgroupGather {
@@ -2248,37 +2115,9 @@ impl super::Validator {
                 argument,
                 result,
             } => {
-                stages &= self.subgroup_stages;
-                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                    return Err(
-                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
-                            .with_span_static(span, "missing capability for this operation"),
-                    );
-                }
-                let operation = mode.required_operations();
-                if !self.subgroup_operations.contains(operation) {
-                    return Err(FunctionError::InvalidSubgroup(
-                        SubgroupError::UnsupportedOperation(operation),
-                    )
-                    .with_span_static(span, "support for this operation is not present"));
-                }
                 self.validate_subgroup_gather(mode, argument, result, context)?;
             }
             S::SubgroupFunction { ref fun, result } => {
-                stages &= self.subgroup_stages;
-                if !self.capabilities.contains(super::Capabilities::SUBGROUP) {
-                    return Err(
-                        FunctionError::MissingCapability(super::Capabilities::SUBGROUP)
-                            .with_span_static(span, "missing capability for this operation"),
-                    );
-                }
-                let operation = fun.required_operations();
-                if !self.subgroup_operations.contains(operation) {
-                    return Err(FunctionError::InvalidSubgroup(
-                        SubgroupError::UnsupportedOperation(operation),
-                    )
-                    .with_span_static(span, "support for this operation is not present"));
-                }
                 self.validate_subgroup_function(fun, result, context)?;
             }
             S::CooperativeStore { target, ref data } => {
@@ -2588,7 +2427,7 @@ impl super::Validator {
         mod_info: &ModuleInfo,
         entry_point: bool,
     ) -> Result<FunctionInfo, WithSpan<FunctionError>> {
-        let mut info = mod_info.process_function(fun, module, self.flags, self.capabilities)?;
+        let mut info = mod_info.process_function(fun, module, self.flags)?;
 
         let local_expr_kind = crate::proc::ExpressionKindTracker::from_arena(&fun.expressions);
 
@@ -2727,7 +2566,7 @@ impl super::Validator {
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         match *context.resolve_type_inner(handle, &self.valid_expression_set)? {
-            crate::TypeInner::AccelerationStructure { .. } => Ok(()),
+            crate::TypeInner::AccelerationStructure => Ok(()),
             _ => Err(FunctionError::InvalidAccelerationStructure(handle)
                 .with_span_handle(handle, context.expressions)),
         }
@@ -2908,7 +2747,7 @@ impl super::Validator {
                 let is_query =
                     match *context.resolve_type_inner(query, &self.valid_expression_set)? {
                         crate::TypeInner::Pointer { base, .. } => {
-                            matches!(context.types[base].inner, crate::TypeInner::RayQuery { .. })
+                            matches!(context.types[base].inner, crate::TypeInner::RayQuery)
                         }
                         _ => false,
                     };

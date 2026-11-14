@@ -1,8 +1,4 @@
 targets = "SPIRV"
-capabilities = """
-  STORAGE_BUFFER_BINDING_ARRAY
-  | STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
-"""
 
 [spv]
 version = [1, 1]

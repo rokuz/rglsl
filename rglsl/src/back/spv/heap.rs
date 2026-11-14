@@ -49,7 +49,7 @@ const fn is_descriptor_inner(inner: &TypeInner) -> bool {
         *inner,
         TypeInner::Image { .. }
             | TypeInner::Sampler { .. }
-            | TypeInner::AccelerationStructure { .. }
+            | TypeInner::AccelerationStructure
             | TypeInner::Tensor { .. }
             | TypeInner::BufferDescriptor { .. }
     )

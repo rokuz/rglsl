@@ -614,7 +614,6 @@ impl FunctionInfo {
         expression_arena: &Arena<crate::Expression>,
         other_functions: &[FunctionInfo],
         resolve_context: &ResolveContext,
-        capabilities: super::Capabilities,
     ) -> Result<(), ExpressionError> {
         use crate::{Expression as E, SampleLevel as Sl};
 
@@ -624,64 +623,23 @@ impl FunctionInfo {
             E::Access { base, index } => {
                 let base_ty = self[base].ty.inner_with(resolve_context.types);
 
-                // build up the caps needed if this is indexed non-uniformly
-                let mut needed_caps = super::Capabilities::empty();
-                let is_binding_array = match *base_ty {
-                    crate::TypeInner::BindingArray {
-                        base: array_element_ty_handle,
-                        ..
-                    } => {
-                        // We're a binding array, so lets use the type of _what_ we are array of to determine if we can non-uniformly index it.
-                        let array_element_ty =
-                            &resolve_context.types[array_element_ty_handle].inner;
-
-                        needed_caps |= match *array_element_ty {
-                            // If we're an image, use the appropriate capability.
-                            crate::TypeInner::Image { class, .. } => match class {
-                                crate::ImageClass::Storage { .. } => {
-                                    super::Capabilities::STORAGE_TEXTURE_BINDING_ARRAY_NON_UNIFORM_INDEXING
-                                }
-                                _ => {
-                                    super::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
-                                }
-                            },
-                            crate::TypeInner::Sampler { .. }
-                            | crate::TypeInner::SampledImage { .. } => {
-                                super::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
-                            }
-                            crate::TypeInner::AccelerationStructure { .. } => {
-                                super::Capabilities::ACCELERATION_STRUCTURE_BINDING_ARRAY
-                            }
-                            crate::TypeInner::Tensor { .. } => super::Capabilities::empty(),
-                            // If we're anything but an image or sampler, assume we're a buffer and use the address space.
-                            _ => {
-                                if let E::GlobalVariable(global_handle) = expression_arena[base] {
-                                    let global = &resolve_context.global_vars[global_handle];
-                                    match global.space {
-                                        crate::AddressSpace::Uniform => {
-                                            super::Capabilities::BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
-                                        }
-                                        crate::AddressSpace::Storage { .. } => {
-                                            super::Capabilities::STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING
-                                        }
-                                        _ => return Err(ExpressionError::InvalidBaseType(base)),
-                                    }
-                                } else {
-                                    return Err(ExpressionError::InvalidBaseType(base));
-                                }
-                            }
-                        };
-
-                        true
+                if let crate::TypeInner::BindingArray { base: element, .. } = *base_ty {
+                    match resolve_context.types[element].inner {
+                        crate::TypeInner::Image { .. }
+                        | crate::TypeInner::Sampler { .. }
+                        | crate::TypeInner::SampledImage { .. }
+                        | crate::TypeInner::AccelerationStructure
+                        | crate::TypeInner::Tensor { .. } => {}
+                        _ => match expression_arena[base] {
+                            E::GlobalVariable(global)
+                                if matches!(
+                                    resolve_context.global_vars[global].space,
+                                    crate::AddressSpace::Uniform
+                                        | crate::AddressSpace::Storage { .. }
+                                ) => {}
+                            _ => return Err(ExpressionError::InvalidBaseType(base)),
+                        },
                     }
-                    _ => false,
-                };
-
-                if self[index].uniformity.non_uniform_result.is_some()
-                    && !capabilities.contains(needed_caps)
-                    && is_binding_array
-                {
-                    return Err(ExpressionError::MissingCapabilities(needed_caps));
                 }
 
                 Uniformity {
@@ -1828,7 +1786,6 @@ impl ModuleInfo {
         fun: &crate::Function,
         module: &crate::Module,
         flags: ValidationFlags,
-        capabilities: super::Capabilities,
     ) -> Result<FunctionInfo, WithSpan<FunctionError>> {
         let mut info = FunctionInfo {
             flags,
@@ -1846,13 +1803,9 @@ impl ModuleInfo {
             ResolveContext::with_locals(module, &fun.local_variables, &fun.arguments);
 
         for (handle, _) in fun.expressions.iter() {
-            if let Err(source) = info.process_expression(
-                handle,
-                &fun.expressions,
-                &self.functions,
-                &resolve_context,
-                capabilities,
-            ) {
+            if let Err(source) =
+                info.process_expression(handle, &fun.expressions, &self.functions, &resolve_context)
+            {
                 return Err(FunctionError::Expression { handle, source }
                     .with_span_handle(handle, &fun.expressions));
             }
@@ -2000,13 +1953,7 @@ fn uniform_control_flow() -> crate::TestResult {
         arguments: &[],
     };
     for (handle, _) in expressions.iter() {
-        info.process_expression(
-            handle,
-            &expressions,
-            &[],
-            &resolve_context,
-            super::Capabilities::empty(),
-        )?;
+        info.process_expression(handle, &expressions, &[], &resolve_context)?;
     }
     assert_eq!(info[non_uniform_global_expr].ref_count, 1);
     assert_eq!(info[uniform_global_expr].ref_count, 1);

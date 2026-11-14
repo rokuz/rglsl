@@ -1,4 +1,3 @@
-capabilities = "SHADER_FLOAT32_ATOMIC"
 targets = "SPIRV"
 
 [spv]

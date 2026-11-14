@@ -115,11 +115,6 @@ impl SpirvOutParameters {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct Parameters {
-    // -- validation options --
-    //
-    // Capabilities to enable. Defaults to `Capabilities::default()`.
-    pub capabilities: Option<rglsl::valid::Capabilities>,
-
     // -- SPIR-V options --
     pub spv: SpirvOutParameters,
 

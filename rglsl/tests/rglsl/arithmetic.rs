@@ -2,7 +2,7 @@ use rglsl::{
     ShaderStage,
     back::spv,
     front::glsl,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::{Decoration, GlslStd450Op as GLOp, Op};
@@ -11,7 +11,7 @@ fn compile(source: &str) -> crate::TestResult<dr::Module> {
     let module = glsl::Frontend::default()
         .parse(&glsl::Options::from(ShaderStage::Fragment), source)
         .map_err(|errors| format!("shader rejected: {errors:?}"))?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = spv::Options {
         flags: spv::WriterFlags::DEBUG
             | spv::WriterFlags::LABEL_VARYINGS

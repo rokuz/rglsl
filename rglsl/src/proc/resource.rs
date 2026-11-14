@@ -62,7 +62,7 @@ impl ResourceClass {
                 TypeInner::Image { .. } => Some(Self::Texture),
                 TypeInner::SampledImage { .. } => Some(Self::CombinedSampler),
                 TypeInner::Sampler { .. } => Some(Self::Sampler),
-                TypeInner::AccelerationStructure { .. } => Some(Self::AccelerationStructure),
+                TypeInner::AccelerationStructure => Some(Self::AccelerationStructure),
                 _ => None,
             },
             _ => None,

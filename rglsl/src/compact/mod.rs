@@ -897,10 +897,7 @@ fn array_length_override() -> crate::TestResult {
         crate::Span::default(),
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1004,10 +1001,7 @@ fn array_length_override_mutual() -> crate::TestResult {
         nowhere,
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1054,10 +1048,7 @@ fn array_length_expression() -> crate::TestResult {
         crate::Span::default(),
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1111,10 +1102,7 @@ fn global_expression_override() -> crate::TestResult {
         crate::Span::default(),
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1184,10 +1172,7 @@ fn local_expression_override() -> crate::TestResult {
 
     module.functions.append(fun, crate::Span::default());
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1257,10 +1242,7 @@ fn unnamed_constant_type() -> crate::TestResult {
         nowhere,
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1330,10 +1312,7 @@ fn unnamed_override_type() -> crate::TestResult {
         nowhere,
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;

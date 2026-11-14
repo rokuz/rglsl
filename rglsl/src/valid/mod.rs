@@ -85,248 +85,6 @@ impl Default for ValidationFlags {
 }
 
 bitflags::bitflags! {
-    /// Allowed IR capabilities.
-    #[must_use]
-    #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
-    #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct Capabilities: u64 {
-        /// Support for [`AddressSpace::Immediate`][1].
-        ///
-        /// [1]: crate::AddressSpace::Immediate
-        const IMMEDIATES = 1 << 0;
-        /// Float values with width = 8.
-        const FLOAT64 = 1 << 1;
-        /// Support for [`BuiltIn::PrimitiveIndex`][1].
-        ///
-        /// [1]: crate::BuiltIn::PrimitiveIndex
-        const PRIMITIVE_INDEX = 1 << 2;
-        /// Support for binding arrays of sampled textures and samplers.
-        const TEXTURE_AND_SAMPLER_BINDING_ARRAY = 1 << 3;
-        /// Support for binding arrays of uniform buffers.
-        const BUFFER_BINDING_ARRAY = 1 << 4;
-        /// Support for binding arrays of storage textures.
-        const STORAGE_TEXTURE_BINDING_ARRAY = 1 << 5;
-        /// Support for binding arrays of storage buffers.
-        const STORAGE_BUFFER_BINDING_ARRAY = 1 << 6;
-        /// Support for [`BuiltIn::ClipDistances`].
-        ///
-        /// [`BuiltIn::ClipDistances`]: crate::BuiltIn::ClipDistances
-        const CLIP_DISTANCES = 1 << 7;
-        /// Support for [`BuiltIn::CullDistance`].
-        ///
-        /// [`BuiltIn::CullDistance`]: crate::BuiltIn::CullDistance
-        const CULL_DISTANCE = 1 << 8;
-        /// Support for 16-bit normalized storage texture formats.
-        const STORAGE_TEXTURE_16BIT_NORM_FORMATS = 1 << 9;
-        /// Support for [`BuiltIn::ViewIndex`].
-        ///
-        /// [`BuiltIn::ViewIndex`]: crate::BuiltIn::ViewIndex
-        const MULTIVIEW = 1 << 10;
-        /// Support for `early_depth_test`.
-        const EARLY_DEPTH_TEST = 1 << 11;
-        /// Support for [`BuiltIn::SampleIndex`] and [`Sampling::Sample`].
-        ///
-        /// [`BuiltIn::SampleIndex`]: crate::BuiltIn::SampleIndex
-        /// [`Sampling::Sample`]: crate::Sampling::Sample
-        const MULTISAMPLED_SHADING = 1 << 12;
-        /// Support for ray queries and acceleration structures.
-        const RAY_QUERY = 1 << 13;
-        /// Support for generating two sources for blending from fragment shaders.
-        const DUAL_SOURCE_BLENDING = 1 << 14;
-        /// Support for arrayed cube textures.
-        const CUBE_ARRAY_TEXTURES = 1 << 15;
-        /// Support for 64-bit signed and unsigned integers.
-        const SHADER_INT64 = 1 << 16;
-        /// Support for subgroup operations (except barriers) in fragment and compute shaders.
-        ///
-        /// Subgroup operations in the vertex stage require
-        /// [`Capabilities::SUBGROUP_VERTEX_STAGE`] in addition to `Capabilities::SUBGROUP`.
-        /// (But note that `create_validator` automatically sets
-        /// `Capabilities::SUBGROUP` whenever `Features::SUBGROUP_VERTEX` is
-        /// available.)
-        ///
-        /// Subgroup barriers require [`Capabilities::SUBGROUP_BARRIER`] in addition to
-        /// `Capabilities::SUBGROUP`.
-        const SUBGROUP = 1 << 17;
-        /// Support for subgroup barriers in compute shaders.
-        ///
-        /// Requires [`Capabilities::SUBGROUP`]. Without it, enables nothing.
-        const SUBGROUP_BARRIER = 1 << 18;
-        /// Support for subgroup operations (not including barriers) in the vertex stage.
-        ///
-        /// Without [`Capabilities::SUBGROUP`], enables nothing. (But note that
-        /// `create_validator` automatically sets `Capabilities::SUBGROUP`
-        /// whenever `Features::SUBGROUP_VERTEX` is available.)
-        const SUBGROUP_VERTEX_STAGE = 1 << 19;
-        /// Support for [`AtomicFunction::Min`] and [`AtomicFunction::Max`] on
-        /// 64-bit integers in the [`Storage`] address space, when the return
-        /// value is not used.
-        ///
-        /// This is the only 64-bit atomic functionality available on Metal 3.1.
-        ///
-        /// [`AtomicFunction::Min`]: crate::AtomicFunction::Min
-        /// [`AtomicFunction::Max`]: crate::AtomicFunction::Max
-        /// [`Storage`]: crate::AddressSpace::Storage
-        const SHADER_INT64_ATOMIC_MIN_MAX = 1 << 20;
-        /// Support for all atomic operations on 64-bit integers.
-        const SHADER_INT64_ATOMIC_ALL_OPS = 1 << 21;
-        /// Support for [`AtomicFunction::Add`], [`AtomicFunction::Sub`],
-        /// and [`AtomicFunction::Exchange { compare: None }`] on 32-bit floating-point numbers
-        /// in the [`Storage`] address space.
-        ///
-        /// [`AtomicFunction::Add`]: crate::AtomicFunction::Add
-        /// [`AtomicFunction::Sub`]: crate::AtomicFunction::Sub
-        /// [`AtomicFunction::Exchange { compare: None }`]: crate::AtomicFunction::Exchange
-        /// [`Storage`]: crate::AddressSpace::Storage
-        const SHADER_FLOAT32_ATOMIC = 1 << 22;
-        /// Support for atomic operations on images.
-        const TEXTURE_ATOMIC = 1 << 23;
-        /// Support for atomic operations on 64-bit images.
-        const TEXTURE_INT64_ATOMIC = 1 << 24;
-        /// Support for ray queries returning vertex position
-        const RAY_HIT_VERTEX_POSITION = 1 << 25;
-        /// Support for 16-bit floating-point types.
-        const SHADER_FLOAT16 = 1 << 26;
-        /// Support for `quantizeToF16`, `pack2x16float`, and `unpack2x16float`, which store
-        /// `f16`-precision values in `f32`s.
-        const SHADER_FLOAT16_IN_FLOAT32 = 1 << 28;
-        /// Support for fragment shader barycentric coordinates.
-        const SHADER_BARYCENTRICS = 1 << 29;
-        /// Support for task shaders, mesh shaders, and per-primitive fragment inputs
-        const MESH_SHADER = 1 << 30;
-        /// Support for mesh shaders which output points.
-        const MESH_SHADER_POINT_TOPOLOGY = 1 << 31;
-        /// Support for non-uniform indexing of binding arrays of sampled textures and samplers.
-        const TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING = 1 << 32;
-        /// Support for non-uniform indexing of binding arrays of uniform buffers.
-        const BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING = 1 << 33;
-        /// Support for non-uniform indexing of binding arrays of storage textures.
-        const STORAGE_TEXTURE_BINDING_ARRAY_NON_UNIFORM_INDEXING = 1 << 34;
-        /// Support for non-uniform indexing of binding arrays of storage buffers.
-        const STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING = 1 << 35;
-        /// Support for cooperative matrix types and operations
-        const COOPERATIVE_MATRIX = 1 << 36;
-        /// Support for per-vertex fragment input.
-        const PER_VERTEX = 1 << 37;
-        /// Support for ray generation, any hit, closest hit, and miss shaders.
-        const RAY_TRACING_PIPELINE = 1 << 38;
-        /// Support for draw index builtin
-        const DRAW_INDEX = 1 << 39;
-        /// Support for binding arrays of acceleration structures.
-        const ACCELERATION_STRUCTURE_BINDING_ARRAY = 1 << 40;
-        /// Support for the `@coherent` memory decoration on storage buffers.
-        const MEMORY_DECORATION_COHERENT = 1 << 41;
-        /// Support for the `@volatile` memory decoration on storage buffers.
-        const MEMORY_DECORATION_VOLATILE = 1 << 42;
-        /// Support for 16-bit integer types.
-        const SHADER_INT16 = 1 << 43;
-    }
-}
-
-impl Capabilities {}
-
-impl Default for Capabilities {
-    fn default() -> Self {
-        Self::MULTISAMPLED_SHADING | Self::CUBE_ARRAY_TEXTURES
-    }
-}
-
-bitflags::bitflags! {
-    /// Supported subgroup operations
-    #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
-    #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct SubgroupOperationSet: u16 {
-        /// Barriers
-        // Possibly elections, when that is supported.
-        // https://github.com/gfx-rs/wgpu/issues/6042#issuecomment-3272603431
-        // Contrary to what the name "basic" suggests, HLSL/DX12 support the
-        // other subgroup operations, but do not support subgroup barriers.
-        const BASIC = 1 << 0;
-        /// Any, All
-        const VOTE = 1 << 1;
-        /// reductions, scans
-        const ARITHMETIC = 1 << 2;
-        /// ballot, broadcast
-        const BALLOT = 1 << 3;
-        /// shuffle, shuffle xor
-        const SHUFFLE = 1 << 4;
-        /// shuffle up, down
-        const SHUFFLE_RELATIVE = 1 << 5;
-        const CLUSTERED = 1 << 6;
-        /// Quad supported
-        const QUAD_FRAGMENT_COMPUTE = 1 << 7;
-        const ROTATE = 1 << 8;
-        const PARTITIONED = 1 << 9;
-        const QUAD_CONTROL = 1 << 10;
-    }
-}
-
-impl super::SubgroupOperation {
-    const fn required_operations(self) -> SubgroupOperationSet {
-        use SubgroupOperationSet as S;
-        match self {
-            Self::All | Self::Any => S::VOTE,
-            Self::Add | Self::Mul | Self::Min | Self::Max | Self::And | Self::Or | Self::Xor => {
-                S::ARITHMETIC
-            }
-        }
-    }
-}
-
-impl super::CollectiveOperation {
-    const fn required_operations(self) -> SubgroupOperationSet {
-        use SubgroupOperationSet as S;
-        match self {
-            Self::Reduce | Self::InclusiveScan | Self::ExclusiveScan => S::empty(),
-            Self::ClusteredReduce(_) => S::CLUSTERED,
-            Self::PartitionedReduce(_)
-            | Self::PartitionedInclusiveScan(_)
-            | Self::PartitionedExclusiveScan(_) => S::PARTITIONED,
-        }
-    }
-}
-
-impl super::SubgroupFunction {
-    const fn required_operations(&self) -> SubgroupOperationSet {
-        use SubgroupOperationSet as S;
-        match *self {
-            Self::Elect => S::BASIC,
-            Self::AllEqual(_) | Self::KhrAll(_) | Self::KhrAny(_) | Self::KhrAllEqual(_) => S::VOTE,
-            Self::QuadAll(_) | Self::QuadAny(_) => S::QUAD_CONTROL,
-            Self::InverseBallot(_)
-            | Self::BallotBitExtract { .. }
-            | Self::BallotBitCount { .. }
-            | Self::BallotFindLsb(_)
-            | Self::BallotFindMsb(_)
-            | Self::KhrBallot(_)
-            | Self::KhrReadInvocation { .. }
-            | Self::KhrReadFirstInvocation(_)
-            | Self::AmdSwizzle { .. }
-            | Self::AmdSwizzleMasked { .. }
-            | Self::AmdWriteInvocation { .. }
-            | Self::AmdMbcnt(_) => S::BALLOT,
-            Self::Partition(_) => S::PARTITIONED,
-            Self::Group { .. } => S::ARITHMETIC,
-        }
-    }
-}
-
-impl super::GatherMode {
-    const fn required_operations(&self) -> SubgroupOperationSet {
-        use SubgroupOperationSet as S;
-        match *self {
-            Self::BroadcastFirst | Self::Broadcast(_) => S::BALLOT,
-            Self::Shuffle(_) | Self::ShuffleXor(_) => S::SHUFFLE,
-            Self::ShuffleUp(_) | Self::ShuffleDown(_) => S::SHUFFLE_RELATIVE,
-            Self::QuadBroadcast(_) | Self::QuadSwap(_) => S::QUAD_FRAGMENT_COMPUTE,
-            Self::Rotate { .. } => S::ROTATE,
-        }
-    }
-}
-
-bitflags::bitflags! {
     /// Validation flags.
     #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
     #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
@@ -392,9 +150,6 @@ pub enum ValidationMode {
 pub struct Validator {
     flags: ValidationFlags,
     mode: ValidationMode,
-    capabilities: Capabilities,
-    subgroup_stages: ShaderStages,
-    subgroup_operations: SubgroupOperationSet,
     types: Vec<r#type::TypeInfo>,
     layouter: Layouter,
     location_mask: BitSet,
@@ -629,40 +384,11 @@ impl Validator {
     /// invalid modules. Regardless of `flags`, validation always returns
     /// a usable [`ModuleInfo`] value on success.
     ///
-    /// If `flags` contains everything in `ValidationFlags::default()`,
-    /// then the returned rglsl [`Validator`] will reject any [`Module`]
-    /// that would use capabilities not included in `capabilities`.
-    ///
     /// [`Module`]: crate::Module
-    pub fn new(flags: ValidationFlags, capabilities: Capabilities) -> Self {
-        let subgroup_operations = if capabilities.contains(Capabilities::SUBGROUP) {
-            use SubgroupOperationSet as S;
-            S::all()
-        } else {
-            SubgroupOperationSet::empty()
-        };
-        let subgroup_stages = {
-            let mut stages = ShaderStages::empty();
-            if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
-                stages |= ShaderStages::VERTEX;
-            }
-            if capabilities.contains(Capabilities::SUBGROUP_VERTEX_STAGE) {
-                stages |= ShaderStages::TESS_CONTROL
-                    | ShaderStages::TESS_EVALUATION
-                    | ShaderStages::GEOMETRY;
-            }
-            if capabilities.contains(Capabilities::SUBGROUP) {
-                stages |= ShaderStages::all() - ShaderStages::VERTEX;
-            }
-            stages
-        };
-
+    pub fn new(flags: ValidationFlags) -> Self {
         Validator {
             flags,
             mode: ValidationMode::Executable,
-            capabilities,
-            subgroup_stages,
-            subgroup_operations,
             types: Vec::new(),
             layouter: Layouter::default(),
             location_mask: BitSet::new(),
@@ -676,18 +402,6 @@ impl Validator {
 
     pub const fn mode(&mut self, mode: ValidationMode) -> &mut Self {
         self.mode = mode;
-        self
-    }
-
-    // TODO(https://github.com/gfx-rs/wgpu/issues/8207): Consider removing this
-    pub const fn subgroup_stages(&mut self, stages: ShaderStages) -> &mut Self {
-        self.subgroup_stages = stages;
-        self
-    }
-
-    // TODO(https://github.com/gfx-rs/wgpu/issues/8207): Consider removing this
-    pub const fn subgroup_operations(&mut self, operations: SubgroupOperationSet) -> &mut Self {
-        self.subgroup_operations = operations;
         self
     }
 

@@ -350,13 +350,10 @@ pub enum AddressSpace {
     /// but by `SetImmediates` pass commands, allowing the CPU to
     /// establish different values for each draw/dispatch.
     ///
-    /// `Immediate` variables may not contain `f16` values, even if
-    /// the [`SHADER_FLOAT16`] capability is enabled.
+    /// `Immediate` variables may not contain `f16` values.
     ///
     /// Backends generally place tight limits on the size of
     /// `Immediate` variables.
-    ///
-    /// [`SHADER_FLOAT16`]: crate::valid::Capabilities::SHADER_FLOAT16
     Immediate,
     /// Task shader to mesh shader payload
     TaskPayload,
@@ -1018,14 +1015,10 @@ pub enum TypeInner {
     },
 
     /// Opaque object representing an acceleration structure of geometry.
-    AccelerationStructure {
-        vertex_return: bool,
-    },
+    AccelerationStructure,
 
     /// Locally used handle for ray queries.
-    RayQuery {
-        vertex_return: bool,
-    },
+    RayQuery,
 
     HitObject {
         kind: HitObjectKind,
@@ -3196,20 +3189,12 @@ pub enum Statement {
         /// Pointer to an atomic value.
         ///
         /// This must be a [`Pointer`] to an [`Atomic`] value. The atomic's
-        /// scalar type may be [`I32`] or [`U32`].
-        ///
-        /// If [`SHADER_INT64_ATOMIC_MIN_MAX`] or [`SHADER_INT64_ATOMIC_ALL_OPS`] are
-        /// enabled, this may also be [`I64`] or [`U64`].
-        ///
-        /// If [`SHADER_FLOAT32_ATOMIC`] is enabled, this may be [`F32`].
+        /// scalar type may be [`I32`], [`U32`], [`I64`], [`U64`] or [`F32`].
         ///
         /// [`Pointer`]: TypeInner::Pointer
         /// [`Atomic`]: TypeInner::Atomic
         /// [`I32`]: Scalar::I32
         /// [`U32`]: Scalar::U32
-        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
-        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
-        /// [`SHADER_FLOAT32_ATOMIC`]: crate::valid::Capabilities::SHADER_FLOAT32_ATOMIC
         /// [`I64`]: Scalar::I64
         /// [`U64`]: Scalar::U64
         /// [`F32`]: Scalar::F32
@@ -3217,30 +3202,12 @@ pub enum Statement {
 
         /// Function to run on the atomic value.
         ///
-        /// If [`pointer`] refers to a 64-bit atomic value, then:
-        ///
-        /// - The [`SHADER_INT64_ATOMIC_ALL_OPS`] capability allows any [`AtomicFunction`]
-        ///   value here.
-        ///
-        /// - The [`SHADER_INT64_ATOMIC_MIN_MAX`] capability allows
-        ///   [`AtomicFunction::Min`] and [`AtomicFunction::Max`]
-        ///   in the [`Storage`] address space here.
-        ///
-        /// - If neither of those capabilities are present, then 64-bit scalar
-        ///   atomics are not allowed.
-        ///
-        /// If [`pointer`] refers to a 32-bit floating-point atomic value, then:
-        ///
-        /// - The [`SHADER_FLOAT32_ATOMIC`] capability allows [`AtomicFunction::Add`],
-        ///   [`AtomicFunction::Subtract`], and [`AtomicFunction::Exchange { compare: None }`]
-        ///   in the [`Storage`] address space here.
+        /// If [`pointer`] refers to a 32-bit floating-point atomic value, this
+        /// is [`AtomicFunction::Add`], [`AtomicFunction::Subtract`] or
+        /// [`AtomicFunction::Exchange { compare: None }`].
         ///
         /// [`AtomicFunction::Exchange { compare: None }`]: AtomicFunction::Exchange
         /// [`pointer`]: Statement::Atomic::pointer
-        /// [`Storage`]: AddressSpace::Storage
-        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
-        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
-        /// [`SHADER_FLOAT32_ATOMIC`]: crate::valid::Capabilities::SHADER_FLOAT32_ATOMIC
         fun: AtomicFunction,
 
         /// Value to use in the function.
@@ -3258,15 +3225,10 @@ pub enum Statement {
         ///
         /// Otherwise, this may be `None` if the return value of the operation is not needed.
         ///
-        /// If `pointer` refers to a 64-bit atomic value, [`SHADER_INT64_ATOMIC_MIN_MAX`]
-        /// is enabled, and [`SHADER_INT64_ATOMIC_ALL_OPS`] is not, this must be `None`.
-        ///
         /// [`AtomicResult`]: crate::Expression::AtomicResult
         /// [`fun`]: Statement::Atomic::fun
         /// [`Store`]: Statement::Store
         /// [`Exchange { compare: None }`]: AtomicFunction::Exchange
-        /// [`SHADER_INT64_ATOMIC_MIN_MAX`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_MIN_MAX
-        /// [`SHADER_INT64_ATOMIC_ALL_OPS`]: crate::valid::Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
         result: Option<Handle<Expression>>,
 
         #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]

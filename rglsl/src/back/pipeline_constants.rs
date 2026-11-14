@@ -16,7 +16,7 @@ use crate::{
     compact::{CompactError, KeepUnused, compact},
     ir,
     proc::{ConstantEvaluator, ConstantEvaluatorError, Emitter},
-    valid::{Capabilities, ModuleInfo, ValidationError, ValidationFlags, Validator},
+    valid::{ModuleInfo, ValidationError, ValidationFlags, Validator},
 };
 
 #[derive(Error, Debug, Clone)]
@@ -279,7 +279,7 @@ pub fn process_overrides<'a>(
 fn revalidate(
     module: Module,
 ) -> Result<(Cow<'static, Module>, Cow<'static, ModuleInfo>), PipelineConstantError> {
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     let module_info = validator.validate_resolved_overrides(&module)?;
     Ok((Cow::Owned(module), Cow::Owned(module_info)))
 }

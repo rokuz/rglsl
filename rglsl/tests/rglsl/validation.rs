@@ -3,7 +3,7 @@
 
 use rglsl::{
     ir::{self, Expression, Function, Module, Scalar},
-    valid::{self, Capabilities, ModuleInfo, ValidationFlags},
+    valid::{self, ModuleInfo, ValidationFlags},
 };
 
 #[derive(Default)]
@@ -21,11 +21,9 @@ impl TestSpanGenerator {
 fn expect_validation_error_impl<I: IntoIterator<Item = rglsl::Span>>(
     module: &Module,
     validation_flags: valid::ValidationFlags,
-    capabilities: valid::Capabilities,
     spans: Option<I>,
 ) -> crate::TestResult<rglsl::valid::ValidationError> {
-    let err =
-        crate::rejected(valid::Validator::new(validation_flags, capabilities).validate(module))?;
+    let err = crate::rejected(valid::Validator::new(validation_flags).validate(module))?;
 
     if let Some(expected_spans_iter) = spans {
         let actual_spans = err.spans().map(|sctx| sctx.0).collect::<Vec<_>>();
@@ -39,7 +37,7 @@ fn expect_validation_error_impl<I: IntoIterator<Item = rglsl::Span>>(
     Ok(err.into_inner())
 }
 
-/// Validate `module` with the given `validation_flags` and `capabilities`.
+/// Validate `module` with the given `validation_flags`.
 ///
 /// Fails if validation succeeds or fails with an error not associated with
 /// `span`. Otherwise, returns the validation error.
@@ -49,15 +47,9 @@ fn expect_validation_error_impl<I: IntoIterator<Item = rglsl::Span>>(
 fn expect_validation_error_with_span(
     module: &Module,
     validation_flags: valid::ValidationFlags,
-    capabilities: valid::Capabilities,
     span: rglsl::Span,
 ) -> crate::TestResult<rglsl::valid::ValidationError> {
-    expect_validation_error_impl(
-        module,
-        validation_flags,
-        capabilities,
-        Some(core::iter::once(span)),
-    )
+    expect_validation_error_impl(module, validation_flags, Some(core::iter::once(span)))
 }
 
 /// Validation should fail if `AtomicResult` expressions are not
@@ -162,11 +154,7 @@ fn populate_atomic_result() -> crate::TestResult {
 
         module.functions.append(fun, span);
 
-        valid::Validator::new(
-            valid::ValidationFlags::default(),
-            valid::Capabilities::all(),
-        )
-        .validate(&module)
+        valid::Validator::new(valid::ValidationFlags::default()).validate(&module)
     }
 
     try_variant(Variant::Atomic)?;
@@ -252,11 +240,7 @@ fn populate_call_result() -> crate::TestResult {
 
         module.functions.append(fun_caller, span);
 
-        valid::Validator::new(
-            valid::ValidationFlags::default(),
-            valid::Capabilities::all(),
-        )
-        .validate(&module)
+        valid::Validator::new(valid::ValidationFlags::default()).validate(&module)
     }
 
     try_variant(Variant::Call)?;
@@ -338,11 +322,7 @@ fn builtin_cross_product_args() -> crate::TestResult {
 
         module.functions.append(fun, span);
 
-        valid::Validator::new(
-            valid::ValidationFlags::default(),
-            valid::Capabilities::all(),
-        )
-        .validate(&module)
+        valid::Validator::new(valid::ValidationFlags::default()).validate(&module)
     }
 
     assert!(variant(VectorSize::Bi, 2).is_err());
@@ -409,7 +389,7 @@ impl BindingArrayFixture {
             },
             span,
         );
-        let validator = rglsl::valid::Validator::new(Default::default(), Default::default());
+        let validator = rglsl::valid::Validator::new(Default::default());
         Ok(BindingArrayFixture {
             module,
             span,
@@ -612,7 +592,7 @@ fn local_var_override_sized_array() -> crate::TestResult {
 
     module.functions.append(fun, span);
 
-    let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
+    let err = valid::Validator::new(Default::default())
         .validate(&module)
         .err()
         .ok_or("module should be invalid")?
@@ -654,7 +634,7 @@ fn invalid_zero_value_runtime_array() -> crate::TestResult {
 
     module.functions.append(fun, span);
 
-    let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
+    let err = valid::Validator::new(Default::default())
         .validate(&module)
         .err()
         .ok_or("module should be invalid")?
@@ -697,7 +677,7 @@ fn zero_value_override_array() -> crate::TestResult {
 
     module.functions.append(fun, span);
 
-    valid::Validator::new(Default::default(), valid::Capabilities::all()).validate(&module)?;
+    valid::Validator::new(Default::default()).validate(&module)?;
     Ok(())
 }
 
@@ -738,7 +718,7 @@ fn invalid_zero_value_texture() -> crate::TestResult {
 
     module.functions.append(fun, span);
 
-    let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
+    let err = valid::Validator::new(Default::default())
         .validate(&module)
         .err()
         .ok_or("module should be invalid")?
@@ -809,7 +789,7 @@ fn invalid_constructor_runtime_array() -> crate::TestResult {
 
     module.functions.append(fun, span);
 
-    let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
+    let err = valid::Validator::new(Default::default())
         .validate(&module)
         .err()
         .ok_or("module should be invalid")?
@@ -875,7 +855,7 @@ fn invalid_constructor_unsized_struct() -> crate::TestResult {
 
     module.functions.append(fun, span);
 
-    let err = valid::Validator::new(Default::default(), valid::Capabilities::all())
+    let err = valid::Validator::new(Default::default())
         .validate(&module)
         .err()
         .ok_or("module should be invalid")?
@@ -940,7 +920,7 @@ fn arity_check() {
             },
         ]);
         module.functions.append(f, nowhere);
-        valid::Validator::new(Default::default(), valid::Capabilities::all())
+        valid::Validator::new(Default::default())
             .validate(&module)
             .map_err(|err| err.into_inner()) // discard spans
     }
@@ -1013,12 +993,7 @@ fn unexpected_task_payload() -> crate::TestResult {
     };
     module.entry_points.push(entry_point);
 
-    let err = expect_validation_error_with_span(
-        &module,
-        ValidationFlags::default(),
-        Capabilities::MESH_SHADER,
-        err_span,
-    )?;
+    let err = expect_validation_error_with_span(&module, ValidationFlags::default(), err_span)?;
 
     assert!(matches!(
         err,

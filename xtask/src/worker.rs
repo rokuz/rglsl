@@ -15,7 +15,7 @@ use std::path::Path;
 use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl;
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 
 pub const EXIT_ACCEPTED: i32 = 0;
 pub const EXIT_REJECTED: i32 = 1;
@@ -155,7 +155,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     };
 
     // Validator
-    let info = match Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module) {
+    let info = match Validator::new(ValidationFlags::all()).validate(&module) {
         Ok(info) => info,
         Err(error) => {
             let line = error

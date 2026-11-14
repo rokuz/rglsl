@@ -880,10 +880,10 @@ impl crate::Module {
         let mut has_acceleration_structure = false;
         for (_, &crate::Type { ref inner, .. }) in self.types.iter() {
             match *inner {
-                crate::TypeInner::AccelerationStructure { .. } => {
+                crate::TypeInner::AccelerationStructure => {
                     has_acceleration_structure = true;
                 }
-                crate::TypeInner::RayQuery { .. } => uses.queries = true,
+                crate::TypeInner::RayQuery => uses.queries = true,
                 _ => {}
             }
         }
@@ -1448,7 +1448,7 @@ pub fn contains_ray_object(
 ) -> bool {
     matches!(
         types[array_element(types, ty)].inner,
-        crate::TypeInner::RayQuery { .. } | crate::TypeInner::HitObject { .. }
+        crate::TypeInner::RayQuery | crate::TypeInner::HitObject { .. }
     )
 }
 

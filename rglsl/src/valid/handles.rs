@@ -435,8 +435,8 @@ impl super::Validator {
             | crate::TypeInner::Image { .. }
             | crate::TypeInner::SampledImage { .. }
             | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::AccelerationStructure { .. }
-            | crate::TypeInner::RayQuery { .. }
+            | crate::TypeInner::AccelerationStructure
+            | crate::TypeInner::RayQuery
             | crate::TypeInner::HitObject { .. } => None,
             crate::TypeInner::Tensor { rank, .. } => {
                 Self::validate_cooperative_size(handle, rank, overrides)?
@@ -1597,7 +1597,7 @@ fn global_expressions_cannot_name_locals_or_later_expressions() -> crate::TestRe
     m.global_expressions
         .append(Expression::LocalVariable(missing_local), nowhere);
     assert!(Validator::validate_module_handles(&m).is_err());
-    let mut validator = Validator::new(ValidationFlags::all(), super::Capabilities::default());
+    let mut validator = Validator::new(ValidationFlags::all());
     assert!(validator.validate(&m).is_err());
 
     let later: Handle<Expression> =
@@ -1631,7 +1631,7 @@ fn global_expressions_after_every_type_check_their_type_handles() -> crate::Test
         Span::default(),
     );
     assert!(Validator::validate_module_handles(&m).is_err());
-    let mut validator = Validator::new(ValidationFlags::all(), super::Capabilities::default());
+    let mut validator = Validator::new(ValidationFlags::all());
     assert!(validator.validate(&m).is_err());
 
     m.types.insert(
