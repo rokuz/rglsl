@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl::compact::Remap;
 use rglsl::object::{BindingAssignment, ObjectModule, PathStep, SymbolKind};
@@ -65,6 +65,7 @@ pub(crate) struct Builder<'a> {
     pub warnings: Vec<String>,
     pub errors: Vec<LinkError>,
     instances: Vec<(Handle<GlobalVariable>, String)>,
+    pub unused: Vec<BTreeSet<Handle<GlobalVariable>>>,
 }
 
 fn has_handles(inner: &TypeInner) -> bool {
@@ -75,7 +76,7 @@ fn has_handles(inner: &TypeInner) -> bool {
 }
 
 impl<'a> Builder<'a> {
-    pub fn new(objects: &'a [ObjectModule]) -> Self {
+    pub fn new(objects: &'a [ObjectModule], unused: Vec<BTreeSet<Handle<GlobalVariable>>>) -> Self {
         Self {
             objects,
             module: Module::default(),
@@ -88,7 +89,14 @@ impl<'a> Builder<'a> {
             warnings: Vec::new(),
             errors: Vec::new(),
             instances: Vec::new(),
+            unused,
         }
+    }
+
+    pub fn is_unused(&self, object: usize, global: Handle<GlobalVariable>) -> bool {
+        self.unused
+            .get(object)
+            .is_some_and(|unused| unused.contains(&global))
     }
 
     pub fn object(&self, index: usize) -> Result<&'a ObjectModule, LinkError> {
@@ -176,6 +184,9 @@ impl<'a> Builder<'a> {
             }
         }
         for (handle, global) in source.global_variables.iter() {
+            if self.is_unused(index, handle) {
+                continue;
+            }
             let mut global = global.clone();
             global.ty = remap.ty(global.ty).map_err(internal)?;
             if let Some(ref mut init) = global.init {
@@ -190,7 +201,7 @@ impl<'a> Builder<'a> {
             remap.map_global(handle, new);
         }
         for (handle, global) in source.global_variables.iter() {
-            if global.spirv_decorations.is_empty() {
+            if global.spirv_decorations.is_empty() || self.is_unused(index, handle) {
                 continue;
             }
             let mut decorations = global.spirv_decorations.clone();
@@ -493,4 +504,74 @@ impl<'a> Builder<'a> {
         }
         new
     }
+}
+
+pub(crate) fn unused_on_use_globals(
+    objects: &[ObjectModule],
+    order: &[Node],
+    main: usize,
+) -> Vec<BTreeSet<Handle<GlobalVariable>>> {
+    objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| {
+            let module = &object.unit.module;
+            let on_use: BTreeSet<Handle<GlobalVariable>> = object
+                .unit
+                .globals
+                .iter()
+                .filter(|symbol| symbol.on_use)
+                .map(|symbol| symbol.global)
+                .collect();
+            if on_use.is_empty() {
+                return on_use;
+            }
+            let mut used = BTreeSet::new();
+            let functions = order
+                .iter()
+                .filter(|&&(defining, _)| defining == index)
+                .filter_map(|&(_, handle)| module.functions.try_get(handle).ok());
+            let entry = module.entry_points.first().filter(|_| index == main);
+            for function in functions.chain(entry.map(|entry| &entry.function)) {
+                for (_, expression) in function.expressions.iter() {
+                    if let Expression::GlobalVariable(global) = *expression {
+                        used.insert(global);
+                    }
+                }
+            }
+            if let Some(entry) = entry {
+                used.extend(entry.task_payload);
+                used.extend(entry.incoming_ray_payload);
+                if let Some(ref mesh) = entry.mesh_shader {
+                    used.extend(mesh.task_memory.iter().copied());
+                }
+            }
+            let mut pending: Vec<Handle<GlobalVariable>> = module
+                .global_variables
+                .iter()
+                .map(|(handle, _)| handle)
+                .filter(|handle| !on_use.contains(handle) || used.contains(handle))
+                .collect();
+            let mut decorated = BTreeSet::new();
+            while let Some(handle) = pending.pop() {
+                if !decorated.insert(handle) {
+                    continue;
+                }
+                let Ok(global) = module.global_variables.try_get(handle) else {
+                    continue;
+                };
+                for decoration in &global.spirv_decorations {
+                    if let rglsl::SpirvDecorationOperands::Ids(ref ids) = decoration.operands {
+                        for &id in ids {
+                            if let rglsl::SpirvId::Global(target) = id {
+                                used.insert(target);
+                                pending.push(target);
+                            }
+                        }
+                    }
+                }
+            }
+            on_use.difference(&used).copied().collect()
+        })
+        .collect()
 }

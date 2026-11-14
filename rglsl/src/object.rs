@@ -11,7 +11,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 18;
+pub const FORMAT_VERSION: u32 = 19;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -318,6 +318,12 @@ pub struct GlobalSymbol {
     pub implicit_sizes: Vec<Vec<PathStep>>,
     pub automatic_location: bool,
     pub binding: BindingAssignment,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub on_use: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

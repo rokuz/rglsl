@@ -195,7 +195,8 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
     let (Some(main), Some(stage), true) = (main, stage, errors.is_empty()) else {
         return Err(errors.into());
     };
-    let mut builder = Builder::new(objects);
+    let unused = merge::unused_on_use_globals(objects, &order, main);
+    let mut builder = Builder::new(objects, unused);
     builder.add_objects()?;
     builder.add_functions(&table, &order)?;
     let mut entry = builder.add_entry_point(&table, main)?;
@@ -290,12 +291,18 @@ fn geometry_interface(
     for (index, object) in builder.objects.iter().enumerate() {
         let remap = builder.remap(index)?;
         for &(handle, stream) in &object.unit.layout.streams {
+            if builder.is_unused(index, handle) {
+                continue;
+            }
             let mapped = remap.global(handle).map_err(error::internal)?;
             if !streams.iter().any(|&(known, _)| known == mapped) {
                 streams.push((mapped, stream));
             }
         }
         for &handle in &object.unit.layout.passthrough {
+            if builder.is_unused(index, handle) {
+                continue;
+            }
             let mapped = remap.global(handle).map_err(error::internal)?;
             if !passthrough.contains(&mapped) {
                 passthrough.push(mapped);

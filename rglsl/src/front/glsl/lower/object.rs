@@ -286,6 +286,7 @@ impl Lowerer<'_> {
                 .map_or(BindingAssignment::Explicit, |&(_, set)| {
                     BindingAssignment::Automatic { set }
                 }),
+            on_use: self.on_use_globals.contains(&handle),
         }
     }
 

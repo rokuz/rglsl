@@ -14,6 +14,7 @@ const OP_EXT_INST_IMPORT: u32 = 11;
 const OP_ENTRY_POINT: u32 = 15;
 const OP_EXECUTION_MODE: u32 = 16;
 const OP_CAPABILITY: u32 = 17;
+const OP_VARIABLE: u32 = 59;
 const OP_DECORATE: u32 = 71;
 const OP_MEMBER_DECORATE: u32 = 72;
 const OP_EXECUTION_MODE_ID: u32 = 331;
@@ -86,12 +87,14 @@ struct Summary {
     declarations: BTreeSet<(u32, Vec<u32>)>,
     interface: usize,
     decorations: Vec<Vec<u32>>,
+    variables: Vec<u32>,
 }
 
 fn summary(words: &[u32]) -> TestResult<Summary> {
     let mut declarations = BTreeSet::new();
     let mut interface = 0;
     let mut decorations = Vec::new();
+    let mut variables = Vec::new();
     for (opcode, operands) in instructions(words)? {
         match opcode {
             OP_CAPABILITY | OP_EXTENSION | OP_EXT_INST_IMPORT => {
@@ -113,16 +116,19 @@ fn summary(words: &[u32]) -> TestResult<Summary> {
                 interface = operands.len().saturating_sub(3 + name_words);
                 declarations.insert((opcode, operands.get(..1).unwrap_or_default().to_vec()));
             }
+            OP_VARIABLE => variables.extend(operands.get(2).copied()),
             OP_DECORATE => decorations.push(operands.get(1..).unwrap_or_default().to_vec()),
             OP_MEMBER_DECORATE => decorations.push(operands.get(1..).unwrap_or_default().to_vec()),
             _ => {}
         }
     }
     decorations.sort();
+    variables.sort_unstable();
     Ok(Summary {
         declarations,
         interface,
         decorations,
+        variables,
     })
 }
 
@@ -297,4 +303,68 @@ void main() {
 ",
         false,
     )
+}
+
+#[test]
+fn globals_of_uncalled_functions_are_not_declared() -> TestResult {
+    assert_same(
+        ShaderStage::Mesh,
+        "#version 460
+#extension GL_EXT_mesh_shader : enable
+#extension GL_ARB_shader_draw_parameters : enable
+#extension GL_EXT_multiview : enable
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+int uncalled() { return gl_DrawIDARB + gl_ViewIndex; }
+void main() { SetMeshOutputsEXT(0u, 0u); }
+",
+        false,
+    )
+}
+
+#[test]
+fn globals_of_functions_called_after_a_return_are_declared() -> TestResult {
+    assert_same(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer Out { uint value; } result;
+void late() { result.value = gl_GlobalInvocationID.x; }
+void main() { result.value = 0u; return; late(); }
+",
+        false,
+    )
+}
+
+fn interface_names(stage: &Linked) -> Vec<String> {
+    let Some(entry) = stage.module.entry_points.first() else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entry
+        .interface
+        .iter()
+        .filter_map(|&handle| stage.module.global_variables[handle].name.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn globals_of_library_functions_follow_the_linked_calls() -> TestResult {
+    let library = "#version 450
+float depth() { return gl_FragCoord.z; }
+int view() { return gl_SampleID; }
+";
+    let main = compile(
+        ShaderStage::Fragment,
+        false,
+        "#version 450
+layout(location = 0) out vec4 color;
+float depth();
+void main() { color = vec4(depth()); }
+",
+    )?;
+    let stage = only_stage(&[main, compile(ShaderStage::Fragment, true, library)?])?;
+    assert_eq!(interface_names(&stage), ["color", "gl_FragCoord"]);
+    Ok(())
 }

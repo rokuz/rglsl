@@ -225,6 +225,7 @@ impl Builder<'_> {
         let interface = self.interface()?;
         let remap = self.remap(main)?;
         let global = |handle: Handle<GlobalVariable>| remap.global(handle).map_err(internal);
+        let used = |&handle: &Handle<GlobalVariable>| !self.is_unused(main, handle);
         let expression =
             |handle: Handle<Expression>| remap.global_expression(handle).map_err(internal);
         let EntryPoint {
@@ -267,11 +268,13 @@ impl Builder<'_> {
                 streams: info
                     .streams
                     .iter()
+                    .filter(|&(handle, _)| used(handle))
                     .map(|&(handle, stream)| Ok((global(handle)?, stream)))
                     .collect::<Result<_, LinkError>>()?,
                 passthrough: info
                     .passthrough
                     .iter()
+                    .filter(|&handle| used(handle))
                     .map(|&handle| global(handle))
                     .collect::<Result<_, LinkError>>()?,
                 ..info
@@ -353,6 +356,9 @@ impl Builder<'_> {
                         .collect(),
                 };
             for handle in declared {
+                if self.is_unused(index, handle) {
+                    continue;
+                }
                 let mapped = remap.global(handle).map_err(internal)?;
                 if !interface.contains(&mapped) {
                     interface.push(mapped);
