@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use rglsl::compact::Remap;
 use rglsl::object::{BindingAssignment, ObjectModule, PathStep, SymbolKind};
 use rglsl::{
-    AddressSpace, Expression, Function, GlobalVariable, Handle, Module, Override, Span, TypeInner,
+    AddressSpace, Expression, Function, GlobalVariable, Handle, Module, Override, Span, Type,
+    TypeInner,
 };
 
 use crate::calls::Node;
@@ -158,12 +159,7 @@ impl<'a> Builder<'a> {
             remap.map_override(handle, new);
             pending_overrides.push((handle, new));
         }
-        for (handle, ty) in source.types.iter() {
-            let mut ty = ty.clone();
-            remap.adjust_type(&mut ty).map_err(internal)?;
-            let new = self.module.types.insert(ty, source.types.get_span(handle));
-            remap.map_type(handle, new);
-        }
+        self.add_types(source, &mut remap)?;
         let mut constants_done = std::collections::BTreeSet::new();
         for (handle, expression) in source.global_expressions.iter() {
             if let Expression::Constant(constant) = *expression
@@ -237,6 +233,147 @@ impl<'a> Builder<'a> {
             }
         }
         Ok(remap)
+    }
+
+    fn add_types(&mut self, source: &Module, remap: &mut Remap) -> Result<(), LinkError> {
+        let forward: BTreeMap<Handle<Type>, (Handle<Type>, AddressSpace)> = source
+            .types
+            .iter()
+            .filter_map(|(handle, ty)| match ty.inner {
+                TypeInner::Pointer { base, space } if base.index() >= handle.index() => {
+                    Some((handle, (base, space)))
+                }
+                _ => None,
+            })
+            .collect();
+        if !forward.is_empty() && self.unify_cycles(source, remap, &forward)? {
+            return Ok(());
+        }
+        let mut pending = Vec::new();
+        for (handle, ty) in source.types.iter() {
+            let span = source.types.get_span(handle);
+            if let Some(&(base, space)) = forward.get(&handle) {
+                let placeholder = self.placeholder_struct(&source.types[base].name);
+                let pointer = self.module.types.insert(
+                    Type {
+                        name: ty.name.clone(),
+                        inner: TypeInner::Pointer {
+                            base: placeholder,
+                            space,
+                        },
+                    },
+                    span,
+                );
+                remap.map_type(handle, pointer);
+                pending.push((pointer, ty.name.clone(), base, space));
+                continue;
+            }
+            let mut ty = ty.clone();
+            remap.adjust_type(&mut ty).map_err(internal)?;
+            let new = self.module.types.insert(ty, span);
+            remap.map_type(handle, new);
+        }
+        for (pointer, name, base, space) in pending {
+            let resolved = Type {
+                name,
+                inner: TypeInner::Pointer {
+                    base: remap.ty(base).map_err(internal)?,
+                    space,
+                },
+            };
+            self.module
+                .types
+                .replace(pointer, resolved)
+                .map_err(internal)?;
+        }
+        Ok(())
+    }
+
+    fn unify_cycles(
+        &mut self,
+        source: &Module,
+        remap: &mut Remap,
+        forward: &BTreeMap<Handle<Type>, (Handle<Type>, AddressSpace)>,
+    ) -> Result<bool, LinkError> {
+        let mut candidates = Vec::with_capacity(forward.len());
+        for (&pointer, &(base, space)) in forward {
+            let Some(candidate) = self.pointer_candidate(source, pointer, base, space) else {
+                return Ok(false);
+            };
+            remap.map_type(pointer, candidate);
+            candidates.push((candidate, base));
+        }
+        for (handle, ty) in source.types.iter() {
+            if forward.contains_key(&handle) {
+                continue;
+            }
+            let mut ty = ty.clone();
+            remap.adjust_type(&mut ty).map_err(internal)?;
+            let new = self.module.types.insert(ty, source.types.get_span(handle));
+            remap.map_type(handle, new);
+        }
+        for (candidate, base) in candidates {
+            let TypeInner::Pointer { base: merged, .. } = self.module.types[candidate].inner else {
+                return Ok(false);
+            };
+            if remap.ty(base).map_err(internal)? != merged {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn pointer_candidate(
+        &self,
+        source: &Module,
+        pointer: Handle<Type>,
+        base: Handle<Type>,
+        space: AddressSpace,
+    ) -> Option<Handle<Type>> {
+        let name = &source.types[pointer].name;
+        let base = &source.types[base];
+        let TypeInner::Struct { ref members, .. } = base.inner else {
+            return None;
+        };
+        self.module.types.iter().find_map(|(handle, ty)| {
+            let TypeInner::Pointer {
+                base: merged,
+                space: merged_space,
+            } = ty.inner
+            else {
+                return None;
+            };
+            let merged_base = self.module.types.get_handle(merged).ok()?;
+            let TypeInner::Struct {
+                members: ref merged_members,
+                ..
+            } = merged_base.inner
+            else {
+                return None;
+            };
+            (merged_space == space
+                && ty.name == *name
+                && merged_base.name == base.name
+                && merged_members.len() == members.len())
+            .then_some(handle)
+        })
+    }
+
+    fn placeholder_struct(&mut self, name: &Option<String>) -> Handle<Type> {
+        let mut span = 0_u32;
+        loop {
+            let placeholder = Type {
+                name: name.clone(),
+                inner: TypeInner::Struct {
+                    members: Vec::new(),
+                    span,
+                },
+            };
+            if self.module.types.get(&placeholder).is_none() || span == u32::MAX {
+                return self.module.types.insert(placeholder, Span::UNDEFINED);
+            }
+            span += 1;
+        }
     }
 
     fn add_constant(

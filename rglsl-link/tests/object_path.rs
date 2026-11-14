@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 
-use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl::{Frontend, Options};
+use rglsl::object::ObjectModule;
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
-use rglsl_link::{Options as LinkOptions, decode, encode, link_objects, validate_object};
+use rglsl::{AddressSpace, ShaderStage, TypeInner};
+use rglsl_link::{Linked, Options as LinkOptions, decode, encode, link_objects, validate_object};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -146,4 +147,83 @@ void main() { block.x[1] = 2.0; }
 ",
         false,
     )
+}
+
+const NODE: &str = "#extension GL_EXT_buffer_reference : enable
+layout(buffer_reference) buffer Node;
+layout(buffer_reference, std430) buffer Node { Node next; uint value; };
+";
+
+fn compile(stage: ShaderStage, library: bool, source: &str) -> TestResult<ObjectModule> {
+    let options = Options {
+        library,
+        ..frontend_options(stage, false)
+    };
+    Ok(Frontend::default()
+        .compile(&options, source)
+        .map_err(|errors| format!("{errors:?}"))?)
+}
+
+fn only_stage(objects: &[ObjectModule]) -> TestResult<Linked> {
+    let linked = link_objects(objects, &LinkOptions::default())?;
+    linked.into_iter().next().ok_or_else(|| "no stage".into())
+}
+
+#[test]
+fn cyclic_buffer_references_link() -> TestResult {
+    assert_same(
+        ShaderStage::Compute,
+        &format!(
+            "#version 450
+{NODE}layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer Root {{ Node head; }} root;
+void main() {{ root.head.next.next.value = root.head.value; }}
+"
+        ),
+        false,
+    )
+}
+
+#[test]
+fn cyclic_buffer_references_of_two_modules_are_one_type() -> TestResult {
+    let main = compile(
+        ShaderStage::Compute,
+        false,
+        &format!(
+            "#version 450
+{NODE}layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer Root {{ Node head; }} root;
+uint total(Node node);
+void main() {{ root.head.value = total(root.head.next); }}
+"
+        ),
+    )?;
+    let library = compile(
+        ShaderStage::Compute,
+        true,
+        &format!(
+            "#version 450
+uint unrelated() {{ return 1u; }}
+{NODE}uint total(Node node) {{ return node.value + node.next.value; }}
+"
+        ),
+    )?;
+    let stage = only_stage(&[main, library])?;
+    let pointers = stage
+        .module
+        .types
+        .iter()
+        .filter(|&(_, ty)| {
+            matches!(
+                ty.inner,
+                TypeInner::Pointer {
+                    space: AddressSpace::PhysicalStorage { .. },
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(pointers, 1);
+    spv::write_vec(&stage.module, &stage.info, &writer_options(), None)?;
+    Ok(())
 }
