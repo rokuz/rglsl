@@ -493,7 +493,7 @@ impl BuiltIn {
             Self::HitLssRadii => access(ANY_OR_CLOSEST_HIT, NONE, array(F32, Any)),
             Self::ClusterId => input(ANY_OR_CLOSEST_HIT, I32),
             Self::HitKindFrontFacingMicroTriangle | Self::HitKindBackFacingMicroTriangle => {
-                input(RAY_TRACING, U32)
+                input(ALL, U32)
             }
             Self::HitIsSphere | Self::HitIsLss => input(ANY_OR_CLOSEST_HIT, BOOL),
             Self::HitSpherePosition => input(ANY_OR_CLOSEST_HIT, VEC3),

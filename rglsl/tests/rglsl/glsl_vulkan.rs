@@ -6832,6 +6832,70 @@ fn ovr_view_id_is_the_view_index() -> crate::TestResult {
 }
 
 #[test]
+fn micro_triangle_hit_kinds_are_declared_in_every_stage() -> crate::TestResult {
+    let source = |main: &str| {
+        format!(
+            "#version 460
+            layout(location = 0) out vec4 color;
+            void main() {{ {main} }}"
+        )
+    };
+    for (stage, main) in [
+        (
+            ShaderStage::Vertex,
+            "gl_Position = vec4(float(gl_HitKindFrontFacingMicroTriangleNV));",
+        ),
+        (
+            ShaderStage::Fragment,
+            "color = vec4(float(gl_HitKindBackFacingMicroTriangleNV));",
+        ),
+        (
+            ShaderStage::Compute,
+            "color = vec4(float(gl_HitKindFrontFacingMicroTriangleNV));",
+        ),
+    ] {
+        let source = source(main);
+        let source = if stage == ShaderStage::Compute {
+            source.replace("layout(location = 0) out vec4 color;", "vec4 color;")
+        } else {
+            source
+        };
+        let module = compile_valid(stage, &source)?;
+        assert!(has_capability(
+            &module,
+            spirv::Capability::RayTracingDisplacementMicromapNV
+        ));
+        assert_eq!(extensions_of(&module), ["SPV_NV_displacement_micromap"]);
+    }
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        &source("color = vec4(float(gl_HitKindBackFacingMicroTriangleNV));"),
+    )?;
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_HitKindBackFacingMicroTriangleNV")?,
+        [
+            (
+                Decoration::BuiltIn,
+                vec![spirv::BuiltIn::HitKindBackFacingMicroTriangleNV as u32]
+            ),
+            (Decoration::Flat, vec![]),
+        ]
+    );
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_Position = vec4(float(gl_HitKindFrontFacingMicroTriangleNV)); }",
+    )
+    .err()
+    .ok_or("gl_HitKindFrontFacingMicroTriangleNV is declared in GLSL 450")?;
+    assert!(
+        error.contains("gl_HitKindFrontFacingMicroTriangleNV"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn per_view_attributes_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,

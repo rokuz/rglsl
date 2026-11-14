@@ -81,11 +81,6 @@ verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_shader_explicit_vertex_parameter built-in variables are not declared"
 
 [[divergence]]
-name = "gl_HitKind*MicroTriangleNV"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the micro-triangle hit kind constants are declared only in ray tracing stages, glslang declares them in every stage"
-
-[[divergence]]
 name = "atomic*"
 signature = "f16vec"
 verdicts = ["only-glslang-accepts"]
