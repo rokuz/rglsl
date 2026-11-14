@@ -9,8 +9,8 @@ use crate::builtins::kind::QuadDirection::*;
 use crate::builtins::kind::Subgroup::*;
 use crate::builtins::kind::SubgroupFunction::*;
 use crate::builtins::kind::{SubgroupMemory, SubgroupOperation};
-use crate::builtins::{COMPUTE, MESH, TASK};
 use crate::types::Scalar;
+use rglsl_types::ShaderStageMask;
 
 const FLOATS_BOOL_INTEGERS: &[Scalar] = &[
     Scalar::Float,
@@ -83,7 +83,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "subgroupMemoryBarrierShared": Subgroup(Barrier { execution: false, memory: SubgroupMemory::Shared }) => [void()] {
         requires: &[KhrShaderSubgroupBasic],
         flags: flags!(SUBGROUP_OPERATION),
-        stages: COMPUTE | MESH | TASK,
+        stages: ShaderStageMask::COMPUTE_LIKE,
     }
     "subgroupElect": Subgroup(Function(Elect)) => [bool()] {
         requires: &[KhrShaderSubgroupBasic],

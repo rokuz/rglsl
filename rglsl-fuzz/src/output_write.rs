@@ -26,7 +26,7 @@ fn output_variables(
     if input.params.vertex() {
         result.insert(
             GL_POSITION.to_owned(),
-            basic::vector(rglsl_ast::ast::ScalarType::Float, 4),
+            basic::vector(rglsl_ast::ast::Scalar::Float, 4),
         );
         result.insert(GL_POINT_SIZE.to_owned(), FLOAT);
     }

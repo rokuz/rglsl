@@ -3,13 +3,13 @@ use rglsl_sema::scope::QualifierFlags;
 use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
-use rglsl_sema::SymbolId;
 use rglsl_sema::builtins::kind::Primitive;
 use rglsl_sema::builtins::variables::{self, BuiltinVariable};
 use rglsl_sema::scope::{Origin, Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockStorage, Scalar, Type as GlslType, TypeKind,
 };
+use rglsl_sema::{LayoutId, SymbolId};
 
 use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, semantic, unsupported, xfb};
@@ -59,48 +59,48 @@ impl StageLayout {
     }
 }
 
-const fn input_primitive(name: &str) -> Option<GeometryInputPrimitive> {
-    Some(match name.as_bytes() {
-        b"points" => GeometryInputPrimitive::Points,
-        b"lines" => GeometryInputPrimitive::Lines,
-        b"lines_adjacency" => GeometryInputPrimitive::LinesAdjacency,
-        b"triangles" => GeometryInputPrimitive::Triangles,
-        b"triangles_adjacency" => GeometryInputPrimitive::TrianglesAdjacency,
+const fn input_primitive(id: LayoutId) -> Option<GeometryInputPrimitive> {
+    Some(match id {
+        LayoutId::Points => GeometryInputPrimitive::Points,
+        LayoutId::Lines => GeometryInputPrimitive::Lines,
+        LayoutId::LinesAdjacency => GeometryInputPrimitive::LinesAdjacency,
+        LayoutId::Triangles => GeometryInputPrimitive::Triangles,
+        LayoutId::TrianglesAdjacency => GeometryInputPrimitive::TrianglesAdjacency,
         _ => return None,
     })
 }
 
-const fn output_primitive(name: &str) -> Option<GeometryOutputPrimitive> {
-    Some(match name.as_bytes() {
-        b"points" => GeometryOutputPrimitive::Points,
-        b"line_strip" => GeometryOutputPrimitive::LineStrip,
-        b"triangle_strip" => GeometryOutputPrimitive::TriangleStrip,
+const fn output_primitive(id: LayoutId) -> Option<GeometryOutputPrimitive> {
+    Some(match id {
+        LayoutId::Points => GeometryOutputPrimitive::Points,
+        LayoutId::LineStrip => GeometryOutputPrimitive::LineStrip,
+        LayoutId::TriangleStrip => GeometryOutputPrimitive::TriangleStrip,
         _ => return None,
     })
 }
 
-const fn tessellation_primitive(name: &str) -> Option<TessellationPrimitive> {
-    Some(match name.as_bytes() {
-        b"triangles" => TessellationPrimitive::Triangles,
-        b"quads" => TessellationPrimitive::Quads,
-        b"isolines" => TessellationPrimitive::Isolines,
+const fn tessellation_primitive(id: LayoutId) -> Option<TessellationPrimitive> {
+    Some(match id {
+        LayoutId::Triangles => TessellationPrimitive::Triangles,
+        LayoutId::Quads => TessellationPrimitive::Quads,
+        LayoutId::Isolines => TessellationPrimitive::Isolines,
         _ => return None,
     })
 }
 
-const fn spacing(name: &str) -> Option<TessellationSpacing> {
-    Some(match name.as_bytes() {
-        b"equal_spacing" => TessellationSpacing::Equal,
-        b"fractional_even_spacing" => TessellationSpacing::FractionalEven,
-        b"fractional_odd_spacing" => TessellationSpacing::FractionalOdd,
+const fn spacing(id: LayoutId) -> Option<TessellationSpacing> {
+    Some(match id {
+        LayoutId::EqualSpacing => TessellationSpacing::Equal,
+        LayoutId::FractionalEvenSpacing => TessellationSpacing::FractionalEven,
+        LayoutId::FractionalOddSpacing => TessellationSpacing::FractionalOdd,
         _ => return None,
     })
 }
 
-const fn vertex_order(name: &str) -> Option<TessellationVertexOrder> {
-    Some(match name.as_bytes() {
-        b"cw" => TessellationVertexOrder::Cw,
-        b"ccw" => TessellationVertexOrder::Ccw,
+const fn vertex_order(id: LayoutId) -> Option<TessellationVertexOrder> {
+    Some(match id {
+        LayoutId::Cw => TessellationVertexOrder::Cw,
+        LayoutId::Ccw => TessellationVertexOrder::Ccw,
         _ => return None,
     })
 }
@@ -113,15 +113,15 @@ pub(super) const fn with_invariant(builtin: BuiltIn, invariant: bool) -> BuiltIn
 }
 
 impl<'a> Lowerer<'a> {
-    pub(super) fn stage_input_layout(&mut self, names: &[String]) {
+    pub(super) fn stage_input_layout(&mut self, ids: &[LayoutId]) {
         let relevant = |stage: ShaderStage| {
-            names.iter().any(|name| match stage {
-                ShaderStage::Geometry => input_primitive(name).is_some(),
+            ids.iter().copied().any(|id| match stage {
+                ShaderStage::Geometry => input_primitive(id).is_some(),
                 ShaderStage::TessEvaluation => {
-                    tessellation_primitive(name).is_some()
-                        || spacing(name).is_some()
-                        || vertex_order(name).is_some()
-                        || name == "point_mode"
+                    tessellation_primitive(id).is_some()
+                        || spacing(id).is_some()
+                        || vertex_order(id).is_some()
+                        || id == LayoutId::PointMode
                 }
                 _ => false,
             })
@@ -129,24 +129,24 @@ impl<'a> Lowerer<'a> {
         let Some(stage) = self.stage_map(|stage| relevant(stage).then_some(stage)) else {
             return;
         };
-        for name in names {
+        for &id in ids {
             match stage {
                 ShaderStage::Geometry => {
-                    if let Some(primitive) = input_primitive(name) {
+                    if let Some(primitive) = input_primitive(id) {
                         self.stage_layout.input_primitive.get_or_insert(primitive);
                     }
                 }
                 ShaderStage::TessEvaluation => {
-                    if let Some(primitive) = tessellation_primitive(name) {
+                    if let Some(primitive) = tessellation_primitive(id) {
                         self.stage_layout.primitive.get_or_insert(primitive);
                     }
-                    if let Some(spacing) = spacing(name) {
+                    if let Some(spacing) = spacing(id) {
                         self.stage_layout.spacing.get_or_insert(spacing);
                     }
-                    if let Some(order) = vertex_order(name) {
+                    if let Some(order) = vertex_order(id) {
                         self.stage_layout.vertex_order.get_or_insert(order);
                     }
-                    if name == "point_mode" {
+                    if id == LayoutId::PointMode {
                         self.stage_layout.point_mode = true;
                     }
                 }
@@ -157,7 +157,8 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn stage_input_values(&mut self, qualifier: &'a Spanned<TypeQualifier>) {
         if self.stage_is(ShaderStage::Geometry)
-            && let Some(invocations) = xfb::ast_layout_value(self, Some(qualifier), "invocations")
+            && let Some(invocations) =
+                xfb::ast_layout_value(self, Some(qualifier), LayoutId::Invocations)
         {
             self.stage_layout.invocations.get_or_insert(invocations);
         }
@@ -165,15 +166,18 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn stage_output_layout(
         &mut self,
-        names: &[String],
+        ids: &[LayoutId],
         qualifier: &'a Spanned<TypeQualifier>,
     ) {
-        let relevant = names.iter().any(|name| {
-            output_primitive(name).is_some()
-                || super::mesh::mesh_topology(name).is_some()
+        let relevant = ids.iter().copied().any(|id| {
+            output_primitive(id).is_some()
+                || super::mesh::mesh_topology(id).is_some()
                 || matches!(
-                    name.as_str(),
-                    "max_vertices" | "stream" | "vertices" | "max_primitives"
+                    id,
+                    LayoutId::MaxVertices
+                        | LayoutId::Stream
+                        | LayoutId::Vertices
+                        | LayoutId::MaxPrimitives
                 )
         });
         if !relevant {
@@ -181,16 +185,18 @@ impl<'a> Lowerer<'a> {
         }
         match self.stage() {
             ShaderStage::Geometry => {
-                for name in names {
-                    if let Some(primitive) = output_primitive(name) {
+                for &id in ids {
+                    if let Some(primitive) = output_primitive(id) {
                         self.stage_layout.output_primitive.get_or_insert(primitive);
                     }
                 }
-                if let Some(vertices) = xfb::ast_layout_value(self, Some(qualifier), "max_vertices")
+                if let Some(vertices) =
+                    xfb::ast_layout_value(self, Some(qualifier), LayoutId::MaxVertices)
                 {
                     self.stage_layout.vertices.get_or_insert(vertices);
                 }
-                if let Some(stream) = xfb::ast_layout_value(self, Some(qualifier), "stream") {
+                if let Some(stream) = xfb::ast_layout_value(self, Some(qualifier), LayoutId::Stream)
+                {
                     self.stage_layout.stream = stream;
                     if stream > 0 {
                         self.stage_layout.multi_stream = true;
@@ -198,22 +204,25 @@ impl<'a> Lowerer<'a> {
                 }
             }
             ShaderStage::TessControl => {
-                if let Some(vertices) = xfb::ast_layout_value(self, Some(qualifier), "vertices") {
+                if let Some(vertices) =
+                    xfb::ast_layout_value(self, Some(qualifier), LayoutId::Vertices)
+                {
                     self.stage_layout.vertices.get_or_insert(vertices);
                 }
             }
             ShaderStage::Mesh => {
-                for name in names {
-                    if let Some(topology) = super::mesh::mesh_topology(name) {
+                for &id in ids {
+                    if let Some(topology) = super::mesh::mesh_topology(id) {
                         self.stage_layout.mesh_topology.get_or_insert(topology);
                     }
                 }
-                if let Some(vertices) = xfb::ast_layout_value(self, Some(qualifier), "max_vertices")
+                if let Some(vertices) =
+                    xfb::ast_layout_value(self, Some(qualifier), LayoutId::MaxVertices)
                 {
                     self.stage_layout.vertices.get_or_insert(vertices);
                 }
                 if let Some(primitives) =
-                    xfb::ast_layout_value(self, Some(qualifier), "max_primitives")
+                    xfb::ast_layout_value(self, Some(qualifier), LayoutId::MaxPrimitives)
                 {
                     self.stage_layout.primitives.get_or_insert(primitives);
                 }
@@ -230,7 +239,7 @@ impl<'a> Lowerer<'a> {
         if !self.library && !self.stage_is(ShaderStage::Geometry) {
             return;
         }
-        let stream = xfb::layout_value(qualifiers, "stream");
+        let stream = xfb::layout_value(qualifiers, LayoutId::Stream);
         if stream.is_some_and(|stream| stream > 0) {
             self.stage_layout.multi_stream = true;
         }
@@ -285,7 +294,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn passthrough(&mut self, handle: Handle<GlobalVariable>, qualifiers: &Qualifiers) {
-        if self.stage_is(ShaderStage::Geometry) && qualifiers.has_layout("passthrough") {
+        if self.stage_is(ShaderStage::Geometry) && qualifiers.has_layout(LayoutId::Passthrough) {
             self.stage_layout.passthrough.push(handle);
         }
     }

@@ -75,7 +75,7 @@ impl Analyzer<'_> {
 
     fn check_extension(&mut self, span: Span, extension: Extension, behavior: ExtensionBehavior) {
         let info = extension.info();
-        if !info.only_stages.is_empty() {
+        if !info.stages.is_all() {
             self.stage_check(span, |stage| {
                 (!info.allowed_in(stage)).then(|| DiagnosticKind::ExtensionStage {
                     extension,

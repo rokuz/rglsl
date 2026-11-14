@@ -1,150 +1,39 @@
 use rglsl_ast::Span;
+use rglsl_types::ShaderStage;
 use rglsl_types::extension::Extension;
 
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::{LOCAL_SIZE_EXT, LayoutId};
 use crate::scope::{LayoutValue, Qualifiers, Storage};
-use rglsl_types::ShaderStage;
 
 const BANK_END: i64 = 0xF;
-
-const BINDLESS_TEXTURE: &[Extension] = &[Extension::ArbBindlessTexture];
-
-const MULTIVIEW: &[Extension] = &[Extension::OvrMultiview, Extension::OvrMultiview2];
-
-const BLEND_EQUATIONS: [&str; 16] = [
-    "blend_support_multiply",
-    "blend_support_screen",
-    "blend_support_overlay",
-    "blend_support_darken",
-    "blend_support_lighten",
-    "blend_support_colordodge",
-    "blend_support_colorburn",
-    "blend_support_hardlight",
-    "blend_support_softlight",
-    "blend_support_difference",
-    "blend_support_exclusion",
-    "blend_support_hsl_hue",
-    "blend_support_hsl_saturation",
-    "blend_support_hsl_color",
-    "blend_support_hsl_luminosity",
-    "blend_support_all_equations",
-];
-
-type StageFilter = fn(ShaderStage) -> bool;
-
-struct LayoutExtension {
-    feature: &'static str,
-    stages: Option<StageFilter>,
-    extensions: &'static [Extension],
-}
-
-const fn compute_like(stage: ShaderStage) -> bool {
-    matches!(
-        stage,
-        ShaderStage::Compute | ShaderStage::Task | ShaderStage::Mesh
-    )
-}
-
-const fn mesh_or_task(stage: ShaderStage) -> bool {
-    matches!(stage, ShaderStage::Task | ShaderStage::Mesh)
-}
-
-const fn mesh(stage: ShaderStage) -> bool {
-    matches!(stage, ShaderStage::Mesh)
-}
-
-const fn fragment(stage: ShaderStage) -> bool {
-    matches!(stage, ShaderStage::Fragment)
-}
-
-fn layout_extension(name: &str) -> Option<LayoutExtension> {
-    let (feature, stages, extensions): (_, Option<StageFilter>, &'static [Extension]) = match name {
-        "scalar" => (
-            "scalar block layout",
-            None,
-            &[Extension::ExtScalarBlockLayout],
-        ),
-        "bindless_sampler" => ("bindless_sampler", None, BINDLESS_TEXTURE),
-        "bindless_image" => ("bindless_image", None, BINDLESS_TEXTURE),
-        "bound_sampler" => ("bound_sampler", None, BINDLESS_TEXTURE),
-        "bound_image" => ("bound_image", None, BINDLESS_TEXTURE),
-        "num_views" => ("num_views", None, MULTIVIEW),
-        "derivative_group_quadsnv" | "derivative_group_linearnv" => (
-            "compute shader derivatives",
-            Some(compute_like),
-            &[Extension::NvComputeShaderDerivatives],
-        ),
-        "derivative_group_quadskhr" | "derivative_group_linearkhr" => (
-            "compute shader derivatives",
-            Some(compute_like),
-            &[Extension::KhrComputeShaderDerivatives],
-        ),
-        "shaderrecordnv" => (
-            "shader record NV",
-            Some(ShaderStage::ray_tracing),
-            &[Extension::NvRayTracing],
-        ),
-        "shaderrecordext" => (
-            "shader record EXT",
-            Some(ShaderStage::ray_tracing),
-            &[Extension::ExtRayTracing],
-        ),
-        "hitobjectshaderrecordnv" => (
-            "hitobject shader record NV",
-            Some(ShaderStage::ray_tracing),
-            &[Extension::NvShaderInvocationReorder],
-        ),
-        "hitobjectshaderrecordext" => (
-            "hitobject shader record EXT",
-            Some(ShaderStage::ray_tracing),
-            &[Extension::ExtShaderInvocationReorder],
-        ),
-        "max_vertices" => ("max_vertices", Some(mesh), &super::mesh::MESH_ANY),
-        "max_primitives" => ("max_primitives", Some(mesh), &super::mesh::MESH_ANY),
-        _ if name.starts_with("local_size_") => (
-            "gl_WorkGroupSize",
-            Some(mesh_or_task),
-            &super::mesh::MESH_ANY,
-        ),
-        _ if BLEND_EQUATIONS.contains(&name) => (
-            "blend equation",
-            Some(fragment),
-            &[Extension::KhrBlendEquationAdvanced],
-        ),
-        _ => return None,
-    };
-    Some(LayoutExtension {
-        feature,
-        stages,
-        extensions,
-    })
-}
 
 impl Analyzer<'_> {
     pub(crate) fn layout_extension_check(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
             let name = entry.name.as_str();
-            if name.starts_with("blend_support") && !BLEND_EQUATIONS.contains(&name) {
+            if entry.id.is_none() && name.starts_with("blend_support") {
                 self.stage_check(entry.span, |stage| {
-                    fragment(stage).then_some(DiagnosticKind::InvalidQualifier {
+                    (stage == ShaderStage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
                         qualifier: "blend_support",
                         reason: "unknown blend equation",
                     })
                 });
             }
-            let Some(required) = layout_extension(name) else {
+            let required = entry
+                .id
+                .and_then(|id| id.info().extension)
+                .or_else(|| name.starts_with("local_size_").then_some(LOCAL_SIZE_EXT));
+            let Some(required) = required else {
                 continue;
             };
-            match required.stages {
-                None => {
-                    self.require_extensions(entry.span, required.extensions, required.feature);
-                }
-                Some(applies) => {
-                    self.require_stage_extensions(entry.span, required.feature, |stage| {
-                        applies(stage).then_some(required.extensions)
-                    });
-                }
+            if required.stages.is_all() {
+                self.require_extensions(entry.span, required.extensions, required.feature);
+            } else {
+                self.require_stage_extensions(entry.span, required.feature, |stage| {
+                    required.stages.has(stage).then_some(required.extensions)
+                });
             }
         }
     }
@@ -168,15 +57,13 @@ impl Analyzer<'_> {
             return;
         }
         for entry in &qualifiers.layout {
-            let qualifier = match entry.name.as_str() {
-                "shared" => "shared",
-                "packed" => "packed",
-                _ => continue,
+            let Some(id @ (LayoutId::Shared | LayoutId::Packed)) = entry.id else {
+                continue;
             };
             self.error(
                 entry.span,
                 DiagnosticKind::InvalidQualifier {
-                    qualifier,
+                    qualifier: id.name(),
                     reason: "not allowed when generating SPIR-V",
                 },
             );
@@ -185,15 +72,16 @@ impl Analyzer<'_> {
 
     pub(crate) fn push_constant_bank_layout_check(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
-            let (qualifier, valid, reason) = match entry.name.as_str() {
-                "bank" => (
-                    "bank",
+            let (id, valid, reason) = match entry.id {
+                Some(id @ LayoutId::Bank) => (
+                    id,
                     entry.value.constant().is_none_or(|value| value < BANK_END),
                     "bank out of range",
                 ),
-                "member_offset" => ("member_offset", true, ""),
+                Some(id @ LayoutId::MemberOffset) => (id, true, ""),
                 _ => continue,
             };
+            let qualifier = id.name();
             self.require_extension(entry.span, Extension::NvPushConstantBank, qualifier);
             if entry.value == LayoutValue::Invalid {
                 self.error(
@@ -218,8 +106,10 @@ impl Analyzer<'_> {
             let Some(value) = entry.value.constant() else {
                 continue;
             };
-            let error = match entry.name.as_str() {
-                "xfb_buffer" if value >= i64::from(limits.max_transform_feedback_buffers) => {
+            let error = match entry.id {
+                Some(LayoutId::XfbBuffer)
+                    if value >= i64::from(limits.max_transform_feedback_buffers) =>
+                {
                     DiagnosticKind::ResourceLimit {
                         qualifier: "xfb_buffer",
                         reason: "buffer is too large",
@@ -227,7 +117,7 @@ impl Analyzer<'_> {
                         value: limits.max_transform_feedback_buffers,
                     }
                 }
-                "xfb_stride"
+                Some(LayoutId::XfbStride)
                     if value
                         > 4 * i64::from(limits.max_transform_feedback_interleaved_components) =>
                 {
@@ -249,7 +139,7 @@ impl Analyzer<'_> {
             return;
         }
         let Some(location) = qualifiers
-            .layout_entry("location")
+            .layout_entry(LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {

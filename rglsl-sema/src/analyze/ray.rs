@@ -9,9 +9,10 @@ use super::{Analyzer, Operand};
 use crate::builtins::kind::{HitObject, HitObjectFlavor, Ray};
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{Qualifiers, Storage};
 use crate::types::{BlockStorage, OpaqueKind, Scalar, Type, TypeKind};
-use rglsl_types::ShaderStage;
+use rglsl_types::ShaderStageMask;
 
 const RT_NV_ONLY: &[Extension] = &[Extension::NvRayTracing];
 const RT_EXT_OR_QUERY: &[Extension] = &[Extension::ExtRayTracing, Extension::ExtRayQuery];
@@ -38,37 +39,29 @@ pub(crate) const fn ray_storage(
     })
 }
 
-const fn storage_stages(storage: Storage) -> &'static [ShaderStage] {
+const fn storage_stages(storage: Storage) -> ShaderStageMask {
     match storage {
-        Storage::RayPayload => &[
-            ShaderStage::RayGeneration,
-            ShaderStage::ClosestHit,
-            ShaderStage::AnyHit,
-            ShaderStage::Miss,
-        ],
-        Storage::RayPayloadIn => &[
-            ShaderStage::ClosestHit,
-            ShaderStage::AnyHit,
-            ShaderStage::Miss,
-        ],
-        Storage::HitAttribute => &[
-            ShaderStage::Intersection,
-            ShaderStage::ClosestHit,
-            ShaderStage::AnyHit,
-        ],
-        Storage::CallableData => &[
-            ShaderStage::RayGeneration,
-            ShaderStage::ClosestHit,
-            ShaderStage::Miss,
-            ShaderStage::Callable,
-        ],
-        Storage::CallableDataIn => &[ShaderStage::Callable],
-        Storage::HitObjectAttributeNv | Storage::HitObjectAttributeExt => &[
-            ShaderStage::RayGeneration,
-            ShaderStage::ClosestHit,
-            ShaderStage::Miss,
-        ],
-        _ => &[],
+        Storage::RayPayload => ShaderStageMask::RAY_GENERATION
+            .union(ShaderStageMask::CLOSEST_HIT)
+            .union(ShaderStageMask::ANY_HIT)
+            .union(ShaderStageMask::MISS),
+        Storage::RayPayloadIn => ShaderStageMask::CLOSEST_HIT
+            .union(ShaderStageMask::ANY_HIT)
+            .union(ShaderStageMask::MISS),
+        Storage::HitAttribute => ShaderStageMask::INTERSECTION
+            .union(ShaderStageMask::CLOSEST_HIT)
+            .union(ShaderStageMask::ANY_HIT),
+        Storage::CallableData => ShaderStageMask::RAY_GENERATION
+            .union(ShaderStageMask::CLOSEST_HIT)
+            .union(ShaderStageMask::MISS)
+            .union(ShaderStageMask::CALLABLE),
+        Storage::CallableDataIn => ShaderStageMask::CALLABLE,
+        Storage::HitObjectAttributeNv | Storage::HitObjectAttributeExt => {
+            ShaderStageMask::RAY_GENERATION
+                .union(ShaderStageMask::CLOSEST_HIT)
+                .union(ShaderStageMask::MISS)
+        }
+        _ => ShaderStageMask::empty(),
     }
 }
 
@@ -134,7 +127,8 @@ pub fn is_shader_record(qualifiers: &Qualifiers) -> bool {
     qualifiers
         .layout
         .iter()
-        .any(|entry| entry.name == "shaderrecordnv" || entry.name == "shaderrecordext")
+        .filter_map(|entry| entry.id)
+        .any(LayoutId::is_shader_record)
 }
 
 pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
@@ -147,9 +141,14 @@ pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn require_stage(&mut self, span: Span, stages: &[ShaderStage], what: &str) -> bool {
+    pub(crate) fn require_stage(
+        &mut self,
+        span: Span,
+        stages: ShaderStageMask,
+        what: &str,
+    ) -> bool {
         !self.stage_check(span, |stage| {
-            (!stages.contains(&stage)).then(|| DiagnosticKind::NotSupportedInStage {
+            (!stages.has(stage)).then(|| DiagnosticKind::NotSupportedInStage {
                 feature: String::from(what),
                 stage: stage.name(),
             })
@@ -207,13 +206,13 @@ impl Analyzer<'_> {
                 invalid("shaderRecordNV", "can only be used with a buffer"),
             );
         }
-        if qualifiers.has_layout("binding") {
+        if qualifiers.has_layout(LayoutId::Binding) {
             self.error(
                 span,
                 invalid("binding", "cannot be used with shaderRecordNV"),
             );
         }
-        if qualifiers.has_layout("set") {
+        if qualifiers.has_layout(LayoutId::Set) {
             self.error(span, invalid("set", "cannot be used with shaderRecordNV"));
         }
     }
@@ -232,7 +231,7 @@ impl Analyzer<'_> {
             return;
         };
         let Some(location) = qualifiers
-            .layout_entry("location")
+            .layout_entry(LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {
@@ -451,7 +450,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn ray_jump(&mut self, span: Span, keyword: &'static str) {
         if self.require_extension(span, Extension::ExtRayTracing, keyword) {
-            self.require_stage(span, &[ShaderStage::AnyHit], keyword);
+            self.require_stage(span, ShaderStageMask::ANY_HIT, keyword);
         }
     }
 
@@ -461,11 +460,7 @@ impl Analyzer<'_> {
         qualifiers: &Qualifiers,
         standalone: bool,
     ) {
-        if !qualifiers
-            .layout
-            .iter()
-            .any(|entry| entry.name == "primitive_culling")
-        {
+        if !qualifiers.has_layout(LayoutId::PrimitiveCulling) {
             return;
         }
         if !self.require_extensions(
@@ -521,7 +516,7 @@ impl Analyzer<'_> {
         let Some(id) = self.redeclared_opacity_micromap() else {
             return false;
         };
-        let entry = qualifiers.layout_entry("constant_id").cloned();
+        let entry = qualifiers.layout_entry(LayoutId::ConstantId).cloned();
         let valid = entry.is_some()
             && qualifiers.storage == Storage::None
             && !qualifiers.flags.contains(QualifierFlags::CONSTANT)
@@ -550,7 +545,7 @@ impl Analyzer<'_> {
         value: Option<&Constant>,
     ) -> Option<crate::scope::SymbolId> {
         let id = self.redeclared_opacity_micromap()?;
-        if qualifiers.has_layout("constant_id") {
+        if qualifiers.has_layout(LayoutId::ConstantId) {
             self.error(
                 span,
                 DiagnosticKind::InvalidQualifier {

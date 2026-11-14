@@ -7,6 +7,7 @@ use rglsl_ast::Span;
 use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 
 use crate::constant::Constant;
+pub use crate::layout_id::LayoutId;
 use crate::spirv::{SpirvDecoration, SpirvInstruction};
 use crate::types::{BlockId, StructId, Type};
 
@@ -50,6 +51,7 @@ impl Storage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutEntry {
+    pub id: Option<LayoutId>,
     pub name: String,
     pub value: LayoutValue,
     pub span: Span,
@@ -146,12 +148,20 @@ pub struct Qualifiers {
 }
 
 impl Qualifiers {
-    pub fn layout_entry(&self, name: &str) -> Option<&LayoutEntry> {
-        self.layout.iter().rev().find(|entry| entry.name == name)
+    pub fn layout_entry(&self, id: LayoutId) -> Option<&LayoutEntry> {
+        self.layout.iter().rev().find(|entry| entry.id == Some(id))
     }
 
-    pub fn has_layout(&self, name: &str) -> bool {
-        self.layout_entry(name).is_some()
+    pub fn has_layout(&self, id: LayoutId) -> bool {
+        self.layout_entry(id).is_some()
+    }
+
+    pub fn image_format(&self) -> Option<LayoutId> {
+        self.layout
+            .iter()
+            .rev()
+            .filter_map(|entry| entry.id)
+            .find(|id| id.is_image_format())
     }
 
     pub const fn has(&self, flags: QualifierFlags) -> bool {

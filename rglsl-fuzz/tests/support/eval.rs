@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use rglsl_fuzz::ast::{
-    BasicType, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, NumericKind,
-    ScalarType, TypeSpecifierNonArray, UnaryOperator,
+    BasicType, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, NumericKind, Scalar,
+    TypeSpecifierNonArray, UnaryOperator,
 };
 use rglsl_fuzz::basic;
 
@@ -10,7 +10,7 @@ use super::TestResult;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Value {
-    pub scalar: ScalarType,
+    pub scalar: Scalar,
     pub columns: u32,
     pub rows: u32,
     pub data: Vec<f64>,
@@ -30,7 +30,7 @@ impl Value {
         }
     }
 
-    pub fn scalar(scalar: ScalarType, value: f64) -> Self {
+    pub fn scalar(scalar: Scalar, value: f64) -> Self {
         Self {
             scalar,
             columns: 1,
@@ -68,23 +68,23 @@ impl Value {
     }
 }
 
-fn wrap(scalar: ScalarType, value: f64) -> f64 {
+fn wrap(scalar: Scalar, value: f64) -> f64 {
     match scalar {
-        ScalarType::Int => f64::from((value as i64) as i32),
-        ScalarType::Uint => f64::from((value as i64) as u32),
-        ScalarType::Bool => f64::from(u8::from(value != 0.0)),
-        ScalarType::Float | ScalarType::Double => value,
+        Scalar::Int => f64::from((value as i64) as i32),
+        Scalar::Uint => f64::from((value as i64) as u32),
+        Scalar::Bool => f64::from(u8::from(value != 0.0)),
+        Scalar::Float | Scalar::Double => value,
         other => panic!("the fuzzer does not generate {other:?}"),
     }
 }
 
-fn convert(value: f64, from: ScalarType, to: ScalarType) -> f64 {
+fn convert(value: f64, from: Scalar, to: Scalar) -> f64 {
     match to {
-        ScalarType::Bool => f64::from(u8::from(value != 0.0)),
-        ScalarType::Int if from == ScalarType::Uint => f64::from(value as u32 as i32),
-        ScalarType::Uint if from == ScalarType::Int => f64::from(value as i32 as u32),
-        ScalarType::Int | ScalarType::Uint => wrap(to, value.trunc()),
-        ScalarType::Float | ScalarType::Double => value,
+        Scalar::Bool => f64::from(u8::from(value != 0.0)),
+        Scalar::Int if from == Scalar::Uint => f64::from(value as u32 as i32),
+        Scalar::Uint if from == Scalar::Int => f64::from(value as i32 as u32),
+        Scalar::Int | Scalar::Uint => wrap(to, value.trunc()),
+        Scalar::Float | Scalar::Double => value,
         other => panic!("the fuzzer does not generate {other:?}"),
     }
 }
@@ -104,10 +104,7 @@ impl Evaluator {
         );
         evaluator.variables.insert(
             String::from("gl_FragCoord"),
-            Value::new(
-                basic::vector(ScalarType::Float, 4),
-                vec![0.5, 0.5, 0.0, 1.0],
-            ),
+            Value::new(basic::vector(Scalar::Float, 4), vec![0.5, 0.5, 0.0, 1.0]),
         );
         evaluator
     }
@@ -122,17 +119,15 @@ impl Evaluator {
             ExpressionKind::Number(literal) => {
                 let digits = literal.digits();
                 match literal.kind {
-                    NumericKind::Int => Value::scalar(ScalarType::Int, digits.parse()?),
-                    NumericKind::Uint => Value::scalar(ScalarType::Uint, digits.parse()?),
+                    NumericKind::Int => Value::scalar(Scalar::Int, digits.parse()?),
+                    NumericKind::Uint => Value::scalar(Scalar::Uint, digits.parse()?),
                     NumericKind::Float | NumericKind::Double => {
-                        Value::scalar(ScalarType::Float, digits.parse()?)
+                        Value::scalar(Scalar::Float, digits.parse()?)
                     }
                     other => panic!("the fuzzer does not generate {other:?} literals"),
                 }
             }
-            ExpressionKind::Bool(value) => {
-                Value::scalar(ScalarType::Bool, f64::from(u8::from(*value)))
-            }
+            ExpressionKind::Bool(value) => Value::scalar(Scalar::Bool, f64::from(u8::from(*value))),
             ExpressionKind::String(value) => panic!("cannot evaluate the string {value:?}"),
             ExpressionKind::Parenthesized(inner) => self.eval(inner)?,
             ExpressionKind::FieldSelection { base, field } => {
@@ -198,7 +193,7 @@ impl Evaluator {
                         UnaryOperator::Plus => *x,
                         UnaryOperator::LogicalNot => f64::from(u8::from(*x == 0.0)),
                         UnaryOperator::BitNot => match scalar {
-                            ScalarType::Uint => f64::from(!(*x as u32)),
+                            Scalar::Uint => f64::from(!(*x as u32)),
                             _ => f64::from(!(*x as i32)),
                         },
                         _ => panic!("side effect"),
@@ -332,8 +327,8 @@ fn construct(ty: BasicType, arguments: &[Value]) -> Value {
     result
 }
 
-fn integer_op(operator: BinaryOperator, scalar: ScalarType, a: f64, b: f64) -> f64 {
-    if scalar == ScalarType::Uint {
+fn integer_op(operator: BinaryOperator, scalar: Scalar, a: f64, b: f64) -> f64 {
+    if scalar == Scalar::Uint {
         let (a, b) = (a as u32, b as u32);
         f64::from(match operator {
             BinaryOperator::Add => a.wrapping_add(b),
@@ -367,7 +362,7 @@ fn integer_op(operator: BinaryOperator, scalar: ScalarType, a: f64, b: f64) -> f
 }
 
 fn binary(operator: BinaryOperator, left: &Value, right: &Value) -> TestResult<Value> {
-    let boolean = |value: bool| Value::scalar(ScalarType::Bool, f64::from(u8::from(value)));
+    let boolean = |value: bool| Value::scalar(Scalar::Bool, f64::from(u8::from(value)));
     match operator {
         BinaryOperator::Equal => return Ok(boolean(left.approx_eq(right))),
         BinaryOperator::NotEqual => return Ok(boolean(!left.approx_eq(right))),
@@ -399,7 +394,7 @@ fn binary(operator: BinaryOperator, left: &Value, right: &Value) -> TestResult<V
     let data = (0..shape.data.len())
         .map(|index| {
             let (a, b) = (left.get(index), right.get(index));
-            if scalar == ScalarType::Float {
+            if scalar == Scalar::Float {
                 match operator {
                     BinaryOperator::Add => a + b,
                     BinaryOperator::Subtract => a - b,
@@ -446,7 +441,7 @@ fn linear_product(left: &Value, right: &Value) -> TestResult<Value> {
     }
     Ok(if left.is_matrix() && right.is_matrix() {
         Value {
-            scalar: ScalarType::Float,
+            scalar: Scalar::Float,
             columns: u32::try_from(right_columns)?,
             rows: u32::try_from(left_rows)?,
             data,
@@ -454,7 +449,7 @@ fn linear_product(left: &Value, right: &Value) -> TestResult<Value> {
     } else {
         let rows = u32::try_from(data.len())?;
         Value {
-            scalar: ScalarType::Float,
+            scalar: Scalar::Float,
             columns: 1,
             rows,
             data,
@@ -486,7 +481,7 @@ fn determinant(data: &[f64], size: usize) -> f64 {
 fn builtin(name: &str, values: &[Value]) -> Value {
     let first = &values[0];
     let map = |f: fn(f64) -> f64| first.with_data(first.data.iter().map(|x| f(*x)).collect());
-    let float = |x: f64| Value::scalar(ScalarType::Float, x);
+    let float = |x: f64| Value::scalar(Scalar::Float, x);
     match name {
         "sqrt" => map(f64::sqrt),
         "abs" => map(f64::abs),
@@ -551,7 +546,7 @@ fn builtin(name: &str, values: &[Value]) -> Value {
             let data = (0..first.data.len())
                 .map(|index| {
                     let (x, y, a) = (first.get(index), values[1].get(index), values[2].get(index));
-                    if values[2].scalar == ScalarType::Bool {
+                    if values[2].scalar == Scalar::Bool {
                         if a != 0.0 { y } else { x }
                     } else {
                         x * (1.0 - a) + y * a

@@ -716,146 +716,7 @@ pub enum ArrayDimension {
     Sized(Expression),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ScalarType {
-    Bool,
-    Int,
-    Uint,
-    Float,
-    Double,
-    Int8,
-    Uint8,
-    Int16,
-    Uint16,
-    Int64,
-    Uint64,
-    Float16,
-    BFloat16,
-    FloatE4M3,
-    FloatE5M2,
-    FloatE2M1,
-    FloatE3M2,
-    FloatE2M3,
-    FloatUE8M0,
-    FloatMXINT8,
-}
-
-impl ScalarType {
-    pub const ALL: [Self; 20] = [
-        Self::Bool,
-        Self::Int,
-        Self::Uint,
-        Self::Float,
-        Self::Double,
-        Self::Int8,
-        Self::Uint8,
-        Self::Int16,
-        Self::Uint16,
-        Self::Int64,
-        Self::Uint64,
-        Self::Float16,
-        Self::BFloat16,
-        Self::FloatE4M3,
-        Self::FloatE5M2,
-        Self::FloatE2M1,
-        Self::FloatE3M2,
-        Self::FloatE2M3,
-        Self::FloatUE8M0,
-        Self::FloatMXINT8,
-    ];
-
-    pub const fn keyword(self) -> &'static str {
-        match self {
-            Self::Bool => "bool",
-            Self::Int => "int",
-            Self::Uint => "uint",
-            Self::Float => "float",
-            Self::Double => "double",
-            Self::Int8 => "int8_t",
-            Self::Uint8 => "uint8_t",
-            Self::Int16 => "int16_t",
-            Self::Uint16 => "uint16_t",
-            Self::Int64 => "int64_t",
-            Self::Uint64 => "uint64_t",
-            Self::Float16 => "float16_t",
-            Self::BFloat16 => "bfloat16_t",
-            Self::FloatE4M3 => "floate4m3_t",
-            Self::FloatE5M2 => "floate5m2_t",
-            Self::FloatE2M1 => "floate2m1_t",
-            Self::FloatE3M2 => "floate3m2_t",
-            Self::FloatE2M3 => "floate2m3_t",
-            Self::FloatUE8M0 => "floatue8m0_t",
-            Self::FloatMXINT8 => "floatmxint8_t",
-        }
-    }
-
-    pub const fn vector_prefix(self) -> &'static str {
-        match self {
-            Self::Bool => "bvec",
-            Self::Int => "ivec",
-            Self::Uint => "uvec",
-            Self::Float => "vec",
-            Self::Double => "dvec",
-            Self::Int8 => "i8vec",
-            Self::Uint8 => "u8vec",
-            Self::Int16 => "i16vec",
-            Self::Uint16 => "u16vec",
-            Self::Int64 => "i64vec",
-            Self::Uint64 => "u64vec",
-            Self::Float16 => "f16vec",
-            Self::BFloat16 => "bf16vec",
-            Self::FloatE4M3 => "fe4m3vec",
-            Self::FloatE5M2 => "fe5m2vec",
-            Self::FloatE2M1 => "fe2m1vec",
-            Self::FloatE3M2 => "fe3m2vec",
-            Self::FloatE2M3 => "fe2m3vec",
-            Self::FloatUE8M0 => "fue8m0vec",
-            Self::FloatMXINT8 => "fmxint8vec",
-        }
-    }
-
-    pub const fn matrix_prefix(self) -> Option<&'static str> {
-        match self {
-            Self::Float => Some("mat"),
-            Self::Double => Some("dmat"),
-            Self::Float16 => Some("f16mat"),
-            _ => None,
-        }
-    }
-
-    fn from_scalar_keyword(word: &str) -> Option<Self> {
-        Some(match word {
-            "int32_t" => Self::Int,
-            "uint32_t" => Self::Uint,
-            "float32_t" => Self::Float,
-            "float64_t" => Self::Double,
-            _ => {
-                return Self::ALL
-                    .into_iter()
-                    .find(|scalar| scalar.keyword() == word);
-            }
-        })
-    }
-
-    fn vector_prefixes() -> impl Iterator<Item = (&'static str, Self)> {
-        Self::ALL
-            .into_iter()
-            .map(|scalar| (scalar.vector_prefix(), scalar))
-            .chain([
-                ("i32vec", Self::Int),
-                ("u32vec", Self::Uint),
-                ("f32vec", Self::Float),
-                ("f64vec", Self::Double),
-            ])
-    }
-
-    fn matrix_prefixes() -> impl Iterator<Item = (&'static str, Self)> {
-        Self::ALL
-            .into_iter()
-            .filter_map(|scalar| scalar.matrix_prefix().map(|prefix| (prefix, scalar)))
-            .chain([("f32mat", Self::Float), ("f64mat", Self::Double)])
-    }
-}
+pub use crate::scalar::Scalar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Dimension {
@@ -885,13 +746,13 @@ impl Dimension {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BasicType {
-    Scalar(ScalarType),
+    Scalar(Scalar),
     Vector {
-        scalar: ScalarType,
+        scalar: Scalar,
         size: Dimension,
     },
     Matrix {
-        scalar: ScalarType,
+        scalar: Scalar,
         columns: Dimension,
         rows: Dimension,
     },
@@ -899,15 +760,15 @@ pub enum BasicType {
 
 impl BasicType {
     pub fn from_keyword(word: &str) -> Option<Self> {
-        if let Some(scalar) = ScalarType::from_scalar_keyword(word) {
+        if let Some(scalar) = Scalar::from_scalar_keyword(word) {
             return Some(Self::Scalar(scalar));
         }
-        for (prefix, scalar) in ScalarType::vector_prefixes() {
+        for (prefix, scalar) in Scalar::vector_prefixes() {
             if let Some(size) = word.strip_prefix(prefix).and_then(Dimension::from_digit) {
                 return Some(Self::Vector { scalar, size });
             }
         }
-        for (prefix, scalar) in ScalarType::matrix_prefixes() {
+        for (prefix, scalar) in Scalar::matrix_prefixes() {
             let Some(shape) = word.strip_prefix(prefix) else {
                 continue;
             };

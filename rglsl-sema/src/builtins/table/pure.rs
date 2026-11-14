@@ -2,6 +2,7 @@ use rglsl_types::extension::Extension::*;
 
 use super::BuiltinFunction;
 use super::Floats::{DoublesAndHalves, Halves};
+use crate::builtins::FRAGMENT;
 use crate::builtins::kind::BitOperation::*;
 use crate::builtins::kind::BuiltinKind::{Assume, Decompose, Expect, Pure, Wide};
 use crate::builtins::kind::Comparison::*;
@@ -11,7 +12,9 @@ use crate::builtins::kind::Pure::*;
 use crate::builtins::kind::Relation::*;
 use crate::builtins::kind::Wide::*;
 use crate::builtins::kind::{Axis, Control};
-use crate::builtins::{COMPUTE, FRAGMENT, MESH, TASK};
+use rglsl_types::ShaderStageMask;
+
+const DERIVATIVE_STAGES: ShaderStageMask = FRAGMENT.union(ShaderStageMask::COMPUTE_LIKE);
 
 pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "radians": Pure(Math(Radians)) => [genF(genF)] {
@@ -745,47 +748,47 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     }
     "dFdx": Pure(Derivative(Axis::X, Control::Plain)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "dFdy": Pure(Derivative(Axis::Y, Control::Plain)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "fwidth": Pure(Derivative(Axis::Width, Control::Plain)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "dFdxFine": Pure(Derivative(Axis::X, Control::Fine)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "dFdyFine": Pure(Derivative(Axis::Y, Control::Fine)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "fwidthFine": Pure(Derivative(Axis::Width, Control::Fine)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "dFdxCoarse": Pure(Derivative(Axis::X, Control::Coarse)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "dFdyCoarse": Pure(Derivative(Axis::Y, Control::Coarse)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "fwidthCoarse": Pure(Derivative(Axis::Width, Control::Coarse)) => [genF(genF)] {
         flags: flags!(FOLD, FUZZ),
-        stages: FRAGMENT | COMPUTE | TASK | MESH,
+        stages: DERIVATIVE_STAGES,
         floats: DoublesAndHalves,
     }
     "assumeEXT": Assume => [void(bool)] {

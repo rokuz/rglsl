@@ -4,14 +4,13 @@ use rglsl_types::extension::Extension::{self, *};
 use super::ConstantValue::{Bool, Int, Uint};
 use super::VariableKind::{Constant, Input};
 use super::{BuiltinVariable, Redeclaration, VariableFlags};
-use crate::builtins::{
-    ALL_STAGE_BITS, ANY_HIT, CALLABLE, CLOSEST_HIT, INTERSECTION, MISS, RAY_GENERATION,
-};
+use crate::builtins::{ALL_STAGES, ANY_HIT, CLOSEST_HIT, INTERSECTION, MISS};
+use rglsl_types::ShaderStageMask;
 
-const HIT: u16 = INTERSECTION | ANY_HIT | CLOSEST_HIT;
-const TRAVERSAL: u16 = HIT | MISS;
-const ALL_RAY: u16 = RAY_GENERATION | TRAVERSAL | CALLABLE;
-const ANY_OR_CLOSEST_HIT: u16 = ANY_HIT | CLOSEST_HIT;
+const HIT: ShaderStageMask = INTERSECTION.union(ANY_HIT).union(CLOSEST_HIT);
+const TRAVERSAL: ShaderStageMask = HIT.union(MISS);
+const ALL_RAY: ShaderStageMask = ShaderStageMask::RAY_TRACING;
+const ANY_OR_CLOSEST_HIT: ShaderStageMask = ANY_HIT.union(CLOSEST_HIT);
 const NV: &[Extension] = &[NvRayTracing];
 const EXT: &[Extension] = &[ExtRayTracing];
 const EITHER: &[Extension] = &[NvRayTracing, ExtRayTracing];
@@ -268,9 +267,9 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: &[NvLinearSweptSpheres],
     }
     "gl_HitKindFrontFacingMicroTriangleNV": Input(HitKindFrontFacingMicroTriangle) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
     }
     "gl_HitKindBackFacingMicroTriangleNV": Input(HitKindBackFacingMicroTriangle) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
     }
 };

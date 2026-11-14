@@ -7,17 +7,17 @@ use rglsl_ast::ast::{
     InitDeclarator, InitDeclaratorList, Initializer, InterpolationQualifier, Node,
     SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
 };
-use rglsl_sema::SymbolId;
 use rglsl_sema::builtins::variables::{self, BlockSize, BuiltinVariable, VariableFlags};
 use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind, Variable};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
     TypeKind,
 };
+use rglsl_sema::{LayoutId, SymbolId};
 
 use super::types::image_dimension;
+use super::xfb;
 use super::{GlobalRef, Initialization, Lowerer, Packing, Result, internal, semantic, unsupported};
-use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
@@ -25,24 +25,32 @@ use crate::{
     StorageFormat, TypeInner,
 };
 
-fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
-    let mut names = Vec::new();
+fn layout_ids(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<LayoutId> {
+    let mut ids = Vec::new();
     for single in qualifier.iter().flat_map(|q| &q.node.qualifiers) {
         if let SingleTypeQualifier::Layout(ref layout) = single.node {
-            names.extend(layout.ids.iter().map(|id| id.node.name.node.as_str()));
+            ids.extend(
+                layout
+                    .ids
+                    .iter()
+                    .filter_map(|id| LayoutId::from_name(&id.node.name.node)),
+            );
         }
     }
-    names
+    ids
 }
 
-fn tile_shading_rate_index(name: &str) -> Option<usize> {
-    [
-        "shading_rate_xqcom",
-        "shading_rate_yqcom",
-        "shading_rate_zqcom",
-    ]
-    .iter()
-    .position(|rate| name == *rate)
+fn layout_entries(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<(Option<LayoutId>, &str)> {
+    let mut entries = Vec::new();
+    for single in qualifier.iter().flat_map(|q| &q.node.qualifiers) {
+        if let SingleTypeQualifier::Layout(ref layout) = single.node {
+            entries.extend(layout.ids.iter().map(|id| {
+                let name = id.node.name.node.as_str();
+                (LayoutId::from_name(name), name)
+            }));
+        }
+    }
+    entries
 }
 
 fn has_qualifier(
@@ -93,50 +101,50 @@ const fn interpolation_of(qualifier: InterpolationQualifier) -> Interpolation {
     }
 }
 
-pub(super) fn image_format(word: &str) -> Option<StorageFormat> {
+pub(super) const fn image_format(id: LayoutId) -> Option<StorageFormat> {
     use StorageFormat as Sf;
-    Some(match word {
-        "rgba32f" => Sf::Rgba32Float,
-        "rgba16f" => Sf::Rgba16Float,
-        "rg32f" => Sf::Rg32Float,
-        "rg16f" => Sf::Rg16Float,
-        "r11f_g11f_b10f" => Sf::Rg11b10Ufloat,
-        "r32f" => Sf::R32Float,
-        "r16f" => Sf::R16Float,
-        "rgba16" => Sf::Rgba16Unorm,
-        "rgb10_a2ui" => Sf::Rgb10a2Uint,
-        "rgb10_a2" => Sf::Rgb10a2Unorm,
-        "rgba8" => Sf::Rgba8Unorm,
-        "rg16" => Sf::Rg16Unorm,
-        "rg8" => Sf::Rg8Unorm,
-        "r16" => Sf::R16Unorm,
-        "r8" => Sf::R8Unorm,
-        "rgba16_snorm" => Sf::Rgba16Snorm,
-        "rgba8_snorm" => Sf::Rgba8Snorm,
-        "rg16_snorm" => Sf::Rg16Snorm,
-        "rg8_snorm" => Sf::Rg8Snorm,
-        "r16_snorm" => Sf::R16Snorm,
-        "r8_snorm" => Sf::R8Snorm,
-        "rgba32i" => Sf::Rgba32Sint,
-        "rgba16i" => Sf::Rgba16Sint,
-        "rgba8i" => Sf::Rgba8Sint,
-        "rg32i" => Sf::Rg32Sint,
-        "rg16i" => Sf::Rg16Sint,
-        "rg8i" => Sf::Rg8Sint,
-        "r32i" => Sf::R32Sint,
-        "r16i" => Sf::R16Sint,
-        "r8i" => Sf::R8Sint,
-        "rgba32ui" => Sf::Rgba32Uint,
-        "rgba16ui" => Sf::Rgba16Uint,
-        "rgba8ui" => Sf::Rgba8Uint,
-        "r64ui" => Sf::R64Uint,
-        "r64i" => Sf::R64Sint,
-        "rg32ui" => Sf::Rg32Uint,
-        "rg16ui" => Sf::Rg16Uint,
-        "rg8ui" => Sf::Rg8Uint,
-        "r32ui" => Sf::R32Uint,
-        "r16ui" => Sf::R16Uint,
-        "r8ui" => Sf::R8Uint,
+    Some(match id {
+        LayoutId::Rgba32f => Sf::Rgba32Float,
+        LayoutId::Rgba16f => Sf::Rgba16Float,
+        LayoutId::Rg32f => Sf::Rg32Float,
+        LayoutId::Rg16f => Sf::Rg16Float,
+        LayoutId::R11fG11fB10f => Sf::Rg11b10Ufloat,
+        LayoutId::R32f => Sf::R32Float,
+        LayoutId::R16f => Sf::R16Float,
+        LayoutId::Rgba16 => Sf::Rgba16Unorm,
+        LayoutId::Rgb10A2ui => Sf::Rgb10a2Uint,
+        LayoutId::Rgb10A2 => Sf::Rgb10a2Unorm,
+        LayoutId::Rgba8 => Sf::Rgba8Unorm,
+        LayoutId::Rg16 => Sf::Rg16Unorm,
+        LayoutId::Rg8 => Sf::Rg8Unorm,
+        LayoutId::R16 => Sf::R16Unorm,
+        LayoutId::R8 => Sf::R8Unorm,
+        LayoutId::Rgba16Snorm => Sf::Rgba16Snorm,
+        LayoutId::Rgba8Snorm => Sf::Rgba8Snorm,
+        LayoutId::Rg16Snorm => Sf::Rg16Snorm,
+        LayoutId::Rg8Snorm => Sf::Rg8Snorm,
+        LayoutId::R16Snorm => Sf::R16Snorm,
+        LayoutId::R8Snorm => Sf::R8Snorm,
+        LayoutId::Rgba32i => Sf::Rgba32Sint,
+        LayoutId::Rgba16i => Sf::Rgba16Sint,
+        LayoutId::Rgba8i => Sf::Rgba8Sint,
+        LayoutId::Rg32i => Sf::Rg32Sint,
+        LayoutId::Rg16i => Sf::Rg16Sint,
+        LayoutId::Rg8i => Sf::Rg8Sint,
+        LayoutId::R32i => Sf::R32Sint,
+        LayoutId::R16i => Sf::R16Sint,
+        LayoutId::R8i => Sf::R8Sint,
+        LayoutId::Rgba32ui => Sf::Rgba32Uint,
+        LayoutId::Rgba16ui => Sf::Rgba16Uint,
+        LayoutId::Rgba8ui => Sf::Rgba8Uint,
+        LayoutId::R64ui => Sf::R64Uint,
+        LayoutId::R64i => Sf::R64Sint,
+        LayoutId::Rg32ui => Sf::Rg32Uint,
+        LayoutId::Rg16ui => Sf::Rg16Uint,
+        LayoutId::Rg8ui => Sf::Rg8Uint,
+        LayoutId::R32ui => Sf::R32Uint,
+        LayoutId::R16ui => Sf::R16Uint,
+        LayoutId::R8ui => Sf::R8Uint,
         _ => return None,
     })
 }
@@ -365,7 +373,7 @@ impl<'a> Lowerer<'a> {
     fn explicit_ranges(&self, variable: &Variable) -> Vec<(u32, u32)> {
         let location_of = |qualifiers: &Qualifiers| {
             qualifiers
-                .layout_entry("location")
+                .layout_entry(LayoutId::Location)
                 .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
         };
@@ -455,9 +463,9 @@ impl<'a> Lowerer<'a> {
             | DeclarationKind::SpirvExecutionMode(_) => Vec::new(),
         };
         if let Some(qualifier) = qualifiers.into_iter().find(|&qualifier| {
-            layout_names(Some(qualifier))
-                .iter()
-                .any(|name| name.starts_with("xfb_"))
+            layout_ids(Some(qualifier))
+                .into_iter()
+                .any(LayoutId::is_xfb)
         }) {
             if self.xfb_default_buffer().is_none() {
                 return Err(semantic(
@@ -502,7 +510,7 @@ impl<'a> Lowerer<'a> {
 
     fn default_qualifier(&mut self, qualifier: &'a Spanned<TypeQualifier>) -> Result<()> {
         let at = self.at(qualifier.span);
-        let names = layout_names(Some(qualifier));
+        let ids = layout_ids(Some(qualifier));
         match storage_of(Some(qualifier)) {
             Some(storage @ (StorageQualifier::Uniform | StorageQualifier::Buffer)) => {
                 let defaults = if storage == StorageQualifier::Buffer {
@@ -510,61 +518,59 @@ impl<'a> Lowerer<'a> {
                 } else {
                     &mut self.uniform_defaults
                 };
-                for name in names {
-                    match name {
-                        "std140" | "shared" | "packed" => defaults.packing = Some(Packing::Std140),
-                        "std430" => defaults.packing = Some(Packing::Std430),
-                        "row_major" => defaults.row_major = Some(true),
-                        "column_major" => defaults.row_major = Some(false),
-                        "scalar" => defaults.packing = Some(Packing::Scalar),
-                        _ => {}
+                for id in ids {
+                    if let Some(packing) = id.packing() {
+                        defaults.packing = Some(packing);
+                    } else if id == LayoutId::RowMajor {
+                        defaults.row_major = Some(true);
+                    } else if id == LayoutId::ColumnMajor {
+                        defaults.row_major = Some(false);
                     }
                 }
                 Ok(())
             }
             Some(StorageQualifier::In) => {
-                let owned: Vec<String> = names.iter().map(|name| String::from(*name)).collect();
-                self.stage_input_layout(&owned);
+                self.stage_input_layout(&ids);
                 self.stage_input_values(qualifier);
-                for name in names {
-                    match name {
-                        "early_fragment_tests" => self.early_fragment_tests = true,
-                        "quad_derivatives" => self.quad_control.quad_derivatives = true,
-                        "full_quads" => self.quad_control.require_full_quads = true,
-                        "local_size_x" | "local_size_y" | "local_size_z" => {
-                            let value = xfb::ast_layout_value(self, Some(qualifier), name);
-                            let index = match name {
-                                "local_size_x" => 0,
-                                "local_size_y" => 1,
-                                _ => 2,
-                            };
-                            if let Some(slot) = self.declared_local_size.get_mut(index) {
+                for id in ids {
+                    match id {
+                        LayoutId::EarlyFragmentTests => self.early_fragment_tests = true,
+                        LayoutId::QuadDerivatives => self.quad_control.quad_derivatives = true,
+                        LayoutId::FullQuads => self.quad_control.require_full_quads = true,
+                        LayoutId::NonCoherentAttachmentReadQcom => {
+                            self.non_coherent_tile_read = true;
+                        }
+                        _ if id.local_size_axis().is_some() => {
+                            let value = xfb::ast_layout_value(self, Some(qualifier), id);
+                            if let Some(slot) = id
+                                .local_size_axis()
+                                .and_then(|index| self.declared_local_size.get_mut(index))
+                            {
                                 *slot = value;
                             }
                         }
-                        "non_coherent_attachment_readqcom" => {
-                            self.non_coherent_tile_read = true;
-                        }
-                        _ if tile_shading_rate_index(name).is_some() => {
-                            let index = tile_shading_rate_index(name).unwrap_or(0);
-                            let value = xfb::ast_layout_value(self, Some(qualifier), name)
+                        _ if id.tile_shading_rate_axis().is_some() => {
+                            let value = xfb::ast_layout_value(self, Some(qualifier), id)
                                 .filter(|value| *value > 0);
-                            if let (Some(slot), Some(value)) =
-                                (self.tile_shading_rate.get_mut(index), value)
-                            {
+                            if let (Some(slot), Some(value)) = (
+                                id.tile_shading_rate_axis()
+                                    .and_then(|index| self.tile_shading_rate.get_mut(index)),
+                                value,
+                            ) {
                                 *slot = Some(value);
                             }
                         }
-                        "local_size_x_id" | "local_size_y_id" | "local_size_z_id" => {
-                            let id = xfb::ast_layout_value(self, Some(qualifier), name)
+                        _ if id.local_size_id_axis().is_some() => {
+                            let spec_id = xfb::ast_layout_value(self, Some(qualifier), id)
                                 .filter(|value| *value != u32::MAX)
                                 .ok_or_else(|| {
                                     semantic("the specialization id is out of range", at)
                                 })?;
-                            if let Some(slot) = specialization::local_size_index(name)
+                            if let Some(slot) = id
+                                .local_size_id_axis()
                                 .and_then(|index| self.local_size_ids.get_mut(index))
                             {
-                                *slot = Some(id);
+                                *slot = Some(spec_id);
                             }
                         }
                         _ => {}
@@ -573,15 +579,14 @@ impl<'a> Lowerer<'a> {
                 Ok(())
             }
             Some(StorageQualifier::Out) => {
-                let owned: Vec<String> = names.iter().map(|name| String::from(*name)).collect();
-                self.stage_output_layout(&owned, qualifier);
+                self.stage_output_layout(&ids, qualifier);
                 let qualifier = Some(qualifier);
-                if let Some(buffer) = xfb::ast_layout_value(self, qualifier, "xfb_buffer") {
+                if let Some(buffer) = xfb::ast_layout_value(self, qualifier, LayoutId::XfbBuffer) {
                     self.xfb.default_buffer = Some(Some(buffer));
                 }
                 if let (Some(buffer), Some(stride)) = (
                     self.xfb_default_buffer(),
-                    xfb::ast_layout_value(self, qualifier, "xfb_stride"),
+                    xfb::ast_layout_value(self, qualifier, LayoutId::XfbStride),
                 ) {
                     self.xfb_stride(buffer, stride, at)?;
                 }
@@ -613,7 +618,7 @@ impl<'a> Lowerer<'a> {
         let qualifiers = &variable.qualifiers;
         let ty = &variable.ty;
         if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
-            if let Some(entry) = qualifiers.layout_entry("constant_id") {
+            if let Some(entry) = qualifiers.layout_entry(LayoutId::ConstantId) {
                 let id = entry
                     .value
                     .constant()
@@ -725,7 +730,7 @@ impl<'a> Lowerer<'a> {
         }
         let location = variable
             .qualifiers
-            .layout_entry("location")
+            .layout_entry(LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| internal(at))?;
@@ -940,9 +945,9 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(());
         }
-        let automatic_location = qualifiers.layout_entry("location").is_none();
+        let automatic_location = qualifiers.layout_entry(LayoutId::Location).is_none();
         let location = match qualifiers
-            .layout_entry("location")
+            .layout_entry(LayoutId::Location)
             .and_then(|e| e.value.constant())
         {
             Some(location) => u32::try_from(location).map_err(|_| internal(at))?,
@@ -976,14 +981,14 @@ impl<'a> Lowerer<'a> {
             sampling.get_or_insert(Sampling::Center);
         }
         let component = match qualifiers
-            .layout_entry("component")
+            .layout_entry(LayoutId::Component)
             .and_then(|e| e.value.constant())
         {
             Some(component) => Some(u32::try_from(component).map_err(|_| internal(at))?),
             None => None,
         };
         let blend_src = match qualifiers
-            .layout_entry("index")
+            .layout_entry(LayoutId::Index)
             .and_then(|e| e.value.constant())
         {
             Some(index) => Some(u32::try_from(index).map_err(|_| internal(at))?),
@@ -1035,19 +1040,19 @@ impl<'a> Lowerer<'a> {
         }
         self.outputs.insert(name, handle);
         self.output_stream(handle, qualifiers);
-        let explicit = xfb::layout_value(qualifiers, "xfb_buffer");
+        let explicit = xfb::layout_value(qualifiers, LayoutId::XfbBuffer);
         if explicit.is_none()
             && self.xfb.default_buffer.is_none()
-            && xfb::layout_value(qualifiers, "xfb_offset").is_none()
-            && xfb::layout_value(qualifiers, "xfb_stride").is_none()
+            && xfb::layout_value(qualifiers, LayoutId::XfbOffset).is_none()
+            && xfb::layout_value(qualifiers, LayoutId::XfbStride).is_none()
         {
             self.xfb.pending.push(handle);
             return Ok(());
         }
         let buffer = explicit.or(self.xfb_default_buffer());
         if let Some(buffer) = buffer {
-            let offset = xfb::layout_value(qualifiers, "xfb_offset");
-            if let Some(stride) = xfb::layout_value(qualifiers, "xfb_stride") {
+            let offset = xfb::layout_value(qualifiers, LayoutId::XfbOffset);
+            if let Some(stride) = xfb::layout_value(qualifiers, LayoutId::XfbStride) {
                 self.xfb_stride(buffer, stride, at)?;
             }
             if let Some(offset) = offset {
@@ -1063,17 +1068,14 @@ impl<'a> Lowerer<'a> {
         qualifiers: &Qualifiers,
         at: Span,
     ) -> Result<(Option<ResourceBinding>, Option<Option<u32>>)> {
-        let value = |name: &str| -> Result<Option<u32>> {
-            match qualifiers
-                .layout_entry(name)
-                .and_then(|e| e.value.constant())
-            {
+        let value = |id: LayoutId| -> Result<Option<u32>> {
+            match qualifiers.layout_entry(id).and_then(|e| e.value.constant()) {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
                 None => Ok(None),
             }
         };
-        let binding = value("binding")?;
-        let set = value("set")?.or(self.options.resource_set);
+        let binding = value(LayoutId::Binding)?;
+        let set = value(LayoutId::Set)?.or(self.options.resource_set);
         match binding {
             Some(binding) => Ok((
                 Some(ResourceBinding {
@@ -1129,10 +1131,8 @@ impl<'a> Lowerer<'a> {
         };
         let inner = if opaque.kind == OpaqueKind::Image {
             let format = qualifiers
-                .layout
-                .iter()
-                .rev()
-                .find_map(|entry| image_format(&entry.name))
+                .image_format()
+                .and_then(image_format)
                 .unwrap_or_else(|| unknown_format(opaque.sampled));
             TypeInner::Image {
                 dim: image_dimension(opaque),
@@ -1191,7 +1191,7 @@ impl<'a> Lowerer<'a> {
         }
         let (binding, unbound) = self.binding(qualifiers, at)?;
         let input_attachment_index = match qualifiers
-            .layout_entry("input_attachment_index")
+            .layout_entry(LayoutId::InputAttachmentIndex)
             .and_then(|entry| entry.value.constant())
         {
             Some(index) if opaque.is_some_and(|opaque| opaque.kind == OpaqueKind::SubpassInput) => {
@@ -1211,10 +1211,7 @@ impl<'a> Lowerer<'a> {
                 xfb: None,
                 input_attachment_index,
                 heap_offset: None,
-                tile_attachment: qualifiers
-                    .layout
-                    .iter()
-                    .any(|entry| entry.name == "tile_attachmentqcom"),
+                tile_attachment: qualifiers.has_layout(LayoutId::TileAttachmentQcom),
                 spirv_decorations: Vec::new(),
                 relaxed_precision: false,
                 immediate_bank: None,
@@ -1238,7 +1235,7 @@ impl<'a> Lowerer<'a> {
         let at = self.at(structure.name.span);
         if structure.name.node == "gl_PerVertex" {
             if storage_of(Some(&structure.qualifier)) == Some(StorageQualifier::In)
-                && layout_names(Some(&structure.qualifier)).contains(&"passthrough")
+                && layout_ids(Some(&structure.qualifier)).contains(&LayoutId::Passthrough)
             {
                 return self.passthrough_per_vertex(structure, at);
             }
@@ -1301,7 +1298,7 @@ impl<'a> Lowerer<'a> {
             }
         };
         let shader_record = rglsl_sema::analyze::is_shader_record(qualifiers);
-        let push_constant = qualifiers.has_layout("push_constant");
+        let push_constant = qualifiers.has_layout(LayoutId::PushConstant);
         if !push_constant && self.is_heap_view(&variable.qualifiers) {
             return self.heap_buffer_array(
                 symbol,
@@ -1312,12 +1309,10 @@ impl<'a> Lowerer<'a> {
             );
         }
         let (packing, row_major) = if shader_record {
-            let explicit = qualifiers.layout.iter().any(|entry| {
-                matches!(
-                    entry.name.as_str(),
-                    "std140" | "std430" | "scalar" | "shared" | "packed"
-                )
-            });
+            let explicit = qualifiers
+                .layout
+                .iter()
+                .any(|entry| entry.id.and_then(LayoutId::packing).is_some());
             let (packing, row_major) = self.block_packing(qualifiers, buffer, true);
             (if explicit { packing } else { Packing::Std430 }, row_major)
         } else {
@@ -1367,23 +1362,23 @@ impl<'a> Lowerer<'a> {
         if block
             .members
             .iter()
-            .any(|member| member.qualifiers.has_layout("member_offset"))
+            .any(|member| member.qualifiers.has_layout(LayoutId::MemberOffset))
         {
             return Err(unsupported(
                 "the `member_offset` layout qualifier on a block member",
                 at,
             ));
         }
-        let layout_value = |name| {
+        let layout_value = |id: LayoutId| {
             qualifiers
-                .layout_entry(name)
+                .layout_entry(id)
                 .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
         };
         let immediate_bank = push_constant
             .then(|| crate::ImmediateBank {
-                bank: layout_value("bank"),
-                member_offset: layout_value("member_offset"),
+                bank: layout_value(LayoutId::Bank),
+                member_offset: layout_value(LayoutId::MemberOffset),
             })
             .filter(|bank| *bank != crate::ImmediateBank::default());
         let handle = self.module.global_variables.append(
@@ -1431,13 +1426,15 @@ impl<'a> Lowerer<'a> {
         let mut packing = None;
         let mut row_major = None;
         for entry in &qualifiers.layout {
-            match entry.name.as_str() {
-                "std140" | "shared" | "packed" => packing = Some(Packing::Std140),
-                "std430" => packing = Some(Packing::Std430),
-                "scalar" => packing = Some(Packing::Scalar),
-                "row_major" => row_major = Some(true),
-                "column_major" => row_major = Some(false),
-                _ => {}
+            let Some(id) = entry.id else {
+                continue;
+            };
+            if let Some(found) = id.packing() {
+                packing = Some(found);
+            } else if id == LayoutId::RowMajor {
+                row_major = Some(true);
+            } else if id == LayoutId::ColumnMajor {
+                row_major = Some(false);
             }
         }
         let packing = packing
@@ -1474,16 +1471,16 @@ impl<'a> Lowerer<'a> {
                 at,
             ));
         }
-        let explicit = |qualifiers: &Qualifiers, name: &str| -> Result<Option<u32>> {
+        let explicit = |qualifiers: &Qualifiers, id: LayoutId| -> Result<Option<u32>> {
             match qualifiers
-                .layout_entry(name)
+                .layout_entry(id)
                 .and_then(|entry| entry.value.constant())
             {
                 Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
                 None => Ok(None),
             }
         };
-        let block_location = explicit(outer, "location")?;
+        let block_location = explicit(outer, LayoutId::Location)?;
         if input
             && (xfb::has_xfb(outer) || block.members.iter().any(|m| xfb::has_xfb(&m.qualifiers)))
         {
@@ -1495,7 +1492,7 @@ impl<'a> Lowerer<'a> {
         let xfb_buffer = if input {
             None
         } else {
-            xfb::layout_value(outer, "xfb_buffer").or(self.xfb_default_buffer())
+            xfb::layout_value(outer, LayoutId::XfbBuffer).or(self.xfb_default_buffer())
         };
         let mut declared = variable.ty.clone();
         if declared.outer_size() == Some(GlslArraySize::Unsized) {
@@ -1527,7 +1524,7 @@ impl<'a> Lowerer<'a> {
             if qualifiers.flags.contains(QualifierFlags::INVARIANT) && input {
                 return Err(semantic("invariant can only apply to an output", at));
             }
-            if let Some(buffer) = xfb::layout_value(qualifiers, "xfb_buffer")
+            if let Some(buffer) = xfb::layout_value(qualifiers, LayoutId::XfbBuffer)
                 && xfb_buffer != Some(buffer)
             {
                 return Err(semantic(
@@ -1561,8 +1558,8 @@ impl<'a> Lowerer<'a> {
                 interpolation = Some(Interpolation::Perspective);
                 sampling.get_or_insert(Sampling::Center);
             }
-            let component = explicit(qualifiers, "component")?;
-            member_locations.push(explicit(qualifiers, "location")?);
+            let component = explicit(qualifiers, LayoutId::Component)?;
+            member_locations.push(explicit(qualifiers, LayoutId::Location)?);
             members.push(crate::StructMember {
                 name: Some(member.name.clone()),
                 ty,
@@ -1595,15 +1592,18 @@ impl<'a> Lowerer<'a> {
                 .map(|(member, declared)| {
                     (
                         member.ty,
-                        xfb::layout_value(&declared.qualifiers, "xfb_offset"),
+                        xfb::layout_value(&declared.qualifiers, LayoutId::XfbOffset),
                     )
                 })
                 .collect();
-            let offsets =
-                self.xfb_member_offsets(xfb::layout_value(outer, "xfb_offset"), &explicit, at)?;
+            let offsets = self.xfb_member_offsets(
+                xfb::layout_value(outer, LayoutId::XfbOffset),
+                &explicit,
+                at,
+            )?;
             for ((member, declared), offset) in members.iter_mut().zip(&block.members).zip(offsets)
             {
-                if let Some(stride) = xfb::layout_value(&declared.qualifiers, "xfb_stride") {
+                if let Some(stride) = xfb::layout_value(&declared.qualifiers, LayoutId::XfbStride) {
                     self.xfb_stride(buffer, stride, at)?;
                 }
                 if let Some(offset) = offset {
@@ -1611,7 +1611,7 @@ impl<'a> Lowerer<'a> {
                 }
                 member.xfb_offset = offset;
             }
-            if let Some(stride) = xfb::layout_value(outer, "xfb_stride") {
+            if let Some(stride) = xfb::layout_value(outer, LayoutId::XfbStride) {
                 self.xfb_stride(buffer, stride, at)?;
             }
         }
@@ -1848,7 +1848,7 @@ impl<'a> Lowerer<'a> {
     fn per_vertex_xfb(&mut self, structure: &'a BlockStructure, at: Span) -> Result<()> {
         let outer = Some(&structure.qualifier);
         let Some(buffer) =
-            xfb::ast_layout_value(self, outer, "xfb_buffer").or(self.xfb_default_buffer())
+            xfb::ast_layout_value(self, outer, LayoutId::XfbBuffer).or(self.xfb_default_buffer())
         else {
             return Ok(());
         };
@@ -1858,9 +1858,9 @@ impl<'a> Lowerer<'a> {
         let mut declared = Vec::new();
         for member in &structure.members {
             let qualifier = member.node.ty.node.qualifier.as_ref();
-            let offset = xfb::ast_layout_value(self, qualifier, "xfb_offset");
-            let stride = xfb::ast_layout_value(self, qualifier, "xfb_stride");
-            if xfb::ast_layout_value(self, qualifier, "xfb_buffer")
+            let offset = xfb::ast_layout_value(self, qualifier, LayoutId::XfbOffset);
+            let stride = xfb::ast_layout_value(self, qualifier, LayoutId::XfbStride);
+            if xfb::ast_layout_value(self, qualifier, LayoutId::XfbBuffer)
                 .is_some_and(|member_buffer| member_buffer != buffer)
             {
                 return Err(semantic(
@@ -1888,7 +1888,7 @@ impl<'a> Lowerer<'a> {
             .map(|&(_, ty, offset, _)| (ty, offset))
             .collect();
         let offsets = self.xfb_member_offsets(
-            xfb::ast_layout_value(self, outer, "xfb_offset"),
+            xfb::ast_layout_value(self, outer, LayoutId::XfbOffset),
             &explicit,
             at,
         )?;
@@ -2079,26 +2079,26 @@ impl<'a> Lowerer<'a> {
         if has_qualifier(qualifier, |q| matches!(q, SingleTypeQualifier::Invariant)) {
             self.invariant.push((name.clone(), at));
         }
-        for layout in layout_names(qualifier) {
+        for (layout, raw) in layout_entries(qualifier) {
             match (layout, name.as_str()) {
-                ("viewport_relative", "gl_Layer") => {
+                (Some(LayoutId::ViewportRelative), "gl_Layer") => {
                     self.layer_layout.viewport_relative = true;
                     self.layer_layout.redeclared = Some(symbol);
                     continue;
                 }
-                ("secondary_view_offset", "gl_Layer") => {
+                (Some(LayoutId::SecondaryViewOffset), "gl_Layer") => {
                     self.layer_layout.secondary_view_offset =
-                        xfb::ast_layout_signed(self, qualifier, "secondary_view_offset")
+                        xfb::ast_layout_signed(self, qualifier, LayoutId::SecondaryViewOffset)
                             .and_then(|value| i32::try_from(value).ok());
                     self.layer_layout.redeclared = Some(symbol);
                     continue;
                 }
-                ("override_coverage", "gl_SampleMask") => {
+                (Some(LayoutId::OverrideCoverage), "gl_SampleMask") => {
                     self.override_coverage = true;
                     continue;
                 }
-                ("origin_upper_left", "gl_FragCoord") => continue,
-                ("pixel_center_integer", "gl_FragCoord") => {
+                (Some(LayoutId::OriginUpperLeft), "gl_FragCoord") => continue,
+                (Some(LayoutId::PixelCenterInteger), "gl_FragCoord") => {
                     return Err(semantic(
                         "`pixel_center_integer` is not allowed in Vulkan: the PixelCenterInteger execution mode must not be used",
                         at,
@@ -2107,13 +2107,13 @@ impl<'a> Lowerer<'a> {
                 _ => {}
             }
             let depth = match layout {
-                "depth_any" => None,
-                "depth_greater" => Some(ConservativeDepth::GreaterEqual),
-                "depth_less" => Some(ConservativeDepth::LessEqual),
-                "depth_unchanged" => Some(ConservativeDepth::Unchanged),
-                other => {
+                Some(LayoutId::DepthAny) => None,
+                Some(LayoutId::DepthGreater) => Some(ConservativeDepth::GreaterEqual),
+                Some(LayoutId::DepthLess) => Some(ConservativeDepth::LessEqual),
+                Some(LayoutId::DepthUnchanged) => Some(ConservativeDepth::Unchanged),
+                _ => {
                     return Err(unsupported(
-                        format!("the layout qualifier `{other}` on `{name}`"),
+                        format!("the layout qualifier `{raw}` on `{name}`"),
                         at,
                     ));
                 }

@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use crate::layout_id::LayoutId;
 use crate::scope::Qualifiers;
 use crate::types::{ArraySize, BlockType, Member, Packing, Scalar, Type, TypeKind, TypeRegistry};
 
@@ -141,18 +142,18 @@ const fn plain(alignment: u32, size: u32) -> TypeLayout {
 }
 
 pub fn member_row_major(qualifiers: &Qualifiers, row_major: bool) -> bool {
-    if qualifiers.has_layout("row_major") {
+    if qualifiers.has_layout(LayoutId::RowMajor) {
         true
-    } else if qualifiers.has_layout("column_major") {
+    } else if qualifiers.has_layout(LayoutId::ColumnMajor) {
         false
     } else {
         row_major
     }
 }
 
-fn layout_value(qualifiers: &Qualifiers, name: &str) -> Option<u32> {
+fn layout_value(qualifiers: &Qualifiers, id: LayoutId) -> Option<u32> {
     qualifiers
-        .layout_entry(name)
+        .layout_entry(id)
         .and_then(|entry| entry.value.constant())
         .and_then(|value| u32::try_from(value).ok())
 }
@@ -200,7 +201,7 @@ struct Placement {
 impl MemberPlacer {
     pub fn new(block: &Qualifiers, packing: Packing) -> Self {
         Self {
-            block_align: layout_value(block, "align"),
+            block_align: layout_value(block, LayoutId::Align),
             packing,
             hlsl_offsets: false,
             offset: 0,
@@ -222,8 +223,8 @@ impl MemberPlacer {
         row_major: bool,
     ) -> Option<u32> {
         let placement = self.placement(ty, layout, row_major);
-        let mut offset = layout_value(qualifiers, "offset").unwrap_or(self.offset);
-        let actual = match layout_value(qualifiers, "align").or(self.block_align) {
+        let mut offset = layout_value(qualifiers, LayoutId::Offset).unwrap_or(self.offset);
+        let actual = match layout_value(qualifiers, LayoutId::Align).or(self.block_align) {
             Some(align) => placement.alignment.max(align),
             None => placement.alignment,
         };

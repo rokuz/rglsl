@@ -8,6 +8,7 @@ use rglsl_types::extension::Extension;
 use super::Analyzer;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::layout::block_size;
+use crate::layout_id::LayoutId;
 use crate::scope::{Lookup, Qualifiers, Storage, SymbolKind};
 use crate::types::{BlockId, BlockStorage, BlockType, Member, Packing, ReferenceLayout};
 
@@ -25,12 +26,7 @@ pub(crate) fn packing_of(qualifiers: &Qualifiers) -> Option<Packing> {
         .layout
         .iter()
         .rev()
-        .find_map(|entry| match entry.name.as_str() {
-            "std140" | "shared" | "packed" => Some(Packing::Std140),
-            "std430" => Some(Packing::Std430),
-            "scalar" => Some(Packing::Scalar),
-            _ => None,
-        })
+        .find_map(|entry| entry.id.and_then(LayoutId::packing))
 }
 
 pub(crate) fn matrix_of(qualifiers: &Qualifiers) -> Option<bool> {
@@ -38,9 +34,9 @@ pub(crate) fn matrix_of(qualifiers: &Qualifiers) -> Option<bool> {
         .layout
         .iter()
         .rev()
-        .find_map(|entry| match entry.name.as_str() {
-            "row_major" => Some(true),
-            "column_major" => Some(false),
+        .find_map(|entry| match entry.id {
+            Some(LayoutId::RowMajor) => Some(true),
+            Some(LayoutId::ColumnMajor) => Some(false),
             _ => None,
         })
 }
@@ -53,7 +49,7 @@ impl Analyzer<'_> {
     pub(crate) fn buffer_reference_layout(&mut self, qualifiers: &Qualifiers) -> bool {
         let mut reference = false;
         for entry in &qualifiers.layout {
-            if entry.name == "buffer_reference" {
+            if entry.id == Some(LayoutId::BufferReference) {
                 reference = true;
                 self.storage_buffer_class = true;
                 self.require_extension(
@@ -61,7 +57,7 @@ impl Analyzer<'_> {
                     Extension::ExtBufferReference,
                     "buffer_reference",
                 );
-            } else if entry.name == "buffer_reference_align" {
+            } else if entry.id == Some(LayoutId::BufferReferenceAlign) {
                 self.require_extension(
                     entry.span,
                     Extension::ExtBufferReference,
@@ -97,7 +93,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn reference_alignment(qualifiers: &Qualifiers) -> u32 {
         qualifiers
-            .layout_entry("buffer_reference_align")
+            .layout_entry(LayoutId::BufferReferenceAlign)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
             .filter(|value| value.is_power_of_two())
@@ -221,21 +217,16 @@ impl Analyzer<'_> {
                 );
                 continue;
             }
-            for (layout, what) in [
+            for (present, what) in [
                 (
-                    "buffer_reference_align",
+                    qualifiers.has_layout(LayoutId::BufferReferenceAlign),
                     "the buffer_reference_align layout is ignored when defined in forward declaration",
                 ),
                 (
-                    "std140",
+                    packing_of(qualifiers).is_some(),
                     "the packing layout (scalar, std430, etc) is ignored when defined in forward declaration",
                 ),
             ] {
-                let present = if layout == "std140" {
-                    packing_of(qualifiers).is_some()
-                } else {
-                    qualifiers.has_layout(layout)
-                };
                 if present {
                     self.warnings.push(Diagnostic {
                         span: identifier.span,

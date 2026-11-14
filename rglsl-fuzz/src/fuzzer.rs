@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rglsl_ast::ast::{BasicType, BinaryOperator, Expression, ScalarType, UnaryOperator};
+use rglsl_ast::ast::{BasicType, BinaryOperator, Expression, Scalar, UnaryOperator};
 use rglsl_sema::Builtins;
 use rglsl_sema::builtins::BuiltinFlags;
 use rglsl_sema::scope::Direction;
@@ -115,8 +115,8 @@ pub struct Templates {
     by_result: BTreeMap<BasicType, Vec<Template>>,
 }
 
-const SCALAR_NUMERIC: [ScalarType; 3] = [ScalarType::Float, ScalarType::Uint, ScalarType::Int];
-const INTEGERS: [ScalarType; 2] = [ScalarType::Uint, ScalarType::Int];
+const SCALAR_NUMERIC: [Scalar; 3] = [Scalar::Float, Scalar::Uint, Scalar::Int];
+const INTEGERS: [Scalar; 2] = [Scalar::Uint, Scalar::Int];
 impl Templates {
     pub fn new(builtins: &Builtins, hidden: &BTreeSet<String>) -> Self {
         let mut list = Vec::new();
@@ -259,16 +259,11 @@ fn add_builtins(list: &mut Vec<Template>, builtins: &Builtins, hidden: &BTreeSet
 }
 
 fn add_casts(list: &mut Vec<Template>) {
-    let scalars = [
-        ScalarType::Float,
-        ScalarType::Uint,
-        ScalarType::Int,
-        ScalarType::Bool,
-    ];
+    let scalars = [Scalar::Float, Scalar::Uint, Scalar::Int, Scalar::Bool];
     for target in scalars {
         for source in scalars {
             if target != source {
-                let constant = !(source == ScalarType::Float && target != ScalarType::Bool);
+                let constant = !(source == Scalar::Float && target != Scalar::Bool);
                 list.push(Template::new(
                     Shape::Constructor,
                     BasicType::Scalar(target),
@@ -281,12 +276,7 @@ fn add_casts(list: &mut Vec<Template>) {
 }
 
 fn add_vector_constructors(list: &mut Vec<Template>) {
-    for scalar in [
-        ScalarType::Float,
-        ScalarType::Uint,
-        ScalarType::Int,
-        ScalarType::Bool,
-    ] {
+    for scalar in [Scalar::Float, Scalar::Uint, Scalar::Int, Scalar::Bool] {
         let width = |size: u32| basic::vector(scalar, size);
         let shapes: [(u32, &[u32]); 17] = [
             (2, &[1]),
@@ -375,8 +365,8 @@ fn add_arithmetic(list: &mut Vec<Template>) {
             if operator == BinaryOperator::Multiply {
                 let columns = basic::columns(matrix);
                 let rows = basic::rows(matrix);
-                let right_vector = basic::vector(ScalarType::Float, columns);
-                let left_vector = basic::vector(ScalarType::Float, rows);
+                let right_vector = basic::vector(Scalar::Float, columns);
+                let left_vector = basic::vector(Scalar::Float, rows);
                 list.push(Template::new(
                     Shape::Binary(operator),
                     left_vector,
@@ -490,7 +480,7 @@ fn add_unary(list: &mut Vec<Template>) {
             &[ty],
             true,
         ));
-        if basic::element(ty) != ScalarType::Uint {
+        if basic::element(ty) != Scalar::Uint {
             list.push(Template::new(
                 Shape::Unary(UnaryOperator::Minus),
                 ty,
@@ -695,29 +685,29 @@ fn instantiate(
 
 pub fn random_constant(random: &mut Random, builder: &mut Builder, ty: BasicType) -> Expression {
     let scalar = |random: &mut Random, builder: &mut Builder| match basic::element(ty) {
-        ScalarType::Float
-        | ScalarType::Double
-        | ScalarType::Float16
-        | ScalarType::BFloat16
-        | ScalarType::FloatE4M3
-        | ScalarType::FloatE5M2
-        | ScalarType::FloatE2M1
-        | ScalarType::FloatE3M2
-        | ScalarType::FloatE2M3
-        | ScalarType::FloatUE8M0
-        | ScalarType::FloatMXINT8 => {
+        Scalar::Float
+        | Scalar::Double
+        | Scalar::Float16
+        | Scalar::BFloat16
+        | Scalar::FloatE4M3
+        | Scalar::FloatE5M2
+        | Scalar::FloatE2M1
+        | Scalar::FloatE3M2
+        | Scalar::FloatE2M3
+        | Scalar::FloatUE8M0
+        | Scalar::FloatMXINT8 => {
             let text = random_float_text(random);
             builder.float(&text)
         }
-        ScalarType::Int | ScalarType::Int8 | ScalarType::Int16 | ScalarType::Int64 => {
+        Scalar::Int | Scalar::Int8 | Scalar::Int16 | Scalar::Int64 => {
             let value = i64::from(random.next_int(200_000)) - 100_000;
             builder.int(value)
         }
-        ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => {
+        Scalar::Uint | Scalar::Uint8 | Scalar::Uint16 | Scalar::Uint64 => {
             let value = u64::from(random.next_int(200_000));
             builder.uint(value)
         }
-        ScalarType::Bool => {
+        Scalar::Bool => {
             let value = random.next_bool();
             builder.boolean(value)
         }
@@ -756,25 +746,23 @@ fn random_float_text(random: &mut Random) -> String {
 
 pub fn literal_zero_or_one(builder: &mut Builder, zero: bool, ty: BasicType) -> Expression {
     let digit = if zero { 0 } else { 1 };
-    let scalar = |builder: &mut Builder, element: ScalarType| match element {
-        ScalarType::Int | ScalarType::Int8 | ScalarType::Int16 | ScalarType::Int64 => {
-            builder.int(digit)
-        }
-        ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => {
+    let scalar = |builder: &mut Builder, element: Scalar| match element {
+        Scalar::Int | Scalar::Int8 | Scalar::Int16 | Scalar::Int64 => builder.int(digit),
+        Scalar::Uint | Scalar::Uint8 | Scalar::Uint16 | Scalar::Uint64 => {
             builder.uint(u64::from(!zero))
         }
-        ScalarType::Bool => builder.boolean(!zero),
-        ScalarType::Float
-        | ScalarType::Double
-        | ScalarType::Float16
-        | ScalarType::BFloat16
-        | ScalarType::FloatE4M3
-        | ScalarType::FloatE5M2
-        | ScalarType::FloatE2M1
-        | ScalarType::FloatE3M2
-        | ScalarType::FloatE2M3
-        | ScalarType::FloatUE8M0
-        | ScalarType::FloatMXINT8 => builder.float(&format!("{digit}.0")),
+        Scalar::Bool => builder.boolean(!zero),
+        Scalar::Float
+        | Scalar::Double
+        | Scalar::Float16
+        | Scalar::BFloat16
+        | Scalar::FloatE4M3
+        | Scalar::FloatE5M2
+        | Scalar::FloatE2M1
+        | Scalar::FloatE3M2
+        | Scalar::FloatE2M3
+        | Scalar::FloatUE8M0
+        | Scalar::FloatMXINT8 => builder.float(&format!("{digit}.0")),
     };
     if basic::is_scalar(ty) {
         return scalar(builder, basic::element(ty));

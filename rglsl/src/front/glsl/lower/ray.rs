@@ -161,7 +161,7 @@ impl Lowerer<'_> {
         let ty = variable.ty.clone();
         let (space, set) = ray_space(qualifiers.storage).ok_or_else(|| internal(at))?;
         let location = qualifiers
-            .layout_entry("location")
+            .layout_entry(rglsl_sema::LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok());
         let ir = self.ir_type(&ty, at)?;
@@ -182,8 +182,12 @@ impl Lowerer<'_> {
         let (space, set) = ray_block_space(block.storage).ok_or_else(|| internal(at))?;
         let location = block
             .qualifiers
-            .layout_entry("location")
-            .or_else(|| variable.qualifiers.layout_entry("location"))
+            .layout_entry(rglsl_sema::LayoutId::Location)
+            .or_else(|| {
+                variable
+                    .qualifiers
+                    .layout_entry(rglsl_sema::LayoutId::Location)
+            })
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok());
         if !variable.ty.dimensions().is_empty() {
@@ -721,7 +725,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Option<GlobalRef>> {
         let Some(id) = variable
             .qualifiers
-            .layout_entry("constant_id")
+            .layout_entry(rglsl_sema::LayoutId::ConstantId)
             .and_then(|entry| entry.value.constant())
         else {
             return Ok(None);

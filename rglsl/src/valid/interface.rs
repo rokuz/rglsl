@@ -1450,29 +1450,8 @@ impl super::Validator {
             }
         }
 
-        {
-            use super::ShaderStages;
-
-            let stage_bit = match ep.stage {
-                crate::ShaderStage::Vertex => ShaderStages::VERTEX,
-                crate::ShaderStage::Fragment => ShaderStages::FRAGMENT,
-                crate::ShaderStage::Compute => ShaderStages::COMPUTE,
-                crate::ShaderStage::Mesh => ShaderStages::MESH,
-                crate::ShaderStage::Task => ShaderStages::TASK,
-                crate::ShaderStage::RayGeneration => ShaderStages::RAY_GENERATION,
-                crate::ShaderStage::AnyHit => ShaderStages::ANY_HIT,
-                crate::ShaderStage::ClosestHit => ShaderStages::CLOSEST_HIT,
-                crate::ShaderStage::Miss => ShaderStages::MISS,
-                crate::ShaderStage::Intersection => ShaderStages::INTERSECTION,
-                crate::ShaderStage::Callable => ShaderStages::CALLABLE,
-                crate::ShaderStage::TessControl => ShaderStages::TESS_CONTROL,
-                crate::ShaderStage::TessEvaluation => ShaderStages::TESS_EVALUATION,
-                crate::ShaderStage::Geometry => ShaderStages::GEOMETRY,
-            };
-
-            if !info.available_stages.contains(stage_bit) {
-                return Err(EntryPointError::ForbiddenStageOperations.with_span());
-            }
+        if !info.available_stages.has(ep.stage) {
+            return Err(EntryPointError::ForbiddenStageOperations.with_span());
         }
 
         self.location_mask.make_empty();

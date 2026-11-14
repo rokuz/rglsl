@@ -18,9 +18,10 @@ use crate::builtins::kind::{
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
 use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
-use rglsl_types::ShaderStage;
+use rglsl_types::{ShaderStage, ShaderStageMask};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Candidate {
@@ -605,45 +606,40 @@ impl Analyzer<'_> {
         };
         let entries = tables.entries(name);
         let overloads = |stage: ShaderStage| {
-            let bit = crate::builtins::stage_bit(stage);
             entries
                 .iter()
-                .filter(move |&&(_, stages)| stages & bit != 0)
+                .filter(move |&&(_, stages)| stages.has(stage))
                 .map(|(function, _)| function)
         };
-        let mut groups: Vec<(Vec<usize>, u16)> = Vec::new();
+        let mut groups: Vec<(Vec<usize>, ShaderStageMask)> = Vec::new();
         for stage in ShaderStage::ALL {
-            let bit = crate::builtins::stage_bit(stage);
             let key: Vec<usize> = entries
                 .iter()
                 .enumerate()
-                .filter(|&(_, &(_, stages))| stages & bit != 0)
+                .filter(|&(_, &(_, stages))| stages.has(stage))
                 .map(|(index, _)| index)
                 .collect();
+            let bit = ShaderStageMask::of(stage);
             match groups.iter_mut().find(|&&mut (ref known, _)| *known == key) {
-                Some(&mut (_, ref mut stages)) => *stages |= crate::builtins::stage_bit(stage),
-                None => groups.push((key, crate::builtins::stage_bit(stage))),
+                Some(&mut (_, ref mut stages)) => *stages |= bit,
+                None => groups.push((key, bit)),
             }
         }
         if groups.len() < 2 {
             return false;
         }
         let own = self.options.stage;
-        let own_bit = crate::builtins::stage_bit(own);
-        let outcome = |analyzer: &Self, stages: u16| {
-            let stage = ShaderStage::ALL
-                .into_iter()
-                .find(|&stage| crate::builtins::stage_bit(stage) & stages != 0)
-                .unwrap_or(own);
+        let outcome = |analyzer: &Self, stages: ShaderStageMask| {
+            let stage = stages.stages().next().unwrap_or(own);
             let functions: Vec<&Function> = overloads(stage).collect();
             analyzer.call_outcome(name, types, &functions)
         };
         let own_stages = groups
             .iter()
-            .find(|&&(_, stages)| stages & own_bit != 0)
-            .map_or(own_bit, |&(_, stages)| stages);
+            .find(|&&(_, stages)| stages.has(own))
+            .map_or(ShaderStageMask::of(own), |&(_, stages)| stages);
         let own_outcome = outcome(self, own_stages);
-        let mut keep = crate::builtins::ALL_STAGE_BITS;
+        let mut keep = ShaderStageMask::all();
         let mut differs = false;
         for &(_, stages) in &groups {
             if stages == own_stages {
@@ -656,10 +652,8 @@ impl Analyzer<'_> {
             differs = true;
             match other.error(name) {
                 Some(kind) => {
-                    for stage in ShaderStage::ALL {
-                        if crate::builtins::stage_bit(stage) & stages != 0 {
-                            self.stage_error(stage, span, kind.clone());
-                        }
+                    for stage in stages.stages() {
+                        self.stage_error(stage, span, kind.clone());
                     }
                 }
                 None => keep &= !stages,
@@ -667,10 +661,8 @@ impl Analyzer<'_> {
         }
         let suppressed = match own_outcome.error(name) {
             Some(kind) if differs => {
-                for stage in ShaderStage::ALL {
-                    if crate::builtins::stage_bit(stage) & own_stages != 0 {
-                        self.stage_error(stage, span, kind.clone());
-                    }
+                for stage in own_stages.stages() {
+                    self.stage_error(stage, span, kind.clone());
                 }
                 true
             }
@@ -1255,7 +1247,7 @@ impl Analyzer<'_> {
         &self,
         operand: &Operand,
         parameter: &Parameter,
-    ) -> (Option<String>, Option<String>) {
+    ) -> (Option<LayoutId>, Option<LayoutId>) {
         if !operand
             .ty
             .as_opaque()
@@ -1263,20 +1255,12 @@ impl Analyzer<'_> {
         {
             return (None, None);
         }
-        let format = |qualifiers: &crate::scope::Qualifiers| {
-            qualifiers
-                .layout
-                .iter()
-                .rev()
-                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
-                .map(|entry| entry.name.clone())
-        };
         let argument = operand
             .root
             .and_then(|id| self.symbol(id))
             .and_then(|symbol| symbol.variable())
-            .and_then(|variable| format(&variable.qualifiers));
-        (argument, format(&parameter.qualifiers))
+            .and_then(|variable| variable.qualifiers.image_format());
+        (argument, parameter.qualifiers.image_format())
     }
 
     fn image_formats_match(&self, operand: &Operand, parameter: &Parameter) -> bool {
@@ -1287,20 +1271,7 @@ impl Analyzer<'_> {
         {
             return true;
         }
-        let format = |qualifiers: &crate::scope::Qualifiers| {
-            qualifiers
-                .layout
-                .iter()
-                .rev()
-                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
-                .map(|entry| entry.name.clone())
-        };
-        let argument = operand
-            .root
-            .and_then(|id| self.symbol(id))
-            .and_then(|symbol| symbol.variable())
-            .and_then(|variable| format(&variable.qualifiers));
-        let formal = format(&parameter.qualifiers);
+        let (argument, formal) = self.image_formats(operand, parameter);
         argument == formal
             || (parameter
                 .qualifiers
@@ -1421,9 +1392,14 @@ impl Analyzer<'_> {
                 .and_then(|id| self.symbol(id))
                 .and_then(|symbol| symbol.variable())
                 .is_some_and(|variable| {
-                    ["r32i", "r32ui", "r64i", "r64ui"]
-                        .iter()
-                        .any(|format| variable.qualifiers.has_layout(format))
+                    [
+                        LayoutId::R32i,
+                        LayoutId::R32ui,
+                        LayoutId::R64i,
+                        LayoutId::R64ui,
+                    ]
+                    .into_iter()
+                    .any(|format| variable.qualifiers.has_layout(format))
                 });
             let atomic = image == ImageAccess::Atomic;
             if atomic && integer_image && !has_atomic_format {
@@ -1433,8 +1409,8 @@ impl Analyzer<'_> {
                 .and_then(|operand| operand.ty.as_opaque())
                 .map(|opaque| opaque.sampled)
                 .and_then(|sampled| match sampled {
-                    crate::types::SampledType::Int64 => Some("r64i"),
-                    crate::types::SampledType::Uint64 => Some("r64ui"),
+                    crate::types::SampledType::Int64 => Some(LayoutId::R64i),
+                    crate::types::SampledType::Uint64 => Some(LayoutId::R64ui),
                     _ => None,
                 });
             if let Some(format) = wide.filter(|_| atomic) {
@@ -1447,7 +1423,7 @@ impl Analyzer<'_> {
                     return invalid(
                         self,
                         span,
-                        if format == "r64i" {
+                        if format == LayoutId::R64i {
                             "only supported on image with format r64i"
                         } else {
                             "only supported on image with format r64ui"

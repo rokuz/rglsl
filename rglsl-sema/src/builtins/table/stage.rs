@@ -7,6 +7,7 @@ use crate::builtins::kind::{
     Mesh, Primitive, SplitPhase,
 };
 use crate::builtins::{COMPUTE, FRAGMENT, GEOMETRY, MESH, TASK, TESS_CONTROL};
+use rglsl_types::ShaderStageMask;
 
 pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "clockARB": BuiltinKind::Clock { source: ClockSource::Subgroup, pair: false } => [uint64_t()] {
@@ -192,7 +193,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         stages: GEOMETRY,
     }
     "barrier": BuiltinKind::Barrier(Barrier::Execution) => [void()] {
-        stages: TESS_CONTROL | COMPUTE | MESH | TASK,
+        stages: TESS_CONTROL.union(ShaderStageMask::COMPUTE_LIKE),
     }
     "memoryBarrier": BuiltinKind::Barrier(Barrier::Memory(MemoryBarrier::All)) => [void()]
     "memoryBarrierBuffer": BuiltinKind::Barrier(Barrier::Memory(MemoryBarrier::Buffer)) => [void()]
@@ -260,12 +261,12 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "memoryBarrierShared": BuiltinKind::Barrier(Barrier::Memory(MemoryBarrier::Shared)) => [
         void(),
     ] {
-        stages: COMPUTE | MESH | TASK,
+        stages: ShaderStageMask::COMPUTE_LIKE,
     }
     "groupMemoryBarrier": BuiltinKind::Barrier(Barrier::Memory(MemoryBarrier::Workgroup)) => [
         void(),
     ] {
-        stages: COMPUTE | MESH | TASK,
+        stages: ShaderStageMask::COMPUTE_LIKE,
     }
     "SetMeshOutputsEXT": BuiltinKind::Mesh(Mesh::SetOutputs) => [void(uint, uint)] {
         requires: &[ExtMeshShader],

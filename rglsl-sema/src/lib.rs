@@ -62,6 +62,7 @@ pub mod builtins;
 pub mod constant;
 pub mod diagnostic;
 pub mod layout;
+pub mod layout_id;
 pub mod scope;
 pub mod spirv;
 pub mod types;
@@ -75,10 +76,10 @@ pub use analyze::{
     analyze_library, analyze_with_builtins, analyze_with_tables, layout_stages,
 };
 pub use builtins::{
-    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, ResourceLimits,
-    StageTables,
+    BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, ResourceLimits, StageTables,
 };
 pub use diagnostic::{Diagnostic, DiagnosticKind};
+pub use layout_id::{LayoutExtension, LayoutId, LayoutInfo, LayoutKind};
 pub use rglsl_ast::extensions;
 pub use scope::{FunctionControl, FunctionId, SymbolId};
 pub use types::{NumericFeatures, Type, TypeKind, TypeRegistry};

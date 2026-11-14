@@ -2,7 +2,7 @@ use rglsl_ast::Stalled;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{
-    BasicType, DeclarationKind, ExpressionKind, ExternalDeclaration, NodeId, ScalarType, Statement,
+    BasicType, DeclarationKind, ExpressionKind, ExternalDeclaration, NodeId, Scalar, Statement,
     StatementKind, TranslationUnit,
 };
 use rglsl_sema::Analysis;
@@ -31,7 +31,7 @@ struct Entry {
 
 #[derive(Debug, Clone)]
 struct MergeSet {
-    element: ScalarType,
+    element: Scalar,
     entries: Vec<Entry>,
 }
 

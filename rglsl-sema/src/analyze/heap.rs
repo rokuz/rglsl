@@ -10,6 +10,7 @@ use super::frames::Cx;
 use super::reference::{matrix_of, packing_of};
 use crate::diagnostic::DiagnosticKind;
 use crate::layout::block_size;
+use crate::layout_id::LayoutId;
 use crate::scope::{LayoutValue, Qualifiers, Storage, SymbolKind};
 use crate::types::{BlockStorage, BlockType, Member, ReferenceLayout, Type, TypeKind};
 
@@ -24,15 +25,15 @@ pub(crate) const fn is_heap_storage(storage: Storage) -> bool {
 impl Analyzer<'_> {
     pub(crate) fn heap_layout_check(&mut self, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
-            match entry.name.as_str() {
-                "descriptor_heap" => {
+            match entry.id {
+                Some(LayoutId::DescriptorHeap) => {
                     self.require_extension(
                         entry.span,
                         Extension::ExtDescriptorHeap,
                         "descriptor_heap",
                     );
                 }
-                "descriptor_stride" => {
+                Some(LayoutId::DescriptorStride) => {
                     self.require_extension(
                         entry.span,
                         Extension::ExtDescriptorHeap,
@@ -49,12 +50,8 @@ impl Analyzer<'_> {
                         );
                     }
                 }
-                "descriptor_size" | "heap_offset" => {
-                    let what = if entry.name == "heap_offset" {
-                        "heap_offset"
-                    } else {
-                        "descriptor_size"
-                    };
+                Some(id @ (LayoutId::DescriptorSize | LayoutId::HeapOffset)) => {
+                    let what = id.name();
                     if self.require_extension(entry.span, Extension::ExtDescriptorHeap, what) {
                         self.require_extension(
                             entry.span,
@@ -63,7 +60,7 @@ impl Analyzer<'_> {
                         );
                     }
                 }
-                "buffer_type" => {
+                Some(LayoutId::BufferType) => {
                     self.require_extension(
                         entry.span,
                         Extension::ExtStructuredDescriptorHeap,
@@ -76,8 +73,8 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn heap_object_check(&mut self, span: Span, qualifiers: &Qualifiers) {
-        if let Some(entry) = qualifiers.layout_entry("descriptor_stride")
-            && !qualifiers.has_layout("descriptor_heap")
+        if let Some(entry) = qualifiers.layout_entry(LayoutId::DescriptorStride)
+            && !qualifiers.has_layout(LayoutId::DescriptorHeap)
         {
             self.error(
                 entry.span,
@@ -87,10 +84,10 @@ impl Analyzer<'_> {
                 ),
             );
         }
-        if let Some(entry) = qualifiers.layout_entry("heap_offset") {
+        if let Some(entry) = qualifiers.layout_entry(LayoutId::HeapOffset) {
             let offset = entry.value != LayoutValue::Constant(0);
             if offset
-                && !qualifiers.has_layout("descriptor_heap")
+                && !qualifiers.has_layout(LayoutId::DescriptorHeap)
                 && !is_heap_storage(qualifiers.storage)
             {
                 self.error(
@@ -106,9 +103,10 @@ impl Analyzer<'_> {
 
     pub(crate) fn heap_requested(&self, qualifiers: &Qualifiers) -> bool {
         self.extension_enabled(Extension::ExtDescriptorHeap)
-            && !qualifiers.has_layout("set")
-            && !qualifiers.has_layout("binding")
-            && (qualifiers.has_layout("descriptor_heap") || is_heap_storage(qualifiers.storage))
+            && !qualifiers.has_layout(LayoutId::Set)
+            && !qualifiers.has_layout(LayoutId::Binding)
+            && (qualifiers.has_layout(LayoutId::DescriptorHeap)
+                || is_heap_storage(qualifiers.storage))
     }
 
     pub(crate) fn heap_declaration_check(
@@ -259,11 +257,11 @@ impl Analyzer<'_> {
             return;
         }
         let names: Vec<&'static str> = [
-            ("descriptor_size", "descriptor_size"),
-            ("descriptor_heap", "descriptor heap member"),
+            (LayoutId::DescriptorSize, "descriptor_size"),
+            (LayoutId::DescriptorHeap, "descriptor heap member"),
         ]
         .into_iter()
-        .filter(|(layout, _)| qualifiers.has_layout(layout))
+        .filter(|&(layout, _)| qualifiers.has_layout(layout))
         .map(|(_, what)| what)
         .collect();
         for what in names {

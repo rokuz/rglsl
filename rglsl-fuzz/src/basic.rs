@@ -1,22 +1,16 @@
-use rglsl_ast::ast::{BasicType, Dimension, ScalarType, TypeSpecifier, TypeSpecifierNonArray};
-use rglsl_sema::types::Scalar;
+use rglsl_ast::ast::{BasicType, Dimension, Scalar, TypeSpecifier, TypeSpecifierNonArray};
 use rglsl_sema::{Type, TypeKind};
 
-pub const FLOAT: BasicType = BasicType::Scalar(ScalarType::Float);
-pub const INT: BasicType = BasicType::Scalar(ScalarType::Int);
-pub const UINT: BasicType = BasicType::Scalar(ScalarType::Uint);
-pub const BOOL: BasicType = BasicType::Scalar(ScalarType::Bool);
+pub const FLOAT: BasicType = BasicType::Scalar(Scalar::Float);
+pub const INT: BasicType = BasicType::Scalar(Scalar::Int);
+pub const UINT: BasicType = BasicType::Scalar(Scalar::Uint);
+pub const BOOL: BasicType = BasicType::Scalar(Scalar::Bool);
 pub const VEC2: BasicType = BasicType::Vector {
-    scalar: ScalarType::Float,
+    scalar: Scalar::Float,
     size: Dimension::Two,
 };
 
-const ELEMENTS: [ScalarType; 4] = [
-    ScalarType::Float,
-    ScalarType::Uint,
-    ScalarType::Int,
-    ScalarType::Bool,
-];
+const ELEMENTS: [Scalar; 4] = [Scalar::Float, Scalar::Uint, Scalar::Int, Scalar::Bool];
 
 const DIMENSIONS: [Dimension; 3] = [Dimension::Two, Dimension::Three, Dimension::Four];
 
@@ -29,7 +23,7 @@ pub const fn dimension(count: u32) -> Option<Dimension> {
     }
 }
 
-pub const fn vector(scalar: ScalarType, size: u32) -> BasicType {
+pub const fn vector(scalar: Scalar, size: u32) -> BasicType {
     match dimension(size) {
         Some(size) => BasicType::Vector { scalar, size },
         None => BasicType::Scalar(scalar),
@@ -38,7 +32,7 @@ pub const fn vector(scalar: ScalarType, size: u32) -> BasicType {
 
 pub const fn matrix(columns: Dimension, rows: Dimension) -> BasicType {
     BasicType::Matrix {
-        scalar: ScalarType::Float,
+        scalar: Scalar::Float,
         columns,
         rows,
     }
@@ -48,7 +42,7 @@ pub fn square_matrix(size: u32) -> Option<BasicType> {
     dimension(size).map(|size| matrix(size, size))
 }
 
-pub const fn element(ty: BasicType) -> ScalarType {
+pub const fn element(ty: BasicType) -> Scalar {
     match ty {
         BasicType::Scalar(scalar)
         | BasicType::Vector { scalar, .. }
@@ -122,22 +116,22 @@ pub fn is_square_matrix(ty: BasicType) -> bool {
 }
 
 pub fn is_boolean(ty: BasicType) -> bool {
-    element(ty) == ScalarType::Bool
+    element(ty) == Scalar::Bool
 }
 
 pub fn is_integer(ty: BasicType) -> bool {
-    !is_matrix(ty) && matches!(element(ty), ScalarType::Int | ScalarType::Uint)
+    !is_matrix(ty) && matches!(element(ty), Scalar::Int | Scalar::Uint)
 }
 
 pub fn is_gen_type(ty: BasicType) -> bool {
-    !is_matrix(ty) && element(ty) == ScalarType::Float
+    !is_matrix(ty) && element(ty) == Scalar::Float
 }
 
 pub fn is_numeric(ty: BasicType) -> bool {
     !is_boolean(ty)
 }
 
-pub fn all_vectors_of(scalar: ScalarType) -> Vec<BasicType> {
+pub fn all_vectors_of(scalar: Scalar) -> Vec<BasicType> {
     (1..=4).map(|size| vector(scalar, size)).collect()
 }
 
@@ -172,35 +166,14 @@ pub fn all_basic_types() -> Vec<BasicType> {
 }
 
 pub fn all_gen_types() -> Vec<BasicType> {
-    all_vectors_of(ScalarType::Float)
+    all_vectors_of(Scalar::Float)
 }
 
 pub fn from_sema(ty: &Type) -> Option<BasicType> {
     if ty.is_array() {
         return None;
     }
-    let scalar = |scalar: Scalar| match scalar {
-        Scalar::Bool => Some(ScalarType::Bool),
-        Scalar::Int => Some(ScalarType::Int),
-        Scalar::Uint => Some(ScalarType::Uint),
-        Scalar::Float => Some(ScalarType::Float),
-        Scalar::Double
-        | Scalar::Int8
-        | Scalar::Uint8
-        | Scalar::Int16
-        | Scalar::Uint16
-        | Scalar::Int64
-        | Scalar::Uint64
-        | Scalar::Float16
-        | Scalar::BFloat16
-        | Scalar::FloatE4M3
-        | Scalar::FloatE5M2
-        | Scalar::FloatE2M1
-        | Scalar::FloatE3M2
-        | Scalar::FloatE2M3
-        | Scalar::FloatUE8M0
-        | Scalar::FloatMXINT8 => None,
-    };
+    let scalar = |scalar: Scalar| ELEMENTS.contains(&scalar).then_some(scalar);
     match ty.kind {
         TypeKind::Scalar(element) => scalar(element).map(BasicType::Scalar),
         TypeKind::Vector {
@@ -224,7 +197,7 @@ pub fn from_specifier(specifier: &TypeSpecifier) -> Option<BasicType> {
         return None;
     }
     match specifier.non_array {
-        TypeSpecifierNonArray::Basic(ty) if element(ty) != ScalarType::Double => Some(ty),
+        TypeSpecifierNonArray::Basic(ty) if element(ty) != Scalar::Double => Some(ty),
         _ => None,
     }
 }

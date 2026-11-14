@@ -21,6 +21,7 @@ use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::builtins::variables::{self, Redeclaration};
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{
     Direction, Function, FunctionControl, FunctionId, LayoutEntry, LayoutValue, Lookup, Origin,
     Parameter, PrecisionKey, Qualifiers, Storage, SymbolId, SymbolKind,
@@ -30,50 +31,6 @@ use crate::types::{
     TypeKind,
 };
 use rglsl_types::ShaderStage;
-
-pub(crate) const IMAGE_FORMATS: [&str; 41] = [
-    "rgba32f",
-    "rgba16f",
-    "rg32f",
-    "rg16f",
-    "r11f_g11f_b10f",
-    "r32f",
-    "r16f",
-    "rgba16",
-    "rgb10_a2",
-    "rgba8",
-    "rg16",
-    "rg8",
-    "r16",
-    "r8",
-    "rgba16_snorm",
-    "rgba8_snorm",
-    "rg16_snorm",
-    "rg8_snorm",
-    "r16_snorm",
-    "r8_snorm",
-    "rgba32i",
-    "rgba16i",
-    "rgba8i",
-    "rg32i",
-    "rg16i",
-    "rg8i",
-    "r32i",
-    "r16i",
-    "r8i",
-    "rgba32ui",
-    "rgba16ui",
-    "rgb10_a2ui",
-    "rgba8ui",
-    "rg32ui",
-    "rg16ui",
-    "rg8ui",
-    "r32ui",
-    "r16ui",
-    "r8ui",
-    "r64i",
-    "r64ui",
-];
 
 #[derive(Debug, Clone, Copy)]
 struct MemberPlace<'q> {
@@ -232,7 +189,7 @@ impl Analyzer<'_> {
         }
         if qualifiers.storage == Storage::Out
             && let Some(vertices) = qualifiers
-                .layout_entry("vertices")
+                .layout_entry(LayoutId::Vertices)
                 .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
             && self.stage_is(ShaderStage::TessControl)
@@ -246,16 +203,24 @@ impl Analyzer<'_> {
         }
         self.input_layout(qualifier.span, &qualifiers);
         self.derivative_layout(qualifier.span, &qualifiers);
-        let names = ["local_size_x", "local_size_y", "local_size_z"];
-        let identifiers = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
+        let axes = [
+            LayoutId::LocalSizeX,
+            LayoutId::LocalSizeY,
+            LayoutId::LocalSizeZ,
+        ];
+        let identifiers = [
+            LayoutId::LocalSizeXId,
+            LayoutId::LocalSizeYId,
+            LayoutId::LocalSizeZId,
+        ];
         for index in 0..3 {
-            if let (Some(name), Some(identifier)) = (names.get(index), identifiers.get(index)) {
-                if let Some(entry) = qualifiers.layout_entry(name) {
+            if let (Some(&axis), Some(&identifier)) = (axes.get(index), identifiers.get(index)) {
+                if let Some(entry) = qualifiers.layout_entry(axis) {
                     if entry.value == LayoutValue::Constant(0) {
                         self.error(
                             entry.span,
                             DiagnosticKind::InvalidQualifier {
-                                qualifier: name,
+                                qualifier: axis.name(),
                                 reason: "must be at least 1",
                             },
                         );
@@ -302,10 +267,10 @@ impl Analyzer<'_> {
                 }
             }
         }
-        if !names
-            .iter()
-            .chain(&identifiers)
-            .any(|name| qualifiers.has_layout(name))
+        if !axes
+            .into_iter()
+            .chain(identifiers)
+            .any(|axis| qualifiers.has_layout(axis))
         {
             return;
         }
@@ -314,9 +279,9 @@ impl Analyzer<'_> {
             return;
         };
         self.local_size_declared = true;
-        for (index, name) in names.iter().enumerate() {
+        for (index, axis) in axes.into_iter().enumerate() {
             let Some(value) = qualifiers
-                .layout_entry(name)
+                .layout_entry(axis)
                 .and_then(|entry| entry.value.constant())
                 .and_then(|value| u32::try_from(value).ok())
             else {
@@ -341,7 +306,8 @@ impl Analyzer<'_> {
         let relevant = qualifiers
             .layout
             .iter()
-            .any(|entry| entry.name.starts_with("derivative_group_"));
+            .filter_map(|entry| entry.id)
+            .any(LayoutId::is_derivative_group);
         if !relevant
             || !self.stage_map(|stage| {
                 matches!(
@@ -356,18 +322,18 @@ impl Analyzer<'_> {
         let mut linear = false;
         let mut khr = false;
         for entry in &qualifiers.layout {
-            match entry.name.as_str() {
-                "derivative_group_quadskhr" => {
+            match entry.id {
+                Some(LayoutId::DerivativeGroupQuadsKhr) => {
                     quads = true;
                     khr = true;
                     self.khr_derivative_group = true;
                 }
-                "derivative_group_linearkhr" => {
+                Some(LayoutId::DerivativeGroupLinearKhr) => {
                     linear = true;
                     khr = true;
                     self.khr_derivative_group = true;
                 }
-                "derivative_group_quadsnv" | "derivative_group_linearnv"
+                Some(LayoutId::DerivativeGroupQuadsNv | LayoutId::DerivativeGroupLinearNv)
                     if !self.stage_is(ShaderStage::Compute) =>
                 {
                     self.error(
@@ -378,11 +344,11 @@ impl Analyzer<'_> {
                         },
                     );
                 }
-                "derivative_group_quadsnv" => {
+                Some(LayoutId::DerivativeGroupQuadsNv) => {
                     quads = true;
                     khr = false;
                 }
-                "derivative_group_linearnv" => {
+                Some(LayoutId::DerivativeGroupLinearNv) => {
                     linear = true;
                     khr = false;
                 }
@@ -443,21 +409,21 @@ impl Analyzer<'_> {
 
     fn input_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
         let primitives = [
-            ("points", 1),
-            ("lines", 2),
-            ("lines_adjacency", 4),
-            ("triangles", 3),
-            ("triangles_adjacency", 6),
+            (LayoutId::Points, 1),
+            (LayoutId::Lines, 2),
+            (LayoutId::LinesAdjacency, 4),
+            (LayoutId::Triangles, 3),
+            (LayoutId::TrianglesAdjacency, 6),
         ];
         if !primitives
-            .iter()
-            .any(|&(name, _)| qualifiers.has_layout(name))
+            .into_iter()
+            .any(|(id, _)| qualifiers.has_layout(id))
             || !self.stage_is(ShaderStage::Geometry)
         {
             return;
         }
-        for (name, size) in primitives {
-            if qualifiers.has_layout(name) && self.input_array_size.is_none() {
+        for (id, size) in primitives {
+            if qualifiers.has_layout(id) && self.input_array_size.is_none() {
                 self.input_array_size = Some(size);
                 self.resize_interface_arrays(span, Storage::In, size);
             }
@@ -649,6 +615,7 @@ impl Analyzer<'_> {
 
     fn layout_value(
         &mut self,
+        id: Option<LayoutId>,
         name: &str,
         expression: &Expression,
         operand: &Operand,
@@ -657,7 +624,7 @@ impl Analyzer<'_> {
         if operand.ty.is_error() {
             return None;
         }
-        if name == "heap_offset" && !operand.constant {
+        if id == Some(LayoutId::HeapOffset) && !operand.constant {
             let read_only = operand.storage == Storage::Uniform
                 || operand.place == Place::ReadOnly("it is read-only");
             if !operand.ty.is_scalar_integer() || !read_only {
@@ -681,9 +648,9 @@ impl Analyzer<'_> {
             );
         } else {
             if operand.specialization {
-                self.literal_layout_value(name, expression.span);
+                self.literal_layout_value(id, expression.span);
             }
-            if name == "input_attachment_index" {
+            if id == Some(LayoutId::InputAttachmentIndex) {
                 self.input_attachment_index_value(expression.span, value);
             }
         }
@@ -707,7 +674,7 @@ impl Analyzer<'_> {
         block: bool,
     ) {
         if !self.options.require_bindings
-            || qualifiers.has_layout("binding")
+            || qualifiers.has_layout(LayoutId::Binding)
             || !matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer)
             || self.extension_enabled(Extension::ExtDescriptorHeap)
         {
@@ -715,12 +682,12 @@ impl Analyzer<'_> {
         }
         let message = if block {
             let exempt = [
-                "push_constant",
-                "buffer_reference",
-                "input_attachment_index",
+                LayoutId::PushConstant,
+                LayoutId::BufferReference,
+                LayoutId::InputAttachmentIndex,
             ]
-            .iter()
-            .any(|name| qualifiers.has_layout(name))
+            .into_iter()
+            .any(|id| qualifiers.has_layout(id))
                 || super::ray::is_shader_record(qualifiers);
             (!exempt).then_some("uniform/buffer blocks require layout(binding=X)")
         } else {
@@ -1309,10 +1276,7 @@ impl Analyzer<'_> {
             && !ty.is_array()
             && qualifiers.storage == Storage::Uniform
             && !qualifiers.flags.contains(QualifierFlags::WRITEONLY)
-            && !qualifiers
-                .layout
-                .iter()
-                .any(|entry| IMAGE_FORMATS.contains(&entry.name.as_str()))
+            && qualifiers.image_format().is_none()
             && !self.extension_enabled(Extension::ExtShaderImageLoadFormatted)
         {
             self.error(
@@ -1526,10 +1490,10 @@ impl Analyzer<'_> {
                     None
                 }
             }
-            Redeclaration::OverrideCoverage => (!qualifiers.has_layout("override_coverage"))
+            Redeclaration::OverrideCoverage => (!qualifiers.has_layout(LayoutId::OverrideCoverage))
                 .then_some("only allowed with the override_coverage layout"),
-            Redeclaration::ViewportRelative => (!qualifiers.has_layout("viewport_relative")
-                && !qualifiers.has_layout("secondary_view_offset"))
+            Redeclaration::ViewportRelative => (!qualifiers.has_layout(LayoutId::ViewportRelative)
+                && !qualifiers.has_layout(LayoutId::SecondaryViewOffset))
             .then_some("only allowed with the viewport_relative or secondary_view_offset layout"),
             Redeclaration::Output => {
                 if has_layout {
@@ -1558,7 +1522,7 @@ impl Analyzer<'_> {
             ty.kind,
             TypeKind::Opaque(opaque) if opaque.kind == crate::types::OpaqueKind::SubpassInput
         );
-        let has_index = qualifiers.has_layout("input_attachment_index");
+        let has_index = qualifiers.has_layout(LayoutId::InputAttachmentIndex);
         let invalid = |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
         if !is_subpass {
             if has_index {
@@ -1635,13 +1599,13 @@ impl Analyzer<'_> {
                 return;
             }
         }
-        if qualifiers.has_layout("buffer_reference") {
+        if qualifiers.has_layout(LayoutId::BufferReference) {
             self.error(
                 name.span,
                 super::reference::invalid("can only be used with a block"),
             );
         }
-        if qualifiers.has_layout("constant_id") {
+        if qualifiers.has_layout(LayoutId::ConstantId) {
             if !qualifiers.flags.contains(QualifierFlags::CONSTANT) {
                 self.error(
                     name.span,
@@ -1816,7 +1780,7 @@ impl Analyzer<'_> {
                 if qualifiers.flags.contains(QualifierFlags::CONSTANT)
                     && operand.constant
                     && operand.specialization
-                    && qualifiers.has_layout("constant_id")
+                    && qualifiers.has_layout(LayoutId::ConstantId)
                 {
                     self.error(
                         span,
@@ -1912,11 +1876,13 @@ impl Analyzer<'_> {
             if outcomes.iter().all(|(_, found)| *found == own) {
                 own
             } else {
-                let mut keep = crate::builtins::ALL_STAGE_BITS;
+                let mut keep = rglsl_types::ShaderStageMask::all();
                 for (stage, found) in outcomes {
                     match found {
                         InterfaceArray::Invalid(kind) => self.stage_error(stage, name.span, kind),
-                        other if other != followed => keep &= !crate::builtins::stage_bit(stage),
+                        other if other != followed => {
+                            keep &= !rglsl_types::ShaderStageMask::of(stage);
+                        }
                         _ => {}
                     }
                 }
@@ -2262,7 +2228,7 @@ impl Analyzer<'_> {
         self.ray_variable_checks(structure.qualifier.span, &qualifiers);
         self.heap_object_check(structure.name.span, &qualifiers);
         self.binding_required_check(structure.name.span, &Type::ERROR, &qualifiers, true);
-        let buffer_type = qualifiers.has_layout("buffer_type");
+        let buffer_type = qualifiers.has_layout(LayoutId::BufferType);
         if buffer_type {
             let invalid =
                 |qualifier, reason| DiagnosticKind::InvalidQualifier { qualifier, reason };
@@ -2278,16 +2244,16 @@ impl Analyzer<'_> {
                     invalid("buffer_type", "cannot have an instance name"),
                 );
             }
-            for layout in ["set", "binding"] {
+            for layout in [LayoutId::Set, LayoutId::Binding] {
                 if qualifiers.has_layout(layout) {
                     self.error(
                         structure.name.span,
-                        invalid(layout, "cannot be used with buffer_type"),
+                        invalid(layout.name(), "cannot be used with buffer_type"),
                     );
                 }
             }
         }
-        if qualifiers.has_layout("input_attachment_index") {
+        if qualifiers.has_layout(LayoutId::InputAttachmentIndex) {
             self.error(
                 structure.name.span,
                 DiagnosticKind::InvalidQualifier {
@@ -2379,7 +2345,7 @@ impl Analyzer<'_> {
                 reason,
             };
             let given = instance.map_or("", |instance| instance.node.name.node.as_str());
-            if qualifiers.has_layout("passthrough") {
+            if qualifiers.has_layout(LayoutId::Passthrough) {
                 return;
             }
             let Some((block, variable)) = self.builtin_per_vertex(storage, given) else {
@@ -2436,7 +2402,7 @@ impl Analyzer<'_> {
         }
         if let Some(instance) = instance {
             self.reserved_check(&instance.node.name);
-        } else if storage == BlockStorage::In && !qualifiers.has_layout("passthrough") {
+        } else if storage == BlockStorage::In && !qualifiers.has_layout(LayoutId::Passthrough) {
             let name = block_name.node.clone();
             self.stage_check(block_name.span, |stage| {
                 matches!(
@@ -3138,15 +3104,15 @@ const fn both_derivative_groups() -> DiagnosticKind {
 }
 
 const fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
-    use rglsl_ast::ast::{BasicType, ScalarType};
+    use rglsl_ast::ast::{BasicType, Scalar};
     match specifier.non_array {
         TypeSpecifierNonArray::Basic(
             BasicType::Scalar(scalar)
             | BasicType::Vector { scalar, .. }
             | BasicType::Matrix { scalar, .. },
         ) => match scalar {
-            ScalarType::Float => Some(PrecisionKey::Float),
-            ScalarType::Int | ScalarType::Uint => Some(PrecisionKey::Int),
+            Scalar::Float => Some(PrecisionKey::Float),
+            Scalar::Int | Scalar::Uint => Some(PrecisionKey::Int),
             _ => None,
         },
         TypeSpecifierNonArray::Opaque(keyword) => Some(PrecisionKey::Opaque(keyword)),
@@ -3165,17 +3131,24 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             match &single.node {
                 SingleTypeQualifier::Layout(layout) => {
                     for id in &layout.ids {
+                        let known = LayoutId::from_name(&id.node.name.node);
                         let value = match &id.node.value {
                             Some(expression) => {
                                 let operand = self.call(self.clone().expression(expression)).await;
                                 self.with(|analyzer| {
-                                    analyzer.layout_value(&id.node.name.node, expression, &operand)
+                                    analyzer.layout_value(
+                                        known,
+                                        &id.node.name.node,
+                                        expression,
+                                        &operand,
+                                    )
                                 })
                                 .map_or(LayoutValue::Invalid, LayoutValue::Constant)
                             }
                             None => LayoutValue::Flag,
                         };
                         result.layout.push(LayoutEntry {
+                            id: known,
                             name: id.node.name.node.clone(),
                             value,
                             span: id.span,

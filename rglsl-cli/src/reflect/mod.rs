@@ -15,7 +15,7 @@ use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     DeclarationKind, ExternalDeclaration, FunctionDefinition, InitDeclaratorList, Node,
 };
-use rglsl_sema::{Analysis, FunctionId, SymbolId};
+use rglsl_sema::{Analysis, FunctionId, LayoutId, SymbolId};
 
 use database::Database;
 use source::{block_defaults, compute_layout, declared_globals, implicit_sizes};
@@ -354,10 +354,12 @@ impl Program<'_> {
                     continue;
                 };
                 let qualifiers = &variable.qualifiers;
-                if !qualifiers.has_layout("descriptor_heap") || qualifiers.has_layout("binding") {
+                if !qualifiers.has_layout(LayoutId::DescriptorHeap)
+                    || qualifiers.has_layout(LayoutId::Binding)
+                {
                     continue;
                 }
-                let set = layout_value(qualifiers, "set").unwrap_or(0);
+                let set = layout_value(qualifiers, LayoutId::Set).unwrap_or(0);
                 let slots = taken.entry(set).or_default();
                 let mut binding = 0;
                 while slots.contains(&binding) {

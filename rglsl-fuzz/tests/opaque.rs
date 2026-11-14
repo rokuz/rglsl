@@ -9,7 +9,7 @@ mod support;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rglsl_fuzz::ast::{BasicType, Expression, ExternalDeclaration, ScalarType, StatementKind};
+use rglsl_fuzz::ast::{BasicType, Expression, ExternalDeclaration, Scalar, StatementKind};
 use rglsl_fuzz::basic::{self, BOOL};
 use rglsl_fuzz::build::Builder;
 use rglsl_fuzz::fuzzer::{Fuzzer, GenerationParams, Templates};
@@ -72,7 +72,7 @@ impl Setup {
 
 fn numeric_types() -> Vec<BasicType> {
     let mut types = Vec::new();
-    for scalar in [ScalarType::Float, ScalarType::Int, ScalarType::Uint] {
+    for scalar in [Scalar::Float, Scalar::Int, Scalar::Uint] {
         types.extend(basic::all_vectors_of(scalar));
     }
     types.extend(basic::all_matrix_types());
@@ -83,10 +83,10 @@ fn sample_value(ty: BasicType) -> Value {
     let count = basic::num_elements(ty) as usize;
     let data = (0..count)
         .map(|index| match basic::element(ty) {
-            ScalarType::Float | ScalarType::Double => 0.25 * (index as f64 + 1.0) - 0.5,
-            ScalarType::Int => index as f64 * 3.0 - 2.0,
-            ScalarType::Uint => index as f64 * 5.0 + 1.0,
-            ScalarType::Bool => (index % 2) as f64,
+            Scalar::Float | Scalar::Double => 0.25 * (index as f64 + 1.0) - 0.5,
+            Scalar::Int => index as f64 * 3.0 - 2.0,
+            Scalar::Uint => index as f64 * 5.0 + 1.0,
+            Scalar::Bool => (index % 2) as f64,
             other => panic!("the fuzzer does not generate {other:?}"),
         })
         .collect();
@@ -98,10 +98,10 @@ fn literal_text(value: &Value, ty: BasicType) -> String {
         .data
         .iter()
         .map(|x| match value.scalar {
-            ScalarType::Float | ScalarType::Double => format!("{x:?}"),
-            ScalarType::Int => format!("{}", *x as i64),
-            ScalarType::Uint => format!("{}u", *x as u64),
-            ScalarType::Bool => String::from(if *x != 0.0 { "true" } else { "false" }),
+            Scalar::Float | Scalar::Double => format!("{x:?}"),
+            Scalar::Int => format!("{}", *x as i64),
+            Scalar::Uint => format!("{}u", *x as u64),
+            Scalar::Bool => String::from(if *x != 0.0 { "true" } else { "false" }),
             other => panic!("the fuzzer does not generate {other:?}"),
         })
         .collect();
@@ -257,7 +257,7 @@ fn opaque_identity_matrices_are_identities() -> TestResult {
 #[test]
 fn opaque_booleans_have_the_requested_type_and_value() -> TestResult {
     let setup = Setup::new();
-    for ty in basic::all_vectors_of(ScalarType::Bool) {
+    for ty in basic::all_vectors_of(Scalar::Bool) {
         for seed in 0..16 {
             for value in [true, false] {
                 let expression = setup.generate(seed, &[], false, |generator| {

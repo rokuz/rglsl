@@ -4,7 +4,7 @@ use rglsl_types::extension::Extension;
 
 use crate::ast::{
     BasicType, Declaration, DeclarationKind, Dimension, ExpressionKind, ExtensionBehavior,
-    ExternalDeclaration, FunctionIdentifier, NumericKind, ScalarType, SingleTypeQualifier,
+    ExternalDeclaration, FunctionIdentifier, NumericKind, Scalar, SingleTypeQualifier,
     TypeSpecifierNonArray,
 };
 use crate::extensions::{EXPLICIT_ARITHMETIC, ExtensionIssue, ExtensionState, Feature, Request};
@@ -189,24 +189,24 @@ fn explicit_type_keywords_are_types_with_the_extension() -> TestResult {
     assert_eq!(
         types,
         [
-            basic(BasicType::Scalar(ScalarType::Float16)),
+            basic(BasicType::Scalar(Scalar::Float16)),
             basic(BasicType::Matrix {
-                scalar: ScalarType::Float16,
+                scalar: Scalar::Float16,
                 columns: Dimension::Two,
                 rows: Dimension::Three,
             }),
             basic(BasicType::Vector {
-                scalar: ScalarType::Int64,
+                scalar: Scalar::Int64,
                 size: Dimension::Four,
             }),
-            basic(BasicType::Scalar(ScalarType::Uint8)),
-            basic(BasicType::Scalar(ScalarType::Float)),
+            basic(BasicType::Scalar(Scalar::Uint8)),
+            basic(BasicType::Scalar(Scalar::Float)),
             basic(BasicType::Vector {
-                scalar: ScalarType::Double,
+                scalar: Scalar::Double,
                 size: Dimension::Two,
             }),
             basic(BasicType::Vector {
-                scalar: ScalarType::Uint,
+                scalar: Scalar::Uint,
                 size: Dimension::Three,
             }),
         ]

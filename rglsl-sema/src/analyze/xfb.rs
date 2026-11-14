@@ -2,6 +2,7 @@ use rglsl_ast::Span;
 
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{Qualifiers, Storage};
 use crate::types::{Member, Scalar, Type, TypeRegistry};
 use rglsl_types::ShaderStage;
@@ -34,7 +35,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn xfb_variable_check(&mut self, span: Span, qualifiers: &Qualifiers, ty: &Type) {
-        if qualifiers.storage == Storage::Out && qualifiers.has_layout("xfb_offset") {
+        if qualifiers.storage == Storage::Out && qualifiers.has_layout(LayoutId::XfbOffset) {
             let bits = narrowest_bits(&self.types, ty);
             self.narrow_capture(span, bits);
         }
@@ -49,10 +50,10 @@ impl Analyzer<'_> {
         if qualifiers.storage != Storage::Out {
             return;
         }
-        let whole = qualifiers.has_layout("xfb_offset");
+        let whole = qualifiers.has_layout(LayoutId::XfbOffset);
         let mut found: Option<(Span, u32)> = None;
         for (span, member) in members {
-            if !whole && !member.qualifiers.has_layout("xfb_offset") {
+            if !whole && !member.qualifiers.has_layout(LayoutId::XfbOffset) {
                 continue;
             }
             if let Some(bits) = narrowest_bits(&self.types, &member.ty) {

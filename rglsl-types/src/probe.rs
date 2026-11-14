@@ -1,61 +1,59 @@
 use core::cell::Cell;
 
-pub const ALL_STAGES: u16 = (1 << 14) - 1;
+use crate::{ShaderStage, ShaderStageMask};
 
 #[derive(Debug, Clone)]
-pub struct StageProbe<S: 'static> {
-    own: S,
-    all: &'static [S],
-    compatible: Cell<u16>,
+pub struct StageProbe {
+    own: ShaderStage,
+    compatible: Cell<ShaderStageMask>,
 }
 
-impl<S: Copy + PartialEq + 'static> StageProbe<S> {
-    pub fn new(own: S, all: &'static [S]) -> Self {
+impl StageProbe {
+    pub const fn new(own: ShaderStage) -> Self {
         Self {
             own,
-            all,
-            compatible: Cell::new(ALL_STAGES),
+            compatible: Cell::new(ShaderStageMask::all()),
         }
     }
 
-    fn restrict(&self, mask: u16) {
+    fn restrict(&self, mask: ShaderStageMask) {
         self.compatible.set(self.compatible.get() & mask);
     }
 
-    pub fn map<T: PartialEq>(&self, answer: impl Fn(S) -> T) -> T {
+    pub fn map<T: PartialEq>(&self, answer: impl Fn(ShaderStage) -> T) -> T {
         let own = answer(self.own);
-        let mut mask = 0_u16;
-        for (index, &stage) in self.all.iter().enumerate().take(14) {
+        let mut mask = ShaderStageMask::empty();
+        for stage in ShaderStage::ALL {
             if answer(stage) == own {
-                mask |= 1 << index;
+                mask |= ShaderStageMask::of(stage);
             }
         }
         self.restrict(mask);
         own
     }
 
-    pub fn is(&self, stage: S) -> bool {
+    pub fn is(&self, stage: ShaderStage) -> bool {
         self.map(|candidate| candidate == stage)
     }
 
-    pub fn any(&self, stages: &[S]) -> bool {
-        self.map(|candidate| stages.contains(&candidate))
+    pub fn any(&self, stages: ShaderStageMask) -> bool {
+        self.map(|candidate| stages.has(candidate))
     }
 
-    pub fn exact(&self) -> S {
+    pub fn exact(&self) -> ShaderStage {
         self.map(|candidate| candidate == self.own);
         self.own
     }
 
-    pub const fn own(&self) -> S {
+    pub const fn own(&self) -> ShaderStage {
         self.own
     }
 
-    pub fn compatible(&self) -> u16 {
+    pub fn compatible(&self) -> ShaderStageMask {
         self.compatible.get()
     }
 
-    pub fn narrow(&self, mask: u16) {
+    pub fn narrow(&self, mask: ShaderStageMask) {
         self.restrict(mask);
     }
 }

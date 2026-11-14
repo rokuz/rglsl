@@ -9,23 +9,24 @@ use rglsl_types::flavor::{BarycentricFlavor as Bary, FragmentDensityFlavor as De
 use super::VariableKind::{Input, Output};
 use super::{BuiltinVariable, Redeclaration};
 use crate::builtins::{
-    ALL_STAGE_BITS, ANY_HIT, CLOSEST_HIT, COMPUTE, FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS,
+    ALL_STAGES, ANY_HIT, CLOSEST_HIT, COMPUTE, FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS,
     RAY_GENERATION, TASK, TESS_CONTROL, TESS_EVALUATION, VERTEX,
 };
+use rglsl_types::ShaderStageMask;
 
-const MESH_STAGES: u16 = MESH | TASK;
-const COMPUTE_LIKE: u16 = COMPUTE | MESH_STAGES;
-const TESSELLATION: u16 = TESS_CONTROL | TESS_EVALUATION;
-const DEVICE_GROUP: u16 = VERTEX
-    | TESSELLATION
-    | GEOMETRY
-    | FRAGMENT
-    | COMPUTE
-    | RAY_GENERATION
-    | INTERSECTION
-    | ANY_HIT
-    | CLOSEST_HIT
-    | MISS;
+const MESH_STAGES: ShaderStageMask = ShaderStageMask::MESH_LIKE;
+const COMPUTE_LIKE: ShaderStageMask = ShaderStageMask::COMPUTE_LIKE;
+const TESSELLATION: ShaderStageMask = TESS_CONTROL.union(TESS_EVALUATION);
+const DEVICE_GROUP: ShaderStageMask = VERTEX
+    .union(TESSELLATION)
+    .union(GEOMETRY)
+    .union(FRAGMENT)
+    .union(COMPUTE)
+    .union(RAY_GENERATION)
+    .union(INTERSECTION)
+    .union(ANY_HIT)
+    .union(CLOSEST_HIT)
+    .union(MISS);
 const MESH_ANY: &[Extension] = &[NvMeshShader, ExtMeshShader];
 const VIEWPORT_LAYER: &[Extension] = &[ArbShaderViewportLayerArray, NvViewportArray2];
 const LAYER: rglsl_types::builtin::BuiltIn = Layer {
@@ -59,7 +60,7 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: &[ExtDeviceGroup],
     }
     "gl_PrimitiveShadingRateEXT": Output(PrimitiveShadingRate) => int {
-        stages: VERTEX | GEOMETRY,
+        stages: VERTEX.union(GEOMETRY),
         requires_one_of: &[ExtFragmentShadingRate],
         redeclaration: Some(Redeclaration::Free),
     }
@@ -138,45 +139,49 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: &[AmdShaderExplicitVertexParameter],
     }
     "gl_ViewportIndex": Output(ViewportIndex) => int {
-        stages: VERTEX | TESSELLATION,
+        stages: VERTEX.union(TESSELLATION),
         requires_one_of: VIEWPORT_LAYER,
     }
     "gl_Layer": Output(LAYER) => int {
-        stages: VERTEX | TESSELLATION,
+        stages: VERTEX.union(TESSELLATION),
         requires_one_of: VIEWPORT_LAYER,
         redeclaration: Some(Redeclaration::ViewportRelative),
     }
     "gl_ViewportMask": Output(ViewportMaskNV) => int[] {
-        stages: VERTEX | TESS_EVALUATION | GEOMETRY,
+        stages: VERTEX.union(TESS_EVALUATION).union(GEOMETRY),
         requires_one_of: &[NvViewportArray2],
         flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_SecondaryViewportMaskNV": Output(SecondaryViewportMaskNV) => int[] {
-        stages: VERTEX | TESS_EVALUATION | GEOMETRY,
+        stages: VERTEX.union(TESS_EVALUATION).union(GEOMETRY),
         requires_one_of: &[NvStereoViewRendering],
         flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_SecondaryPositionNV": Output(SecondaryPositionNV) => vec4 {
-        stages: VERTEX | TESS_EVALUATION | GEOMETRY,
+        stages: VERTEX.union(TESS_EVALUATION).union(GEOMETRY),
         requires_one_of: &[NvStereoViewRendering],
     }
     "gl_PositionPerViewNV": Output(PositionPerViewNV) => vec4[] {
-        stages: VERTEX | TESS_EVALUATION | GEOMETRY,
+        stages: VERTEX.union(TESS_EVALUATION).union(GEOMETRY),
         requires_one_of: &[NvxMultiviewPerViewAttributes],
         flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_ViewportMaskPerViewNV": Output(ViewportMaskPerViewNV) => int[] {
-        stages: VERTEX | TESS_EVALUATION | GEOMETRY,
+        stages: VERTEX.union(TESS_EVALUATION).union(GEOMETRY),
         requires_one_of: &[NvxMultiviewPerViewAttributes],
         flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_ViewIndex": Input(ViewIndex) => int {
-        stages: VERTEX | TESSELLATION | GEOMETRY | MESH | FRAGMENT,
+        stages: VERTEX
+            .union(TESSELLATION)
+            .union(GEOMETRY)
+            .union(MESH)
+            .union(FRAGMENT),
         requires_one_of: &[ExtMultiview],
         precision: Some(High),
     }
     "gl_ViewID_OVR": Input(ViewIndex) => uint {
-        stages: VERTEX | FRAGMENT,
+        stages: VERTEX.union(FRAGMENT),
         requires_one_of: &[OvrMultiview, OvrMultiview2],
         precision: Some(High),
     }
@@ -342,145 +347,145 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     }
     "gl_DrawID": Input(DrawIndex) => int { stages: MESH_STAGES, since: 460 }
     "gl_SubgroupSize": Input(SubgroupSize) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBasic],
         precision: Some(Medium),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubgroupInvocationID": Input(SubgroupInvocationId) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBasic],
         precision: Some(Medium),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubgroupEqMask": Input(SubgroupMask(Mask::Eq)) => uvec4 {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBallot],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubgroupGeMask": Input(SubgroupMask(Mask::Ge)) => uvec4 {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBallot],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubgroupGtMask": Input(SubgroupMask(Mask::Gt)) => uvec4 {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBallot],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubgroupLeMask": Input(SubgroupMask(Mask::Le)) => uvec4 {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBallot],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubgroupLtMask": Input(SubgroupMask(Mask::Lt)) => uvec4 {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[KhrShaderSubgroupBallot],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubGroupSizeARB": Input(ShaderBallot(Ballot::Size)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SIMDGroupSizeAMD": Input(ShaderBallot(Ballot::Size)) => int {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[AmdGcnShader],
     }
     "gl_SubGroupInvocationARB": Input(ShaderBallot(Ballot::InvocationId)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubGroupEqMaskARB": Input(ShaderBallot(Ballot::Mask(Mask::Eq))) => uint64_t {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubGroupGeMaskARB": Input(ShaderBallot(Ballot::Mask(Mask::Ge))) => uint64_t {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubGroupGtMaskARB": Input(ShaderBallot(Ballot::Mask(Mask::Gt))) => uint64_t {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubGroupLeMaskARB": Input(ShaderBallot(Ballot::Mask(Mask::Le))) => uint64_t {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SubGroupLtMaskARB": Input(ShaderBallot(Ballot::Mask(Mask::Lt))) => uint64_t {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_WarpsPerSMNV": Input(ShaderCore(Core::WarpsPerSmNv)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[NvShaderSmBuiltins],
         precision: Some(High),
     }
     "gl_SMCountNV": Input(ShaderCore(Core::SmCountNv)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[NvShaderSmBuiltins],
         precision: Some(High),
     }
     "gl_WarpIDNV": Input(ShaderCore(Core::WarpIdNv)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[NvShaderSmBuiltins],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_SMIDNV": Input(ShaderCore(Core::SmIdNv)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[NvShaderSmBuiltins],
         precision: Some(High),
         flags: variable_flags!(RAY_VOLATILE),
     }
     "gl_CoreIDARM": Input(ShaderCore(Core::CoreIdArm)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArmShaderCoreBuiltins],
         precision: Some(High),
     }
     "gl_CoreCountARM": Input(ShaderCore(Core::CoreCountArm)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArmShaderCoreBuiltins],
         precision: Some(High),
     }
     "gl_CoreMaxIDARM": Input(ShaderCore(Core::CoreMaxIdArm)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArmShaderCoreBuiltins],
         precision: Some(High),
     }
     "gl_WarpIDARM": Input(ShaderCore(Core::WarpIdArm)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArmShaderCoreBuiltins],
         precision: Some(High),
     }
     "gl_WarpMaxIDARM": Input(ShaderCore(Core::WarpMaxIdArm)) => uint {
-        stages: ALL_STAGE_BITS,
+        stages: ALL_STAGES,
         requires_one_of: &[ArmShaderCoreBuiltins],
         precision: Some(High),
     }
     "gl_TileOffsetQCOM": Input(TileOffset) => uvec2 {
-        stages: COMPUTE | FRAGMENT,
+        stages: COMPUTE.union(FRAGMENT),
         since: 460,
         requires_one_of: &[QcomTileShading],
     }
     "gl_TileDimensionQCOM": Input(TileDimension) => uvec3 {
-        stages: COMPUTE | FRAGMENT,
+        stages: COMPUTE.union(FRAGMENT),
         since: 460,
         requires_one_of: &[QcomTileShading],
     }
     "gl_TileApronSizeQCOM": Input(TileApronSize) => uvec2 {
-        stages: COMPUTE | FRAGMENT,
+        stages: COMPUTE.union(FRAGMENT),
         since: 460,
         requires_one_of: &[QcomTileShading],
     }

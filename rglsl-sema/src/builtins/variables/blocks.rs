@@ -5,6 +5,7 @@ use super::VariableKind::Member;
 use super::{BlockSize, BuiltinBlock, BuiltinVariable, Redeclaration};
 use crate::builtins::{GEOMETRY, MESH, TESS_CONTROL, TESS_EVALUATION, VERTEX};
 use crate::types::BlockStorage;
+use rglsl_types::ShaderStageMask;
 
 const LAYER: BuiltIn = Layer {
     viewport_relative: false,
@@ -113,7 +114,7 @@ const fn block(
     instance: &'static str,
     storage: BlockStorage,
     size: BlockSize,
-    stages: u16,
+    stages: ShaderStageMask,
     members: &'static [&'static [BuiltinVariable]],
 ) -> BuiltinBlock {
     BuiltinBlock {
@@ -152,7 +153,7 @@ pub(super) const BLOCKS: &[BuiltinBlock] = &[
         "gl_in",
         BlockStorage::In,
         BlockSize::PatchVertices,
-        TESS_CONTROL | TESS_EVALUATION,
+        TESS_CONTROL.union(TESS_EVALUATION),
         &[PER_VERTEX, VIEWS_IN],
     ),
     block(
@@ -176,7 +177,7 @@ pub(super) const BLOCKS: &[BuiltinBlock] = &[
         "",
         BlockStorage::Out,
         BlockSize::Single,
-        VERTEX | TESS_EVALUATION | GEOMETRY,
+        VERTEX.union(TESS_EVALUATION).union(GEOMETRY),
         &[PER_VERTEX],
     ),
     mesh(
