@@ -3,7 +3,16 @@ use std::path::{Path, PathBuf};
 
 use crate::TestResult;
 
-const GLSL_NOT_EXTENSIONS: [(&str, &str); 1] = [("rglsl-cli/src/compile.rs", "GL_KHR_vulkan_glsl")];
+const REGISTRY: &str = "rglsl-types/src/extension.rs";
+
+const SHADER_WRITERS: [&str; 1] = ["xtask/"];
+
+const GLSL_OUTSIDE_REGISTRY: [(&str, &str); 4] = [
+    ("rglsl-cli/src/compile.rs", "GL_KHR_vulkan_glsl"),
+    ("rglsl-pp/src/diagnostic.rs", "GL_EXT_debug_printf"),
+    ("rglsl-pp/src/diagnostic.rs", "GL_EXT_spirv_intrinsics"),
+    ("rglsl-pp/src/diagnostic.rs", "GL_EXT_abort"),
+];
 
 const SPIRV_NOT_EXTENSIONS: [(&str, &str); 1] = [(
     "rglsl-cli/src/disassemble/ext.rs",
@@ -103,10 +112,14 @@ fn extension_names<'a>(text: &'a str, prefix: &str) -> Vec<&'a str> {
     names
 }
 
+fn without_test_module(text: &str) -> &str {
+    text.split("#[cfg(test)]\nmod tests").next().unwrap_or(text)
+}
+
 fn unknown_names(
     prefix: &str,
     exceptions: &[(&str, &str)],
-    known: impl Fn(&str) -> bool,
+    known: impl Fn(&str, &str) -> bool,
 ) -> TestResult<BTreeMap<String, BTreeSet<String>>> {
     let root = workspace();
     let mut unknown: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -116,11 +129,11 @@ fn unknown_names(
             .strip_prefix(&root)?
             .to_string_lossy()
             .replace('\\', "/");
-        for name in extension_names(&text, prefix) {
+        for name in extension_names(without_test_module(&text), prefix) {
             let excepted = exceptions
                 .iter()
                 .any(|&(file, exception)| file == relative && exception == name);
-            if !known(name) && !excepted {
+            if !known(&relative, name) && !excepted {
                 unknown
                     .entry(name.to_owned())
                     .or_default()
@@ -145,15 +158,18 @@ fn report(unknown: &BTreeMap<String, BTreeSet<String>>) -> String {
 }
 
 #[test]
-fn glsl_extension_names_are_known() -> TestResult {
-    let unknown = unknown_names("GL_", &GLSL_NOT_EXTENSIONS, |name| {
-        rglsl_types::extension::Extension::from_name(name).is_some()
+fn glsl_extension_names_are_spelled_only_in_the_registry() -> TestResult {
+    let outside = unknown_names("GL_", &GLSL_OUTSIDE_REGISTRY, |file, name| {
+        let writes_shaders = SHADER_WRITERS.iter().any(|writer| file.starts_with(writer));
+        (file == REGISTRY || writes_shaders)
+            && rglsl_types::extension::Extension::from_name(name).is_some()
     })?;
-    if !unknown.is_empty() {
+    if !outside.is_empty() {
         return Err(format!(
-            "GLSL extension names missing from the registry in rglsl-types/src/extension.rs \
-             (a typo, or an extension to register): {}",
-            report(&unknown)
+            "GLSL extension names spelled outside the registry in {REGISTRY}: the compiler \
+             names an extension by its `Extension` variant, and tools that write shaders may \
+             spell only registered names (a new extension gets a row in the registry first): {}",
+            report(&outside)
         )
         .into());
     }
@@ -181,7 +197,9 @@ fn spirv_extension_names_are_known() -> TestResult {
     if known.is_empty() {
         return Err(format!("no SPIR-V extensions in {}", table.display()).into());
     }
-    let unknown = unknown_names("SPV_", &SPIRV_NOT_EXTENSIONS, |name| known.contains(name))?;
+    let unknown = unknown_names("SPV_", &SPIRV_NOT_EXTENSIONS, |_, name| {
+        known.contains(name)
+    })?;
     if !unknown.is_empty() {
         return Err(format!(
             "SPIR-V extension names that the pinned SPIRV-Headers and SPIRV-Tools do not know \
@@ -196,7 +214,7 @@ fn spirv_extension_names_are_known() -> TestResult {
 #[test]
 fn not_extensions_are_current() -> TestResult {
     let root = workspace();
-    for &(file, name) in GLSL_NOT_EXTENSIONS.iter().chain(&SPIRV_NOT_EXTENSIONS) {
+    for &(file, name) in GLSL_OUTSIDE_REGISTRY.iter().chain(&SPIRV_NOT_EXTENSIONS) {
         let text = std::fs::read_to_string(root.join(file))
             .map_err(|error| format!("{file}, which has an exception for {name}: {error}"))?;
         let prefix = if name.starts_with("GL_") {
