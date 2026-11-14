@@ -10,6 +10,11 @@ use rglsl_sema::{Callee, FunctionId, SymbolId};
 
 use super::{Lowerer, Result, semantic};
 
+type FunctionOrder<'a> = (
+    Vec<(FunctionId, &'a Node<FunctionDefinition>)>,
+    Option<BTreeSet<FunctionId>>,
+);
+
 pub(super) fn strip(expression: &Expression) -> &Expression {
     let mut current = expression;
     while let ExpressionKind::Parenthesized(ref inner) = current.kind {
@@ -245,7 +250,7 @@ impl<'a> Lowerer<'a> {
     pub(super) fn function_order(
         &self,
         definitions: &[&'a Node<FunctionDefinition>],
-    ) -> Result<Vec<(FunctionId, &'a Node<FunctionDefinition>)>> {
+    ) -> Result<FunctionOrder<'a>> {
         let analysis = self.analysis;
         let main = self.main_function();
         let mut defined: BTreeMap<FunctionId, &'a Node<FunctionDefinition>> = BTreeMap::new();
@@ -327,18 +332,21 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
-        if let (Some(main), false, false) = (main, self.object, self.options.keep_uncalled) {
-            let mut reachable = BTreeSet::from([main]);
-            let mut pending = Vec::from([main]);
-            while let Some(caller) = pending.pop() {
-                for &callee in calls.get(&caller).into_iter().flatten() {
-                    if reachable.insert(callee) {
-                        pending.push(callee);
-                    }
+        let Some(main) = main.filter(|_| !self.options.keep_uncalled) else {
+            return Ok((order, None));
+        };
+        let mut reachable = BTreeSet::from([main]);
+        let mut pending = Vec::from([main]);
+        while let Some(caller) = pending.pop() {
+            for &callee in calls.get(&caller).into_iter().flatten() {
+                if reachable.insert(callee) {
+                    pending.push(callee);
                 }
             }
+        }
+        if !self.object {
             order.retain(|&(id, _)| reachable.contains(&id));
         }
-        Ok(order)
+        Ok((order, Some(reachable)))
     }
 }

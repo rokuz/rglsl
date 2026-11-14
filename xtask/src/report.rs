@@ -9,8 +9,8 @@ use crate::interface;
 use crate::runner::{CaseResult, Environment, OracleResult, OursResult};
 
 fn table_header(sources: &[(TargetId, ExecSource)]) -> String {
-    let mut header = String::from("| Stage | Files | accept | diag | valid | interface |");
-    let mut rule = String::from("|---|---:|---:|---:|---:|---:|");
+    let mut header = String::from("| Stage | Files | accept | diag | valid | interface | object |");
+    let mut rule = String::from("|---|---:|---:|---:|---:|---:|---:|");
     for (target, _) in sources {
         let _ = write!(header, " {} |", column(target));
         rule.push_str("---:|");
@@ -63,6 +63,7 @@ struct Row {
     diag: Score,
     valid: Score,
     interface: Score,
+    object: Score,
     exec: BTreeMap<TargetId, Score>,
     link: Score,
     crashes: usize,
@@ -80,6 +81,7 @@ impl Row {
         self.diag.add(result.diag());
         self.valid.add(result.valid());
         self.interface.add(result.interface());
+        self.object.add(result.object());
         for (target, outcome) in &result.exec {
             self.exec
                 .entry(target.clone())
@@ -94,12 +96,13 @@ impl Row {
 
     fn line(&self, label: &str, exec: &[String]) -> String {
         format!(
-            "| {label} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {label} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             self.files,
             self.accept.cell(),
             self.diag.cell(),
             self.valid.cell(),
             self.interface.cell(),
+            self.object.cell(),
             exec.join(" | "),
             self.link.cell(),
             self.crashes
@@ -422,13 +425,17 @@ const fn corpus_title(corpus: Corpus) -> (&'static str, &'static str) {
             "glslang Vulkan tests",
             "Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under Vulkan \
              semantics. Each one is compiled the way its test does: target environment, automatic \
-             bindings and locations, linking.",
+             bindings and locations, linking. `object` compiles every shader we accept a second \
+             time as an object module, writes and reads it as an object file, links it and checks \
+             the result with spirv-val and against the direct path (capabilities, extensions, \
+             instruction sets and the interface).",
         ),
         Corpus::OpenGlAsVulkan => (
             "glslang OpenGL tests, compiled for Vulkan",
             "Shaders that glslang's own test suite compiles under OpenGL semantics. Here glslang \
              compiles them for Vulkan 1.0 with automatic bindings and locations, so most of them \
-             test that OpenGL-only constructs are rejected, and on which lines.",
+             test that OpenGL-only constructs are rejected, and on which lines. `object` is the \
+             object-module path, as for the Vulkan tests.",
         ),
         Corpus::Link => (
             "rglsl link tests",
@@ -655,6 +662,13 @@ pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
             }
         }
         for result in &results {
+            if let Some(ref outcome) = result.object
+                && !outcome.passed
+            {
+                let _ = writeln!(out, "  object FAIL {}: {}", result.case.name, outcome.note);
+            }
+        }
+        for result in &results {
             if result.link() == Some(false) {
                 let _ = writeln!(out, "  link FAIL {}: {}", result.case.name, result.note);
             }
@@ -737,7 +751,7 @@ pub fn details(results: &[CaseResult]) -> String {
     for target in &targets {
         let _ = write!(out, "\texec_{}_note", target.label());
     }
-    out.push('\n');
+    out.push_str("\tobject\tobject_note\n");
     let mark = |outcome: Option<bool>| match outcome {
         Some(true) => "pass",
         Some(false) => "FAIL",
@@ -802,7 +816,14 @@ pub fn details(results: &[CaseResult]) -> String {
         for (_, note) in &columns {
             let _ = write!(out, "\t{}", note.replace(['\t', '\n'], " "));
         }
-        out.push('\n');
+        let _ = writeln!(
+            out,
+            "\t{}\t{}",
+            mark(r.object()),
+            r.object.as_ref().map_or(String::new(), |outcome| outcome
+                .note
+                .replace(['\t', '\n'], " "))
+        );
     }
     out
 }
@@ -984,7 +1005,7 @@ Exec nvidia: Amber `c9f1e287` on NVIDIA GeForce RTX 4090, NVIDIA 617.14 (Vulkan 
         assert_eq!(labels(&exec_sources(&[], None)), ["local:absent"]);
         let header = table_header(&exec_sources(&[], Some(&carried)));
         assert!(header.starts_with(
-            "| Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+            "| Stage | Files | accept | diag | valid | interface | object | exec local | exec amd | exec nvidia | link | crashes |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
         ));
     }
 

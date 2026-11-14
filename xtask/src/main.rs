@@ -18,6 +18,7 @@ mod fuzz_libfuzzer;
 mod fuzz_reduce;
 mod groups;
 mod interface;
+mod object_path;
 mod oracles;
 mod process;
 mod renamed;
@@ -358,6 +359,7 @@ fn run(args: Vec<String>) -> Result<i32> {
             let out = args.value("--out")?.context("--out is required")?;
             let auto_map = args.flag("--auto-map");
             let object = args.flag("--object");
+            let via_object = args.flag("--via-object");
             let hlsl_offsets = args.flag("--hlsl-offsets");
             let debug = args.value("--debug")?;
             let mut include_dirs = Vec::new();
@@ -378,6 +380,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     spv_version: &spv,
                     auto_map,
                     object,
+                    via_object,
                     hlsl_offsets,
                     include_dirs: &include_dirs,
                     preamble: (!preamble.is_empty()).then_some(preamble),

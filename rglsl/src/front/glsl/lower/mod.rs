@@ -1064,6 +1064,8 @@ pub(super) struct Lowerer<'a> {
     pub(super) depth: BTreeSet<SymbolId>,
     pub(super) comparison: BTreeSet<SymbolId>,
     pub(super) interface: Vec<Handle<GlobalVariable>>,
+    pub(super) on_use_globals: BTreeSet<Handle<GlobalVariable>>,
+    pub(super) reachable: Option<BTreeSet<FunctionId>>,
     pub(super) outputs: BTreeMap<String, Handle<GlobalVariable>>,
     pub(super) inputs: BTreeSet<String>,
     pub(super) builtins: BTreeMap<String, Handle<GlobalVariable>>,
@@ -1164,6 +1166,8 @@ impl<'a> Lowerer<'a> {
             depth: BTreeSet::new(),
             comparison: BTreeSet::new(),
             interface: Vec::new(),
+            on_use_globals: BTreeSet::new(),
+            reachable: None,
             outputs: BTreeMap::new(),
             inputs: BTreeSet::new(),
             builtins: BTreeMap::new(),
@@ -1429,7 +1433,10 @@ impl<'a> Lowerer<'a> {
             return Err(core::mem::take(&mut self.errors).into());
         }
         let order = match self.function_order(&definitions) {
-            Ok(order) => order,
+            Ok((order, reachable)) => {
+                self.reachable = reachable;
+                order
+            }
             Err(error) => return Err(vec![error].into()),
         };
         let main = self.main_function();
@@ -1441,10 +1448,12 @@ impl<'a> Lowerer<'a> {
             let result = self.declare_function(id, definition);
             self.report(result);
         }
+        let declared_globals = self.module.global_variables.len();
         for &(id, definition) in &order {
             let result = self.define_function(id, definition);
             self.report(result);
         }
+        self.on_use_globals = self.globals_on_use(declared_globals);
         let entry = definitions.iter().find(|definition| {
             self.analysis.function_declarations.get(&definition.id) == main.as_ref()
         });
@@ -1474,6 +1483,35 @@ impl<'a> Lowerer<'a> {
             object: self.into_object(),
             debug,
         })
+    }
+
+    pub(super) fn reachable_functions(&self) -> impl Iterator<Item = &crate::Function> {
+        self.reachable
+            .iter()
+            .flatten()
+            .filter_map(|id| self.functions.get(id))
+            .filter_map(|&handle| self.module.functions.try_get(handle).ok())
+    }
+
+    fn globals_on_use(&self, declared: usize) -> BTreeSet<Handle<GlobalVariable>> {
+        if self.options.keep_uncalled {
+            return BTreeSet::new();
+        }
+        let mut referenced = BTreeSet::new();
+        for function in self.reachable_functions() {
+            for (_, expression) in function.expressions.iter() {
+                if let crate::Expression::GlobalVariable(global) = *expression {
+                    referenced.insert(global);
+                }
+            }
+        }
+        self.module
+            .global_variables
+            .iter()
+            .skip(declared)
+            .map(|(handle, _)| handle)
+            .filter(|handle| !referenced.contains(handle))
+            .collect()
     }
 
     fn relax_globals(&mut self) {

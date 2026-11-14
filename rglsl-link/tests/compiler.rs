@@ -205,3 +205,21 @@ fn a_shared_compiler_compiles_like_the_free_functions_on_several_threads() -> Te
         Ok(())
     })
 }
+
+#[test]
+fn a_preamble_comes_before_the_source() -> TestResult {
+    let mut options = program_options();
+    options.preamble = Some(String::from("#define VALUE 0.5\n"));
+    let program = compile_and_link(
+        &[(
+            "#version 450
+layout(location = 0) out vec4 color;
+void main() { color = vec4(VALUE); }
+",
+            options,
+        )],
+        &ProgramOptions::default(),
+    )?;
+    assert_eq!(program.stages.len(), 1);
+    Ok(())
+}

@@ -70,6 +70,7 @@ pub struct CaseResult {
     pub expected_messages: Option<bool>,
     pub interface: Option<interface::Check>,
     pub debug: Option<bool>,
+    pub object: Option<crate::object_path::Outcome>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +138,10 @@ impl CaseResult {
                     .values()
                     .any(|outcome| matches!(outcome, exec::Outcome::Fail(_))),
         )
+    }
+
+    pub fn object(&self) -> Option<bool> {
+        self.object.as_ref().map(|outcome| outcome.passed)
     }
 
     pub fn interface(&self) -> Option<bool> {
@@ -364,6 +369,14 @@ fn run_case(
         _ => None,
     };
 
+    let object = if matches!(ours, OursResult::Accepted) && !case.target.compile_only {
+        Some(crate::object_path::check(
+            env, self_exe, case, &out, timeout,
+        )?)
+    } else {
+        None
+    };
+
     let reference = work_dir.join("glslang").join(format!("{}.spv", case.name));
     let interface = (matches!(oracle, OracleResult::Accepted)
         && matches!(ours, OursResult::Accepted)
@@ -434,10 +447,11 @@ fn run_case(
         expected_messages: None,
         interface,
         debug,
+        object,
     })
 }
 
-fn ours_command(
+pub fn ours_command(
     env: &Environment,
     self_exe: &Path,
     case: &Case,
@@ -595,7 +609,7 @@ fn run_exec(executor: &Executor, results: &[CaseResult]) -> Vec<(usize, exec::Ou
     outcomes
 }
 
-fn validate(
+pub fn validate(
     env: &Environment,
     case: &Case,
     module: &Path,
@@ -898,6 +912,7 @@ fn run_group(
         expected_messages,
         interface,
         debug: None,
+        object: None,
     })
 }
 
@@ -1051,6 +1066,7 @@ fn run_script(
         expected_messages: None,
         interface,
         debug: None,
+        object: None,
     })
 }
 
