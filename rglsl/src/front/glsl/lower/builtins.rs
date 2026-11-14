@@ -1,6 +1,7 @@
 use alloc::{format, string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
+use rglsl_sema::builtins::kind::BuiltinKind;
 use rglsl_sema::scope::Function;
 use rglsl_sema::types::{
     Opaque, OpaqueKind, Scalar as GlslScalar, TextureDimension, Type as GlslType, TypeKind,
@@ -837,6 +838,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
+        match analysis.builtins.kind(id) {
+            BuiltinKind::Subgroup(kind) => {
+                let frame = self.clone().subgroup(kind, arguments, at);
+                return self.nest(frame).await;
+            }
+            BuiltinKind::Named => {}
+        }
         let route = route(name, arguments.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
         match route {
@@ -960,10 +968,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             Route::Wide => {
                 let frame = self.clone().wide(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Subgroup => {
-                let frame = self.clone().subgroup(name, arguments, at);
                 self.nest(frame).await
             }
             Route::Generic => {
@@ -2486,7 +2490,6 @@ pub(super) enum Route {
     Split,
     Atomic,
     Wide,
-    Subgroup,
     Generic,
 }
 
@@ -2548,7 +2551,6 @@ pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
         "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
         | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => Route::Atomic,
         "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => Route::Wide,
-        _ if super::subgroup::is_subgroup_function(name) => Route::Subgroup,
         _ if is_generic(name, arguments) => Route::Generic,
         _ => return None,
     })

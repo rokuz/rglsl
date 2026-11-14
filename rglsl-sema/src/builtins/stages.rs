@@ -4,8 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{
-    BuiltinFunctionId, Builtins, Footprints, ResourceLimits, Signature, add_name, available,
-    expand_prototypes, footprint, variables,
+    BuiltinFunction, BuiltinFunctionId, Builtins, Footprints, ResourceLimits, Signature, add_name,
+    available, expand_prototypes, footprint, variables,
 };
 
 use crate::scope::{Function, Symbol, SymbolId, SymbolKind, Variable};
@@ -26,7 +26,7 @@ struct StageVariables {
 pub struct StageTables {
     version: u32,
     limits: ResourceLimits,
-    functions: Vec<(Function, u16)>,
+    functions: Vec<(Function, u16, Option<&'static BuiltinFunction>)>,
     names: FastHashMap<String, Vec<usize>>,
     variables: Vec<StageVariables>,
     footprints: Footprints,
@@ -130,7 +130,7 @@ impl StageTables {
                 })
                 .collect()
         };
-        let mut functions: Vec<(Function, u16)> = Vec::new();
+        let mut functions: Vec<(Function, u16, Option<&'static BuiltinFunction>)> = Vec::new();
         let mut names: FastHashMap<String, Vec<usize>> = FastHashMap::default();
         for (prototype, kept) in prototypes.into_iter().zip(kept) {
             if kept == 0 {
@@ -142,7 +142,8 @@ impl StageTables {
                     names.insert(prototype.name.clone(), Vec::from([functions.len()]));
                 }
             }
-            functions.push((prototype.function(), kept));
+            let row = prototype.row;
+            functions.push((prototype.function(), kept, row));
         }
         let variables = ShaderStage::ALL
             .into_iter()
@@ -172,8 +173,9 @@ impl StageTables {
     pub fn builtins(&self, own: ShaderStage) -> Builtins {
         let bit = crate::builtins::stage_bit(own);
         let mut functions = Vec::new();
+        let mut rows = Vec::new();
         let mut names: FastHashMap<String, Vec<BuiltinFunctionId>> = FastHashMap::default();
-        for &(ref function, stages) in &self.functions {
+        for &(ref function, stages, row) in &self.functions {
             if stages & bit == 0 {
                 continue;
             }
@@ -181,6 +183,7 @@ impl StageTables {
                 break;
             };
             add_name(&mut names, &function.name, BuiltinFunctionId(index));
+            rows.push(row);
             functions.push(function.clone());
         }
         let (symbols, scope, types) = self
@@ -198,8 +201,7 @@ impl StageTables {
             self.version,
             own,
             &self.limits,
-            functions,
-            names,
+            (functions, rows, names),
             types,
             (symbols, scope),
             self.footprints.clone(),
@@ -236,7 +238,7 @@ impl StageTables {
             .filter_map(|&index| {
                 self.functions
                     .get(index)
-                    .map(|&(ref function, stages)| (index, function, stages))
+                    .map(|&(ref function, stages, _)| (index, function, stages))
             })
     }
 

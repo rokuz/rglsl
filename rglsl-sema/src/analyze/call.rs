@@ -11,7 +11,10 @@ use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
-use crate::builtins::subgroup;
+use crate::builtins::kind::{
+    AmdShaderBallot, BuiltinKind, Collective, Gather, Subgroup, SubgroupFunction,
+};
+use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
@@ -783,9 +786,13 @@ impl Analyzer<'_> {
                 Candidate::Builtin(id) => Callee::Builtin(id),
             },
         );
-        let is_builtin = matches!(chosen, Candidate::Builtin(_));
-        if is_builtin {
-            self.builtin_extensions(span, name);
+        let builtin = match chosen {
+            Candidate::Builtin(id) => Some(id),
+            Candidate::User(_) => None,
+        };
+        let is_builtin = builtin.is_some();
+        if let Some(id) = builtin {
+            self.builtin_extensions(span, id, name);
         }
         if is_builtin && name == "barrier" {
             self.tessellation_barrier(span);
@@ -912,11 +919,15 @@ impl Analyzer<'_> {
                 }
             }
         }
-        if is_builtin && !failed && subgroup::is_subgroup_operation(name) {
-            failed = !self.subgroup_checks(span, name, operands);
+        let entry = builtin.and_then(|id| self.builtins.entry(id));
+        if !failed
+            && let Some(entry) = entry
+            && entry.has(BuiltinFlags::SUBGROUP_OPERATION)
+        {
+            failed = !self.subgroup_checks(span, entry.kind, name, operands);
         }
-        if is_builtin && !failed {
-            failed = !self.lane_pattern_check(span, name, operands);
+        if !failed && let Some(entry) = entry {
+            failed = !self.lane_pattern_check(span, entry.kind, name, operands);
         }
         if failed {
             return Operand::error();
@@ -1072,12 +1083,12 @@ impl Analyzer<'_> {
         Operand::temporary(Type::VOID)
     }
 
-    pub(crate) fn builtin_extensions(&mut self, span: Span, name: &str) {
-        if matches!(name, "subgroupQuadAll" | "subgroupQuadAny") {
-            self.require_extension(span, Extension::ExtShaderQuadControl, name);
-        }
-        if let Some(extension) = subgroup::function_extension(name) {
-            self.require_extension(span, extension, name);
+    pub(crate) fn builtin_extensions(&mut self, span: Span, id: BuiltinFunctionId, name: &str) {
+        if let Some(entry) = self.builtins.entry(id) {
+            for &extension in entry.requires {
+                self.require_extension(span, extension, name);
+            }
+            return;
         }
         if matches!(
             name,
@@ -1104,10 +1115,20 @@ impl Analyzer<'_> {
         self.texture_extensions(span, name);
     }
 
-    fn lane_pattern_check(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
-        let (limit, range) = match name {
-            "swizzleInvocationsAMD" => (3, "components must be in the range [0, 3]"),
-            "swizzleInvocationsMaskedAMD" => (31, "components must be in the range [0, 31]"),
+    fn lane_pattern_check(
+        &mut self,
+        span: Span,
+        kind: BuiltinKind,
+        name: &str,
+        operands: &[Operand],
+    ) -> bool {
+        let (limit, range) = match kind {
+            BuiltinKind::Subgroup(Subgroup::Function(SubgroupFunction::Amd(
+                AmdShaderBallot::Swizzle,
+            ))) => (3, "components must be in the range [0, 3]"),
+            BuiltinKind::Subgroup(Subgroup::Function(SubgroupFunction::Amd(
+                AmdShaderBallot::SwizzleMasked,
+            ))) => (31, "components must be in the range [0, 31]"),
             _ => return true,
         };
         let pattern = operands
@@ -1137,7 +1158,13 @@ impl Analyzer<'_> {
         false
     }
 
-    fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
+    fn subgroup_checks(
+        &mut self,
+        span: Span,
+        kind: BuiltinKind,
+        name: &str,
+        operands: &[Operand],
+    ) -> bool {
         let invalid = |analyzer: &mut Self, reason: &'static str| {
             analyzer.error(
                 span,
@@ -1150,7 +1177,7 @@ impl Analyzer<'_> {
         };
         let spirv = self.options.spirv_version;
         let mut valid = true;
-        if name.starts_with("subgroupClustered") && name != "subgroupClusteredRotate" {
+        if let BuiltinKind::Subgroup(Subgroup::Collective(_, Collective::Clustered)) = kind {
             let size = operands.get(1).filter(|operand| {
                 operand.constant && !operand.specialization && operand.value.is_some()
             });
@@ -1165,8 +1192,10 @@ impl Analyzer<'_> {
                 Some(_) => {}
             }
         }
-        if matches!(name, "subgroupBroadcast" | "subgroupQuadBroadcast")
-            && spirv.is_some_and(|version| version < (1, 5))
+        if matches!(
+            kind,
+            BuiltinKind::Subgroup(Subgroup::Gather(Gather::Broadcast | Gather::QuadBroadcast))
+        ) && spirv.is_some_and(|version| version < (1, 5))
             && operands
                 .get(1)
                 .is_some_and(|operand| !operand.constant || operand.specialization)

@@ -7,6 +7,8 @@ use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Operand};
+use crate::builtins::kind::{BuiltinKind, Subgroup, SubgroupFunction};
+use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{
@@ -596,12 +598,16 @@ impl Analyzer<'_> {
             let Some(id) = id else {
                 return ambiguous(self);
             };
-            self.builtin_extensions(span, name);
+            self.builtin_extensions(span, id, name);
             self.calls.insert(expression.id, super::Callee::Builtin(id));
             return Operand::temporary(result);
         }
         let features = self.numeric_features();
-        let convertible = name.starts_with("subgroup");
+        let convertible = |id: &BuiltinFunctionId| {
+            self.builtins
+                .entry(*id)
+                .is_some_and(|entry| entry.has(BuiltinFlags::SUBGROUP_OPERATION))
+        };
         let candidate = self
             .builtins
             .overloads(name)
@@ -614,7 +620,7 @@ impl Analyzer<'_> {
             })
             .or_else(|| {
                 self.builtins.overloads(name).iter().copied().find(|id| {
-                    convertible
+                    convertible(id)
                         && self.builtins.function(*id).is_some_and(|function| {
                             function.parameters.len() == stand_ins.len()
                                 && function.parameters.iter().zip(&stand_ins).all(
@@ -651,8 +657,13 @@ impl Analyzer<'_> {
                 self.record_conversion(argument, &operand.ty, &parameter.ty);
             }
         }
-        self.builtin_extensions(span, name);
-        let fixed_result = matches!(name, "subgroupPartitionNV" | "subgroupBallot");
+        self.builtin_extensions(span, id, name);
+        let fixed_result = matches!(
+            self.builtins.kind(id),
+            BuiltinKind::Subgroup(
+                Subgroup::Ballot | Subgroup::Function(SubgroupFunction::Partition)
+            )
+        );
         let result = match function.return_type.kind {
             TypeKind::Vector { scalar, .. } if !fixed_result => long(scalar),
             _ => function.return_type.clone(),

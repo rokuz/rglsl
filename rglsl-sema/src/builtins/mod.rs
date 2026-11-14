@@ -1,9 +1,11 @@
 pub(crate) mod footprint;
 mod functions;
+pub mod kind;
 mod limits;
 pub(crate) mod ray;
 mod stages;
 pub(crate) mod subgroup;
+mod table;
 mod tables;
 mod textures;
 mod variables;
@@ -19,6 +21,7 @@ use rglsl_ast::ast::BasicType;
 
 pub use limits::ResourceLimits;
 pub use stages::{ALL_STAGE_BITS, StageTables};
+pub use table::{BuiltinFlags, BuiltinFunction};
 pub(crate) use tables::Prebuilt;
 pub use tables::{BuiltinTables, FreshTables};
 
@@ -112,6 +115,7 @@ struct Prototype {
     result: Type,
     parameters: Vec<(Type, Direction)>,
     stages: u16,
+    row: Option<&'static BuiltinFunction>,
 }
 
 struct Signature<'a>(&'a Prototype);
@@ -173,6 +177,12 @@ impl Prototype {
     }
 }
 
+type Functions = (
+    Vec<Function>,
+    Vec<Option<&'static BuiltinFunction>>,
+    FastHashMap<String, Vec<BuiltinFunctionId>>,
+);
+
 pub(crate) type Footprints = Vec<(&'static str, crate::types::StructId)>;
 
 fn expand_prototypes(
@@ -186,7 +196,11 @@ fn expand_prototypes(
         }
     }
     prototypes.append(&mut textures::prototypes());
-    prototypes.append(&mut subgroup::prototypes(version));
+    for family in table::FAMILIES {
+        for row in *family {
+            row.expand(version, &mut prototypes);
+        }
+    }
     let mut types = TypeRegistry::new();
     let footprints = footprint::structs(&mut types);
     prototypes.append(&mut footprint::prototypes(&footprints));
@@ -384,6 +398,7 @@ fn parse_prototype(words: &[String], stages: u16) -> Option<Prototype> {
         result,
         parameters,
         stages,
+        row: None,
     })
 }
 
@@ -454,6 +469,7 @@ pub struct Builtins {
     stage: ShaderStage,
     limits: ResourceLimits,
     functions: Vec<Function>,
+    rows: Vec<Option<&'static BuiltinFunction>>,
     names: FastHashMap<String, Vec<BuiltinFunctionId>>,
     types: TypeRegistry,
     symbols: Vec<Symbol>,
@@ -474,6 +490,7 @@ impl Builtins {
                 .collect()
         };
         let mut functions = Vec::new();
+        let mut rows = Vec::new();
         let mut names: FastHashMap<String, Vec<BuiltinFunctionId>> = FastHashMap::default();
         for (prototype, kept) in prototypes.into_iter().zip(kept) {
             if !kept {
@@ -483,28 +500,31 @@ impl Builtins {
                 break;
             };
             add_name(&mut names, &prototype.name, BuiltinFunctionId(index));
+            rows.push(prototype.row);
             functions.push(prototype.function());
         }
         let table = variables::build(version, stage, limits, &mut types);
         Self::assemble(
-            version, stage, limits, functions, names, types, table, footprints,
+            version,
+            stage,
+            limits,
+            (functions, rows, names),
+            types,
+            table,
+            footprints,
         )
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     fn assemble(
         version: u32,
         stage: ShaderStage,
         limits: &ResourceLimits,
-        functions: Vec<Function>,
-        names: FastHashMap<String, Vec<BuiltinFunctionId>>,
+        functions: Functions,
         types: TypeRegistry,
         table: (Vec<Symbol>, Vec<(String, SymbolId)>),
         footprints: Footprints,
     ) -> Self {
+        let (functions, rows, names) = functions;
         let (mut symbols, mut scope) = table;
         for (name, id) in footprints {
             let Some(symbol) = u32::try_from(symbols.len()).ok().and_then(SymbolId::new) else {
@@ -522,6 +542,7 @@ impl Builtins {
             stage,
             limits: *limits,
             functions,
+            rows,
             names,
             types,
             symbols,
@@ -547,6 +568,18 @@ impl Builtins {
 
     pub fn function(&self, id: BuiltinFunctionId) -> Option<&Function> {
         self.functions.get(usize::try_from(id.0).ok()?)
+    }
+
+    pub fn entry(&self, id: BuiltinFunctionId) -> Option<&'static BuiltinFunction> {
+        self.rows
+            .get(usize::try_from(id.0).ok()?)
+            .copied()
+            .flatten()
+    }
+
+    pub fn kind(&self, id: BuiltinFunctionId) -> kind::BuiltinKind {
+        self.entry(id)
+            .map_or(kind::BuiltinKind::Named, |entry| entry.kind)
     }
 
     pub fn overloads(&self, name: &str) -> &[BuiltinFunctionId] {

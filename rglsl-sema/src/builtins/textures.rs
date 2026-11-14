@@ -32,6 +32,7 @@ impl Emitter<'_> {
             result,
             parameters: parameters.into_iter().map(input).collect(),
             stages,
+            row: None,
         });
     }
 
@@ -51,6 +52,7 @@ impl Emitter<'_> {
             result: Type::INT,
             parameters,
             stages,
+            row: None,
         });
     }
 }

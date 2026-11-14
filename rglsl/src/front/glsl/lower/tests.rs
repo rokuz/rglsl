@@ -3,6 +3,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_sema::builtins::kind::BuiltinKind;
 use rglsl_sema::builtins::{Builtins, ResourceLimits};
 
 use super::builtins::route;
@@ -13,8 +14,16 @@ fn prototypes() -> BTreeSet<(String, usize)> {
     for version in [450, 460] {
         for stage in ShaderStage::ALL {
             let builtins = Builtins::new(version, stage, &ResourceLimits::default());
-            for function in builtins.functions() {
-                prototypes.insert((function.name.clone(), function.parameters.len()));
+            for name in builtins.function_names() {
+                for &id in builtins.overloads(name) {
+                    if builtins.kind(id) != BuiltinKind::Named {
+                        continue;
+                    }
+                    let Some(function) = builtins.function(id) else {
+                        continue;
+                    };
+                    prototypes.insert((function.name.clone(), function.parameters.len()));
+                }
             }
         }
     }

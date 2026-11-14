@@ -504,12 +504,6 @@ const TASK_SHADER: &str = "
 void EmitMeshTasksEXT(uint, uint, uint)
 ";
 
-const SHADER_INVOCATION_GROUP: &str = "
-bool anyInvocation(bool)
-bool allInvocations(bool)
-bool allInvocationsEqual(bool)
-";
-
 const INT64: &str = "
 genI64 abs(genI64)
 genI64 sign(genI64)
@@ -733,7 +727,6 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE | MESH | TASK),
     Section::new(MESH_SHADER).in_stages(MESH),
     Section::new(TASK_SHADER).in_stages(TASK),
-    Section::new(SHADER_INVOCATION_GROUP).since(460),
     Section::new(EXPECT_ASSUME),
     Section::new(ENCODED_FLOATS),
 ];

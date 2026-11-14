@@ -82,6 +82,7 @@ pub(super) fn prototypes(structs: &[(&'static str, StructId)]) -> Vec<Prototype>
                     result: Type::BOOL,
                     parameters,
                     stages: ALL_STAGES,
+                    row: None,
                 });
             };
             push("textureFootprintNV", &[], &[]);
