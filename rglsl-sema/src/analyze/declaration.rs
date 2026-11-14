@@ -373,9 +373,10 @@ impl Analyzer<'_> {
     }
 
     fn resize_interface_arrays(&mut self, span: Span, storage: Storage, size: u32) {
+        let mut updates = Vec::new();
         let mut mismatched = Vec::new();
-        for symbol in &mut self.symbols {
-            let SymbolKind::Variable(variable) = &mut symbol.kind else {
+        for (index, symbol) in self.symbols.iter().enumerate() {
+            let SymbolKind::Variable(variable) = &symbol.kind else {
                 continue;
             };
             let is_interface = variable.qualifiers.storage == storage
@@ -386,11 +387,18 @@ impl Analyzer<'_> {
                 continue;
             }
             match variable.ty.outer_size() {
-                Some(ArraySize::Unsized) => variable.ty.set_outer_size(ArraySize::Sized(size)),
+                Some(ArraySize::Unsized) => updates.push(index),
                 Some(ArraySize::Sized(declared)) if declared != size => {
                     mismatched.push(symbol.name.clone());
                 }
                 _ => {}
+            }
+        }
+        for index in updates {
+            if let Some(SymbolKind::Variable(variable)) =
+                self.symbols.get_mut(index).map(|symbol| &mut symbol.kind)
+            {
+                variable.ty.set_outer_size(ArraySize::Sized(size));
             }
         }
         if storage == Storage::In && !self.stage_is(ShaderStage::Geometry) {

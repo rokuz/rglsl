@@ -395,6 +395,7 @@ impl Builder<'_> {
                 ref spirv_requirements,
                 ref source_extensions,
                 debug_info: _,
+                span_map: _,
             } = self.object(index)?.unit.module;
             let remap = self.remap(index)?;
             let mut special = self.module.special_types.clone();

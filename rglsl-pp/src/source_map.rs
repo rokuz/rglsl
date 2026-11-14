@@ -1,5 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::Cell;
 
@@ -34,10 +35,34 @@ pub enum PresumedSource<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceMap {
     pub(crate) root: FileId,
-    pub(crate) segments: Vec<Segment>,
+    pub(crate) segments: Arc<[Segment]>,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) files: BTreeMap<FileId, String>,
     pub(crate) texts: BTreeMap<FileId, String>,
+}
+
+#[derive(Clone, Default)]
+pub struct SpanMap {
+    root: FileId,
+    segments: Option<Arc<[Segment]>>,
+}
+
+impl core::fmt::Debug for SpanMap {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("SpanMap")
+    }
+}
+
+impl SpanMap {
+    pub fn locate_root(&self, offset: usize) -> Option<u32> {
+        let segments = self.segments.as_deref()?;
+        let location = located(self.root, segment_in(segments, offset), offset);
+        (location.file == self.root).then_some(location.offset)
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.segments.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +92,7 @@ impl<'a> Locator<'a> {
     }
 
     fn segment(&self, offset: usize) -> Option<&'a Segment> {
-        let segments = self.map.segments.as_slice();
+        let segments = &*self.map.segments;
         let target = u32::try_from(offset).unwrap_or(u32::MAX);
         let before = |segment: &Segment| segment.start <= target;
         let hint = self.last.get().min(segments.len().saturating_sub(1));
@@ -118,16 +143,42 @@ pub(crate) fn clamp_line(line: i64) -> u32 {
     u32::try_from(line.max(0)).unwrap_or(u32::MAX)
 }
 
+fn segment_in(segments: &[Segment], offset: usize) -> Option<&Segment> {
+    let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+    let index = segments.partition_point(|segment| segment.start <= offset);
+    index
+        .checked_sub(1)
+        .and_then(|index| segments.get(index))
+        .or_else(|| segments.first())
+}
+
+fn located(root: FileId, segment: Option<&Segment>, offset: usize) -> Location {
+    let Some(segment) = segment else {
+        return Location {
+            file: root,
+            offset: 0,
+        };
+    };
+    let delta = u32::try_from(offset)
+        .unwrap_or(u32::MAX)
+        .saturating_sub(segment.start);
+    let inside = if delta < segment.exact { delta } else { 0 };
+    Location {
+        file: segment.file,
+        offset: segment.offset.saturating_add(inside),
+    }
+}
+
 impl SourceMap {
+    pub fn span_map(&self) -> SpanMap {
+        SpanMap {
+            root: self.root,
+            segments: Some(Arc::clone(&self.segments)),
+        }
+    }
+
     fn segment(&self, offset: usize) -> Option<&Segment> {
-        let offset = u32::try_from(offset).unwrap_or(u32::MAX);
-        let index = self
-            .segments
-            .partition_point(|segment| segment.start <= offset);
-        index
-            .checked_sub(1)
-            .and_then(|index| self.segments.get(index))
-            .or_else(|| self.segments.first())
+        segment_in(&self.segments, offset)
     }
 
     pub fn locate(&self, offset: usize) -> Location {
@@ -135,20 +186,7 @@ impl SourceMap {
     }
 
     fn located(&self, segment: Option<&Segment>, offset: usize) -> Location {
-        let Some(segment) = segment else {
-            return Location {
-                file: self.root,
-                offset: 0,
-            };
-        };
-        let delta = u32::try_from(offset)
-            .unwrap_or(u32::MAX)
-            .saturating_sub(segment.start);
-        let inside = if delta < segment.exact { delta } else { 0 };
-        Location {
-            file: segment.file,
-            offset: segment.offset.saturating_add(inside),
-        }
+        located(self.root, segment, offset)
     }
 
     pub fn line(&self, offset: usize) -> (FileId, u32) {

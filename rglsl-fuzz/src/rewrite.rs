@@ -376,25 +376,33 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
                     {
                         self.specifier_in(specifier).await;
                     }
-                    let children: Vec<Expression> = node
-                        .kind
-                        .children_mut()
-                        .into_iter()
-                        .map(take_expression)
-                        .collect();
-                    let count = children.len();
-                    tasks.push(Rewrite::Build(node, count));
-                    tasks.extend(children.into_iter().rev().map(Rewrite::Visit));
+                    let count = node.kind.child_count();
+                    if count == 0 {
+                        self.with(|state| (state.visit)(&mut node));
+                        done.push(node);
+                    } else {
+                        let mark = tasks.len() + 1;
+                        tasks.push(Rewrite::Build(rglsl_ast::placeholder(), count));
+                        node.kind.for_each_child_mut(|child| {
+                            tasks.push(Rewrite::Visit(take_expression(child)));
+                        });
+                        if let Some(slot) = tasks.get_mut(mark - 1) {
+                            *slot = Rewrite::Build(node, count);
+                        }
+                        if let Some(added) = tasks.get_mut(mark..) {
+                            added.reverse();
+                        }
+                    }
                 }
                 Rewrite::Build(mut node, count) => {
                     let start = done.len().saturating_sub(count);
-                    for (slot, child) in node
-                        .kind
-                        .children_mut()
-                        .into_iter()
-                        .zip(done.drain(start..))
                     {
-                        *slot = child;
+                        let mut iter = done.drain(start..);
+                        node.kind.for_each_child_mut(|slot| {
+                            if let Some(child) = iter.next() {
+                                *slot = child;
+                            }
+                        });
                     }
                     self.with(|state| (state.visit)(&mut node));
                     done.push(node);

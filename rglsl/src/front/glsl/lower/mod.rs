@@ -640,9 +640,6 @@ fn run_lowerer(
     lowerer
         .run()
         .map_err(|errors| {
-            if !debug {
-                return errors;
-            }
             let ParseErrors { errors, included } = errors;
             ParseErrors {
                 errors: errors
@@ -656,6 +653,7 @@ fn run_lowerer(
             }
         })
         .and_then(|mut object| {
+            object.object.unit.module.span_map = map.span_map();
             if debug {
                 let mut info = debug_info(
                     options,
@@ -1075,7 +1073,6 @@ pub(super) struct Initialization<'a> {
 #[derive(Debug)]
 pub(super) struct Lowerer<'a> {
     pub(super) source_map: &'a rglsl_pp::SourceMap,
-    locator: rglsl_pp::Locator<'a>,
     pub(super) unit: &'a TranslationUnit,
     pub(super) analysis: &'a Analysis,
     pub(super) options: &'a Options,
@@ -1174,7 +1171,6 @@ impl<'a> Lowerer<'a> {
     ) -> Self {
         Self {
             source_map,
-            locator: rglsl_pp::Locator::new(source_map),
             unit,
             analysis,
             options,
@@ -1274,15 +1270,9 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    pub(super) fn at(&self, span: rglsl_ast::Span) -> Span {
-        if self.debug.is_some() {
-            return Span::new(span.start, span.end);
-        }
-        original_located(
-            self.source_map.root(),
-            |offset| self.locator.locate(offset),
-            span,
-        )
+    pub(super) const fn at(&self, span: rglsl_ast::Span) -> Span {
+        let _ = self;
+        Span::new(span.start, span.end)
     }
 
     pub(super) fn debug_scope(&mut self, start: u32, end: u32, at: u32) {

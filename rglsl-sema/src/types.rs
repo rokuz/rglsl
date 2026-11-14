@@ -1403,37 +1403,168 @@ impl TypeRegistry {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct TypeRegistry {
+    base: Option<Arc<crate::builtins::Builtins>>,
+    block_overrides: rglsl_types::FastHashMap<usize, BlockType>,
     structs: Vec<StructType>,
     blocks: Vec<BlockType>,
     spirv: Vec<SpirvType>,
 }
 
+#[derive(Debug, Clone)]
+pub struct StructIter<'a> {
+    registry: &'a TypeRegistry,
+    index: usize,
+    end: usize,
+}
+
+impl<'a> Iterator for StructIter<'a> {
+    type Item = &'a StructType;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+        let current = self.index;
+        self.index += 1;
+        let base_len = self.registry.base_structs_len();
+        if current < base_len {
+            self.registry.base.as_ref()?.types().structs.get(current)
+        } else {
+            self.registry.structs.get(current - base_len)
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.end.saturating_sub(self.index);
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for StructIter<'_> {}
+
+#[derive(Debug, Clone)]
+pub struct BlockIter<'a> {
+    registry: &'a TypeRegistry,
+    index: usize,
+    end: usize,
+}
+
+impl<'a> Iterator for BlockIter<'a> {
+    type Item = &'a BlockType;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+        let current = self.index;
+        self.index += 1;
+        let base_len = self.registry.base_blocks_len();
+        if current < base_len {
+            self.registry
+                .block_overrides
+                .get(&current)
+                .or_else(|| self.registry.base.as_ref()?.types().blocks.get(current))
+        } else {
+            self.registry.blocks.get(current - base_len)
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.end.saturating_sub(self.index);
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for BlockIter<'_> {}
+
+impl PartialEq for TypeRegistry {
+    fn eq(&self, other: &Self) -> bool {
+        let spirv_len = self.base_spirv_len() + self.spirv.len();
+        let other_spirv_len = other.base_spirv_len() + other.spirv.len();
+        let spirv = self
+            .base
+            .iter()
+            .flat_map(|builtins| &builtins.types().spirv)
+            .chain(&self.spirv);
+        let other_spirv = other
+            .base
+            .iter()
+            .flat_map(|builtins| &builtins.types().spirv)
+            .chain(&other.spirv);
+        self.structs().len() == other.structs().len()
+            && self.blocks().len() == other.blocks().len()
+            && spirv_len == other_spirv_len
+            && self.structs().eq(other.structs())
+            && self.blocks().eq(other.blocks())
+            && spirv.eq(other_spirv)
+    }
+}
+
+impl Eq for TypeRegistry {}
+
 impl TypeRegistry {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_builtins(builtins: Arc<crate::builtins::Builtins>) -> Self {
         Self {
+            base: Some(builtins),
+            block_overrides: rglsl_types::FastHashMap::default(),
             structs: Vec::new(),
             blocks: Vec::new(),
             spirv: Vec::new(),
         }
     }
 
+    fn base_structs_len(&self) -> usize {
+        self.base
+            .as_ref()
+            .map_or(0, |builtins| builtins.types().structs.len())
+    }
+
+    fn base_blocks_len(&self) -> usize {
+        self.base
+            .as_ref()
+            .map_or(0, |builtins| builtins.types().blocks.len())
+    }
+
+    fn base_spirv_len(&self) -> usize {
+        self.base
+            .as_ref()
+            .map_or(0, |builtins| builtins.types().spirv.len())
+    }
+
     pub fn add_spirv(&mut self, ty: SpirvType) -> Option<SpirvTypeId> {
-        if let Some(index) = self.spirv.iter().position(|known| *known == ty) {
+        let base_len = self.base_spirv_len();
+        if let Some(builtins) = &self.base
+            && let Some(index) = builtins.types().spirv.iter().position(|known| *known == ty)
+        {
             return SpirvTypeId::new(u32::try_from(index).ok()?);
         }
-        let id = SpirvTypeId::new(u32::try_from(self.spirv.len()).ok()?)?;
+        if let Some(index) = self.spirv.iter().position(|known| *known == ty) {
+            return SpirvTypeId::new(u32::try_from(base_len.checked_add(index)?).ok()?);
+        }
+        let id = SpirvTypeId::new(u32::try_from(base_len.checked_add(self.spirv.len())?).ok()?)?;
         self.spirv.push(ty);
         Some(id)
     }
 
     pub fn spirv(&self, id: SpirvTypeId) -> Option<&SpirvType> {
-        self.spirv.get(usize::try_from(id.index()).ok()?)
+        let index = usize::try_from(id.index()).ok()?;
+        let base_len = self.base_spirv_len();
+        if index < base_len {
+            self.base.as_ref()?.types().spirv.get(index)
+        } else {
+            self.spirv.get(index - base_len)
+        }
     }
 
     pub fn add_struct(&mut self, name: Option<String>, members: Vec<Member>) -> Option<StructId> {
-        let id = StructId::new(u32::try_from(self.structs.len()).ok()?)?;
+        let total = self.base_structs_len().checked_add(self.structs.len())?;
+        let id = StructId::new(u32::try_from(total).ok()?)?;
         let mut contains_opaque = false;
         let mut contains_unsized_array = false;
         let mut contains_reference = false;
@@ -1466,29 +1597,62 @@ impl TypeRegistry {
     }
 
     pub fn add_block(&mut self, block: BlockType) -> Option<BlockId> {
-        let id = BlockId::new(u32::try_from(self.blocks.len()).ok()?)?;
+        let total = self.base_blocks_len().checked_add(self.blocks.len())?;
+        let id = BlockId::new(u32::try_from(total).ok()?)?;
         self.blocks.push(block);
         Some(id)
     }
 
     pub fn structure(&self, id: StructId) -> Option<&StructType> {
-        self.structs.get(usize::try_from(id.index()).ok()?)
+        let index = usize::try_from(id.index()).ok()?;
+        let base_len = self.base_structs_len();
+        if index < base_len {
+            self.base.as_ref()?.types().structs.get(index)
+        } else {
+            self.structs.get(index - base_len)
+        }
     }
 
     pub fn block(&self, id: BlockId) -> Option<&BlockType> {
-        self.blocks.get(usize::try_from(id.index()).ok()?)
+        let index = usize::try_from(id.index()).ok()?;
+        let base_len = self.base_blocks_len();
+        if index < base_len {
+            self.block_overrides
+                .get(&index)
+                .or_else(|| self.base.as_ref()?.types().blocks.get(index))
+        } else {
+            self.blocks.get(index - base_len)
+        }
     }
 
     pub fn block_mut(&mut self, id: BlockId) -> Option<&mut BlockType> {
-        self.blocks.get_mut(usize::try_from(id.index()).ok()?)
+        let index = usize::try_from(id.index()).ok()?;
+        let base_len = self.base_blocks_len();
+        if index < base_len {
+            if !self.block_overrides.contains_key(&index) {
+                let block = self.base.as_ref()?.types().blocks.get(index)?.clone();
+                self.block_overrides.insert(index, block);
+            }
+            self.block_overrides.get_mut(&index)
+        } else {
+            self.blocks.get_mut(index - base_len)
+        }
     }
 
-    pub fn structs(&self) -> &[StructType] {
-        &self.structs
+    pub fn structs(&self) -> StructIter<'_> {
+        StructIter {
+            registry: self,
+            index: 0,
+            end: self.base_structs_len() + self.structs.len(),
+        }
     }
 
-    pub fn blocks(&self) -> &[BlockType] {
-        &self.blocks
+    pub fn blocks(&self) -> BlockIter<'_> {
+        BlockIter {
+            registry: self,
+            index: 0,
+            end: self.base_blocks_len() + self.blocks.len(),
+        }
     }
 }
 

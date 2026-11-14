@@ -55,9 +55,9 @@ enum Begun {
 
 #[derive(Debug)]
 struct Expansion {
-    name: Rc<str>,
+    name: crate::token::TokenText,
     body: Rc<[Token]>,
-    params: Rc<[Rc<str>]>,
+    params: Rc<[crate::token::TokenText]>,
     args: Vec<Rc<[Token]>>,
     expanded: Vec<Option<Rc<[Token]>>>,
     prescanned: Vec<Token>,
@@ -83,8 +83,8 @@ impl Expansion {
 
 #[derive(Debug)]
 struct FoundMacro {
-    name: Rc<str>,
-    params: Rc<[Rc<str>]>,
+    name: crate::token::TokenText,
+    params: Rc<[crate::token::TokenText]>,
     body: Rc<[Token]>,
     function_like: bool,
 }
@@ -231,7 +231,7 @@ impl Preprocessor<'_> {
                 }
                 let combined = format!("{left}{right}");
                 if result == Kind::Identifier {
-                    token.text = Rc::from(combined.as_str());
+                    token.text = crate::token::TokenText::from_str(&combined);
                 } else {
                     match operator(&combined) {
                         Some(op) => result = Kind::Op(op),
@@ -331,7 +331,7 @@ impl Preprocessor<'_> {
     fn unget_number(&mut self, token: &Token, text: &str, value: i64) {
         let mut number = token.clone();
         number.kind = Kind::IntConst;
-        number.text = Rc::from(text);
+        number.text = crate::token::TokenText::from_str(text);
         number.value = value;
         number.at.exact = 0;
         self.inputs.push(Input::Ungot(Some(number)));
@@ -384,7 +384,7 @@ impl Preprocessor<'_> {
         token: &mut Token,
         expand_undef: bool,
     ) -> Result<FoundMacro, Expand> {
-        let name: Rc<str> = token.text.clone();
+        let name = token.text.clone();
         let definition = match self.macros.get_mut(&name) {
             Some(definition) if definition.busy => {
                 token.fully_expanded = true;

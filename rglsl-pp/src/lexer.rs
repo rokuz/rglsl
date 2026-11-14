@@ -72,25 +72,58 @@ fn offset_u32(offset: usize) -> u32 {
 }
 
 struct Name {
-    text: String,
+    inline: arrayvec::ArrayString<63>,
+    heap: String,
     complained: bool,
 }
 
 impl Name {
     const fn new() -> Self {
         Self {
-            text: String::new(),
+            inline: arrayvec::ArrayString::new_const(),
+            heap: String::new(),
             complained: false,
         }
     }
 
     const fn len(&self) -> usize {
-        self.text.len()
+        if self.heap.is_empty() {
+            self.inline.len()
+        } else {
+            self.heap.len()
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        if self.heap.is_empty() {
+            self.inline.as_str()
+        } else {
+            self.heap.as_str()
+        }
+    }
+
+    fn push(&mut self, character: char) {
+        if self.heap.is_empty() {
+            if self.inline.try_push(character).is_err() {
+                self.heap.push_str(&self.inline);
+                self.heap.push(character);
+            }
+        } else {
+            self.heap.push(character);
+        }
+    }
+
+    fn truncate(&mut self, len: usize) {
+        if self.heap.is_empty() {
+            self.inline.truncate(len);
+        } else {
+            self.heap.truncate(len);
+        }
     }
 
     fn push_limited(&mut self, character: char) -> bool {
-        if self.text.len() < MAX_TOKEN_LENGTH {
-            self.text.push(character);
+        if self.len() < MAX_TOKEN_LENGTH {
+            self.push(character);
             true
         } else {
             false
@@ -429,7 +462,7 @@ impl FileInput {
             (character, mark) = self.next(context, events);
         }
         self.reset(mark);
-        Token::with_text(Kind::Identifier, &name.text, at)
+        Token::with_text(Kind::Identifier, name.as_str(), at)
     }
 
     fn operator(
@@ -534,7 +567,7 @@ impl FileInput {
         short: bool,
         at: At,
     ) -> Token {
-        let mut token = Token::with_text(Kind::Number, &name.text, at);
+        let mut token = Token::with_text(Kind::Number, name.as_str(), at);
         if long {
             token.value = i64::from_ne_bytes(value.to_ne_bytes());
         } else {
@@ -585,7 +618,7 @@ impl FileInput {
             0xffff_ffff
         };
         let mut value: u64 = 0;
-        for digit in name.text.get(..numeric_length).unwrap_or("").chars() {
+        for digit in name.as_str().get(..numeric_length).unwrap_or("").chars() {
             let digit = digit_value(digit);
             let overflow = value > maximum / 10 || (value == maximum / 10 && digit > maximum % 10);
             if overflow {
@@ -746,8 +779,8 @@ impl FileInput {
         at: At,
     ) -> Token {
         let save = |name: &mut Name, character: char| {
-            if name.text.len() <= MAX_TOKEN_LENGTH {
-                name.text.push(character);
+            if name.len() <= MAX_TOKEN_LENGTH {
+                name.push(character);
             }
         };
         let mut has_point_or_exponent = false;
@@ -826,8 +859,8 @@ impl FileInput {
             }
             _ => self.reset(mark),
         }
-        if name.text.len() > MAX_TOKEN_LENGTH {
-            name.text.truncate(MAX_TOKEN_LENGTH);
+        if name.len() > MAX_TOKEN_LENGTH {
+            name.truncate(MAX_TOKEN_LENGTH);
             self.report(
                 events,
                 DiagnosticKind::InvalidLiteral {
@@ -836,7 +869,7 @@ impl FileInput {
                 at,
             );
         }
-        Token::with_text(Kind::Number, &name.text, at)
+        Token::with_text(Kind::Number, name.as_str(), at)
     }
 
     fn string(&mut self, context: &ScanContext, events: &mut Events, at: At) -> Token {

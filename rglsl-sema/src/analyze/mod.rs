@@ -59,7 +59,7 @@ use crate::constant::Constant;
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scope::{
     Function, FunctionId, Lookup, Origin, Qualifiers, Scopes, Storage, Symbol, SymbolId,
-    SymbolKind, Variable,
+    SymbolKind, Symbols, Variable,
 };
 use crate::spirv::{SpirvExecutionModes, SpirvRequirements};
 use crate::types::{BlockStorage, Packing, Type, TypeKind, TypeRegistry};
@@ -124,7 +124,7 @@ pub struct Analysis {
     pub builtins: Arc<Builtins>,
     pub builtin_functions: BuiltinFunctions,
     pub types: TypeRegistry,
-    pub symbols: Vec<Symbol>,
+    pub symbols: Symbols,
     pub functions: Vec<Function>,
     pub expressions: FastHashMap<NodeId, ExpressionInfo>,
     pub references: FastHashMap<NodeId, SymbolId>,
@@ -192,7 +192,7 @@ impl Analysis {
     }
 }
 
-fn symbol_type(symbols: &[Symbol], types: &TypeRegistry, id: SymbolId) -> Option<Type> {
+fn symbol_type(symbols: &Symbols, types: &TypeRegistry, id: SymbolId) -> Option<Type> {
     let symbol = symbols.get(usize::try_from(id.index()).ok()?)?;
     match &symbol.kind {
         SymbolKind::Variable(variable) => Some(variable.ty.clone()),
@@ -383,7 +383,7 @@ pub(crate) struct Analyzer<'a> {
     pub builtins: Arc<Builtins>,
     pub builtin_functions: BuiltinFunctions,
     pub types: TypeRegistry,
-    pub symbols: Vec<Symbol>,
+    pub symbols: Symbols,
     pub functions: Vec<Function>,
     pub scopes: Scopes,
     pub expressions: FastHashMap<NodeId, ExpressionInfo>,
@@ -445,16 +445,10 @@ pub enum DerivativeGroup {
 
 impl<'a> Analyzer<'a> {
     fn new(options: &'a Options, builtins: Arc<Builtins>, diagnostics: Vec<Diagnostic>) -> Self {
-        let mut scopes = Scopes::new();
-        scopes.push();
-        let mut work_group_size = None;
-        for (name, id) in builtins.variables() {
-            if name == "gl_WorkGroupSize" {
-                work_group_size = Some(id);
-            }
-            let _ = scopes.declare(name, id);
-        }
-        scopes.push();
+        let scopes = Scopes::with_builtins(Arc::clone(&builtins));
+        let types = TypeRegistry::with_builtins(Arc::clone(&builtins));
+        let symbols = Symbols::with_builtins(Arc::clone(&builtins));
+        let work_group_size = builtins.work_group_size();
         let probe = StageProbe::new(options.stage);
         let trust = alloc::vec![ShaderStageMask::all(); diagnostics.len()];
         Self {
@@ -466,8 +460,8 @@ impl<'a> Analyzer<'a> {
             target_limits: Vec::new(),
             options,
             version: None,
-            types: builtins.types().clone(),
-            symbols: builtins.symbols().to_vec(),
+            types,
+            symbols,
             builtins,
             builtin_functions: BuiltinFunctions::default(),
             functions: Vec::new(),

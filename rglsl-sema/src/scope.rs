@@ -1,11 +1,13 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
-use rglsl_types::FastHashMap;
+use rglsl_types::{FastHashMap, FastHashSet};
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{InterpolationQualifier, NodeId, PrecisionQualifier};
 
+use crate::builtins::Builtins;
 use crate::constant::Constant;
 pub use crate::layout_id::LayoutId;
 use crate::spirv::{SpirvDecoration, SpirvInstruction};
@@ -388,7 +390,124 @@ pub enum DeclareError {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct Symbols {
+    base: Option<Arc<Builtins>>,
+    overrides: FastHashMap<usize, Symbol>,
+    added: Vec<Symbol>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SymbolIter<'a> {
+    symbols: &'a Symbols,
+    index: usize,
+    end: usize,
+}
+
+impl<'a> Iterator for SymbolIter<'a> {
+    type Item = &'a Symbol;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.end {
+            return None;
+        }
+        let current = self.index;
+        self.index += 1;
+        self.symbols.get(current)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.end.saturating_sub(self.index);
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for SymbolIter<'_> {}
+
+impl Symbols {
+    pub fn with_builtins(builtins: Arc<Builtins>) -> Self {
+        Self {
+            base: Some(builtins),
+            overrides: FastHashMap::default(),
+            added: Vec::new(),
+        }
+    }
+
+    fn base_len(&self) -> usize {
+        self.base
+            .as_ref()
+            .map_or(0, |builtins| builtins.symbols().len())
+    }
+
+    pub fn len(&self) -> usize {
+        self.base_len() + self.added.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get(&self, index: usize) -> Option<&Symbol> {
+        let base_len = self.base_len();
+        if index < base_len {
+            self.overrides
+                .get(&index)
+                .or_else(|| self.base.as_ref()?.symbols().get(index))
+        } else {
+            self.added.get(index - base_len)
+        }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Symbol> {
+        let base_len = self.base_len();
+        if index < base_len {
+            if !self.overrides.contains_key(&index) {
+                let symbol = self.base.as_ref()?.symbols().get(index)?.clone();
+                self.overrides.insert(index, symbol);
+            }
+            self.overrides.get_mut(&index)
+        } else {
+            self.added.get_mut(index - base_len)
+        }
+    }
+
+    pub fn push(&mut self, symbol: Symbol) {
+        self.added.push(symbol);
+    }
+
+    pub fn iter(&self) -> SymbolIter<'_> {
+        SymbolIter {
+            symbols: self,
+            index: 0,
+            end: self.len(),
+        }
+    }
+
+    pub fn modified_or_added(&self) -> impl Iterator<Item = &Symbol> {
+        self.overrides.values().chain(self.added.iter())
+    }
+}
+
+impl<'a> IntoIterator for &'a Symbols {
+    type Item = &'a Symbol;
+    type IntoIter = SymbolIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl PartialEq for Symbols {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for Symbols {}
+
+#[derive(Debug, Clone, Default)]
 pub struct Scopes {
+    builtins: Option<Arc<Builtins>>,
+    removed_builtins: FastHashSet<String>,
     levels: Vec<Level>,
     bound: FastHashMap<String, Vec<usize>>,
     precise_levels: Vec<usize>,
@@ -397,10 +516,29 @@ pub struct Scopes {
 impl Scopes {
     pub fn new() -> Self {
         Self {
+            builtins: None,
+            removed_builtins: FastHashSet::default(),
             levels: Vec::new(),
             bound: FastHashMap::default(),
             precise_levels: Vec::new(),
         }
+    }
+
+    pub fn with_builtins(builtins: Arc<Builtins>) -> Self {
+        Self {
+            builtins: Some(builtins),
+            removed_builtins: FastHashSet::default(),
+            levels: alloc::vec![Level::default(), Level::default()],
+            bound: FastHashMap::default(),
+            precise_levels: Vec::new(),
+        }
+    }
+
+    fn builtin_symbol(&self, name: &str) -> Option<SymbolId> {
+        if self.levels.is_empty() || self.removed_builtins.contains(name) {
+            return None;
+        }
+        self.builtins.as_ref()?.lookup_scope(name)
     }
 
     pub fn push(&mut self) {
@@ -412,6 +550,10 @@ impl Scopes {
             return;
         };
         let index = self.levels.len();
+        if index == 0 {
+            self.builtins = None;
+            self.removed_builtins.clear();
+        }
         for name in level.symbols.keys().chain(
             level
                 .functions
@@ -485,10 +627,14 @@ impl Scopes {
     }
 
     pub fn declare(&mut self, name: &str, id: SymbolId) -> Result<(), DeclareError> {
+        let builtin_conflict = self.levels.len() == 1 && self.builtin_symbol(name).is_some();
         let Some(level) = self.levels.last_mut() else {
             return Ok(());
         };
-        if level.symbols.contains_key(name) || level.functions.contains_key(name) {
+        if builtin_conflict
+            || level.symbols.contains_key(name)
+            || level.functions.contains_key(name)
+        {
             return Err(DeclareError::Redeclaration);
         }
         level.symbols.insert(String::from(name), id);
@@ -498,6 +644,13 @@ impl Scopes {
     }
 
     pub fn replace_in_current(&mut self, name: &str, id: SymbolId) {
+        if self.levels.len() == 1 && self.builtin_symbol(name).is_some() {
+            if let Some(level) = self.levels.first_mut() {
+                level.symbols.insert(String::from(name), id);
+            }
+            self.bind(name, 0);
+            return;
+        }
         if let Some(slot) = self
             .levels
             .last_mut()
@@ -508,6 +661,13 @@ impl Scopes {
     }
 
     pub fn remove_builtin(&mut self, name: &str) {
+        if self
+            .builtins
+            .as_ref()
+            .is_some_and(|builtins| builtins.lookup_scope(name).is_some())
+        {
+            self.removed_builtins.insert(String::from(name));
+        }
         let unbound = match self.levels.first_mut() {
             Some(level) => {
                 level.symbols.remove(name).is_some() && !level.functions.contains_key(name)
@@ -520,10 +680,11 @@ impl Scopes {
     }
 
     pub fn declare_function(&mut self, name: &str, id: FunctionId) -> Result<(), DeclareError> {
+        let builtin_conflict = self.levels.len() == 1 && self.builtin_symbol(name).is_some();
         let Some(level) = self.levels.last_mut() else {
             return Ok(());
         };
-        if level.symbols.contains_key(name) {
+        if builtin_conflict || level.symbols.contains_key(name) {
             return Err(DeclareError::Redeclaration);
         }
         match level.functions.get_mut(name) {
@@ -546,7 +707,7 @@ impl Scopes {
                 return Some(Lookup::Function(functions));
             }
         }
-        None
+        self.builtin_symbol(name).map(Lookup::Symbol)
     }
 
     pub fn lookup_in_current(&self, name: &str) -> Option<Lookup<'_>> {
@@ -554,10 +715,12 @@ impl Scopes {
         if let Some(id) = level.symbols.get(name) {
             return Some(Lookup::Symbol(*id));
         }
-        level
-            .functions
-            .get(name)
-            .map(|functions| Lookup::Function(functions))
+        if let Some(functions) = level.functions.get(name) {
+            return Some(Lookup::Function(functions));
+        }
+        (self.levels.len() == 1)
+            .then(|| self.builtin_symbol(name).map(Lookup::Symbol))
+            .flatten()
     }
 
     pub fn lookup_level(&self, name: &str) -> Option<(usize, Lookup<'_>)> {
@@ -569,13 +732,15 @@ impl Scopes {
                 return Some((index, Lookup::Function(functions)));
             }
         }
-        None
+        self.builtin_symbol(name).map(|id| (0, Lookup::Symbol(id)))
     }
 
     pub fn function_levels(&self, name: &str) -> Vec<&[FunctionId]> {
         let mut found = Vec::new();
-        for (_, level) in self.binding_levels(name) {
-            if level.symbols.contains_key(name) {
+        for (index, level) in self.binding_levels(name) {
+            if level.symbols.contains_key(name)
+                || (index == 0 && self.builtin_symbol(name).is_some())
+            {
                 break;
             }
             if let Some(functions) = level.functions.get(name) {

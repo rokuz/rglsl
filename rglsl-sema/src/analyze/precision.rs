@@ -96,13 +96,8 @@ fn relaxes_members(analysis: &Analysis) -> bool {
     let structs = analysis
         .types
         .structs()
-        .iter()
         .flat_map(|structure| &structure.members);
-    let blocks = analysis
-        .types
-        .blocks()
-        .iter()
-        .flat_map(|block| &block.members);
+    let blocks = analysis.types.blocks().flat_map(|block| &block.members);
     structs
         .chain(blocks)
         .any(|member| Precision::of(member.qualifiers.precision).relaxed())
@@ -365,13 +360,9 @@ impl<'a> Pass<'a> {
                 | ExpressionKind::Bool(_)
                 | ExpressionKind::String(_)
                 | ExpressionKind::Parenthesized(_) => {}
-                _ => pending.extend(
-                    inner
-                        .kind
-                        .children()
-                        .into_iter()
-                        .map(|child| (child, false)),
-                ),
+                _ => inner
+                    .kind
+                    .for_each_child(|child| pending.push((child, false))),
             }
             if let Some(children) = pending.get_mut(start..) {
                 children.reverse();

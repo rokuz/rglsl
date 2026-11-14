@@ -107,7 +107,7 @@ impl Preprocessor<'_> {
         }
         let name = String::from(&*name_token.text);
         let define_at = name_token.at;
-        let mut params: Vec<Rc<str>> = Vec::new();
+        let mut params: Vec<crate::token::TokenText> = Vec::new();
         let mut function_like = false;
         let mut token = self.scan();
         if token.kind.is_op("(") && !token.space {

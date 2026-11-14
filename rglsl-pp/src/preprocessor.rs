@@ -1,5 +1,4 @@
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
@@ -12,14 +11,14 @@ use crate::options::Options;
 use crate::output::Output;
 use crate::predefined;
 use crate::source_map::{SourceInfo, SourceMap, clamp_line};
-use crate::token::{At, Kind, Token};
+use crate::token::{At, Kind, Token, TokenText};
 use crate::version::{self, Profile, Version};
 use rglsl_types::ShaderStage;
 use rglsl_types::extension::{Extension, ExtensionSet};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Macro {
-    pub(crate) params: Rc<[Rc<str>]>,
+    pub(crate) params: Rc<[TokenText]>,
     pub(crate) body: Rc<[Token]>,
     pub(crate) function_like: bool,
     pub(crate) busy: bool,
@@ -28,7 +27,10 @@ pub(crate) struct Macro {
 
 impl Macro {
     pub(crate) fn integer(value: u32) -> Self {
-        let mut token = Token::with_text(Kind::IntConst, &format!("{value}"), At::default());
+        use core::fmt::Write as _;
+        let mut buf = arrayvec::ArrayString::<16>::new();
+        let _ = write!(buf, "{value}");
+        let mut token = Token::with_text(Kind::IntConst, &buf, At::default());
         token.value = i64::from(value.cast_signed());
         token.space = true;
         Self {
@@ -43,10 +45,10 @@ impl Macro {
 
 #[derive(Debug)]
 pub(crate) struct MacroInput {
-    pub(crate) name: Rc<str>,
+    pub(crate) name: TokenText,
     pub(crate) body: Rc<[Token]>,
     pub(crate) pos: usize,
-    pub(crate) params: Rc<[Rc<str>]>,
+    pub(crate) params: Rc<[TokenText]>,
     pub(crate) args: Vec<Rc<[Token]>>,
     pub(crate) expanded: Vec<Option<Rc<[Token]>>>,
     pub(crate) prepaste: bool,
@@ -366,7 +368,7 @@ impl Preprocessor<'_> {
             text: self.output.text,
             source_map: SourceMap {
                 root: self.root,
-                segments: self.output.segments,
+                segments: alloc::sync::Arc::from(self.output.segments),
                 sources: self.sources,
                 files: self.files,
                 texts: self.texts,

@@ -1,7 +1,79 @@
 use alloc::rc::Rc;
 use alloc::string::String;
+use core::borrow::Borrow;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
+
+use arrayvec::ArrayString;
 
 use crate::include::FileId;
+
+#[derive(Clone)]
+pub(crate) enum TokenText {
+    Inline(ArrayString<30>),
+    Shared(Rc<str>),
+}
+
+impl TokenText {
+    pub(crate) const fn empty() -> Self {
+        Self::Inline(ArrayString::new_const())
+    }
+
+    pub(crate) fn from_str(text: &str) -> Self {
+        match ArrayString::from(text) {
+            Ok(inline) => Self::Inline(inline),
+            Err(_) => Self::Shared(Rc::from(text)),
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Inline(inline) => inline.as_str(),
+            Self::Shared(shared) => shared,
+        }
+    }
+}
+
+impl Default for TokenText {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl Deref for TokenText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for TokenText {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl PartialEq for TokenText {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for TokenText {}
+
+impl Hash for TokenText {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl fmt::Debug for TokenText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(formatter)
+    }
+}
 
 pub(crate) const MAX_TOKEN_LENGTH: usize = 1024;
 
@@ -58,7 +130,7 @@ pub(crate) struct At {
 #[derive(Debug, Clone)]
 pub(crate) struct Token {
     pub(crate) kind: Kind,
-    pub(crate) text: Rc<str>,
+    pub(crate) text: TokenText,
     pub(crate) value: i64,
     pub(crate) space: bool,
     pub(crate) fully_expanded: bool,
@@ -66,10 +138,10 @@ pub(crate) struct Token {
 }
 
 impl Token {
-    pub(crate) fn new(kind: Kind, at: At) -> Self {
+    pub(crate) const fn new(kind: Kind, at: At) -> Self {
         Self {
             kind,
-            text: Rc::from(""),
+            text: TokenText::empty(),
             value: 0,
             space: false,
             fully_expanded: false,
@@ -80,7 +152,7 @@ impl Token {
     pub(crate) fn with_text(kind: Kind, text: &str, at: At) -> Self {
         Self {
             kind,
-            text: Rc::from(text),
+            text: TokenText::from_str(text),
             value: 0,
             space: false,
             fully_expanded: false,

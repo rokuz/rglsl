@@ -188,7 +188,7 @@ pub fn side_effect_free(expression: &Expression, builtins: &Builtins) -> bool {
             } => return false,
             _ => {}
         }
-        pending.extend(expression.kind.children());
+        expression.kind.for_each_child(|child| pending.push(child));
     }
     true
 }

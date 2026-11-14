@@ -90,59 +90,82 @@ impl ExpressionKind {
         )
     }
 
-    pub fn children(&self) -> Vec<&Expression> {
-        let mut children = Vec::new();
+    pub fn child_count(&self) -> usize {
+        match self {
+            Self::Variable(_) | Self::Number(_) | Self::Bool(_) | Self::String(_) => 0,
+            Self::Parenthesized(_)
+            | Self::FieldSelection { .. }
+            | Self::Postfix { .. }
+            | Self::Unary { .. } => 1,
+            Self::Subscript { .. } | Self::Binary { .. } | Self::Assignment { .. } => 2,
+            Self::Conditional { .. } => 3,
+            Self::FunctionCall(call) => {
+                let head = match call.function.node {
+                    FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => 1,
+                    FunctionIdentifier::Constructor(_)
+                    | FunctionIdentifier::Cast(_)
+                    | FunctionIdentifier::Function(_) => 0,
+                };
+                head + call.arguments.len()
+            }
+            Self::Sequence(items) => items.len(),
+        }
+    }
+
+    pub fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Expression)) {
         match self {
             Self::Variable(_) | Self::Number(_) | Self::Bool(_) | Self::String(_) => {}
-            Self::Parenthesized(inner) => children.push(&**inner),
+            Self::Parenthesized(inner) => f(inner),
             Self::Subscript { base, index } => {
-                children.push(&**base);
-                children.push(&**index);
+                f(base);
+                f(index);
             }
             Self::FunctionCall(call) => {
                 match &call.function.node {
-                    FunctionIdentifier::Expression(callee) => children.push(&**callee),
-                    FunctionIdentifier::Method { object, .. } => children.push(&**object),
+                    FunctionIdentifier::Expression(callee) => f(callee),
+                    FunctionIdentifier::Method { object, .. } => f(object),
                     FunctionIdentifier::Constructor(_)
                     | FunctionIdentifier::Cast(_)
                     | FunctionIdentifier::Function(_) => {}
                 }
-                children.extend(call.arguments.iter());
+                for argument in &call.arguments {
+                    f(argument);
+                }
             }
-            Self::FieldSelection { base, .. } => children.push(&**base),
-            Self::Postfix { operand, .. } | Self::Unary { operand, .. } => {
-                children.push(&**operand);
-            }
+            Self::FieldSelection { base, .. } => f(base),
+            Self::Postfix { operand, .. } | Self::Unary { operand, .. } => f(operand),
             Self::Binary { left, right, .. } => {
-                children.push(&**left);
-                children.push(&**right);
+                f(left);
+                f(right);
             }
             Self::Conditional {
                 condition,
                 then_expression,
                 else_expression,
             } => {
-                children.push(&**condition);
-                children.push(&**then_expression);
-                children.push(&**else_expression);
+                f(condition);
+                f(then_expression);
+                f(else_expression);
             }
             Self::Assignment { target, value, .. } => {
-                children.push(&**target);
-                children.push(&**value);
+                f(target);
+                f(value);
             }
-            Self::Sequence(items) => children.extend(items.iter()),
+            Self::Sequence(items) => {
+                for item in items {
+                    f(item);
+                }
+            }
         }
-        children
     }
 
-    pub fn children_mut(&mut self) -> Vec<&mut Expression> {
-        let mut children = Vec::new();
+    pub fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut Expression)) {
         match self {
             Self::Variable(_) | Self::Number(_) | Self::Bool(_) | Self::String(_) => {}
-            Self::Parenthesized(inner) => children.push(&mut **inner),
+            Self::Parenthesized(inner) => f(inner),
             Self::Subscript { base, index } => {
-                children.push(&mut **base);
-                children.push(&mut **index);
+                f(base);
+                f(index);
             }
             Self::FunctionCall(call) => {
                 let FunctionCall {
@@ -150,37 +173,52 @@ impl ExpressionKind {
                     arguments,
                 } = &mut **call;
                 match &mut function.node {
-                    FunctionIdentifier::Expression(callee) => children.push(&mut **callee),
-                    FunctionIdentifier::Method { object, .. } => children.push(&mut **object),
+                    FunctionIdentifier::Expression(callee) => f(callee),
+                    FunctionIdentifier::Method { object, .. } => f(object),
                     FunctionIdentifier::Constructor(_)
                     | FunctionIdentifier::Cast(_)
                     | FunctionIdentifier::Function(_) => {}
                 }
-                children.extend(arguments.iter_mut());
+                for argument in arguments {
+                    f(argument);
+                }
             }
-            Self::FieldSelection { base, .. } => children.push(&mut **base),
-            Self::Postfix { operand, .. } | Self::Unary { operand, .. } => {
-                children.push(&mut **operand);
-            }
+            Self::FieldSelection { base, .. } => f(base),
+            Self::Postfix { operand, .. } | Self::Unary { operand, .. } => f(operand),
             Self::Binary { left, right, .. } => {
-                children.push(&mut **left);
-                children.push(&mut **right);
+                f(left);
+                f(right);
             }
             Self::Conditional {
                 condition,
                 then_expression,
                 else_expression,
             } => {
-                children.push(&mut **condition);
-                children.push(&mut **then_expression);
-                children.push(&mut **else_expression);
+                f(condition);
+                f(then_expression);
+                f(else_expression);
             }
             Self::Assignment { target, value, .. } => {
-                children.push(&mut **target);
-                children.push(&mut **value);
+                f(target);
+                f(value);
             }
-            Self::Sequence(items) => children.extend(items.iter_mut()),
+            Self::Sequence(items) => {
+                for item in items {
+                    f(item);
+                }
+            }
         }
+    }
+
+    pub fn children(&self) -> Vec<&Expression> {
+        let mut children = Vec::with_capacity(self.child_count());
+        self.for_each_child(|child| children.push(child));
+        children
+    }
+
+    pub fn children_mut(&mut self) -> Vec<&mut Expression> {
+        let mut children = Vec::with_capacity(self.child_count());
+        self.for_each_child_mut(|child| children.push(child));
         children
     }
 
@@ -325,12 +363,20 @@ impl Nested for ExpressionKind {
         Expression::new(node.id, node.span, kind)
     }
 
-    fn children(&self) -> Vec<&Expression> {
-        Self::children(self)
+    fn has_children(&self) -> bool {
+        self.child_count() != 0
     }
 
-    fn children_mut(&mut self) -> Vec<&mut Expression> {
-        Self::children_mut(self)
+    fn child_count(&self) -> usize {
+        Self::child_count(self)
+    }
+
+    fn for_each_child<'a>(&'a self, f: impl FnMut(&'a Expression)) {
+        Self::for_each_child(self, f);
+    }
+
+    fn for_each_child_mut<'a>(&'a mut self, f: impl FnMut(&'a mut Expression)) {
+        Self::for_each_child_mut(self, f);
     }
 
     fn shell(&self) -> Self {

@@ -203,6 +203,8 @@ pub struct Builtins {
     footprints: Footprints,
     types: TypeRegistry,
     table: variables::Table,
+    scope_map: rglsl_types::FastHashMap<String, SymbolId>,
+    work_group_size: Option<SymbolId>,
 }
 
 impl Builtins {
@@ -226,6 +228,17 @@ impl Builtins {
                 break;
             }
         }
+        let mut scope_map = rglsl_types::FastHashMap::with_capacity_and_hasher(
+            table.scope.len(),
+            Default::default(),
+        );
+        let mut work_group_size = None;
+        for &(ref name, id) in &table.scope {
+            if name == "gl_WorkGroupSize" {
+                work_group_size = Some(id);
+            }
+            scope_map.entry(name.clone()).or_insert(id);
+        }
         Self {
             version,
             stage,
@@ -234,6 +247,8 @@ impl Builtins {
             footprints,
             types,
             table,
+            scope_map,
+            work_group_size,
         }
     }
 
@@ -295,6 +310,14 @@ impl Builtins {
 
     pub fn symbols(&self) -> &[Symbol] {
         &self.table.symbols
+    }
+
+    pub fn lookup_scope(&self, name: &str) -> Option<SymbolId> {
+        self.scope_map.get(name).copied()
+    }
+
+    pub const fn work_group_size(&self) -> Option<SymbolId> {
+        self.work_group_size
     }
 
     pub fn variables(&self) -> impl Iterator<Item = (&str, SymbolId)> {

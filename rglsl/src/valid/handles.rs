@@ -50,6 +50,7 @@ impl super::Validator {
             spirv_requirements: _,
             source_extensions: _,
             debug_info: _,
+            span_map: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to
