@@ -190,14 +190,13 @@ fn expand_prototypes(
         }
     }
     prototypes.append(&mut textures::prototypes());
-    for family in table::FAMILIES {
-        for row in *family {
-            row.expand(version, &mut prototypes);
-        }
-    }
     let mut types = TypeRegistry::new();
     let footprints = footprint::structs(&mut types);
-    prototypes.append(&mut footprint::prototypes(&footprints));
+    for family in table::FAMILIES {
+        for row in *family {
+            row.expand(version, &footprints, &mut prototypes);
+        }
+    }
     (prototypes, types, footprints)
 }
 

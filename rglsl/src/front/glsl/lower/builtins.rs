@@ -1,7 +1,7 @@
 use alloc::{format, string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
-use rglsl_sema::builtins::kind::BuiltinKind;
+use rglsl_sema::builtins::kind::{BuiltinKind, FootprintLevel, Texture};
 use rglsl_sema::scope::Function;
 use rglsl_sema::types::{
     Opaque, OpaqueKind, Scalar as GlslScalar, TextureDimension, Type as GlslType, TypeKind,
@@ -847,6 +847,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().ray_call(kind, arguments, at);
                 return self.nest(frame).await;
             }
+            BuiltinKind::Texture(Texture::Footprint { level, clamp }) => {
+                let frame = self.clone().footprint(level, clamp, arguments, at);
+                return self.nest(frame).await.map(Some);
+            }
             BuiltinKind::Named => {}
         }
         let route = route(name, arguments.len())
@@ -923,11 +927,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Route::HelperInvocation => {
                 self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
             }
-            Route::Footprint => {
-                let frame = self.clone().footprint(name, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
             Route::FragmentFetch => {
                 let frame = self.clone().fragment_fetch_call(name, arguments, at);
                 self.nest(frame).await
@@ -1970,7 +1969,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn footprint(
         self,
-        name: &'b str,
+        footprint: FootprintLevel,
+        clamp: bool,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -1999,8 +1999,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }?;
         let mut level = SampleLevel::Auto;
         let mut min_lod = None;
-        match name {
-            "textureFootprintLodNV" => {
+        match footprint {
+            FootprintLevel::Lod => {
                 level = SampleLevel::Exact({
                     let frame = self.clone().next_argument(
                         arguments,
@@ -2013,7 +2013,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?);
             }
-            "textureFootprintGradNV" | "textureFootprintGradClampNV" => {
+            FootprintLevel::Gradient => {
                 let x = {
                     let frame = self.clone().next_argument(
                         arguments,
@@ -2037,7 +2037,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?;
                 level = SampleLevel::Gradient { x, y };
-                if name == "textureFootprintGradClampNV" {
+                if clamp {
                     min_lod = Some({
                         let frame = self.clone().next_argument(
                             arguments,
@@ -2051,7 +2051,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     }?);
                 }
             }
-            "textureFootprintClampNV" => {
+            FootprintLevel::Implicit if clamp => {
                 min_lod = Some({
                     let frame = self.clone().next_argument(
                         arguments,
@@ -2064,7 +2064,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?);
             }
-            _ => {}
+            FootprintLevel::Implicit => {}
         }
         let granularity = {
             let frame = self.clone().next_argument(
@@ -2477,7 +2477,6 @@ pub(super) enum Route {
     Barrier,
     Interlock,
     HelperInvocation,
-    Footprint,
     FragmentFetch,
     Interpolate,
     AttachmentRead,
@@ -2522,11 +2521,6 @@ pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
         | "controlBarrierWait" => Route::Barrier,
         "beginInvocationInterlockARB" | "endInvocationInterlockARB" => Route::Interlock,
         "helperInvocationEXT" => Route::HelperInvocation,
-        "textureFootprintNV"
-        | "textureFootprintClampNV"
-        | "textureFootprintLodNV"
-        | "textureFootprintGradNV"
-        | "textureFootprintGradClampNV" => Route::Footprint,
         "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Route::FragmentFetch,
         "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
             Route::Interpolate

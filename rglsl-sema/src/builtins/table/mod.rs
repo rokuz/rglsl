@@ -44,6 +44,7 @@ macro_rules! builtins {
 
 mod ray;
 mod subgroup;
+mod texture;
 mod words;
 
 use alloc::string::String;
@@ -52,7 +53,7 @@ use alloc::vec::Vec;
 use rglsl_types::extension::Extension;
 
 use super::kind::BuiltinKind;
-use super::{ALL_STAGES, Prototype};
+use super::{ALL_STAGES, Footprints, Prototype};
 use crate::scope::Direction;
 use crate::types::{ArraySize, Scalar, Type, TypeKind};
 
@@ -92,6 +93,31 @@ pub struct BuiltinFunction {
     pub(crate) since: u32,
     pub(crate) values: &'static [Scalar],
     pub(crate) signatures: &'static [Signature],
+    pub(crate) generate: Option<Generator>,
+}
+
+pub(crate) type Generator = fn(&mut Emitter<'_>);
+
+pub(crate) struct Emitter<'a> {
+    row: &'static BuiltinFunction,
+    footprints: &'a Footprints,
+    prototypes: &'a mut Vec<Prototype>,
+}
+
+impl Emitter<'_> {
+    pub(crate) const fn footprints(&self) -> &Footprints {
+        self.footprints
+    }
+
+    pub(crate) fn push(&mut self, result: Type, parameters: Vec<(Type, Direction)>, stages: u16) {
+        self.prototypes.push(Prototype {
+            name: String::from(self.row.name),
+            result,
+            parameters,
+            stages,
+            row: Some(self.row),
+        });
+    }
 }
 
 impl BuiltinFunction {
@@ -104,6 +130,7 @@ impl BuiltinFunction {
         since: 450,
         values: &[],
         signatures: &[],
+        generate: None,
     };
 
     pub const fn has(&self, flags: BuiltinFlags) -> bool {
@@ -127,7 +154,8 @@ pub(crate) const fn parameter<const N: usize>(
     }
 }
 
-pub(super) const FAMILIES: &[&[BuiltinFunction]] = &[ray::FUNCTIONS, subgroup::FUNCTIONS];
+pub(super) const FAMILIES: &[&[BuiltinFunction]] =
+    &[ray::FUNCTIONS, texture::FUNCTIONS, subgroup::FUNCTIONS];
 
 fn concrete(word: Word, value: Option<&Type>) -> Option<Type> {
     match word {
@@ -137,9 +165,21 @@ fn concrete(word: Word, value: Option<&Type>) -> Option<Type> {
 }
 
 impl BuiltinFunction {
-    pub(super) fn expand(&'static self, version: u32, prototypes: &mut Vec<Prototype>) {
+    pub(super) fn expand(
+        &'static self,
+        version: u32,
+        footprints: &Footprints,
+        prototypes: &mut Vec<Prototype>,
+    ) {
         if version < self.since {
             return;
+        }
+        if let Some(generate) = self.generate {
+            generate(&mut Emitter {
+                row: self,
+                footprints,
+                prototypes,
+            });
         }
         for signature in self.signatures {
             let generic = core::iter::once(signature.result)

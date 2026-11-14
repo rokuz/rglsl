@@ -73,7 +73,6 @@ pub(crate) fn function_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "helperInvocationEXT" => Extension::ExtDemoteToHelperInvocation,
         "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Extension::AmdShaderFragmentMask,
-        _ if crate::builtins::footprint::is_function(name) => Extension::NvShaderTextureFootprint,
         "controlBarrierArrive" | "controlBarrierWait" => Extension::ExtSplitBarrier,
         "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
             Extension::ExtShaderTileImage

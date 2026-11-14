@@ -3,13 +3,14 @@ pub enum BuiltinKind {
     Named,
     Subgroup(Subgroup),
     Ray(Ray),
+    Texture(Texture),
 }
 
 impl BuiltinKind {
     pub const fn requirements_gate_call(self) -> bool {
         match self {
             Self::Ray(_) => true,
-            Self::Named | Self::Subgroup(_) => false,
+            Self::Named | Self::Subgroup(_) | Self::Texture(_) => false,
         }
     }
 }
@@ -229,4 +230,16 @@ pub enum HitObjectValue {
     IsSphereHit,
     IsLssHit,
     TriangleVertexPositions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Texture {
+    Footprint { level: FootprintLevel, clamp: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FootprintLevel {
+    Implicit,
+    Lod,
+    Gradient,
 }
