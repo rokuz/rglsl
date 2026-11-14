@@ -356,17 +356,8 @@ impl FunctionLowerer<'_, '_> {
             return self.wide_bit_operation(name, arg(0)?, element, result, vector, at);
         }
         if let Some((axis, ctrl)) = derivative(name) {
-            let half = first_ty.base_scalar() == Some(GlslScalar::Float16);
-            let mut expr = arg(0)?;
-            if half {
-                expr = self.as_kind(expr, crate::Scalar::F32, at)?;
-            }
-            let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
-            return if half {
-                self.as_kind(value, crate::Scalar::F16, at)
-            } else {
-                Ok(value)
-            };
+            let expr = arg(0)?;
+            return self.add(Expression::Derivative { axis, ctrl, expr }, at);
         }
         if name == "mix" && types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) {
             return self.add(

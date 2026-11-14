@@ -52,8 +52,12 @@ fn scratch(name: &str) -> std::path::PathBuf {
 }
 
 fn ours(stage: ShaderStage, target: Target, source: &str) -> Result<Vec<u32>, Vec<String>> {
+    let frontend = glsl::Options {
+        spirv_version: Some(target.spirv()),
+        ..glsl::Options::from(stage)
+    };
     let module = glsl::Frontend::default()
-        .parse(&glsl::Options::from(stage), source)
+        .parse(&frontend, source)
         .map_err(|errors| {
             errors
                 .errors
@@ -66,6 +70,7 @@ fn ours(stage: ShaderStage, target: Target, source: &str) -> Result<Vec<u32>, Ve
         .map_err(|error| vec![format!("validation: {:?}", error.into_inner())])?;
     let options = spv::Options {
         lang_version: target.spirv(),
+        flags: spv::WriterFlags::LABEL_VARYINGS | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
         ..spv::Options::default()
     };
     spv::write_vec(&module, &info, &options, None).map_err(|error| vec![format!("{error}")])
@@ -198,6 +203,42 @@ fn amd_group_operations_declare_the_extension_of_groups() -> TestResult {
         );
         assert!(opcode(&summary, Op::GroupFMin), "{summary:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn float16_interpolation_and_derivatives_use_amd_half_float() -> TestResult {
+    let source = "#version 450
+        #extension GL_EXT_shader_16bit_storage : require
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        layout(location = 0) in f16vec2 v;
+        layout(location = 1) in float16_t w;
+        layout(std430, binding = 0) buffer B { f16vec2 offset; f16vec2 r; float16_t s; };
+        void main() {
+            r = interpolateAtCentroid(v) + interpolateAtSample(v, 1);
+            r += interpolateAtOffset(v, offset);
+            s = interpolateAtOffset(w, offset) + interpolateAtSample(w, 0);
+            r += dFdx(v) + dFdyFine(v) + fwidthCoarse(v);
+            s += dFdxCoarse(w) + fwidth(w);
+        }";
+    for target in [Target::Vulkan11, Target::Vulkan13] {
+        let summary = valid_like_glslang(ShaderStage::Fragment, target, source)?;
+        assert!(
+            summary.extensions.contains("SPV_AMD_gpu_shader_half_float"),
+            "{summary:?}"
+        );
+        assert!(!opcode(&summary, Op::FConvert), "{summary:?}");
+        assert!(opcode(&summary, Op::DPdxCoarse), "{summary:?}");
+    }
+    let summary = valid_like_glslang(
+        ShaderStage::Fragment,
+        Target::Vulkan11,
+        "#version 450
+        layout(location = 0) in vec2 v;
+        layout(location = 0) out vec2 o;
+        void main() { o = dFdx(v) + interpolateAtOffset(v, vec2(0.25)); }",
+    )?;
+    assert!(summary.extensions.is_empty(), "{summary:?}");
     Ok(())
 }
 

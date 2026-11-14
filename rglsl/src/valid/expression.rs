@@ -1755,7 +1755,7 @@ impl super::Validator {
                             *resolver.resolve(offset)?,
                             Ti::Vector {
                                 size: crate::VectorSize::Bi,
-                                scalar: Sc::F32,
+                                scalar: Sc::F32 | Sc::F16,
                             }
                         ) {
                             return Err(ExpressionError::InvalidImageOtherIndexType(offset));
