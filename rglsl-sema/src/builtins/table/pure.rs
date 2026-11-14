@@ -256,8 +256,11 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
+    "mix": Pure(Select) => [genF(genF, genF, genB)] {
+        flags: flags!(FOLD, FUZZ),
+        floats: DoublesAndHalves,
+    }
     "mix": Pure(Select) => [
-        genF(genF, genF, genB),
         genI(genI, genI, genB),
         genU(genU, genU, genB),
         genB(genB, genB, genB),
@@ -268,8 +271,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI8(genI8, genI8, genB),
         genU8(genU8, genU8, genB),
     ] {
-        flags: flags!(FOLD, FUZZ),
-        floats: DoublesAndHalves,
+        flags: flags!(FUZZ),
     }
     "step": Pure(Math(Step)) => [genF(genF, genF), genF(float, genF)] {
         flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),

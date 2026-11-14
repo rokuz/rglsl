@@ -6756,3 +6756,11 @@ layout(binding = 0, rgba8) uniform readonly image2D img;
 void main() {
     vec4 v; int r = sparseImageLoadARB(img, ivec2(0), v);
 }
+### mix with a boolean selector folds floats only | frag | 4:NonConstantInitializer, 5:NonConstantInitializer, 6:ArraySizeNotConstant
+const float f = mix(1.0, 2.0, true);
+const vec2 v = mix(vec2(1.0), vec2(2.0), bvec2(true, false));
+const int i = mix(1, 2, true);
+const bool b = mix(false, true, true);
+int a[mix(1, 3, true)];
+float c[int(mix(1.0, 3.0, true))];
+void main() {}
