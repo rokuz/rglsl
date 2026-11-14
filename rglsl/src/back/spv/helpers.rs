@@ -85,6 +85,33 @@ pub(super) fn contains_builtin(
     false
 }
 
+pub(super) fn references_builtin_output(
+    module: &crate::Module,
+    entry_point: &crate::EntryPoint,
+    built_in: crate::BuiltIn,
+) -> bool {
+    let targets: Vec<Handle<crate::GlobalVariable>> = entry_point
+        .interface
+        .iter()
+        .copied()
+        .filter(|&handle| {
+            let global = &module.global_variables[handle];
+            global.space == crate::AddressSpace::Output
+                && contains_builtin(global.io.as_ref(), global.ty, &module.types, built_in)
+        })
+        .collect();
+    if targets.is_empty() {
+        return false;
+    }
+    core::iter::once(&entry_point.function)
+        .chain(module.functions.iter().map(|(_, function)| function))
+        .any(|function| {
+            function.expressions.iter().any(|(_, expression)| {
+                matches!(*expression, crate::Expression::GlobalVariable(global) if targets.contains(&global))
+            })
+        })
+}
+
 impl crate::AddressSpace {
     pub(super) const fn to_spirv_semantics_and_scope(
         self,

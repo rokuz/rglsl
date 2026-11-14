@@ -1185,6 +1185,55 @@ fn frag_depth_output_replaces_depth() -> crate::TestResult {
 }
 
 #[test]
+fn unused_redeclared_builtins_are_interface_variables() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(depth_greater) out float gl_FragDepth;
+        in float gl_ClipDistance[];
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(1.0); }",
+    )?;
+    let entry = instructions(&module, Op::EntryPoint)
+        .into_iter()
+        .next()
+        .ok_or("no entry point")?;
+    let interface: Vec<String> = entry
+        .operands
+        .iter()
+        .skip(3)
+        .filter_map(|operand| match *operand {
+            Operand::IdRef(id) => Some(name_of(&module, id)),
+            _ => None,
+        })
+        .collect();
+    for name in ["gl_FragDepth", "gl_ClipDistance", "color"] {
+        assert!(interface.iter().any(|found| found == name), "{interface:?}");
+    }
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DepthGreater
+    ));
+    assert!(!has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DepthReplacing
+    ));
+    assert!(has_capability(&module, spirv::Capability::ClipDistance));
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(depth_less) out float gl_FragDepth;
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(gl_FragDepth); }",
+    )?;
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DepthReplacing
+    ));
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,

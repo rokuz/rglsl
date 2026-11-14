@@ -1895,7 +1895,9 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
-        if (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+        if (self.per_vertex_used.is_empty()
+            && !self.per_vertex_redeclared
+            && !self.per_vertex_member_redeclared)
             || !self.stage_map(|stage| {
                 matches!(
                     stage,
@@ -2107,6 +2109,36 @@ impl<'a> Lowerer<'a> {
                 ));
             }
             self.conservative_depth = depth;
+        }
+        if self.is_per_vertex_member(symbol) {
+            self.per_vertex_member_redeclared = true;
+        } else if self
+            .analysis
+            .builtins
+            .variable(symbol)
+            .is_some_and(|row| row.builtin().is_some())
+        {
+            let without_size = super::prepass::IMPLICITLY_SIZED.contains(&name.as_str())
+                && !self.builtin_sizes.contains_key(&name);
+            if without_size {
+                self.unused_redeclarations.push((symbol, name, at));
+            } else {
+                self.global_ref(symbol, at)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn declare_unused_redeclarations(&mut self) -> Result<()> {
+        let pending = core::mem::take(&mut self.unused_redeclarations);
+        for (symbol, name, at) in pending {
+            if self.globals.contains_key(&symbol) {
+                continue;
+            }
+            self.builtin_sizes.entry(name).or_insert(1);
+            if let GlobalRef::Variable(handle) = self.global_ref(symbol, at)? {
+                self.redeclared_globals.insert(handle);
+            }
         }
         Ok(())
     }
