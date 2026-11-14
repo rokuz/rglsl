@@ -6679,3 +6679,88 @@ void main() {}
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t v;
 void main() { v = missing; }
+### fragment clip distances cannot become outputs | frag | 2:InvalidRedeclaration
+out float gl_ClipDistance[4];
+void main() {}
+### fragment clip distances can be resized | frag | ok
+in float gl_ClipDistance[4];
+void main() {}
+### clip distances keep their interpolation | frag | 2:InvalidRedeclaration, 3:InvalidRedeclaration
+flat in float gl_CullDistance[4];
+centroid in float gl_ClipDistance[4];
+void main() {}
+### clip distances take no layout | vert | 2:InvalidRedeclaration
+layout(location = 1) out float gl_ClipDistance[4];
+void main() {}
+### clip distances keep their element type | vert | 2:InvalidRedeclaration
+out int gl_ClipDistance[4];
+void main() {}
+### fragment depth stays an output | frag | 2:InvalidRedeclaration
+layout(depth_greater) in float gl_FragDepth;
+void main() {}
+### fragment depth stays a scalar | frag | 2:InvalidRedeclaration
+out float gl_FragDepth[2];
+void main() {}
+### fragment coordinate stays an input | frag | 2:InvalidRedeclaration
+layout(origin_upper_left) out vec4 gl_FragCoord;
+void main() {}
+### fragment coordinate keeps its interpolation | frag | 2:InvalidRedeclaration
+flat in vec4 gl_FragCoord;
+void main() {}
+### sample mask redeclaration needs override coverage | frag | 2:InvalidRedeclaration
+out int gl_SampleMask[];
+void main() {}
+### layer redeclaration needs a viewport layout | geom | 2:InvalidRedeclaration
+out int gl_Layer;
+layout(points) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### other built-ins cannot be redeclared | vert | 2:ReservedIdentifier, 3:ReservedIdentifier
+out float gl_PointSize;
+out int gl_VertexIndex;
+void main() {}
+### half interpolants take half offsets like glslang | frag | ok
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(location = 0) in f16vec2 v;
+void main() {
+    f16vec2 a = interpolateAtOffset(v, f16vec2(0.25));
+}
+### a half offset with a single interpolant is ambiguous like in glslang | frag | 5:AmbiguousCall
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(location = 0) in vec2 v;
+void main() {
+    vec2 a = interpolateAtOffset(v, f16vec2(0.25));
+}
+### sparse fetches from textures need no samplerless extension like in glslang | frag | ok
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0) uniform texture2D t;
+void main() {
+    vec4 v;
+    int r = sparseTexelFetchARB(t, ivec2(0), 0, v);
+    r += sparseTexelFetchOffsetARB(t, ivec2(0), 0, ivec2(1), v);
+}
+### fetches from textures need the samplerless extension | frag | 4:ExtensionRequired
+layout(binding = 0) uniform texture2D t;
+void main() {
+    vec4 v = texelFetch(t, ivec2(0), 0);
+}
+### sparse image loads respect writeonly | frag | 5:InvalidBuiltinCall
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0, rgba8) uniform writeonly image2D img;
+void main() {
+    vec4 v; int r = sparseImageLoadARB(img, ivec2(0), v);
+}
+### sparse image loads from readonly images | frag | ok
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0, rgba8) uniform readonly image2D img;
+void main() {
+    vec4 v; int r = sparseImageLoadARB(img, ivec2(0), v);
+}
+### mix with a boolean selector folds floats only | frag | 4:NonConstantInitializer, 5:NonConstantInitializer, 6:ArraySizeNotConstant
+const float f = mix(1.0, 2.0, true);
+const vec2 v = mix(vec2(1.0), vec2(2.0), bvec2(true, false));
+const int i = mix(1, 2, true);
+const bool b = mix(false, true, true);
+int a[mix(1, 3, true)];
+float c[int(mix(1.0, 3.0, true))];
+void main() {}

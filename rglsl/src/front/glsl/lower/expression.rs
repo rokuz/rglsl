@@ -931,7 +931,37 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Some((laid, plain))
     }
 
+    fn explicitly_interpolated(&self, pointer: Handle<Expression>) -> bool {
+        let mut current = pointer;
+        loop {
+            let Some(expression) = self.expressions.try_get(current).ok() else {
+                return false;
+            };
+            if let Expression::GlobalVariable(handle) = *expression {
+                return matches!(
+                    self.lw.module.global_variables[handle].io,
+                    Some(crate::Binding::Location {
+                        interpolation: Some(crate::Interpolation::ExplicitVertexAmd),
+                        ..
+                    })
+                );
+            }
+            let (Expression::Access { base, .. } | Expression::AccessIndex { base, .. }) =
+                *expression
+            else {
+                return false;
+            };
+            current = base;
+        }
+    }
+
     pub(super) fn load(&mut self, place: &Place, at: Span) -> Result<Handle<Expression>> {
+        if self.explicitly_interpolated(place.pointer) {
+            return Err(semantic(
+                "an `__explicitInterpAMD` input can be read only by `interpolateAtVertexAMD`",
+                at,
+            ));
+        }
         let mut value = self.add(
             Expression::Load {
                 pointer: place.pointer,

@@ -9,7 +9,9 @@ use super::{
     EntryPointContext, Error, Function, FunctionArgument, GlobalVariable, IdGenerator, Instruction,
     LocalImageType, LocalType, LocalVariable, LogicalLayout, LookupFunctionType, LookupType,
     NumericType, Options, PhysicalLayout, PipelineOptions, ResultMember, Writer, WriterFlags,
-    helpers::{contains_builtin, global_needs_wrapper, map_storage_class},
+    helpers::{
+        contains_builtin, global_needs_wrapper, map_storage_class, references_builtin_output,
+    },
 };
 use crate::{
     arena::{Handle, HandleVec, UniqueArena},
@@ -1326,29 +1328,16 @@ impl Writer {
                         crate::BuiltIn::FragDepth,
                     )
                 });
-                let interface_depth = entry_point.interface.iter().any(|&handle| {
-                    let global = &ir_module.global_variables[handle];
-                    global.space == crate::AddressSpace::Output
-                        && contains_builtin(
-                            global.io.as_ref(),
-                            global.ty,
-                            &ir_module.types,
-                            crate::BuiltIn::FragDepth,
-                        )
-                });
+                let interface_depth =
+                    references_builtin_output(ir_module, entry_point, crate::BuiltIn::FragDepth);
                 if result_depth || interface_depth {
                     self.write_execution_mode(function_id, spirv::ExecutionMode::DepthReplacing)?;
                 }
-                let stencil = entry_point.interface.iter().any(|&handle| {
-                    let global = &ir_module.global_variables[handle];
-                    global.space == crate::AddressSpace::Output
-                        && contains_builtin(
-                            global.io.as_ref(),
-                            global.ty,
-                            &ir_module.types,
-                            crate::BuiltIn::FragStencilRef,
-                        )
-                });
+                let stencil = references_builtin_output(
+                    ir_module,
+                    entry_point,
+                    crate::BuiltIn::FragStencilRef,
+                );
                 if stencil {
                     self.write_execution_mode(
                         function_id,
@@ -2566,6 +2555,7 @@ impl Writer {
             | crate::Expression::Expect { .. }
             | crate::Expression::ImageSparseResident { .. }
             | crate::Expression::IsHelperInvocation
+            | crate::Expression::ReadClock { .. }
             | crate::Expression::InterpolateAt { .. }
             | crate::Expression::FragmentFetch { .. }
             | crate::Expression::ImageFootprint { .. }
@@ -2854,6 +2844,10 @@ impl Writer {
                         }
                         Some(crate::Interpolation::Linear) => {
                             others.push(Decoration::NoPerspective);
+                        }
+                        Some(crate::Interpolation::ExplicitVertexAmd) => {
+                            self.use_extension("SPV_AMD_shader_explicit_vertex_parameter");
+                            others.push(Decoration::ExplicitInterpAMD);
                         }
                         Some(crate::Interpolation::PerVertex {
                             flavor,

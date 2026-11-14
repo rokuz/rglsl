@@ -547,6 +547,7 @@ pub enum Interpolation {
     Linear,
     /// Indicates that no interpolation will be performed.
     Flat,
+    ExplicitVertexAmd,
     /// Indicates the fragment input binding holds an array of per-vertex values.
     /// This is typically used with barycentrics.
     PerVertex {
@@ -1544,6 +1545,7 @@ pub enum InterpolationLocation {
     Centroid,
     Sample(Handle<Expression>),
     Offset(Handle<Expression>),
+    VertexAmd(Handle<Expression>),
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
@@ -1629,6 +1631,16 @@ pub enum AtomicLocation {
     Texel(Texel),
 }
 
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ClockSource {
+    Subgroup,
+    Device,
+    AmdTime,
+}
+
 /// Hint at which precision to compute a derivative.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -1674,6 +1686,19 @@ pub enum MathFunction {
     Min,
     Max,
     Clamp,
+    Min3,
+    Max3,
+    Mid3,
+    CubeFaceIndex,
+    CubeFaceCoord,
+    IntelCountLeadingZeros,
+    IntelCountTrailingZeros,
+    AbsoluteDifference,
+    AddSaturate,
+    SubtractSaturate,
+    Average,
+    AverageRounded,
+    Multiply32x16,
     // trigonometry
     Cos,
     Cosh,
@@ -2560,6 +2585,10 @@ pub enum Expression {
         code: Handle<Expression>,
     },
     IsHelperInvocation,
+    ReadClock {
+        source: ClockSource,
+        pair: bool,
+    },
     InterpolateAt {
         pointer: Handle<Expression>,
         location: InterpolationLocation,

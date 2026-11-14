@@ -198,6 +198,7 @@ fn make_rule(
 #[repr(u8)]
 pub(in crate::proc::overloads) enum ConclusionRule {
     ArgumentType,
+    Unsigned,
     Scalar,
     Frexp,
     Modf,
@@ -216,6 +217,10 @@ impl ConclusionRule {
     fn conclude(self, size: ConstructorSize, scalar: ir::Scalar) -> Option<Conclusion> {
         Some(match self {
             Self::ArgumentType => Conclusion::Value(size.to_inner(scalar)),
+            Self::Unsigned => Conclusion::Value(size.to_inner(ir::Scalar {
+                kind: ir::ScalarKind::Uint,
+                width: scalar.width,
+            })),
             Self::Scalar => Conclusion::Value(ir::TypeInner::Scalar(scalar)),
             Self::Frexp => Conclusion::for_frexp_modf(ir::MathFunction::Frexp, size, scalar)?,
             Self::Modf => Conclusion::for_frexp_modf(ir::MathFunction::Modf, size, scalar)?,

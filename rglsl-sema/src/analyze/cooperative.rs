@@ -768,6 +768,19 @@ impl Analyzer<'_> {
                 | Math::Min
                 | Math::Max
                 | Math::Clamp
+                | Math::Min3
+                | Math::Max3
+                | Math::Mid3
+                | Math::CubeFaceIndex
+                | Math::CubeFaceCoord
+                | Math::IntelCountLeadingZeros
+                | Math::IntelCountTrailingZeros
+                | Math::AbsoluteDifference
+                | Math::AddSaturate
+                | Math::SubtractSaturate
+                | Math::Average
+                | Math::AverageRounded
+                | Math::Multiply32x16
                 | Math::Mix
                 | Math::Step
                 | Math::SmoothStep
@@ -855,6 +868,7 @@ impl Analyzer<'_> {
             | BuiltinKind::Barrier(_)
             | BuiltinKind::Interlock { .. }
             | BuiltinKind::HelperInvocation
+            | BuiltinKind::Clock { .. }
             | BuiltinKind::Interpolate(_)
             | BuiltinKind::AttachmentRead(_)
             | BuiltinKind::Mesh(_)

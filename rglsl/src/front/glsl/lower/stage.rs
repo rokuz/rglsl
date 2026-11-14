@@ -326,7 +326,7 @@ impl<'a> Lowerer<'a> {
                 let builtin = variables::member(&block.name, name)
                     .and_then(BuiltinVariable::builtin)
                     .ok_or_else(|| unsupported(format_member(name), at))?;
-                let ty = if super::prepass::CLIP_DISTANCES.contains(&name.as_str()) {
+                let ty = if variables::clip_or_cull_distance(name) {
                     let size = match member.ty.outer_size() {
                         Some(GlslArraySize::Sized(size)) => size,
                         _ => 1,

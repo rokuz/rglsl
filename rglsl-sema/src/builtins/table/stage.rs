@@ -1,14 +1,29 @@
 use rglsl_types::extension::Extension::*;
 
 use super::BuiltinFunction;
-use super::Floats::DoublesAndHalves;
+use super::Floats::{DoublesAndHalves, Halves};
 use crate::builtins::kind::{
-    AtomicOperation, Attachment, Barrier, BuiltinKind, InterpolateAt, MemoryBarrier, Mesh,
-    Primitive, SplitPhase,
+    AtomicOperation, Attachment, Barrier, BuiltinKind, ClockSource, InterpolateAt, MemoryBarrier,
+    Mesh, Primitive, SplitPhase,
 };
 use crate::builtins::{COMPUTE, FRAGMENT, GEOMETRY, MESH, TASK, TESS_CONTROL};
 
 pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
+    "clockARB": BuiltinKind::Clock { source: ClockSource::Subgroup, pair: false } => [uint64_t()] {
+        requires: &[ArbShaderClock],
+    }
+    "clock2x32ARB": BuiltinKind::Clock { source: ClockSource::Subgroup, pair: true } => [uvec2()] {
+        requires: &[ArbShaderClock],
+    }
+    "timeAMD": BuiltinKind::Clock { source: ClockSource::AmdTime, pair: false } => [uint64_t()] {
+        requires: &[AmdGcnShader],
+    }
+    "clockRealtimeEXT": BuiltinKind::Clock { source: ClockSource::Device, pair: false } => [uint64_t()] {
+        requires: &[ExtShaderRealtimeClock],
+    }
+    "clockRealtime2x32EXT": BuiltinKind::Clock { source: ClockSource::Device, pair: true } => [uvec2()] {
+        requires: &[ExtShaderRealtimeClock],
+    }
     "atomicAdd": BuiltinKind::Atomic(AtomicOperation::Add) => [
         uint(inout uint, uint),
         int(inout int, int),
@@ -24,6 +39,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicMin": BuiltinKind::Atomic(AtomicOperation::Min) => [
         uint(inout uint, uint),
@@ -40,6 +57,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicMax": BuiltinKind::Atomic(AtomicOperation::Max) => [
         uint(inout uint, uint),
@@ -56,6 +75,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicAnd": BuiltinKind::Atomic(AtomicOperation::And) => [
         uint(inout uint, uint),
@@ -102,6 +123,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicCompSwap": BuiltinKind::Atomic(AtomicOperation::CompareSwap) => [
         uint(inout uint, uint, uint),
@@ -144,6 +167,16 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "interpolateAtOffset": BuiltinKind::Interpolate(InterpolateAt::Offset) => [genF(genF, vec2)] {
         stages: FRAGMENT,
         floats: DoublesAndHalves,
+        precision_operands: Some(1),
+    }
+    "interpolateAtVertexAMD": BuiltinKind::Interpolate(InterpolateAt::Vertex) => [
+        genF(genF, uint),
+        genI(genI, uint),
+        genU(genU, uint),
+    ] {
+        requires: &[AmdShaderExplicitVertexParameter],
+        stages: FRAGMENT,
+        floats: Halves,
         precision_operands: Some(1),
     }
     "EmitStreamVertex": BuiltinKind::Primitive(Primitive::Emit) => [void(int)] {

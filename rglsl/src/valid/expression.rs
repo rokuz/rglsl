@@ -416,6 +416,7 @@ impl super::Validator {
             | E::Expect { .. }
             | E::ImageSparseResident { .. }
             | E::IsHelperInvocation
+            | E::ReadClock { .. }
             | E::InterpolateAt { .. }
             | E::FragmentFetch { .. }
             | E::ImageFootprint { .. }
@@ -1772,6 +1773,7 @@ impl super::Validator {
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => ShaderStages::all(),
             E::IsHelperInvocation => ShaderStages::FRAGMENT,
+            E::ReadClock { .. } => ShaderStages::all(),
             E::InterpolateAt { pointer, location } => {
                 if !matches!(
                     *resolver.resolve(pointer)?,
@@ -1790,6 +1792,11 @@ impl super::Validator {
                     crate::InterpolationLocation::Sample(sample) => {
                         if !matches!(*resolver.resolve(sample)?, Ti::Scalar(Sc::I32)) {
                             return Err(ExpressionError::InvalidImageOtherIndexType(sample));
+                        }
+                    }
+                    crate::InterpolationLocation::VertexAmd(vertex) => {
+                        if !matches!(*resolver.resolve(vertex)?, Ti::Scalar(Sc::U32)) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(vertex));
                         }
                     }
                     crate::InterpolationLocation::Offset(offset) => {

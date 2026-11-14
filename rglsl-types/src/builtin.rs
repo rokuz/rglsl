@@ -24,6 +24,20 @@ pub enum SubgroupMask {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum AmdBarycentric {
+    NoPerspective,
+    NoPerspectiveCentroid,
+    NoPerspectiveSample,
+    Smooth,
+    SmoothCentroid,
+    SmoothSample,
+    PullModel,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ShaderBallot {
     Size,
     InvocationId,
@@ -108,6 +122,8 @@ pub enum BuiltIn {
         perspective: bool,
         flavor: BarycentricFlavor,
     },
+    /// Read in fragment shaders
+    AmdBarycentric(AmdBarycentric),
     /// Read in fragment shaders
     SampleIndex,
     /// Read or written in fragment shaders
@@ -424,7 +440,10 @@ impl BuiltIn {
             Self::FrontFacing | Self::HelperInvocation | Self::FullyCovered => {
                 input(FRAGMENT, BOOL)
             }
-            Self::Barycentric { .. } => input(FRAGMENT, VEC3),
+            Self::Barycentric { .. } | Self::AmdBarycentric(AmdBarycentric::PullModel) => {
+                input(FRAGMENT, VEC3)
+            }
+            Self::AmdBarycentric(_) => input(FRAGMENT, VEC2),
             Self::SampleIndex => input(FRAGMENT, INDEX),
             Self::SampleMask { .. } => access(
                 FRAGMENT,
@@ -446,9 +465,10 @@ impl BuiltIn {
             Self::LocalInvocationIndex | Self::NumSubgroups | Self::SubgroupId => {
                 input(COMPUTE_LIKE, U32)
             }
+            Self::ShaderBallot(ShaderBallot::Size) => input(ALL, INDEX),
             Self::SubgroupSize
             | Self::SubgroupInvocationId
-            | Self::ShaderBallot(ShaderBallot::Size | ShaderBallot::InvocationId)
+            | Self::ShaderBallot(ShaderBallot::InvocationId)
             | Self::ShaderCore(_) => input(ALL, U32),
             Self::SubgroupMask(_) | Self::ShaderBallot(ShaderBallot::Mask(_)) => input(ALL, UVEC4),
             Self::TileOffset | Self::TileApronSize => input(TILE, UVEC2),
@@ -490,7 +510,7 @@ impl BuiltIn {
             Self::HitLssRadii => access(ANY_OR_CLOSEST_HIT, NONE, array(F32, Any)),
             Self::ClusterId => input(ANY_OR_CLOSEST_HIT, I32),
             Self::HitKindFrontFacingMicroTriangle | Self::HitKindBackFacingMicroTriangle => {
-                input(RAY_TRACING, U32)
+                input(ALL, U32)
             }
             Self::HitIsSphere | Self::HitIsLss => input(ANY_OR_CLOSEST_HIT, BOOL),
             Self::HitSpherePosition => input(ANY_OR_CLOSEST_HIT, VEC3),

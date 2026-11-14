@@ -384,3 +384,142 @@ fn lane_patterns_out_of_range_are_invalid() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn amd_shader_trinary_minmax_matches_glslang() -> TestResult {
+    let summary = matches_glslang(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_trinary_minmax : enable
+        layout(location = 0) in vec3 a;
+        layout(location = 1) flat in ivec2 b;
+        layout(location = 2) flat in uint c;
+        layout(location = 0) out vec4 o;
+        void main() {
+            vec3 x = min3(a, a.yzx, vec3(0.5));
+            ivec2 y = max3(b, b.yx, ivec2(1));
+            uint z = mid3(c, 3u, 7u);
+            float h = mid3(a.x, a.y, 1.0);
+            ivec2 i = min3(b, ivec2(2), ivec2(3));
+            uvec3 u = max3(uvec3(c), uvec3(1), uvec3(5));
+            float k = min3(1.0, 2.0, 3.0);
+            o = vec4(x.x, y.x, z, h + i.x + u.z + k);
+        }",
+    )?;
+    for key in [
+        "SPV_AMD_shader_trinary_minmax 1 [_ _ (1056964608, 1056964608, 1056964608)]",
+        "SPV_AMD_shader_trinary_minmax 1 [1065353216 1073741824 1077936128]",
+        "SPV_AMD_shader_trinary_minmax 3 [_ (2, 2) (3, 3)]",
+        "SPV_AMD_shader_trinary_minmax 5 [_ (1, 1, 1) (5, 5, 5)]",
+        "SPV_AMD_shader_trinary_minmax 6 [_ _ (1, 1)]",
+        "SPV_AMD_shader_trinary_minmax 7 [_ _ 1065353216]",
+        "SPV_AMD_shader_trinary_minmax 8 [_ 3 7]",
+    ] {
+        assert_eq!(summary.get(key), Some(&1), "{key}: {summary:?}");
+    }
+    assert_eq!(summary.get("extension SPV_AMD_shader_trinary_minmax"), None);
+    Ok(())
+}
+
+#[test]
+fn amd_shader_trinary_minmax_needs_its_extension() -> TestResult {
+    rejected_like_glslang(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = vec4(min3(1.0, 2.0, 3.0));
+        }",
+        "GL_AMD_shader_trinary_minmax",
+    )
+}
+
+#[test]
+fn amd_gcn_shader_matches_glslang() -> TestResult {
+    let summary = matches_glslang(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_AMD_gcn_shader : enable
+        #extension GL_ARB_gpu_shader_int64 : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { vec3 d; uint64_t t; float f; vec2 g; };
+        void main() {
+            t = timeAMD();
+            f = cubeFaceIndexAMD(d);
+            g = cubeFaceCoordAMD(vec3(1.0, 0.5, 0.25));
+        }",
+    )?;
+    for key in [
+        "SPV_AMD_gcn_shader 1 [_]",
+        "SPV_AMD_gcn_shader 2 [(1065353216, 1056964608, 1048576000)]",
+        "SPV_AMD_gcn_shader 3 []",
+    ] {
+        assert_eq!(summary.get(key), Some(&1), "{key}: {summary:?}");
+    }
+    assert_eq!(summary.get("extension SPV_AMD_gcn_shader"), None);
+    Ok(())
+}
+
+#[test]
+fn amd_interpolate_at_vertex_matches_glslang() -> TestResult {
+    let summary = matches_glslang(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_explicit_vertex_parameter : enable
+        layout(location = 0) __explicitInterpAMD in vec4 v;
+        layout(location = 1) __explicitInterpAMD in float f;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = interpolateAtVertexAMD(v, 1u) + vec4(interpolateAtVertexAMD(f, 2u));
+        }",
+    )?;
+    for key in [
+        "SPV_AMD_shader_explicit_vertex_parameter 1 [_ 1]",
+        "SPV_AMD_shader_explicit_vertex_parameter 1 [_ 2]",
+        "extension SPV_AMD_shader_explicit_vertex_parameter",
+    ] {
+        assert_eq!(summary.get(key), Some(&1), "{key}: {summary:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn amd_interpolate_at_vertex_is_checked_like_glslang() -> TestResult {
+    let shader = |declaration: &str, body: &str| {
+        format!(
+            "#version 450
+            #extension GL_AMD_shader_explicit_vertex_parameter : enable
+            layout(location = 0) {declaration} vec4 v;
+            layout(location = 1) flat in uint k;
+            layout(location = 0) out vec4 o;
+            void main() {{
+                o = {body};
+            }}"
+        )
+    };
+    for (declaration, body, message) in [
+        (
+            "in",
+            "interpolateAtVertexAMD(v, 1u)",
+            "must be qualified as __explicitInterpAMD",
+        ),
+        (
+            "__explicitInterpAMD in",
+            "interpolateAtVertexAMD(v, k)",
+            "must be a compile-time constant",
+        ),
+        (
+            "__explicitInterpAMD in",
+            "interpolateAtVertexAMD(v, 3u)",
+            "must be in the range [0, 2]",
+        ),
+        (
+            "__explicitInterpAMD in",
+            "v",
+            "can be read only by `interpolateAtVertexAMD`",
+        ),
+    ] {
+        rejected_like_glslang(ShaderStage::Fragment, &shader(declaration, body), message)?;
+    }
+    Ok(())
+}
