@@ -1005,7 +1005,7 @@ Exec nvidia: Amber `c9f1e287` on NVIDIA GeForce RTX 4090, NVIDIA 617.14 (Vulkan 
         assert_eq!(labels(&exec_sources(&[], None)), ["local:absent"]);
         let header = table_header(&exec_sources(&[], Some(&carried)));
         assert!(header.starts_with(
-            "| Stage | Files | accept | diag | valid | interface | exec local | exec amd | exec nvidia | link | crashes |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+            "| Stage | Files | accept | diag | valid | interface | object | exec local | exec amd | exec nvidia | link | crashes |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
         ));
     }
 
