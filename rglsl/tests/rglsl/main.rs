@@ -16,6 +16,7 @@ mod layout_names;
 mod object_schema;
 mod snapshots;
 mod stage_io;
+mod sweep;
 mod tensors;
 mod validation;
 
