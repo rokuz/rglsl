@@ -21,36 +21,6 @@ verdicts = ["capabilities-differ"]
 reason = "intentional: GLSL.std.450 FindILsb \"is currently limited to 32-bit width components\", so rglsl widens 8- and 16-bit operands and needs no Int8/Int16; glslang emits FindILsb on 16-bit integers"
 
 [[divergence]]
-name = "absoluteDifference"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
-
-[[divergence]]
-name = "addSaturate"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
-
-[[divergence]]
-name = "subtractSaturate"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
-
-[[divergence]]
-name = "average*"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
-
-[[divergence]]
-name = "count*Zeros"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
-
-[[divergence]]
-name = "multiply32x16"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
-
-[[divergence]]
 name = "gl_BaryCoord*AMD"
 verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_shader_explicit_vertex_parameter built-in variables are not declared"

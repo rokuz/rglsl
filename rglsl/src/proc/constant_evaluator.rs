@@ -2162,6 +2162,14 @@ impl<'a> ConstantEvaluator<'a> {
             | crate::MathFunction::Mid3
             | crate::MathFunction::CubeFaceIndex
             | crate::MathFunction::CubeFaceCoord
+            | crate::MathFunction::IntelCountLeadingZeros
+            | crate::MathFunction::IntelCountTrailingZeros
+            | crate::MathFunction::AbsoluteDifference
+            | crate::MathFunction::AddSaturate
+            | crate::MathFunction::SubtractSaturate
+            | crate::MathFunction::Average
+            | crate::MathFunction::AverageRounded
+            | crate::MathFunction::Multiply32x16
             | crate::MathFunction::Round
             | crate::MathFunction::Modf
             | crate::MathFunction::Frexp

@@ -531,6 +531,14 @@ fn math_component(math: Math, result: Scalar, arguments: &[Value]) -> Option<Val
         | Math::Mid3
         | Math::CubeFaceIndex
         | Math::CubeFaceCoord
+        | Math::IntelCountLeadingZeros
+        | Math::IntelCountTrailingZeros
+        | Math::AbsoluteDifference
+        | Math::AddSaturate
+        | Math::SubtractSaturate
+        | Math::Average
+        | Math::AverageRounded
+        | Math::Multiply32x16
         | Math::Fma
         | Math::Ldexp
         | Math::Length
@@ -753,6 +761,14 @@ fn geometric(kind: Pure, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
             | Math::Mid3
             | Math::CubeFaceIndex
             | Math::CubeFaceCoord
+            | Math::IntelCountLeadingZeros
+            | Math::IntelCountTrailingZeros
+            | Math::AbsoluteDifference
+            | Math::AddSaturate
+            | Math::SubtractSaturate
+            | Math::Average
+            | Math::AverageRounded
+            | Math::Multiply32x16
             | Math::Mix
             | Math::Step
             | Math::SmoothStep

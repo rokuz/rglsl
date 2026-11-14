@@ -252,6 +252,65 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         requires: &[AmdShaderTrinaryMinmax],
         floats: Halves,
     }
+    "countLeadingZeros": Pure(Math(IntelCountLeadingZeros)) => [genU(genU)] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "countTrailingZeros": Pure(Math(IntelCountTrailingZeros)) => [genU(genU)] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "absoluteDifference": Pure(Math(AbsoluteDifference)) => [
+        genU(genI, genI),
+        genU16(genI16, genI16),
+        genU64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "addSaturate": Pure(Math(AddSaturate)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "subtractSaturate": Pure(Math(SubtractSaturate)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "average": Pure(Math(Average)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "averageRounded": Pure(Math(AverageRounded)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "multiply32x16": Pure(Math(Multiply32x16)) => [genI(genI, genI), genU(genU, genU)] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
     "cubeFaceIndexAMD": Pure(Math(CubeFaceIndex)) => [float(vec3)] {
         requires: &[AmdGcnShader],
     }

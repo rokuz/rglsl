@@ -1345,6 +1345,54 @@ fn shader_clocks_match_glslang() -> crate::TestResult {
 }
 
 #[test]
+fn intel_integer_functions_match_glslang() -> crate::TestResult {
+    use spirv::Capability as C;
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_INTEL_shader_integer_functions2 : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { ivec2 i; uvec2 u; uint r[8]; ivec2 s[5]; };
+        void main() {
+            r[0] = countLeadingZeros(u.x);
+            r[1] = countTrailingZeros(u.y);
+            uvec2 d = absoluteDifference(i, i.yx) + absoluteDifference(u, u.yx);
+            r[2] = d.x;
+            s[0] = addSaturate(i, i);
+            s[1] = subtractSaturate(i, i.yx);
+            s[2] = average(i, i.yx);
+            s[3] = averageRounded(i, i.yx);
+            s[4] = multiply32x16(i, i.yx);
+            r[3] = addSaturate(u.x, 1u) + multiply32x16(u.y, 2u);
+        }",
+    )?;
+    for (op, count) in [
+        (Op::UCountLeadingZerosINTEL, 1),
+        (Op::UCountTrailingZerosINTEL, 1),
+        (Op::AbsISubINTEL, 1),
+        (Op::AbsUSubINTEL, 1),
+        (Op::IAddSatINTEL, 1),
+        (Op::UAddSatINTEL, 1),
+        (Op::ISubSatINTEL, 1),
+        (Op::IAverageINTEL, 1),
+        (Op::IAverageRoundedINTEL, 1),
+        (Op::IMul32x16INTEL, 1),
+        (Op::UMul32x16INTEL, 1),
+    ] {
+        assert_eq!(instructions(&module, op).len(), count, "{op:?}");
+    }
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_INTEL_shader_integer_functions2"]
+    );
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::IntegerFunctions2INTEL])
+    );
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,

@@ -20,6 +20,32 @@ const AMD_CUBE_FACE_INDEX: Word = 1;
 const AMD_CUBE_FACE_COORD: Word = 2;
 const AMD_TIME: Word = 3;
 
+const fn integer_functions2(
+    fun: crate::MathFunction,
+    kind: Option<crate::ScalarKind>,
+) -> Result<spirv::Op, Error> {
+    use crate::MathFunction as Mf;
+    use crate::ScalarKind as Sk;
+    use spirv::Op;
+    Ok(match (fun, kind) {
+        (Mf::IntelCountLeadingZeros, Some(Sk::Uint)) => Op::UCountLeadingZerosINTEL,
+        (Mf::IntelCountTrailingZeros, Some(Sk::Uint)) => Op::UCountTrailingZerosINTEL,
+        (Mf::AbsoluteDifference, Some(Sk::Sint)) => Op::AbsISubINTEL,
+        (Mf::AbsoluteDifference, Some(Sk::Uint)) => Op::AbsUSubINTEL,
+        (Mf::AddSaturate, Some(Sk::Sint)) => Op::IAddSatINTEL,
+        (Mf::AddSaturate, Some(Sk::Uint)) => Op::UAddSatINTEL,
+        (Mf::SubtractSaturate, Some(Sk::Sint)) => Op::ISubSatINTEL,
+        (Mf::SubtractSaturate, Some(Sk::Uint)) => Op::USubSatINTEL,
+        (Mf::Average, Some(Sk::Sint)) => Op::IAverageINTEL,
+        (Mf::Average, Some(Sk::Uint)) => Op::UAverageINTEL,
+        (Mf::AverageRounded, Some(Sk::Sint)) => Op::IAverageRoundedINTEL,
+        (Mf::AverageRounded, Some(Sk::Uint)) => Op::UAverageRoundedINTEL,
+        (Mf::Multiply32x16, Some(Sk::Sint)) => Op::IMul32x16INTEL,
+        (Mf::Multiply32x16, Some(Sk::Uint)) => Op::UMul32x16INTEL,
+        _ => return Err(Error::Validation("integer function of a non-integer value")),
+    })
+}
+
 const fn trinary_minmax(
     fun: crate::MathFunction,
     kind: Option<crate::ScalarKind>,
@@ -1103,6 +1129,27 @@ impl BlockContext<'_> {
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UClamp,
                         _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     }),
+                    Mf::IntelCountLeadingZeros
+                    | Mf::IntelCountTrailingZeros
+                    | Mf::AbsoluteDifference
+                    | Mf::AddSaturate
+                    | Mf::SubtractSaturate
+                    | Mf::Average
+                    | Mf::AverageRounded
+                    | Mf::Multiply32x16 => {
+                        let op = integer_functions2(fun, arg_scalar_kind)?;
+                        self.writer
+                            .use_extension("SPV_INTEL_shader_integer_functions2");
+                        self.writer.require_any(
+                            "integer functions 2",
+                            &[spirv::Capability::IntegerFunctions2INTEL],
+                        )?;
+                        MathOp::Custom(if fun.argument_count() == 1 {
+                            Instruction::unary(op, result_type_id, id, arg0_id)
+                        } else {
+                            Instruction::binary(op, result_type_id, id, arg0_id, arg1_id)
+                        })
+                    }
                     Mf::CubeFaceIndex | Mf::CubeFaceCoord => {
                         let op = if fun == Mf::CubeFaceIndex {
                             AMD_CUBE_FACE_INDEX

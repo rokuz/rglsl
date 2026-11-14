@@ -336,6 +336,13 @@ impl super::MathFunction {
             Self::Clamp => 3,
             Self::Min3 | Self::Max3 | Self::Mid3 => 3,
             Self::CubeFaceIndex | Self::CubeFaceCoord => 1,
+            Self::IntelCountLeadingZeros | Self::IntelCountTrailingZeros => 1,
+            Self::AbsoluteDifference
+            | Self::AddSaturate
+            | Self::SubtractSaturate
+            | Self::Average
+            | Self::AverageRounded
+            | Self::Multiply32x16 => 2,
             // trigonometry
             Self::Cos => 1,
             Self::Cosh => 1,
