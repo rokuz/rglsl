@@ -68,6 +68,7 @@ bitflags::bitflags! {
         const RAY_VOLATILE = 1 << 3;
         const TRANSPOSED = 1 << 4;
         const GATE = 1 << 5;
+        const IMPLICITLY_SIZED = 1 << 6;
     }
 }
 
@@ -80,6 +81,53 @@ pub enum ConstantValue {
     Limits(fn(&ResourceLimits) -> [i32; 3]),
     LocalSize,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ArrayLimit {
+    pub feature: &'static str,
+    pub limit: &'static str,
+    pub value: fn(&ResourceLimits) -> i32,
+    pub dimension: usize,
+    pub declared: bool,
+    pub indexed: bool,
+}
+
+pub(crate) const CLIP_DISTANCES: ArrayLimit = ArrayLimit {
+    feature: "gl_ClipDistance array size",
+    limit: "gl_MaxClipDistances",
+    value: |limits| limits.max_clip_distances,
+    dimension: 0,
+    declared: true,
+    indexed: true,
+};
+pub(crate) const CULL_DISTANCES: ArrayLimit = ArrayLimit {
+    feature: "gl_CullDistance array size",
+    limit: "gl_MaxCullDistances",
+    value: |limits| limits.max_cull_distances,
+    dimension: 0,
+    declared: true,
+    indexed: true,
+};
+pub(crate) const CLIP_DISTANCES_PER_VIEW: ArrayLimit = ArrayLimit {
+    feature: "gl_ClipDistancePerViewNV array size",
+    dimension: 1,
+    indexed: false,
+    ..CLIP_DISTANCES
+};
+pub(crate) const CULL_DISTANCES_PER_VIEW: ArrayLimit = ArrayLimit {
+    feature: "gl_CullDistancePerViewNV array size",
+    dimension: 1,
+    indexed: false,
+    ..CULL_DISTANCES
+};
+pub(crate) const SAMPLE_MASK_WORDS: ArrayLimit = ArrayLimit {
+    feature: "gl_SampleMask array size",
+    limit: "gl_MaxSamples",
+    value: |limits| limits.max_samples.saturating_add(31) / 32,
+    dimension: 0,
+    declared: false,
+    indexed: true,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Redeclaration {
@@ -109,6 +157,7 @@ pub struct BuiltinVariable {
     pub named: Option<&'static str>,
     pub flags: VariableFlags,
     pub redeclaration: Option<Redeclaration>,
+    pub array_limit: Option<ArrayLimit>,
     pub(crate) ty: Word,
     pub(crate) dimensions: &'static [Option<u32>],
     pub(crate) precision: Option<PrecisionQualifier>,
@@ -131,6 +180,7 @@ impl BuiltinVariable {
         named: None,
         flags: VariableFlags::empty(),
         redeclaration: None,
+        array_limit: None,
         ty: Word::Fixed(crate::types::TypeKind::Void),
         dimensions: &[],
         precision: None,
@@ -270,6 +320,32 @@ pub fn named(name: &str) -> impl Iterator<Item = &'static BuiltinVariable> + '_ 
         .iter()
         .flat_map(|family| family.iter())
         .filter(move |row| row.name == name)
+}
+
+fn rows_named(name: &str) -> impl Iterator<Item = &'static BuiltinVariable> + '_ {
+    named(name).chain(
+        blocks::BLOCKS
+            .iter()
+            .flat_map(BuiltinBlock::members)
+            .filter(move |row| row.name == name),
+    )
+}
+
+pub fn implicitly_sized(name: &str) -> bool {
+    rows_named(name).any(|row| row.has(VariableFlags::IMPLICITLY_SIZED))
+}
+
+pub fn array_limit(name: &str) -> Option<ArrayLimit> {
+    rows_named(name).find_map(|row| row.array_limit)
+}
+
+pub fn clip_or_cull_distance(name: &str) -> bool {
+    rows_named(name).any(|row| {
+        matches!(
+            row.builtin(),
+            Some(BuiltIn::ClipDistances | BuiltIn::CullDistance)
+        )
+    })
 }
 
 pub fn requirement<'a>(

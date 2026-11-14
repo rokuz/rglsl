@@ -854,3 +854,60 @@ fn structs_are_interned_with_their_properties() -> TestResult {
     assert_eq!(registry.structs().len(), 3);
     Ok(())
 }
+
+#[test]
+fn array_properties_of_built_in_variables_come_from_their_rows() {
+    use crate::builtins::variables::{array_limit, clip_or_cull_distance, implicitly_sized};
+    for name in [
+        "gl_ClipDistance",
+        "gl_CullDistance",
+        "gl_ViewportMask",
+        "gl_SecondaryViewportMaskNV",
+        "gl_PositionPerViewNV",
+        "gl_ViewportMaskPerViewNV",
+        "gl_SampleMask",
+        "gl_SampleMaskIn",
+    ] {
+        assert!(implicitly_sized(name), "{name}");
+    }
+    for name in [
+        "gl_Position",
+        "gl_PrimitiveIndicesNV",
+        "gl_ClipDistancePerViewNV",
+    ] {
+        assert!(!implicitly_sized(name), "{name}");
+    }
+    assert!(clip_or_cull_distance("gl_ClipDistance"));
+    assert!(clip_or_cull_distance("gl_CullDistance"));
+    assert!(!clip_or_cull_distance("gl_ClipDistancePerViewNV"));
+    let limits = ResourceLimits::default();
+    let limit = |name: &str| {
+        array_limit(name).map(|limit| {
+            (
+                (limit.value)(&limits),
+                limit.dimension,
+                limit.declared,
+                limit.indexed,
+            )
+        })
+    };
+    assert_eq!(
+        limit("gl_ClipDistance"),
+        Some((limits.max_clip_distances, 0, true, true))
+    );
+    assert_eq!(
+        limit("gl_CullDistance"),
+        Some((limits.max_cull_distances, 0, true, true))
+    );
+    assert_eq!(
+        limit("gl_ClipDistancePerViewNV"),
+        Some((limits.max_clip_distances, 1, true, false))
+    );
+    assert_eq!(
+        limit("gl_CullDistancePerViewNV"),
+        Some((limits.max_cull_distances, 1, true, false))
+    );
+    assert_eq!(limit("gl_SampleMask"), Some((1, 0, false, true)));
+    assert_eq!(limit("gl_SampleMaskIn"), Some((1, 0, false, true)));
+    assert_eq!(limit("gl_Position"), None);
+}

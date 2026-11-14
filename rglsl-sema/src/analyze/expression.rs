@@ -865,14 +865,8 @@ impl Analyzer<'_> {
             ExpressionKind::FieldSelection { field, .. } => field.node.as_str(),
             _ => return None,
         };
-        let limits = &self.options.limits;
-        let limit = match name {
-            "gl_ClipDistance" => limits.max_clip_distances,
-            "gl_CullDistance" => limits.max_cull_distances,
-            "gl_SampleMask" | "gl_SampleMaskIn" => limits.max_samples.saturating_add(31) / 32,
-            _ => return None,
-        };
-        Some(i64::from(limit))
+        let limit = crate::builtins::variables::array_limit(name).filter(|limit| limit.indexed)?;
+        Some(i64::from((limit.value)(&self.options.limits)))
     }
 
     pub(crate) fn per_vertex_output_check(&mut self, target: &Expression) {

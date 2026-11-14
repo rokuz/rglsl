@@ -1955,7 +1955,7 @@ impl<'a> Lowerer<'a> {
                     other
                 }
             };
-            let ty = if super::prepass::CLIP_DISTANCES.contains(&name) {
+            let ty = if variables::clip_or_cull_distance(name) {
                 let size = match member.ty.outer_size() {
                     Some(GlslArraySize::Sized(size)) => Some(size),
                     _ => None,
@@ -2118,8 +2118,8 @@ impl<'a> Lowerer<'a> {
             .variable(symbol)
             .is_some_and(|row| row.builtin().is_some())
         {
-            let without_size = super::prepass::IMPLICITLY_SIZED.contains(&name.as_str())
-                && !self.builtin_sizes.contains_key(&name);
+            let without_size =
+                variables::implicitly_sized(&name) && !self.builtin_sizes.contains_key(&name);
             if without_size {
                 self.unused_redeclarations.push((symbol, name, at));
             } else {
@@ -2471,7 +2471,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             },
             other => other,
         };
-        let ir = if super::prepass::IMPLICITLY_SIZED.contains(&name) {
+        let ir = if variables::implicitly_sized(name) {
             let size = self.with(|this| {
                 this.builtin_sizes
                     .get(name)

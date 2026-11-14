@@ -18,7 +18,7 @@ use rglsl_ast::ast::{
 use super::frames::Cx;
 use super::heap::is_heap_storage;
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
-use crate::builtins::variables::Redeclaration;
+use crate::builtins::variables::{self, Redeclaration};
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
@@ -736,43 +736,19 @@ impl Analyzer<'_> {
     }
 
     fn builtin_array_limit_check(&mut self, span: Span, name: &str, ty: &Type) {
-        let limits = self.options.limits;
-        let (feature, limit, value, dimension) = match name {
-            "gl_ClipDistance" => (
-                "gl_ClipDistance array size",
-                "gl_MaxClipDistances",
-                limits.max_clip_distances,
-                0,
-            ),
-            "gl_CullDistance" => (
-                "gl_CullDistance array size",
-                "gl_MaxCullDistances",
-                limits.max_cull_distances,
-                0,
-            ),
-            "gl_ClipDistancePerViewNV" => (
-                "gl_ClipDistancePerViewNV array size",
-                "gl_MaxClipDistances",
-                limits.max_clip_distances,
-                1,
-            ),
-            "gl_CullDistancePerViewNV" => (
-                "gl_CullDistancePerViewNV array size",
-                "gl_MaxCullDistances",
-                limits.max_cull_distances,
-                1,
-            ),
-            _ => return,
-        };
-        let Some(&ArraySize::Sized(size)) = ty.dimensions().get(dimension) else {
+        let Some(limit) = variables::array_limit(name).filter(|limit| limit.declared) else {
             return;
         };
+        let Some(&ArraySize::Sized(size)) = ty.dimensions().get(limit.dimension) else {
+            return;
+        };
+        let value = (limit.value)(&self.options.limits);
         if i64::from(size) > i64::from(value) {
             self.error(
                 span,
                 DiagnosticKind::ArrayLimit {
-                    feature,
-                    limit,
+                    feature: limit.feature,
+                    limit: limit.limit,
                     value,
                 },
             );

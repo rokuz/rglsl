@@ -16,9 +16,13 @@ const PER_VERTEX: &[BuiltinVariable] = variables! {
     "gl_PointSize": Member(PointSize) => float
     "gl_ClipDistance": Member(ClipDistances) => float[] {
         redeclaration: Some(Redeclaration::Interpolant),
+        flags: variable_flags!(IMPLICITLY_SIZED),
+        array_limit: Some(super::CLIP_DISTANCES),
     }
     "gl_CullDistance": Member(CullDistance) => float[] {
         redeclaration: Some(Redeclaration::Interpolant),
+        flags: variable_flags!(IMPLICITLY_SIZED),
+        array_limit: Some(super::CULL_DISTANCES),
     }
 };
 
@@ -28,24 +32,29 @@ const VIEWS_IN: &[BuiltinVariable] = variables! {
     }
     "gl_PositionPerViewNV": Member(PositionPerViewNV) => vec4[] {
         requires_one_of: &[NvxMultiviewPerViewAttributes],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
 };
 
 const VIEWS_OUT: &[BuiltinVariable] = variables! {
     "gl_ViewportMask": Member(ViewportMaskNV) => int[] {
         requires_one_of: &[NvViewportArray2],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_SecondaryPositionNV": Member(SecondaryPositionNV) => vec4 {
         requires_one_of: &[NvStereoViewRendering],
     }
     "gl_SecondaryViewportMaskNV": Member(SecondaryViewportMaskNV) => int[] {
         requires_one_of: &[NvStereoViewRendering],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_PositionPerViewNV": Member(PositionPerViewNV) => vec4[] {
         requires_one_of: &[NvxMultiviewPerViewAttributes],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_ViewportMaskPerViewNV": Member(ViewportMaskPerViewNV) => int[] {
         requires_one_of: &[NvxMultiviewPerViewAttributes],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
 };
 
@@ -55,9 +64,11 @@ const MESH_VIEWS_NV: &[BuiltinVariable] = variables! {
     }
     "gl_ClipDistancePerViewNV": Member(ClipDistancePerViewNV) => float[4][] {
         flags: variable_flags!(PER_VIEW),
+        array_limit: Some(super::CLIP_DISTANCES_PER_VIEW),
     }
     "gl_CullDistancePerViewNV": Member(CullDistancePerViewNV) => float[4][] {
         flags: variable_flags!(PER_VIEW),
+        array_limit: Some(super::CULL_DISTANCES_PER_VIEW),
     }
 };
 
@@ -76,7 +87,7 @@ const PER_PRIMITIVE: &[BuiltinVariable] = variables! {
 
 const MESH_PRIMITIVE_NV: &[BuiltinVariable] = variables! {
     "gl_ViewportMask": Member(ViewportMaskNV) => int[] {
-        flags: variable_flags!(PER_PRIMITIVE),
+        flags: variable_flags!(IMPLICITLY_SIZED, PER_PRIMITIVE),
     }
     "gl_LayerPerViewNV": Member(LayerPerViewNV) => int[4] {
         flags: variable_flags!(PER_PRIMITIVE, PER_VIEW),

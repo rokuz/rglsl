@@ -118,10 +118,12 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_ViewportMask": Output(ViewportMaskNV) => int[] {
         stages: VERTEX | TESS_EVALUATION | GEOMETRY,
         requires_one_of: &[NvViewportArray2],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_SecondaryViewportMaskNV": Output(SecondaryViewportMaskNV) => int[] {
         stages: VERTEX | TESS_EVALUATION | GEOMETRY,
         requires_one_of: &[NvStereoViewRendering],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_SecondaryPositionNV": Output(SecondaryPositionNV) => vec4 {
         stages: VERTEX | TESS_EVALUATION | GEOMETRY,
@@ -130,10 +132,12 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_PositionPerViewNV": Output(PositionPerViewNV) => vec4[] {
         stages: VERTEX | TESS_EVALUATION | GEOMETRY,
         requires_one_of: &[NvxMultiviewPerViewAttributes],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_ViewportMaskPerViewNV": Output(ViewportMaskPerViewNV) => int[] {
         stages: VERTEX | TESS_EVALUATION | GEOMETRY,
         requires_one_of: &[NvxMultiviewPerViewAttributes],
+        flags: variable_flags!(IMPLICITLY_SIZED),
     }
     "gl_ViewIndex": Input(ViewIndex) => int {
         stages: VERTEX | TESSELLATION | GEOMETRY | MESH | FRAGMENT,
@@ -186,18 +190,28 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_ClipDistance": Input(ClipDistances) => float[] {
         stages: FRAGMENT,
         redeclaration: Some(Redeclaration::Interpolant),
+        flags: variable_flags!(IMPLICITLY_SIZED),
+        array_limit: Some(super::CLIP_DISTANCES),
     }
     "gl_CullDistance": Input(CullDistance) => float[] {
         stages: FRAGMENT,
         redeclaration: Some(Redeclaration::Interpolant),
+        flags: variable_flags!(IMPLICITLY_SIZED),
+        array_limit: Some(super::CULL_DISTANCES),
     }
     "gl_PrimitiveID": Input(PrimitiveIndex) => int { stages: FRAGMENT }
     "gl_SampleID": Input(SampleIndex) => int { stages: FRAGMENT }
     "gl_SamplePosition": Input(SamplePosition) => vec2 { stages: FRAGMENT }
-    "gl_SampleMaskIn": Input(SAMPLE_MASK) => int[] { stages: FRAGMENT }
+    "gl_SampleMaskIn": Input(SAMPLE_MASK) => int[] {
+        stages: FRAGMENT,
+        flags: variable_flags!(IMPLICITLY_SIZED),
+        array_limit: Some(super::SAMPLE_MASK_WORDS),
+    }
     "gl_SampleMask": Output(SAMPLE_MASK) => int[] {
         stages: FRAGMENT,
         redeclaration: Some(Redeclaration::OverrideCoverage),
+        flags: variable_flags!(IMPLICITLY_SIZED),
+        array_limit: Some(super::SAMPLE_MASK_WORDS),
     }
     "gl_Layer": Input(LAYER) => int {
         stages: FRAGMENT,
