@@ -1,7 +1,7 @@
 use rglsl_types::extension::Extension::*;
 
+use super::BuiltinFunction;
 use super::Floats::DoublesAndHalves;
-use super::{BuiltinFlags, BuiltinFunction};
 use crate::builtins::kind::{
     AtomicOperation, Attachment, Barrier, BuiltinKind, InterpolateAt, MemoryBarrier, Mesh,
     Primitive, SplitPhase,
@@ -203,7 +203,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         uint(int),
     ] {
         requires: &[ExtShaderTileImage],
-        flags: BuiltinFlags::LOWP_RESULT,
+        flags: flags!(LOWP_RESULT),
         stages: FRAGMENT,
     }
     "depthAttachmentReadEXT": BuiltinKind::AttachmentRead(Attachment::Depth) => [

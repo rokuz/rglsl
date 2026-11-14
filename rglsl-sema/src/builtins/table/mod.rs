@@ -22,6 +22,13 @@ macro_rules! parameters {
     };
 }
 
+macro_rules! flags {
+    ($($flag:ident),* $(,)?) => {
+        $crate::builtins::table::BuiltinFlags::empty()
+            $(.union($crate::builtins::table::BuiltinFlags::$flag))*
+    };
+}
+
 macro_rules! builtins {
     ($(
         $name:literal: $kind:expr => [$($result:ident($($parameters:tt)*)),* $(,)?]
@@ -69,6 +76,7 @@ bitflags::bitflags! {
         const NO_DOUBLE_LONG_VECTOR = 1 << 6;
         const LOWP_RESULT = 1 << 7;
         const SAMPLED_RESULT = 1 << 8;
+        const FUZZ = 1 << 9;
     }
 }
 

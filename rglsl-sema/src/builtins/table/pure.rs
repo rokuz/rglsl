@@ -1,7 +1,7 @@
 use rglsl_types::extension::Extension::*;
 
+use super::BuiltinFunction;
 use super::Floats::{DoublesAndHalves, Halves};
-use super::{BuiltinFlags, BuiltinFunction};
 use crate::builtins::kind::BitOperation::*;
 use crate::builtins::kind::BuiltinKind::{Assume, Decompose, Expect, Pure, Wide};
 use crate::builtins::kind::Comparison::*;
@@ -15,101 +15,91 @@ use crate::builtins::{COMPUTE, FRAGMENT, MESH, TASK};
 
 pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "radians": Pure(Math(Radians)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "degrees": Pure(Math(Degrees)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "sin": Pure(Math(Sin)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "cos": Pure(Math(Cos)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "tan": Pure(Math(Tan)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "asin": Pure(Math(Asin)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "acos": Pure(Math(Acos)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "atan": Pure(Math(Atan2)) => [genF(genF, genF)] {
-        flags: BuiltinFlags::FOLD
-            .union(BuiltinFlags::COOPERATIVE_VECTOR)
-            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "atan": Pure(Math(Atan)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD
-            .union(BuiltinFlags::COOPERATIVE_VECTOR)
-            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "sinh": Pure(Math(Sinh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "cosh": Pure(Math(Cosh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "tanh": Pure(Math(Tanh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD
-            .union(BuiltinFlags::COOPERATIVE_VECTOR)
-            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "asinh": Pure(Math(Asinh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "acosh": Pure(Math(Acosh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "atanh": Pure(Math(Atanh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "pow": Pure(Math(Pow)) => [genF(genF, genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "exp": Pure(Math(Exp)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD
-            .union(BuiltinFlags::COOPERATIVE_VECTOR)
-            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "log": Pure(Math(Log)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD
-            .union(BuiltinFlags::COOPERATIVE_VECTOR)
-            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "exp2": Pure(Math(Exp2)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "log2": Pure(Math(Log2)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: flags!(FOLD, NO_DOUBLE_LONG_VECTOR, FUZZ),
         floats: Halves,
     }
     "sqrt": Pure(Math(Sqrt)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "inversesqrt": Pure(Math(InverseSqrt)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "abs": Pure(Math(Abs)) => [
@@ -119,7 +109,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI16(genI16),
         genI8(genI8),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "sign": Pure(Math(Sign)) => [
@@ -129,35 +119,35 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI16(genI16),
         genI8(genI8),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "floor": Pure(Math(Floor)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "trunc": Pure(Math(Trunc)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "round": Pure(Math(Round)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "roundEven": Pure(Math(RoundEven)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "ceil": Pure(Math(Ceil)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "fract": Pure(Math(Fract)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "mod": Pure(Modulo) => [genF(genF, genF), genF(genF, float)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::PRECISE_ARITHMETIC),
+        flags: flags!(FOLD, PRECISE_ARITHMETIC, FUZZ),
         floats: DoublesAndHalves,
     }
     "modf": Decompose(Modf) => [genF(genF, out genF)] {
@@ -183,7 +173,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genU8(genU8, genU8),
         genU8(genU8, uint8_t),
     ] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
     "max": Pure(Math(Max)) => [
@@ -206,7 +196,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genU8(genU8, genU8),
         genU8(genU8, uint8_t),
     ] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
     "clamp": Pure(Math(Clamp)) => [
@@ -229,11 +219,11 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genU8(genU8, genU8, genU8),
         genU8(genU8, uint8_t, uint8_t),
     ] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
     "mix": Pure(Math(Mix)) => [genF(genF, genF, genF), genF(genF, genF, float)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "mix": Pure(Select) => [
@@ -248,84 +238,84 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI8(genI8, genI8, genB),
         genU8(genU8, genU8, genB),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "step": Pure(Math(Step)) => [genF(genF, genF), genF(float, genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
+        flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
     "smoothstep": Pure(Math(SmoothStep)) => [genF(genF, genF, genF), genF(float, float, genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "isnan": Pure(Relational(IsNan)) => [genB(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "isinf": Pure(Relational(IsInf)) => [genB(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "fma": Pure(Math(Fma)) => [genF(genF, genF, genF)] {
-        flags: BuiltinFlags::COOPERATIVE_VECTOR,
+        flags: flags!(COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
     "frexp": Decompose(Frexp) => [genF(genF, out genI), genH(genH, out genI16)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
         floats: DoublesAndHalves,
     }
     "ldexp": Pure(Math(Ldexp)) => [genF(genF, genI), genH(genH, genI16)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
         floats: DoublesAndHalves,
     }
     "floatBitsToInt": Pure(Bitcast) => [genI(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::HIGHP_OPERANDS),
+        flags: flags!(FOLD, HIGHP_OPERANDS, FUZZ),
     }
     "floatBitsToUint": Pure(Bitcast) => [genU(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::HIGHP_OPERANDS),
+        flags: flags!(FOLD, HIGHP_OPERANDS, FUZZ),
     }
     "intBitsToFloat": Pure(Bitcast) => [genF(genI)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::HIGHP_OPERANDS),
+        flags: flags!(FOLD, HIGHP_OPERANDS, FUZZ),
     }
     "uintBitsToFloat": Pure(Bitcast) => [genF(genU)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::HIGHP_OPERANDS),
+        flags: flags!(FOLD, HIGHP_OPERANDS, FUZZ),
     }
     "packUnorm2x16": Pure(Math(Pack2x16unorm)) => [uint(vec2)] {
-        flags: BuiltinFlags::HIGHP_RESULT,
+        flags: flags!(HIGHP_RESULT, FUZZ),
     }
     "packSnorm2x16": Pure(Math(Pack2x16snorm)) => [uint(vec2)] {
-        flags: BuiltinFlags::HIGHP_RESULT,
+        flags: flags!(HIGHP_RESULT, FUZZ),
     }
     "packUnorm4x8": Pure(Math(Pack4x8unorm)) => [uint(vec4)] {
-        flags: BuiltinFlags::HIGHP_RESULT,
+        flags: flags!(HIGHP_RESULT, FUZZ),
     }
     "packSnorm4x8": Pure(Math(Pack4x8snorm)) => [uint(vec4)] {
-        flags: BuiltinFlags::HIGHP_RESULT,
+        flags: flags!(HIGHP_RESULT, FUZZ),
     }
     "unpackUnorm2x16": Pure(Math(Unpack2x16unorm)) => [vec2(uint)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "unpackSnorm2x16": Pure(Math(Unpack2x16snorm)) => [vec2(uint)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "unpackUnorm4x8": Pure(Math(Unpack4x8unorm)) => [vec4(uint)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "unpackSnorm4x8": Pure(Math(Unpack4x8snorm)) => [vec4(uint)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "packHalf2x16": Pure(Math(Pack2x16float)) => [uint(vec2)] {
-        flags: BuiltinFlags::HIGHP_RESULT,
+        flags: flags!(HIGHP_RESULT, FUZZ),
     }
     "unpackHalf2x16": Pure(Math(Unpack2x16float)) => [vec2(uint)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "packDouble2x32": Pure(Math(PackDouble2x32)) => [double(uvec2)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
     }
     "unpackDouble2x32": Pure(Math(UnpackDouble2x32)) => [uvec2(double)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
     }
     "packFloat2x16": Pure(PackedBitcast { extract: false }) => [uint(f16vec2)]
     "unpackFloat2x16": Pure(PackedBitcast { extract: false }) => [f16vec2(uint)]
@@ -340,7 +330,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         bvecN(ivecN, ivecN),
         bvecN(uvecN, uvecN),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "lessThanEqual": Pure(Compare(LessEqual)) => [
@@ -354,7 +344,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         bvecN(ivecN, ivecN),
         bvecN(uvecN, uvecN),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "greaterThan": Pure(Compare(Greater)) => [
@@ -368,7 +358,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         bvecN(ivecN, ivecN),
         bvecN(uvecN, uvecN),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "greaterThanEqual": Pure(Compare(GreaterEqual)) => [
@@ -382,7 +372,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         bvecN(ivecN, ivecN),
         bvecN(uvecN, uvecN),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "equal": Pure(Compare(Equal)) => [
@@ -397,7 +387,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         bvecN(uvecN, uvecN),
         bvecN(bvecN, bvecN),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "notEqual": Pure(Compare(NotEqual)) => [
@@ -412,7 +402,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         bvecN(uvecN, uvecN),
         bvecN(bvecN, bvecN),
     ] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "bitCount": Pure(Bits(Count)) => [
@@ -424,7 +414,9 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI8(genU8),
         genI(genI),
         genI(genU),
-    ]
+    ] {
+        flags: flags!(FUZZ),
+    }
     "findLSB": Pure(Bits(FindLsb)) => [
         genI64(genI64),
         genI64(genU64),
@@ -434,7 +426,9 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI8(genU8),
         genI(genI),
         genI(genU),
-    ]
+    ] {
+        flags: flags!(FUZZ),
+    }
     "findMSB": Pure(Bits(FindMsb)) => [
         genI64(genI64),
         genI64(genU64),
@@ -445,7 +439,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI(genI),
         genI(genU),
     ] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "doubleBitsToInt64": Pure(Bitcast) => [genI64(genD)]
     "doubleBitsToUint64": Pure(Bitcast) => [genU64(genD)]
@@ -463,6 +457,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI(genI, int, int),
         genU(genU, int, int),
     ] {
+        flags: flags!(FUZZ),
         precision_operands: Some(1),
     }
     "bitfieldInsert": Pure(Bits(Insert)) => [
@@ -473,6 +468,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI(genI, genI, int, int),
         genU(genU, genU, int, int),
     ] {
+        flags: flags!(FUZZ),
         precision_operands: Some(2),
     }
     "bitfieldReverse": Pure(Bits(Reverse)) => [
@@ -483,7 +479,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI(genI),
         genU(genU),
     ] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS, FUZZ),
     }
     "halfBitsToInt16": Pure(Bitcast) => [genI16(genH)]
     "halfBitsToUint16": Pure(Bitcast) => [genU16(genH)]
@@ -518,74 +514,77 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     ]
     "unpack32": Pure(UnpackBits) => [ivec2(int64_t), uvec2(uint64_t)]
     "length": Pure(Math(Length)) => [float(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "distance": Pure(Math(Distance)) => [float(genF, genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "dot": Pure(Math(Dot)) => [float(genF, genF), bfloat16_t(bf16vecN, bf16vecN)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::PRECISE_ARITHMETIC),
+        flags: flags!(FOLD, PRECISE_ARITHMETIC, FUZZ),
         floats: DoublesAndHalves,
     }
     "cross": Pure(Math(Cross)) => [vec3(vec3, vec3)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "normalize": Pure(Math(Normalize)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "faceforward": Pure(Math(FaceForward)) => [genF(genF, genF, genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "reflect": Pure(Math(Reflect)) => [genF(genF, genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "refract": Pure(Math(Refract)) => [genF(genF, genF, float)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "matrixCompMult": Pure(MatrixCompMult) => [matCxR(matCxR, matCxR)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "outerProduct": Pure(Math(Outer)) => [matCxR(vecR, vecC)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
     "transpose": Pure(Math(Transpose)) => [matRxC(matCxR)] {
+        flags: flags!(FUZZ),
         floats: DoublesAndHalves,
     }
     "determinant": Pure(Math(Determinant)) => [float(matN)] {
+        flags: flags!(FUZZ),
         floats: DoublesAndHalves,
     }
     "inverse": Pure(Math(Inverse)) => [matN(matN)] {
+        flags: flags!(FUZZ),
         floats: DoublesAndHalves,
     }
     "any": Pure(Relational(Any)) => [bool(bvecN)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
     }
     "all": Pure(Relational(All)) => [bool(bvecN)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
     }
     "not": Pure(Not) => [bvecN(bvecN)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
     }
     "uaddCarry": Wide(AddCarry) => [genU(genU, genU, out genU)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
     }
     "usubBorrow": Wide(SubBorrow) => [genU(genU, genU, out genU)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
     }
     "umulExtended": Wide(MulExtended { signed: false }) => [void(genU, genU, out genU, out genU)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
     }
     "imulExtended": Wide(MulExtended { signed: true }) => [void(genI, genI, out genI, out genI)] {
-        flags: BuiltinFlags::HIGHP_OPERANDS,
+        flags: flags!(HIGHP_OPERANDS),
     }
     "dotEXT": Pure(Math(IntegerDot)) => [
         uint(uvecN, uvecN),
@@ -606,7 +605,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         int64_t(i64vecN, i64vecN),
     ] {
         requires: &[ExtIntegerDotProduct],
-        flags: BuiltinFlags::PRECISE_ARITHMETIC,
+        flags: flags!(PRECISE_ARITHMETIC),
     }
     "dotAccSatEXT": Pure(Math(IntegerDotAccSat)) => [
         uint(uvecN, uvecN, uint),
@@ -627,7 +626,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         int64_t(i64vecN, i64vecN, int64_t),
     ] {
         requires: &[ExtIntegerDotProduct],
-        flags: BuiltinFlags::PRECISE_ARITHMETIC,
+        flags: flags!(PRECISE_ARITHMETIC),
     }
     "dotPacked4x8EXT": Pure(Math(PackedIntegerDot4x8)) => [
         uint(uint, uint),
@@ -636,7 +635,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         int(int, int),
     ] {
         requires: &[ExtIntegerDotProduct],
-        flags: BuiltinFlags::PRECISE_ARITHMETIC,
+        flags: flags!(PRECISE_ARITHMETIC),
     }
     "dotPacked4x8AccSatEXT": Pure(Math(PackedIntegerDot4x8AccSat)) => [
         uint(uint, uint, uint),
@@ -645,50 +644,50 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         int(int, int, int),
     ] {
         requires: &[ExtIntegerDotProduct],
-        flags: BuiltinFlags::PRECISE_ARITHMETIC,
+        flags: flags!(PRECISE_ARITHMETIC),
     }
     "dFdx": Pure(Derivative(Axis::X, Control::Plain)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "dFdy": Pure(Derivative(Axis::Y, Control::Plain)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "fwidth": Pure(Derivative(Axis::Width, Control::Plain)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "dFdxFine": Pure(Derivative(Axis::X, Control::Fine)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "dFdyFine": Pure(Derivative(Axis::Y, Control::Fine)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "fwidthFine": Pure(Derivative(Axis::Width, Control::Fine)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "dFdxCoarse": Pure(Derivative(Axis::X, Control::Coarse)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "dFdyCoarse": Pure(Derivative(Axis::Y, Control::Coarse)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }
     "fwidthCoarse": Pure(Derivative(Axis::Width, Control::Coarse)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD,
+        flags: flags!(FOLD, FUZZ),
         stages: FRAGMENT | COMPUTE | TASK | MESH,
         floats: DoublesAndHalves,
     }

@@ -1,6 +1,6 @@
 use rglsl_types::extension::Extension::{self, *};
 
-use super::{BuiltinFlags, BuiltinFunction};
+use super::BuiltinFunction;
 use crate::builtins::kind::AtomicOperation::{
     Add, And, CompareSwap, Exchange, Load, Max, Min, Or, Store, Xor,
 };
@@ -107,27 +107,27 @@ const QCOM_GATHER: &[Extension] = &[QcomImageProcessing3];
 
 pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "textureFootprintNV": Texture(Footprint { level: Implicit, clamp: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[NvShaderTextureFootprint],
         generate: Some(footprint::implicit),
     }
     "textureFootprintClampNV": Texture(Footprint { level: Implicit, clamp: true }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[NvShaderTextureFootprint],
         generate: Some(footprint::clamp),
     }
     "textureFootprintLodNV": Texture(Footprint { level: Lod, clamp: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[NvShaderTextureFootprint],
         generate: Some(footprint::lod),
     }
     "textureFootprintGradNV": Texture(Footprint { level: Gradient, clamp: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[NvShaderTextureFootprint],
         generate: Some(footprint::gradient),
     }
     "textureFootprintGradClampNV": Texture(Footprint { level: Gradient, clamp: true }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[NvShaderTextureFootprint],
         generate: Some(footprint::gradient_clamp),
     }
@@ -143,233 +143,233 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     }
     "textureQueryLod": Texture(QueryLod) => [] { generate: Some(textures::query_lod) }
     "textureQueryLOD": Texture(QueryLod) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::query_lod) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::query_lod) }
 
     "texture": Texture(Sample(IMPLICIT)) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::sample) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
     "textureProj": Texture(Sample(IMPLICIT.proj())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::sample) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
     "textureLod": Texture(Sample(LOD)) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::sample) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
     "textureOffset": Texture(Sample(IMPLICIT.offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::sample),
     }
     "textureProjOffset": Texture(Sample(IMPLICIT.proj().offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::sample),
     }
     "textureLodOffset": Texture(Sample(LOD.offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::sample),
     }
     "textureProjLod": Texture(Sample(LOD.proj())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::sample) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
     "textureProjLodOffset": Texture(Sample(LOD.proj().offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::sample),
     }
     "textureGrad": Texture(Sample(GRAD)) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::sample) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
     "textureGradOffset": Texture(Sample(GRAD.offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::sample),
     }
     "textureProjGrad": Texture(Sample(GRAD.proj())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::sample) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
     "textureProjGradOffset": Texture(Sample(GRAD.proj().offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::sample),
     }
     "textureClampARB": Texture(Sample(IMPLICIT.clamp())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "textureOffsetClampARB": Texture(Sample(IMPLICIT.offset().clamp())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "textureGradClampARB": Texture(Sample(GRAD.clamp())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "textureGradOffsetClampARB": Texture(Sample(GRAD.offset().clamp())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "sparseTextureARB": Texture(Sample(IMPLICIT.sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::sample),
     }
     "sparseTextureLodARB": Texture(Sample(LOD.sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::sample),
     }
     "sparseTextureOffsetARB": Texture(Sample(IMPLICIT.offset().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::sample),
     }
     "sparseTextureLodOffsetARB": Texture(Sample(LOD.offset().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::sample),
     }
     "sparseTextureGradARB": Texture(Sample(GRAD.sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::sample),
     }
     "sparseTextureGradOffsetARB": Texture(Sample(GRAD.offset().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::sample),
     }
     "sparseTextureClampARB": Texture(Sample(IMPLICIT.clamp().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "sparseTextureOffsetClampARB": Texture(Sample(IMPLICIT.offset().clamp().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "sparseTextureGradClampARB": Texture(Sample(GRAD.clamp().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
     "sparseTextureGradOffsetClampARB": Texture(Sample(GRAD.offset().clamp().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: CLAMP,
         generate: Some(textures::sample),
     }
 
     "texelFetch": Texture(Fetch { offset: false, sparse: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::fetch),
     }
     "texelFetchOffset": Texture(Fetch { offset: true, sparse: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::fetch),
     }
     "sparseTexelFetchARB": Texture(Fetch { offset: false, sparse: true }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::fetch),
     }
     "sparseTexelFetchOffsetARB": Texture(Fetch { offset: true, sparse: true }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::fetch),
     }
     "sparseTexelsResidentARB": Texture(SparseTexelsResident) => [bool(int)]
 
     "textureGather": Texture(Gather(GATHER)) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT, generate: Some(textures::gather) }
+        flags: flags!(SAMPLED_RESULT), generate: Some(textures::gather) }
     "textureGatherOffset": Texture(Gather(GATHER.offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::gather),
     }
     "textureGatherOffsets": Texture(Gather(GATHER.offsets())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::gather),
     }
     "sparseTextureGatherARB": Texture(Gather(GATHER.sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::gather),
     }
     "sparseTextureGatherOffsetARB": Texture(Gather(GATHER.offset().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::gather),
     }
     "sparseTextureGatherOffsetsARB": Texture(Gather(GATHER.offsets().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: SPARSE,
         generate: Some(textures::gather),
     }
     "textureGatherLodAMD": Texture(Gather(GATHER.lod())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: GATHER_LOD,
         generate: Some(textures::gather),
     }
     "textureGatherLodOffsetAMD": Texture(Gather(GATHER.lod().offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: GATHER_LOD,
         generate: Some(textures::gather),
     }
     "textureGatherLodOffsetsAMD": Texture(Gather(GATHER.lod().offsets())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: GATHER_LOD,
         generate: Some(textures::gather),
     }
     "sparseTextureGatherLodAMD": Texture(Gather(GATHER.lod().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: GATHER_LOD,
         generate: Some(textures::gather),
     }
     "sparseTextureGatherLodOffsetAMD": Texture(Gather(GATHER.lod().offset().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: GATHER_LOD,
         generate: Some(textures::gather),
     }
     "sparseTextureGatherLodOffsetsAMD": Texture(Gather(GATHER.lod().offsets().sparse())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: GATHER_LOD,
         generate: Some(textures::gather),
     }
     "textureGather4x1QCOM": Texture(Gather(GATHER.pattern(Linear4x1))) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGather4x1OffsetQCOM": Texture(Gather(GATHER.pattern(Linear4x1).offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGatherV2QCOM": Texture(Gather(GATHER.pattern(Vertical2))) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGatherV2OffsetQCOM": Texture(Gather(GATHER.pattern(Vertical2).offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGatherH2QCOM": Texture(Gather(GATHER.pattern(Horizontal2))) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGatherH2OffsetQCOM": Texture(Gather(GATHER.pattern(Horizontal2).offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGatherDQCOM": Texture(Gather(GATHER.pattern(Diagonal))) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
     "textureGatherDOffsetQCOM": Texture(Gather(GATHER.pattern(Diagonal).offset())) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: QCOM_GATHER,
         generate: Some(textures::gather),
     }
 
     "imageLoad": Texture(ImageLoad { lod: false, sparse: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::image_load),
     }
     "sparseImageLoadARB": Texture(ImageLoad { lod: false, sparse: true }) => [] {
@@ -385,7 +385,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         generate: Some(textures::image_load),
     }
     "imageStore": Texture(ImageStore { lod: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         generate: Some(textures::image_store),
     }
     "imageStoreLodAMD": Texture(ImageStore { lod: true }) => [] {
@@ -413,23 +413,23 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
 
     "subpassLoad": Texture(SubpassLoad) => [] { generate: Some(textures::subpass_load) }
     "fragmentMaskFetchAMD": Texture(FragmentFetch { mask: true }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[AmdShaderFragmentMask],
         generate: Some(textures::fragment_fetch),
     }
     "fragmentFetchAMD": Texture(FragmentFetch { mask: false }) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[AmdShaderFragmentMask],
         generate: Some(textures::fragment_fetch),
     }
 
     "textureWeightedQCOM": Texture(ImageProcessing(Weighted)) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[QcomImageProcessing],
         generate: Some(textures::weighted),
     }
     "textureBoxFilterQCOM": Texture(ImageProcessing(BoxFilter)) => [] {
-        flags: BuiltinFlags::SAMPLED_RESULT,
+        flags: flags!(SAMPLED_RESULT),
         requires: &[QcomImageProcessing],
         generate: Some(textures::box_filter),
     }
