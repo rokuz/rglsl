@@ -449,9 +449,10 @@ impl BuiltIn {
             Self::LocalInvocationIndex | Self::NumSubgroups | Self::SubgroupId => {
                 input(COMPUTE_LIKE, U32)
             }
+            Self::ShaderBallot(ShaderBallot::Size) => input(ALL, INDEX),
             Self::SubgroupSize
             | Self::SubgroupInvocationId
-            | Self::ShaderBallot(ShaderBallot::Size | ShaderBallot::InvocationId)
+            | Self::ShaderBallot(ShaderBallot::InvocationId)
             | Self::ShaderCore(_) => input(ALL, U32),
             Self::SubgroupMask(_) | Self::ShaderBallot(ShaderBallot::Mask(_)) => input(ALL, UVEC4),
             Self::TileOffset | Self::TileApronSize => input(TILE, UVEC2),

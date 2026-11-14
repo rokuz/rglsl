@@ -314,6 +314,10 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: &[ArbShaderBallot],
         flags: variable_flags!(RAY_VOLATILE),
     }
+    "gl_SIMDGroupSizeAMD": Input(ShaderBallot(Ballot::Size)) => int {
+        stages: ALL_STAGE_BITS,
+        requires_one_of: &[AmdGcnShader],
+    }
     "gl_SubGroupInvocationARB": Input(ShaderBallot(Ballot::InvocationId)) => uint {
         stages: ALL_STAGE_BITS,
         requires_one_of: &[ArbShaderBallot],

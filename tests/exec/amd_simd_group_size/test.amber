@@ -1,0 +1,9 @@
+#!amber
+SHADER compute main SPIRV-BIN FILE main.spv
+BUFFER results DATA_TYPE int32 SIZE 2 FILL 7
+PIPELINE compute p
+  ATTACH main
+  BIND BUFFER results AS storage DESCRIPTOR_SET 0 BINDING 0
+END
+RUN p 1 1 1
+EXPECT results IDX 0 EQ 1 1

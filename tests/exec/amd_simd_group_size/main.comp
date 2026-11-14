@@ -1,0 +1,9 @@
+#version 450
+#extension GL_AMD_gcn_shader : require
+layout(local_size_x = 1) in;
+layout(std430, set = 0, binding = 0) buffer Results { int in_range; int power_of_two; };
+
+void main() {
+  in_range = int(gl_SIMDGroupSizeAMD >= 1 && gl_SIMDGroupSizeAMD <= 128);
+  power_of_two = bitCount(gl_SIMDGroupSizeAMD);
+}

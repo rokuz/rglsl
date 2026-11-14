@@ -6320,6 +6320,37 @@ fn gpu_shader5_votes_match_glslang() -> crate::TestResult {
 }
 
 #[test]
+fn simd_group_size_is_the_signed_subgroup_size() -> crate::TestResult {
+    use spirv::Capability as C;
+    let source = "#version 450
+        #extension GL_AMD_gcn_shader : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { int size; };
+        void main() { size = gl_SIMDGroupSizeAMD; }";
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    assert_eq!(extensions_of(&module), ["SPV_KHR_shader_ballot"]);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::SubgroupBallotKHR])
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_SIMDGroupSizeAMD")?,
+        [(
+            Decoration::BuiltIn,
+            vec![spirv::BuiltIn::SubgroupSize as u32]
+        )]
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        &source.replace("#extension GL_AMD_gcn_shader : enable", ""),
+    )
+    .err()
+    .ok_or("gl_SIMDGroupSizeAMD without GL_AMD_gcn_shader is accepted")?;
+    assert!(error.contains("GL_AMD_gcn_shader"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn rotate_partition_and_quad_control_match_glslang() -> crate::TestResult {
     use spirv::{Capability as C, GroupOperation as G};
     let module = compile_valid_1_3(
