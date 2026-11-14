@@ -2520,13 +2520,69 @@ impl Writer {
 
                 self.get_constant_composite(ty, component_ids)?
             }
-            crate::Expression::Replicate { ty, value } if !self.is_override_dependent(handle) => {
+            crate::Expression::Replicate { ty, value } => {
                 let value_id = self.constant_ids[value];
                 let inner = ir_module.types[ty].inner.clone();
                 self.write_constant_replicate(ty, value_id, &inner)?
             }
             crate::Expression::Override(item) => self.write_override(item, ir_module, mod_info)?,
-            _ => self.write_spec_operation(handle, ir_module, mod_info)?,
+            crate::Expression::Access { .. }
+            | crate::Expression::AccessIndex { .. }
+            | crate::Expression::Swizzle { .. }
+            | crate::Expression::FunctionArgument(_)
+            | crate::Expression::GlobalVariable(_)
+            | crate::Expression::LocalVariable(_)
+            | crate::Expression::Load { .. }
+            | crate::Expression::ImageSample { .. }
+            | crate::Expression::ImageLoad { .. }
+            | crate::Expression::ImageQuery { .. }
+            | crate::Expression::Unary { .. }
+            | crate::Expression::Binary { .. }
+            | crate::Expression::Select { .. }
+            | crate::Expression::Derivative { .. }
+            | crate::Expression::Relational { .. }
+            | crate::Expression::Math { .. }
+            | crate::Expression::As { .. }
+            | crate::Expression::CallResult(_)
+            | crate::Expression::AtomicResult { .. }
+            | crate::Expression::ArrayLength(_)
+            | crate::Expression::WideArrayLength(_)
+            | crate::Expression::PhysicalPointer { .. }
+            | crate::Expression::PhysicalAddress { .. }
+            | crate::Expression::BufferPointer { .. }
+            | crate::Expression::HeapOffset { .. }
+            | crate::Expression::RayQueryProceedResult
+            | crate::Expression::RayQueryGet { .. }
+            | crate::Expression::ReportIntersectionResult
+            | crate::Expression::AccelerationStructureFromAddress { .. }
+            | crate::Expression::HitObjectGet { .. }
+            | crate::Expression::FetchMicroTriangleVertex { .. }
+            | crate::Expression::SubgroupBallotResult
+            | crate::Expression::SubgroupOperationResult { .. }
+            | crate::Expression::SpirvInstructionResult { .. }
+            | crate::Expression::CooperativeLoad { .. }
+            | crate::Expression::CooperativeMultiplyAdd { .. }
+            | crate::Expression::CooperativeMatrixLength { .. }
+            | crate::Expression::Expect { .. }
+            | crate::Expression::ImageSparseResident { .. }
+            | crate::Expression::IsHelperInvocation
+            | crate::Expression::InterpolateAt { .. }
+            | crate::Expression::FragmentFetch { .. }
+            | crate::Expression::ImageFootprint { .. }
+            | crate::Expression::AttachmentRead { .. }
+            | crate::Expression::CooperativeVectorLoad { .. }
+            | crate::Expression::CooperativeVectorMatMul { .. }
+            | crate::Expression::Convert { .. }
+            | crate::Expression::CooperativeMatrixResult { .. }
+            | crate::Expression::TensorCreate { .. }
+            | crate::Expression::ImageProcessing { .. }
+            | crate::Expression::ArrayConversion { .. }
+            | crate::Expression::Bitcast { .. }
+            | crate::Expression::TensorSet { .. }
+            | crate::Expression::TensorRead { .. }
+            | crate::Expression::TensorQuerySize { .. } => {
+                self.write_spec_operation(handle, ir_module, mod_info)?
+            }
         };
 
         self.constant_ids[handle] = id;
@@ -4096,10 +4152,9 @@ fn interface_member_used(
 
 fn reachable_functions(module: &crate::Module) -> Vec<&crate::Function> {
     fn calls(block: &crate::Block, found: &mut Vec<Handle<crate::Function>>) {
-        found.extend(block.walk().filter_map(|statement| match *statement {
-            crate::Statement::Call { function, .. } => Some(function),
-            _ => None,
-        }));
+        for statement in block.walk() {
+            statement.for_each_callee(|function| found.push(function));
+        }
     }
     let mut pending = Vec::new();
     let mut reached: Vec<&crate::Function> = Vec::new();

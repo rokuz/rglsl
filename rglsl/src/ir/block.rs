@@ -1,3 +1,5 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut, RangeBounds};
 
@@ -227,7 +229,44 @@ impl Statement {
                 break_if,
                 control,
             },
-            _ => self.clone(),
+            Self::Emit(_)
+            | Self::Break
+            | Self::Continue
+            | Self::Return { .. }
+            | Self::Kill
+            | Self::Demote
+            | Self::BeginInvocationInterlock
+            | Self::EndInvocationInterlock
+            | Self::EmitVertex { .. }
+            | Self::EndPrimitive { .. }
+            | Self::ControlBarrier(_)
+            | Self::MemoryBarrier(_)
+            | Self::ScopedBarrier { .. }
+            | Self::SplitBarrier { .. }
+            | Self::Store { .. }
+            | Self::ImageStore { .. }
+            | Self::Atomic { .. }
+            | Self::AtomicLoad { .. }
+            | Self::AtomicStore { .. }
+            | Self::ImageAtomic { .. }
+            | Self::Call { .. }
+            | Self::RayQuery { .. }
+            | Self::RayPipelineFunction(_)
+            | Self::HitObject { .. }
+            | Self::ReorderThread { .. }
+            | Self::MeshFunction(_)
+            | Self::SubgroupBallot { .. }
+            | Self::SubgroupGather { .. }
+            | Self::SubgroupCollectiveOperation { .. }
+            | Self::SubgroupFunction { .. }
+            | Self::CooperativeStore { .. }
+            | Self::DebugPrintf { .. }
+            | Self::Assume { .. }
+            | Self::CooperativeVector(_)
+            | Self::CooperativeMatrix { .. }
+            | Self::Abort { .. }
+            | Self::TensorWrite { .. }
+            | Self::SpirvInstruction { .. } => self.clone(),
         }
     }
 

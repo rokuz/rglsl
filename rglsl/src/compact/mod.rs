@@ -1,3 +1,5 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+
 mod expressions;
 mod functions;
 mod handle_set_map;
@@ -584,7 +586,26 @@ impl<'module> ModuleTracer<'module> {
                         crate::ArraySize::Constant(_) | crate::ArraySize::Dynamic => None,
                         crate::ArraySize::Pending(handle) => self.module.overrides[handle].init,
                     },
-                    _ => None,
+                    crate::TypeInner::Scalar(_)
+                    | crate::TypeInner::Vector { .. }
+                    | crate::TypeInner::Matrix { .. }
+                    | crate::TypeInner::CooperativeMatrix { .. }
+                    | crate::TypeInner::LongVector { .. }
+                    | crate::TypeInner::TensorLayout { .. }
+                    | crate::TypeInner::TensorView { .. }
+                    | crate::TypeInner::Tensor { .. }
+                    | crate::TypeInner::Atomic(_)
+                    | crate::TypeInner::Pointer { .. }
+                    | crate::TypeInner::ValuePointer { .. }
+                    | crate::TypeInner::Struct { .. }
+                    | crate::TypeInner::Image { .. }
+                    | crate::TypeInner::Sampler { .. }
+                    | crate::TypeInner::SampledImage { .. }
+                    | crate::TypeInner::AccelerationStructure
+                    | crate::TypeInner::RayQuery
+                    | crate::TypeInner::HitObject { .. }
+                    | crate::TypeInner::BufferDescriptor { .. }
+                    | crate::TypeInner::Spirv { .. } => None,
                 },
             );
             max_dep.push(previous);

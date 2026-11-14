@@ -1,3 +1,5 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+
 use core::convert::Infallible;
 
 use crate::arena::{Handle, Range};
