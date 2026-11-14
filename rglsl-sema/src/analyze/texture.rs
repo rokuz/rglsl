@@ -147,6 +147,17 @@ impl Analyzer<'_> {
         {
             return false;
         }
+        if kind == BuiltinKind::Texture(Texture::QueryLod)
+            && self.derivative_group.is_none()
+            && self.stage_check(span, |stage| {
+                gated(stage).then(|| DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason: "needs implicit derivatives: a fragment shader or a derivative_group_quads* or derivative_group_linear* layout qualifier",
+                })
+            })
+        {
+            return false;
+        }
         if self.extensions.is_on(Extension::KhrComputeShaderDerivatives)
             && self.derivative_group.is_none()
             && self.stage_check(span, |stage| {
@@ -191,9 +202,8 @@ impl Analyzer<'_> {
         if gather.lod && gather.sparse {
             valid &= self.require_extension(span, Extension::ArbSparseTexture2, name);
         }
-        let index = if shadow { 3 } else { 2 };
-        if !gather.lod
-            && gather.sparse
+        let index = if shadow || gather.lod { 3 } else { 2 };
+        if (gather.lod || gather.sparse)
             && gather.offsets == GatherOffsets::Four
             && operands
                 .get(index)

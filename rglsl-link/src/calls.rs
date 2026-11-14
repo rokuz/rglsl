@@ -109,7 +109,7 @@ impl SymbolTable {
                     )));
                     continue;
                 };
-                if function.linkage.is_import() {
+                if function.linkage.is_import() && symbol.invalid.is_none() {
                     continue;
                 }
                 if table.definitions.contains_key(&symbol.signature) {
@@ -204,6 +204,7 @@ pub(crate) fn order(
             .unwrap_or_default()
     };
     let mut missing: Vec<String> = Vec::new();
+    let mut invalid: Vec<LinkError> = Vec::new();
     let mut recursion: BTreeSet<String> = BTreeSet::new();
     let mut done: BTreeSet<Node> = BTreeSet::new();
     let mut active: BTreeSet<Node> = BTreeSet::new();
@@ -249,6 +250,17 @@ pub(crate) fn order(
                 if done.contains(&next) {
                     continue;
                 }
+                if let Some(message) = table
+                    .symbol(objects, next)
+                    .and_then(|symbol| symbol.invalid.clone())
+                {
+                    done.insert(next);
+                    invalid.push(LinkError::InvalidFunction {
+                        signature: name(next),
+                        message,
+                    });
+                    continue;
+                }
                 active.insert(next);
                 let mut children = body(next).map_or_else(Vec::new, |block| edges(next.0, block));
                 children.reverse();
@@ -265,6 +277,7 @@ pub(crate) fn order(
         }
     }
     errors.extend(missing.into_iter().map(LinkError::MissingDefinition));
+    errors.extend(invalid);
     errors.extend(recursion.into_iter().map(LinkError::Recursion));
     postorder
 }

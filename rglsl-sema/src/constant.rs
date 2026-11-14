@@ -596,8 +596,7 @@ fn component(kind: Pure, result: Scalar, arguments: &[Value]) -> Option<Value> {
         Pure::MatrixCompMult => floating(float(0)? * float(1)?),
         Pure::Relational(Relation::Any | Relation::All)
         | Pure::Bits(_)
-        | Pure::PackBits
-        | Pure::UnpackBits
+        | Pure::RepackBits
         | Pure::PackedBitcast { .. } => None,
     }
 }
@@ -777,8 +776,7 @@ fn geometric(kind: Pure, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
         | Pure::Modulo
         | Pure::MatrixCompMult
         | Pure::Bitcast
-        | Pure::PackBits
-        | Pure::UnpackBits
+        | Pure::RepackBits
         | Pure::PackedBitcast { .. }
         | Pure::Derivative(..) => return None,
     })

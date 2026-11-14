@@ -15,6 +15,7 @@ use crate::object::{
     BindingAssignment, CompiledUnit, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
     ObjectTarget, ParameterQualifier, PathStep, StageLayout, SymbolKind,
 };
+use crate::valid::{Capabilities, ValidationError, ValidationFlags, ValidationMode, Validator};
 use crate::{Function, GlobalVariable, Handle, Linkage, Span, Type, TypeInner};
 
 impl Lowerer<'_> {
@@ -161,6 +162,7 @@ impl Lowerer<'_> {
                             Direction::Inout => ParameterQualifier::Inout,
                         })
                         .collect(),
+                    invalid: None,
                 })
             })
             .collect()
@@ -286,6 +288,7 @@ impl Lowerer<'_> {
                 .map_or(BindingAssignment::Explicit, |&(_, set)| {
                     BindingAssignment::Automatic { set }
                 }),
+            on_use: self.on_use_globals.contains(&handle),
         }
     }
 
@@ -307,8 +310,77 @@ impl Lowerer<'_> {
         layout
     }
 
+    pub(super) fn is_deferrable(&self, id: FunctionId) -> bool {
+        self.object
+            && self
+                .reachable
+                .as_ref()
+                .is_none_or(|reachable| !reachable.contains(&id))
+    }
+
+    pub(super) fn defer_function(&mut self, handle: Handle<Function>, message: String) {
+        let function = self.module.functions.get_mut(handle);
+        *function = Function {
+            name: function.name.take(),
+            arguments: core::mem::take(&mut function.arguments),
+            result: function.result.take(),
+            linkage: Linkage::Import,
+            ..Function::default()
+        };
+        self.deferred.push((handle, message));
+    }
+
+    fn defer_invalid_functions(&mut self) {
+        let deferrable: BTreeSet<Handle<Function>> = self
+            .functions
+            .iter()
+            .filter(|&(&id, _)| self.is_deferrable(id))
+            .map(|(_, &handle)| handle)
+            .filter(|&handle| {
+                self.module
+                    .functions
+                    .try_get(handle)
+                    .is_ok_and(|function| function.linkage.is_definition())
+            })
+            .collect();
+        if deferrable.is_empty() {
+            return;
+        }
+        loop {
+            let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+            validator.mode(ValidationMode::Object);
+            let Err(error) = validator.validate(&self.module) else {
+                return;
+            };
+            let ValidationError::Function { handle, .. } = *error.as_inner() else {
+                return;
+            };
+            if !deferrable.contains(&handle)
+                || self.deferred.iter().any(|&(done, _)| done == handle)
+            {
+                return;
+            }
+            let mut message = error.as_inner().to_string();
+            let mut source = core::error::Error::source(error.as_inner());
+            while let Some(inner) = source {
+                message.push_str(": ");
+                message.push_str(&inner.to_string());
+                source = inner.source();
+            }
+            self.defer_function(handle, message);
+        }
+    }
+
     pub(super) fn into_object(mut self) -> ObjectModule {
-        let functions = self.function_symbols();
+        self.defer_invalid_functions();
+        let deferred = core::mem::take(&mut self.deferred);
+        let mut functions = self.function_symbols();
+        for symbol in &mut functions {
+            symbol.invalid = deferred
+                .iter()
+                .find(|&&(handle, _)| handle == symbol.function)
+                .map(|&(_, ref message)| message.clone());
+        }
         let globals = self.global_symbols();
         let layout = self.layout_record();
         let extensions: Vec<String> = self

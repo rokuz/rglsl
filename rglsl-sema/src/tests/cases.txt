@@ -3192,6 +3192,37 @@ void main() { const ivec2 o[4] = ivec2[4](ivec2(0), ivec2(1), ivec2(2), ivec2(3)
 ### gather offsets not const | frag | 3:InvalidBuiltinCall
 layout(binding=0) uniform sampler2D s;
 void main() { ivec2 o[4]; vec4 r = textureGatherOffsets(s, vec2(0.0), o); }
+### clamped offsets not const | frag | 8:InvalidBuiltinCall, 9:InvalidBuiltinCall, 10:InvalidBuiltinCall, 11:InvalidBuiltinCall
+#extension GL_ARB_sparse_texture_clamp : require
+layout(binding=0) uniform sampler2D s;
+layout(location=0) flat in ivec2 o;
+layout(location=0) out vec4 r;
+void main() {
+  r = textureOffsetClampARB(s, vec2(0.0), ivec2(1), 0.5) + textureGradOffsetClampARB(s, vec2(0.0), vec2(0.0), vec2(0.0), ivec2(1), 0.5);
+  r += textureOffsetClampARB(s, vec2(0.0), o, 0.5);
+  r += textureGradOffsetClampARB(s, vec2(0.0), vec2(0.0), vec2(0.0), o, 0.5);
+  int k = sparseTextureOffsetClampARB(s, vec2(0.0), o, 0.5, r);
+  k += sparseTextureGradOffsetClampARB(s, vec2(0.0), vec2(0.0), vec2(0.0), o, 0.5, r);
+}
+### clamped offsets with GL_EXT_texture_offset_non_const | frag | ok
+#extension GL_ARB_sparse_texture_clamp : require
+#extension GL_EXT_texture_offset_non_const : require
+layout(binding=0) uniform sampler2D s;
+layout(location=0) flat in ivec2 o;
+layout(location=0) out vec4 r;
+void main() { r = textureOffsetClampARB(s, vec2(0.0), o, 0.5); }
+### lod gather offsets not const | frag | 10:InvalidBuiltinCall, 11:InvalidBuiltinCall
+#extension GL_AMD_texture_gather_bias_lod : require
+#extension GL_ARB_sparse_texture2 : require
+layout(binding=0) uniform sampler2D s;
+void main() {
+  const ivec2 c[4] = ivec2[4](ivec2(0), ivec2(1), ivec2(2), ivec2(3));
+  ivec2 o[4] = c;
+  vec4 r = textureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, c, 1);
+  int k = sparseTextureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, c, r);
+  r += textureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, o);
+  k += sparseTextureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, o, r, 2);
+}
 ### gather offset non const | frag | ok
 layout(binding=0) uniform sampler2D s;
 void main() { ivec2 o; vec4 r = textureGatherOffset(s, vec2(0.0), o); }
@@ -5619,6 +5650,11 @@ layout(derivative_group_quadsKHR) in;
 layout(set = 0, binding = 0) uniform sampler2D s;
 layout(set = 0, binding = 1) buffer B { vec4 x; } b;
 void main() { b.x = texture(s, vec2(0.5), 1.0) + textureQueryLod(s, vec2(0.5)).xyxy; }
+### textureQueryLod in compute needs a derivative group | comp 450 | 5:InvalidBuiltinCall, 5:InvalidBuiltinCall
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform sampler1D s;
+layout(set = 0, binding = 1) buffer B { vec2 x; } b;
+void main() { b.x = textureQueryLod(s, 0.5) + textureQueryLOD(s, 0.5); }
 ### sparse textures need GL_ARB_sparse_texture2 | frag 450 | 5:ExtensionRequired
 layout(set = 0, binding = 0) uniform sampler2D s;
 layout(location = 0) out vec4 o;
@@ -5955,6 +5991,16 @@ void main() {
     floate2m1_t b = floate2m1_t(a);
     float g = floatue8m0_t(1.0);
 }
+### microscaling long vectors are not converted at run time | comp 450 | 8:InvalidConstructor
+#extension GL_EXT_float_e2m1 : require
+#extension GL_EXT_long_vector : require
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer B { vector<float, 8> v; uint r; };
+void main() {
+    vector<floate2m1_t, 8> same = vector<floate2m1_t, 8>(1.0);
+    r = packFloat8xfe2m1EXT(vector<floate2m1_t, 8>(v));
+    r += packFloat8xfe2m1EXT(vector<floate2m1_t, 8>(same));
+}
 ### precision statements and precise | frag 450 | ok
 precision mediump float;
 precision lowp sampler2D;
@@ -5991,6 +6037,29 @@ void main() {
 #extension GL_EXT_split_barrier : require
 void main() {
     controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquire | gl_SemanticsVolatile);
+}
+### barrier scopes outside compute-like stages | frag 450 | 5:InvalidBuiltinCall, 6:InvalidBuiltinCall
+#extension GL_KHR_memory_scope_semantics : require
+void main() {
+    controlBarrier(gl_ScopeSubgroup, gl_ScopeSubgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeSubgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    controlBarrier(gl_ScopeSubgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+}
+### workgroup barriers in tessellation control shaders | tesc 450 | ok
+#extension GL_KHR_memory_scope_semantics : require
+layout(vertices = 3) out;
+void main() {
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+}
+### split barriers are compute only | mesh 460 | 8:InvalidBuiltinCall, 9:InvalidBuiltinCall
+#extension GL_EXT_mesh_shader : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_split_barrier : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+void main() {
+    controlBarrierArrive(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsRelease);
+    controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
 }
 ### split barrier needs its extension | comp | 3:ExtensionRequired
 void main() {

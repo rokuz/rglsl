@@ -1,0 +1,18 @@
+[package]
+name = "rglsl-bench-harness"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+rglsl.workspace = true
+rglsl-ast.workspace = true
+rglsl-link.workspace = true
+rglsl-pp = { workspace = true, features = ["std"] }
+rglsl-sema.workspace = true
+
+[lints]
+workspace = true

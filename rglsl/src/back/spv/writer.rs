@@ -109,6 +109,7 @@ impl Writer {
             gl450_ext_inst_id,
             temp_list: Vec::new(),
             has_ray_tracing_pipeline: false,
+            micromap_acceleration_structures: false,
             legacy_buffer_blocks: false,
             invariant_outputs: false,
             legacy_storage_blocks: crate::FastHashSet::default(),
@@ -146,6 +147,10 @@ impl Writer {
     /// Returns `(major, minor)` of the SPIR-V language version.
     pub const fn lang_version(&self) -> (u8, u8) {
         self.physical_layout.lang_version()
+    }
+
+    pub(super) fn sampled_buffer_is_image(&self, dim: crate::ImageDimension) -> bool {
+        dim == crate::ImageDimension::Buffer && self.lang_version() >= (1, 6)
     }
 
     pub(super) const fn storage_class(&self, space: crate::AddressSpace) -> spirv::StorageClass {
@@ -272,6 +277,7 @@ impl Writer {
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             has_ray_tracing_pipeline: false,
+            micromap_acceleration_structures: false,
             legacy_buffer_blocks: false,
             invariant_outputs: false,
             legacy_storage_blocks: crate::FastHashSet::default(),
@@ -622,10 +628,14 @@ impl Writer {
                 arrayed,
                 class,
             } => {
-                let image_type_id = self.get_localtype_id(LocalType::Image(
-                    LocalImageType::from_inner(dim, arrayed, class)?,
-                ));
-                LocalType::SampledImage { image_type_id }
+                let image = LocalType::Image(LocalImageType::from_inner(dim, arrayed, class)?);
+                if self.sampled_buffer_is_image(dim) {
+                    image
+                } else {
+                    LocalType::SampledImage {
+                        image_type_id: self.get_localtype_id(image),
+                    }
+                }
             }
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,
@@ -1652,7 +1662,7 @@ impl Writer {
             crate::TypeInner::AccelerationStructure { .. } => {
                 if self.has_ray_tracing_pipeline {
                     self.require_ray_tracing()?;
-                } else {
+                } else if !self.micromap_acceleration_structures {
                     self.require_ray_queries()?;
                 }
             }
@@ -3210,11 +3220,6 @@ impl Writer {
                     Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
                     Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
                     Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
-                        self.use_extension("SPV_NVX_multiview_per_view_attributes");
-                        self.require_any(
-                            "per-view attributes",
-                            &[spirv::Capability::PerViewAttributesNV],
-                        )?;
                         if built_in == Bi::LayerPerViewNV && mesh_output {
                             others.push(Decoration::PerPrimitiveEXT);
                         }
@@ -3998,6 +4003,7 @@ impl Writer {
         let rt_uses = ir_module.uses_ray_tracing(ep_index);
         let has_ray_query = rt_uses.queries;
         self.has_ray_tracing_pipeline = rt_uses.pipelines;
+        self.micromap_acceleration_structures = rt_uses.micromap;
         self.ray_tracing_features = ir_module.ray_tracing;
 
         if self.physical_layout.version < 0x10300 && has_storage_buffers {

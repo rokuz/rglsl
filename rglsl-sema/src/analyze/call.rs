@@ -165,7 +165,6 @@ const fn offset_index(kind: BuiltinKind) -> Option<usize> {
     match texture {
         Texture::Sample(Sample {
             offset: true,
-            clamp: false,
             level,
             ..
         }) => Some(match level {
@@ -1103,6 +1102,20 @@ impl Analyzer<'_> {
                 self.require_extension(span, extension, name);
             }
         }
+        if let BuiltinKind::Texture(Texture::ImageProcessing(_)) = entry.kind
+            && self
+                .options
+                .spirv_version
+                .is_some_and(|version| version < (1, 4))
+        {
+            self.error(
+                span,
+                DiagnosticKind::SpirvVersionRequired {
+                    feature: "QCOM image processing",
+                    version: "1.4",
+                },
+            );
+        }
     }
 
     fn lane_pattern_check(
@@ -1903,7 +1916,10 @@ impl Analyzer<'_> {
 
 fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
     if ty.is_array()
-        || !matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. })
+        || !matches!(
+            ty.kind,
+            TypeKind::Scalar(_) | TypeKind::Vector { .. } | TypeKind::LongVector { .. }
+        )
         || !ty.base_scalar().is_some_and(Scalar::is_microscaling)
     {
         return false;

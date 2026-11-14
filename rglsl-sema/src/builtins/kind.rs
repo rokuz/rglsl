@@ -52,8 +52,7 @@ pub enum Pure {
     Modulo,
     MatrixCompMult,
     Bitcast,
-    PackBits,
-    UnpackBits,
+    RepackBits,
     PackedBitcast { extract: bool },
     Derivative(Axis, Control),
 }

@@ -445,10 +445,10 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "doubleBitsToUint64": Pure(Bitcast) => [genU64(genD)]
     "int64BitsToDouble": Pure(Bitcast) => [genD(genI64)]
     "uint64BitsToDouble": Pure(Bitcast) => [genD(genU64)]
-    "packInt2x32": Pure(PackBits) => [int64_t(ivec2)]
-    "packUint2x32": Pure(PackBits) => [uint64_t(uvec2)]
-    "unpackInt2x32": Pure(UnpackBits) => [ivec2(int64_t)]
-    "unpackUint2x32": Pure(UnpackBits) => [uvec2(uint64_t)]
+    "packInt2x32": Pure(RepackBits) => [int64_t(ivec2)]
+    "packUint2x32": Pure(RepackBits) => [uint64_t(uvec2)]
+    "unpackInt2x32": Pure(RepackBits) => [ivec2(int64_t)]
+    "unpackUint2x32": Pure(RepackBits) => [uvec2(uint64_t)]
     "bitfieldExtract": Pure(Bits(Extract)) => [
         genI16(genI16, int16_t, int16_t),
         genU16(genU16, int16_t, int16_t),
@@ -489,30 +489,30 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "uint16BitsToFloat16": Pure(Bitcast) => [genH(genU16)]
     "int16BitsToHalf": Pure(Bitcast) => [genH(genI16)]
     "uint16BitsToHalf": Pure(Bitcast) => [genH(genU16)]
-    "packInt2x16": Pure(PackBits) => [int(i16vec2)]
-    "packUint2x16": Pure(PackBits) => [uint(u16vec2)]
-    "packInt4x16": Pure(PackBits) => [int64_t(i16vec4)]
-    "packUint4x16": Pure(PackBits) => [uint64_t(u16vec4)]
-    "unpackInt2x16": Pure(UnpackBits) => [i16vec2(int)]
-    "unpackUint2x16": Pure(UnpackBits) => [u16vec2(uint)]
-    "unpackInt4x16": Pure(UnpackBits) => [i16vec4(int64_t)]
-    "unpackUint4x16": Pure(UnpackBits) => [u16vec4(uint64_t)]
-    "pack16": Pure(PackBits) => [int16_t(i8vec2), uint16_t(u8vec2)]
-    "pack32": Pure(PackBits) => [int(i8vec4), uint(u8vec4), int(i16vec2), uint(u16vec2)]
-    "pack64": Pure(PackBits) => [
+    "packInt2x16": Pure(RepackBits) => [int(i16vec2)]
+    "packUint2x16": Pure(RepackBits) => [uint(u16vec2)]
+    "packInt4x16": Pure(RepackBits) => [int64_t(i16vec4)]
+    "packUint4x16": Pure(RepackBits) => [uint64_t(u16vec4)]
+    "unpackInt2x16": Pure(RepackBits) => [i16vec2(int)]
+    "unpackUint2x16": Pure(RepackBits) => [u16vec2(uint)]
+    "unpackInt4x16": Pure(RepackBits) => [i16vec4(int64_t)]
+    "unpackUint4x16": Pure(RepackBits) => [u16vec4(uint64_t)]
+    "pack16": Pure(RepackBits) => [int16_t(i8vec2), uint16_t(u8vec2)]
+    "pack32": Pure(RepackBits) => [int(i8vec4), uint(u8vec4), int(i16vec2), uint(u16vec2)]
+    "pack64": Pure(RepackBits) => [
         int64_t(i16vec4),
         uint64_t(u16vec4),
         int64_t(ivec2),
         uint64_t(uvec2),
     ]
-    "unpack8": Pure(UnpackBits) => [i8vec2(int16_t), u8vec2(uint16_t), i8vec4(int), u8vec4(uint)]
-    "unpack16": Pure(UnpackBits) => [
+    "unpack8": Pure(RepackBits) => [i8vec2(int16_t), u8vec2(uint16_t), i8vec4(int), u8vec4(uint)]
+    "unpack16": Pure(RepackBits) => [
         i16vec2(int),
         u16vec2(uint),
         i16vec4(int64_t),
         u16vec4(uint64_t),
     ]
-    "unpack32": Pure(UnpackBits) => [ivec2(int64_t), uvec2(uint64_t)]
+    "unpack32": Pure(RepackBits) => [ivec2(int64_t), uvec2(uint64_t)]
     "length": Pure(Math(Length)) => [float(genF)] {
         flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,

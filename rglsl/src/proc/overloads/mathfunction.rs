@@ -120,9 +120,9 @@ impl ir::MathFunction {
 
 fn ldexp() -> List {
     /// Construct the exponent scalar given the mantissa's inner.
-    const fn exponent_from_mantissa(mantissa: ir::Scalar) -> Option<ir::Scalar> {
+    const fn exponents_from_mantissa(mantissa: ir::Scalar) -> &'static [ir::Scalar] {
         match mantissa.kind {
-            ir::ScalarKind::Float => Some(ir::Scalar::I32),
+            ir::ScalarKind::Float => &[ir::Scalar::I32, ir::Scalar::I16],
             ir::ScalarKind::Sint
             | ir::ScalarKind::Uint
             | ir::ScalarKind::Bool
@@ -133,7 +133,7 @@ fn ldexp() -> List {
             | ir::ScalarKind::FloatE3M2
             | ir::ScalarKind::FloatE2M3
             | ir::ScalarKind::FloatUE8M0
-            | ir::ScalarKind::FloatMXINT8 => None,
+            | ir::ScalarKind::FloatMXINT8 => &[],
         }
     }
 
@@ -141,13 +141,16 @@ fn ldexp() -> List {
         // The ldexp mantissa argument can be any floating-point type.
         float_scalars().flat_map(|mantissa_scalar| {
             // The exponent type is the integer counterpart of the mantissa type.
-            let exponent_scalar = exponent_from_mantissa(mantissa_scalar);
-            // There are scalar and vector component-wise overloads.
-            scalar_or_vecn(mantissa_scalar)
-                .zip(exponent_scalar.into_iter().flat_map(scalar_or_vecn))
-                .map(move |(mantissa, exponent)| {
-                    let result = mantissa.clone();
-                    rule([mantissa, exponent], result)
+            exponents_from_mantissa(mantissa_scalar)
+                .iter()
+                .flat_map(move |&exponent_scalar| {
+                    // There are scalar and vector component-wise overloads.
+                    scalar_or_vecn(mantissa_scalar)
+                        .zip(scalar_or_vecn(exponent_scalar))
+                        .map(|(mantissa, exponent)| {
+                            let result = mantissa.clone();
+                            rule([mantissa, exponent], result)
+                        })
                 })
         }),
     )

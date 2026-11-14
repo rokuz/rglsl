@@ -845,8 +845,7 @@ impl Analyzer<'_> {
                 | Pure::Modulo
                 | Pure::MatrixCompMult
                 | Pure::Bitcast
-                | Pure::PackBits
-                | Pure::UnpackBits
+                | Pure::RepackBits
                 | Pure::PackedBitcast { extract: false }
                 | Pure::Derivative(..),
             )

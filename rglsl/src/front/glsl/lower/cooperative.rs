@@ -158,10 +158,9 @@ impl FunctionLowerer<'_, '_> {
                 }
             }
             Pure::Math(math) => self.math_call(math_function(math), &values, at),
-            Pure::MatrixCompMult
-            | Pure::PackBits
-            | Pure::UnpackBits
-            | Pure::PackedBitcast { .. } => return Ok(None),
+            Pure::MatrixCompMult | Pure::RepackBits | Pure::PackedBitcast { .. } => {
+                return Ok(None);
+            }
         };
         value.map(Some)
     }

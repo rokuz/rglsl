@@ -225,6 +225,7 @@ impl Builder<'_> {
         let interface = self.interface()?;
         let remap = self.remap(main)?;
         let global = |handle: Handle<GlobalVariable>| remap.global(handle).map_err(internal);
+        let used = |&handle: &Handle<GlobalVariable>| !self.is_unused(main, handle);
         let expression =
             |handle: Handle<Expression>| remap.global_expression(handle).map_err(internal);
         let EntryPoint {
@@ -267,11 +268,13 @@ impl Builder<'_> {
                 streams: info
                     .streams
                     .iter()
+                    .filter(|&(handle, _)| used(handle))
                     .map(|&(handle, stream)| Ok((global(handle)?, stream)))
                     .collect::<Result<_, LinkError>>()?,
                 passthrough: info
                     .passthrough
                     .iter()
+                    .filter(|&handle| used(handle))
                     .map(|&handle| global(handle))
                     .collect::<Result<_, LinkError>>()?,
                 ..info
@@ -353,6 +356,9 @@ impl Builder<'_> {
                         .collect(),
                 };
             for handle in declared {
+                if self.is_unused(index, handle) {
+                    continue;
+                }
                 let mapped = remap.global(handle).map_err(internal)?;
                 if !interface.contains(&mapped) {
                     interface.push(mapped);
@@ -369,10 +375,28 @@ impl Builder<'_> {
                 .iter()
                 .all(|object| object.unit.module.legacy_buffer_blocks);
         for index in 0..self.objects.len() {
-            let source = &self.object(index)?.unit.module;
+            let rglsl::Module {
+                types: _,
+                special_types: ref incoming,
+                constants: _,
+                overrides: _,
+                global_variables: _,
+                global_expressions: _,
+                functions: _,
+                entry_points: _,
+                vulkan_memory_model,
+                descriptor_heap,
+                shader_64bit_indexing,
+                variable_pointers,
+                replicated_composites,
+                legacy_buffer_blocks: _,
+                ray_tracing,
+                ref spirv_requirements,
+                ref source_extensions,
+                debug_info: _,
+            } = self.object(index)?.unit.module;
             let remap = self.remap(index)?;
             let mut special = self.module.special_types.clone();
-            let incoming = &source.special_types;
             if special.ray_vertex_return.is_none() {
                 special.ray_vertex_return = incoming
                     .ray_vertex_return
@@ -386,30 +410,27 @@ impl Builder<'_> {
                     special.predeclared_types.insert(kind.clone(), ty);
                 }
             }
-            let vulkan_memory_model = source.vulkan_memory_model;
-            let descriptor_heap = source.descriptor_heap;
-            let ray_tracing = source.ray_tracing;
             self.module.special_types = special;
             self.module.vulkan_memory_model |= vulkan_memory_model;
             self.module.descriptor_heap |= descriptor_heap;
-            self.module.variable_pointers |= source.variable_pointers;
-            self.module.replicated_composites |= source.replicated_composites;
+            self.module.shader_64bit_indexing |= shader_64bit_indexing;
+            self.module.variable_pointers |= variable_pointers;
+            self.module.replicated_composites |= replicated_composites;
             self.module.ray_tracing |= ray_tracing;
-            for extension in &source.source_extensions {
+            for extension in source_extensions {
                 if let Err(position) = self.module.source_extensions.binary_search(extension) {
                     self.module
                         .source_extensions
                         .insert(position, extension.clone());
                 }
             }
-            let requirements = source.spirv_requirements.clone();
             let merged = &mut self.module.spirv_requirements;
-            for extension in requirements.extensions {
-                if !merged.extensions.contains(&extension) {
-                    merged.extensions.push(extension);
+            for extension in &spirv_requirements.extensions {
+                if !merged.extensions.contains(extension) {
+                    merged.extensions.push(extension.clone());
                 }
             }
-            for capability in requirements.capabilities {
+            for &capability in &spirv_requirements.capabilities {
                 if !merged.capabilities.contains(&capability) {
                     merged.capabilities.push(capability);
                 }

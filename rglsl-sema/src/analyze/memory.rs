@@ -1,6 +1,7 @@
 use alloc::string::String;
 
 use rglsl_ast::Span;
+use rglsl_types::ShaderStage;
 use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
@@ -17,6 +18,8 @@ const VOLATILE: i64 = 0x8000;
 const ORDER: i64 = ACQUIRE | RELEASE | ACQUIRE_RELEASE;
 const SEMANTICS: i64 = ORDER | MAKE_AVAILABLE | MAKE_VISIBLE | VOLATILE;
 const STORAGE: i64 = 0x40 | 0x100 | 0x800 | 0x1000;
+const SCOPE_WORKGROUP: i64 = 2;
+const SCOPE_SUBGROUP: i64 = 3;
 
 const INT64_ATOMICS: [Extension; 2] = [
     Extension::NvShaderAtomicInt64,
@@ -218,6 +221,16 @@ impl Analyzer<'_> {
         if shape.kind == Kind::ControlBarrier {
             valid &= self.require_extension(span, Extension::KhrMemoryScopeSemantics, name);
         }
+        if matches!(shape.kind, Kind::BarrierArrive | Kind::BarrierWait)
+            && self.stage_check(span, |stage| {
+                (stage != ShaderStage::Compute).then(|| DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason: "split barriers are only available in compute shaders",
+                })
+            })
+        {
+            return false;
+        }
         if !scoped {
             if !image
                 && matches!(shape.kind, Kind::Modify | Kind::CompareSwap)
@@ -405,6 +418,42 @@ impl Analyzer<'_> {
                     self,
                     "semEqual and semUnequal must either both include gl_SemanticsVolatile or neither",
                 );
+            }
+        }
+        if matches!(
+            shape.kind,
+            Kind::ControlBarrier | Kind::BarrierArrive | Kind::BarrierWait
+        ) {
+            let execution = value(0);
+            let memory = value(1);
+            let reason = |stage: ShaderStage| {
+                if matches!(
+                    stage,
+                    ShaderStage::Compute
+                        | ShaderStage::Task
+                        | ShaderStage::Mesh
+                        | ShaderStage::TessControl
+                ) {
+                    None
+                } else if execution != SCOPE_SUBGROUP {
+                    Some(
+                        "the execution scope must be gl_ScopeSubgroup outside compute, mesh, task and tessellation control shaders",
+                    )
+                } else if memory == SCOPE_WORKGROUP {
+                    Some(
+                        "the memory scope must not be gl_ScopeWorkgroup outside compute, mesh, task and tessellation control shaders",
+                    )
+                } else {
+                    None
+                }
+            };
+            if self.stage_check(span, |stage| {
+                reason(stage).map(|reason| DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason,
+                })
+            }) {
+                failed = true;
             }
         }
         !failed

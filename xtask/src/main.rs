@@ -18,6 +18,7 @@ mod fuzz_libfuzzer;
 mod fuzz_reduce;
 mod groups;
 mod interface;
+mod object_path;
 mod oracles;
 mod process;
 mod renamed;
@@ -95,6 +96,11 @@ commands:
       --debug-info MODE   add -g or -gVS (MODE: g, gVS) to every command line; the report
                           goes to target/xtask/bench-MODE.md
       --timeout SECS      per-process timeout of the warm-up run (default: 60)
+      --in-process        compile in one process each instead: rglsl through its library
+                          (with a phase breakdown), glslang through a C++ harness linked
+                          against target/oracles/build; first and steady-state compiles of
+                          the Vulkan and gl-as-vulkan corpus shaders and the synthetic ones;
+                          report in target/xtask/bench-in-process.md and .tsv
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
@@ -259,6 +265,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                         None => None,
                     },
                     timeout_secs: args.parsed("--timeout")?.unwrap_or(60),
+                    in_process: args.flag("--in-process"),
                 };
             args.finish()?;
             bench::run(&workspace_root()?, &options)
@@ -352,6 +359,7 @@ fn run(args: Vec<String>) -> Result<i32> {
             let out = args.value("--out")?.context("--out is required")?;
             let auto_map = args.flag("--auto-map");
             let object = args.flag("--object");
+            let via_object = args.flag("--via-object");
             let hlsl_offsets = args.flag("--hlsl-offsets");
             let debug = args.value("--debug")?;
             let mut include_dirs = Vec::new();
@@ -372,6 +380,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     spv_version: &spv,
                     auto_map,
                     object,
+                    via_object,
                     hlsl_offsets,
                     include_dirs: &include_dirs,
                     preamble: (!preamble.is_empty()).then_some(preamble),

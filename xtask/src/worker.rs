@@ -43,6 +43,7 @@ pub struct OneOptions<'a> {
     pub spv_version: &'a str,
     pub auto_map: bool,
     pub object: bool,
+    pub via_object: bool,
     pub hlsl_offsets: bool,
     pub include_dirs: &'a [String],
     pub preamble: Option<String>,
@@ -73,6 +74,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         spv_version,
         auto_map,
         object,
+        via_object,
         hlsl_offsets,
         include_dirs,
         ref preamble,
@@ -118,6 +120,17 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     let root = includer.add_root(input);
     if object {
         return compile_only(
+            &frontend,
+            &options,
+            &source,
+            root,
+            &mut includer,
+            (lang_version, debug),
+            out,
+        );
+    }
+    if via_object {
+        return compile_through_object(
             &frontend,
             &options,
             &source,
@@ -352,4 +365,64 @@ fn compile_only(
     let mut options = spirv_options(lang_version, debug);
     options.flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
     write_words(&object.unit.module, &info, &options, out)
+}
+
+fn compile_through_object(
+    frontend: &glsl::Frontend,
+    options: &glsl::Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut rglsl_pp::FileSystemIncluder,
+    (lang_version, debug): ((u8, u8), Option<&str>),
+    out: &Path,
+) -> i32 {
+    let object = match frontend.compile_with_includer(options, source, root, includer) {
+        Ok(object) => object,
+        Err(errors) => {
+            for error in &errors.errors {
+                let line = error
+                    .meta
+                    .is_defined()
+                    .then(|| error.meta.location(source).line_number);
+                diagnostic("parse", line, &full_message(error));
+            }
+            return EXIT_REJECTED;
+        }
+    };
+    if let Err(errors) = rglsl_link::validate_object(&object) {
+        for error in errors.iter() {
+            diagnostic("validate", None, &error.to_string());
+        }
+        return EXIT_REJECTED;
+    }
+    let object = match rglsl_link::encode(&object).and_then(|text| rglsl_link::decode(&text)) {
+        Ok(object) => object,
+        Err(error) => {
+            diagnostic("object-file", None, &full_message(&error));
+            return EXIT_REJECTED;
+        }
+    };
+    let link_options = rglsl_link::Options {
+        auto_map_locations: options.auto_map_locations,
+        auto_map_bindings: options.auto_map_bindings,
+        ..rglsl_link::Options::default()
+    };
+    let linked = match rglsl_link::link_objects(&[object], &link_options) {
+        Ok(linked) => linked,
+        Err(errors) => {
+            for error in errors.iter() {
+                diagnostic("link", None, &error.to_string());
+            }
+            return EXIT_REJECTED;
+        }
+    };
+    let [ref stage] = *linked.as_slice() else {
+        diagnostic(
+            "link",
+            None,
+            &format!("{} stages linked from one shader", linked.len()),
+        );
+        return EXIT_REJECTED;
+    };
+    write_spirv(&stage.module, &stage.info, lang_version, debug, out)
 }
