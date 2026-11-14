@@ -10,7 +10,7 @@ use rglsl_sema::{BuiltinFunctionId, Callee};
 use super::function::FunctionLowerer;
 use super::prepass::strip;
 use super::types::{scalar, vector_size};
-use super::{Result, internal, unsupported};
+use super::{Result, internal, semantic, unsupported};
 use crate::{
     BinaryOperator, BlockMatchMetric, BlockMatchSearch, DerivativeAxis, DerivativeControl,
     Expression, Handle, ImageGatherPattern, ImageProcessingOperation, ImageQuery, Literal,
@@ -356,6 +356,14 @@ impl FunctionLowerer<'_, '_> {
             return self.wide_bit_operation(name, arg(0)?, element, result, vector, at);
         }
         if let Some((axis, ctrl)) = derivative(name) {
+            if first_ty.base_scalar() == Some(GlslScalar::Double) {
+                return Err(semantic(
+                    format!(
+                        "`{name}` of a double is not supported: SPIR-V derivatives take 16- or 32-bit floats"
+                    ),
+                    at,
+                ));
+            }
             let expr = arg(0)?;
             return self.add(Expression::Derivative { axis, ctrl, expr }, at);
         }

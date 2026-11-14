@@ -242,6 +242,27 @@ fn float16_interpolation_and_derivatives_use_amd_half_float() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn double_derivatives_are_not_supported() -> TestResult {
+    for call in ["dFdx(d)", "dFdyFine(d)", "fwidthCoarse(dvec2(d))"] {
+        let source = format!(
+            "#version 450
+            layout(std430, binding = 0) buffer B {{ double d; dvec2 r; }};
+            void main() {{ r = dvec2({call}); }}"
+        );
+        let Err(errors) = ours(ShaderStage::Fragment, Target::Vulkan11, &source) else {
+            return Err(format!("rglsl accepts {call}").into());
+        };
+        assert!(
+            errors.iter().any(|error| error.contains(
+                "of a double is not supported: SPIR-V derivatives take 16- or 32-bit floats"
+            )),
+            "{errors:?}"
+        );
+    }
+    Ok(())
+}
+
 fn declares(words: &[u32], op: Op) -> TestResult<bool> {
     let module = dr::load_words(words)?;
     Ok(module
