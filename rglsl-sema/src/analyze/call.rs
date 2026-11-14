@@ -138,10 +138,6 @@ const fn image_access(kind: BuiltinKind) -> Option<ImageAccess> {
         return None;
     };
     match texture {
-        Texture::ImageLoad {
-            lod: false,
-            sparse: true,
-        } => None,
         Texture::ImageLoad { .. } => Some(ImageAccess::Load),
         Texture::ImageStore { .. } => Some(ImageAccess::Store),
         Texture::ImageAtomic(_) => Some(ImageAccess::Atomic),

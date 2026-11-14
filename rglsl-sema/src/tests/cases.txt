@@ -6744,3 +6744,15 @@ layout(binding = 0) uniform texture2D t;
 void main() {
     vec4 v = texelFetch(t, ivec2(0), 0);
 }
+### sparse image loads respect writeonly | frag | 5:InvalidBuiltinCall
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0, rgba8) uniform writeonly image2D img;
+void main() {
+    vec4 v; int r = sparseImageLoadARB(img, ivec2(0), v);
+}
+### sparse image loads from readonly images | frag | ok
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0, rgba8) uniform readonly image2D img;
+void main() {
+    vec4 v; int r = sparseImageLoadARB(img, ivec2(0), v);
+}
