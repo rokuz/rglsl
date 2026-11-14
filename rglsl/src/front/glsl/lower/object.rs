@@ -13,7 +13,7 @@ use rglsl_sema::types::{ArraySize as GlslArraySize, Type as GlslType, TypeKind};
 
 use super::{GlobalRef, Lowerer, Result};
 use crate::object::{
-    BindingAssignment, CompiledUnit, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
+    BindingAssignment, CompiledUnit, DeadCall, FunctionSymbol, GlobalSymbol, Library, ObjectModule,
     ObjectTarget, ParameterQualifier, PathStep, StageLayout, SymbolKind,
 };
 use crate::valid::{ValidationError, ValidationFlags, ValidationMode, Validator};
@@ -108,25 +108,23 @@ impl Lowerer<'_> {
             .collect()
     }
 
-    pub(super) fn declare_imports(&mut self) -> Result<()> {
-        for id in self.undefined_functions() {
-            let at = self
-                .analysis
-                .function(id)
-                .map_or(Span::UNDEFINED, |function| self.at(function.span));
-            let (arguments, result, _) = self.signature(id, at)?;
-            let handle = self.module.functions.append(
-                Function {
-                    name: Some(self.function_name(id)),
-                    arguments,
-                    result,
-                    linkage: Linkage::Import,
-                    ..Function::default()
-                },
-                at,
-            );
-            self.functions.insert(id, handle);
-        }
+    pub(super) fn declare_import(&mut self, id: FunctionId) -> Result<()> {
+        let at = self
+            .analysis
+            .function(id)
+            .map_or(Span::UNDEFINED, |function| self.at(function.span));
+        let (arguments, result, _) = self.signature(id, at)?;
+        let handle = self.module.functions.append(
+            Function {
+                name: Some(self.function_name(id)),
+                arguments,
+                result,
+                linkage: Linkage::Import,
+                ..Function::default()
+            },
+            at,
+        );
+        self.functions.insert(id, handle);
         Ok(())
     }
 
@@ -194,6 +192,9 @@ impl Lowerer<'_> {
                     ),
                     None => continue,
                 },
+                _ if self.function_private.contains(&handle) => {
+                    (record.name.clone(), SymbolKind::Local, None)
+                }
                 _ if variable.origin == rglsl_sema::scope::Origin::BuiltIn => {
                     (record.name.clone(), SymbolKind::BuiltIn, None)
                 }
@@ -289,6 +290,7 @@ impl Lowerer<'_> {
                     BindingAssignment::Automatic { set }
                 }),
             on_use: self.on_use_globals.contains(&handle),
+            initializer: self.constant_initializers.get(&handle).copied(),
         }
     }
 
@@ -371,6 +373,44 @@ impl Lowerer<'_> {
         }
     }
 
+    fn dead_calls(&self) -> Vec<DeadCall> {
+        let main = self.main_function();
+        let mut dead = Vec::new();
+        for (&caller_id, callees) in &self.ast_calls {
+            let (caller, function) = if Some(caller_id) == main {
+                (
+                    None,
+                    self.module
+                        .entry_points
+                        .first()
+                        .map(|entry| &entry.function),
+                )
+            } else {
+                let Some(&handle) = self.functions.get(&caller_id) else {
+                    continue;
+                };
+                (Some(handle), self.module.functions.try_get(handle).ok())
+            };
+            let Some(function) = function else {
+                continue;
+            };
+            let mut lowered = BTreeSet::new();
+            for statement in function.body.walk() {
+                statement.for_each_callee(|callee| {
+                    lowered.insert(callee);
+                });
+            }
+            for callee in callees {
+                if let Some(&callee) = self.functions.get(callee)
+                    && !lowered.contains(&callee)
+                {
+                    dead.push(DeadCall { caller, callee });
+                }
+            }
+        }
+        dead
+    }
+
     pub(super) fn into_object(mut self) -> ObjectModule {
         self.defer_invalid_functions();
         let deferred = core::mem::take(&mut self.deferred);
@@ -382,6 +422,7 @@ impl Lowerer<'_> {
                 .map(|&(_, ref message)| message.clone());
         }
         let globals = self.global_symbols();
+        let dead_calls = self.dead_calls();
         let layout = self.layout_record();
         let extensions: Vec<String> = self
             .analysis
@@ -414,6 +455,7 @@ impl Lowerer<'_> {
                 functions,
                 globals,
                 layout,
+                dead_calls,
                 ..CompiledUnit::new(module)
             },
         )

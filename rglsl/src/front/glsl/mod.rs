@@ -150,6 +150,16 @@ impl Frontend {
         lower::parse(options, source, root, includer)
     }
 
+    pub fn compile_program(
+        &self,
+        options: &Options,
+        source: &str,
+        root: FileId,
+        includer: &mut dyn Includer,
+    ) -> Result<crate::object::ObjectModule, ParseErrors> {
+        lower::compile_program(options, source, root, includer)
+    }
+
     pub fn compile(
         &self,
         options: &Options,

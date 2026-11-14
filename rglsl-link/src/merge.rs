@@ -50,6 +50,13 @@ pub(crate) struct MergedGlobal {
     pub implicit: Vec<Vec<PathStep>>,
     pub automatic_location: bool,
     pub binding: BindingAssignment,
+    pub initializer: Option<Handle<Expression>>,
+}
+
+#[derive(Debug, Default)]
+struct OverridePlan {
+    fresh: Vec<Handle<Override>>,
+    shared: Vec<(Handle<Override>, u32)>,
 }
 
 #[derive(Debug)]
@@ -64,15 +71,9 @@ pub(crate) struct Builder<'a> {
     pub library_functions: Vec<Handle<Function>>,
     pub warnings: Vec<String>,
     pub errors: Vec<LinkError>,
-    instances: Vec<(Handle<GlobalVariable>, String)>,
+    instances: BTreeMap<Handle<GlobalVariable>, String>,
+    symbols: Vec<BTreeMap<Handle<GlobalVariable>, usize>>,
     pub unused: Vec<BTreeSet<Handle<GlobalVariable>>>,
-}
-
-fn has_handles(inner: &TypeInner) -> bool {
-    !matches!(
-        *inner,
-        TypeInner::Scalar(_) | TypeInner::Vector { .. } | TypeInner::Matrix { .. }
-    )
 }
 
 impl<'a> Builder<'a> {
@@ -88,7 +89,17 @@ impl<'a> Builder<'a> {
             library_functions: Vec::new(),
             warnings: Vec::new(),
             errors: Vec::new(),
-            instances: Vec::new(),
+            instances: BTreeMap::new(),
+            symbols: objects
+                .iter()
+                .map(|object| {
+                    let mut positions = BTreeMap::new();
+                    for (position, symbol) in object.unit.globals.iter().enumerate() {
+                        positions.entry(symbol.global).or_insert(position);
+                    }
+                    positions
+                })
+                .collect(),
             unused,
         }
     }
@@ -112,10 +123,7 @@ impl<'a> Builder<'a> {
     }
 
     pub fn instance(&self, handle: Handle<GlobalVariable>) -> Option<&str> {
-        self.instances
-            .iter()
-            .find(|&&(candidate, _)| candidate == handle)
-            .map(|(_, name)| name.as_str())
+        self.instances.get(&handle).map(String::as_str)
     }
 
     pub fn add_objects(&mut self) -> Result<(), LinkError> {
@@ -133,34 +141,13 @@ impl<'a> Builder<'a> {
             .ok_or_else(|| internal("object index"))?;
         let source = &object.unit.module;
         let mut remap = Remap::new();
-        let mut pending_overrides = Vec::new();
-        for (handle, value) in source.overrides.iter() {
-            let ty = &source.types[value.ty];
-            if has_handles(&ty.inner) {
-                continue;
-            }
-            let ty = self.module.types.insert(ty.clone(), Span::UNDEFINED);
-            if let Some(new) = self.add_override(index, value, ty, &mut remap, handle) {
-                pending_overrides.push((handle, new));
-            }
-        }
+        let plan = self.plan_overrides(index, source, &mut remap);
         self.add_types(source, &mut remap)?;
-        for (handle, value) in source.overrides.iter() {
-            if !has_handles(&source.types[value.ty].inner) {
-                continue;
-            }
-            let ty = remap.ty(value.ty).map_err(internal)?;
-            if let Some(new) = self.add_override(index, value, ty, &mut remap, handle) {
-                pending_overrides.push((handle, new));
-            }
+        self.add_overrides(index, source, &mut remap, &plan)?;
+        for (offset, (handle, _)) in source.constants.iter().enumerate() {
+            remap.map_constant(handle, self.module.constants.appended_handle(offset));
         }
-        let mut constants_done = std::collections::BTreeSet::new();
         for (handle, expression) in source.global_expressions.iter() {
-            if let Expression::Constant(constant) = *expression
-                && constants_done.insert(constant)
-            {
-                self.add_constant(source, &mut remap, constant)?;
-            }
             let mut expression = expression.clone();
             remap
                 .adjust_global_expression(&mut expression)
@@ -171,16 +158,27 @@ impl<'a> Builder<'a> {
                 .append(expression, source.global_expressions.get_span(handle));
             remap.map_global_expression(handle, new);
         }
-        for (handle, _) in source.constants.iter() {
-            if constants_done.insert(handle) {
-                self.add_constant(source, &mut remap, handle)?;
+        for (handle, constant) in source.constants.iter() {
+            let mut constant = constant.clone();
+            constant.ty = remap.ty(constant.ty).map_err(internal)?;
+            constant.init = remap.global_expression(constant.init).map_err(internal)?;
+            let new = self
+                .module
+                .constants
+                .append(constant, source.constants.get_span(handle));
+            if remap.constant(handle).map_err(internal)? != new {
+                return Err(internal("constant handle out of plan"));
             }
         }
-        for (old, new) in pending_overrides {
-            let init = source.overrides[old].init;
-            if let Some(init) = init {
+        for &handle in &plan.fresh {
+            if let Some(init) = source.overrides.try_get(handle).map_err(internal)?.init {
                 let init = remap.global_expression(init).map_err(internal)?;
-                self.module.overrides.get_mut(new).init = Some(init);
+                let new = remap.r#override(handle).map_err(internal)?;
+                self.module
+                    .overrides
+                    .try_get_mut(new)
+                    .map_err(internal)?
+                    .init = Some(init);
             }
         }
         for (handle, global) in source.global_variables.iter() {
@@ -197,7 +195,7 @@ impl<'a> Builder<'a> {
             }
             global.spirv_decorations = Vec::new();
             let span = source.global_variables.get_span(handle);
-            let new = self.add_global(index, handle, global, span);
+            let new = self.add_global(index, handle, global, span, &remap)?;
             remap.map_global(handle, new);
         }
         for (handle, global) in source.global_variables.iter() {
@@ -232,54 +230,79 @@ impl<'a> Builder<'a> {
         Ok(remap)
     }
 
-    fn add_override(
+    fn plan_overrides(&self, object: usize, source: &Module, remap: &mut Remap) -> OverridePlan {
+        let mut plan = OverridePlan::default();
+        for (handle, value) in source.overrides.iter() {
+            let earlier = value.id.and_then(|id| {
+                self.overrides
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .find(|&&(defining, _)| defining != object)
+                    .map(|&(_, existing)| (id, existing))
+            });
+            match earlier {
+                Some((id, existing)) => {
+                    remap.map_override(handle, existing);
+                    plan.shared.push((handle, id));
+                }
+                None => {
+                    let new = self.module.overrides.appended_handle(plan.fresh.len());
+                    remap.map_override(handle, new);
+                    plan.fresh.push(handle);
+                }
+            }
+        }
+        plan
+    }
+
+    fn add_overrides(
         &mut self,
         object: usize,
-        value: &Override,
-        ty: Handle<Type>,
+        source: &Module,
         remap: &mut Remap,
-        handle: Handle<Override>,
-    ) -> Option<Handle<Override>> {
-        if let Some(id) = value.id {
-            let earlier: Vec<Handle<Override>> = self
+        plan: &OverridePlan,
+    ) -> Result<(), LinkError> {
+        for &handle in &plan.fresh {
+            let value = source.overrides.try_get(handle).map_err(internal)?;
+            let new = self.module.overrides.append(
+                Override {
+                    name: value.name.clone(),
+                    id: value.id,
+                    ty: remap.ty(value.ty).map_err(internal)?,
+                    init: None,
+                },
+                source.overrides.get_span(handle),
+            );
+            if remap.r#override(handle).map_err(internal)? != new {
+                return Err(internal("override handle out of plan"));
+            }
+            if let Some(id) = value.id {
+                self.overrides.entry(id).or_default().push((object, new));
+            }
+        }
+        for &(handle, id) in &plan.shared {
+            let value = source.overrides.try_get(handle).map_err(internal)?;
+            let ty = remap.ty(value.ty).map_err(internal)?;
+            let same = self
                 .overrides
                 .get(&id)
                 .into_iter()
                 .flatten()
                 .filter(|&&(defining, _)| defining != object)
                 .map(|&(_, existing)| existing)
-                .collect();
-            let same = earlier.iter().copied().find(|&existing| {
-                let previous = &self.module.overrides[existing];
-                previous.ty == ty && previous.name == value.name
-            });
-            match (same, earlier.first()) {
-                (Some(existing), _) => {
-                    remap.map_override(handle, existing);
-                    return None;
-                }
-                (None, Some(&existing)) => {
-                    self.errors.push(LinkError::SpecializationConstant(id));
-                    remap.map_override(handle, existing);
-                    return None;
-                }
-                (None, None) => {}
+                .find(|&existing| {
+                    self.module
+                        .overrides
+                        .try_get(existing)
+                        .is_ok_and(|previous| previous.ty == ty && previous.name == value.name)
+                });
+            match same {
+                Some(existing) => remap.map_override(handle, existing),
+                None => self.errors.push(LinkError::SpecializationConstant(id)),
             }
         }
-        let new = self.module.overrides.append(
-            Override {
-                name: value.name.clone(),
-                id: value.id,
-                ty,
-                init: None,
-            },
-            Span::UNDEFINED,
-        );
-        if let Some(id) = value.id {
-            self.overrides.entry(id).or_default().push((object, new));
-        }
-        remap.map_override(handle, new);
-        Some(new)
+        Ok(())
     }
 
     fn add_types(&mut self, source: &Module, remap: &mut Remap) -> Result<(), LinkError> {
@@ -423,55 +446,36 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn add_constant(
-        &mut self,
-        source: &Module,
-        remap: &mut Remap,
-        handle: Handle<rglsl::Constant>,
-    ) -> Result<(), LinkError> {
-        let mut constant = source.constants.try_get(handle).map_err(internal)?.clone();
-        constant.ty = remap.ty(constant.ty).map_err(internal)?;
-        constant.init = remap.global_expression(constant.init).map_err(internal)?;
-        let new = self
-            .module
-            .constants
-            .append(constant, source.constants.get_span(handle));
-        remap.map_constant(handle, new);
-        Ok(())
-    }
-
     fn add_global(
         &mut self,
         object: usize,
         handle: Handle<GlobalVariable>,
         global: GlobalVariable,
         span: Span,
-    ) -> Handle<GlobalVariable> {
-        let symbol = self
-            .objects
+        remap: &Remap,
+    ) -> Result<Handle<GlobalVariable>, LinkError> {
+        let Some(symbol) = self
+            .symbols
             .get(object)
-            .and_then(|object| object.unit.global_symbol(handle))
-            .cloned();
-        let name = symbol
-            .as_ref()
-            .map(|symbol| symbol.name.clone())
-            .or_else(|| global.name.clone());
-        let Some(name) = name else {
-            return self.module.global_variables.append(global, span);
+            .and_then(|positions| positions.get(&handle))
+            .zip(self.objects.get(object))
+            .and_then(|(&position, object)| object.unit.globals.get(position))
+            .cloned()
+        else {
+            return Ok(self.module.global_variables.append(global, span));
         };
-        let kind = symbol
-            .as_ref()
-            .map_or(SymbolKind::Variable, |symbol| symbol.kind);
-        let implicit = symbol
-            .as_ref()
-            .map(|symbol| symbol.implicit_sizes.clone())
-            .unwrap_or_default();
-        let automatic_location = symbol
-            .as_ref()
-            .is_some_and(|symbol| symbol.automatic_location);
-        let binding = symbol
-            .as_ref()
-            .map_or(BindingAssignment::Explicit, |symbol| symbol.binding);
+        let initializer = match symbol.initializer {
+            Some(initializer) => Some(remap.global_expression(initializer).map_err(internal)?),
+            None => global.init,
+        };
+        let name = symbol.name.clone();
+        let kind = symbol.kind;
+        let implicit = symbol.implicit_sizes.clone();
+        let automatic_location = symbol.automatic_location;
+        let binding = symbol.binding;
+        if kind == SymbolKind::Local {
+            return Ok(self.module.global_variables.append(global, span));
+        }
         let key = (space_class(global.space), name.clone());
         if let Some(&position) = self.keys.get(&key)
             && let Some(existing) = self.globals.get(position).cloned()
@@ -484,10 +488,11 @@ impl<'a> Builder<'a> {
                     implicit: &implicit,
                     automatic_location,
                     binding,
-                    instance: symbol.as_ref().and_then(|symbol| symbol.instance.clone()),
+                    instance: symbol.instance.clone(),
+                    initializer,
                 },
             );
-            return existing.handle;
+            return Ok(existing.handle);
         }
         let new = self.module.global_variables.append(global, span);
         self.keys.insert(key, self.globals.len());
@@ -498,11 +503,12 @@ impl<'a> Builder<'a> {
             implicit,
             automatic_location,
             binding,
+            initializer,
         });
-        if let Some(instance) = symbol.and_then(|symbol| symbol.instance) {
-            self.instances.push((new, instance));
+        if let Some(instance) = symbol.instance {
+            self.instances.insert(new, instance);
         }
-        new
+        Ok(new)
     }
 }
 

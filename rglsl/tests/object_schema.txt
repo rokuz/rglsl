@@ -1,4 +1,4 @@
-FORMAT_VERSION 28
+FORMAT_VERSION 29
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -20,7 +20,7 @@ BuiltIn b5e0a6dcf44048a4
 Bytes b5d60d85d4bb59b3
 ClockSource 50e2dd400974d3f6
 CollectiveOperation 81943b5923902fa8
-CompiledUnit 88230c5bfc8f1cff
+CompiledUnit 2692e6960d9dd2ae
 ConservativeDepth 2016f4ffbf48a719
 Constant b193de7977ec725a
 CooperativeData 1b51b8817b4979aa
@@ -31,6 +31,7 @@ CooperativeSize 889f8801ae4adfc2
 CooperativeVectorBias 9598eec6cfd69975
 CooperativeVectorFunction 9478d0581f558fdb
 CooperativeVectorMatMul 92ba28cb7fca4782
+DeadCall 48a196d2baadf96b
 DebugAnchor 2207bc653da75636
 DebugFunction a0d6fa89b4a6d7ff
 DebugInfo ebd3cfe6ddd5e735
@@ -67,7 +68,7 @@ GeometryInfo c31985b29083461e
 GeometryInputPrimitive e005d048eed94469
 GeometryOutputPrimitive 472205656884166c
 GlobalOrArgument 7759690cb37b3a9b
-GlobalSymbol de2cff676fad182a
+GlobalSymbol 3f2398c7412d1871
 GlobalVariable dd0a5953247511a0
 Handle 66802279fa236b57
 HeapMember 05f79ad7c4a5f037
@@ -164,7 +165,7 @@ SubgroupOperation 4f073a3a9eae761b
 SwitchCase 733388b1b52115f4
 SwitchValue e7d1805d9c40c4ff
 SwizzleComponent 9372c38101604168
-SymbolKind ed939559ea2fc395
+SymbolKind 62990d0c08f4bede
 TensorOperation 855711ca52dededc
 TessellationInfo 0ad7aec9dc17abac
 TessellationPrimitive 03b2f95502647892

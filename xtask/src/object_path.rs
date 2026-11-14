@@ -31,10 +31,10 @@ pub fn check(
     env: &Environment,
     self_exe: &Path,
     case: &Case,
-    direct: &Path,
+    program: &Path,
     timeout: Duration,
 ) -> Result<Outcome> {
-    let out = direct.with_extension("object.spv");
+    let out = program.with_extension("object.spv");
     let mut command = crate::runner::ours_command(env, self_exe, case, &case.path, &out);
     command.arg("--via-object");
     let output = process::run(command, timeout)?;
@@ -62,27 +62,29 @@ pub fn check(
     if let Some(message) = crate::runner::validate(env, case, &out, timeout)? {
         return Ok(Outcome::fail(format!("spirv-val: {message}")));
     }
-    let differences = compare(direct, &out);
-    if differences.is_empty() {
-        Ok(Outcome {
+    if std::fs::read(program)? == std::fs::read(&out)? {
+        return Ok(Outcome {
             passed: true,
             note: String::new(),
-        })
-    } else {
-        Ok(Outcome::fail(format!(
-            "differs from the direct path: {}",
-            differences.join("; ")
-        )))
+        });
     }
+    let mut differences = compare(program, &out);
+    if differences.is_empty() {
+        differences.push(String::from("the words differ"));
+    }
+    Ok(Outcome::fail(format!(
+        "differs from the program compilation: {}",
+        differences.join("; ")
+    )))
 }
 
-fn compare(direct: &Path, linked: &Path) -> Vec<String> {
+fn compare(program_path: &Path, object_path: &Path) -> Vec<String> {
     let read = |path: &Path| -> Result<Module, String> {
         let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
         module::parse_bytes(&bytes)
     };
-    let (direct, linked) = match (read(direct), read(linked)) {
-        (Ok(direct), Ok(linked)) => (direct, linked),
+    let (program, object) = match (read(program_path), read(object_path)) {
+        (Ok(program), Ok(object)) => (program, object),
         (Err(error), _) | (_, Err(error)) => return vec![format!("cannot parse: {error}")],
     };
     let mut differences = Vec::new();
@@ -91,24 +93,28 @@ fn compare(direct: &Path, linked: &Path) -> Vec<String> {
         ("extensions", Op::Extension),
         ("instruction sets", Op::ExtInstImport),
     ] {
-        let direct_set = operands(&direct, op);
-        let linked_set = operands(&linked, op);
+        let direct_set = operands(&program, op);
+        let linked_set = operands(&object, op);
         if direct_set != linked_set {
             differences.push(format!(
-                "{what}: direct only {:?}, linked only {:?}",
+                "{what}: program only {:?}, object only {:?}",
                 direct_set.difference(&linked_set).collect::<Vec<_>>(),
                 linked_set.difference(&direct_set).collect::<Vec<_>>()
             ));
         }
     }
-    match (interface::reflect(&direct), interface::reflect(&linked)) {
-        (Ok(direct), Ok(linked)) => {
-            differences.extend(interface::compare(&direct, &linked).iter().map(|mismatch| {
-                mismatch
-                    .to_string()
-                    .replacen("glslang `", "direct `", 1)
-                    .replacen("ours `", "linked `", 1)
-            }));
+    match (interface::reflect(&program), interface::reflect(&object)) {
+        (Ok(program), Ok(object)) => {
+            differences.extend(
+                interface::compare(&program, &object)
+                    .iter()
+                    .map(|mismatch| {
+                        mismatch
+                            .to_string()
+                            .replacen("glslang `", "program `", 1)
+                            .replacen("ours `", "object `", 1)
+                    }),
+            );
         }
         (Err(error), _) | (_, Err(error)) => differences.push(format!("cannot reflect: {error}")),
     }

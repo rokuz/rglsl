@@ -19,6 +19,8 @@ pub(crate) type Node = (usize, Handle<Function>);
 
 type Frame = (Option<Node>, Vec<Result<Node, String>>);
 
+type DeadCalls = BTreeMap<Option<Handle<Function>>, Vec<Handle<Function>>>;
+
 #[derive(Debug, Default)]
 pub(crate) struct SymbolTable {
     pub definitions: BTreeMap<String, Node>,
@@ -126,13 +128,33 @@ pub(crate) fn order(
     else {
         return Vec::new();
     };
-    let edges = |index: usize, block: &Block| -> Vec<Result<Node, String>> {
+    let dead_calls: Vec<DeadCalls> = objects
+        .iter()
+        .map(|object| {
+            let mut calls = DeadCalls::new();
+            for call in &object.unit.dead_calls {
+                calls.entry(call.caller).or_default().push(call.callee);
+            }
+            calls
+        })
+        .collect();
+    let edges = |index: usize, caller: Option<Handle<Function>>, block: &Block| {
         let mut found = Vec::new();
         callees(block, &mut found);
+        for &callee in dead_calls
+            .get(index)
+            .and_then(|calls| calls.get(&caller))
+            .into_iter()
+            .flatten()
+        {
+            if !found.contains(&callee) {
+                found.push(callee);
+            }
+        }
         found
             .into_iter()
             .map(|callee| table.resolve(objects, (index, callee)))
-            .collect()
+            .collect::<Vec<Result<Node, String>>>()
     };
     let body = |node: Node| -> Option<&Block> {
         let (index, handle) = node;
@@ -160,8 +182,9 @@ pub(crate) fn order(
     let mut done: BTreeSet<Node> = BTreeSet::new();
     let mut active: BTreeSet<Node> = BTreeSet::new();
     let mut postorder: Vec<Node> = Vec::new();
+    let mut callees_of: BTreeMap<Node, Vec<Node>> = BTreeMap::new();
     let mut stack: Vec<Frame> = Vec::new();
-    let mut roots = edges(main, &entry.function.body);
+    let mut roots = edges(main, None, &entry.function.body);
     if keep_uncalled {
         let mut uncalled: Vec<Result<Node, String>> = objects
             .iter()
@@ -213,7 +236,15 @@ pub(crate) fn order(
                     continue;
                 }
                 active.insert(next);
-                let mut children = body(next).map_or_else(Vec::new, |block| edges(next.0, block));
+                let mut children =
+                    body(next).map_or_else(Vec::new, |block| edges(next.0, Some(next.1), block));
+                callees_of.insert(
+                    next,
+                    children
+                        .iter()
+                        .filter_map(|child| child.as_ref().ok().copied())
+                        .collect(),
+                );
                 children.reverse();
                 stack.push((Some(next), children));
             }
@@ -230,5 +261,42 @@ pub(crate) fn order(
     errors.extend(missing.into_iter().map(LinkError::MissingDefinition));
     errors.extend(invalid);
     errors.extend(recursion.into_iter().map(LinkError::Recursion));
-    postorder
+    in_object_order(&postorder, &callees_of)
+}
+
+fn in_object_order(reachable: &[Node], callees_of: &BTreeMap<Node, Vec<Node>>) -> Vec<Node> {
+    let members: BTreeSet<Node> = reachable.iter().copied().collect();
+    let mut waiting: BTreeMap<Node, usize> = BTreeMap::new();
+    let mut callers: BTreeMap<Node, Vec<Node>> = BTreeMap::new();
+    for &node in reachable {
+        let callees: BTreeSet<Node> = callees_of
+            .get(&node)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|callee| members.contains(callee) && *callee != node)
+            .collect();
+        waiting.insert(node, callees.len());
+        for callee in callees {
+            callers.entry(callee).or_default().push(node);
+        }
+    }
+    let mut ready: BTreeSet<Node> = waiting
+        .iter()
+        .filter(|&(_, &count)| count == 0)
+        .map(|(&node, _)| node)
+        .collect();
+    let mut order = Vec::with_capacity(reachable.len());
+    while let Some(node) = ready.pop_first() {
+        order.push(node);
+        for &caller in callers.get(&node).into_iter().flatten() {
+            if let Some(count) = waiting.get_mut(&caller) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    ready.insert(caller);
+                }
+            }
+        }
+    }
+    order
 }

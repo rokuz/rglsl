@@ -1,6 +1,7 @@
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use super::{
@@ -16,8 +17,7 @@ pub const ALL_STAGE_BITS: u16 = rglsl_types::probe::ALL_STAGES;
 
 #[derive(Debug, Clone)]
 struct StageVariables {
-    table: variables::Table,
-    types: TypeRegistry,
+    builtins: Arc<Builtins>,
     descriptions: BTreeMap<String, String>,
 }
 
@@ -121,8 +121,14 @@ impl StageTables {
                 let table = variables::build(version, stage, limits, &mut types);
                 let descriptions = descriptions(&table.symbols, &table.scope, &types);
                 StageVariables {
-                    table,
-                    types,
+                    builtins: Arc::new(Builtins::assemble(
+                        version,
+                        stage,
+                        limits,
+                        types,
+                        table,
+                        footprints.clone(),
+                    )),
                     descriptions,
                 }
             })
@@ -136,19 +142,19 @@ impl StageTables {
         }
     }
 
-    pub fn builtins(&self, own: ShaderStage) -> Builtins {
-        let (table, types) = self
-            .variables
-            .get(Self::index(own))
-            .map(|variables| (variables.table.clone(), variables.types.clone()))
-            .unwrap_or_default();
-        Builtins::assemble(
-            self.version,
-            own,
-            &self.limits,
-            types,
-            table,
-            self.footprints.clone(),
+    pub fn builtins(&self, own: ShaderStage) -> Arc<Builtins> {
+        self.variables.get(Self::index(own)).map_or_else(
+            || {
+                Arc::new(Builtins::assemble(
+                    self.version,
+                    own,
+                    &self.limits,
+                    TypeRegistry::new(),
+                    variables::Table::default(),
+                    self.footprints.clone(),
+                ))
+            },
+            |variables| Arc::clone(&variables.builtins),
         )
     }
 

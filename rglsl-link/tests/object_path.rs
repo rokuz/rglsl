@@ -134,10 +134,169 @@ fn summary(words: &[u32]) -> TestResult<Summary> {
     })
 }
 
+fn program(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult<Vec<u32>> {
+    let linked = rglsl_link::compile_program(
+        &frontend_options(stage, auto_map),
+        source,
+        rglsl_pp::FileId(0),
+        &mut rglsl_pp::NoIncluder,
+    )?;
+    Ok(spv::write_vec(
+        &linked.module,
+        &linked.info,
+        &writer_options(),
+        None,
+    )?)
+}
+
 fn assert_same(stage: ShaderStage, source: &str, auto_map: bool) -> TestResult {
-    let direct = summary(&direct(stage, source, auto_map)?)?;
-    let linked = summary(&through_object(stage, source, auto_map)?)?;
+    let direct = direct(stage, source, auto_map)?;
+    let linked = through_object(stage, source, auto_map)?;
+    assert_eq!(summary(&direct)?, summary(&linked)?, "{source}");
     assert_eq!(direct, linked, "{source}");
+    assert_eq!(direct, program(stage, source, auto_map)?, "{source}");
+    Ok(())
+}
+
+#[test]
+fn every_snapshot_input_compiles_to_the_same_words_on_every_path() -> TestResult {
+    let directory = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rglsl/tests/in/glsl"
+    ));
+    let mut compared = 0;
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
+        let Some(stage) = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(ShaderStage::from_extension)
+        else {
+            continue;
+        };
+        let source = std::fs::read_to_string(&path)?;
+        let Ok(direct) = direct(stage, &source, true) else {
+            continue;
+        };
+        assert_eq!(
+            direct,
+            through_object(stage, &source, true)?,
+            "{}",
+            path.display()
+        );
+        assert_eq!(direct, program(stage, &source, true)?, "{}", path.display());
+        compared += 1;
+    }
+    assert!(compared > 30, "only {compared} inputs compared");
+    Ok(())
+}
+
+#[test]
+fn ray_queries_of_two_functions_with_one_name_stay_apart() -> TestResult {
+    let source = "#version 460
+#extension GL_EXT_ray_query : enable
+layout(local_size_x = 1) in;
+layout(binding = 0) uniform accelerationStructureEXT scene;
+void first() {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, 0u, 0xFFu, vec3(0.0), 0.0, vec3(1.0), 1.0);
+}
+void second() {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, 0u, 0xFFu, vec3(0.0), 0.0, vec3(1.0), 1.0);
+}
+void uncalled() {
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, 0u, 0xFFu, vec3(0.0), 0.0, vec3(1.0), 1.0);
+}
+void main() { first(); second(); }
+";
+    assert_same(ShaderStage::Compute, source, false)?;
+    let object = compile(ShaderStage::Compute, false, source)?;
+    let stage = only_stage(&[object])?;
+    let queries = stage
+        .module
+        .global_variables
+        .iter()
+        .filter(|&(_, global)| global.space == AddressSpace::Private)
+        .count();
+    assert_eq!(queries, 2);
+    Ok(())
+}
+
+#[test]
+fn functions_called_only_from_dead_code_are_linked() -> TestResult {
+    let source = "#version 450
+layout(location = 0) out vec4 color;
+vec4 late() { return vec4(1.0); }
+void main() { color = vec4(0.0); return; color = late(); }
+";
+    assert_same(ShaderStage::Fragment, source, false)?;
+    let object = compile(ShaderStage::Fragment, false, source)?;
+    let stage = only_stage(&[object])?;
+    assert_eq!(stage.module.functions.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_dead_call_to_a_function_without_a_body_is_a_link_error() -> TestResult {
+    let object = compile(
+        ShaderStage::Fragment,
+        false,
+        "#version 450
+layout(location = 0) out vec4 color;
+vec4 missing();
+void main() { color = vec4(0.0); return; color = missing(); }
+",
+    )?;
+    let Err(errors) = link_objects(&[object], &LinkOptions::default()) else {
+        return Err("linked a dead call to a function without a body".into());
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| matches!(*error, LinkError::MissingDefinition(_)))
+    );
+    Ok(())
+}
+
+#[test]
+fn constant_initializers_match_between_a_program_and_a_library() -> TestResult {
+    let program = compile(
+        ShaderStage::Fragment,
+        false,
+        "#version 450
+layout(location = 0) out vec4 color;
+float scale = 0.5;
+float scaled();
+void main() { color = vec4(scaled()); }
+",
+    )?;
+    let same = compile(
+        ShaderStage::Fragment,
+        true,
+        "#version 450
+float scale = 0.5;
+float scaled() { return scale * 2.0; }
+",
+    )?;
+    let other = compile(
+        ShaderStage::Fragment,
+        true,
+        "#version 450
+float scale = 0.25;
+float scaled() { return scale * 2.0; }
+",
+    )?;
+    only_stage(&[program.clone(), same])?;
+    let Err(errors) = link_objects(&[program, other], &LinkOptions::default()) else {
+        return Err("linked different initializers".into());
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.to_string().contains("initializers"))
+    );
     Ok(())
 }
 

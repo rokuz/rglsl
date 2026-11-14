@@ -306,6 +306,7 @@ struct RglslSample {
     sema: f64,
     lowering: f64,
     validate: f64,
+    link: f64,
     spv: f64,
     words: f64,
     compiler_first: Option<f64>,
@@ -332,6 +333,7 @@ impl RglslSample {
             sema: fields.median("sema")?,
             lowering: stats::median(&lowering).context("no lowering times")?,
             validate: fields.median("validate")?,
+            link: fields.median("link")?,
             spv: fields.median("spv")?,
             words: fields.median("words")?,
             compiler_first: fields.optional_median("compiler_first"),
@@ -780,7 +782,7 @@ fn share(part: f64, whole: f64) -> String {
 }
 
 fn phases_tables(out: &mut String, measured: &[Measured]) {
-    out.push_str("| shader set | preprocessor | parser | sema | lowering | validator | SPIR-V | total | built-in tables (fresh − steady) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|\n");
+    out.push_str("| shader set | preprocessor | parser | sema | lowering | validator | linker | SPIR-V | total | built-in tables (fresh − steady) |\n|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n");
     for (label, shaders) in groups_with_all(measured) {
         let phases = [
             sum(&shaders, |shader| shader.rglsl.pp),
@@ -788,6 +790,7 @@ fn phases_tables(out: &mut String, measured: &[Measured]) {
             sum(&shaders, |shader| shader.rglsl.sema),
             sum(&shaders, |shader| shader.rglsl.lowering),
             sum(&shaders, |shader| shader.rglsl.validate),
+            sum(&shaders, |shader| shader.rglsl.link),
             sum(&shaders, |shader| shader.rglsl.spv),
         ];
         let total: f64 = phases.iter().sum();
@@ -827,12 +830,12 @@ fn phases_tables(out: &mut String, measured: &[Measured]) {
 
 fn steady_shader_table(out: &mut String, title: &str, shaders: &[&Measured]) {
     let _ = writeln!(out, "\n### {title}\n");
-    out.push_str("| shader | set | glslang | rglsl | rglsl/glslang | preprocessor | parser | sema | lowering | validator | SPIR-V |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n");
+    out.push_str("| shader | set | glslang | rglsl | rglsl/glslang | preprocessor | parser | sema | lowering | validator | linker | SPIR-V |\n|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|\n");
     for shader in shaders {
         let rglsl = &shader.rglsl;
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             shader.name,
             shader.group.key(),
             milliseconds(shader.glslang.steady),
@@ -843,6 +846,7 @@ fn steady_shader_table(out: &mut String, title: &str, shaders: &[&Measured]) {
             milliseconds(rglsl.sema),
             milliseconds(rglsl.lowering),
             milliseconds(rglsl.validate),
+            milliseconds(rglsl.link),
             milliseconds(rglsl.spv),
         );
     }
@@ -935,7 +939,7 @@ fn markdown(environment: &Environment, outcome: &Outcome, options: &Options) -> 
     variants_table(&mut out, measured);
 
     out.push_str("\n## Phases\n\n");
-    out.push_str("rglsl, steady state, totals of the per-shader medians and their share. The preprocessor, the parser and sema are timed by calling `rglsl_pp::preprocess`, `rglsl_ast::parse_prefix` and `rglsl_sema::analyze_with_tables` on their own; lowering is the rest of `Frontend::parse_with_includer` (per run: frontend − preprocessor − parser − sema, so it can be slightly negative for tiny shaders); SPIR-V includes freeing the module.\n\n");
+    out.push_str("rglsl, steady state, totals of the per-shader medians and their share. The preprocessor, the parser and sema are timed by calling `rglsl_pp::preprocess`, `rglsl_ast::parse_prefix` and `rglsl_sema::analyze_with_tables` on their own; lowering is the rest of `Frontend::compile_program` (per run: frontend − preprocessor − parser − sema, so it can be slightly negative for tiny shaders); the validator checks the program's object module and the linker finishes it alone (`rglsl_link::compile_program`, as the command-line tool does: compaction, and a second validation only when compaction removed something); SPIR-V includes freeing the module.\n\n");
     phases_tables(&mut out, measured);
 
     out.push_str("\n## Shaders\n");
@@ -1045,7 +1049,7 @@ fn not_measured(out: &mut String, outcome: &Outcome) {
 
 fn tsv(measured: &[Measured]) -> String {
     let mut out = String::from(
-        "shader\tset\tglslang_first_ms\tglslang_steady_ms\tglslang_parse_ms\tglslang_link_ms\tglslang_spv_ms\trglsl_first_ms\trglsl_steady_ms\trglsl_fresh_ms\trglsl_pp_ms\trglsl_parse_ms\trglsl_sema_ms\trglsl_lowering_ms\trglsl_validate_ms\trglsl_spv_ms\tcompiler_first_ms\tcompiler_steady_ms\tsteady_ratio\tfirst_ratio\tglslang_words\trglsl_words\tcommand_line\n",
+        "shader\tset\tglslang_first_ms\tglslang_steady_ms\tglslang_parse_ms\tglslang_link_ms\tglslang_spv_ms\trglsl_first_ms\trglsl_steady_ms\trglsl_fresh_ms\trglsl_pp_ms\trglsl_parse_ms\trglsl_sema_ms\trglsl_lowering_ms\trglsl_validate_ms\trglsl_link_ms\trglsl_spv_ms\tcompiler_first_ms\tcompiler_steady_ms\tsteady_ratio\tfirst_ratio\tglslang_words\trglsl_words\tcommand_line\n",
     );
     let optional =
         |value: Option<f64>| value.map_or_else(String::new, |value| format!("{value:.4}"));
@@ -1054,7 +1058,7 @@ fn tsv(measured: &[Measured]) -> String {
         let rglsl = &shader.rglsl;
         let _ = writeln!(
             out,
-            "{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{:.0}\t{:.0}\t{}",
+            "{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{:.0}\t{:.0}\t{}",
             shader.name,
             shader.group.key(),
             glslang.first,
@@ -1070,6 +1074,7 @@ fn tsv(measured: &[Measured]) -> String {
             rglsl.sema,
             rglsl.lowering,
             rglsl.validate,
+            rglsl.link,
             rglsl.spv,
             optional(rglsl.compiler_first),
             optional(rglsl.compiler),
@@ -1153,7 +1158,7 @@ mod tests {
 
     fn rglsl_fields() -> Result<Fields> {
         reply(
-            "ok\tfirst=8\tfresh=5,5,5\tsteady=2,2,2\tpp=1,0.5,0.5\tparse=0.25,0.25,0.25\tsema=0.25,0.25,0.25\tfrontend=2,1.5,1.25\tvalidate=0.1,0.1,0.1\tspv=0.2,0.2,0.2\twords=100",
+            "ok\tfirst=8\tfresh=5,5,5\tsteady=2,2,2\tpp=1,0.5,0.5\tparse=0.25,0.25,0.25\tsema=0.25,0.25,0.25\tfrontend=2,1.5,1.25\tvalidate=0.1,0.1,0.1\tlink=0.1,0.1,0.1\tspv=0.2,0.2,0.2\twords=100",
         )
     }
 

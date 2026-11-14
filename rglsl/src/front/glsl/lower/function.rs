@@ -779,7 +779,7 @@ impl<'a> Lowerer<'a> {
             function,
             task_payload: self.task_payload,
             incoming_ray_payload: self.incoming_ray_payload,
-            interface: self.interface.clone(),
+            interface: Vec::new(),
             transform_feedback: self.xfb.mode,
             opacity_micromap,
             quad_control: self.quad_control,

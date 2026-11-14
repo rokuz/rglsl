@@ -11,10 +11,14 @@ use rglsl_sema::{Callee, FunctionId, SymbolId};
 
 use super::{Lowerer, Result, semantic};
 
-type FunctionOrder<'a> = (
-    Vec<(FunctionId, &'a Node<FunctionDefinition>)>,
-    Option<BTreeSet<FunctionId>>,
-);
+pub(super) type Definitions<'a> = Vec<(FunctionId, &'a Node<FunctionDefinition>)>;
+
+pub(super) struct FunctionOrder<'a> {
+    pub reached: Definitions<'a>,
+    pub unreached: Definitions<'a>,
+    pub reachable: Option<BTreeSet<FunctionId>>,
+    pub calls: BTreeMap<FunctionId, BTreeSet<FunctionId>>,
+}
 
 pub(super) fn strip(expression: &Expression) -> &Expression {
     let mut current = expression;
@@ -258,6 +262,12 @@ impl<'a> Lowerer<'a> {
             let Some(&Callee::Function(callee)) = analysis.calls.get(&expression.id) else {
                 continue;
             };
+            if analysis
+                .function(callee)
+                .is_some_and(|function| function.spirv_instruction.is_some())
+            {
+                continue;
+            }
             if Some(callee) == main {
                 return Err(semantic(
                     "`main` cannot be called",
@@ -270,7 +280,7 @@ impl<'a> Lowerer<'a> {
                 .and_then(|index| spans.get(index))
                 .filter(|&&(_, end, _)| expression.span.end <= end)
                 .map(|&(_, _, id)| id);
-            if let Some(caller) = caller {
+            if let Some(caller) = caller.or(main) {
                 calls.entry(caller).or_default().insert(callee);
             }
         }
@@ -321,7 +331,12 @@ impl<'a> Lowerer<'a> {
             }
         }
         let Some(main) = main.filter(|_| !self.options.keep_uncalled) else {
-            return Ok((order, None));
+            return Ok(FunctionOrder {
+                reached: order,
+                unreached: Vec::new(),
+                reachable: None,
+                calls,
+            });
         };
         let mut reachable = BTreeSet::from([main]);
         let mut pending = Vec::from([main]);
@@ -332,9 +347,17 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        let (reached, mut unreached): (Definitions<'a>, Definitions<'a>) = order
+            .into_iter()
+            .partition(|&(id, _)| reachable.contains(&id));
         if !self.object {
-            order.retain(|&(id, _)| reachable.contains(&id));
+            unreached.clear();
         }
-        Ok((order, Some(reachable)))
+        Ok(FunctionOrder {
+            reached,
+            unreached,
+            reachable: Some(reachable),
+            calls,
+        })
     }
 }

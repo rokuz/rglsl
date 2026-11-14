@@ -182,13 +182,14 @@ fn milliseconds(started: Instant) -> f64 {
 struct CliRun {
     frontend: f64,
     validate: f64,
+    link: f64,
     spv: f64,
     words: usize,
 }
 
 impl CliRun {
     fn total(&self) -> f64 {
-        self.frontend + self.validate + self.spv
+        self.frontend + self.validate + self.link + self.spv
     }
 }
 
@@ -197,23 +198,26 @@ fn cli(job: &Job, source: &str, tables: Tables) -> Result<CliRun> {
     let spv_options = job.spv_options();
     let (mut includer, root) = job.includer();
     let started = Instant::now();
-    let parsed =
-        glsl::Frontend::default().parse_with_includer(&options, source, root, &mut includer);
+    let compiled = glsl::Frontend::default().compile_program(&options, source, root, &mut includer);
     let frontend = milliseconds(started);
-    let module = parsed.map_err(|errors| anyhow!("{errors}"))?;
+    let object = compiled.map_err(|errors| anyhow!("{errors}"))?;
     let started = Instant::now();
-    let info = Validator::new(ValidationFlags::all()).validate(&module);
+    let info = Validator::new(ValidationFlags::all()).validate(&object.unit.module);
     let validate = milliseconds(started);
     let info = info.map_err(|error| anyhow!("validation: {error}"))?;
     let started = Instant::now();
-    let words = spv::write_vec(&module, &info, &spv_options, None);
-    drop(info);
-    drop(module);
+    let linked = rglsl_link::finish_program(object, info);
+    let link = milliseconds(started);
+    let linked = linked.map_err(|errors| anyhow!("link: {errors}"))?;
+    let started = Instant::now();
+    let words = spv::write_vec(&linked.module, &linked.info, &spv_options, None);
+    drop(linked);
     let spv = milliseconds(started);
     let words = words.map_err(|error| anyhow!("SPIR-V: {error}"))?;
     Ok(CliRun {
         frontend,
         validate,
+        link,
         spv,
         words: words.len(),
     })
@@ -380,6 +384,7 @@ impl Harness {
             reply.push("steady", run.total());
             reply.push("frontend", run.frontend);
             reply.push("validate", run.validate);
+            reply.push("link", run.link);
             reply.push("spv", run.spv);
         }
         for _ in 0..job.runs {

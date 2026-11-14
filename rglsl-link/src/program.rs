@@ -389,7 +389,7 @@ fn match_pipeline_locations(merged: &mut [Merged]) {
 }
 
 pub fn link_program(
-    stages: &[Vec<rglsl::object::ObjectModule>],
+    stages: Vec<Vec<rglsl::object::ObjectModule>>,
     options: &Options,
 ) -> Result<Vec<Linked>, LinkErrors> {
     link_program_staged(stages, options).map_err(|errors| {
@@ -404,7 +404,7 @@ pub fn link_program(
 pub type StagedErrors = Vec<(Option<ShaderStage>, LinkError)>;
 
 pub fn link_program_staged(
-    stages: &[Vec<rglsl::object::ObjectModule>],
+    stages: Vec<Vec<rglsl::object::ObjectModule>>,
     options: &Options,
 ) -> Result<Vec<Linked>, StagedErrors> {
     let mut errors: StagedErrors = Vec::new();
@@ -465,47 +465,60 @@ pub fn link_program_staged(
 }
 
 pub fn group_by_stage<O: Borrow<ObjectModule>>(objects: &[O]) -> Vec<Vec<ObjectModule>> {
+    group_objects_by_stage(
+        objects
+            .iter()
+            .map(|object| object.borrow().clone())
+            .collect(),
+    )
+}
+
+pub fn group_objects_by_stage(objects: Vec<ObjectModule>) -> Vec<Vec<ObjectModule>> {
     let mut stages: Vec<ShaderStage> = Vec::new();
-    for stage in objects.iter().filter_map(|object| object.borrow().stage()) {
+    for stage in objects.iter().filter_map(ObjectModule::stage) {
         if !stages.contains(&stage) {
             stages.push(stage);
         }
     }
     if stages.is_empty() {
-        return vec![
-            objects
-                .iter()
-                .map(|object| object.borrow().clone())
-                .collect(),
-        ];
+        return vec![objects];
     }
     let joins = |object: &ObjectModule, stage: ShaderStage| match object.stage() {
         Some(own) => own == stage,
         None => object.supports(stage) || stages.iter().all(|&other| !object.supports(other)),
     };
-    stages
-        .iter()
-        .map(|&stage| {
-            objects
-                .iter()
-                .map(Borrow::borrow)
-                .filter(|object| joins(object, stage))
-                .cloned()
-                .collect()
-        })
-        .collect()
+    let mut groups: Vec<Vec<ObjectModule>> = stages.iter().map(|_| Vec::new()).collect();
+    for object in objects {
+        let joined: Vec<usize> = stages
+            .iter()
+            .enumerate()
+            .filter(|&(_, &stage)| joins(&object, stage))
+            .map(|(index, _)| index)
+            .collect();
+        if let Some((&last, others)) = joined.split_last() {
+            for &index in others {
+                if let Some(group) = groups.get_mut(index) {
+                    group.push(object.clone());
+                }
+            }
+            if let Some(group) = groups.get_mut(last) {
+                group.push(object);
+            }
+        }
+    }
+    groups
 }
 
 pub fn link_objects<O: Borrow<ObjectModule>>(
     objects: &[O],
     options: &Options,
 ) -> Result<Vec<Linked>, LinkErrors> {
-    link_program(&group_by_stage(objects), options)
+    link_program(group_by_stage(objects), options)
 }
 
 pub fn link_objects_staged<O: Borrow<ObjectModule>>(
     objects: &[O],
     options: &Options,
 ) -> Result<Vec<Linked>, StagedErrors> {
-    link_program_staged(&group_by_stage(objects), options)
+    link_program_staged(group_by_stage(objects), options)
 }

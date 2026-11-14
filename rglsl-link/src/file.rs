@@ -135,7 +135,13 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
         if unit
             .functions
             .iter()
-            .any(|symbol| module.functions.try_get(symbol.function).is_err())
+            .map(|symbol| symbol.function)
+            .chain(
+                unit.dead_calls
+                    .iter()
+                    .flat_map(|call| call.caller.into_iter().chain([call.callee])),
+            )
+            .any(|function| module.functions.try_get(function).is_err())
         {
             return Err(FileError::Invalid(String::from(
                 "a function symbol names a missing function",
@@ -152,6 +158,16 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
         {
             return Err(FileError::Invalid(String::from(
                 "a global symbol names a missing global variable",
+            )));
+        }
+        if unit
+            .globals
+            .iter()
+            .filter_map(|symbol| symbol.initializer)
+            .any(|initializer| module.global_expressions.try_get(initializer).is_err())
+        {
+            return Err(FileError::Invalid(String::from(
+                "a global symbol names a missing initializer",
             )));
         }
         if unit
