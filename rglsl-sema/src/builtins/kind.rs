@@ -9,6 +9,7 @@ pub enum BuiltinKind {
     Barrier(Barrier),
     Interlock { begin: bool },
     HelperInvocation,
+    Clock { source: ClockSource, pair: bool },
     Interpolate(InterpolateAt),
     AttachmentRead(Attachment),
     Mesh(Mesh),
@@ -31,6 +32,7 @@ impl BuiltinKind {
             | Self::Barrier(_)
             | Self::Interlock { .. }
             | Self::HelperInvocation
+            | Self::Clock { .. }
             | Self::Interpolate(_)
             | Self::AttachmentRead(_)
             | Self::Mesh(_)
@@ -233,6 +235,13 @@ pub enum MemoryBarrier {
 pub enum SplitPhase {
     Arrive,
     Wait,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClockSource {
+    Subgroup,
+    Device,
+    AmdTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

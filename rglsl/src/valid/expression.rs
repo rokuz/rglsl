@@ -416,6 +416,7 @@ impl super::Validator {
             | E::Expect { .. }
             | E::ImageSparseResident { .. }
             | E::IsHelperInvocation
+            | E::ReadClock { .. }
             | E::InterpolateAt { .. }
             | E::FragmentFetch { .. }
             | E::ImageFootprint { .. }
@@ -1772,6 +1773,7 @@ impl super::Validator {
             },
             E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => ShaderStages::all(),
             E::IsHelperInvocation => ShaderStages::FRAGMENT,
+            E::ReadClock { .. } => ShaderStages::all(),
             E::InterpolateAt { pointer, location } => {
                 if !matches!(
                     *resolver.resolve(pointer)?,

@@ -15,6 +15,8 @@ use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 
 const SPV_AMD_GPU_SHADER_HALF_FLOAT: &str = "SPV_AMD_gpu_shader_half_float";
 const SPV_AMD_SHADER_TRINARY_MINMAX: &str = "SPV_AMD_shader_trinary_minmax";
+const SPV_AMD_GCN_SHADER: &str = "SPV_AMD_gcn_shader";
+const AMD_TIME: Word = 3;
 
 const fn trinary_minmax(
     fun: crate::MathFunction,
@@ -1770,6 +1772,38 @@ impl BlockContext<'_> {
             }
             crate::Expression::AttachmentRead { aspect, sample } => {
                 self.write_attachment_read(aspect, sample, result_type_id, block)?
+            }
+            crate::Expression::ReadClock { source, .. } => {
+                let id = self.gen_id();
+                let scope = match source {
+                    crate::ClockSource::Subgroup => Some(spirv::Scope::Subgroup),
+                    crate::ClockSource::Device => Some(spirv::Scope::Device),
+                    crate::ClockSource::AmdTime => None,
+                };
+                match scope {
+                    Some(scope) => {
+                        self.writer.use_extension("SPV_KHR_shader_clock");
+                        self.writer
+                            .require_any("clock reads", &[spirv::Capability::ShaderClockKHR])?;
+                        let scope_id = self.get_scope_constant(scope as u32);
+                        let mut instruction = Instruction::new(spirv::Op::ReadClockKHR);
+                        instruction.set_type(result_type_id);
+                        instruction.set_result(id);
+                        instruction.add_operand(scope_id);
+                        block.body.push(instruction);
+                    }
+                    None => {
+                        let set = self.writer.spirv_ext_import(SPV_AMD_GCN_SHADER);
+                        block.body.push(Instruction::ext_inst(
+                            set,
+                            AMD_TIME,
+                            result_type_id,
+                            id,
+                            &[],
+                        ));
+                    }
+                }
+                id
             }
             crate::Expression::IsHelperInvocation => {
                 self.writer.require_demote()?;

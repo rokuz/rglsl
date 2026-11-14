@@ -92,7 +92,11 @@ macro_rules! expression_handles {
             | Expression::RayQueryProceedResult
             | Expression::ReportIntersectionResult
             | Expression::SubgroupBallotResult
-            | Expression::IsHelperInvocation => {}
+            | Expression::IsHelperInvocation
+            | Expression::ReadClock {
+                source: _,
+                pair: _,
+            } => {}
             Expression::Constant(ref $($m)? constant) => $v.constant($($d)? constant)?,
             Expression::Override(ref $($m)? r#override) => $v.r#override($($d)? r#override)?,
             Expression::ZeroValue(ref $($m)? ty)

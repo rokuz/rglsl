@@ -1444,6 +1444,7 @@ impl super::Validator {
                         | Ex::TensorRead { .. }
                         | Ex::TensorQuerySize { .. }
                         | Ex::IsHelperInvocation
+                        | Ex::ReadClock { .. }
                         | Ex::AttachmentRead { .. }
                         | Ex::InterpolateAt { .. }
                         | Ex::FragmentFetch { .. }

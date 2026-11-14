@@ -922,7 +922,7 @@ impl FunctionInfo {
                 .or(Some(handle)),
                 requirements: UniformityRequirements::empty(),
             },
-            E::IsHelperInvocation => Uniformity {
+            E::IsHelperInvocation | E::ReadClock { .. } => Uniformity {
                 non_uniform_result: Some(handle),
                 requirements: UniformityRequirements::empty(),
             },

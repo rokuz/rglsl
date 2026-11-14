@@ -1629,6 +1629,16 @@ pub enum AtomicLocation {
     Texel(Texel),
 }
 
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum ClockSource {
+    Subgroup,
+    Device,
+    AmdTime,
+}
+
 /// Hint at which precision to compute a derivative.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -2563,6 +2573,10 @@ pub enum Expression {
         code: Handle<Expression>,
     },
     IsHelperInvocation,
+    ReadClock {
+        source: ClockSource,
+        pair: bool,
+    },
     InterpolateAt {
         pointer: Handle<Expression>,
         location: InterpolationLocation,

@@ -2555,6 +2555,7 @@ impl Writer {
             | crate::Expression::Expect { .. }
             | crate::Expression::ImageSparseResident { .. }
             | crate::Expression::IsHelperInvocation
+            | crate::Expression::ReadClock { .. }
             | crate::Expression::InterpolateAt { .. }
             | crate::Expression::FragmentFetch { .. }
             | crate::Expression::ImageFootprint { .. }

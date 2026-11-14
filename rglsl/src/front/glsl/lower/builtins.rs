@@ -823,6 +823,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             BuiltinKind::HelperInvocation => {
                 self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
             }
+            BuiltinKind::Clock { source, pair } => {
+                let source = match source {
+                    kind::ClockSource::Subgroup => crate::ClockSource::Subgroup,
+                    kind::ClockSource::Device => crate::ClockSource::Device,
+                    kind::ClockSource::AmdTime => crate::ClockSource::AmdTime,
+                };
+                self.with(|this| {
+                    this.add(Expression::ReadClock { source, pair }, at)
+                        .map(Some)
+                })?
+            }
             BuiltinKind::Interpolate(location) => {
                 let frame = self.clone().interpolate(location, arguments, at);
                 self.nest(frame).await.map(Some)

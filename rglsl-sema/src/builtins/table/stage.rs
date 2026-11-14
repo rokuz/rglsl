@@ -3,12 +3,24 @@ use rglsl_types::extension::Extension::*;
 use super::BuiltinFunction;
 use super::Floats::DoublesAndHalves;
 use crate::builtins::kind::{
-    AtomicOperation, Attachment, Barrier, BuiltinKind, InterpolateAt, MemoryBarrier, Mesh,
-    Primitive, SplitPhase,
+    AtomicOperation, Attachment, Barrier, BuiltinKind, ClockSource, InterpolateAt, MemoryBarrier,
+    Mesh, Primitive, SplitPhase,
 };
 use crate::builtins::{COMPUTE, FRAGMENT, GEOMETRY, MESH, TASK, TESS_CONTROL};
 
 pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
+    "clockARB": BuiltinKind::Clock { source: ClockSource::Subgroup, pair: false } => [uint64_t()] {
+        requires: &[ArbShaderClock],
+    }
+    "clock2x32ARB": BuiltinKind::Clock { source: ClockSource::Subgroup, pair: true } => [uvec2()] {
+        requires: &[ArbShaderClock],
+    }
+    "clockRealtimeEXT": BuiltinKind::Clock { source: ClockSource::Device, pair: false } => [uint64_t()] {
+        requires: &[ExtShaderRealtimeClock],
+    }
+    "clockRealtime2x32EXT": BuiltinKind::Clock { source: ClockSource::Device, pair: true } => [uvec2()] {
+        requires: &[ExtShaderRealtimeClock],
+    }
     "atomicAdd": BuiltinKind::Atomic(AtomicOperation::Add) => [
         uint(inout uint, uint),
         int(inout int, int),

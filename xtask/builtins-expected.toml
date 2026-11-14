@@ -51,16 +51,6 @@ verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
 
 [[divergence]]
-name = "clock*ARB"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_ARB_shader_clock built-ins are not declared"
-
-[[divergence]]
-name = "clockRealtime*EXT"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_EXT_shader_realtime_clock built-ins are not declared"
-
-[[divergence]]
 name = "cubeFace*AMD"
 verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"

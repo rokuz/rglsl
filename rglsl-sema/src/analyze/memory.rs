@@ -100,6 +100,7 @@ const fn shape(builtin: BuiltinKind) -> Option<Shape> {
         | BuiltinKind::Assume
         | BuiltinKind::Interlock { .. }
         | BuiltinKind::HelperInvocation
+        | BuiltinKind::Clock { .. }
         | BuiltinKind::Interpolate(_)
         | BuiltinKind::AttachmentRead(_)
         | BuiltinKind::Mesh(_)

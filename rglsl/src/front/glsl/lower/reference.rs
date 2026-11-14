@@ -325,6 +325,7 @@ impl FunctionLowerer<'_, '_> {
                 | Expression::Expect { .. }
                 | Expression::ImageSparseResident { .. }
                 | Expression::IsHelperInvocation
+                | Expression::ReadClock { .. }
                 | Expression::InterpolateAt { .. }
                 | Expression::FragmentFetch { .. }
                 | Expression::ImageFootprint { .. }

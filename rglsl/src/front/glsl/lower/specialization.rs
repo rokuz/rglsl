@@ -75,6 +75,7 @@ const fn specializable(expression: &Expression) -> bool {
         | Expression::Expect { .. }
         | Expression::ImageSparseResident { .. }
         | Expression::IsHelperInvocation
+        | Expression::ReadClock { .. }
         | Expression::InterpolateAt { .. }
         | Expression::FragmentFetch { .. }
         | Expression::ImageFootprint { .. }

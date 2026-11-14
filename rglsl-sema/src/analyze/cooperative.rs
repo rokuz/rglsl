@@ -858,6 +858,7 @@ impl Analyzer<'_> {
             | BuiltinKind::Barrier(_)
             | BuiltinKind::Interlock { .. }
             | BuiltinKind::HelperInvocation
+            | BuiltinKind::Clock { .. }
             | BuiltinKind::Interpolate(_)
             | BuiltinKind::AttachmentRead(_)
             | BuiltinKind::Mesh(_)

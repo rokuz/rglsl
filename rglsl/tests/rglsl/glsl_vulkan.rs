@@ -1299,6 +1299,52 @@ fn qcom_array_conversions_need_arrays_of_known_length() -> crate::TestResult {
 }
 
 #[test]
+fn shader_clocks_match_glslang() -> crate::TestResult {
+    use spirv::Capability as C;
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_ARB_shader_clock : enable
+        #extension GL_EXT_shader_realtime_clock : enable
+        #extension GL_ARB_gpu_shader_int64 : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uint64_t a; uvec2 b; uint64_t c; uvec2 d; };
+        void main() {
+            a = clockARB();
+            b = clock2x32ARB();
+            c = clockRealtimeEXT();
+            d = clockRealtime2x32EXT();
+        }",
+    )?;
+    let scopes = instructions(&module, Op::ReadClockKHR)
+        .into_iter()
+        .map(|inst| {
+            inst.operands
+                .first()
+                .map(|operand| constant(&module, operand))
+        })
+        .collect::<Option<Result<Vec<u32>, _>>>()
+        .ok_or("a clock read without a scope")??;
+    assert_eq!(scopes, [3, 3, 1, 1]);
+    assert_eq!(extensions_of(&module), ["SPV_KHR_shader_clock"]);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::Int64, C::ShaderClockKHR])
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uvec2 b; };
+        void main() { b = clock2x32ARB(); }",
+    )
+    .err()
+    .ok_or("clock2x32ARB without GL_ARB_shader_clock is accepted")?;
+    assert!(error.contains("GL_ARB_shader_clock"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,

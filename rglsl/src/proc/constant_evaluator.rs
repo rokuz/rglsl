@@ -902,6 +902,7 @@ impl ExpressionKindTracker {
             | Expression::Expect { .. }
             | Expression::ImageSparseResident { .. }
             | Expression::IsHelperInvocation
+            | Expression::ReadClock { .. }
             | Expression::InterpolateAt { .. }
             | Expression::FragmentFetch { .. }
             | Expression::ImageFootprint { .. }
@@ -1455,6 +1456,9 @@ impl<'a> ConstantEvaluator<'a> {
             )),
             Expression::IsHelperInvocation => Err(ConstantEvaluatorError::NotImplemented(
                 String::from("helper invocation query"),
+            )),
+            Expression::ReadClock { .. } => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("clock reads"),
             )),
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
