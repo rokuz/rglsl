@@ -362,6 +362,42 @@ fn per_view_mesh_outputs_need_only_mesh_shading() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn qcom_image_processing_requires_spirv_1_4() -> TestResult {
+    for (extension, call) in [
+        (
+            "GL_QCOM_image_processing",
+            "textureBoxFilterQCOM(s, p, vec2(2.0))",
+        ),
+        (
+            "GL_QCOM_image_processing2",
+            "textureBlockMatchWindowSADQCOM(s, uvec2(0), s, uvec2(1), uvec2(4))",
+        ),
+    ] {
+        let source = format!(
+            "#version 450
+            #extension {extension} : require
+            layout(binding = 0) uniform sampler2D s;
+            layout(location = 0) in vec2 p;
+            layout(location = 0) out vec4 o;
+            void main() {{ o = {call}; }}"
+        );
+        let Err(errors) = ours(ShaderStage::Fragment, Target::Vulkan11, &source) else {
+            return Err(format!("rglsl accepts {call} at SPIR-V 1.3").into());
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("QCOM image processing requires SPIR-V 1.4")),
+            "{errors:?}"
+        );
+        let words = ours(ShaderStage::Fragment, Target::Vulkan13, &source)
+            .map_err(|errors| format!("rglsl rejects {call} at SPIR-V 1.6: {errors:?}"))?;
+        validate(&words, Target::Vulkan13)?;
+    }
+    Ok(())
+}
+
 fn footprint_operands(words: &[u32]) -> TestResult<Vec<String>> {
     let module = dr::load_words(words)?;
     Ok(module

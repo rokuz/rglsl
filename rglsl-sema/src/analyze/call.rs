@@ -1097,6 +1097,22 @@ impl Analyzer<'_> {
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::qcom::function_extension(name) {
             self.require_extension(span, extension, name);
+            if matches!(
+                extension,
+                Extension::QcomImageProcessing | Extension::QcomImageProcessing2
+            ) && self
+                .options
+                .spirv_version
+                .is_some_and(|version| version < (1, 4))
+            {
+                self.error(
+                    span,
+                    DiagnosticKind::SpirvVersionRequired {
+                        feature: "QCOM image processing",
+                        version: "1.4",
+                    },
+                );
+            }
         }
         if let Some(extension) = super::fragment::function_extension(name) {
             self.require_extension(span, extension, name);
