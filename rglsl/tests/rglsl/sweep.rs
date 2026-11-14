@@ -303,6 +303,40 @@ fn ldexp_takes_a_16_bit_exponent() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn micro_triangle_fetches_need_no_ray_queries() -> TestResult {
+    let source = "#version 460
+        #extension GL_NV_displacement_micromap : require
+        layout(local_size_x = 1) in;
+        layout(binding = 0) uniform accelerationStructureEXT a;
+        layout(std430, binding = 1) buffer B { ivec4 i; vec3 p; vec2 b; };
+        void main() {
+            p = fetchMicroTriangleVertexPositionNV(a, i.x, i.y, i.z, i.zw);
+            b = fetchMicroTriangleVertexBarycentricNV(a, i.x, i.y, i.z, i.zw);
+        }";
+    let summary = valid_like_glslang(ShaderStage::Compute, Target::Vulkan13, source)?;
+    assert!(!summary.capabilities.contains("RayQueryKHR"), "{summary:?}");
+    assert!(
+        summary.capabilities.contains("DisplacementMicromapNV"),
+        "{summary:?}"
+    );
+    let summary = valid_like_glslang(
+        ShaderStage::Compute,
+        Target::Vulkan13,
+        "#version 460
+        #extension GL_EXT_ray_query : require
+        layout(local_size_x = 1) in;
+        layout(binding = 0) uniform accelerationStructureEXT a;
+        layout(std430, binding = 1) buffer B { float t; };
+        void main() {
+            rayQueryEXT q;
+            rayQueryInitializeEXT(q, a, 0u, 0xffu, vec3(0.0), 0.0, vec3(1.0), t);
+        }",
+    )?;
+    assert!(summary.capabilities.contains("RayQueryKHR"), "{summary:?}");
+    Ok(())
+}
+
 fn footprint_operands(words: &[u32]) -> TestResult<Vec<String>> {
     let module = dr::load_words(words)?;
     Ok(module

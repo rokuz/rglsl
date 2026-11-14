@@ -887,6 +887,23 @@ impl crate::Module {
                 _ => {}
             }
         }
+        let fetches_micro_triangles = |function: &crate::Function| {
+            function.expressions.iter().any(|(_, expression)| {
+                matches!(
+                    *expression,
+                    crate::Expression::FetchMicroTriangleVertex { .. }
+                )
+            })
+        };
+        uses.micromap = has_acceleration_structure
+            && (self
+                .functions
+                .iter()
+                .any(|(_, function)| fetches_micro_triangles(function))
+                || self
+                    .entry_points
+                    .iter()
+                    .any(|ep| fetches_micro_triangles(&ep.function)));
         for (index, ep) in self.entry_points.iter().enumerate() {
             if ep_index.is_some() && ep_index != Some(index) {
                 continue;
@@ -894,7 +911,7 @@ impl crate::Module {
             if ep.stage.ray_tracing() {
                 uses.pipelines = true;
             } else {
-                uses.queries |= has_acceleration_structure;
+                uses.queries |= has_acceleration_structure && !uses.micromap;
             }
         }
         uses
@@ -905,6 +922,7 @@ impl crate::Module {
 pub struct RayTracingUses {
     pub pipelines: bool,
     pub queries: bool,
+    pub micromap: bool,
 }
 
 impl crate::AddressSpace {

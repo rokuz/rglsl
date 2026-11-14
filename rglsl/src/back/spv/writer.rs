@@ -109,6 +109,7 @@ impl Writer {
             gl450_ext_inst_id,
             temp_list: Vec::new(),
             has_ray_tracing_pipeline: false,
+            micromap_acceleration_structures: false,
             legacy_buffer_blocks: false,
             invariant_outputs: false,
             legacy_storage_blocks: crate::FastHashSet::default(),
@@ -276,6 +277,7 @@ impl Writer {
             saved_cached: take(&mut self.saved_cached).reclaim(),
             temp_list: take(&mut self.temp_list).reclaim(),
             has_ray_tracing_pipeline: false,
+            micromap_acceleration_structures: false,
             legacy_buffer_blocks: false,
             invariant_outputs: false,
             legacy_storage_blocks: crate::FastHashSet::default(),
@@ -1660,7 +1662,7 @@ impl Writer {
             crate::TypeInner::AccelerationStructure { .. } => {
                 if self.has_ray_tracing_pipeline {
                     self.require_ray_tracing()?;
-                } else {
+                } else if !self.micromap_acceleration_structures {
                     self.require_ray_queries()?;
                 }
             }
@@ -4006,6 +4008,7 @@ impl Writer {
         let rt_uses = ir_module.uses_ray_tracing(ep_index);
         let has_ray_query = rt_uses.queries;
         self.has_ray_tracing_pipeline = rt_uses.pipelines;
+        self.micromap_acceleration_structures = rt_uses.micromap;
         self.ray_tracing_features = ir_module.ray_tracing;
 
         if self.physical_layout.version < 0x10300 && has_storage_buffers {
