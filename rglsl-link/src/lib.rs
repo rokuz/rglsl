@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod build;
 mod cache;
 mod calls;
 mod compiler;
@@ -20,6 +21,9 @@ use rglsl::{
     SampleLevel, TypeInner,
 };
 
+pub use build::{
+    CompileError, CompiledObject, InvalidModule, compile_object, compile_program, finish_program,
+};
 pub use cache::BuiltinCache;
 pub use compiler::{
     CompileOptions, Compiler, Diagnostic, Diagnostics, Program, ProgramOptions, Severity,
@@ -29,8 +33,8 @@ pub use compiler::{
 pub use error::{LinkError, LinkErrors};
 pub use file::{FileError, decode, encode};
 pub use program::{
-    StagedErrors, group_by_stage, link_objects, link_objects_staged, link_program,
-    link_program_staged,
+    StagedErrors, group_by_stage, group_objects_by_stage, link_objects, link_objects_staged,
+    link_program, link_program_staged,
 };
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
@@ -74,6 +78,10 @@ pub(crate) struct Merged {
 }
 
 pub fn link(objects: &[ObjectModule], options: &Options) -> Result<Linked, LinkErrors> {
+    link_owned(objects.to_vec(), options)
+}
+
+pub fn link_owned(objects: Vec<ObjectModule>, options: &Options) -> Result<Linked, LinkErrors> {
     finish(merge(objects, options)?)
 }
 
@@ -105,9 +113,9 @@ fn message(error: &dyn std::error::Error) -> String {
     text
 }
 
-pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merged, LinkErrors> {
+pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Merged, LinkErrors> {
     let mut errors = Vec::new();
-    for object in objects {
+    for object in &objects {
         if object.format_version != rglsl::object::FORMAT_VERSION {
             errors.push(LinkError::Format {
                 found: object.format_version,
@@ -133,10 +141,10 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
     }
     let specialized: Vec<ObjectModule> = match stage {
         Some(stage) => objects
-            .iter()
+            .into_iter()
             .filter_map(|object| {
                 if !object.is_library() {
-                    return Some(object.clone());
+                    return Some(object);
                 }
                 match object.for_stage(stage) {
                     Ok(specialized) => Some(specialized),
@@ -156,7 +164,7 @@ pub(crate) fn merge(objects: &[ObjectModule], options: &Options) -> Result<Merge
                 }
             })
             .collect(),
-        None => objects.to_vec(),
+        None => objects,
     };
     if errors
         .iter()
@@ -348,6 +356,13 @@ fn check_geometry_inputs(
 ) {
     let expected = primitive_vertices(primitive);
     for object in objects {
+        let names: std::collections::BTreeMap<Handle<rglsl::GlobalVariable>, &str> = object
+            .unit
+            .globals
+            .iter()
+            .rev()
+            .map(|symbol| (symbol.global, symbol.name.as_str()))
+            .collect();
         for (handle, global) in object.unit.module.global_variables.iter() {
             if global.space != AddressSpace::Input
                 || !matches!(global.io, Some(Binding::Location { .. }))
@@ -363,10 +378,9 @@ fn check_geometry_inputs(
                 _ => continue,
             };
             if size != expected {
-                let name = object
-                    .unit
-                    .global_symbol(handle)
-                    .map(|symbol| symbol.name.clone())
+                let name = names
+                    .get(&handle)
+                    .map(|&name| String::from(name))
                     .or_else(|| global.name.clone())
                     .unwrap_or_default();
                 errors.push(LinkError::GeometryInputSize(name));
@@ -407,17 +421,103 @@ pub(crate) fn finish(merged: Merged) -> Result<Linked, LinkErrors> {
         globals: _,
         warnings,
     } = merged;
-    compact(&mut module, KeepUnused::Declarations)
-        .map_err(|error| LinkError::Internal(message(&error)))?;
-    let mut validator = Validator::new(ValidationFlags::all());
-    validator.mode(ValidationMode::Executable);
-    let info = validator
-        .validate(&module)
-        .map_err(|error| LinkError::Validation(message(error.as_inner())))?;
+    let info = finish_module(&mut module, None)?;
     Ok(Linked {
         stage,
         module,
         info,
         warnings,
     })
+}
+
+pub(crate) fn finish_module(
+    module: &mut Module,
+    validated: Option<ModuleInfo>,
+) -> Result<ModuleInfo, LinkError> {
+    let mut info = compact_and_validate(module, validated)?;
+    let unused = unused_predeclared_types(module, &info);
+    if !unused.is_empty() {
+        module
+            .special_types
+            .predeclared_types
+            .retain(|_, handle| !unused.contains(handle));
+        info = compact_and_validate(module, None)?;
+    }
+    Ok(info)
+}
+
+fn compact_and_validate(
+    module: &mut Module,
+    validated: Option<ModuleInfo>,
+) -> Result<ModuleInfo, LinkError> {
+    let before = arena_sizes(module);
+    compact(module, KeepUnused::Declarations)
+        .map_err(|error| LinkError::Internal(message(&error)))?;
+    match validated {
+        Some(info) if arena_sizes(module) == before => Ok(info),
+        Some(_) | None => {
+            let mut validator = Validator::new(ValidationFlags::all());
+            validator.mode(ValidationMode::Executable);
+            validator
+                .validate(module)
+                .map_err(|error| LinkError::Validation(message(error.as_inner())))
+        }
+    }
+}
+
+fn arena_sizes(module: &Module) -> Vec<usize> {
+    let mut sizes = Vec::from([
+        module.types.len(),
+        module.special_types.predeclared_types.len(),
+        module.constants.len(),
+        module.overrides.len(),
+        module.global_expressions.len(),
+        module.global_variables.len(),
+        module.functions.len(),
+    ]);
+    let functions = module
+        .functions
+        .iter()
+        .map(|(_, function)| function)
+        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    for function in functions {
+        sizes.push(function.expressions.len());
+        sizes.push(function.local_variables.len());
+        sizes.push(function.named_expressions.len());
+    }
+    sizes
+}
+
+fn unused_predeclared_types(
+    module: &Module,
+    info: &ModuleInfo,
+) -> std::collections::BTreeSet<Handle<rglsl::Type>> {
+    let mut unused: std::collections::BTreeSet<Handle<rglsl::Type>> = module
+        .special_types
+        .predeclared_types
+        .values()
+        .copied()
+        .collect();
+    if unused.is_empty() {
+        return unused;
+    }
+    let functions = module
+        .functions
+        .iter()
+        .map(|(handle, function)| (function, &info[handle]))
+        .chain(
+            module
+                .entry_points
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (&entry.function, info.get_entry_point(index))),
+        );
+    for (function, function_info) in functions {
+        for (handle, _) in function.expressions.iter() {
+            if let rglsl::proc::TypeResolution::Handle(ty) = function_info[handle].ty {
+                unused.remove(&ty);
+            }
+        }
+    }
+    unused
 }

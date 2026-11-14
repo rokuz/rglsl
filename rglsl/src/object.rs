@@ -11,7 +11,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 22;
+pub const FORMAT_VERSION: u32 = 23;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -67,6 +67,17 @@ pub struct CompiledUnit {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub deferred_bias: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub dead_calls: Vec<DeadCall>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+pub struct DeadCall {
+    pub caller: Option<Handle<Function>>,
+    pub callee: Handle<Function>,
 }
 
 impl CompiledUnit {
@@ -82,21 +93,12 @@ impl CompiledUnit {
             work_group_size_placeholders: [None; 3],
             specialized: None,
             deferred_bias: false,
+            dead_calls: Vec::new(),
         }
     }
 
     pub const fn has_entry_point(&self) -> bool {
         !self.module.entry_points.is_empty()
-    }
-
-    pub fn function_symbol(&self, function: Handle<Function>) -> Option<&FunctionSymbol> {
-        self.functions
-            .iter()
-            .find(|symbol| symbol.function == function)
-    }
-
-    pub fn global_symbol(&self, global: Handle<GlobalVariable>) -> Option<&GlobalSymbol> {
-        self.globals.iter().find(|symbol| symbol.global == global)
     }
 
     fn for_library_stage(&self, stage: ShaderStage) -> Self {
@@ -300,6 +302,7 @@ pub enum SymbolKind {
     Variable,
     Block,
     BuiltIn,
+    Local,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -327,6 +330,9 @@ pub struct GlobalSymbol {
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub on_use: bool,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub initializer: Option<Handle<crate::Expression>>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

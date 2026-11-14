@@ -13,6 +13,7 @@ pub(crate) struct Candidate<'c> {
     pub automatic_location: bool,
     pub binding: BindingAssignment,
     pub instance: Option<String>,
+    pub initializer: Option<Handle<Expression>>,
 }
 
 impl Builder<'_> {
@@ -33,7 +34,7 @@ impl Builder<'_> {
             space,
             binding,
             ty,
-            init,
+            init: _,
             memory_decorations,
             ref io,
             xfb,
@@ -82,7 +83,7 @@ impl Builder<'_> {
         if current.spirv_decorations.len() != spirv_decorations.len() {
             self.errors.push(mismatch("SPIR-V decorate qualifiers"));
         }
-        if !same_optional(&self.module, current.init, init) {
+        if !same_optional(&self.module, existing.initializer, candidate.initializer) {
             self.errors.push(mismatch("initializers"));
         }
         if !same_optional(&self.module, current.heap_offset, heap_offset) {

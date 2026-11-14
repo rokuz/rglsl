@@ -788,6 +788,7 @@ impl<'a> Lowerer<'a> {
         };
         let mut init = None;
         let mut runtime = None;
+        let mut constant_initializer = None;
         if let Some(ref initializer) = declarator.kind.initializer {
             if rglsl_sema::analyze::is_null_initializer(&initializer.node) {
                 init = Some(
@@ -797,7 +798,7 @@ impl<'a> Lowerer<'a> {
                 );
             }
             let constant = match initializer.node {
-                Initializer::Expression(ref expression) if self.object => analysis
+                Initializer::Expression(ref expression) => analysis
                     .expression(expression.id)
                     .filter(|info| {
                         info.is_constant
@@ -805,7 +806,7 @@ impl<'a> Lowerer<'a> {
                             && !info.ty.contains_reference(&analysis.types)
                     })
                     .and_then(|info| Some((info.ty.clone(), info.value.clone()?))),
-                Initializer::Expression(_) | Initializer::List(_) => None,
+                Initializer::List(_) => None,
             };
             let converted = constant.and_then(|(from, value)| {
                 if from == *ty {
@@ -816,7 +817,15 @@ impl<'a> Lowerer<'a> {
                     .then(|| value.values.iter().map(|v| v.convert(target)).collect())
             });
             match converted {
-                Some(values) => init = Some(self.global_constant(ty, &values, at)?),
+                Some(values) => {
+                    let constant = self.global_constant(ty, &values, at)?;
+                    constant_initializer = Some(constant);
+                    if self.main_function().is_some() {
+                        runtime = Some(initializer);
+                    } else {
+                        init = Some(constant);
+                    }
+                }
                 None if init.is_some() => {}
                 None => runtime = Some(initializer),
             }
@@ -842,6 +851,9 @@ impl<'a> Lowerer<'a> {
             at,
         );
         self.globals.insert(symbol, GlobalRef::Variable(handle));
+        if let Some(constant) = constant_initializer {
+            self.constant_initializers.insert(handle, constant);
+        }
         if let Some(initializer) = runtime {
             self.initializers.push(Initialization {
                 global: handle,
@@ -2314,7 +2326,10 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             }?;
             let global = self.with(|this| this.ray_query_global(name, ty, span))?;
             let found = GlobalRef::Variable(global);
-            self.with(|this| this.globals.insert(symbol, found))?;
+            self.with(|this| {
+                this.globals.insert(symbol, found);
+                this.function_private.insert(global);
+            })?;
             return Ok(found);
         }
         if self.with(|this| this.has_local_size_ids())?

@@ -141,6 +141,10 @@ impl<T> Arena<T> {
         Handle::from_usize(index)
     }
 
+    pub fn appended_handle(&self, offset: usize) -> Handle<T> {
+        Handle::from_usize(self.data.len().saturating_add(offset))
+    }
+
     /// Fetch a handle to an existing type.
     pub fn fetch_if<F: Fn(&T) -> bool>(&self, fun: F) -> Option<Handle<T>> {
         self.data

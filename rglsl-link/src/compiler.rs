@@ -13,7 +13,10 @@ use rglsl_pp::{
 };
 
 use crate::cache::BuiltinCache;
-use crate::{LinkError, Options, file, link_objects_staged, message, validate_object};
+use crate::{
+    CompileError, LinkError, Options, compile_object, file, group_by_stage, group_objects_by_stage,
+    link_program_staged, message,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -217,16 +220,21 @@ impl Compiler {
             answers: BTreeMap::new(),
         };
         let frontend = options.frontend(Arc::clone(&self.builtins));
-        let mut object = glsl::Frontend::default()
-            .compile_with_includer(&frontend, source, root, &mut includer)
-            .map_err(|errors| parse_diagnostics(&errors, source, &options.name))?;
+        let mut object = compile_object(&frontend, source, root, &mut includer)
+            .map_err(|error| match error {
+                CompileError::Frontend(errors) => parse_diagnostics(&errors, source, &options.name),
+                CompileError::Object(errors) | CompileError::Link(errors) => Diagnostics {
+                    list: errors
+                        .iter()
+                        .map(|error| Diagnostic::error(Some(&options.name), error.to_string()))
+                        .collect(),
+                },
+                CompileError::Invalid(_) => {
+                    Diagnostic::error(Some(&options.name), error.to_string()).into()
+                }
+            })?
+            .object;
         object.name = Some(options.name.clone());
-        validate_object(&object).map_err(|errors| Diagnostics {
-            list: errors
-                .iter()
-                .map(|error| Diagnostic::error(Some(&options.name), error.to_string()))
-                .collect(),
-        })?;
         Ok(object)
     }
 
@@ -246,7 +254,7 @@ impl Compiler {
         if !errors.list.is_empty() {
             return Err(errors);
         }
-        link_spirv(&objects, options)
+        spirv_program(group_objects_by_stage(objects), options)
     }
 }
 
@@ -379,12 +387,19 @@ pub fn link_spirv<O: Borrow<ObjectModule>>(
     objects: &[O],
     options: &ProgramOptions,
 ) -> Result<Program, Diagnostics> {
+    spirv_program(group_by_stage(objects), options)
+}
+
+fn spirv_program(
+    stages: Vec<Vec<ObjectModule>>,
+    options: &ProgramOptions,
+) -> Result<Program, Diagnostics> {
     let link_options = Options {
         auto_map_bindings: options.auto_map_bindings,
         auto_map_locations: options.auto_map_locations,
         ..Options::default()
     };
-    let linked = link_objects_staged(objects, &link_options).map_err(|errors| Diagnostics {
+    let linked = link_program_staged(stages, &link_options).map_err(|errors| Diagnostics {
         list: errors
             .iter()
             .map(|&(stage, ref error)| link_diagnostic(stage, error))

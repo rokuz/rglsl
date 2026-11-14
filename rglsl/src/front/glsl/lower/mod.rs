@@ -56,6 +56,25 @@ pub(super) fn parse(
     root: rglsl_pp::FileId,
     includer: &mut dyn rglsl_pp::Includer,
 ) -> core::result::Result<Module, ParseErrors> {
+    let mut module = compile_program(options, source, root, includer)?
+        .unit
+        .module;
+    let valid = crate::valid::Validator::new(crate::valid::ValidationFlags::all())
+        .validate(&module)
+        .is_ok();
+    if valid {
+        crate::compact::compact(&mut module, crate::compact::KeepUnused::Declarations)
+            .map_err(|_| ParseErrors::from(Vec::from([internal(Span::UNDEFINED)])))?;
+    }
+    Ok(module)
+}
+
+pub(super) fn compile_program(
+    options: &Options,
+    source: &str,
+    root: rglsl_pp::FileId,
+    includer: &mut dyn rglsl_pp::Includer,
+) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
     lower(
         options,
         source,
@@ -66,7 +85,6 @@ pub(super) fn parse(
         false,
         &StageClass::new(options.stage),
     )
-    .map(|object| object.unit.module)
 }
 
 pub(super) fn compile(
@@ -717,6 +735,22 @@ fn debug_anchors(
     Ok(anchors)
 }
 
+fn main_of(analysis: &Analysis) -> Option<FunctionId> {
+    analysis
+        .functions
+        .iter()
+        .enumerate()
+        .find(|&(_, function)| function.name == "main" && function.parameters.is_empty())
+        .and_then(|(index, _)| {
+            let index = u32::try_from(index).ok()?;
+            analysis
+                .function_declarations
+                .values()
+                .copied()
+                .find(|id| id.index() == index)
+        })
+}
+
 pub(super) struct Lowered {
     pub object: crate::object::ObjectModule,
     pub debug: DebugCollector,
@@ -1109,6 +1143,10 @@ pub(super) struct Lowerer<'a> {
     pub(super) ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
     pub(super) incoming_ray_payload: Option<Handle<GlobalVariable>>,
     pub(super) deferred_private: BTreeMap<SymbolId, (String, Span)>,
+    pub(super) function_private: BTreeSet<Handle<GlobalVariable>>,
+    pub(super) ast_calls: BTreeMap<FunctionId, BTreeSet<FunctionId>>,
+    main: Option<FunctionId>,
+    pub(super) constant_initializers: BTreeMap<Handle<GlobalVariable>, Handle<crate::Expression>>,
     xfb: xfb::Xfb,
     stage_layout: stage::StageLayout,
     pub(super) object: bool,
@@ -1211,6 +1249,10 @@ impl<'a> Lowerer<'a> {
             ray_data: BTreeMap::new(),
             incoming_ray_payload: None,
             deferred_private: BTreeMap::new(),
+            function_private: BTreeSet::new(),
+            ast_calls: BTreeMap::new(),
+            main: main_of(analysis),
+            constant_initializers: BTreeMap::new(),
             xfb: xfb::Xfb::new(),
             stage_layout: stage::StageLayout::default(),
             probe,
@@ -1432,41 +1474,26 @@ impl<'a> Lowerer<'a> {
             self.errors.extend(missing_layouts);
             return Err(core::mem::take(&mut self.errors).into());
         }
-        let order = match self.function_order(&definitions) {
-            Ok((order, reachable)) => {
-                self.reachable = reachable;
-                order
-            }
+        let prepass::FunctionOrder {
+            reached,
+            unreached,
+            reachable,
+            calls,
+        } = match self.function_order(&definitions) {
+            Ok(order) => order,
             Err(error) => return Err(vec![error].into()),
         };
+        let reaches_all = reachable.is_none();
+        self.reachable = reachable;
         let main = self.main_function();
-        if self.object {
-            let result = self.declare_imports();
-            self.report(result);
-        }
-        for &(id, definition) in &order {
-            let result = self.declare_function(id, definition);
-            self.report(result);
-        }
+        let mut imports: BTreeSet<FunctionId> = if self.object {
+            self.undefined_functions().into_iter().collect()
+        } else {
+            BTreeSet::new()
+        };
+        self.declare_functions(&reached, main, &calls, &mut imports);
         let declared_globals = self.module.global_variables.len();
-        for &(id, definition) in &order {
-            let before = self.errors.len();
-            let result = self.define_function(id, definition);
-            self.report(result);
-            if self.errors.len() > before
-                && self.is_deferrable(id)
-                && let Some(&handle) = self.functions.get(&id)
-            {
-                let message = self
-                    .errors
-                    .drain(before..)
-                    .map(|error| error.kind.to_string())
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                self.defer_function(handle, message);
-            }
-        }
-        self.on_use_globals = self.globals_on_use(declared_globals);
+        self.define_functions(&reached);
         let entry = definitions.iter().find(|definition| {
             self.analysis.function_declarations.get(&definition.id) == main.as_ref()
         });
@@ -1480,6 +1507,29 @@ impl<'a> Lowerer<'a> {
                 "the shader has no `main` function",
                 Span::UNDEFINED,
             )),
+        }
+        let lowered_globals = self.module.global_variables.len();
+        self.declare_functions(&unreached, None, &calls, &mut imports);
+        for id in imports {
+            let result = self.declare_import(id);
+            self.report(result);
+        }
+        self.define_functions(&unreached);
+        self.ast_calls = calls;
+        let optional_from = match (reaches_all, self.options.keep_uncalled) {
+            (_, true) => self.module.global_variables.len(),
+            (true, false) => declared_globals,
+            (false, false) => lowered_globals,
+        };
+        self.on_use_globals = self
+            .module
+            .global_variables
+            .iter()
+            .skip(optional_from)
+            .map(|(handle, _)| handle)
+            .collect();
+        if let Some(entry) = self.module.entry_points.first_mut() {
+            entry.interface.clone_from(&self.interface);
         }
         self.errors.extend(missing_layouts);
         if !self.errors.is_empty() {
@@ -1506,25 +1556,49 @@ impl<'a> Lowerer<'a> {
             .filter_map(|&handle| self.module.functions.try_get(handle).ok())
     }
 
-    fn globals_on_use(&self, declared: usize) -> BTreeSet<Handle<GlobalVariable>> {
-        if self.options.keep_uncalled {
-            return BTreeSet::new();
-        }
-        let mut referenced = BTreeSet::new();
-        for function in self.reachable_functions() {
-            for (_, expression) in function.expressions.iter() {
-                if let crate::Expression::GlobalVariable(global) = *expression {
-                    referenced.insert(global);
+    fn declare_functions(
+        &mut self,
+        group: &prepass::Definitions<'a>,
+        main: Option<FunctionId>,
+        calls: &BTreeMap<FunctionId, BTreeSet<FunctionId>>,
+        imports: &mut BTreeSet<FunctionId>,
+    ) {
+        let callers = group
+            .iter()
+            .map(|&(id, definition)| (id, Some(definition)))
+            .chain(main.map(|id| (id, None)));
+        for (id, definition) in callers {
+            for &callee in calls.get(&id).into_iter().flatten() {
+                if imports.remove(&callee) {
+                    let result = self.declare_import(callee);
+                    self.report(result);
                 }
             }
+            if let Some(definition) = definition {
+                let result = self.declare_function(id, definition);
+                self.report(result);
+            }
         }
-        self.module
-            .global_variables
-            .iter()
-            .skip(declared)
-            .map(|(handle, _)| handle)
-            .filter(|handle| !referenced.contains(handle))
-            .collect()
+    }
+
+    fn define_functions(&mut self, group: &prepass::Definitions<'a>) {
+        for &(id, definition) in group {
+            let before = self.errors.len();
+            let result = self.define_function(id, definition);
+            self.report(result);
+            if self.errors.len() > before
+                && self.is_deferrable(id)
+                && let Some(&handle) = self.functions.get(&id)
+            {
+                let message = self
+                    .errors
+                    .drain(before..)
+                    .map(|error| error.kind.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                self.defer_function(handle, message);
+            }
+        }
     }
 
     fn relax_globals(&mut self) {
@@ -1579,20 +1653,8 @@ impl<'a> Lowerer<'a> {
         self.parameters.insert(id, symbols);
     }
 
-    fn main_function(&self) -> Option<FunctionId> {
-        self.analysis
-            .functions
-            .iter()
-            .enumerate()
-            .find(|&(_, function)| function.name == "main" && function.parameters.is_empty())
-            .and_then(|(index, _)| {
-                let index = u32::try_from(index).ok()?;
-                self.analysis
-                    .function_declarations
-                    .values()
-                    .copied()
-                    .find(|id| id.index() == index)
-            })
+    const fn main_function(&self) -> Option<FunctionId> {
+        self.main
     }
 
     pub(super) fn function_name(&self, id: FunctionId) -> String {
