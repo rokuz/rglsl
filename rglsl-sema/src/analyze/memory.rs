@@ -4,7 +4,7 @@ use rglsl_ast::Span;
 use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
-use crate::builtins::kind::{AtomicOperation, Barrier, BuiltinKind, SplitPhase};
+use crate::builtins::kind::{AtomicOperation, Barrier, BuiltinKind, SplitPhase, Texture};
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{Scalar, Type};
 
@@ -42,26 +42,25 @@ struct Shape {
     storage: usize,
 }
 
-fn image_shape(name: &str, multisample: bool) -> Option<Shape> {
-    let offset = usize::from(multisample);
-    let (kind, first_constant) = match name {
-        "imageAtomicLoad" => (Kind::Load, 2),
-        "imageAtomicStore" => (Kind::Store, 3),
-        "imageAtomicCompSwap" => (Kind::CompareSwap, 4),
-        "imageAtomicAdd"
-        | "imageAtomicMin"
-        | "imageAtomicMax"
-        | "imageAtomicAnd"
-        | "imageAtomicOr"
-        | "imageAtomicXor"
-        | "imageAtomicExchange" => (Kind::Modify, 3),
-        _ => return None,
+const fn image_shape(operation: AtomicOperation, multisample: bool) -> Shape {
+    let offset = if multisample { 1 } else { 0 };
+    let (kind, first_constant) = match operation {
+        AtomicOperation::Load => (Kind::Load, 2),
+        AtomicOperation::Store => (Kind::Store, 3),
+        AtomicOperation::CompareSwap => (Kind::CompareSwap, 4),
+        AtomicOperation::Add
+        | AtomicOperation::Min
+        | AtomicOperation::Max
+        | AtomicOperation::And
+        | AtomicOperation::Or
+        | AtomicOperation::Xor
+        | AtomicOperation::Exchange => (Kind::Modify, 3),
     };
-    Some(Shape {
+    Shape {
         kind,
         first_constant: first_constant + offset,
         storage: first_constant + offset + 1,
-    })
+    }
 }
 
 const fn shape(builtin: BuiltinKind) -> Option<Shape> {
@@ -159,22 +158,28 @@ impl Analyzer<'_> {
     pub(crate) fn image_atomic_float_extensions(
         &mut self,
         span: Span,
+        operation: AtomicOperation,
         name: &str,
         operands: &[Operand],
     ) {
         let Some(first) = operands.first() else {
             return;
         };
-        let operation = name.strip_prefix("imageAtomic").unwrap_or_default();
         let float = first
             .ty
             .as_opaque()
             .is_some_and(|opaque| opaque.sampled == crate::types::SampledType::Float);
         let extension = match operation {
             _ if !float => None,
-            "Add" | "Load" | "Store" => Some(Extension::ExtShaderAtomicFloat),
-            "Min" | "Max" => Some(Extension::ExtShaderAtomicFloat2),
-            _ => None,
+            AtomicOperation::Add | AtomicOperation::Load | AtomicOperation::Store => {
+                Some(Extension::ExtShaderAtomicFloat)
+            }
+            AtomicOperation::Min | AtomicOperation::Max => Some(Extension::ExtShaderAtomicFloat2),
+            AtomicOperation::And
+            | AtomicOperation::Or
+            | AtomicOperation::Xor
+            | AtomicOperation::Exchange
+            | AtomicOperation::CompareSwap => None,
         };
         if let Some(extension) = extension {
             self.require_extension(span, extension, name);
@@ -192,13 +197,10 @@ impl Analyzer<'_> {
         let multisample = first
             .and_then(|operand| operand.ty.as_opaque())
             .is_some_and(|opaque| opaque.multisample);
-        let image = name.starts_with("imageAtomic");
-        let (shape, scoped) = if image {
-            let Some(shape) = image_shape(name, multisample) else {
-                return true;
-            };
+        let image = matches!(kind, BuiltinKind::Texture(Texture::ImageAtomic(_)));
+        let (shape, scoped) = if let BuiltinKind::Texture(Texture::ImageAtomic(operation)) = kind {
             let limit = if multisample { 5 } else { 4 };
-            (shape, operands.len() > limit)
+            (image_shape(operation, multisample), operands.len() > limit)
         } else {
             let Some(shape) = shape(kind) else {
                 return true;

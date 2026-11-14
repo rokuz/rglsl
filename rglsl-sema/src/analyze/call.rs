@@ -1319,8 +1319,8 @@ impl Analyzer<'_> {
         let image = image_access(kind);
         if let BuiltinKind::Atomic(operation) = kind {
             self.atomic_float_extensions(span, operation, name, operands);
-        } else if image == Some(ImageAccess::Atomic) {
-            self.image_atomic_float_extensions(span, name, operands);
+        } else if let BuiltinKind::Texture(Texture::ImageAtomic(operation)) = kind {
+            self.image_atomic_float_extensions(span, operation, name, operands);
         }
         if !self.memory_scope_checks(span, kind, name, operands) {
             return false;

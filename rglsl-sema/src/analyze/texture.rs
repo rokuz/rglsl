@@ -6,7 +6,7 @@ use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
 use crate::builtins::kind::{
-    BuiltinKind, GatherOffsets, GatherPattern, Sample, Texture, TextureGather, TextureLevel,
+    BuiltinKind, GatherOffsets, GatherPattern, Pure, Sample, Texture, TextureGather, TextureLevel,
 };
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{OpaqueKind, TextureDimension};
@@ -17,18 +17,6 @@ const COMPUTE_DERIVATIVES: [Extension; 2] = [
     Extension::KhrComputeShaderDerivatives,
 ];
 const KHR_ONLY: [Extension; 1] = [Extension::KhrComputeShaderDerivatives];
-
-const DERIVATIVE_FUNCTIONS: [&str; 9] = [
-    "dFdx",
-    "dFdy",
-    "fwidth",
-    "dFdxFine",
-    "dFdyFine",
-    "fwidthFine",
-    "dFdxCoarse",
-    "dFdyCoarse",
-    "fwidthCoarse",
-];
 
 const fn implicit_lod(kind: Texture, operands: &[Operand]) -> bool {
     match kind {
@@ -138,7 +126,7 @@ impl Analyzer<'_> {
             valid = self.texture_function_checks(span, texture, name, operands);
             implicit = implicit_lod(texture, operands);
         }
-        let derivative = DERIVATIVE_FUNCTIONS.contains(&name);
+        let derivative = matches!(kind, BuiltinKind::Pure(Pure::Derivative(..)));
         if !derivative && !implicit {
             return valid;
         }

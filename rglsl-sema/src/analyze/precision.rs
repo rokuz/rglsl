@@ -9,6 +9,7 @@ use rglsl_ast::ast::{
 };
 
 use super::{Analysis, Callee};
+use crate::builtins::kind::BuiltinKind;
 use crate::builtins::{BuiltinFlags, BuiltinFunction};
 use crate::scope::{SymbolId, SymbolKind};
 use crate::types::{Scalar, Type, TypeKind};
@@ -49,30 +50,6 @@ const fn builtin_result(entry: Option<&BuiltinFunction>) -> Precision {
         Some(entry) if entry.has(BuiltinFlags::LOWP_RESULT) => Precision::Low,
         Some(_) | None => Precision::None,
     }
-}
-
-fn is_sampling(name: &str) -> bool {
-    let texture = name.starts_with("texture") || name.starts_with("texel");
-    let query = matches!(
-        name,
-        "textureSize" | "textureQueryLod" | "textureQueryLevels" | "textureSamples"
-    );
-    (texture && !query)
-        || name.starts_with("sparseTex")
-        || matches!(name, "fragmentFetchAMD" | "fragmentMaskFetchAMD")
-}
-
-fn is_image_or_texture(name: &str) -> bool {
-    [
-        "texture",
-        "texel",
-        "image",
-        "sparse",
-        "subpassLoad",
-        "fragment",
-    ]
-    .iter()
-    .any(|prefix| name.starts_with(prefix))
 }
 
 fn counted_arguments(entry: Option<&BuiltinFunction>, count: usize) -> usize {
@@ -502,7 +479,6 @@ impl<'a> Pass<'a> {
                     self.set_own(node, Precision::None);
                     return;
                 };
-                let name = function.name.as_str();
                 let entry = analysis.builtins.entry(*id);
                 let counted = counted_arguments(entry, arguments.len());
                 let mut operation = arguments
@@ -514,7 +490,7 @@ impl<'a> Pass<'a> {
                 if entry.is_some_and(|entry| entry.has(BuiltinFlags::HIGHP_OPERANDS)) {
                     operation = Precision::High;
                 }
-                let result = if is_sampling(name) || matches!(name, "imageLoad" | "imageStore") {
+                let result = if entry.is_some_and(|entry| entry.has(BuiltinFlags::SAMPLED_RESULT)) {
                     arguments
                         .first()
                         .map_or(Precision::None, |first| self.visible(first))
@@ -529,7 +505,7 @@ impl<'a> Pass<'a> {
                 self.set_own(node, Precision::None);
                 if operation != Precision::None {
                     self.propagate_inner(node, operation);
-                    if !is_image_or_texture(name) {
+                    if !entry.is_some_and(|entry| matches!(entry.kind, BuiltinKind::Texture(_))) {
                         self.operation.insert(node.id, operation);
                     }
                 }

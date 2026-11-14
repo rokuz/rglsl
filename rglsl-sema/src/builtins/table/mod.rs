@@ -68,6 +68,7 @@ bitflags::bitflags! {
         const COOPERATIVE_VECTOR = 1 << 5;
         const NO_DOUBLE_LONG_VECTOR = 1 << 6;
         const LOWP_RESULT = 1 << 7;
+        const SAMPLED_RESULT = 1 << 8;
     }
 }
 
