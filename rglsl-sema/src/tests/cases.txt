@@ -6679,3 +6679,43 @@ void main() {}
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 layout(location = 0, xfb_buffer = 0, xfb_offset = 0) out float16_t v;
 void main() { v = missing; }
+### fragment clip distances cannot become outputs | frag | 2:InvalidRedeclaration
+out float gl_ClipDistance[4];
+void main() {}
+### fragment clip distances can be resized | frag | ok
+in float gl_ClipDistance[4];
+void main() {}
+### clip distances keep their interpolation | frag | 2:InvalidRedeclaration, 3:InvalidRedeclaration
+flat in float gl_CullDistance[4];
+centroid in float gl_ClipDistance[4];
+void main() {}
+### clip distances take no layout | vert | 2:InvalidRedeclaration
+layout(location = 1) out float gl_ClipDistance[4];
+void main() {}
+### clip distances keep their element type | vert | 2:InvalidRedeclaration
+out int gl_ClipDistance[4];
+void main() {}
+### fragment depth stays an output | frag | 2:InvalidRedeclaration
+layout(depth_greater) in float gl_FragDepth;
+void main() {}
+### fragment depth stays a scalar | frag | 2:InvalidRedeclaration
+out float gl_FragDepth[2];
+void main() {}
+### fragment coordinate stays an input | frag | 2:InvalidRedeclaration
+layout(origin_upper_left) out vec4 gl_FragCoord;
+void main() {}
+### fragment coordinate keeps its interpolation | frag | 2:InvalidRedeclaration
+flat in vec4 gl_FragCoord;
+void main() {}
+### sample mask redeclaration needs override coverage | frag | 2:InvalidRedeclaration
+out int gl_SampleMask[];
+void main() {}
+### layer redeclaration needs a viewport layout | geom | 2:InvalidRedeclaration
+out int gl_Layer;
+layout(points) in;
+layout(points, max_vertices = 1) out;
+void main() {}
+### other built-ins cannot be redeclared | vert | 2:ReservedIdentifier, 3:ReservedIdentifier
+out float gl_PointSize;
+out int gl_VertexIndex;
+void main() {}

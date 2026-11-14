@@ -81,6 +81,17 @@ pub enum ConstantValue {
     LocalSize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Redeclaration {
+    Interpolant,
+    FragmentOutput,
+    FragmentCoordinate,
+    OverrideCoverage,
+    ViewportRelative,
+    Output,
+    Free,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum VariableKind {
     Input(BuiltIn),
@@ -97,6 +108,7 @@ pub struct BuiltinVariable {
     pub shared: Option<&'static str>,
     pub named: Option<&'static str>,
     pub flags: VariableFlags,
+    pub redeclaration: Option<Redeclaration>,
     pub(crate) ty: Word,
     pub(crate) dimensions: &'static [Option<u32>],
     pub(crate) precision: Option<PrecisionQualifier>,
@@ -118,6 +130,7 @@ impl BuiltinVariable {
         shared: None,
         named: None,
         flags: VariableFlags::empty(),
+        redeclaration: None,
         ty: Word::Fixed(crate::types::TypeKind::Void),
         dimensions: &[],
         precision: None,

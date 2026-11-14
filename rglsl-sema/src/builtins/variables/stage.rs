@@ -3,8 +3,8 @@ use rglsl_types::builtin::BuiltIn::*;
 use rglsl_types::builtin::{ShaderBallot as Ballot, ShaderCore as Core, SubgroupMask as Mask};
 use rglsl_types::extension::Extension::{self, *};
 
-use super::BuiltinVariable;
 use super::VariableKind::{Input, Output};
+use super::{BuiltinVariable, Redeclaration};
 use crate::builtins::{
     ALL_STAGE_BITS, ANY_HIT, CLOSEST_HIT, COMPUTE, FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS,
     RAY_GENERATION, TASK, TESS_CONTROL, TESS_EVALUATION, VERTEX,
@@ -58,6 +58,7 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_PrimitiveShadingRateEXT": Output(PrimitiveShadingRate) => int {
         stages: VERTEX | GEOMETRY,
         requires_one_of: &[ExtFragmentShadingRate],
+        redeclaration: Some(Redeclaration::Free),
     }
     "gl_FragSizeEXT": Input(FragSize { nv: false }) => ivec2 {
         stages: FRAGMENT,
@@ -82,10 +83,12 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_ShadingRateEXT": Input(ShadingRate) => int {
         stages: FRAGMENT,
         requires_one_of: &[ExtFragmentShadingRate],
+        redeclaration: Some(Redeclaration::Free),
     }
     "gl_FragStencilRefARB": Output(FragStencilRef) => int {
         stages: FRAGMENT,
         requires_one_of: &[ArbShaderStencilExport],
+        redeclaration: Some(Redeclaration::FragmentOutput),
     }
     "gl_BaryCoordNV": Input(Barycentric { perspective: true, nv: true }) => vec3 {
         stages: FRAGMENT,
@@ -110,6 +113,7 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_Layer": Output(LAYER) => int {
         stages: VERTEX | TESSELLATION,
         requires_one_of: VIEWPORT_LAYER,
+        redeclaration: Some(Redeclaration::ViewportRelative),
     }
     "gl_ViewportMask": Output(ViewportMaskNV) => int[] {
         stages: VERTEX | TESS_EVALUATION | GEOMETRY,
@@ -164,20 +168,41 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_PrimitiveIDIn": Input(PrimitiveIndex) => int { stages: GEOMETRY }
     "gl_InvocationID": Input(InvocationId) => int { stages: GEOMETRY }
     "gl_PrimitiveID": Output(PrimitiveIndex) => int { stages: GEOMETRY }
-    "gl_Layer": Output(LAYER) => int { stages: GEOMETRY }
+    "gl_Layer": Output(LAYER) => int {
+        stages: GEOMETRY,
+        redeclaration: Some(Redeclaration::ViewportRelative),
+    }
     "gl_ViewportIndex": Output(ViewportIndex) => int { stages: GEOMETRY }
-    "gl_FragCoord": Input(Position { invariant: false }) => vec4 { stages: FRAGMENT }
+    "gl_FragCoord": Input(Position { invariant: false }) => vec4 {
+        stages: FRAGMENT,
+        redeclaration: Some(Redeclaration::FragmentCoordinate),
+    }
     "gl_FrontFacing": Input(FrontFacing) => bool { stages: FRAGMENT }
-    "gl_FragDepth": Output(FragDepth) => float { stages: FRAGMENT }
+    "gl_FragDepth": Output(FragDepth) => float {
+        stages: FRAGMENT,
+        redeclaration: Some(Redeclaration::FragmentOutput),
+    }
     "gl_PointCoord": Input(PointCoord) => vec2 { stages: FRAGMENT }
-    "gl_ClipDistance": Input(ClipDistances) => float[] { stages: FRAGMENT }
-    "gl_CullDistance": Input(CullDistance) => float[] { stages: FRAGMENT }
+    "gl_ClipDistance": Input(ClipDistances) => float[] {
+        stages: FRAGMENT,
+        redeclaration: Some(Redeclaration::Interpolant),
+    }
+    "gl_CullDistance": Input(CullDistance) => float[] {
+        stages: FRAGMENT,
+        redeclaration: Some(Redeclaration::Interpolant),
+    }
     "gl_PrimitiveID": Input(PrimitiveIndex) => int { stages: FRAGMENT }
     "gl_SampleID": Input(SampleIndex) => int { stages: FRAGMENT }
     "gl_SamplePosition": Input(SamplePosition) => vec2 { stages: FRAGMENT }
     "gl_SampleMaskIn": Input(SAMPLE_MASK) => int[] { stages: FRAGMENT }
-    "gl_SampleMask": Output(SAMPLE_MASK) => int[] { stages: FRAGMENT }
-    "gl_Layer": Input(LAYER) => int { stages: FRAGMENT }
+    "gl_SampleMask": Output(SAMPLE_MASK) => int[] {
+        stages: FRAGMENT,
+        redeclaration: Some(Redeclaration::OverrideCoverage),
+    }
+    "gl_Layer": Input(LAYER) => int {
+        stages: FRAGMENT,
+        redeclaration: Some(Redeclaration::ViewportRelative),
+    }
     "gl_ViewportIndex": Input(ViewportIndex) => int { stages: FRAGMENT }
     "gl_HelperInvocation": Input(HelperInvocation) => bool { stages: FRAGMENT }
     "gl_NumWorkGroups": Input(NumWorkGroups) => uvec3 {
@@ -232,18 +257,22 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_PrimitiveIndicesNV": Output(PrimitiveIndicesNV) => uint[] {
         stages: MESH,
         requires_one_of: &[NvMeshShader],
+        redeclaration: Some(Redeclaration::Output),
     }
     "gl_PrimitivePointIndicesEXT": Output(PointIndex) => uint[] {
         stages: MESH,
         requires_one_of: &[ExtMeshShader],
+        redeclaration: Some(Redeclaration::Free),
     }
     "gl_PrimitiveLineIndicesEXT": Output(LineIndices) => uvec2[] {
         stages: MESH,
         requires_one_of: &[ExtMeshShader],
+        redeclaration: Some(Redeclaration::Free),
     }
     "gl_PrimitiveTriangleIndicesEXT": Output(TriangleIndices) => uvec3[] {
         stages: MESH,
         requires_one_of: &[ExtMeshShader],
+        redeclaration: Some(Redeclaration::Free),
     }
     "gl_TaskCountNV": Output(TaskCountNV) => uint {
         stages: TASK,

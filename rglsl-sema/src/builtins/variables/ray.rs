@@ -3,7 +3,7 @@ use rglsl_types::extension::Extension::{self, *};
 
 use super::ConstantValue::{Bool, Int, Uint};
 use super::VariableKind::{Constant, Input};
-use super::{BuiltinVariable, VariableFlags};
+use super::{BuiltinVariable, Redeclaration, VariableFlags};
 use crate::builtins::{
     ALL_STAGE_BITS, ANY_HIT, CALLABLE, CLOSEST_HIT, INTERSECTION, MISS, RAY_GENERATION,
 };
@@ -58,6 +58,7 @@ pub(super) const CONSTANTS: &[BuiltinVariable] = variables! {
     "gl_ClusterIDNoneNV": Constant(Int(-1)) => int
     "gl_EnableOpacityMicromapEXT": Constant(Bool(false)) => bool {
         requires_one_of: &[ExtOpacityMicromapRayQueryMode],
+        redeclaration: Some(Redeclaration::Free),
     }
 };
 

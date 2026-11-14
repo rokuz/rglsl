@@ -2,7 +2,7 @@ use rglsl_types::builtin::BuiltIn::{self, *};
 use rglsl_types::extension::Extension::*;
 
 use super::VariableKind::Member;
-use super::{BlockSize, BuiltinBlock, BuiltinVariable};
+use super::{BlockSize, BuiltinBlock, BuiltinVariable, Redeclaration};
 use crate::builtins::{GEOMETRY, MESH, TESS_CONTROL, TESS_EVALUATION, VERTEX};
 use crate::types::BlockStorage;
 
@@ -14,8 +14,12 @@ const LAYER: BuiltIn = Layer {
 const PER_VERTEX: &[BuiltinVariable] = variables! {
     "gl_Position": Member(Position { invariant: false }) => vec4
     "gl_PointSize": Member(PointSize) => float
-    "gl_ClipDistance": Member(ClipDistances) => float[]
-    "gl_CullDistance": Member(CullDistance) => float[]
+    "gl_ClipDistance": Member(ClipDistances) => float[] {
+        redeclaration: Some(Redeclaration::Interpolant),
+    }
+    "gl_CullDistance": Member(CullDistance) => float[] {
+        redeclaration: Some(Redeclaration::Interpolant),
+    }
 };
 
 const VIEWS_IN: &[BuiltinVariable] = variables! {
@@ -63,6 +67,7 @@ const PER_PRIMITIVE: &[BuiltinVariable] = variables! {
     }
     "gl_Layer": Member(LAYER) => int {
         flags: variable_flags!(PER_PRIMITIVE),
+        redeclaration: Some(Redeclaration::ViewportRelative),
     }
     "gl_ViewportIndex": Member(ViewportIndex) => int {
         flags: variable_flags!(PER_PRIMITIVE),
@@ -88,6 +93,7 @@ const MESH_PRIMITIVE_EXT: &[BuiltinVariable] = variables! {
     "gl_PrimitiveShadingRateEXT": Member(PrimitiveShadingRate) => int {
         requires_one_of: &[ExtFragmentShadingRate],
         flags: variable_flags!(PER_PRIMITIVE),
+        redeclaration: Some(Redeclaration::Free),
     }
 };
 
