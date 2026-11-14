@@ -148,6 +148,10 @@ impl Writer {
         self.physical_layout.lang_version()
     }
 
+    pub(super) fn sampled_buffer_is_image(&self, dim: crate::ImageDimension) -> bool {
+        dim == crate::ImageDimension::Buffer && self.lang_version() >= (1, 6)
+    }
+
     pub(super) const fn storage_class(&self, space: crate::AddressSpace) -> spirv::StorageClass {
         match space {
             crate::AddressSpace::Storage { .. } if self.legacy_buffer_blocks => {
@@ -622,10 +626,14 @@ impl Writer {
                 arrayed,
                 class,
             } => {
-                let image_type_id = self.get_localtype_id(LocalType::Image(
-                    LocalImageType::from_inner(dim, arrayed, class)?,
-                ));
-                LocalType::SampledImage { image_type_id }
+                let image = LocalType::Image(LocalImageType::from_inner(dim, arrayed, class)?);
+                if self.sampled_buffer_is_image(dim) {
+                    image
+                } else {
+                    LocalType::SampledImage {
+                        image_type_id: self.get_localtype_id(image),
+                    }
+                }
             }
             crate::TypeInner::Sampler { comparison: _ } => LocalType::Sampler,
             crate::TypeInner::AccelerationStructure { .. } => LocalType::AccelerationStructure,

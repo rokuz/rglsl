@@ -200,3 +200,41 @@ fn amd_group_operations_declare_the_extension_of_groups() -> TestResult {
     }
     Ok(())
 }
+
+fn declares(words: &[u32], op: Op) -> TestResult<bool> {
+    let module = dr::load_words(words)?;
+    Ok(module
+        .types_global_values
+        .iter()
+        .any(|inst| inst.class.opcode == op))
+}
+
+#[test]
+fn texel_buffers_are_images_in_spirv_1_6() -> TestResult {
+    let source = "#version 460
+        #extension GL_EXT_nonuniform_qualifier : require
+        layout(binding = 0) uniform isamplerBuffer s;
+        layout(binding = 1) uniform usamplerBuffer u[];
+        layout(binding = 2) uniform textureBuffer t;
+        layout(binding = 3) uniform sampler m;
+        layout(location = 0) flat in int k;
+        layout(location = 0) out ivec4 o;
+        layout(location = 1) out vec4 p;
+        uvec4 fetch(usamplerBuffer b) { return texelFetch(b, 2); }
+        void main() {
+            o = texelFetch(s, 3) + textureSize(s) + ivec4(texelFetch(u[nonuniformEXT(k)], k));
+            o += ivec4(fetch(u[1])) + textureSize(u[k]);
+            p = texelFetch(samplerBuffer(t, m), 1);
+        }";
+    let summary = valid_like_glslang(ShaderStage::Fragment, Target::Vulkan13, source)?;
+    assert!(opcode(&summary, Op::ImageFetch), "{summary:?}");
+    assert!(opcode(&summary, Op::ImageQuerySize), "{summary:?}");
+    let words = ours(ShaderStage::Fragment, Target::Vulkan13, source)
+        .map_err(|errors| format!("rglsl rejects: {errors:?}"))?;
+    assert!(!declares(&words, Op::TypeSampledImage)?);
+    let words = ours(ShaderStage::Fragment, Target::Vulkan11, source)
+        .map_err(|errors| format!("rglsl rejects: {errors:?}"))?;
+    validate(&words, Target::Vulkan11)?;
+    assert!(declares(&words, Op::TypeSampledImage)?);
+    Ok(())
+}

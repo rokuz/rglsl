@@ -383,7 +383,7 @@ impl BlockContext<'_> {
                 dim,
                 arrayed,
                 class,
-            } => {
+            } if !self.writer.sampled_buffer_is_image(dim) => {
                 let image_type_id = self.get_localtype_id(LocalType::Image(
                     LocalImageType::from_inner(dim, arrayed, class)?,
                 ));

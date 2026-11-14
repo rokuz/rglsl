@@ -38,20 +38,6 @@ verdicts = ["rglsl-backend-failed"]
 reason = "bug: gather offsets that are not constant are not lowered"
 
 [[divergence]]
-name = "texelFetch"
-signature = "amplerBuffer"
-versions = [460]
-verdicts = ["rglsl-invalid"]
-reason = "bug: SPIR-V 1.6 forbids a sampled image of a buffer; the texel buffer must be fetched through its image"
-
-[[divergence]]
-name = "textureSize"
-signature = "amplerBuffer"
-versions = [460]
-verdicts = ["rglsl-invalid"]
-reason = "bug: SPIR-V 1.6 forbids a sampled image of a buffer; the size must be queried on the image"
-
-[[divergence]]
 name = "dFdx*"
 signature = "16"
 verdicts = ["extensions-differ"]

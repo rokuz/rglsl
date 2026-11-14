@@ -868,6 +868,13 @@ impl Writer {
                     dim,
                     arrayed,
                     class,
+                } if self.sampled_buffer_is_image(dim) => {
+                    self.debug_opaque(&image_name(dim, arrayed, class))
+                }
+                crate::TypeInner::SampledImage {
+                    dim,
+                    arrayed,
+                    class,
                 } => {
                     self.debug_opaque(&image_name(dim, arrayed, class));
                     self.debug_opaque(&sampled_image_name(dim, arrayed, class))
