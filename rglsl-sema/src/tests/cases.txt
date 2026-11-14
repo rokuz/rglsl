@@ -5650,6 +5650,11 @@ layout(derivative_group_quadsKHR) in;
 layout(set = 0, binding = 0) uniform sampler2D s;
 layout(set = 0, binding = 1) buffer B { vec4 x; } b;
 void main() { b.x = texture(s, vec2(0.5), 1.0) + textureQueryLod(s, vec2(0.5)).xyxy; }
+### textureQueryLod in compute needs a derivative group | comp 450 | 5:InvalidBuiltinCall, 5:InvalidBuiltinCall
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform sampler1D s;
+layout(set = 0, binding = 1) buffer B { vec2 x; } b;
+void main() { b.x = textureQueryLod(s, 0.5) + textureQueryLOD(s, 0.5); }
 ### sparse textures need GL_ARB_sparse_texture2 | frag 450 | 5:ExtensionRequired
 layout(set = 0, binding = 0) uniform sampler2D s;
 layout(location = 0) out vec4 o;
