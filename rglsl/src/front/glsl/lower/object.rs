@@ -311,8 +311,12 @@ impl Lowerer<'_> {
         let functions = self.function_symbols();
         let globals = self.global_symbols();
         let layout = self.layout_record();
-        let mut extensions: Vec<String> = self.analysis.extensions.iter().cloned().collect();
-        extensions.sort();
+        let extensions: Vec<String> = self
+            .analysis
+            .extensions
+            .iter()
+            .map(|extension| String::from(extension.name()))
+            .collect();
         let stage = (!self.library).then(|| self.stage());
         let module = core::mem::take(&mut self.module);
         let work_group_size_constant = !self.specialize_work_group_size

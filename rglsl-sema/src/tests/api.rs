@@ -565,8 +565,8 @@ fn extensions_are_recorded() -> TestResult {
     let analysis = versioned(
         "#version 450\n#extension GL_EXT_scalar_block_layout : enable\n#extension GL_EXT_demo : disable\nvoid main() {}\n",
     )?;
-    let names: Vec<&str> = analysis.extensions.iter().map(String::as_str).collect();
-    assert_eq!(names, ["GL_EXT_scalar_block_layout"]);
+    let extensions: Vec<Extension> = analysis.extensions.iter().collect();
+    assert_eq!(extensions, [Extension::ExtScalarBlockLayout]);
     Ok(())
 }
 
@@ -738,13 +738,13 @@ fn extension_warnings_and_implied_extensions_are_recorded() -> TestResult {
         "#version 450\n#extension GL_EXT_demo : enable\n#extension GL_EXT_shader_subgroup_extended_types_int16 : enable\n#extension GL_EXT_shader_explicit_arithmetic_types_int64 : warn\nvoid main() { int64_t x = 1l; }\n",
     )?;
     assert!(analysis.is_ok(), "{:?}", analysis.diagnostics);
-    let names: Vec<&str> = analysis.extensions.iter().map(String::as_str).collect();
+    let extensions: Vec<Extension> = analysis.extensions.iter().collect();
     assert_eq!(
-        names,
+        extensions,
         [
-            "GL_EXT_shader_explicit_arithmetic_types_int16",
-            "GL_EXT_shader_explicit_arithmetic_types_int64",
-            "GL_EXT_shader_subgroup_extended_types_int16",
+            Extension::ExtShaderExplicitArithmeticTypesInt16,
+            Extension::ExtShaderExplicitArithmeticTypesInt64,
+            Extension::ExtShaderSubgroupExtendedTypesInt16,
         ]
     );
     let warnings: Vec<&DiagnosticKind> = analysis

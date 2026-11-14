@@ -3,6 +3,7 @@ use alloc::{format, vec::Vec};
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 use rglsl_sema::{Callee, CooperativeCall, MatrixCall, QcomConversion, TensorCall};
+use rglsl_types::extension::Extension;
 
 use super::builtins::{derivative, math};
 use super::function::FunctionLowerer;
@@ -291,11 +292,11 @@ impl FunctionLowerer<'_, '_> {
             .ok_or_else(|| unsupported("a function without a body as a cooperative callback", at))
     }
 
-    pub(super) fn cooperative_family(&self) -> CooperativeFamily {
+    pub(super) const fn cooperative_family(&self) -> CooperativeFamily {
         let extensions = &self.lw.analysis.extensions;
-        if extensions.contains("GL_EXT_cooperative_matrix_maintenance1") {
+        if extensions.contains(Extension::ExtCooperativeMatrixMaintenance1) {
             CooperativeFamily::Ext
-        } else if extensions.contains("GL_NV_cooperative_matrix2") {
+        } else if extensions.contains(Extension::NvCooperativeMatrix2) {
             CooperativeFamily::Nv
         } else {
             CooperativeFamily::Khr

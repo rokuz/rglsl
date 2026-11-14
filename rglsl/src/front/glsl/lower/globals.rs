@@ -1,5 +1,6 @@
 use alloc::{format, string::String, vec, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
+use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::{
     BlockInstance, BlockStructure, Declaration, DeclarationKind, ExternalDeclaration,
@@ -1194,7 +1195,7 @@ impl<'a> Lowerer<'a> {
             None if self
                 .analysis
                 .extensions
-                .contains(super::heap::HEAP_EXTENSION) =>
+                .contains(Extension::ExtDescriptorHeap) =>
             {
                 Ok((None, None))
             }

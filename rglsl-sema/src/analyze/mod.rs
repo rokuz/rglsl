@@ -34,7 +34,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
-use rglsl_types::extension::Extension;
+use rglsl_types::extension::{Extension, ExtensionSet};
 
 use rglsl_types::probe::StageProbe;
 use rglsl_types::{FastHashMap, FastHashSet};
@@ -129,8 +129,8 @@ pub struct Analysis {
     pub calls: FastHashMap<NodeId, Callee>,
     pub declarations: FastHashMap<NodeId, SymbolId>,
     pub function_declarations: FastHashMap<NodeId, FunctionId>,
-    pub extensions: BTreeSet<String>,
-    pub requested_extensions: Vec<String>,
+    pub extensions: ExtensionSet,
+    pub requested_extensions: ExtensionSet,
     pub diagnostics: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
     pub vulkan_memory_model: bool,
@@ -868,18 +868,8 @@ impl<'a> Analyzer<'a> {
             calls: self.calls,
             declarations: self.declarations,
             function_declarations: self.function_declarations,
-            extensions: self
-                .extensions
-                .enabled()
-                .iter()
-                .map(|extension| String::from(extension.name()))
-                .collect(),
-            requested_extensions: self
-                .extensions
-                .requested()
-                .iter()
-                .map(|extension| String::from(extension.name()))
-                .collect(),
+            extensions: self.extensions.enabled(),
+            requested_extensions: self.extensions.requested(),
             diagnostics: self.diagnostics,
             warnings: self.warnings,
             vulkan_memory_model: self.vulkan_memory_model,

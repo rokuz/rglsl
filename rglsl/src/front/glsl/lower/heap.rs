@@ -8,6 +8,7 @@ use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, Member, OpaqueKind, Packing, StructId,
     Type as GlslType, TypeKind,
 };
+use rglsl_types::extension::Extension;
 
 use super::globals::{image_access, image_format, storage_access};
 use super::types::{image_dimension, matrix_layout};
@@ -17,8 +18,6 @@ use crate::{
     AddressSpace, DescriptorHeap, Expression, GlobalVariable, Handle, HeapMember, ImageClass,
     Literal, MemoryDecorations, Span, StructMember, Type, TypeInner,
 };
-
-pub(super) const HEAP_EXTENSION: &str = "GL_EXT_descriptor_heap";
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum HeapOffset<'a> {
@@ -105,7 +104,9 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn is_heap_view(&self, qualifiers: &Qualifiers) -> bool {
-        self.analysis.extensions.contains(HEAP_EXTENSION)
+        self.analysis
+            .extensions
+            .contains(Extension::ExtDescriptorHeap)
             && !qualifiers.has_layout("set")
             && !qualifiers.has_layout("binding")
             && (qualifiers.has_layout("descriptor_heap")
