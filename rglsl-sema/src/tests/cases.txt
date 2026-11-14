@@ -6731,3 +6731,16 @@ layout(location = 0) in vec2 v;
 void main() {
     vec2 a = interpolateAtOffset(v, f16vec2(0.25));
 }
+### sparse fetches from textures need no samplerless extension like in glslang | frag | ok
+#extension GL_ARB_sparse_texture2 : enable
+layout(binding = 0) uniform texture2D t;
+void main() {
+    vec4 v;
+    int r = sparseTexelFetchARB(t, ivec2(0), 0, v);
+    r += sparseTexelFetchOffsetARB(t, ivec2(0), 0, ivec2(1), v);
+}
+### fetches from textures need the samplerless extension | frag | 4:ExtensionRequired
+layout(binding = 0) uniform texture2D t;
+void main() {
+    vec4 v = texelFetch(t, ivec2(0), 0);
+}
