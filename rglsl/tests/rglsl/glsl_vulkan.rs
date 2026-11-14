@@ -10107,6 +10107,44 @@ fn precise_tells_struct_members_apart_past_the_tenth() -> crate::TestResult {
 }
 
 #[test]
+fn image_and_texture_results_take_the_precision_glslang_gives_them() -> crate::TestResult {
+    let compile = |call: &str| {
+        compile_valid(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                #extension GL_ARB_texture_query_lod : enable
+                #extension GL_AMD_shader_image_load_store_lod : enable
+                layout(binding = 0) uniform mediump sampler2D s;
+                layout(binding = 1, rgba8) uniform mediump image2D img;
+                layout(location = 0) in highp vec2 uv;
+                layout(location = 0) out highp vec4 o;
+                void main() {{
+                    highp ivec2 c = ivec2(uv);
+                    highp vec2 p = uv * 2.0;
+                    {call}
+                }}"
+            ),
+        )
+    };
+    let module = compile("o = imageLoadLodAMD(img, c, 0);")?;
+    assert!(decorated_ops(&module, Decoration::RelaxedPrecision).contains(&Op::ImageRead));
+    let module = compile("o = imageLoad(img, c);")?;
+    assert!(decorated_ops(&module, Decoration::RelaxedPrecision).contains(&Op::ImageRead));
+    for call in [
+        "o = vec4(textureQueryLOD(s, p), 0.0, 1.0);",
+        "o = vec4(textureQueryLod(s, p), 0.0, 1.0);",
+    ] {
+        let module = compile(call)?;
+        assert!(
+            !decorated_ops(&module, Decoration::RelaxedPrecision).contains(&Op::ImageQueryLod),
+            "{call}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn precision_qualifiers_become_relaxed_precision() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,

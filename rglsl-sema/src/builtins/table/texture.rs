@@ -142,8 +142,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         generate: Some(textures::query_levels),
     }
     "textureQueryLod": Texture(QueryLod) => [] { generate: Some(textures::query_lod) }
-    "textureQueryLOD": Texture(QueryLod) => [] {
-        flags: flags!(SAMPLED_RESULT), generate: Some(textures::query_lod) }
+    "textureQueryLOD": Texture(QueryLod) => [] { generate: Some(textures::query_lod) }
 
     "texture": Texture(Sample(IMPLICIT)) => [] {
         flags: flags!(SAMPLED_RESULT), generate: Some(textures::sample) }
@@ -377,6 +376,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         generate: Some(textures::image_load),
     }
     "imageLoadLodAMD": Texture(ImageLoad { lod: true, sparse: false }) => [] {
+        flags: flags!(SAMPLED_RESULT),
         requires: IMAGE_LOD,
         generate: Some(textures::image_load),
     }
@@ -389,6 +389,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         generate: Some(textures::image_store),
     }
     "imageStoreLodAMD": Texture(ImageStore { lod: true }) => [] {
+        flags: flags!(SAMPLED_RESULT),
         requires: IMAGE_LOD,
         generate: Some(textures::image_store),
     }
@@ -424,12 +425,10 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     }
 
     "textureWeightedQCOM": Texture(ImageProcessing(Weighted)) => [] {
-        flags: flags!(SAMPLED_RESULT),
         requires: &[QcomImageProcessing],
         generate: Some(textures::weighted),
     }
     "textureBoxFilterQCOM": Texture(ImageProcessing(BoxFilter)) => [] {
-        flags: flags!(SAMPLED_RESULT),
         requires: &[QcomImageProcessing],
         generate: Some(textures::box_filter),
     }
