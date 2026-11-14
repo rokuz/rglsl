@@ -197,6 +197,15 @@ bitflags::bitflags! {
 }
 
 impl ShaderStageMask {
+    pub const MESH_LIKE: Self = Self::TASK.union(Self::MESH);
+    pub const COMPUTE_LIKE: Self = Self::COMPUTE.union(Self::MESH_LIKE);
+    pub const RAY_TRACING: Self = Self::RAY_GENERATION
+        .union(Self::INTERSECTION)
+        .union(Self::ANY_HIT)
+        .union(Self::CLOSEST_HIT)
+        .union(Self::MISS)
+        .union(Self::CALLABLE);
+
     pub const fn of(stage: ShaderStage) -> Self {
         match stage {
             ShaderStage::Vertex => Self::VERTEX,

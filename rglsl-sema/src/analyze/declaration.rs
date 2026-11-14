@@ -1912,11 +1912,13 @@ impl Analyzer<'_> {
             if outcomes.iter().all(|(_, found)| *found == own) {
                 own
             } else {
-                let mut keep = crate::builtins::ALL_STAGE_BITS;
+                let mut keep = rglsl_types::ShaderStageMask::all();
                 for (stage, found) in outcomes {
                     match found {
                         InterfaceArray::Invalid(kind) => self.stage_error(stage, name.span, kind),
-                        other if other != followed => keep &= !crate::builtins::stage_bit(stage),
+                        other if other != followed => {
+                            keep &= !rglsl_types::ShaderStageMask::of(stage);
+                        }
                         _ => {}
                     }
                 }

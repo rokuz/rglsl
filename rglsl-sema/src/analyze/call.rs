@@ -20,7 +20,7 @@ use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
 use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
-use rglsl_types::ShaderStage;
+use rglsl_types::{ShaderStage, ShaderStageMask};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Candidate {
@@ -605,45 +605,40 @@ impl Analyzer<'_> {
         };
         let entries = tables.entries(name);
         let overloads = |stage: ShaderStage| {
-            let bit = crate::builtins::stage_bit(stage);
             entries
                 .iter()
-                .filter(move |&&(_, stages)| stages & bit != 0)
+                .filter(move |&&(_, stages)| stages.has(stage))
                 .map(|(function, _)| function)
         };
-        let mut groups: Vec<(Vec<usize>, u16)> = Vec::new();
+        let mut groups: Vec<(Vec<usize>, ShaderStageMask)> = Vec::new();
         for stage in ShaderStage::ALL {
-            let bit = crate::builtins::stage_bit(stage);
             let key: Vec<usize> = entries
                 .iter()
                 .enumerate()
-                .filter(|&(_, &(_, stages))| stages & bit != 0)
+                .filter(|&(_, &(_, stages))| stages.has(stage))
                 .map(|(index, _)| index)
                 .collect();
+            let bit = ShaderStageMask::of(stage);
             match groups.iter_mut().find(|&&mut (ref known, _)| *known == key) {
-                Some(&mut (_, ref mut stages)) => *stages |= crate::builtins::stage_bit(stage),
-                None => groups.push((key, crate::builtins::stage_bit(stage))),
+                Some(&mut (_, ref mut stages)) => *stages |= bit,
+                None => groups.push((key, bit)),
             }
         }
         if groups.len() < 2 {
             return false;
         }
         let own = self.options.stage;
-        let own_bit = crate::builtins::stage_bit(own);
-        let outcome = |analyzer: &Self, stages: u16| {
-            let stage = ShaderStage::ALL
-                .into_iter()
-                .find(|&stage| crate::builtins::stage_bit(stage) & stages != 0)
-                .unwrap_or(own);
+        let outcome = |analyzer: &Self, stages: ShaderStageMask| {
+            let stage = stages.stages().next().unwrap_or(own);
             let functions: Vec<&Function> = overloads(stage).collect();
             analyzer.call_outcome(name, types, &functions)
         };
         let own_stages = groups
             .iter()
-            .find(|&&(_, stages)| stages & own_bit != 0)
-            .map_or(own_bit, |&(_, stages)| stages);
+            .find(|&&(_, stages)| stages.has(own))
+            .map_or(ShaderStageMask::of(own), |&(_, stages)| stages);
         let own_outcome = outcome(self, own_stages);
-        let mut keep = crate::builtins::ALL_STAGE_BITS;
+        let mut keep = ShaderStageMask::all();
         let mut differs = false;
         for &(_, stages) in &groups {
             if stages == own_stages {
@@ -656,10 +651,8 @@ impl Analyzer<'_> {
             differs = true;
             match other.error(name) {
                 Some(kind) => {
-                    for stage in ShaderStage::ALL {
-                        if crate::builtins::stage_bit(stage) & stages != 0 {
-                            self.stage_error(stage, span, kind.clone());
-                        }
+                    for stage in stages.stages() {
+                        self.stage_error(stage, span, kind.clone());
                     }
                 }
                 None => keep &= !stages,
@@ -667,10 +660,8 @@ impl Analyzer<'_> {
         }
         let suppressed = match own_outcome.error(name) {
             Some(kind) if differs => {
-                for stage in ShaderStage::ALL {
-                    if crate::builtins::stage_bit(stage) & own_stages != 0 {
-                        self.stage_error(stage, span, kind.clone());
-                    }
+                for stage in own_stages.stages() {
+                    self.stage_error(stage, span, kind.clone());
                 }
                 true
             }

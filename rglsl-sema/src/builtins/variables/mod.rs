@@ -45,12 +45,12 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{InterpolationQualifier, PrecisionQualifier};
-use rglsl_types::ShaderStage;
 use rglsl_types::builtin::BuiltIn;
 use rglsl_types::extension::Extension;
+use rglsl_types::{ShaderStage, ShaderStageMask};
 
+use super::ResourceLimits;
 use super::table::Word;
-use super::{ResourceLimits, available};
 use crate::constant::{Constant, Value};
 use crate::scope::{Origin, QualifierFlags, Qualifiers, Storage, Symbol, SymbolId, SymbolKind};
 use crate::types::{
@@ -161,15 +161,15 @@ pub struct BuiltinVariable {
     pub(crate) ty: Word,
     pub(crate) dimensions: &'static [Option<u32>],
     pub(crate) precision: Option<PrecisionQualifier>,
-    pub(crate) stages: u16,
+    pub(crate) stages: ShaderStageMask,
     pub(crate) since: u32,
 }
 
-const RAY_VOLATILE_STAGES: u16 = super::RAY_GENERATION
-    | super::INTERSECTION
-    | super::CLOSEST_HIT
-    | super::MISS
-    | super::CALLABLE;
+const RAY_VOLATILE_STAGES: ShaderStageMask = super::RAY_GENERATION
+    .union(super::INTERSECTION)
+    .union(super::CLOSEST_HIT)
+    .union(super::MISS)
+    .union(super::CALLABLE);
 
 impl BuiltinVariable {
     pub(crate) const DEFAULT: Self = Self {
@@ -210,7 +210,7 @@ impl BuiltinVariable {
     }
 
     pub(crate) const fn declared_in(&self, version: u32, stage: ShaderStage) -> bool {
-        version >= self.since && available(self.stages, stage)
+        version >= self.since && self.stages.has(stage)
     }
 
     fn ty(&self) -> Option<Type> {
@@ -236,7 +236,7 @@ impl BuiltinVariable {
                 flags |= qualifier;
             }
         }
-        if self.has(VariableFlags::RAY_VOLATILE) && available(RAY_VOLATILE_STAGES, stage) {
+        if self.has(VariableFlags::RAY_VOLATILE) && RAY_VOLATILE_STAGES.has(stage) {
             flags |= QualifierFlags::VOLATILE;
         }
         let storage = match self.kind {
@@ -291,12 +291,12 @@ pub struct BuiltinBlock {
     pub size: BlockSize,
     pub per_primitive: bool,
     pub(crate) members: &'static [&'static [BuiltinVariable]],
-    pub(crate) stages: u16,
+    pub(crate) stages: ShaderStageMask,
 }
 
 impl BuiltinBlock {
     pub const fn declared_in(&self, stage: ShaderStage) -> bool {
-        available(self.stages, stage)
+        self.stages.has(stage)
     }
 
     pub fn members(&self) -> impl Iterator<Item = &'static BuiltinVariable> + use<> {

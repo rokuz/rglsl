@@ -45,7 +45,8 @@ use rglsl_types::probe::StageProbe;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
-    ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, Span, Type, proc::Layouter,
+    ConservativeDepth, GlobalVariable, Handle, Module, ShaderStage, ShaderStageMask, Span, Type,
+    proc::Layouter,
 };
 
 pub(super) type Result<T> = core::result::Result<T, Error>;
@@ -287,16 +288,16 @@ impl Parsed {
 }
 
 pub(super) struct StageClass {
-    probe: StageProbe<ShaderStage>,
+    probe: StageProbe,
     names: RefCell<BTreeSet<String>>,
     collects_identifiers: bool,
     version: core::cell::Cell<Option<u32>>,
 }
 
 impl StageClass {
-    pub(super) fn new(stage: ShaderStage) -> Self {
+    pub(super) const fn new(stage: ShaderStage) -> Self {
         Self {
-            probe: StageProbe::new(stage, &ShaderStage::ALL),
+            probe: StageProbe::new(stage),
             names: RefCell::new(BTreeSet::new()),
             collects_identifiers: false,
             version: core::cell::Cell::new(None),
@@ -314,7 +315,7 @@ impl StageClass {
         self.version.get()
     }
 
-    pub(super) fn stages(&self) -> u16 {
+    pub(super) fn stages(&self) -> ShaderStageMask {
         self.probe.compatible()
     }
 
@@ -628,7 +629,7 @@ fn run_lowerer(
     unit: &TranslationUnit,
     analysis: &Analysis,
     mode: Mode,
-    probe: &StageProbe<ShaderStage>,
+    probe: &StageProbe,
     names: &RefCell<BTreeSet<String>>,
     specialize: bool,
 ) -> core::result::Result<crate::object::ObjectModule, ParseErrors> {
@@ -1078,7 +1079,7 @@ pub(super) struct Lowerer<'a> {
     pub(super) unit: &'a TranslationUnit,
     pub(super) analysis: &'a Analysis,
     pub(super) options: &'a Options,
-    probe: &'a StageProbe<ShaderStage>,
+    probe: &'a StageProbe,
     stage_names: &'a RefCell<BTreeSet<String>>,
     pub(super) module: Module,
     pub(super) layouter: Layouter,
@@ -1168,7 +1169,7 @@ impl<'a> Lowerer<'a> {
         options: &'a Options,
         source_map: &'a rglsl_pp::SourceMap,
         mode: Mode,
-        probe: &'a StageProbe<ShaderStage>,
+        probe: &'a StageProbe,
         stage_names: &'a RefCell<BTreeSet<String>>,
     ) -> Self {
         Self {

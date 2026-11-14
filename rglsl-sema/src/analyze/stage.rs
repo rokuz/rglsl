@@ -4,7 +4,7 @@ use rglsl_types::extension::Extension;
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{LayoutEntry, Qualifiers, Storage};
-use rglsl_types::ShaderStage;
+use rglsl_types::{ShaderStage, ShaderStageMask};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -102,12 +102,10 @@ fn shader_layouts(
     })
 }
 
-const PRE_RASTERIZATION: &[ShaderStage] = &[
-    ShaderStage::Vertex,
-    ShaderStage::TessControl,
-    ShaderStage::TessEvaluation,
-    ShaderStage::Geometry,
-];
+const PRE_RASTERIZATION: ShaderStageMask = ShaderStageMask::VERTEX
+    .union(ShaderStageMask::TESS_CONTROL)
+    .union(ShaderStageMask::TESS_EVALUATION)
+    .union(ShaderStageMask::GEOMETRY);
 
 const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier { qualifier, reason }
@@ -160,7 +158,7 @@ impl Analyzer<'_> {
                 let applies = if fragment {
                     stage == ShaderStage::Fragment
                 } else {
-                    PRE_RASTERIZATION.contains(&stage)
+                    PRE_RASTERIZATION.has(stage)
                 };
                 applies.then_some(extension)
             });

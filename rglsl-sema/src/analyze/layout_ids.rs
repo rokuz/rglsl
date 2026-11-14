@@ -6,29 +6,20 @@ use super::Analyzer;
 use super::declaration::IMAGE_FORMATS;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{LayoutEntry, LayoutValue, Qualifiers};
-use rglsl_types::ShaderStage;
+use rglsl_types::ShaderStageMask;
 
-const ALL: &[ShaderStage] = &ShaderStage::ALL;
+const ALL: ShaderStageMask = ShaderStageMask::all();
 
-const PRE_RASTERIZATION: &[ShaderStage] = &[
-    ShaderStage::Vertex,
-    ShaderStage::TessControl,
-    ShaderStage::TessEvaluation,
-    ShaderStage::Geometry,
-];
+const PRE_RASTERIZATION: ShaderStageMask = ShaderStageMask::VERTEX
+    .union(ShaderStageMask::TESS_CONTROL)
+    .union(ShaderStageMask::TESS_EVALUATION)
+    .union(ShaderStageMask::GEOMETRY);
 
-const COMPUTE_LIKE: &[ShaderStage] = &[ShaderStage::Compute, ShaderStage::Task, ShaderStage::Mesh];
+const COMPUTE_LIKE: ShaderStageMask = ShaderStageMask::COMPUTE_LIKE;
 
-const RAY_TRACING: &[ShaderStage] = &[
-    ShaderStage::RayGeneration,
-    ShaderStage::Intersection,
-    ShaderStage::AnyHit,
-    ShaderStage::ClosestHit,
-    ShaderStage::Miss,
-    ShaderStage::Callable,
-];
+const RAY_TRACING: ShaderStageMask = ShaderStageMask::RAY_TRACING;
 
-const FRAGMENT: &[ShaderStage] = &[ShaderStage::Fragment];
+const FRAGMENT: ShaderStageMask = ShaderStageMask::FRAGMENT;
 
 const PACKINGS_AND_MATRICES: [&str; 7] = [
     "column_major",
@@ -107,7 +98,7 @@ const ANY_STAGE_VALUES: [&str; 18] = [
     "heap_offset",
 ];
 
-fn flag_stages(name: &str) -> Option<&'static [ShaderStage]> {
+fn flag_stages(name: &str) -> Option<ShaderStageMask> {
     if PACKINGS_AND_MATRICES.contains(&name)
         || IMAGE_FORMATS.contains(&name)
         || OTHER_FORMATS.contains(&name)
@@ -119,17 +110,15 @@ fn flag_stages(name: &str) -> Option<&'static [ShaderStage]> {
         return Some(FRAGMENT);
     }
     Some(match name {
-        "triangles" => &[
-            ShaderStage::Geometry,
-            ShaderStage::TessEvaluation,
-            ShaderStage::Mesh,
-        ],
-        "points" | "lines" => &[ShaderStage::Geometry, ShaderStage::Mesh],
+        "triangles" => ShaderStageMask::GEOMETRY
+            .union(ShaderStageMask::TESS_EVALUATION)
+            .union(ShaderStageMask::MESH),
+        "points" | "lines" => ShaderStageMask::GEOMETRY.union(ShaderStageMask::MESH),
         "line_strip"
         | "lines_adjacency"
         | "triangles_adjacency"
         | "triangle_strip"
-        | "passthrough" => &[ShaderStage::Geometry],
+        | "passthrough" => ShaderStageMask::GEOMETRY,
         "quads"
         | "isolines"
         | "equal_spacing"
@@ -137,9 +126,9 @@ fn flag_stages(name: &str) -> Option<&'static [ShaderStage]> {
         | "fractional_odd_spacing"
         | "cw"
         | "ccw"
-        | "point_mode" => &[ShaderStage::TessEvaluation],
+        | "point_mode" => ShaderStageMask::TESS_EVALUATION,
         "non_coherent_attachment_readqcom" => FRAGMENT,
-        "tile_attachmentqcom" => &[ShaderStage::Fragment, ShaderStage::Compute],
+        "tile_attachmentqcom" => ShaderStageMask::FRAGMENT.union(ShaderStageMask::COMPUTE),
         "viewport_relative" => PRE_RASTERIZATION,
         "shaderrecordnv"
         | "shaderrecordext"
@@ -153,16 +142,16 @@ fn flag_stages(name: &str) -> Option<&'static [ShaderStage]> {
     })
 }
 
-fn value_stages(name: &str) -> Option<&'static [ShaderStage]> {
+fn value_stages(name: &str) -> Option<ShaderStageMask> {
     if ANY_STAGE_VALUES.contains(&name) {
         return Some(ALL);
     }
     Some(match name {
         "secondary_view_offset" => PRE_RASTERIZATION,
-        "vertices" => &[ShaderStage::TessControl],
-        "invocations" | "stream" => &[ShaderStage::Geometry],
-        "max_vertices" => &[ShaderStage::Geometry, ShaderStage::Mesh],
-        "max_primitives" => &[ShaderStage::Mesh],
+        "vertices" => ShaderStageMask::TESS_CONTROL,
+        "invocations" | "stream" => ShaderStageMask::GEOMETRY,
+        "max_vertices" => ShaderStageMask::GEOMETRY.union(ShaderStageMask::MESH),
+        "max_primitives" => ShaderStageMask::MESH,
         "index" => FRAGMENT,
         "local_size_x" | "local_size_y" | "local_size_z" | "local_size_x_id"
         | "local_size_y_id" | "local_size_z_id" | "shading_rate_xqcom" | "shading_rate_yqcom"
@@ -171,10 +160,10 @@ fn value_stages(name: &str) -> Option<&'static [ShaderStage]> {
     })
 }
 
-pub fn layout_stages(name: &str) -> Option<&'static [ShaderStage]> {
+pub fn layout_stages(name: &str) -> Option<ShaderStageMask> {
     flag_stages(name)
         .or_else(|| value_stages(name))
-        .filter(|stages| stages.len() < ALL.len())
+        .filter(|stages| !stages.is_all())
 }
 
 fn literal_name(name: &str) -> &str {
@@ -208,7 +197,7 @@ impl Analyzer<'_> {
             LayoutValue::Flag => {
                 let stages = flag_stages(name);
                 self.stage_check(entry.span, |stage| {
-                    (!stages.is_some_and(|stages| stages.contains(&stage)))
+                    (!stages.is_some_and(|stages| stages.has(stage)))
                         .then(|| DiagnosticKind::UnrecognizedLayout(String::from(name)))
                 });
             }
@@ -217,9 +206,9 @@ impl Analyzer<'_> {
                 let stages = value_stages(name);
                 let zero_local_size = is_local_size_axis(name) && entry.value.constant() == Some(0);
                 self.stage_check(entry.span, |stage| {
-                    if stages.is_some_and(|stages| stages.contains(&stage)) {
+                    if stages.is_some_and(|stages| stages.has(stage)) {
                         None
-                    } else if zero_local_size && COMPUTE_LIKE.contains(&stage) {
+                    } else if zero_local_size && COMPUTE_LIKE.has(stage) {
                         Some(DiagnosticKind::LayoutValueBelowOne(String::from(name)))
                     } else {
                         Some(DiagnosticKind::UnknownLayoutWithValue(String::from(name)))
@@ -238,7 +227,7 @@ impl Analyzer<'_> {
         };
         self.stage_check(span, |stage| {
             stages
-                .contains(&stage)
+                .has(stage)
                 .then(|| DiagnosticKind::LayoutValueNotLiteral(String::from(literal_name(name))))
         });
     }

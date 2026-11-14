@@ -4,7 +4,7 @@ use rglsl_types::extension::Extension;
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{LayoutValue, Qualifiers, Storage};
-use rglsl_types::ShaderStage;
+use rglsl_types::{ShaderStage, ShaderStageMask};
 
 const BANK_END: i64 = 0xF;
 
@@ -31,85 +31,73 @@ const BLEND_EQUATIONS: [&str; 16] = [
     "blend_support_all_equations",
 ];
 
-type StageFilter = fn(ShaderStage) -> bool;
-
 struct LayoutExtension {
     feature: &'static str,
-    stages: Option<StageFilter>,
+    stages: ShaderStageMask,
     extensions: &'static [Extension],
 }
 
-const fn compute_like(stage: ShaderStage) -> bool {
-    matches!(
-        stage,
-        ShaderStage::Compute | ShaderStage::Task | ShaderStage::Mesh
-    )
-}
-
-const fn mesh_or_task(stage: ShaderStage) -> bool {
-    matches!(stage, ShaderStage::Task | ShaderStage::Mesh)
-}
-
-const fn mesh(stage: ShaderStage) -> bool {
-    matches!(stage, ShaderStage::Mesh)
-}
-
-const fn fragment(stage: ShaderStage) -> bool {
-    matches!(stage, ShaderStage::Fragment)
-}
-
 fn layout_extension(name: &str) -> Option<LayoutExtension> {
-    let (feature, stages, extensions): (_, Option<StageFilter>, &'static [Extension]) = match name {
+    let all = ShaderStageMask::all();
+    let (feature, stages, extensions): (_, ShaderStageMask, &'static [Extension]) = match name {
         "scalar" => (
             "scalar block layout",
-            None,
+            all,
             &[Extension::ExtScalarBlockLayout],
         ),
-        "bindless_sampler" => ("bindless_sampler", None, BINDLESS_TEXTURE),
-        "bindless_image" => ("bindless_image", None, BINDLESS_TEXTURE),
-        "bound_sampler" => ("bound_sampler", None, BINDLESS_TEXTURE),
-        "bound_image" => ("bound_image", None, BINDLESS_TEXTURE),
-        "num_views" => ("num_views", None, MULTIVIEW),
+        "bindless_sampler" => ("bindless_sampler", all, BINDLESS_TEXTURE),
+        "bindless_image" => ("bindless_image", all, BINDLESS_TEXTURE),
+        "bound_sampler" => ("bound_sampler", all, BINDLESS_TEXTURE),
+        "bound_image" => ("bound_image", all, BINDLESS_TEXTURE),
+        "num_views" => ("num_views", all, MULTIVIEW),
         "derivative_group_quadsnv" | "derivative_group_linearnv" => (
             "compute shader derivatives",
-            Some(compute_like),
+            ShaderStageMask::COMPUTE_LIKE,
             &[Extension::NvComputeShaderDerivatives],
         ),
         "derivative_group_quadskhr" | "derivative_group_linearkhr" => (
             "compute shader derivatives",
-            Some(compute_like),
+            ShaderStageMask::COMPUTE_LIKE,
             &[Extension::KhrComputeShaderDerivatives],
         ),
         "shaderrecordnv" => (
             "shader record NV",
-            Some(ShaderStage::ray_tracing),
+            ShaderStageMask::RAY_TRACING,
             &[Extension::NvRayTracing],
         ),
         "shaderrecordext" => (
             "shader record EXT",
-            Some(ShaderStage::ray_tracing),
+            ShaderStageMask::RAY_TRACING,
             &[Extension::ExtRayTracing],
         ),
         "hitobjectshaderrecordnv" => (
             "hitobject shader record NV",
-            Some(ShaderStage::ray_tracing),
+            ShaderStageMask::RAY_TRACING,
             &[Extension::NvShaderInvocationReorder],
         ),
         "hitobjectshaderrecordext" => (
             "hitobject shader record EXT",
-            Some(ShaderStage::ray_tracing),
+            ShaderStageMask::RAY_TRACING,
             &[Extension::ExtShaderInvocationReorder],
         ),
-        "max_vertices" => ("max_vertices", Some(mesh), &super::mesh::MESH_ANY),
-        "max_primitives" => ("max_primitives", Some(mesh), &super::mesh::MESH_ANY),
+        "max_vertices" => (
+            "max_vertices",
+            ShaderStageMask::MESH,
+            &super::mesh::MESH_ANY,
+        ),
+        "max_primitives" => (
+            "max_primitives",
+            ShaderStageMask::MESH,
+            &super::mesh::MESH_ANY,
+        ),
         _ if name.starts_with("local_size_") => (
             "gl_WorkGroupSize",
-            Some(mesh_or_task),
+            ShaderStageMask::MESH_LIKE,
             &super::mesh::MESH_ANY,
         ),
         _ if BLEND_EQUATIONS.contains(&name) => (
             "blend equation",
-            Some(fragment),
+            ShaderStageMask::FRAGMENT,
             &[Extension::KhrBlendEquationAdvanced],
         ),
         _ => return None,
@@ -127,7 +115,7 @@ impl Analyzer<'_> {
             let name = entry.name.as_str();
             if name.starts_with("blend_support") && !BLEND_EQUATIONS.contains(&name) {
                 self.stage_check(entry.span, |stage| {
-                    fragment(stage).then_some(DiagnosticKind::InvalidQualifier {
+                    (stage == ShaderStage::Fragment).then_some(DiagnosticKind::InvalidQualifier {
                         qualifier: "blend_support",
                         reason: "unknown blend equation",
                     })
@@ -136,15 +124,12 @@ impl Analyzer<'_> {
             let Some(required) = layout_extension(name) else {
                 continue;
             };
-            match required.stages {
-                None => {
-                    self.require_extensions(entry.span, required.extensions, required.feature);
-                }
-                Some(applies) => {
-                    self.require_stage_extensions(entry.span, required.feature, |stage| {
-                        applies(stage).then_some(required.extensions)
-                    });
-                }
+            if required.stages.is_all() {
+                self.require_extensions(entry.span, required.extensions, required.feature);
+            } else {
+                self.require_stage_extensions(entry.span, required.feature, |stage| {
+                    required.stages.has(stage).then_some(required.extensions)
+                });
             }
         }
     }

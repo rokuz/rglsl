@@ -84,29 +84,7 @@ impl Default for ValidationFlags {
     }
 }
 
-bitflags::bitflags! {
-    /// Validation flags.
-    #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
-    #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct ShaderStages: u16 {
-        const VERTEX = 0x1;
-        const FRAGMENT = 0x2;
-        const COMPUTE = 0x4;
-        const MESH = 0x8;
-        const TASK = 0x10;
-        const RAY_GENERATION = 0x20;
-        const ANY_HIT = 0x40;
-        const CLOSEST_HIT = 0x80;
-        const MISS = 0x100;
-        const INTERSECTION = 0x200;
-        const CALLABLE = 0x400;
-        const TESS_CONTROL = 0x2000;
-        const TESS_EVALUATION = 0x4000;
-        const GEOMETRY = 0x8000;
-        const COMPUTE_LIKE = Self::COMPUTE.bits() | Self::TASK.bits() | Self::MESH.bits();
-    }
-}
+pub use rglsl_types::ShaderStageMask as ShaderStages;
 
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]

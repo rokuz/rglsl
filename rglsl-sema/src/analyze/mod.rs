@@ -38,7 +38,7 @@ use core::cell::RefCell;
 use rglsl_types::extension::{Extension, ExtensionSet};
 
 use rglsl_types::probe::StageProbe;
-use rglsl_types::{FastHashMap, FastHashSet};
+use rglsl_types::{FastHashMap, FastHashSet, ShaderStageMask};
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
 use rglsl_ast::extensions::ExtensionState;
@@ -51,8 +51,8 @@ pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
 use crate::builtins::{
-    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinFunctions, BuiltinTables, Builtins, FreshTables,
-    Prebuilt, ResourceLimits, StageTables,
+    BuiltinFunctionId, BuiltinFunctions, BuiltinTables, Builtins, FreshTables, Prebuilt,
+    ResourceLimits, StageTables,
 };
 
 use crate::constant::Constant;
@@ -151,10 +151,10 @@ pub struct Analysis {
     pub no_contraction: FastHashSet<NodeId>,
     pub relaxed_precision: precision::RelaxedPrecision,
     pub work_group_size_read: bool,
-    pub stages: u16,
+    pub stages: ShaderStageMask,
     pub stage_names: BTreeSet<String>,
     pub stage_diagnostics: Vec<StageDiagnostic>,
-    pub diagnostic_trust: Vec<u16>,
+    pub diagnostic_trust: Vec<ShaderStageMask>,
     pub stage_tables: Option<Arc<StageTables>>,
 }
 
@@ -163,7 +163,7 @@ pub struct StageDiagnostic {
     pub index: usize,
     pub stage: ShaderStage,
     pub diagnostic: Diagnostic,
-    pub trusted: u16,
+    pub trusted: ShaderStageMask,
 }
 
 impl Analysis {
@@ -372,12 +372,12 @@ pub(crate) struct SwitchContext {
 }
 
 pub(crate) struct Analyzer<'a> {
-    probe: StageProbe<ShaderStage>,
+    probe: StageProbe,
     stage_names: RefCell<BTreeSet<String>>,
     pub library: Option<Arc<StageTables>>,
     pub stage_diagnostics: Vec<StageDiagnostic>,
-    pub trust: Vec<u16>,
-    target_limits: Vec<(Diagnostic, u16)>,
+    pub trust: Vec<ShaderStageMask>,
+    target_limits: Vec<(Diagnostic, ShaderStageMask)>,
     pub options: &'a Options,
     pub version: Option<u32>,
     pub builtins: Arc<Builtins>,
@@ -455,8 +455,8 @@ impl<'a> Analyzer<'a> {
             let _ = scopes.declare(name, id);
         }
         scopes.push();
-        let probe = StageProbe::new(options.stage, &ShaderStage::ALL);
-        let trust = alloc::vec![ALL_STAGE_BITS; diagnostics.len()];
+        let probe = StageProbe::new(options.stage);
+        let trust = alloc::vec![ShaderStageMask::all(); diagnostics.len()];
         Self {
             probe,
             stage_names: RefCell::new(BTreeSet::new()),
@@ -835,7 +835,7 @@ impl<'a> Analyzer<'a> {
         });
     }
 
-    pub(crate) fn narrow(&self, stages: u16) {
+    pub(crate) fn narrow(&self, stages: ShaderStageMask) {
         self.probe.narrow(stages);
     }
 
@@ -979,7 +979,7 @@ impl<'a> Analyzer<'a> {
             let stages = ShaderStage::ALL
                 .into_iter()
                 .filter(|&stage| tables.same(own, stage, name) || !tables.declares(stage, name))
-                .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage));
+                .collect();
             self.probe.narrow(stages);
         }
     }
@@ -992,12 +992,12 @@ impl<'a> Analyzer<'a> {
         let undeclared = || DiagnosticKind::UndeclaredIdentifier(String::from(name));
         if found {
             let described = tables.variable(own, name);
-            let mut keep = ALL_STAGE_BITS;
+            let mut keep = ShaderStageMask::all();
             for stage in ShaderStage::ALL {
                 match tables.variable(stage, name) {
                     None => self.stage_error(stage, span, undeclared()),
                     Some(description) if Some(description) != described => {
-                        keep &= !crate::builtins::stage_bit(stage);
+                        keep &= !ShaderStageMask::of(stage);
                     }
                     Some(_) => {}
                 }
@@ -1005,15 +1005,15 @@ impl<'a> Analyzer<'a> {
             self.probe.narrow(keep);
             return false;
         }
-        let having = ShaderStage::ALL
+        let having: ShaderStageMask = ShaderStage::ALL
             .into_iter()
             .filter(|&stage| tables.variable(stage, name).is_some())
-            .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage));
-        if having == 0 {
+            .collect();
+        if having.is_empty() {
             return false;
         }
         for stage in ShaderStage::ALL {
-            if having & crate::builtins::stage_bit(stage) == 0 {
+            if !having.has(stage) {
                 self.stage_error(stage, span, undeclared());
             }
         }

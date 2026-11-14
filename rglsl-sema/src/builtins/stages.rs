@@ -5,15 +5,12 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use super::{
-    Builtins, Footprints, ResourceLimits, Rows, Signature, available, expand, footprint, rows,
-    variables,
+    Builtins, Footprints, ResourceLimits, Rows, Signature, expand, footprint, rows, variables,
 };
 
 use crate::scope::{Function, Symbol, SymbolId, SymbolKind, Variable};
 use crate::types::{Type, TypeKind, TypeRegistry};
-use rglsl_types::{FastHashMap, ShaderStage};
-
-pub const ALL_STAGE_BITS: u16 = rglsl_types::probe::ALL_STAGES;
+use rglsl_types::{FastHashMap, ShaderStage, ShaderStageMask};
 
 #[derive(Debug, Clone)]
 struct StageVariables {
@@ -102,13 +99,6 @@ fn descriptions(
         .collect()
 }
 
-fn stage_bits(stages: u16) -> u16 {
-    ShaderStage::ALL
-        .into_iter()
-        .filter(|&stage| available(stages, stage))
-        .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage))
-}
-
 impl StageTables {
     pub fn new(version: u32, limits: &ResourceLimits) -> Self {
         let mut types = TypeRegistry::new();
@@ -180,20 +170,19 @@ impl StageTables {
             .map(String::as_str)
     }
 
-    pub fn entries(&self, name: &str) -> Vec<(Function, u16)> {
+    pub fn entries(&self, name: &str) -> Vec<(Function, ShaderStageMask)> {
         let prototypes = expand(&self.rows, name, self.version, &self.footprints);
-        let kept: Vec<u16> = {
-            let mut remaining: FastHashMap<Signature<'_>, u16> =
+        let kept: Vec<ShaderStageMask> = {
+            let mut remaining: FastHashMap<Signature<'_>, ShaderStageMask> =
                 FastHashMap::with_capacity_and_hasher(prototypes.len(), Default::default());
             prototypes
                 .iter()
                 .map(|prototype| {
-                    let bits = stage_bits(prototype.stages);
                     let left = remaining
                         .entry(Signature(prototype))
-                        .or_insert(ALL_STAGE_BITS);
-                    let kept = bits & *left;
-                    *left &= !bits;
+                        .or_insert_with(ShaderStageMask::all);
+                    let kept = prototype.stages & *left;
+                    *left &= !prototype.stages;
                     kept
                 })
                 .collect()
@@ -201,16 +190,15 @@ impl StageTables {
         prototypes
             .into_iter()
             .zip(kept)
-            .filter(|&(_, kept)| kept != 0)
+            .filter(|&(_, kept)| !kept.is_empty())
             .map(|(prototype, kept)| (prototype.function(), kept))
             .collect()
     }
 
     pub fn overloads(&self, stage: ShaderStage, name: &str) -> Vec<Function> {
-        let bit = crate::builtins::stage_bit(stage);
         self.entries(name)
             .into_iter()
-            .filter(|&(_, stages)| stages & bit != 0)
+            .filter(|&(_, stages)| stages.has(stage))
             .map(|(function, _)| function)
             .collect()
     }
@@ -227,28 +215,22 @@ impl StageTables {
         if self.variable(first, name) != self.variable(second, name) {
             return false;
         }
-        let (first, second) = (
-            crate::builtins::stage_bit(first),
-            crate::builtins::stage_bit(second),
-        );
         self.entries(name)
             .iter()
-            .all(|&(_, stages)| (stages & first != 0) == (stages & second != 0))
+            .all(|&(_, stages)| stages.has(first) == stages.has(second))
     }
 
-    pub fn same_stages(&self, own: ShaderStage, name: &str) -> u16 {
+    pub fn same_stages(&self, own: ShaderStage, name: &str) -> ShaderStageMask {
         let entries = self.entries(name);
         let own_variable = self.variable(own, name);
-        let own_bit = crate::builtins::stage_bit(own);
         ShaderStage::ALL
             .into_iter()
             .filter(|&stage| {
-                let bit = crate::builtins::stage_bit(stage);
                 self.variable(stage, name) == own_variable
                     && entries
                         .iter()
-                        .all(|&(_, stages)| (stages & own_bit != 0) == (stages & bit != 0))
+                        .all(|&(_, stages)| stages.has(own) == stages.has(stage))
             })
-            .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage))
+            .collect()
     }
 }

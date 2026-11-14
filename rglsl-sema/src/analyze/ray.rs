@@ -11,7 +11,7 @@ use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Qualifiers, Storage};
 use crate::types::{BlockStorage, OpaqueKind, Scalar, Type, TypeKind};
-use rglsl_types::ShaderStage;
+use rglsl_types::ShaderStageMask;
 
 const RT_NV_ONLY: &[Extension] = &[Extension::NvRayTracing];
 const RT_EXT_OR_QUERY: &[Extension] = &[Extension::ExtRayTracing, Extension::ExtRayQuery];
@@ -38,37 +38,29 @@ pub(crate) const fn ray_storage(
     })
 }
 
-const fn storage_stages(storage: Storage) -> &'static [ShaderStage] {
+const fn storage_stages(storage: Storage) -> ShaderStageMask {
     match storage {
-        Storage::RayPayload => &[
-            ShaderStage::RayGeneration,
-            ShaderStage::ClosestHit,
-            ShaderStage::AnyHit,
-            ShaderStage::Miss,
-        ],
-        Storage::RayPayloadIn => &[
-            ShaderStage::ClosestHit,
-            ShaderStage::AnyHit,
-            ShaderStage::Miss,
-        ],
-        Storage::HitAttribute => &[
-            ShaderStage::Intersection,
-            ShaderStage::ClosestHit,
-            ShaderStage::AnyHit,
-        ],
-        Storage::CallableData => &[
-            ShaderStage::RayGeneration,
-            ShaderStage::ClosestHit,
-            ShaderStage::Miss,
-            ShaderStage::Callable,
-        ],
-        Storage::CallableDataIn => &[ShaderStage::Callable],
-        Storage::HitObjectAttributeNv | Storage::HitObjectAttributeExt => &[
-            ShaderStage::RayGeneration,
-            ShaderStage::ClosestHit,
-            ShaderStage::Miss,
-        ],
-        _ => &[],
+        Storage::RayPayload => ShaderStageMask::RAY_GENERATION
+            .union(ShaderStageMask::CLOSEST_HIT)
+            .union(ShaderStageMask::ANY_HIT)
+            .union(ShaderStageMask::MISS),
+        Storage::RayPayloadIn => ShaderStageMask::CLOSEST_HIT
+            .union(ShaderStageMask::ANY_HIT)
+            .union(ShaderStageMask::MISS),
+        Storage::HitAttribute => ShaderStageMask::INTERSECTION
+            .union(ShaderStageMask::CLOSEST_HIT)
+            .union(ShaderStageMask::ANY_HIT),
+        Storage::CallableData => ShaderStageMask::RAY_GENERATION
+            .union(ShaderStageMask::CLOSEST_HIT)
+            .union(ShaderStageMask::MISS)
+            .union(ShaderStageMask::CALLABLE),
+        Storage::CallableDataIn => ShaderStageMask::CALLABLE,
+        Storage::HitObjectAttributeNv | Storage::HitObjectAttributeExt => {
+            ShaderStageMask::RAY_GENERATION
+                .union(ShaderStageMask::CLOSEST_HIT)
+                .union(ShaderStageMask::MISS)
+        }
+        _ => ShaderStageMask::empty(),
     }
 }
 
@@ -147,9 +139,14 @@ pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn require_stage(&mut self, span: Span, stages: &[ShaderStage], what: &str) -> bool {
+    pub(crate) fn require_stage(
+        &mut self,
+        span: Span,
+        stages: ShaderStageMask,
+        what: &str,
+    ) -> bool {
         !self.stage_check(span, |stage| {
-            (!stages.contains(&stage)).then(|| DiagnosticKind::NotSupportedInStage {
+            (!stages.has(stage)).then(|| DiagnosticKind::NotSupportedInStage {
                 feature: String::from(what),
                 stage: stage.name(),
             })
@@ -451,7 +448,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn ray_jump(&mut self, span: Span, keyword: &'static str) {
         if self.require_extension(span, Extension::ExtRayTracing, keyword) {
-            self.require_stage(span, &[ShaderStage::AnyHit], keyword);
+            self.require_stage(span, ShaderStageMask::ANY_HIT, keyword);
         }
     }
 

@@ -57,6 +57,7 @@ pub(super) mod words;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_types::ShaderStageMask;
 use rglsl_types::extension::Extension;
 
 use super::kind::BuiltinKind;
@@ -130,7 +131,7 @@ pub struct BuiltinFunction {
     pub requires: &'static [Extension],
     pub flags: BuiltinFlags,
     pub precision_operands: Option<usize>,
-    pub(crate) stages: u16,
+    pub(crate) stages: ShaderStageMask,
     pub(crate) since: u32,
     pub(crate) floats: Floats,
     pub(crate) values: &'static [Scalar],
@@ -155,7 +156,12 @@ impl Emitter<'_> {
         self.footprints
     }
 
-    pub(crate) fn push(&mut self, result: Type, parameters: Vec<(Type, Direction)>, stages: u16) {
+    pub(crate) fn push(
+        &mut self,
+        result: Type,
+        parameters: Vec<(Type, Direction)>,
+        stages: ShaderStageMask,
+    ) {
         self.prototypes.push(Prototype {
             name: String::from(self.row.name),
             result,

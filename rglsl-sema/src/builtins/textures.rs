@@ -5,9 +5,10 @@ use super::kind::{
     TextureLevel,
 };
 use super::table::Emitter;
-use super::{ALL_STAGES, COMPUTE, FRAGMENT, MESH, TASK};
+use super::{ALL_STAGES, COMPUTE, FRAGMENT};
 use crate::scope::Direction;
 use crate::types::{ArraySize, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type};
+use rglsl_types::ShaderStageMask;
 
 const fn sized(scalar: Scalar, count: u8) -> Type {
     Type::vector(scalar, count)
@@ -25,7 +26,7 @@ fn common(emitter: &mut Emitter<'_>, result: Type, parameters: Vec<Type>) {
     staged(emitter, result, parameters, ALL_STAGES);
 }
 
-fn staged(emitter: &mut Emitter<'_>, result: Type, parameters: Vec<Type>, stages: u16) {
+fn staged(emitter: &mut Emitter<'_>, result: Type, parameters: Vec<Type>, stages: ShaderStageMask) {
     emitter.push(result, parameters.into_iter().map(input).collect(), stages);
 }
 
@@ -34,7 +35,7 @@ fn sparse(
     parameters: Vec<Type>,
     texel: Type,
     trailing: &[Type],
-    stages: u16,
+    stages: ShaderStageMask,
 ) {
     let mut parameters: Vec<(Type, Direction)> = parameters.into_iter().map(input).collect();
     parameters.push((texel, Direction::Out));
@@ -50,8 +51,8 @@ const fn texture(emitter: &Emitter<'_>) -> Option<Texture> {
     }
 }
 
-const IMPLICIT_LOD_STAGES: u16 = FRAGMENT | COMPUTE;
-const DERIVATIVE_STAGES: u16 = FRAGMENT | COMPUTE | TASK | MESH;
+const IMPLICIT_LOD_STAGES: ShaderStageMask = FRAGMENT.union(COMPUTE);
+const DERIVATIVE_STAGES: ShaderStageMask = FRAGMENT.union(ShaderStageMask::COMPUTE_LIKE);
 
 fn opaque_types() -> Vec<Opaque> {
     let mut types = Vec::new();

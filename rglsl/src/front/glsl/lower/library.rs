@@ -72,13 +72,6 @@ enum Outcome {
     Failure(usize),
 }
 
-fn stage_bit(stage: ShaderStage) -> u16 {
-    ShaderStage::ALL
-        .iter()
-        .position(|&candidate| candidate == stage)
-        .map_or(0, |index| 1 << index)
-}
-
 fn stage_order(hint: Option<ShaderStage>) -> Vec<ShaderStage> {
     hint.into_iter()
         .chain(
@@ -104,7 +97,7 @@ pub(super) fn compile(
     parsed: Parsed,
 ) -> Result<ObjectModule, ParseErrors> {
     let order = stage_order(hint);
-    let all = order.iter().fold(0, |mask, &stage| mask | stage_bit(stage));
+    let all: ShaderStageMask = order.iter().copied().collect();
     let once = if share {
         once(options, hint, source, root, includer, names, parsed)
     } else {
@@ -115,7 +108,7 @@ pub(super) fn compile(
             per_class(options, hint, source, root, includer, share, names, all);
         return assemble(Vec::new(), variants, failures, hint, source);
     };
-    let (variants, failures) = if once.unknown == 0 {
+    let (variants, failures) = if once.unknown.is_empty() {
         (Vec::new(), Vec::new())
     } else {
         per_class(
@@ -137,7 +130,7 @@ pub(super) fn compile(
         {
             return Err(errors);
         }
-        let reported = hint.map_or(all, stage_bit);
+        let reported = hint.map_or(all, ShaderStageMask::of);
         let (variants, failures) = per_class(
             options, hint, source, root, includer, share, names, reported,
         );
@@ -229,17 +222,16 @@ fn per_class(
     includer: &mut dyn rglsl_pp::Includer,
     share: bool,
     names: &mut StageNames,
-    stages: u16,
+    stages: ShaderStageMask,
 ) -> Classes {
     let mut variants: Vec<(String, ObjectModule)> = Vec::new();
     let mut failures: Vec<(ShaderStage, ParseErrors)> = Vec::new();
-    let mut classes: Vec<(u16, Outcome)> = Vec::new();
+    let mut classes: Vec<(ShaderStageMask, Outcome)> = Vec::new();
     for stage in stage_order(hint) {
-        let bit = stage_bit(stage);
-        if stages & bit == 0 {
+        if !stages.has(stage) {
             continue;
         }
-        if share && let Some(&(_, outcome)) = classes.iter().find(|&&(mask, _)| mask & bit != 0) {
+        if share && let Some(&(_, outcome)) = classes.iter().find(|&&(mask, _)| mask.has(stage)) {
             match outcome {
                 Outcome::Variant(index) => {
                     if let Some(&mut (_, ref mut variant)) = variants.get_mut(index) {
@@ -268,7 +260,8 @@ fn per_class(
         );
         let version = class.version();
         let reached = class.stages();
-        let mask = names.equivalent(version, stage, reached, &class.into_names()) | bit;
+        let mask = names.equivalent(version, stage, reached, &class.into_names())
+            | ShaderStageMask::of(stage);
         let outcome = match result {
             Ok(mut object) => {
                 let key = fingerprint(&object);
@@ -306,38 +299,35 @@ type Classes = (Vec<(String, ObjectModule)>, Vec<(ShaderStage, ParseErrors)>);
 struct Once {
     object: Option<ObjectModule>,
     rejections: Vec<StageRejection>,
-    unknown: u16,
+    unknown: ShaderStageMask,
 }
 
 struct Run {
     object: Option<ObjectModule>,
-    accepted: u16,
+    accepted: ShaderStageMask,
     rejected: Vec<(ShaderStage, StageRejection)>,
-    unknown: u16,
+    unknown: ShaderStageMask,
 }
 
-const STAGE_KEYWORDS: [(&str, &[ShaderStage]); 3] = [
-    ("discard", &[ShaderStage::Fragment]),
-    (
-        "shared",
-        &[ShaderStage::Compute, ShaderStage::Task, ShaderStage::Mesh],
-    ),
+const STAGE_KEYWORDS: [(&str, ShaderStageMask); 3] = [
+    ("discard", ShaderStageMask::FRAGMENT),
+    ("shared", ShaderStageMask::COMPUTE_LIKE),
     (
         "patch",
-        &[ShaderStage::TessControl, ShaderStage::TessEvaluation],
+        ShaderStageMask::TESS_CONTROL.union(ShaderStageMask::TESS_EVALUATION),
     ),
 ];
 
 fn choose(
     order: &[ShaderStage],
-    allowed: u16,
+    allowed: ShaderStageMask,
     tables: &StageTables,
     identifiers: &BTreeSet<String>,
 ) -> Option<ShaderStage> {
     let candidates: Vec<ShaderStage> = order
         .iter()
         .copied()
-        .filter(|&candidate| allowed & stage_bit(candidate) != 0)
+        .filter(|&candidate| allowed.has(candidate))
         .collect();
     let mut scores: BTreeMap<ShaderStage, (usize, usize)> = BTreeMap::new();
     for identifier in identifiers {
@@ -358,10 +348,10 @@ fn choose(
             if tables.variable(candidate, identifier).is_some() {
                 declared += 1;
             }
-            if layout.is_some_and(|stages| stages.contains(&candidate)) {
+            if layout.is_some_and(|stages| stages.has(candidate)) {
                 declared += 1;
             }
-            if keyword.is_some_and(|stages| stages.contains(&candidate)) {
+            if keyword.is_some_and(|stages| stages.has(candidate)) {
                 declared += 1;
             }
             let entry = scores.entry(candidate).or_default();
@@ -389,14 +379,14 @@ fn once(
     if !base.1.is_empty() {
         return None;
     }
-    let mut versioned = 0;
+    let mut versioned = ShaderStageMask::empty();
     let mut rejections: Vec<(ShaderStage, StageRejection)> = Vec::new();
-    let mut unknown = 0;
+    let mut unknown = ShaderStageMask::empty();
     for &candidate in &order {
         let checked =
             rglsl_pp::version_check(source, &preprocessor_options(options, Some(candidate)));
         if checked == base {
-            versioned |= stage_bit(candidate);
+            versioned |= ShaderStageMask::of(candidate);
             continue;
         }
         match checked.1.first() {
@@ -410,13 +400,13 @@ fn once(
                 let errors = ParseErrors::from(alloc::vec![(error, None)]);
                 rejections.push((candidate, rejection(candidate, &errors, source)));
             }
-            None => unknown |= stage_bit(candidate),
+            None => unknown |= ShaderStageMask::of(candidate),
         }
     }
     let first = order
         .iter()
         .copied()
-        .find(|&candidate| versioned & stage_bit(candidate) != 0)?;
+        .find(|&candidate| versioned.has(candidate))?;
     let (preprocessed, unit, failed) = match parsed.reuse(first) {
         Some(reused) => reused,
         None => {
@@ -457,24 +447,22 @@ fn once(
         && object.unit.work_group_size_constant
     {
         let specialized = context.run(true, names);
-        if specialized.accepted & accepted == accepted {
+        if specialized.accepted.contains(accepted) {
             object.unit.specialized = specialized
                 .object
                 .map(|specialized| alloc::boxed::Box::new(specialized.unit));
-        } else if specialized.accepted & accepted == 0 && specialized.unknown & accepted == 0 {
+        } else if !specialized.accepted.intersects(accepted)
+            && !specialized.unknown.intersects(accepted)
+        {
             object.unit.specialized = None;
         } else {
             unknown |= accepted;
-            accepted = 0;
+            accepted = ShaderStageMask::empty();
         }
     }
-    let object = object.filter(|_| accepted != 0).map(|mut object| {
+    let object = object.filter(|_| !accepted.is_empty()).map(|mut object| {
         if let Some(library) = object.library_mut() {
-            library.stages = order
-                .iter()
-                .copied()
-                .filter(|&candidate| accepted & stage_bit(candidate) != 0)
-                .collect();
+            library.stages = accepted;
         }
         object
     });
@@ -498,7 +486,7 @@ struct Context<'a> {
     order: &'a [ShaderStage],
     hint: Option<ShaderStage>,
     own: ShaderStage,
-    versioned: u16,
+    versioned: ShaderStageMask,
 }
 
 impl Context<'_> {
@@ -516,11 +504,11 @@ impl Context<'_> {
         );
         let mut run = Run {
             object: None,
-            accepted: 0,
+            accepted: ShaderStageMask::empty(),
             rejected: Vec::new(),
-            unknown: 0,
+            unknown: ShaderStageMask::empty(),
         };
-        let mut clean = 0;
+        let mut clean = ShaderStageMask::empty();
         let mut waiting = Vec::new();
         let waits_for_lowering = analysis
             .diagnostics
@@ -528,13 +516,13 @@ impl Context<'_> {
             .filter(|diagnostic| !link_time(&diagnostic.kind))
             .all(|diagnostic| diagnostic.kind.waits_for_lowering());
         for &candidate in self.order {
-            let bit = stage_bit(candidate);
-            if self.versioned & bit == 0 {
+            if !self.versioned.has(candidate) {
                 continue;
             }
+            let bit = ShaderStageMask::of(candidate);
             match first_error(&analysis, candidate) {
                 Some((diagnostic, trusted)) => {
-                    if trusted & bit == 0 {
+                    if !trusted.has(candidate) {
                         run.unknown |= bit;
                         continue;
                     }
@@ -544,7 +532,7 @@ impl Context<'_> {
                     let rejected = (candidate, rejection(candidate, &errors, self.source));
                     if waits_for_lowering
                         && diagnostic.kind.waits_for_lowering()
-                        && analysis.stages & bit != 0
+                        && analysis.stages.has(candidate)
                     {
                         clean |= bit;
                         waiting.push(rejected);
@@ -552,7 +540,7 @@ impl Context<'_> {
                         run.rejected.push(rejected);
                     }
                 }
-                None if analysis.stages & bit != 0 => clean |= bit,
+                None if analysis.stages.has(candidate) => clean |= bit,
                 None => run.unknown |= bit,
             }
         }
@@ -561,11 +549,11 @@ impl Context<'_> {
             .into_iter()
             .chain([self.own])
             .chain(self.order.iter().copied())
-            .find(|&candidate| clean & stage_bit(candidate) != 0)
+            .find(|&candidate| clean.has(candidate))
         else {
             return run;
         };
-        let probe = StageProbe::new(lowering, &ShaderStage::ALL);
+        let probe = StageProbe::new(lowering);
         probe.narrow(analysis.stages);
         let stage_names = RefCell::new(BTreeSet::new());
         names.lowerings += 1;
@@ -584,11 +572,10 @@ impl Context<'_> {
         run.unknown |= clean & !compatible;
         match result {
             Ok(object) => {
-                let mut waited = 0;
+                let mut waited = ShaderStageMask::empty();
                 for (candidate, rejected) in waiting {
-                    let bit = stage_bit(candidate);
-                    if compatible & bit != 0 {
-                        waited |= bit;
+                    if compatible.has(candidate) {
+                        waited |= ShaderStageMask::of(candidate);
                         run.rejected.push((candidate, rejected));
                     }
                 }
@@ -597,7 +584,7 @@ impl Context<'_> {
             }
             Err(errors) => {
                 for &candidate in self.order {
-                    if compatible & stage_bit(candidate) != 0 {
+                    if compatible.has(candidate) {
                         run.rejected
                             .push((candidate, rejection(candidate, &errors, self.source)));
                     }
@@ -611,7 +598,7 @@ impl Context<'_> {
 fn first_error(
     analysis: &rglsl_sema::Analysis,
     candidate: ShaderStage,
-) -> Option<(&rglsl_sema::Diagnostic, u16)> {
+) -> Option<(&rglsl_sema::Diagnostic, ShaderStageMask)> {
     let staged = analysis
         .stage_diagnostics
         .iter()
@@ -631,7 +618,7 @@ fn first_error(
                     .diagnostic_trust
                     .get(index)
                     .copied()
-                    .unwrap_or(rglsl_sema::ALL_STAGE_BITS),
+                    .unwrap_or_else(ShaderStageMask::all),
             )
         });
     staged
@@ -722,22 +709,18 @@ impl StageNames {
         &mut self,
         version: Option<u32>,
         own: ShaderStage,
-        reached: u16,
+        reached: ShaderStageMask,
         names: &BTreeSet<String>,
-    ) -> u16 {
+    ) -> ShaderStageMask {
         let version = match version {
             Some(460) => 460,
             _ => 450,
         };
         let tables = self.tables(version);
-        let mut mask = 0;
-        for candidate in ShaderStage::ALL {
-            let bit = stage_bit(candidate);
-            if reached & bit == 0 {
-                continue;
-            }
+        let mut mask = ShaderStageMask::empty();
+        for candidate in reached.stages() {
             if candidate == own || names.iter().all(|name| tables.same(own, candidate, name)) {
-                mask |= bit;
+                mask |= ShaderStageMask::of(candidate);
             }
         }
         mask

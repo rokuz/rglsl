@@ -3,13 +3,14 @@ use rglsl_types::extension::Extension::{self, *};
 use super::BuiltinVariable;
 use super::ConstantValue::*;
 use super::VariableKind::Constant;
-use crate::builtins::{ALL_STAGE_BITS, COMPUTE, MESH, TASK};
+use crate::builtins::COMPUTE;
+use rglsl_types::ShaderStageMask;
 
 pub(crate) const TENSOR_OPERAND_NONTEMPORAL: u32 = 0x1;
 pub(crate) const TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE: u32 = 0x2;
 
-const MESH_STAGES: u16 = MESH | TASK;
-const OTHER_STAGES: u16 = ALL_STAGE_BITS & !MESH_STAGES;
+const MESH_STAGES: ShaderStageMask = ShaderStageMask::MESH_LIKE;
+const OTHER_STAGES: ShaderStageMask = ShaderStageMask::all().difference(MESH_STAGES);
 const MESH_ANY: &[Extension] = &[NvMeshShader, ExtMeshShader];
 const MEMORY_SCOPE_SEMANTICS: &[Extension] = &[KhrMemoryScopeSemantics];
 

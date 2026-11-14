@@ -75,8 +75,7 @@ pub use analyze::{
     analyze_library, analyze_with_builtins, analyze_with_tables, layout_stages,
 };
 pub use builtins::{
-    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, ResourceLimits,
-    StageTables,
+    BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, ResourceLimits, StageTables,
 };
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use rglsl_ast::extensions;

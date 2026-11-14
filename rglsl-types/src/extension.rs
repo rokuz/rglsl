@@ -1,4 +1,4 @@
-use crate::ShaderStage;
+use crate::{ShaderStage, ShaderStageMask};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Predefined {
@@ -30,7 +30,7 @@ pub struct Info {
     pub implies: &'static [Extension],
     pub minimum_spirv: Option<(u8, u8)>,
     pub vulkan: Vulkan,
-    pub only_stages: &'static [ShaderStage],
+    pub stages: ShaderStageMask,
     pub conflicts: &'static [Extension],
     pub preprocessor: bool,
     pub string_literals: bool,
@@ -43,15 +43,15 @@ impl Info {
         implies: &[],
         minimum_spirv: None,
         vulkan: Vulkan::Supported,
-        only_stages: &[],
+        stages: ShaderStageMask::all(),
         conflicts: &[],
         preprocessor: false,
         string_literals: false,
         keywords: &[],
     };
 
-    pub fn allowed_in(&self, stage: ShaderStage) -> bool {
-        self.only_stages.is_empty() || self.only_stages.contains(&stage)
+    pub const fn allowed_in(&self, stage: ShaderStage) -> bool {
+        self.stages.has(stage)
     }
 }
 
@@ -79,7 +79,6 @@ macro_rules! extensions {
             pub const fn info(self) -> &'static Info {
                 use Extension::*;
                 use Predefined::*;
-                use ShaderStage::*;
                 use Vulkan::*;
                 match self {
                     $(Self::$variant => const { &Info { $($field: $value,)* ..Info::DEFAULT } },)*
@@ -270,7 +269,7 @@ extensions! {
     ExtMeshShader "GL_EXT_mesh_shader" {
         predefined: Always,
         minimum_spirv: Some((1, 4)),
-        only_stages: &[Task, Mesh, Fragment],
+        stages: ShaderStageMask::MESH_LIKE.union(ShaderStageMask::FRAGMENT),
         conflicts: &[NvMeshShader],
     }
     ExtMultiview "GL_EXT_multiview" { predefined: Always }
@@ -486,7 +485,7 @@ extensions! {
     NvLinearSweptSpheres "GL_NV_linear_swept_spheres" {}
     NvMeshShader "GL_NV_mesh_shader" {
         predefined: Always,
-        only_stages: &[Task, Mesh, Fragment],
+        stages: ShaderStageMask::MESH_LIKE.union(ShaderStageMask::FRAGMENT),
         conflicts: &[ExtMeshShader],
     }
     NvPushConstantBank "GL_NV_push_constant_bank" {}

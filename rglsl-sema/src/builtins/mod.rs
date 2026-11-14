@@ -16,59 +16,36 @@ use alloc::vec::Vec;
 use rglsl_ast::Span;
 
 pub use limits::ResourceLimits;
-pub use stages::{ALL_STAGE_BITS, StageTables};
+pub use stages::StageTables;
 pub use table::{BuiltinFlags, BuiltinFunction};
 pub(crate) use tables::Prebuilt;
 pub use tables::{BuiltinTables, FreshTables};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
 use crate::types::{Type, TypeRegistry};
-use rglsl_types::{FastHashMap, FastHashSet, ShaderStage};
+use rglsl_types::{FastHashMap, FastHashSet, ShaderStage, ShaderStageMask};
 
-pub(crate) const fn stage_bit(stage: ShaderStage) -> u16 {
-    match stage {
-        ShaderStage::Vertex => VERTEX,
-        ShaderStage::TessControl => TESS_CONTROL,
-        ShaderStage::TessEvaluation => TESS_EVALUATION,
-        ShaderStage::Geometry => GEOMETRY,
-        ShaderStage::Fragment => FRAGMENT,
-        ShaderStage::Compute => COMPUTE,
-        ShaderStage::Task => TASK,
-        ShaderStage::Mesh => MESH,
-        ShaderStage::RayGeneration => RAY_GENERATION,
-        ShaderStage::Intersection => INTERSECTION,
-        ShaderStage::AnyHit => ANY_HIT,
-        ShaderStage::ClosestHit => CLOSEST_HIT,
-        ShaderStage::Miss => MISS,
-        ShaderStage::Callable => CALLABLE,
-    }
-}
-
-const VERTEX: u16 = 1;
-const TESS_CONTROL: u16 = 1 << 1;
-const TESS_EVALUATION: u16 = 1 << 2;
-const GEOMETRY: u16 = 1 << 3;
-const FRAGMENT: u16 = 1 << 4;
-const COMPUTE: u16 = 1 << 5;
-const TASK: u16 = 1 << 6;
-const MESH: u16 = 1 << 7;
-const RAY_GENERATION: u16 = 1 << 8;
-const INTERSECTION: u16 = 1 << 9;
-const ANY_HIT: u16 = 1 << 10;
-const CLOSEST_HIT: u16 = 1 << 11;
-const MISS: u16 = 1 << 12;
-const CALLABLE: u16 = 1 << 13;
-const ALL_STAGES: u16 = 0;
-
-const fn available(stages: u16, stage: ShaderStage) -> bool {
-    stages == ALL_STAGES || stages & stage_bit(stage) != 0
-}
+const VERTEX: ShaderStageMask = ShaderStageMask::VERTEX;
+const TESS_CONTROL: ShaderStageMask = ShaderStageMask::TESS_CONTROL;
+const TESS_EVALUATION: ShaderStageMask = ShaderStageMask::TESS_EVALUATION;
+const GEOMETRY: ShaderStageMask = ShaderStageMask::GEOMETRY;
+const FRAGMENT: ShaderStageMask = ShaderStageMask::FRAGMENT;
+const COMPUTE: ShaderStageMask = ShaderStageMask::COMPUTE;
+const TASK: ShaderStageMask = ShaderStageMask::TASK;
+const MESH: ShaderStageMask = ShaderStageMask::MESH;
+const RAY_GENERATION: ShaderStageMask = ShaderStageMask::RAY_GENERATION;
+const INTERSECTION: ShaderStageMask = ShaderStageMask::INTERSECTION;
+const ANY_HIT: ShaderStageMask = ShaderStageMask::ANY_HIT;
+const CLOSEST_HIT: ShaderStageMask = ShaderStageMask::CLOSEST_HIT;
+const MISS: ShaderStageMask = ShaderStageMask::MISS;
+const CALLABLE: ShaderStageMask = ShaderStageMask::CALLABLE;
+const ALL_STAGES: ShaderStageMask = ShaderStageMask::all();
 
 struct Prototype {
     name: String,
     result: Type,
     parameters: Vec<(Type, Direction)>,
-    stages: u16,
+    stages: ShaderStageMask,
     row: &'static BuiltinFunction,
 }
 
@@ -268,7 +245,7 @@ impl Builtins {
             prototypes
                 .iter()
                 .map(|prototype| {
-                    available(prototype.stages, self.stage) && seen.insert(Signature(prototype))
+                    prototype.stages.has(self.stage) && seen.insert(Signature(prototype))
                 })
                 .collect()
         };
