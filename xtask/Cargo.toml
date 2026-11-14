@@ -13,7 +13,10 @@ rglsl = { workspace = true }
 rglsl-cli = { path = "../rglsl-cli" }
 rglsl-fuzz.workspace = true
 rglsl-link.workspace = true
+rglsl-ast.workspace = true
 rglsl-pp = { workspace = true, features = ["std"] }
+rglsl-sema.workspace = true
+rglsl-types.workspace = true
 serde_json.workspace = true
 spirv.workspace = true
 toml.workspace = true
