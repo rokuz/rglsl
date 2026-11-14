@@ -24,6 +24,7 @@ If `AGENTS.local.md` exists, read it too: it has the maintainers' local workflow
 | `samples/` | runtime use of the compiler through `rglsl-link`'s `compile`/`link_spirv`; `samples/run.sh` runs them (CI); `samples/c/` uses the C API from C and C++ (`samples/c/run.sh`) |
 | `rglsl-test/`, `rglsl/tests/` | upstream snapshot tests |
 | `xtask/` | project automation: `cargo xtask oracles`, `cargo xtask test`, `cargo xtask snapshots`, `cargo xtask cli`, `cargo xtask fuzz`, `cargo xtask capi-header` |
+| `xtask/harness/` | in-process harnesses of `cargo xtask bench --in-process`: rglsl (crate `rglsl-bench-harness`) and glslang (`glslang.cpp`) |
 | `oracles.toml` | pinned glslang / SPIRV-Tools / SPIRV-Headers, KosmicKrisp, Amber and the ML emulation layer |
 
 ## Rules
@@ -87,6 +88,10 @@ SPIRV_VAL=target/oracles/bin/spirv-val sh samples/c/run.sh   # C and C++ samples
 cargo xtask bench [--runs N] [--filter NAME] [--debug-info g|gVS]
                                                    # compile time against glslang, one process at a time:
                                                    # target/xtask/bench.md and bench.tsv
+cargo xtask bench --in-process [--runs N] [--filter NAME] [--debug-info g|gVS]
+                                                   # the same in one process each (no start-up),
+                                                   # first and steady compiles, rglsl phases:
+                                                   # target/xtask/bench-in-process.md and .tsv
 
 cargo xtask fuzz --shaders DIR [--exec]                      # differential fuzzing against glslang (+ exec)
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run

@@ -110,6 +110,18 @@ Compares the compile time of the release-built `rglsl` with the pinned Release-b
 accept, the link tests and large generated shaders. The report goes to `target/xtask/bench.md`,
 per-shader numbers to `target/xtask/bench.tsv`.
 
+```sh
+cargo xtask bench --in-process --glslang-dir ../glslang [--runs 10] [--filter TEXT]
+```
+
+Compares the compilers without process start-up: each compiles every shader inside one
+long-lived process. rglsl runs through its library (`xtask/harness`), glslang through a small C++
+harness built with the system `c++` (or `$CXX`) against the libraries `cargo xtask oracles`
+builds. The report shows the first compile (built-in tables built) and the steady state (tables
+cached) for the Vulkan and gl-as-vulkan corpus shaders and the generated ones, and splits rglsl's
+time into preprocessor, parser, sema, lowering, validator and SPIR-V:
+`target/xtask/bench-in-process.md` and `.tsv`.
+
 ## Projects used
 
 - [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga) — the base of the IR, validator and

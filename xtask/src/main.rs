@@ -76,6 +76,11 @@ commands:
       --debug-info MODE   add -g or -gVS (MODE: g, gVS) to every command line; the report
                           goes to target/xtask/bench-MODE.md
       --timeout SECS      per-process timeout of the warm-up run (default: 60)
+      --in-process        compile in one process each instead: rglsl through its library
+                          (with a phase breakdown), glslang through a C++ harness linked
+                          against target/oracles/build; first and steady-state compiles of
+                          the Vulkan and gl-as-vulkan corpus shaders and the synthetic ones;
+                          report in target/xtask/bench-in-process.md and .tsv
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
@@ -221,6 +226,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                         None => None,
                     },
                     timeout_secs: args.parsed("--timeout")?.unwrap_or(60),
+                    in_process: args.flag("--in-process"),
                 };
             args.finish()?;
             bench::run(&workspace_root()?, &options)
