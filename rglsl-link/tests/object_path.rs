@@ -261,3 +261,40 @@ void main() { result.v = splat; result.i = pair.b + list[1]; }
         false,
     )
 }
+
+#[test]
+fn unused_expressions_stay() -> TestResult {
+    assert_same(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+layout(local_size_x = 1) in;
+void main() { vec4 v = vec4(0.0); vec4(f16vec4(v)); }
+",
+        false,
+    )
+}
+
+#[test]
+fn long_vector_math_results_stay() -> TestResult {
+    assert_same(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_long_vector : enable
+#extension GL_EXT_shader_explicit_arithmetic_types : enable
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer Out { int value; } result;
+void main() {
+    vector<int32_t, 5> a = vector<int32_t, 5>(result.value);
+    vector<int32_t, 5> high;
+    vector<int32_t, 5> low;
+    imulExtended(a, a, high, low);
+    vector<float, 5> f = vector<float, 5>(float(result.value));
+    vector<float, 5> whole;
+    vector<float, 5> part = modf(f, whole);
+    result.value = high[0] + low[1] + int(part[2] + whole[3]);
+}
+",
+        false,
+    )
+}

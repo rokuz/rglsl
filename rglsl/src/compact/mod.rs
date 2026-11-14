@@ -146,6 +146,7 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
     // itself will be retained by compaction, but since it will not be traced,
     // anything it refers to could be compacted away.
     let mut module_tracer = ModuleTracer::new(module);
+    module_tracer.keep_expressions = keep_unused == KeepUnused::Declarations;
 
     // Observe what each entry point actually uses.
     log::trace!("tracing entry points");
@@ -232,6 +233,7 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
     // We treat all special types as used by definition.
     log::trace!("tracing special types");
     module_tracer.trace_special_types(&module.special_types);
+    module_tracer.trace_long_math_results();
 
     log::trace!("tracing global variables");
     if keep_unused.into() {
@@ -493,6 +495,7 @@ struct ModuleTracer<'module> {
     constants_used: HandleSet<crate::Constant>,
     overrides_used: HandleSet<crate::Override>,
     global_expressions_used: HandleSet<crate::Expression>,
+    keep_expressions: bool,
 }
 
 impl<'module> ModuleTracer<'module> {
@@ -506,6 +509,7 @@ impl<'module> ModuleTracer<'module> {
             constants_used: HandleSet::for_arena(&module.constants),
             overrides_used: HandleSet::for_arena(&module.overrides),
             global_expressions_used: HandleSet::for_arena(&module.global_expressions),
+            keep_expressions: false,
         }
     }
 
@@ -520,6 +524,28 @@ impl<'module> ModuleTracer<'module> {
         }
         for (_, &handle) in predeclared_types {
             self.types_used.insert(handle);
+        }
+    }
+
+    fn trace_long_math_results(&mut self) {
+        let types = &self.module.types;
+        for (_, ty) in types.iter() {
+            if !matches!(ty.inner, crate::TypeInner::LongVector { .. }) {
+                continue;
+            }
+            for fun in [
+                crate::MathFunction::Modf,
+                crate::MathFunction::Frexp,
+                crate::MathFunction::AddCarry,
+                crate::MathFunction::SubBorrow,
+                crate::MathFunction::MulExtended,
+            ] {
+                if let Some(handle) = crate::proc::long_math_result(fun, &ty.inner, types)
+                    .and_then(|result| types.get(&result))
+                {
+                    self.types_used.insert(handle);
+                }
+            }
         }
     }
 
@@ -634,7 +660,13 @@ impl<'module> ModuleTracer<'module> {
             constants_used: &mut self.constants_used,
             overrides_used: &mut self.overrides_used,
             global_expressions_used: &mut self.global_expressions_used,
-            expressions_used: HandleSet::for_arena(&function.expressions),
+            expressions_used: {
+                let mut used = HandleSet::for_arena(&function.expressions);
+                if self.keep_expressions {
+                    used.add_all();
+                }
+                used
+            },
         }
     }
 }
