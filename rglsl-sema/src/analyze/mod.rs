@@ -229,7 +229,7 @@ pub fn analyze_library(
 ) -> Analysis {
     let mut diagnostics = Vec::new();
     let version = version_of(unit, &mut diagnostics);
-    let builtins = Arc::new(tables.builtins(options.stage));
+    let builtins = tables.builtins(options.stage);
     let mut analyzer = Analyzer::new(options, builtins, diagnostics);
     analyzer.library = Some(Arc::clone(tables));
     analyzer.version = version;
