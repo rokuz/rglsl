@@ -7,7 +7,7 @@ use rglsl::back::spv;
 use rglsl::front::glsl;
 use rglsl::object::ObjectModule;
 use rglsl::proc::{BindingShifts, ResourceClass};
-use rglsl::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
+use rglsl::valid::{ModuleInfo, ValidationFlags, Validator};
 use rglsl::{Module, ShaderStage};
 
 use crate::args::{
@@ -809,18 +809,17 @@ impl<'a> Session<'a> {
                 });
             }
         };
-        let info =
-            match Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module) {
-                Ok(info) => info,
-                Err(error) => {
-                    let mut log = self.validation_log(unit, &error);
-                    log.notes = notes;
-                    self.report_unit(unit, &log);
-                    self.reflect(&[(unit, true)], &[(stage, &module)])?;
-                    self.not_generated();
-                    return Ok(EXIT_COMPILE);
-                }
-            };
+        let info = match Validator::new(ValidationFlags::all()).validate(&module) {
+            Ok(info) => info,
+            Err(error) => {
+                let mut log = self.validation_log(unit, &error);
+                log.notes = notes;
+                self.report_unit(unit, &log);
+                self.reflect(&[(unit, true)], &[(stage, &module)])?;
+                self.not_generated();
+                return Ok(EXIT_COMPILE);
+            }
+        };
         self.report_unit(
             unit,
             &Log {

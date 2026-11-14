@@ -4,12 +4,12 @@ use spirv::Op;
 
 use crate::arena::Handle;
 use crate::back::spv::{Block, BlockContext, Error, Instruction, Writer};
-use crate::{HitObjectFunction, HitObjectKind, HitObjectValue, ReorderHint};
+use crate::{HitObjectFlavor, HitObjectFunction, HitObjectValue, ReorderHint};
 
-const fn pick(kind: HitObjectKind, nv: Op, ext: Op) -> Op {
-    match kind {
-        HitObjectKind::Nv => nv,
-        HitObjectKind::Ext => ext,
+const fn pick(flavor: HitObjectFlavor, nv: Op, ext: Op) -> Op {
+    match flavor {
+        HitObjectFlavor::Nv => nv,
+        HitObjectFlavor::Ext => ext,
     }
 }
 
@@ -34,14 +34,17 @@ impl Writer {
 }
 
 impl BlockContext<'_> {
-    fn hit_object_kind(&self, object: Handle<crate::Expression>) -> Result<HitObjectKind, Error> {
+    fn hit_object_flavor(
+        &self,
+        object: Handle<crate::Expression>,
+    ) -> Result<HitObjectFlavor, Error> {
         let inner = self.fun_info[object]
             .ty
             .inner_with(&self.ir_module.types)
             .pointer_base_type()
             .map(|base| base.inner_with(&self.ir_module.types).clone());
         match inner {
-            Some(crate::TypeInner::HitObject { kind }) => Ok(kind),
+            Some(crate::TypeInner::HitObject { flavor }) => Ok(flavor),
             _ => Err(Error::Validation(
                 "a hit object operand is not a hit object",
             )),
@@ -57,7 +60,7 @@ impl BlockContext<'_> {
 
     fn hint_ids(&mut self, hint: Option<ReorderHint>) -> Result<Vec<spirv::Word>, Error> {
         match hint {
-            Some(hint) => self.ids(&hint.operands()),
+            Some(hint) => self.ids(&[hint.hint, hint.bits]),
             None => Ok(Vec::new()),
         }
     }
@@ -89,9 +92,9 @@ impl BlockContext<'_> {
         function: &HitObjectFunction,
         block: &mut Block,
     ) -> Result<(), Error> {
-        let kind = self.hit_object_kind(object)?;
+        let flavor = self.hit_object_flavor(object)?;
         self.writer.require_ray_tracing()?;
-        self.writer.require_hit_objects(kind)?;
+        self.writer.require_hit_objects(flavor)?;
         let mut operands = alloc::vec![self.cached.get(object)?];
         let op = match *function {
             HitObjectFunction::TraceRay(ref trace) => {
@@ -99,12 +102,12 @@ impl BlockContext<'_> {
                 if trace.time.is_some() {
                     self.writer.require_motion_blur()?;
                     pick(
-                        kind,
+                        flavor,
                         Op::HitObjectTraceRayMotionNV,
                         Op::HitObjectTraceRayMotionEXT,
                     )
                 } else {
-                    pick(kind, Op::HitObjectTraceRayNV, Op::HitObjectTraceRayEXT)
+                    pick(flavor, Op::HitObjectTraceRayNV, Op::HitObjectTraceRayEXT)
                 }
             }
             HitObjectFunction::TraceReorderExecute { ref trace, hint } => {
@@ -132,13 +135,11 @@ impl BlockContext<'_> {
                 attributes,
             } => {
                 operands.push(self.get_handle_id(acceleration_structure)?);
-                let rest: Vec<_> = [instance_id, primitive_id, geometry_index, hit_kind]
-                    .into_iter()
-                    .chain(sbt_record.operands())
-                    .chain([origin, tmin, direction, tmax])
-                    .chain(time)
-                    .chain(core::iter::once(attributes))
-                    .collect();
+                let mut rest = Vec::from([instance_id, primitive_id, geometry_index, hit_kind]);
+                sbt_record.for_each_operand(|operand| rest.push(operand));
+                rest.extend([origin, tmin, direction, tmax]);
+                rest.extend(time);
+                rest.push(attributes);
                 operands.extend(self.ids(&rest)?);
                 if time.is_some() {
                     self.writer.require_motion_blur()?;
@@ -176,16 +177,20 @@ impl BlockContext<'_> {
                 if time.is_some() {
                     self.writer.require_motion_blur()?;
                     pick(
-                        kind,
+                        flavor,
                         Op::HitObjectRecordMissMotionNV,
                         Op::HitObjectRecordMissMotionEXT,
                     )
                 } else {
-                    pick(kind, Op::HitObjectRecordMissNV, Op::HitObjectRecordMissEXT)
+                    pick(
+                        flavor,
+                        Op::HitObjectRecordMissNV,
+                        Op::HitObjectRecordMissEXT,
+                    )
                 }
             }
             HitObjectFunction::RecordEmpty => pick(
-                kind,
+                flavor,
                 Op::HitObjectRecordEmptyNV,
                 Op::HitObjectRecordEmptyEXT,
             ),
@@ -206,7 +211,7 @@ impl BlockContext<'_> {
             HitObjectFunction::ExecuteShader { payload } => {
                 operands.push(self.cached.get(payload)?);
                 pick(
-                    kind,
+                    flavor,
                     Op::HitObjectExecuteShaderNV,
                     Op::HitObjectExecuteShaderEXT,
                 )
@@ -219,7 +224,7 @@ impl BlockContext<'_> {
             HitObjectFunction::GetAttributes { attributes } => {
                 operands.push(self.cached.get(attributes)?);
                 pick(
-                    kind,
+                    flavor,
                     Op::HitObjectGetAttributesNV,
                     Op::HitObjectGetAttributesEXT,
                 )
@@ -231,7 +236,7 @@ impl BlockContext<'_> {
             HitObjectFunction::ReorderThread { hint } => {
                 operands.extend(self.hint_ids(hint)?);
                 pick(
-                    kind,
+                    flavor,
                     Op::ReorderThreadWithHitObjectNV,
                     Op::ReorderThreadWithHitObjectEXT,
                 )
@@ -243,16 +248,16 @@ impl BlockContext<'_> {
 
     pub(in super::super) fn write_reorder_thread(
         &mut self,
-        kind: HitObjectKind,
+        flavor: HitObjectFlavor,
         hint: Handle<crate::Expression>,
         bits: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
         self.writer.require_ray_tracing()?;
-        self.writer.require_hit_objects(kind)?;
+        self.writer.require_hit_objects(flavor)?;
         let operands = self.ids(&[hint, bits])?;
         let op = pick(
-            kind,
+            flavor,
             Op::ReorderThreadWithHintNV,
             Op::ReorderThreadWithHintEXT,
         );
@@ -268,82 +273,94 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<spirv::Word, Error> {
         use HitObjectValue as Hv;
-        let kind = self.hit_object_kind(object)?;
+        let flavor = self.hit_object_flavor(object)?;
         self.writer.require_ray_tracing()?;
-        self.writer.require_hit_objects(kind)?;
+        self.writer.require_hit_objects(flavor)?;
         let op = match value {
-            Hv::IsEmpty => pick(kind, Op::HitObjectIsEmptyNV, Op::HitObjectIsEmptyEXT),
-            Hv::IsHit => pick(kind, Op::HitObjectIsHitNV, Op::HitObjectIsHitEXT),
-            Hv::IsMiss => pick(kind, Op::HitObjectIsMissNV, Op::HitObjectIsMissEXT),
-            Hv::RayTMin => pick(kind, Op::HitObjectGetRayTMinNV, Op::HitObjectGetRayTMinEXT),
-            Hv::RayTMax => pick(kind, Op::HitObjectGetRayTMaxNV, Op::HitObjectGetRayTMaxEXT),
+            Hv::IsEmpty => pick(flavor, Op::HitObjectIsEmptyNV, Op::HitObjectIsEmptyEXT),
+            Hv::IsHit => pick(flavor, Op::HitObjectIsHitNV, Op::HitObjectIsHitEXT),
+            Hv::IsMiss => pick(flavor, Op::HitObjectIsMissNV, Op::HitObjectIsMissEXT),
+            Hv::RayTMin => pick(
+                flavor,
+                Op::HitObjectGetRayTMinNV,
+                Op::HitObjectGetRayTMinEXT,
+            ),
+            Hv::RayTMax => pick(
+                flavor,
+                Op::HitObjectGetRayTMaxNV,
+                Op::HitObjectGetRayTMaxEXT,
+            ),
             Hv::RayFlags => Op::HitObjectGetRayFlagsEXT,
             Hv::WorldRayOrigin => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetWorldRayOriginNV,
                 Op::HitObjectGetWorldRayOriginEXT,
             ),
             Hv::WorldRayDirection => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetWorldRayDirectionNV,
                 Op::HitObjectGetWorldRayDirectionEXT,
             ),
             Hv::ObjectRayOrigin => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetObjectRayOriginNV,
                 Op::HitObjectGetObjectRayOriginEXT,
             ),
             Hv::ObjectRayDirection => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetObjectRayDirectionNV,
                 Op::HitObjectGetObjectRayDirectionEXT,
             ),
             Hv::ObjectToWorld => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetObjectToWorldNV,
                 Op::HitObjectGetObjectToWorldEXT,
             ),
             Hv::WorldToObject => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetWorldToObjectNV,
                 Op::HitObjectGetWorldToObjectEXT,
             ),
             Hv::InstanceCustomIndex => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetInstanceCustomIndexNV,
                 Op::HitObjectGetInstanceCustomIndexEXT,
             ),
             Hv::InstanceId => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetInstanceIdNV,
                 Op::HitObjectGetInstanceIdEXT,
             ),
             Hv::GeometryIndex => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetGeometryIndexNV,
                 Op::HitObjectGetGeometryIndexEXT,
             ),
             Hv::PrimitiveIndex => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetPrimitiveIndexNV,
                 Op::HitObjectGetPrimitiveIndexEXT,
             ),
-            Hv::HitKind => pick(kind, Op::HitObjectGetHitKindNV, Op::HitObjectGetHitKindEXT),
+            Hv::HitKind => pick(
+                flavor,
+                Op::HitObjectGetHitKindNV,
+                Op::HitObjectGetHitKindEXT,
+            ),
             Hv::CurrentTime => {
                 self.writer.require_motion_blur()?;
                 pick(
-                    kind,
+                    flavor,
                     Op::HitObjectGetCurrentTimeNV,
                     Op::HitObjectGetCurrentTimeEXT,
                 )
             }
             Hv::ShaderBindingTableRecordIndex => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetShaderBindingTableRecordIndexNV,
                 Op::HitObjectGetShaderBindingTableRecordIndexEXT,
             ),
             Hv::ShaderRecordBufferHandle => pick(
-                kind,
+                flavor,
                 Op::HitObjectGetShaderRecordBufferHandleNV,
                 Op::HitObjectGetShaderRecordBufferHandleEXT,
             ),

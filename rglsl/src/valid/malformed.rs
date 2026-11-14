@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use super::{Capabilities, ValidationFlags, Validator};
+use super::{ValidationFlags, Validator};
 use crate::{
     Block, Expression, Function, FunctionResult, Handle, Module, Scalar, Span, Statement, Type,
     TypeInner,
@@ -13,10 +13,8 @@ fn handle<T>(index: u32) -> crate::TestResult<Handle<T>> {
 }
 
 fn assert_rejected(module: &Module) {
-    for capabilities in [Capabilities::default(), Capabilities::all()] {
-        let mut validator = Validator::new(ValidationFlags::all(), capabilities);
-        assert!(validator.validate(module).is_err());
-    }
+    let mut validator = Validator::new(ValidationFlags::all());
+    assert!(validator.validate(module).is_err());
 }
 
 fn scalar_type(module: &mut Module, scalar: Scalar) -> Handle<Type> {

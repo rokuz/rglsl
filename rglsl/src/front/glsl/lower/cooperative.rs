@@ -14,9 +14,9 @@ use super::function::FunctionLowerer;
 use super::types::scalar;
 use super::{Result, internal, unsupported};
 use crate::{
-    ArrayConversion, BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
-    CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Handle,
-    MathFunction, Span, Statement, TensorOperation, UnaryOperator,
+    ArrayConversion, BinaryOperator, CooperativeData, CooperativeMatrixFunction,
+    CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Flavor,
+    Handle, MathFunction, Span, Statement, TensorOperation, UnaryOperator,
 };
 
 impl FunctionLowerer<'_, '_> {
@@ -286,14 +286,14 @@ impl FunctionLowerer<'_, '_> {
             .ok_or_else(|| unsupported("a function without a body as a cooperative callback", at))
     }
 
-    pub(super) const fn cooperative_family(&self) -> CooperativeFamily {
+    pub(super) const fn cooperative_flavor(&self) -> Flavor {
         let extensions = &self.lw.analysis.extensions;
         if extensions.contains(Extension::ExtCooperativeMatrixMaintenance1) {
-            CooperativeFamily::Ext
+            Flavor::Ext
         } else if extensions.contains(Extension::NvCooperativeMatrix2) {
-            CooperativeFamily::Nv
+            Flavor::Nv
         } else {
-            CooperativeFamily::Khr
+            Flavor::Khr
         }
     }
 
@@ -619,14 +619,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().rvalue(argument(1)?);
                     self.nest(frame).await
                 }?;
-                let family = self.with(|this| this.cooperative_family())?;
+                let flavor = self.with(|this| this.cooperative_flavor())?;
                 let value = self.with(|this| {
                     this.add(
                         Expression::Convert {
                             expr,
                             ty,
                             saturating: true,
-                            family,
+                            flavor,
                         },
                         at,
                     )
@@ -717,9 +717,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
-        let family = self.with(|this| match this.cooperative_family() {
-            CooperativeFamily::Ext => CooperativeFamily::Ext,
-            CooperativeFamily::Khr | CooperativeFamily::Nv => CooperativeFamily::Nv,
+        let flavor = self.with(|this| match this.cooperative_flavor() {
+            Flavor::Ext => Flavor::Ext,
+            Flavor::Khr | Flavor::Nv => Flavor::Nv,
         })?;
         let (function, target) = match kind {
             MatrixCall::LoadTensor { view } | MatrixCall::StoreTensor { view } => {
@@ -797,7 +797,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?;
                 (
-                    CooperativeMatrixFunction::Transpose { matrix, family },
+                    CooperativeMatrixFunction::Transpose { matrix, flavor },
                     Some(argument(0)?),
                 )
             }
@@ -813,7 +813,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         matrix,
                         mask,
                         combine,
-                        family,
+                        flavor,
                     },
                     Some(argument(0)?),
                 )
@@ -837,7 +837,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         matrix,
                         function,
                         arguments: extra,
-                        family,
+                        flavor,
                     },
                     Some(argument(0)?),
                 )

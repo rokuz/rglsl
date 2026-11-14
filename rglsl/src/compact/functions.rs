@@ -56,7 +56,7 @@ impl FunctionTracer<'_> {
         self.as_expression().trace_expressions();
     }
 
-    const fn as_expression(&mut self) -> super::expressions::ExpressionTracer<'_> {
+    pub(super) const fn as_expression(&mut self) -> super::expressions::ExpressionTracer<'_> {
         super::expressions::ExpressionTracer {
             constants: self.constants,
             overrides: self.overrides,
@@ -79,7 +79,7 @@ impl FunctionMap {
         module_map: &ModuleMap,
         reuse: &mut crate::NamedExpressions,
     ) -> Result<(), BadHandle> {
-        assert!(reuse.is_empty());
+        reuse.clear();
 
         for argument in function.arguments.iter_mut() {
             module_map.types.adjust(&mut argument.ty)?;
@@ -113,7 +113,6 @@ impl FunctionMap {
             reuse.insert(handle, name);
         }
         core::mem::swap(&mut function.named_expressions, reuse);
-        assert!(reuse.is_empty());
 
         let non_uniform = core::mem::take(&mut function.non_uniform);
         function.non_uniform = non_uniform
@@ -127,6 +126,6 @@ impl FunctionMap {
             .collect();
 
         // Adjust statements.
-        self.adjust_body(function, &module_map.functions, &module_map.types)
+        self.adjust_body(function, module_map)
     }
 }

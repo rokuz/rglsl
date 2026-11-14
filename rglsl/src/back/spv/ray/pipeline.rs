@@ -88,24 +88,28 @@ impl BlockContext<'_> {
                 ));
                 Ok(None)
             }
-            crate::RayPipelineFunction::IgnoreIntersection { nv: true } => {
+            crate::RayPipelineFunction::IgnoreIntersection {
+                flavor: crate::RayTracingFlavor::Nv,
+            } => {
                 block
                     .body
                     .push(Instruction::ray(Op::IgnoreIntersectionNV, None, &[]));
                 Ok(None)
             }
-            crate::RayPipelineFunction::TerminateRay { nv: true } => {
+            crate::RayPipelineFunction::TerminateRay {
+                flavor: crate::RayTracingFlavor::Nv,
+            } => {
                 block
                     .body
                     .push(Instruction::ray(Op::TerminateRayNV, None, &[]));
                 Ok(None)
             }
-            crate::RayPipelineFunction::IgnoreIntersection { nv: false } => {
-                Ok(Some(Instruction::ray(Op::IgnoreIntersectionKHR, None, &[])))
-            }
-            crate::RayPipelineFunction::TerminateRay { nv: false } => {
-                Ok(Some(Instruction::ray(Op::TerminateRayKHR, None, &[])))
-            }
+            crate::RayPipelineFunction::IgnoreIntersection {
+                flavor: crate::RayTracingFlavor::Khr,
+            } => Ok(Some(Instruction::ray(Op::IgnoreIntersectionKHR, None, &[]))),
+            crate::RayPipelineFunction::TerminateRay {
+                flavor: crate::RayTracingFlavor::Khr,
+            } => Ok(Some(Instruction::ray(Op::TerminateRayKHR, None, &[]))),
         }
     }
 }

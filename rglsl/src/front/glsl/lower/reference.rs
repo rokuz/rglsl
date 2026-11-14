@@ -281,7 +281,65 @@ impl FunctionLowerer<'_, '_> {
                     current = base;
                 }
                 Expression::PhysicalPointer { value, .. } => current = value,
-                _ => return false,
+                Expression::Literal(_)
+                | Expression::Constant(_)
+                | Expression::Override(_)
+                | Expression::ZeroValue(_)
+                | Expression::Compose { .. }
+                | Expression::Splat { .. }
+                | Expression::Swizzle { .. }
+                | Expression::FunctionArgument(_)
+                | Expression::GlobalVariable(_)
+                | Expression::LocalVariable(_)
+                | Expression::Load { .. }
+                | Expression::ImageSample { .. }
+                | Expression::ImageLoad { .. }
+                | Expression::ImageQuery { .. }
+                | Expression::Unary { .. }
+                | Expression::Binary { .. }
+                | Expression::Select { .. }
+                | Expression::Derivative { .. }
+                | Expression::Relational { .. }
+                | Expression::Math { .. }
+                | Expression::As { .. }
+                | Expression::CallResult(_)
+                | Expression::AtomicResult { .. }
+                | Expression::ArrayLength(_)
+                | Expression::WideArrayLength(_)
+                | Expression::PhysicalAddress { .. }
+                | Expression::BufferPointer { .. }
+                | Expression::HeapOffset { .. }
+                | Expression::RayQueryProceedResult
+                | Expression::RayQueryGet { .. }
+                | Expression::ReportIntersectionResult
+                | Expression::AccelerationStructureFromAddress { .. }
+                | Expression::HitObjectGet { .. }
+                | Expression::FetchMicroTriangleVertex { .. }
+                | Expression::SubgroupBallotResult
+                | Expression::SubgroupOperationResult { .. }
+                | Expression::SpirvInstructionResult { .. }
+                | Expression::CooperativeLoad { .. }
+                | Expression::CooperativeMultiplyAdd { .. }
+                | Expression::CooperativeMatrixLength { .. }
+                | Expression::Replicate { .. }
+                | Expression::Expect { .. }
+                | Expression::ImageSparseResident { .. }
+                | Expression::IsHelperInvocation
+                | Expression::InterpolateAt { .. }
+                | Expression::FragmentFetch { .. }
+                | Expression::ImageFootprint { .. }
+                | Expression::AttachmentRead { .. }
+                | Expression::CooperativeVectorLoad { .. }
+                | Expression::CooperativeVectorMatMul { .. }
+                | Expression::Convert { .. }
+                | Expression::CooperativeMatrixResult { .. }
+                | Expression::TensorCreate { .. }
+                | Expression::ImageProcessing { .. }
+                | Expression::ArrayConversion { .. }
+                | Expression::Bitcast { .. }
+                | Expression::TensorSet { .. }
+                | Expression::TensorRead { .. }
+                | Expression::TensorQuerySize { .. } => return false,
             }
         }
     }

@@ -367,7 +367,7 @@ impl FunctionLowerer<'_, '_> {
                         expr,
                         ty,
                         saturating: false,
-                        family: self.cooperative_family(),
+                        flavor: self.cooperative_flavor(),
                     },
                     at,
                 )

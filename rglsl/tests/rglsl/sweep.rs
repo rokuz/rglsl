@@ -5,7 +5,7 @@ use rglsl::{
     ShaderStage,
     back::spv,
     front::glsl,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::Op;
@@ -65,7 +65,7 @@ fn ours(stage: ShaderStage, target: Target, source: &str) -> Result<Vec<u32>, Ve
                 .map(|error| error.kind.to_string())
                 .collect::<Vec<_>>()
         })?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+    let info = Validator::new(ValidationFlags::all())
         .validate(&module)
         .map_err(|error| vec![format!("validation: {:?}", error.into_inner())])?;
     let options = spv::Options {

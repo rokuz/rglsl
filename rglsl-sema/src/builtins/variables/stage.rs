@@ -2,6 +2,7 @@ use rglsl_ast::ast::PrecisionQualifier::{High, Medium};
 use rglsl_types::builtin::BuiltIn::*;
 use rglsl_types::builtin::{ShaderBallot as Ballot, ShaderCore as Core, SubgroupMask as Mask};
 use rglsl_types::extension::Extension::{self, *};
+use rglsl_types::flavor::{BarycentricFlavor as Bary, FragmentDensityFlavor as Density};
 
 use super::BuiltinVariable;
 use super::VariableKind::{Input, Output};
@@ -59,11 +60,11 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         stages: VERTEX | GEOMETRY,
         requires_one_of: &[ExtFragmentShadingRate],
     }
-    "gl_FragSizeEXT": Input(FragSize { nv: false }) => ivec2 {
+    "gl_FragSizeEXT": Input(FragSize(Density::Ext)) => ivec2 {
         stages: FRAGMENT,
         requires_one_of: &[ExtFragmentInvocationDensity],
     }
-    "gl_FragInvocationCountEXT": Input(FragInvocationCount { nv: false }) => int {
+    "gl_FragInvocationCountEXT": Input(FragInvocationCount(Density::Ext)) => int {
         stages: FRAGMENT,
         requires_one_of: &[ExtFragmentInvocationDensity],
     }
@@ -71,11 +72,11 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         stages: FRAGMENT,
         requires_one_of: &[NvConservativeRasterUnderestimation],
     }
-    "gl_FragmentSizeNV": Input(FragSize { nv: true }) => ivec2 {
+    "gl_FragmentSizeNV": Input(FragSize(Density::Nv)) => ivec2 {
         stages: FRAGMENT,
         requires_one_of: &[NvShadingRateImage],
     }
-    "gl_InvocationsPerPixelNV": Input(FragInvocationCount { nv: true }) => int {
+    "gl_InvocationsPerPixelNV": Input(FragInvocationCount(Density::Nv)) => int {
         stages: FRAGMENT,
         requires_one_of: &[NvShadingRateImage],
     }
@@ -87,19 +88,19 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         stages: FRAGMENT,
         requires_one_of: &[ArbShaderStencilExport],
     }
-    "gl_BaryCoordNV": Input(Barycentric { perspective: true, nv: true }) => vec3 {
+    "gl_BaryCoordNV": Input(Barycentric { perspective: true, flavor: Bary::Nv }) => vec3 {
         stages: FRAGMENT,
         requires_one_of: &[NvFragmentShaderBarycentric],
     }
-    "gl_BaryCoordNoPerspNV": Input(Barycentric { perspective: false, nv: true }) => vec3 {
+    "gl_BaryCoordNoPerspNV": Input(Barycentric { perspective: false, flavor: Bary::Nv }) => vec3 {
         stages: FRAGMENT,
         requires_one_of: &[NvFragmentShaderBarycentric],
     }
-    "gl_BaryCoordEXT": Input(Barycentric { perspective: true, nv: false }) => vec3 {
+    "gl_BaryCoordEXT": Input(Barycentric { perspective: true, flavor: Bary::Khr }) => vec3 {
         stages: FRAGMENT,
         requires_one_of: &[ExtFragmentShaderBarycentric],
     }
-    "gl_BaryCoordNoPerspEXT": Input(Barycentric { perspective: false, nv: false }) => vec3 {
+    "gl_BaryCoordNoPerspEXT": Input(Barycentric { perspective: false, flavor: Bary::Khr }) => vec3 {
         stages: FRAGMENT,
         requires_one_of: &[ExtFragmentShaderBarycentric],
     }

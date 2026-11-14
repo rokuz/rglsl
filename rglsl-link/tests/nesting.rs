@@ -2,7 +2,7 @@ use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{Options as LinkOptions, decode, encode, link};
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
 
@@ -121,7 +121,7 @@ fn direct(options: &Options, source: &str, includes: Includes) -> Outcome {
         Ok(module) => module,
         Err(outcome) => return outcome,
     };
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     if let Err(error) = validator.validate(&module) {
         return Outcome::Failed(format!("validation: {error:?}"));
     }
@@ -1033,7 +1033,7 @@ fn debug_pipeline(source: &str, level: spv::DebugLevel) -> Outcome {
     if let Err(error) = compact(&mut module, KeepUnused::No) {
         return Outcome::Failed(format!("compaction: {error:?}"));
     }
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     let info = match validator.validate(&module) {
         Ok(info) => info,
         Err(error) => return Outcome::Failed(format!("validation: {error:?}")),

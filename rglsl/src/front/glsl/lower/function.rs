@@ -830,10 +830,10 @@ impl<'a> Lowerer<'a> {
                 rglsl_sema::DerivativeGroup::Quads => crate::DerivativeGroupShape::Quads,
                 rglsl_sema::DerivativeGroup::Linear => crate::DerivativeGroupShape::Linear,
             },
-            extension: if khr {
-                crate::DerivativeGroupExtension::Khr
+            flavor: if khr {
+                crate::DerivativeFlavor::Khr
             } else {
-                crate::DerivativeGroupExtension::Nv
+                crate::DerivativeFlavor::Nv
             },
         })
     }

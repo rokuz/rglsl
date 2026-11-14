@@ -93,14 +93,6 @@ impl<T: 'static> HandleMap<T> {
         Ok(())
     }
 
-    /// Like `adjust`, but for optional handles.
-    pub fn adjust_option(&self, handle: &mut Option<Handle<T>>) -> Result<(), BadHandle> {
-        match *handle {
-            Some(ref mut handle) => self.adjust(handle),
-            None => Ok(()),
-        }
-    }
-
     /// Shrink `range` to include only used handles.
     ///
     /// Fortunately, compaction doesn't arbitrarily scramble the expressions

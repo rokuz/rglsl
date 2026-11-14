@@ -11,9 +11,8 @@ use rglsl_sema::scope::{Qualifiers, Storage};
 use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, semantic};
 use crate::{
-    AddressSpace, Binding, GlobalVariable, MemoryDecorations, MeshFunction, MeshOutputLayout,
-    MeshOutputTopology, MeshShaderExtension, MeshShaderInfo, ShaderStage, Span, Statement,
-    TypeInner,
+    AddressSpace, Binding, GlobalVariable, MemoryDecorations, MeshFlavor, MeshFunction,
+    MeshOutputLayout, MeshOutputTopology, MeshShaderInfo, ShaderStage, Span, Statement, TypeInner,
 };
 
 pub(super) const fn mesh_topology(name: &str) -> Option<MeshOutputTopology> {
@@ -26,11 +25,11 @@ pub(super) const fn mesh_topology(name: &str) -> Option<MeshOutputTopology> {
 }
 
 impl Lowerer<'_> {
-    pub(super) const fn mesh_extension(&self) -> MeshShaderExtension {
+    pub(super) const fn mesh_flavor(&self) -> MeshFlavor {
         if self.analysis.extensions.contains(Extension::ExtMeshShader) {
-            MeshShaderExtension::Ext
+            MeshFlavor::Ext
         } else {
-            MeshShaderExtension::Nv
+            MeshFlavor::Nv
         }
     }
 
@@ -93,17 +92,17 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn mesh_shader_info(&self) -> Option<MeshShaderInfo> {
-        let extension = self.mesh_extension();
+        let flavor = self.mesh_flavor();
         match self.stage() {
             ShaderStage::Task => Some(MeshShaderInfo {
-                extension,
+                flavor,
                 output: None,
                 task_memory: self.task_memory.clone(),
             }),
             ShaderStage::Mesh => {
                 let layout = &self.stage_layout;
                 Some(MeshShaderInfo {
-                    extension,
+                    flavor,
                     output: match (layout.mesh_topology, layout.vertices, layout.primitives) {
                         (Some(topology), Some(max_vertices), Some(max_primitives)) => {
                             Some(MeshOutputLayout {
@@ -142,10 +141,10 @@ impl Lowerer<'_> {
                         }
                 });
                 used.then(|| MeshShaderInfo {
-                    extension: if self.analysis.extensions.contains(Extension::NvMeshShader) {
-                        MeshShaderExtension::Nv
+                    flavor: if self.analysis.extensions.contains(Extension::NvMeshShader) {
+                        MeshFlavor::Nv
                     } else {
-                        MeshShaderExtension::Ext
+                        MeshFlavor::Ext
                     },
                     output: None,
                     task_memory: Vec::new(),

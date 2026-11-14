@@ -1,11 +1,12 @@
 use alloc::{vec, vec::Vec};
+use core::convert::Infallible;
 
 use spirv::{Op, Word};
 
 use super::{Error, Instruction, LookupType, NumericType, Writer, WriterFlags};
 use crate::{
     BinaryOperator, Expression, Literal, Module, Scalar, ScalarKind, TypeInner, UnaryOperator,
-    VectorSize, arena::Handle, proc::TypeResolution, valid::ModuleInfo,
+    VectorSize, arena::Handle, proc::TypeResolution, valid::ModuleInfo, visit::Visitor,
 };
 
 fn literal_words(literal: Literal) -> Vec<Word> {
@@ -70,30 +71,68 @@ const fn one_literal(scalar: Scalar) -> Option<Literal> {
     })
 }
 
-fn global_operands(module: &Module, handle: Handle<Expression>) -> Vec<Handle<Expression>> {
-    match module.global_expressions[handle] {
-        Expression::Constant(constant) => vec![module.constants[constant].init],
-        Expression::Override(item) => {
-            let item = &module.overrides[item];
-            match (item.id, item.init) {
-                (None, Some(init)) => vec![init],
-                _ => Vec::new(),
-            }
-        }
-        Expression::Compose { ref components, .. } => components.clone(),
-        Expression::Splat { value, .. } => vec![value],
-        Expression::Swizzle { vector, .. } => vec![vector],
-        Expression::AccessIndex { base, .. } => vec![base],
-        Expression::Access { base, index } => vec![base, index],
-        Expression::Unary { expr, .. } | Expression::As { expr, .. } => vec![expr],
-        Expression::Binary { left, right, .. } => vec![left, right],
-        Expression::Select {
-            condition,
-            accept,
-            reject,
-        } => vec![condition, accept, reject],
-        _ => Vec::new(),
+struct Dependencies<'m, F> {
+    module: &'m Module,
+    visit: F,
+}
+
+impl<'a, F: FnMut(Handle<Expression>)> Visitor<'a> for Dependencies<'_, F> {
+    type Error = Infallible;
+
+    fn expression(&mut self, handle: Handle<Expression>) -> Result<(), Infallible> {
+        (self.visit)(handle);
+        Ok(())
     }
+
+    fn result(&mut self, handle: Handle<Expression>) -> Result<(), Infallible> {
+        (self.visit)(handle);
+        Ok(())
+    }
+
+    fn emitted(&mut self, _: &crate::arena::Range<Expression>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn ty(&mut self, _: Handle<crate::Type>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn constant(&mut self, handle: Handle<crate::Constant>) -> Result<(), Infallible> {
+        (self.visit)(self.module.constants[handle].init);
+        Ok(())
+    }
+
+    fn r#override(&mut self, handle: Handle<crate::Override>) -> Result<(), Infallible> {
+        let item = &self.module.overrides[handle];
+        if let (None, Some(init)) = (item.id, item.init) {
+            (self.visit)(init);
+        }
+        Ok(())
+    }
+
+    fn global_variable(&mut self, _: Handle<crate::GlobalVariable>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn local_variable(&mut self, _: Handle<crate::LocalVariable>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn function(&mut self, _: Handle<crate::Function>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn block(&mut self, _: &'a crate::Block) -> Result<(), Infallible> {
+        Ok(())
+    }
+}
+
+fn global_dependencies(
+    module: &Module,
+    handle: Handle<Expression>,
+    visit: impl FnMut(Handle<Expression>),
+) {
+    let Ok(()) = module.global_expressions[handle].visit(&mut Dependencies { module, visit });
 }
 
 fn resolution_inner<'a>(module: &'a Module, resolution: &'a TypeResolution) -> &'a TypeInner {
@@ -128,9 +167,7 @@ impl Writer {
             }
         };
         for (handle, _) in module.global_expressions.iter() {
-            for operand in global_operands(module, handle) {
-                mark(operand);
-            }
+            global_dependencies(module, handle, &mut mark);
         }
         for (_, constant) in module.constants.iter() {
             mark(constant.init);
@@ -197,7 +234,7 @@ impl Writer {
                 continue;
             }
             *slot = true;
-            stack.extend(global_operands(module, current));
+            global_dependencies(module, current, |operand| stack.push(operand));
         }
         for (current, _) in module.global_expressions.iter() {
             if needed.get(current.index()).copied().unwrap_or(false)
@@ -673,7 +710,60 @@ impl Writer {
                 .ok_or(not_allowed("an index that is not a constant"))?;
                 self.spec_op(type_id, Op::CompositeExtract, &[base_id, index])
             }
-            _ => return Err(not_allowed("this expression")),
+            Expression::Literal(_)
+            | Expression::Constant(_)
+            | Expression::Override(_)
+            | Expression::ZeroValue(_)
+            | Expression::Compose { .. }
+            | Expression::Splat { .. }
+            | Expression::FunctionArgument(_)
+            | Expression::GlobalVariable(_)
+            | Expression::LocalVariable(_)
+            | Expression::Load { .. }
+            | Expression::ImageSample { .. }
+            | Expression::ImageLoad { .. }
+            | Expression::ImageQuery { .. }
+            | Expression::Derivative { .. }
+            | Expression::Relational { .. }
+            | Expression::Math { .. }
+            | Expression::CallResult(_)
+            | Expression::AtomicResult { .. }
+            | Expression::ArrayLength(_)
+            | Expression::WideArrayLength(_)
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. }
+            | Expression::RayQueryProceedResult
+            | Expression::RayQueryGet { .. }
+            | Expression::ReportIntersectionResult
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. }
+            | Expression::SubgroupBallotResult
+            | Expression::SubgroupOperationResult { .. }
+            | Expression::SpirvInstructionResult { .. }
+            | Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::Replicate { .. }
+            | Expression::Expect { .. }
+            | Expression::ImageSparseResident { .. }
+            | Expression::IsHelperInvocation
+            | Expression::InterpolateAt { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. }
+            | Expression::AttachmentRead { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::ImageProcessing { .. }
+            | Expression::ArrayConversion { .. }
+            | Expression::Bitcast { .. }
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => return Err(not_allowed("this expression")),
         };
         Ok(id)
     }

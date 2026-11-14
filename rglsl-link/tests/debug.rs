@@ -2,7 +2,7 @@ use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{Options as LinkOptions, decode, encode, link_objects};
 use rglsl_pp::MemoryIncluder;
 use std::collections::BTreeMap;
@@ -74,7 +74,7 @@ fn spirv_version(
     level: spv::DebugLevel,
     lang_version: (u8, u8),
 ) -> TestResult<Vec<u32>> {
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(module)?;
     let options = spv::Options {
         lang_version,
         debug_info: Some(spv::DebugInfo {
@@ -477,7 +477,7 @@ void main() {
 #[test]
 fn source_extensions_list_every_requested_extension() -> TestResult {
     let module = single(ShaderStage::Fragment, "requested.frag", REQUESTED)?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let mut options = spv::Options::default();
     options.flags |= spv::WriterFlags::DEBUG;
     let words = spv::write_vec(&module, &info, &options, None)?;

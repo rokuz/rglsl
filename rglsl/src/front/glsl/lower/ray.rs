@@ -14,10 +14,10 @@ use super::expression::Chain;
 use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Packing, Result, internal, semantic};
 use crate::{
-    AddressSpace, Binding, BuiltIn, Expression, GlobalVariable, Handle, HitObjectKind,
+    AddressSpace, Binding, BuiltIn, Expression, GlobalVariable, Handle, HitObjectFlavor,
     MathFunction, MemoryDecorations, RayPipelineFunction, RayQueryFunction,
-    RayQueryIntersectionValue, RayQueryValue, RayTracingData, RayTracingFeatures, ShaderStage,
-    Span, Statement,
+    RayQueryIntersectionValue, RayQueryValue, RayTracingData, RayTracingFeatures, RayTracingFlavor,
+    ShaderStage, Span, Statement,
 };
 
 const fn intersection(value: RayIntersection) -> RayQueryIntersectionValue {
@@ -69,13 +69,13 @@ const fn ray_block_space(storage: BlockStorage) -> Option<(AddressSpace, Option<
         BlockStorage::CallableDataIn => (AddressSpace::IncomingCallableData, Some(1)),
         BlockStorage::HitObjectAttributeNv => (
             AddressSpace::HitObjectAttribute {
-                kind: HitObjectKind::Nv,
+                flavor: HitObjectFlavor::Nv,
             },
             Some(2),
         ),
         BlockStorage::HitObjectAttributeExt => (
             AddressSpace::HitObjectAttribute {
-                kind: HitObjectKind::Ext,
+                flavor: HitObjectFlavor::Ext,
             },
             Some(2),
         ),
@@ -92,13 +92,13 @@ const fn ray_space(storage: Storage) -> Option<(AddressSpace, Option<usize>)> {
         Storage::CallableDataIn => (AddressSpace::IncomingCallableData, Some(1)),
         Storage::HitObjectAttributeNv => (
             AddressSpace::HitObjectAttribute {
-                kind: HitObjectKind::Nv,
+                flavor: HitObjectFlavor::Nv,
             },
             Some(2),
         ),
         Storage::HitObjectAttributeExt => (
             AddressSpace::HitObjectAttribute {
-                kind: HitObjectKind::Ext,
+                flavor: HitObjectFlavor::Ext,
             },
             Some(2),
         ),
@@ -641,7 +641,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| {
                     this.push(
                         Statement::RayPipelineFunction(RayPipelineFunction::IgnoreIntersection {
-                            nv: true,
+                            flavor: RayTracingFlavor::Nv,
                         }),
                         at,
                     );
@@ -652,7 +652,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| {
                     this.push(
                         Statement::RayPipelineFunction(RayPipelineFunction::TerminateRay {
-                            nv: true,
+                            flavor: RayTracingFlavor::Nv,
                         }),
                         at,
                     );

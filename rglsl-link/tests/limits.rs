@@ -1,7 +1,7 @@
 use rglsl::ShaderStage;
 use rglsl::front::glsl::{ErrorKind, Frontend, Options, ResourceLimits};
 use rglsl::object::ObjectModule;
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::LinkError;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -59,7 +59,7 @@ fn an_implicit_stride_over_the_limit_is_a_link_error_of_a_program() -> TestResul
             CAPTURE_PROGRAM,
         )
         .map_err(|errors| errors.to_string())?;
-    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    Validator::new(ValidationFlags::all()).validate(&module)?;
     Ok(())
 }
 
@@ -133,7 +133,7 @@ fn clip_distances_follow_the_limits() -> TestResult {
     let module = Frontend::default()
         .parse(&options(ShaderStage::Vertex, limits), source)
         .map_err(|errors| errors.to_string())?;
-    Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module)?;
+    Validator::new(ValidationFlags::all()).validate(&module)?;
     Ok(())
 }
 

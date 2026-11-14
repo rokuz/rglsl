@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl::{self, BuiltinTables, FreshTables};
-use rglsl::valid::{Capabilities, ValidationFlags, Validator};
+use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{
     BuiltinCache, CompileOptions, Compiler, IncludeKind, IncludeRequest, ProgramOptions,
     ResolvedInclude,
@@ -202,7 +202,7 @@ fn cli(job: &Job, source: &str, tables: Tables) -> Result<CliRun> {
     let frontend = milliseconds(started);
     let module = parsed.map_err(|errors| anyhow!("{errors}"))?;
     let started = Instant::now();
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all()).validate(&module);
+    let info = Validator::new(ValidationFlags::all()).validate(&module);
     let validate = milliseconds(started);
     let info = info.map_err(|error| anyhow!("validation: {error}"))?;
     let started = Instant::now();

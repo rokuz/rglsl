@@ -1,6 +1,5 @@
 use alloc::{string::String, vec::Vec};
 
-use super::Capabilities;
 use crate::{arena::Handle, ir, proc::Alignment};
 
 bitflags::bitflags! {
@@ -97,8 +96,6 @@ pub enum TypeError {
     InvalidTensorRank,
     #[error("The size of type {0:?} exceeds the limit")]
     TooLarge(Handle<crate::Type>),
-    #[error("Capability {0:?} is required")]
-    MissingCapability(Capabilities),
     #[error("The {0:?} scalar width {1} is not supported for an atomic")]
     InvalidAtomicWidth(crate::ScalarKind, crate::Bytes),
     #[error("Invalid type for pointer target {0:?}")]
@@ -164,11 +161,6 @@ pub enum TypeError {
 pub enum WidthError {
     #[error("The {0:?} scalar width {1} is not supported")]
     Invalid(crate::ScalarKind, crate::Bytes),
-    #[error("Using `{name}` values requires the `rglsl::valid::Capabilities::{flag}` flag")]
-    MissingCapability {
-        name: &'static str,
-        flag: &'static str,
-    },
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -274,28 +266,9 @@ fn vector_alignment(
 }
 
 impl super::Validator {
-    const fn require_type_capability(&self, capability: Capabilities) -> Result<(), TypeError> {
-        if self.capabilities.contains(capability) {
-            Ok(())
-        } else {
-            Err(TypeError::MissingCapability(capability))
-        }
-    }
-
-    /// Check whether `scalar` is a permitted scalar width.
-    ///
-    /// If `scalar` is not a width allowed by the selected [`Capabilities`],
-    /// return an error explaining why.
-    ///
-    /// If `scalar` is allowed, return a [`ImmediateCompatibility`] result
-    /// that says whether `scalar` is allowed specifically in immediates.
-    ///
-    /// [`Capabilities`]: crate::valid::Capabilities
     pub(super) const fn check_width(
-        &self,
         scalar: crate::Scalar,
     ) -> Result<ImmediateCompatibility, WidthError> {
-        let immediates_compatibility = Ok(());
         let good = match scalar.kind {
             crate::ScalarKind::Bool => scalar.width == crate::BOOL_WIDTH,
             crate::ScalarKind::BFloat => scalar.width == 2,
@@ -306,91 +279,13 @@ impl super::Validator {
             | crate::ScalarKind::FloatE2M3
             | crate::ScalarKind::FloatUE8M0
             | crate::ScalarKind::FloatMXINT8 => scalar.width == 1,
-            crate::ScalarKind::Float => match scalar.width {
-                8 => {
-                    if !self.capabilities.contains(Capabilities::FLOAT64) {
-                        return Err(WidthError::MissingCapability {
-                            name: "f64",
-                            flag: "FLOAT64",
-                        });
-                    }
-                    true
-                }
-                2 => {
-                    if !self.capabilities.contains(Capabilities::SHADER_FLOAT16) {
-                        return Err(WidthError::MissingCapability {
-                            name: "f16",
-                            flag: "FLOAT16",
-                        });
-                    }
-
-                    true
-                }
-                _ => scalar.width == 4,
-            },
-            crate::ScalarKind::Sint => {
-                if scalar.width == 1 {
-                    if !self.capabilities.contains(Capabilities::SHADER_INT16) {
-                        return Err(WidthError::MissingCapability {
-                            name: "i8",
-                            flag: "SHADER_INT16",
-                        });
-                    }
-                    true
-                } else if scalar.width == 2 {
-                    if !self.capabilities.contains(Capabilities::SHADER_INT16) {
-                        return Err(WidthError::MissingCapability {
-                            name: "i16",
-                            flag: "SHADER_INT16",
-                        });
-                    }
-
-                    true
-                } else if scalar.width == 8 {
-                    if !self.capabilities.contains(Capabilities::SHADER_INT64) {
-                        return Err(WidthError::MissingCapability {
-                            name: "i64",
-                            flag: "SHADER_INT64",
-                        });
-                    }
-                    true
-                } else {
-                    scalar.width == 4
-                }
-            }
-            crate::ScalarKind::Uint => {
-                if scalar.width == 1 {
-                    if !self.capabilities.contains(Capabilities::SHADER_INT16) {
-                        return Err(WidthError::MissingCapability {
-                            name: "u8",
-                            flag: "SHADER_INT16",
-                        });
-                    }
-                    true
-                } else if scalar.width == 2 {
-                    if !self.capabilities.contains(Capabilities::SHADER_INT16) {
-                        return Err(WidthError::MissingCapability {
-                            name: "u16",
-                            flag: "SHADER_INT16",
-                        });
-                    }
-
-                    true
-                } else if scalar.width == 8 {
-                    if !self.capabilities.contains(Capabilities::SHADER_INT64) {
-                        return Err(WidthError::MissingCapability {
-                            name: "u64",
-                            flag: "SHADER_INT64",
-                        });
-                    }
-                    true
-                } else {
-                    scalar.width == 4
-                }
+            crate::ScalarKind::Float => matches!(scalar.width, 2 | 4 | 8),
+            crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                matches!(scalar.width, 1 | 2 | 4 | 8)
             }
         };
         if good {
-            Ok(immediates_compatibility)
+            Ok(Ok(()))
         } else {
             Err(WidthError::Invalid(scalar.kind, scalar.width))
         }
@@ -410,7 +305,7 @@ impl super::Validator {
         use crate::TypeInner as Ti;
         Ok(match gctx.types[handle].inner {
             Ti::Scalar(scalar) => {
-                let immediates_compatibility = self.check_width(scalar)?;
+                let immediates_compatibility = Self::check_width(scalar)?;
                 let shareable = if scalar.kind.is_numeric() {
                     TypeFlags::IO_SHAREABLE | TypeFlags::HOST_SHAREABLE
                 } else {
@@ -430,7 +325,7 @@ impl super::Validator {
                 type_info
             }
             Ti::Vector { size, scalar } => {
-                let immediates_compatibility = self.check_width(scalar)?;
+                let immediates_compatibility = Self::check_width(scalar)?;
                 let shareable = if scalar.kind.is_numeric() {
                     TypeFlags::IO_SHAREABLE | TypeFlags::HOST_SHAREABLE
                 } else {
@@ -457,7 +352,7 @@ impl super::Validator {
                 if scalar.kind != crate::ScalarKind::Float {
                     return Err(TypeError::MatrixElementNotFloat);
                 }
-                let immediates_compatibility = self.check_width(scalar)?;
+                let immediates_compatibility = Self::check_width(scalar)?;
                 let mut type_info = TypeInfo::new(
                     TypeFlags::DATA
                         | TypeFlags::SIZED
@@ -472,7 +367,6 @@ impl super::Validator {
                 type_info
             }
             Ti::CooperativeMatrix { scalar, .. } => {
-                self.require_type_capability(Capabilities::COOPERATIVE_MATRIX)?;
                 if !scalar.kind.is_numeric() {
                     return Err(TypeError::MatrixElementNotFloat);
                 }
@@ -491,7 +385,7 @@ impl super::Validator {
                 scalar,
                 class,
             } => {
-                let _ = self.check_width(scalar)?;
+                let _ = Self::check_width(scalar)?;
                 let shareable = match class {
                     crate::LongVectorClass::Plain => TypeFlags::HOST_SHAREABLE,
                     crate::LongVectorClass::CooperativeNv => TypeFlags::empty(),
@@ -532,26 +426,8 @@ impl super::Validator {
                     crate::Scalar {
                         kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
                         width: 8,
-                    } => {
-                        if !self.capabilities.intersects(
-                            Capabilities::SHADER_INT64_ATOMIC_ALL_OPS
-                                | Capabilities::SHADER_INT64_ATOMIC_MIN_MAX,
-                        ) {
-                            return Err(TypeError::MissingCapability(
-                                Capabilities::SHADER_INT64_ATOMIC_ALL_OPS,
-                            ));
-                        }
-                    }
-                    crate::Scalar::F32 => {
-                        if !self
-                            .capabilities
-                            .contains(Capabilities::SHADER_FLOAT32_ATOMIC)
-                        {
-                            return Err(TypeError::MissingCapability(
-                                Capabilities::SHADER_FLOAT32_ATOMIC,
-                            ));
-                        }
-                    }
+                    } => {}
+                    crate::Scalar::F32 => {}
                     _ => return Err(TypeError::InvalidAtomicWidth(scalar.kind, scalar.width)),
                 };
                 TypeInfo::new(
@@ -652,7 +528,7 @@ impl super::Validator {
                 // However, some cases are trivial: All our implicit base types
                 // are DATA and SIZED, so we can never return
                 // `InvalidPointerBase` or `InvalidPointerToUnsized`.
-                let _ = self.check_width(scalar)?;
+                let _ = Self::check_width(scalar)?;
 
                 // `Validator::validate_function` actually checks the address
                 // space of pointer arguments explicitly before checking the
@@ -840,14 +716,6 @@ impl super::Validator {
                         }) => {
                             // `blend_src` is only valid if dual source blending was explicitly enabled,
                             // see https://www.w3.org/TR/WGSL/#extension-dual_source_blending
-                            if !self
-                                .capabilities
-                                .contains(Capabilities::DUAL_SOURCE_BLENDING)
-                            {
-                                return Err(TypeError::MissingCapability(
-                                    Capabilities::DUAL_SOURCE_BLENDING,
-                                ));
-                            }
                             if !(location == 0 && (blend_src == 0 || blend_src == 1)) {
                                 return Err(TypeError::InvalidBlendSrc(
                                     super::VaryingError::InvalidBlendSrcIndex {
@@ -1047,9 +915,6 @@ impl super::Validator {
                         class,
                     });
                 }
-                if arrayed && matches!(dim, crate::ImageDimension::Cube) {
-                    self.require_type_capability(Capabilities::CUBE_ARRAY_TEXTURES)?;
-                }
                 let heap = if matches!(gctx.types[handle].inner, Ti::Image { .. }) {
                     TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED
                 } else {
@@ -1068,7 +933,7 @@ impl super::Validator {
                 Alignment::ONE,
             ),
             Ti::Tensor { scalar, rank } => {
-                let _ = self.check_width(scalar)?;
+                let _ = Self::check_width(scalar)?;
                 if rank.known().is_some_and(|rank| rank > 15) {
                     return Err(TypeError::InvalidTensorRank);
                 }
@@ -1080,33 +945,20 @@ impl super::Validator {
                     Alignment::ONE,
                 )
             }
-            Ti::AccelerationStructure { vertex_return } => {
-                self.require_type_capability(Capabilities::RAY_TRACING_PIPELINE)
-                    .or_else(|_| self.require_type_capability(Capabilities::RAY_QUERY))?;
-                if vertex_return {
-                    self.require_type_capability(Capabilities::RAY_HIT_VERTEX_POSITION)?;
-                }
-                TypeInfo::new(
-                    TypeFlags::ARGUMENT
-                        | TypeFlags::CREATION_RESOLVED
-                        | TypeFlags::HEAP_LAYOUT
-                        | TypeFlags::SIZED,
-                    Alignment::ONE,
-                )
-            }
-            Ti::RayQuery { vertex_return } => {
-                self.require_type_capability(Capabilities::RAY_QUERY)?;
-                if vertex_return {
-                    self.require_type_capability(Capabilities::RAY_HIT_VERTEX_POSITION)?;
-                }
-                TypeInfo::new(
-                    TypeFlags::DATA
-                        | TypeFlags::CONSTRUCTIBLE
-                        | TypeFlags::SIZED
-                        | TypeFlags::CREATION_RESOLVED,
-                    Alignment::ONE,
-                )
-            }
+            Ti::AccelerationStructure => TypeInfo::new(
+                TypeFlags::ARGUMENT
+                    | TypeFlags::CREATION_RESOLVED
+                    | TypeFlags::HEAP_LAYOUT
+                    | TypeFlags::SIZED,
+                Alignment::ONE,
+            ),
+            Ti::RayQuery => TypeInfo::new(
+                TypeFlags::DATA
+                    | TypeFlags::CONSTRUCTIBLE
+                    | TypeFlags::SIZED
+                    | TypeFlags::CREATION_RESOLVED,
+                Alignment::ONE,
+            ),
             Ti::HitObject { .. } => TypeInfo::new(
                 TypeFlags::DATA
                     | TypeFlags::CONSTRUCTIBLE

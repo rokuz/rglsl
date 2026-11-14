@@ -5,7 +5,7 @@ use rglsl::{
     ShaderStage,
     back::spv,
     front::glsl,
-    valid::{Capabilities, ValidationFlags, Validator},
+    valid::{ValidationFlags, Validator},
 };
 use rspirv::dr::{self, Operand};
 use spirv::Op;
@@ -39,7 +39,7 @@ fn ours(stage: ShaderStage, source: &str) -> Result<Vec<u32>, Vec<(u32, String)>
                 .map(|error| (line(error.meta), error.kind.to_string()))
                 .collect::<Vec<_>>()
         })?;
-    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+    let info = Validator::new(ValidationFlags::all())
         .validate(&module)
         .map_err(|error| vec![(0, format!("validation: {:?}", error.into_inner()))])?;
     spv::write_vec(&module, &info, &spv::Options::default(), None)
@@ -344,7 +344,7 @@ fn lane_patterns_out_of_range_are_invalid() -> TestResult {
             i = swizzleInvocationsMaskedAMD(i, uvec3(31u, 0u, 1u));
         }";
     let validate = |module: &rglsl::Module| {
-        Validator::new(ValidationFlags::all(), Capabilities::all())
+        Validator::new(ValidationFlags::all())
             .validate(module)
             .map(|_| ())
             .map_err(|error| format!("{:?}", error.into_inner()))

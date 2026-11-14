@@ -1,4 +1,2 @@
-capabilities = "TEXTURE_ATOMIC"
-
 [spv]
 version = [1, 0]

@@ -5,9 +5,8 @@ use spirv::{Op, Word};
 use super::block::AccessTypeAdjustment;
 use super::{Block, BlockContext, Error, Instruction, LookupType, Writer};
 use crate::{
-    CooperativeData, CooperativeFamily, CooperativeMatrixClass, CooperativeMatrixFunction,
-    CooperativeSize, Expression, LongVectorClass, ScalarKind, TensorOperation, TypeInner,
-    arena::Handle,
+    CooperativeData, CooperativeMatrixClass, CooperativeMatrixFunction, CooperativeSize,
+    Expression, Flavor, LongVectorClass, ScalarKind, TensorOperation, TypeInner, arena::Handle,
 };
 
 const SPV_EXT_REPLICATED_COMPOSITES: &str = "SPV_EXT_replicated_composites";
@@ -700,7 +699,7 @@ impl BlockContext<'_> {
         &mut self,
         expr: Handle<Expression>,
         ty: Handle<crate::Type>,
-        (saturating, family): (bool, CooperativeFamily),
+        (saturating, flavor): (bool, Flavor),
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
@@ -720,7 +719,7 @@ impl BlockContext<'_> {
             _ => false,
         };
         if use_changes {
-            self.require_conversions(family)?;
+            self.require_conversions(flavor)?;
         }
         let id = if source == target && !use_changes {
             self.cached.get(expr)?
@@ -747,16 +746,16 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    fn require_conversions(&mut self, family: CooperativeFamily) -> Result<(), Error> {
-        match family {
-            CooperativeFamily::Ext => {
+    fn require_conversions(&mut self, flavor: Flavor) -> Result<(), Error> {
+        match flavor {
+            Flavor::Ext => {
                 self.writer
                     .raw_capabilities
                     .insert(CAPABILITY_COOPERATIVE_MATRIX_CONVERSIONS_EXT);
                 self.writer
                     .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1);
             }
-            CooperativeFamily::Khr | CooperativeFamily::Nv => {
+            Flavor::Khr | Flavor::Nv => {
                 self.writer.require_any(
                     "cooperative matrix conversions",
                     &[spirv::Capability::CooperativeMatrixConversionsNV],
@@ -769,16 +768,16 @@ impl BlockContext<'_> {
 
     fn require_family(
         &mut self,
-        family: CooperativeFamily,
+        flavor: Flavor,
         capability: spirv::Capability,
     ) -> Result<(), Error> {
         self.writer
             .require_any("cooperative matrix operation", &[capability])?;
-        match family {
-            CooperativeFamily::Ext => self
+        match flavor {
+            Flavor::Ext => self
                 .writer
                 .use_extension(SPV_EXT_COOPERATIVE_MATRIX_MAINTENANCE1),
-            CooperativeFamily::Khr | CooperativeFamily::Nv => {
+            Flavor::Khr | Flavor::Nv => {
                 self.writer.use_extension(SPV_NV_COOPERATIVE_MATRIX2);
             }
         }
@@ -852,7 +851,7 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        self.require_conversions(CooperativeFamily::Ext)?;
+        self.require_conversions(Flavor::Ext)?;
         let target = self.fun_info[result]
             .ty
             .inner_with(&self.ir_module.types)
@@ -981,15 +980,15 @@ impl BlockContext<'_> {
         };
         let id = self.gen_id();
         let instruction = match *function {
-            CooperativeMatrixFunction::Transpose { matrix, family } => match (family, result) {
-                (CooperativeFamily::Ext, Some(result)) => {
+            CooperativeMatrixFunction::Transpose { matrix, flavor } => match (flavor, result) {
+                (Flavor::Ext, Some(result)) => {
                     let converted =
                         self.write_transpose_ext(matrix, result, result_type_id, block)?;
                     self.cached.set(result, converted)?;
                     return Ok(());
                 }
                 _ => {
-                    self.require_conversions(family)?;
+                    self.require_conversions(flavor)?;
                     let matrix_id = self.cached.get(matrix)?;
                     Instruction::unary(
                         Op::CooperativeMatrixTransposeNV,
@@ -1003,9 +1002,9 @@ impl BlockContext<'_> {
                 matrix,
                 mask,
                 combine,
-                family,
+                flavor,
             } => {
-                self.require_family(family, spirv::Capability::CooperativeMatrixReductionsNV)?;
+                self.require_family(flavor, spirv::Capability::CooperativeMatrixReductionsNV)?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixReduceNV);
                 instruction.set_type(result_type_id);
                 instruction.set_result(id);
@@ -1018,10 +1017,10 @@ impl BlockContext<'_> {
                 matrix,
                 function,
                 ref arguments,
-                family,
+                flavor,
             } => {
                 self.require_family(
-                    family,
+                    flavor,
                     spirv::Capability::CooperativeMatrixPerElementOperationsNV,
                 )?;
                 let mut instruction = Instruction::new(Op::CooperativeMatrixPerElementOpNV);

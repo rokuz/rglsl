@@ -1,3 +1,5 @@
+#![warn(clippy::wildcard_enum_match_arm)]
+
 mod expressions;
 mod functions;
 mod handle_set_map;
@@ -584,7 +586,26 @@ impl<'module> ModuleTracer<'module> {
                         crate::ArraySize::Constant(_) | crate::ArraySize::Dynamic => None,
                         crate::ArraySize::Pending(handle) => self.module.overrides[handle].init,
                     },
-                    _ => None,
+                    crate::TypeInner::Scalar(_)
+                    | crate::TypeInner::Vector { .. }
+                    | crate::TypeInner::Matrix { .. }
+                    | crate::TypeInner::CooperativeMatrix { .. }
+                    | crate::TypeInner::LongVector { .. }
+                    | crate::TypeInner::TensorLayout { .. }
+                    | crate::TypeInner::TensorView { .. }
+                    | crate::TypeInner::Tensor { .. }
+                    | crate::TypeInner::Atomic(_)
+                    | crate::TypeInner::Pointer { .. }
+                    | crate::TypeInner::ValuePointer { .. }
+                    | crate::TypeInner::Struct { .. }
+                    | crate::TypeInner::Image { .. }
+                    | crate::TypeInner::Sampler { .. }
+                    | crate::TypeInner::SampledImage { .. }
+                    | crate::TypeInner::AccelerationStructure
+                    | crate::TypeInner::RayQuery
+                    | crate::TypeInner::HitObject { .. }
+                    | crate::TypeInner::BufferDescriptor { .. }
+                    | crate::TypeInner::Spirv { .. } => None,
                 },
             );
             max_dep.push(previous);
@@ -897,10 +918,7 @@ fn array_length_override() -> crate::TestResult {
         crate::Span::default(),
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1004,10 +1022,7 @@ fn array_length_override_mutual() -> crate::TestResult {
         nowhere,
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1054,10 +1069,7 @@ fn array_length_expression() -> crate::TestResult {
         crate::Span::default(),
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1111,10 +1123,7 @@ fn global_expression_override() -> crate::TestResult {
         crate::Span::default(),
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1184,10 +1193,7 @@ fn local_expression_override() -> crate::TestResult {
 
     module.functions.append(fun, crate::Span::default());
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1257,10 +1263,7 @@ fn unnamed_constant_type() -> crate::TestResult {
         nowhere,
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
@@ -1330,10 +1333,7 @@ fn unnamed_override_type() -> crate::TestResult {
         nowhere,
     );
 
-    let mut validator = super::valid::Validator::new(
-        super::valid::ValidationFlags::all(),
-        super::valid::Capabilities::all(),
-    );
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;

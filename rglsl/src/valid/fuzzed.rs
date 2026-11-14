@@ -1,4 +1,4 @@
-use super::{Capabilities, ValidationFlags, Validator};
+use super::{ValidationFlags, Validator};
 use crate::{
     ImageClass, ImageDimension, Module, Scalar, ScalarKind, Span, StorageAccess, StorageFormat,
     Type, TypeInner,
@@ -42,7 +42,7 @@ fn modules_with_impossible_scalar_widths_are_rejected() {
             },
             Span::default(),
         );
-        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::default());
+        let mut validator = Validator::new(ValidationFlags::all());
         assert!(validator.validate(&module).is_err(), "{:#?}", module.types);
     }
 }

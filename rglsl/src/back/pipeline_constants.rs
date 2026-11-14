@@ -3,6 +3,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use core::convert::Infallible;
 use core::mem;
 
 use hashbrown::HashSet;
@@ -16,7 +17,8 @@ use crate::{
     compact::{CompactError, KeepUnused, compact},
     ir,
     proc::{ConstantEvaluator, ConstantEvaluatorError, Emitter},
-    valid::{Capabilities, ModuleInfo, ValidationError, ValidationFlags, Validator},
+    valid::{ModuleInfo, ValidationError, ValidationFlags, Validator},
+    visit::VisitorMut,
 };
 
 #[derive(Error, Debug, Clone)]
@@ -279,7 +281,7 @@ pub fn process_overrides<'a>(
 fn revalidate(
     module: Module,
 ) -> Result<(Cow<'static, Module>, Cow<'static, ModuleInfo>), PipelineConstantError> {
-    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let mut validator = Validator::new(ValidationFlags::all());
     let module_info = validator.validate_resolved_overrides(&module)?;
     Ok((Cow::Owned(module), Cow::Owned(module_info)))
 }
@@ -467,450 +469,8 @@ fn process_function(
     Ok(())
 }
 
-/// Replace every expression handle in `expr` with its counterpart
-/// given by `new_pos`.
 fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut Expression) {
-    let adjust = |expr: &mut Handle<Expression>| {
-        *expr = new_pos[*expr];
-    };
-    match *expr {
-        Expression::Compose {
-            ref mut components,
-            ty: _,
-        } => {
-            for c in components.iter_mut() {
-                adjust(c);
-            }
-        }
-        Expression::Access {
-            ref mut base,
-            ref mut index,
-        } => {
-            adjust(base);
-            adjust(index);
-        }
-        Expression::AccessIndex {
-            ref mut base,
-            index: _,
-        } => {
-            adjust(base);
-        }
-        Expression::Splat {
-            ref mut value,
-            size: _,
-        } => {
-            adjust(value);
-        }
-        Expression::Swizzle {
-            ref mut vector,
-            size: _,
-            pattern: _,
-        } => {
-            adjust(vector);
-        }
-        Expression::Load { ref mut pointer } => {
-            adjust(pointer);
-        }
-        Expression::ImageSample {
-            ref mut image,
-            ref mut sampler,
-            ref mut coordinate,
-            ref mut array_index,
-            ref mut offset,
-            ref mut level,
-            ref mut depth_ref,
-            ref mut min_lod,
-            gather: _,
-            gather_pattern: _,
-            sparse: _,
-        } => {
-            adjust(image);
-            if let Some(e) = sampler.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = min_lod.as_mut() {
-                adjust(e);
-            }
-            adjust(coordinate);
-            if let Some(e) = array_index.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = offset.as_mut() {
-                adjust(e);
-            }
-            match *level {
-                crate::SampleLevel::Exact(ref mut expr)
-                | crate::SampleLevel::Bias(ref mut expr) => {
-                    adjust(expr);
-                }
-                crate::SampleLevel::Gradient {
-                    ref mut x,
-                    ref mut y,
-                } => {
-                    adjust(x);
-                    adjust(y);
-                }
-                _ => {}
-            }
-            if let Some(e) = depth_ref.as_mut() {
-                adjust(e);
-            }
-        }
-        Expression::ImageLoad {
-            ref mut image,
-            ref mut coordinate,
-            ref mut array_index,
-            ref mut sample,
-            ref mut level,
-            sparse: _,
-        } => {
-            adjust(image);
-            adjust(coordinate);
-            if let Some(e) = array_index.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = sample.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = level.as_mut() {
-                adjust(e);
-            }
-        }
-        Expression::ImageQuery {
-            ref mut image,
-            ref mut query,
-        } => {
-            adjust(image);
-            match *query {
-                crate::ImageQuery::Size { ref mut level } => {
-                    if let Some(e) = level.as_mut() {
-                        adjust(e);
-                    }
-                }
-                crate::ImageQuery::NumLevels
-                | crate::ImageQuery::NumLayers
-                | crate::ImageQuery::NumSamples => {}
-                crate::ImageQuery::Lod {
-                    ref mut sampler,
-                    ref mut coordinate,
-                } => {
-                    if let Some(e) = sampler.as_mut() {
-                        adjust(e);
-                    }
-                    adjust(coordinate);
-                }
-            }
-        }
-        Expression::ImageSparseResident { ref mut code } => {
-            adjust(code);
-        }
-        Expression::InterpolateAt {
-            ref mut pointer,
-            ref mut location,
-        } => {
-            adjust(pointer);
-            match *location {
-                crate::InterpolationLocation::Centroid => {}
-                crate::InterpolationLocation::Sample(ref mut operand)
-                | crate::InterpolationLocation::Offset(ref mut operand) => adjust(operand),
-            }
-        }
-        Expression::ImageFootprint {
-            ref mut image,
-            ref mut coordinate,
-            ref mut granularity,
-            ref mut coarse,
-            ref mut level,
-            ref mut min_lod,
-            ty: _,
-        } => {
-            adjust(image);
-            adjust(coordinate);
-            adjust(granularity);
-            adjust(coarse);
-            match *level {
-                crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
-                crate::SampleLevel::Exact(ref mut expr)
-                | crate::SampleLevel::Bias(ref mut expr) => {
-                    adjust(expr);
-                }
-                crate::SampleLevel::Gradient {
-                    ref mut x,
-                    ref mut y,
-                } => {
-                    adjust(x);
-                    adjust(y);
-                }
-            }
-            if let Some(ref mut min_lod) = *min_lod {
-                adjust(min_lod);
-            }
-        }
-        Expression::FragmentFetch {
-            ref mut image,
-            ref mut coordinate,
-            ref mut fragment,
-        } => {
-            adjust(image);
-            adjust(coordinate);
-            if let Some(ref mut fragment) = *fragment {
-                adjust(fragment);
-            }
-        }
-        Expression::AttachmentRead {
-            ref mut aspect,
-            ref mut sample,
-        } => {
-            if let crate::AttachmentAspect::Color(ref mut image) = *aspect {
-                adjust(image);
-            }
-            if let Some(ref mut sample) = *sample {
-                adjust(sample);
-            }
-        }
-        Expression::Unary {
-            ref mut expr,
-            op: _,
-        } => {
-            adjust(expr);
-        }
-        Expression::Binary {
-            ref mut left,
-            ref mut right,
-            op: _,
-        } => {
-            adjust(left);
-            adjust(right);
-        }
-        Expression::Select {
-            ref mut condition,
-            ref mut accept,
-            ref mut reject,
-        } => {
-            adjust(condition);
-            adjust(accept);
-            adjust(reject);
-        }
-        Expression::Derivative {
-            ref mut expr,
-            axis: _,
-            ctrl: _,
-        } => {
-            adjust(expr);
-        }
-        Expression::Relational {
-            ref mut argument,
-            fun: _,
-        } => {
-            adjust(argument);
-        }
-        Expression::Math {
-            ref mut arg,
-            ref mut arg1,
-            ref mut arg2,
-            ref mut arg3,
-            fun: _,
-        } => {
-            adjust(arg);
-            if let Some(e) = arg1.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = arg2.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = arg3.as_mut() {
-                adjust(e);
-            }
-        }
-        Expression::As {
-            ref mut expr,
-            kind: _,
-            convert: _,
-        } => {
-            adjust(expr);
-        }
-        Expression::ArrayLength(ref mut expr) | Expression::WideArrayLength(ref mut expr) => {
-            adjust(expr);
-        }
-        Expression::PhysicalAddress {
-            ref mut pointer,
-            split: _,
-        } => {
-            adjust(pointer);
-        }
-        Expression::PhysicalPointer {
-            ref mut value,
-            ty: _,
-        } => {
-            adjust(value);
-        }
-        Expression::BufferPointer { ref mut descriptor } => {
-            adjust(descriptor);
-        }
-        Expression::HeapOffset {
-            ref mut pointer,
-            ref mut offset,
-        } => {
-            adjust(pointer);
-            adjust(offset);
-        }
-        Expression::RayQueryGet {
-            ref mut query,
-            value: _,
-        } => {
-            adjust(query);
-        }
-        Expression::AccelerationStructureFromAddress { ref mut address } => {
-            adjust(address);
-        }
-        Expression::HitObjectGet {
-            ref mut object,
-            value: _,
-        } => {
-            adjust(object);
-        }
-        Expression::FetchMicroTriangleVertex {
-            ref mut acceleration_structure,
-            ref mut instance_id,
-            ref mut geometry_index,
-            ref mut primitive_index,
-            ref mut barycentric,
-            value: _,
-        } => {
-            adjust(acceleration_structure);
-            adjust(instance_id);
-            adjust(geometry_index);
-            adjust(primitive_index);
-            adjust(barycentric);
-        }
-        Expression::Literal(_)
-        | Expression::FunctionArgument(_)
-        | Expression::GlobalVariable(_)
-        | Expression::LocalVariable(_)
-        | Expression::CallResult(_)
-        | Expression::RayQueryProceedResult
-        | Expression::ReportIntersectionResult
-        | Expression::Constant(_)
-        | Expression::Override(_)
-        | Expression::ZeroValue(_)
-        | Expression::AtomicResult {
-            ty: _,
-            comparison: _,
-        }
-        | Expression::SubgroupBallotResult
-        | Expression::IsHelperInvocation
-        | Expression::SubgroupOperationResult { .. }
-        | Expression::SpirvInstructionResult { .. } => {}
-        Expression::CooperativeLoad { ref mut data, .. } => {
-            for operand in data.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Expression::CooperativeMultiplyAdd {
-            ref mut a,
-            ref mut b,
-            ref mut c,
-            ..
-        } => {
-            adjust(a);
-            adjust(b);
-            adjust(c);
-        }
-        Expression::CooperativeMatrixLength { .. } => {}
-        Expression::Replicate { ref mut value, .. } => adjust(value),
-        Expression::Expect {
-            ref mut value,
-            ref mut expected,
-        } => {
-            adjust(value);
-            adjust(expected);
-        }
-        Expression::Convert { ref mut expr, .. } => adjust(expr),
-        Expression::ImageProcessing {
-            operation: _,
-            ref mut image,
-            ref mut sampler,
-            ref mut coordinate,
-            ref mut reference,
-            ref mut reference_sampler,
-            ref mut reference_coordinate,
-            ref mut size,
-        } => {
-            adjust(image);
-            adjust(coordinate);
-            for operand in [
-                sampler,
-                reference,
-                reference_sampler,
-                reference_coordinate,
-                size,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                adjust(operand);
-            }
-        }
-        Expression::ArrayConversion {
-            ref mut expr,
-            ref mut index,
-            ..
-        } => {
-            adjust(expr);
-            if let Some(index) = index.as_mut() {
-                adjust(index);
-            }
-        }
-        Expression::Bitcast {
-            ref mut expr,
-            ref mut offset,
-            ..
-        } => {
-            adjust(expr);
-            if let Some(offset) = offset.as_mut() {
-                adjust(offset);
-            }
-        }
-        Expression::CooperativeMatrixResult { .. } | Expression::TensorCreate { .. } => {}
-        Expression::TensorSet {
-            ref mut base,
-            ref mut operands,
-            ..
-        } => {
-            adjust(base);
-            for operand in operands {
-                adjust(operand);
-            }
-        }
-        Expression::CooperativeVectorLoad {
-            ref mut pointer,
-            ref mut offset,
-            ..
-        } => {
-            adjust(pointer);
-            adjust(offset);
-        }
-        Expression::CooperativeVectorMatMul {
-            ref mut operation, ..
-        } => {
-            for operand in operation.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Expression::TensorRead {
-            ref mut tensor,
-            ref mut coordinates,
-            ref mut out_of_bounds,
-            ..
-        } => {
-            adjust(tensor);
-            adjust(coordinates);
-            if let Some(value) = out_of_bounds.as_mut() {
-                adjust(value);
-            }
-        }
-        Expression::TensorQuerySize { ref mut tensor, .. } => adjust(tensor),
-    }
+    expr.for_each_operand_mut(|operand| *operand = new_pos[*operand]);
 }
 
 /// Replace every expression handle in `block` with its counterpart
@@ -918,364 +478,62 @@ fn adjust_expr(new_pos: &HandleVec<Expression, Handle<Expression>>, expr: &mut E
 fn adjust_block(new_pos: &HandleVec<Expression, Handle<Expression>>, block: &mut Block) {
     block.visit_blocks_mut(|block| {
         for stmt in block.iter_mut() {
-            adjust_stmt(new_pos, stmt);
+            let Ok(()) = stmt.visit_mut(&mut StatementRemap(new_pos));
         }
     });
 }
 
-/// Replace every expression handle in `stmt` with its counterpart
-/// given by `new_pos`.
-fn adjust_stmt(new_pos: &HandleVec<Expression, Handle<Expression>>, stmt: &mut Statement) {
-    let adjust = |expr: &mut Handle<Expression>| {
-        *expr = new_pos[*expr];
-    };
-    match *stmt {
-        Statement::Emit(ref mut range) => {
-            if let Some((mut first, mut last)) = range.first_and_last() {
-                adjust(&mut first);
-                adjust(&mut last);
-                *range = Range::new_from_bounds(first, last);
-            }
+struct StatementRemap<'m>(&'m HandleVec<Expression, Handle<Expression>>);
+
+impl<'a> VisitorMut<'a> for StatementRemap<'_> {
+    type Error = Infallible;
+
+    fn expression(&mut self, handle: &mut Handle<Expression>) -> Result<(), Infallible> {
+        *handle = self.0[*handle];
+        Ok(())
+    }
+
+    fn result(&mut self, handle: &mut Handle<Expression>) -> Result<(), Infallible> {
+        *handle = self.0[*handle];
+        Ok(())
+    }
+
+    fn emitted(&mut self, range: &mut Range<Expression>) -> Result<(), Infallible> {
+        if let Some((first, last)) = range.first_and_last() {
+            *range = Range::new_from_bounds(self.0[first], self.0[last]);
         }
-        Statement::Block(_) => {}
-        Statement::If {
-            ref mut condition,
-            accept: _,
-            reject: _,
-            control: _,
-        } => {
-            adjust(condition);
-        }
-        Statement::Switch {
-            ref mut selector,
-            cases: _,
-            control: _,
-        } => {
-            adjust(selector);
-        }
-        Statement::Loop {
-            body: _,
-            continuing: _,
-            ref mut break_if,
-            control: _,
-        } => {
-            if let Some(e) = break_if.as_mut() {
-                adjust(e);
-            }
-        }
-        Statement::Return { ref mut value } => {
-            if let Some(e) = value.as_mut() {
-                adjust(e);
-            }
-        }
-        Statement::Store {
-            ref mut pointer,
-            ref mut value,
-        } => {
-            adjust(pointer);
-            adjust(value);
-        }
-        Statement::ImageStore {
-            ref mut image,
-            ref mut coordinate,
-            ref mut array_index,
-            ref mut sample,
-            ref mut level,
-            ref mut value,
-        } => {
-            adjust(image);
-            adjust(coordinate);
-            if let Some(e) = array_index.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = sample.as_mut() {
-                adjust(e);
-            }
-            if let Some(e) = level.as_mut() {
-                adjust(e);
-            }
-            adjust(value);
-        }
-        Statement::Atomic {
-            ref mut pointer,
-            ref mut value,
-            ref mut result,
-            ref mut fun,
-            order: _,
-        } => {
-            adjust(pointer);
-            adjust(value);
-            if let Some(ref mut result) = *result {
-                adjust(result);
-            }
-            match *fun {
-                crate::AtomicFunction::Exchange {
-                    compare: Some(ref mut compare),
-                } => {
-                    adjust(compare);
-                }
-                crate::AtomicFunction::Add
-                | crate::AtomicFunction::Subtract
-                | crate::AtomicFunction::And
-                | crate::AtomicFunction::ExclusiveOr
-                | crate::AtomicFunction::InclusiveOr
-                | crate::AtomicFunction::Min
-                | crate::AtomicFunction::Max
-                | crate::AtomicFunction::Exchange { compare: None } => {}
-            }
-        }
-        Statement::ImageAtomic {
-            ref mut image,
-            ref mut coordinate,
-            ref mut array_index,
-            ref mut fun,
-            ref mut value,
-            ref mut sample,
-            ref mut result,
-            order: _,
-        } => {
-            adjust(image);
-            adjust(coordinate);
-            if let Some(ref mut array_index) = *array_index {
-                adjust(array_index);
-            }
-            if let crate::AtomicFunction::Exchange {
-                compare: Some(ref mut compare),
-            } = *fun
-            {
-                adjust(compare);
-            }
-            adjust(value);
-            if let Some(ref mut sample) = *sample {
-                adjust(sample);
-            }
-            if let Some(ref mut result) = *result {
-                adjust(result);
-            }
-        }
-        Statement::AtomicLoad {
-            ref mut location,
-            order: _,
-            ref mut result,
-        } => {
-            adjust_location(location, &adjust);
-            adjust(result);
-        }
-        Statement::AtomicStore {
-            ref mut location,
-            ref mut value,
-            order: _,
-        } => {
-            adjust_location(location, &adjust);
-            adjust(value);
-        }
-        Statement::SubgroupBallot {
-            ref mut result,
-            ref mut predicate,
-        } => {
-            if let Some(ref mut predicate) = *predicate {
-                adjust(predicate);
-            }
-            adjust(result);
-        }
-        Statement::SubgroupCollectiveOperation {
-            ref mut collective_op,
-            ref mut argument,
-            ref mut result,
-            ..
-        } => {
-            if let Some(ballot) = collective_op.partition_mut() {
-                adjust(ballot);
-            }
-            adjust(argument);
-            adjust(result);
-        }
-        Statement::SubgroupGather {
-            ref mut mode,
-            ref mut argument,
-            ref mut result,
-        } => {
-            if let Some(index) = mode.index_mut() {
-                adjust(index);
-            }
-            adjust(argument);
-            adjust(result);
-        }
-        Statement::SubgroupFunction {
-            ref mut fun,
-            ref mut result,
-        } => {
-            for operand in fun.operands_mut().into_iter().flatten() {
-                adjust(operand);
-            }
-            adjust(result);
-        }
-        Statement::Call {
-            ref mut arguments,
-            ref mut result,
-            function: _,
-        } => {
-            for argument in arguments.iter_mut() {
-                adjust(argument);
-            }
-            if let Some(e) = result.as_mut() {
-                adjust(e);
-            }
-        }
-        Statement::RayQuery {
-            ref mut query,
-            ref mut fun,
-        } => {
-            adjust(query);
-            for operand in fun.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Statement::CooperativeStore {
-            ref mut target,
-            ref mut data,
-        } => {
-            adjust(target);
-            for operand in data.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Statement::MeshFunction(ref mut function) => {
-            for operand in function.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Statement::HitObject {
-            ref mut object,
-            ref mut fun,
-        } => {
-            adjust(object);
-            for operand in fun.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Statement::ReorderThread {
-            ref mut hint,
-            ref mut bits,
-            ..
-        } => {
-            adjust(hint);
-            adjust(bits);
-        }
-        Statement::RayPipelineFunction(ref mut func) => {
-            for operand in func.operands_mut() {
-                adjust(operand);
-            }
-            if let Some(result) = func.result_mut() {
-                adjust(result);
-            }
-        }
-        Statement::Assume { ref mut condition } => adjust(condition),
-        Statement::CooperativeMatrix {
-            ref mut function,
-            ref mut result,
-        } => {
-            for operand in function.operands_mut() {
-                adjust(operand);
-            }
-            if let Some(ref mut result) = *result {
-                adjust(result);
-            }
-        }
-        Statement::CooperativeVector(ref mut function) => {
-            for operand in function.operands_mut() {
-                adjust(operand);
-            }
-        }
-        Statement::DebugPrintf {
-            ref mut arguments, ..
-        } => {
-            for argument in arguments.iter_mut() {
-                if let crate::DebugPrintfArgument::Value(ref mut value) = *argument {
-                    adjust(value);
-                }
-            }
-        }
-        Statement::Abort {
-            ref mut arguments, ..
-        } => {
-            for argument in arguments.iter_mut() {
-                adjust(argument);
-            }
-        }
-        Statement::TensorWrite {
-            ref mut tensor,
-            ref mut coordinates,
-            ref mut value,
-            ..
-        } => {
-            adjust(tensor);
-            adjust(coordinates);
-            adjust(value);
-        }
-        Statement::SpirvInstruction {
-            ref mut operands,
-            ref mut result,
-            ..
-        } => {
-            for operand in operands.iter_mut() {
-                match *operand {
-                    crate::SpirvOperand::Value(ref mut value)
-                    | crate::SpirvOperand::Pointer(ref mut value) => adjust(value),
-                    crate::SpirvOperand::Literal(_) => {}
-                }
-            }
-            if let Some(ref mut result) = *result {
-                adjust(result);
-            }
-        }
-        Statement::Break
-        | Statement::Continue
-        | Statement::Kill
-        | Statement::Demote
-        | Statement::BeginInvocationInterlock
-        | Statement::EndInvocationInterlock
-        | Statement::SplitBarrier { .. }
-        | Statement::EmitVertex { .. }
-        | Statement::EndPrimitive { .. }
-        | Statement::ControlBarrier(_)
-        | Statement::MemoryBarrier(_)
-        | Statement::ScopedBarrier { .. } => {}
+        Ok(())
+    }
+
+    fn ty(&mut self, _: &mut Handle<crate::Type>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn global_variable(&mut self, _: &mut Handle<crate::GlobalVariable>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn local_variable(&mut self, _: &mut Handle<crate::LocalVariable>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn function(&mut self, _: &mut Handle<Function>) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn block(&mut self, _: &'a mut Block) -> Result<(), Infallible> {
+        Ok(())
     }
 }
 
-fn adjust_location(location: &mut crate::AtomicLocation, adjust: &dyn Fn(&mut Handle<Expression>)) {
-    match *location {
-        crate::AtomicLocation::Pointer(ref mut pointer) => adjust(pointer),
-        crate::AtomicLocation::Texel(ref mut texel) => {
-            adjust(&mut texel.image);
-            adjust(&mut texel.coordinate);
-            if let Some(ref mut array_index) = texel.array_index {
-                adjust(array_index);
-            }
-            if let Some(ref mut sample) = texel.sample {
-                adjust(sample);
-            }
-        }
-    }
-}
-
-/// Adjust [`Emit`] statements in `block` to skip [`needs_pre_emit`] expressions we have introduced.
-///
-/// According to validation, [`Emit`] statements must not cover any expressions
-/// for which [`Expression::needs_pre_emit`] returns true. All expressions built
-/// by successful constant evaluation fall into that category, meaning that
-/// `process_function` will usually rewrite [`Override`] expressions and those
-/// that use their values into pre-emitted expressions, leaving any [`Emit`]
-/// statements that cover them invalid.
-///
-/// This function rewrites all [`Emit`] statements into zero or more new
-/// [`Emit`] statements covering only those expressions in the original range
-/// that are not pre-emitted.
-///
-/// [`Emit`]: Statement::Emit
-/// [`needs_pre_emit`]: Expression::needs_pre_emit
-/// [`Override`]: Expression::Override
 fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
     block.visit_blocks_mut(|block| filter_emits(block, expressions));
 }

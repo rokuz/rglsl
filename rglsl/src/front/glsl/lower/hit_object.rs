@@ -9,9 +9,8 @@ use rglsl_sema::builtins::kind::{
 use super::function::FunctionLowerer;
 use super::{Result, internal};
 use crate::{
-    Expression, Handle, HitObjectFunction, HitObjectKind, HitObjectSbtRecord, HitObjectTrace,
-    HitObjectValue, MicroTriangleVertexValue, PredeclaredType, ReorderHint, Span, Statement,
-    VectorSize,
+    Expression, Handle, HitObjectFunction, HitObjectSbtRecord, HitObjectTrace, HitObjectValue,
+    MicroTriangleVertexValue, PredeclaredType, ReorderHint, Span, Statement, VectorSize,
 };
 
 const PAYLOADS: usize = 0;
@@ -50,10 +49,10 @@ const fn hit_object_value(value: Value) -> HitObjectValue {
     }
 }
 
-const fn hit_object_kind(flavor: HitObjectFlavor) -> HitObjectKind {
+const fn hit_object_flavor(flavor: HitObjectFlavor) -> crate::HitObjectFlavor {
     match flavor {
-        HitObjectFlavor::Nv => HitObjectKind::Nv,
-        HitObjectFlavor::Ext => HitObjectKind::Ext,
+        HitObjectFlavor::Nv => crate::HitObjectFlavor::Nv,
+        HitObjectFlavor::Ext => crate::HitObjectFlavor::Ext,
     }
 }
 
@@ -220,7 +219,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let kind = hit_object_kind(flavor);
         if call == HitObject::ReorderThread
             && let [ref hint, ref bits] = *arguments
         {
@@ -232,7 +230,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().rvalue(bits);
                 self.nest(frame).await
             }?;
-            self.with(|this| this.push(Statement::ReorderThread { kind, hint, bits }, at))?;
+            self.with(|this| {
+                this.push(
+                    Statement::ReorderThread {
+                        flavor: hit_object_flavor(flavor),
+                        hint,
+                        bits,
+                    },
+                    at,
+                );
+            })?;
             return Ok(None);
         }
         let (object, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
@@ -353,9 +360,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().ray_operands(rest);
                     self.nest(frame).await
                 }?;
-                let (flags, operands) = match kind {
-                    HitObjectKind::Nv => (None, operands.as_slice()),
-                    HitObjectKind::Ext => {
+                let (flags, operands) = match flavor {
+                    HitObjectFlavor::Nv => (None, operands.as_slice()),
+                    HitObjectFlavor::Ext => {
                         let (flags, operands) =
                             operands.split_first().ok_or_else(|| internal(at))?;
                         (Some(*flags), operands)
