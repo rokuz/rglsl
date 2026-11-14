@@ -378,6 +378,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rglsl-bench-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rglsl",
+ "rglsl-ast",
+ "rglsl-link",
+ "rglsl-pp",
+ "rglsl-sema",
+]
+
+[[package]]
 name = "rglsl-capi"
 version = "0.1.0"
 dependencies = [

@@ -14,6 +14,7 @@ use crate::groups;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 
+mod in_process;
 mod stats;
 mod synthetic;
 
@@ -24,6 +25,7 @@ pub struct Options {
     pub runs: usize,
     pub debug_info: Option<DebugInfo>,
     pub timeout_secs: u64,
+    pub in_process: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,15 +276,9 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     if options.runs == 0 {
         bail!("--runs must be at least 1");
     }
-    let glslang_dir = options
-        .glslang_dir
-        .clone()
-        .unwrap_or_else(|| oracles::default_glslang_src(root));
-    if !glslang_dir.join("Test").is_dir() {
-        bail!(
-            "{} has no Test/ directory: run `cargo xtask oracles` or pass --glslang-dir",
-            glslang_dir.display()
-        );
+    let glslang_dir = corpus_dir(root, options)?;
+    if options.in_process {
+        return in_process::run(root, &glslang_dir, options);
     }
     let glslang = oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?;
     if !glslang.pinned {
@@ -322,7 +318,12 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         out_dir: work.join("out"),
         timeout: Duration::from_secs(options.timeout_secs),
     };
-    let environment = Environment::describe(root, &glslang_dir, &tools);
+    let rglsl_build = if std::env::var_os("RGLSL_CLI").is_some() {
+        "RGLSL_CLI (as given)"
+    } else {
+        "cargo --release (workspace release profile)"
+    };
+    let environment = Environment::describe(root, &glslang_dir, &tools.glslang, rglsl_build);
 
     let started = Instant::now();
     let mut measured = Vec::new();
@@ -388,6 +389,20 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         table_path.display()
     );
     Ok(0)
+}
+
+fn corpus_dir(root: &Path, options: &Options) -> Result<PathBuf> {
+    let glslang_dir = options
+        .glslang_dir
+        .clone()
+        .unwrap_or_else(|| oracles::default_glslang_src(root));
+    if !glslang_dir.join("Test").is_dir() {
+        bail!(
+            "{} has no Test/ directory: run `cargo xtask oracles` or pass --glslang-dir",
+            glslang_dir.display()
+        );
+    }
+    Ok(glslang_dir)
 }
 
 fn sample(times: &[f64], peak_rss: Option<u64>) -> Result<Sample> {
@@ -536,7 +551,7 @@ struct Environment {
 }
 
 impl Environment {
-    fn describe(root: &Path, glslang_dir: &Path, tools: &Tools) -> Self {
+    fn describe(root: &Path, glslang_dir: &Path, tool: &Tool, rglsl_build: &str) -> Self {
         let mut machine = Vec::new();
         if let Some(cpu) = cpu_model() {
             machine.push(("CPU".into(), cpu));
@@ -556,7 +571,7 @@ impl Environment {
         let pinned =
             oracles::load_pins(root).map_or_else(|_| "unknown".into(), |pins| pins.glslang.commit);
         glslang.push(("pinned commit (oracles.toml)".into(), pinned));
-        if tools.glslang.pinned {
+        if tool.pinned {
             let cache = oracles::oracles_dir(root)
                 .join("build")
                 .join("glslang")
@@ -581,7 +596,7 @@ impl Environment {
                 "unpinned (not built by `cargo xtask oracles`)".into(),
             ));
         }
-        if let Ok(version) = process::capture(Command::new(&tools.glslang.path).arg("--version"))
+        if let Ok(version) = process::capture(Command::new(&tool.path).arg("--version"))
             && let Some(line) = version.lines().next()
         {
             glslang.push(("version".into(), line.trim().to_string()));
@@ -606,14 +621,7 @@ impl Environment {
                 commit
             },
         ));
-        rglsl.push((
-            "build".into(),
-            if std::env::var_os("RGLSL_CLI").is_some() {
-                "RGLSL_CLI (as given)".into()
-            } else {
-                "cargo --release (workspace release profile)".into()
-            },
-        ));
+        rglsl.push(("build".into(), rglsl_build.into()));
         if let Ok(version) = process::capture(Command::new("rustc").arg("--version")) {
             rglsl.push(("rustc".into(), version));
         }
@@ -1032,6 +1040,7 @@ mod tests {
             runs: 3,
             debug_info: Some(DebugInfo::NonSemantic),
             timeout_secs: 1,
+            in_process: false,
         };
         let environment = Environment {
             machine: vec![("CPU".into(), "test".into())],
