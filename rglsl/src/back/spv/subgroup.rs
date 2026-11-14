@@ -531,10 +531,8 @@ impl BlockContext<'_> {
                 self.writer.use_extension(SPV_KHR_SUBGROUP_VOTE);
                 self.require_subgroup("subgroup vote", &[Capability::SubgroupVoteKHR])?;
             }
-            Sf::Group { non_uniform, .. } => {
-                if non_uniform {
-                    self.writer.use_extension(SPV_AMD_SHADER_BALLOT);
-                }
+            Sf::Group { .. } => {
+                self.writer.use_extension(SPV_AMD_SHADER_BALLOT);
                 self.require_subgroup("group operation", &[Capability::Groups])?;
             }
             Sf::AmdSwizzle { .. }

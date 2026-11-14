@@ -163,21 +163,24 @@ impl Analyzer<'_> {
         ) {
             valid &= self.require_extension(span, Extension::ArbSparseTexture2, name);
         }
-        if name == "sparseTextureGatherOffsetsARB" {
-            let index = if shadow { 3 } else { 2 };
-            if operands
+        let offsets = match name {
+            "sparseTextureGatherOffsetsARB" => Some(if shadow { 3 } else { 2 }),
+            "textureGatherLodOffsetsAMD" | "sparseTextureGatherLodOffsetsAMD" => Some(3),
+            _ => None,
+        };
+        if let Some(index) = offsets
+            && operands
                 .get(index)
                 .is_some_and(|operand| !operand.constant || operand.specialization)
-            {
-                self.error(
-                    span,
-                    DiagnosticKind::InvalidBuiltinCall {
-                        name: String::from(name),
-                        reason: "the offsets must be constant",
-                    },
-                );
-                valid = false;
-            }
+        {
+            self.error(
+                span,
+                DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason: "the offsets must be constant",
+                },
+            );
+            valid = false;
         }
         let derivative = DERIVATIVE_FUNCTIONS.contains(&name);
         if !derivative && !implicit_lod(name, operands) {
@@ -195,6 +198,17 @@ impl Analyzer<'_> {
                     &COMPUTE_DERIVATIVES[..]
                 } else {
                     &KHR_ONLY[..]
+                })
+            })
+        {
+            return false;
+        }
+        if matches!(name, "textureQueryLod" | "textureQueryLOD")
+            && self.derivative_group.is_none()
+            && self.stage_check(span, |stage| {
+                gated(stage).then(|| DiagnosticKind::InvalidBuiltinCall {
+                    name: String::from(name),
+                    reason: "needs implicit derivatives: a fragment shader or a derivative_group_quads* or derivative_group_linear* layout qualifier",
                 })
             })
         {

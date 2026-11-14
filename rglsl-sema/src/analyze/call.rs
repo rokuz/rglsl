@@ -1097,6 +1097,22 @@ impl Analyzer<'_> {
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::qcom::function_extension(name) {
             self.require_extension(span, extension, name);
+            if matches!(
+                extension,
+                Extension::QcomImageProcessing | Extension::QcomImageProcessing2
+            ) && self
+                .options
+                .spirv_version
+                .is_some_and(|version| version < (1, 4))
+            {
+                self.error(
+                    span,
+                    DiagnosticKind::SpirvVersionRequired {
+                        feature: "QCOM image processing",
+                        version: "1.4",
+                    },
+                );
+            }
         }
         if let Some(extension) = super::fragment::function_extension(name) {
             self.require_extension(span, extension, name);
@@ -1396,13 +1412,21 @@ impl Analyzer<'_> {
             }
         }
         let offset_index = match name {
-            "textureOffset" | "textureProjOffset" | "sparseTextureOffsetARB" => Some(2),
+            "textureOffset"
+            | "textureProjOffset"
+            | "sparseTextureOffsetARB"
+            | "textureOffsetClampARB"
+            | "sparseTextureOffsetClampARB" => Some(2),
             "texelFetchOffset"
             | "textureLodOffset"
             | "textureProjLodOffset"
             | "sparseTextureLodOffsetARB"
             | "sparseTexelFetchOffsetARB" => Some(3),
-            "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
+            "textureGradOffset"
+            | "textureProjGradOffset"
+            | "sparseTextureGradOffsetARB"
+            | "textureGradOffsetClampARB"
+            | "sparseTextureGradOffsetClampARB" => Some(4),
             _ => None,
         };
         if let Some(index) = offset_index
@@ -1878,7 +1902,10 @@ impl Analyzer<'_> {
 
 fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
     if ty.is_array()
-        || !matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. })
+        || !matches!(
+            ty.kind,
+            TypeKind::Scalar(_) | TypeKind::Vector { .. } | TypeKind::LongVector { .. }
+        )
         || !ty.base_scalar().is_some_and(Scalar::is_microscaling)
     {
         return false;

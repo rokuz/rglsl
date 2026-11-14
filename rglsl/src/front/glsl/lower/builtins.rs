@@ -10,7 +10,7 @@ use rglsl_sema::{BuiltinFunctionId, Callee};
 use super::function::FunctionLowerer;
 use super::prepass::strip;
 use super::types::{scalar, vector_size};
-use super::{Result, internal, unsupported};
+use super::{Result, internal, semantic, unsupported};
 use crate::{
     BinaryOperator, BlockMatchMetric, BlockMatchSearch, DerivativeAxis, DerivativeControl,
     Expression, Handle, ImageGatherPattern, ImageProcessingOperation, ImageQuery, Literal,
@@ -356,17 +356,16 @@ impl FunctionLowerer<'_, '_> {
             return self.wide_bit_operation(name, arg(0)?, element, result, vector, at);
         }
         if let Some((axis, ctrl)) = derivative(name) {
-            let half = first_ty.base_scalar() == Some(GlslScalar::Float16);
-            let mut expr = arg(0)?;
-            if half {
-                expr = self.as_kind(expr, crate::Scalar::F32, at)?;
+            if first_ty.base_scalar() == Some(GlslScalar::Double) {
+                return Err(semantic(
+                    format!(
+                        "`{name}` of a double is not supported: SPIR-V derivatives take 16- or 32-bit floats"
+                    ),
+                    at,
+                ));
             }
-            let value = self.add(Expression::Derivative { axis, ctrl, expr }, at)?;
-            return if half {
-                self.as_kind(value, crate::Scalar::F16, at)
-            } else {
-                Ok(value)
-            };
+            let expr = arg(0)?;
+            return self.add(Expression::Derivative { axis, ctrl, expr }, at);
         }
         if name == "mix" && types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) {
             return self.add(
@@ -411,11 +410,8 @@ impl FunctionLowerer<'_, '_> {
                     at,
                 );
             }
-            Some(Special::Pack) => {
+            Some(Special::Pack | Special::Unpack) => {
                 return self.pack_bits(arg(0)?, &first_ty, result, at);
-            }
-            Some(Special::Unpack) => {
-                return self.unpack_bits(arg(0)?, &first_ty, result, at);
             }
             Some(Special::Modulo) => {
                 let x = arg(0)?;
@@ -459,15 +455,6 @@ impl FunctionLowerer<'_, '_> {
         }
         let fun = math(name, values.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        if name == "ldexp" {
-            let narrow = types
-                .get(1)
-                .and_then(GlslType::base_scalar)
-                .is_some_and(|exponent| exponent.bits() < 32);
-            if narrow && let Some(exponent) = values.get_mut(1) {
-                *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
-            }
-        }
         if let Some(size) = vector {
             let splatted = matches!(
                 name,
@@ -666,88 +653,18 @@ impl FunctionLowerer<'_, '_> {
         result: &GlslType,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let (Some(element), Some(count), Some(target)) = (
-            source.base_scalar(),
-            source.component_count(),
-            result.base_scalar(),
-        ) else {
-            return Err(internal(at));
-        };
-        let element_bits = element.bits();
-        let width = scalar(target).width;
-        let unsigned = self.bitcast(value, crate::ScalarKind::Uint, at)?;
-        let wide = self.as_kind(
-            unsigned,
-            crate::Scalar {
-                kind: crate::ScalarKind::Uint,
-                width,
-            },
-            at,
-        )?;
-        let mut packed = self.add(
-            Expression::AccessIndex {
-                base: wide,
-                index: 0,
-            },
-            at,
-        )?;
-        for index in 1..count {
-            let part = self.add(Expression::AccessIndex { base: wide, index }, at)?;
-            let amount = self.shift_amount(index * element_bits, at)?;
-            let shifted = self.binary_op(BinaryOperator::ShiftLeft, part, amount, at)?;
-            packed = self.binary_op(BinaryOperator::InclusiveOr, packed, shifted, at)?;
-        }
-        let kind = scalar(target).kind;
-        if kind == crate::ScalarKind::Uint {
-            Ok(packed)
-        } else {
-            self.bitcast(packed, kind, at)
-        }
-    }
-
-    fn unpack_bits(
-        &mut self,
-        value: Handle<Expression>,
-        source: &GlslType,
-        result: &GlslType,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let (Some(element), Some(count)) = (result.base_scalar(), result.component_count()) else {
-            return Err(internal(at));
-        };
         if source.base_scalar().is_none() {
             return Err(internal(at));
         }
-        let element_scalar = scalar(element);
-        let unsigned_element = crate::Scalar {
-            kind: crate::ScalarKind::Uint,
-            width: element_scalar.width,
-        };
-        let unsigned = self.bitcast(value, crate::ScalarKind::Uint, at)?;
-        let mut components = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
-        for index in 0..count {
-            let part = if index == 0 {
-                unsigned
-            } else {
-                let amount = self.shift_amount(index * element.bits(), at)?;
-                self.binary_op(BinaryOperator::ShiftRight, unsigned, amount, at)?
-            };
-            components.push(self.as_kind(part, unsigned_element, at)?);
-        }
-        let unsigned_ty = result.with_scalar(match element {
-            GlslScalar::Int8 => GlslScalar::Uint8,
-            GlslScalar::Int16 => GlslScalar::Uint16,
-            GlslScalar::Int64 => GlslScalar::Uint64,
-            GlslScalar::Int => GlslScalar::Uint,
-            other => other,
-        });
-        let ty = self.lw.ir_type(&unsigned_ty, at)?;
-        let composed = self.add(Expression::Compose { ty, components }, at)?;
-        if element_scalar.kind == crate::ScalarKind::Uint {
-            Ok(composed)
-        } else {
-            self.bitcast(composed, element_scalar.kind, at)
-        }
+        let ty = self.lw.ir_type(result, at)?;
+        self.add(
+            Expression::Bitcast {
+                expr: value,
+                ty,
+                offset: None,
+            },
+            at,
+        )
     }
 
     fn resize(
@@ -2092,6 +2009,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().rvalue(bias);
                 self.nest(frame).await
             }?);
+        }
+        if matches!(level, SampleLevel::Auto | SampleLevel::Bias(_)) {
+            let group = self.with(|this| this.lw.analysis.derivative_group.is_some())?;
+            let derivatives = self.with(|this| {
+                this.lw.stage_map(|stage| {
+                    stage == ShaderStage::Fragment || (stage == ShaderStage::Compute && group)
+                })
+            })?;
+            if !derivatives {
+                level =
+                    match min_lod.take() {
+                        Some(clamp) => {
+                            let zero = self.with(|this| this.literal(Literal::F32(0.0), at))??;
+                            SampleLevel::Exact(self.with(|this| {
+                                this.math_call(MathFunction::Max, &[clamp, zero], at)
+                            })??)
+                        }
+                        None => SampleLevel::Zero,
+                    };
+            }
         }
         let output_ty = self.with(|this| this.info(output))??.ty.clone();
         let footprint = self.with(|this| this.lw.ir_type(&output_ty, at))??;

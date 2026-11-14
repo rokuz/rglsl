@@ -1,0 +1,15 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+layout(local_size_x = 4) in;
+layout(std430, set = 0, binding = 0) buffer Words { uint words[]; };
+layout(std430, set = 0, binding = 1) buffer Packed { uint packed[]; };
+
+void main() {
+  uint i = gl_LocalInvocationID.x;
+  uint w = words[i];
+  u16vec2 halves = unpack16(w);
+  u8vec4 bytes = unpack8(w);
+  packed[3 * i] = pack32(halves.yx);
+  packed[3 * i + 1] = pack32(bytes.wzyx);
+  packed[3 * i + 2] = packUint2x16(halves + u16vec2(1));
+}

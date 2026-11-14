@@ -13,6 +13,8 @@ use super::{
 };
 use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 
+const SPV_AMD_GPU_SHADER_HALF_FLOAT: &str = "SPV_AMD_gpu_shader_half_float";
+
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
         crate::TypeInner::Scalar(_) => Ok(Dimension::Scalar),
@@ -289,6 +291,14 @@ impl Writer {
 }
 
 impl BlockContext<'_> {
+    fn is_half(&self, expression: Handle<crate::Expression>) -> bool {
+        self.fun_info[expression]
+            .ty
+            .inner_with(&self.ir_module.types)
+            .scalar()
+            == Some(crate::Scalar::F16)
+    }
+
     pub(super) fn cache_expression_value(
         &mut self,
         expr_handle: Handle<crate::Expression>,
@@ -1661,6 +1671,17 @@ impl BlockContext<'_> {
                         Some(self.cached.get(offset)?),
                     ),
                 };
+                let offset = match location {
+                    crate::InterpolationLocation::Offset(offset) => Some(offset),
+                    _ => None,
+                };
+                if [Some(expr_handle), offset]
+                    .into_iter()
+                    .flatten()
+                    .any(|handle| self.is_half(handle))
+                {
+                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
+                }
                 let id = self.gen_id();
                 let mut operands = alloc::vec![pointer_id];
                 operands.extend(operand);
@@ -1846,6 +1867,9 @@ impl BlockContext<'_> {
                         )?;
                     }
                     Ctrl::None => {}
+                }
+                if self.is_half(expr) {
+                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
                 }
                 let id = self.gen_id();
                 let expr_id = self.cached.get(expr)?;
