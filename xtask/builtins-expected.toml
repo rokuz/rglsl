@@ -51,11 +51,6 @@ verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
 
 [[divergence]]
-name = "*Thread*NV"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_NV_gpu_shader5 votes allThreadsNV, anyThreadNV and allThreadsEqualNV are not declared"
-
-[[divergence]]
 name = "clock*ARB"
 verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_ARB_shader_clock built-ins are not declared"

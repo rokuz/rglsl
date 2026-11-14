@@ -6285,6 +6285,41 @@ fn shader_ballot_uses_the_khr_extensions() -> crate::TestResult {
 }
 
 #[test]
+fn gpu_shader5_votes_match_glslang() -> crate::TestResult {
+    use spirv::Capability as C;
+    let source = "#version 450
+        #extension GL_NV_gpu_shader5 : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { bool b; bool c; bool d; };
+        void main() {
+            b = anyThreadNV(b);
+            c = allThreadsNV(c);
+            d = allThreadsEqualNV(d);
+        }";
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    for op in [
+        Op::SubgroupAnyKHR,
+        Op::SubgroupAllKHR,
+        Op::SubgroupAllEqualKHR,
+    ] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+    assert_eq!(extensions_of(&module), ["SPV_KHR_subgroup_vote"]);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::SubgroupVoteKHR])
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        &source.replace("#extension GL_NV_gpu_shader5 : enable", ""),
+    )
+    .err()
+    .ok_or("anyThreadNV without GL_NV_gpu_shader5 is accepted")?;
+    assert!(error.contains("GL_NV_gpu_shader5"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn rotate_partition_and_quad_control_match_glslang() -> crate::TestResult {
     use spirv::{Capability as C, GroupOperation as G};
     let module = compile_valid_1_3(
