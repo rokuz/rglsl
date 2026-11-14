@@ -1,29 +1,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_types::extension::Extension;
+
 use super::{ALL_STAGES, COMPUTE, MESH, Prototype, TASK};
 use crate::scope::Direction;
 use crate::types::{Scalar, Type};
-
-pub(crate) const BASIC: &str = "GL_KHR_shader_subgroup_basic";
-const VOTE: &str = "GL_KHR_shader_subgroup_vote";
-const BALLOT: &str = "GL_KHR_shader_subgroup_ballot";
-const SHUFFLE: &str = "GL_KHR_shader_subgroup_shuffle";
-const SHUFFLE_RELATIVE: &str = "GL_KHR_shader_subgroup_shuffle_relative";
-const ROTATE: &str = "GL_KHR_shader_subgroup_rotate";
-const ARITHMETIC: &str = "GL_KHR_shader_subgroup_arithmetic";
-const CLUSTERED: &str = "GL_KHR_shader_subgroup_clustered";
-const QUAD: &str = "GL_KHR_shader_subgroup_quad";
-const PARTITIONED: &str = "GL_NV_shader_subgroup_partitioned";
-pub(crate) const QUAD_CONTROL: &str = "GL_EXT_shader_quad_control";
-const ARB_BALLOT: &str = "GL_ARB_shader_ballot";
-const ARB_VOTE: &str = "GL_ARB_shader_group_vote";
-pub(crate) const AMD_BALLOT: &str = "GL_AMD_shader_ballot";
-const AMD_GCN_SHADER: &str = "GL_AMD_gcn_shader";
-pub(crate) const EXTENDED_INT8: &str = "GL_EXT_shader_subgroup_extended_types_int8";
-pub(crate) const EXTENDED_INT16: &str = "GL_EXT_shader_subgroup_extended_types_int16";
-pub(crate) const EXTENDED_INT64: &str = "GL_EXT_shader_subgroup_extended_types_int64";
-pub(crate) const EXTENDED_FLOAT16: &str = "GL_EXT_shader_subgroup_extended_types_float16";
 
 const UVEC4: Type = Type::vector(Scalar::Uint, 4);
 
@@ -340,16 +322,16 @@ fn amd(emitter: &mut Emitter) {
     );
 }
 
-pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
+pub(crate) fn function_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "subgroupBarrier"
         | "subgroupMemoryBarrier"
         | "subgroupMemoryBarrierBuffer"
         | "subgroupMemoryBarrierImage"
         | "subgroupMemoryBarrierShared"
-        | "subgroupElect" => BASIC,
+        | "subgroupElect" => Extension::KhrShaderSubgroupBasic,
         "subgroupAll" | "subgroupAny" | "subgroupAllEqual" | "subgroupQuadAll"
-        | "subgroupQuadAny" => VOTE,
+        | "subgroupQuadAny" => Extension::KhrShaderSubgroupVote,
         "subgroupBroadcast"
         | "subgroupBroadcastFirst"
         | "subgroupBallot"
@@ -359,24 +341,26 @@ pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
         | "subgroupBallotInclusiveBitCount"
         | "subgroupBallotExclusiveBitCount"
         | "subgroupBallotFindLSB"
-        | "subgroupBallotFindMSB" => BALLOT,
-        "subgroupShuffle" | "subgroupShuffleXor" => SHUFFLE,
-        "subgroupShuffleUp" | "subgroupShuffleDown" => SHUFFLE_RELATIVE,
-        "subgroupRotate" | "subgroupClusteredRotate" => ROTATE,
-        "ballotARB" | "readInvocationARB" | "readFirstInvocationARB" => ARB_BALLOT,
-        "anyInvocationARB" | "allInvocationsARB" | "allInvocationsEqualARB" => ARB_VOTE,
+        | "subgroupBallotFindMSB" => Extension::KhrShaderSubgroupBallot,
+        "subgroupShuffle" | "subgroupShuffleXor" => Extension::KhrShaderSubgroupShuffle,
+        "subgroupShuffleUp" | "subgroupShuffleDown" => Extension::KhrShaderSubgroupShuffleRelative,
+        "subgroupRotate" | "subgroupClusteredRotate" => Extension::KhrShaderSubgroupRotate,
+        "ballotARB" | "readInvocationARB" | "readFirstInvocationARB" => Extension::ArbShaderBallot,
+        "anyInvocationARB" | "allInvocationsARB" | "allInvocationsEqualARB" => {
+            Extension::ArbShaderGroupVote
+        }
         _ => {
             let Some(suffix) = name.strip_prefix("subgroup") else {
                 return amd_function(name);
             };
             if suffix.starts_with("Partition") {
-                PARTITIONED
+                Extension::NvShaderSubgroupPartitioned
             } else if suffix.starts_with("Clustered") {
-                CLUSTERED
+                Extension::KhrShaderSubgroupClustered
             } else if suffix.starts_with("Quad") {
-                QUAD
+                Extension::KhrShaderSubgroupQuad
             } else if GENERIC.contains(&suffix) && math_or_logical(suffix) {
-                ARITHMETIC
+                Extension::KhrShaderSubgroupArithmetic
             } else {
                 return None;
             }
@@ -388,14 +372,14 @@ fn math_or_logical(suffix: &str) -> bool {
     math(suffix) || logical(suffix)
 }
 
-fn amd_function(name: &str) -> Option<&'static str> {
+fn amd_function(name: &str) -> Option<Extension> {
     if name == "ballotAMD" {
-        return Some(AMD_GCN_SHADER);
+        return Some(Extension::AmdGcnShader);
     }
     let stem = name.strip_suffix("AMD")?;
     (AMD_REDUCTIONS.contains(&stem)
         || matches!(stem, "swizzleInvocations" | "writeInvocation" | "mbcnt"))
-    .then_some(AMD_BALLOT)
+    .then_some(Extension::AmdShaderBallot)
 }
 
 pub(crate) fn is_subgroup_operation(name: &str) -> bool {
@@ -407,25 +391,25 @@ pub(crate) fn is_subgroup_operation(name: &str) -> bool {
     }) && function_extension(name).is_some()
 }
 
-pub(crate) fn variable_extension(name: &str) -> Option<&'static str> {
+pub(crate) fn variable_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "gl_SubgroupSize" | "gl_SubgroupInvocationID" | "gl_NumSubgroups" | "gl_SubgroupID" => {
-            BASIC
+            Extension::KhrShaderSubgroupBasic
         }
         "gl_SubgroupEqMask" | "gl_SubgroupGeMask" | "gl_SubgroupGtMask" | "gl_SubgroupLeMask"
-        | "gl_SubgroupLtMask" => BALLOT,
+        | "gl_SubgroupLtMask" => Extension::KhrShaderSubgroupBallot,
         "gl_SubGroupSizeARB"
         | "gl_SubGroupInvocationARB"
         | "gl_SubGroupEqMaskARB"
         | "gl_SubGroupGeMaskARB"
         | "gl_SubGroupGtMaskARB"
         | "gl_SubGroupLeMaskARB"
-        | "gl_SubGroupLtMaskARB" => ARB_BALLOT,
+        | "gl_SubGroupLtMaskARB" => Extension::ArbShaderBallot,
         "gl_WarpsPerSMNV" | "gl_SMCountNV" | "gl_WarpIDNV" | "gl_SMIDNV" => {
-            "GL_NV_shader_sm_builtins"
+            Extension::NvShaderSmBuiltins
         }
         "gl_CoreIDARM" | "gl_CoreCountARM" | "gl_CoreMaxIDARM" | "gl_WarpIDARM"
-        | "gl_WarpMaxIDARM" => "GL_ARM_shader_core_builtins",
+        | "gl_WarpMaxIDARM" => Extension::ArmShaderCoreBuiltins,
         _ => return None,
     })
 }

@@ -24,17 +24,15 @@ use crate::ast::{
     TypeQualifier, TypeSpecifier, TypeSpecifierNonArray, UnaryOperator,
 };
 use crate::error::{ParseError, ParseErrorKind};
-use crate::extensions::{ExtensionState, Feature, joined_names};
+use crate::extensions::{ExtensionState, Feature};
 use crate::keywords::{WordClass, is_reserved_word, is_unavailable_word};
 use crate::lexer::{Token, TokenKind, tokenize};
 use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
+use rglsl_types::extension::Extension;
 use rglsl_types::stack::{Call, Stack, run};
 
 pub const NON_UNIFORM: &str = "nonuniformEXT";
-const NON_UNIFORM_EXTENSION: &str = "GL_EXT_nonuniform_qualifier";
-const SPIRV_INTRINSICS: &str = "GL_EXT_spirv_intrinsics";
-const EXPLICIT_TYPECAST: &str = "GL_NV_explicit_typecast";
 const SPIRV_TYPE: &str = "spirv_type";
 const SPIRV_QUALIFIERS: [&str; 6] = [
     "spirv_storage_class",
@@ -399,9 +397,7 @@ impl<'a> Parser<'a> {
         if self.extensions.borrow().keyword_enabled(word) {
             return Ok(());
         }
-        let extensions = Feature::of_type_keyword(word)
-            .map(|feature| joined_names(feature.extensions()))
-            .unwrap_or_default();
+        let extensions = Feature::of_type_keyword(word).map_or(&[][..], Feature::extensions);
         Err(self.error(
             ParseErrorKind::ExtensionRequired {
                 word: word.to_owned(),
@@ -412,13 +408,17 @@ impl<'a> Parser<'a> {
     }
 
     fn require_non_uniform(&self, span: Span) -> Result<()> {
-        if self.extensions.borrow().is_on(NON_UNIFORM_EXTENSION) {
+        if self
+            .extensions
+            .borrow()
+            .is_on(Extension::ExtNonuniformQualifier)
+        {
             return Ok(());
         }
         Err(self.error(
             ParseErrorKind::ExtensionRequired {
                 word: NON_UNIFORM.to_owned(),
-                extensions: NON_UNIFORM_EXTENSION.to_owned(),
+                extensions: &[Extension::ExtNonuniformQualifier],
             },
             span,
         ))
@@ -435,7 +435,11 @@ impl<'a> Parser<'a> {
     }
 
     fn is_spirv_word(&self, word: &str, words: &[&str]) -> bool {
-        words.contains(&word) && self.extensions.borrow().is_on(SPIRV_INTRINSICS)
+        words.contains(&word)
+            && self
+                .extensions
+                .borrow()
+                .is_on(Extension::ExtSpirvIntrinsics)
     }
 
     fn declare_struct(&self, name: &'a str) {
@@ -804,7 +808,12 @@ impl<'a> Parser<'a> {
     }
 
     fn starts_cast(&self) -> bool {
-        if !self.at("(") || !self.extensions.borrow().is_on(EXPLICIT_TYPECAST) {
+        if !self.at("(")
+            || !self
+                .extensions
+                .borrow()
+                .is_on(Extension::NvExplicitTypecast)
+        {
             return false;
         }
         match self.token_at(self.cursor.get().saturating_add(1)).kind {

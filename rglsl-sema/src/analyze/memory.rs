@@ -1,6 +1,7 @@
 use alloc::string::String;
 
 use rglsl_ast::Span;
+use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
 use crate::diagnostic::DiagnosticKind;
@@ -16,8 +17,10 @@ const ORDER: i64 = ACQUIRE | RELEASE | ACQUIRE_RELEASE;
 const SEMANTICS: i64 = ORDER | MAKE_AVAILABLE | MAKE_VISIBLE | VOLATILE;
 const STORAGE: i64 = 0x40 | 0x100 | 0x800 | 0x1000;
 
-const SCOPE_EXTENSION: &str = "GL_KHR_memory_scope_semantics";
-const INT64_ATOMICS: [&str; 2] = ["GL_NV_shader_atomic_int64", "GL_EXT_shader_atomic_int64"];
+const INT64_ATOMICS: [Extension; 2] = [
+    Extension::NvShaderAtomicInt64,
+    Extension::ExtShaderAtomicInt64,
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -84,9 +87,6 @@ const fn is_int64(ty: &Type) -> bool {
     matches!(ty.base_scalar(), Some(Scalar::Int64 | Scalar::Uint64)) && !ty.is_array()
 }
 
-const ATOMIC_FLOAT: &str = "GL_EXT_shader_atomic_float";
-const ATOMIC_FLOAT2: &str = "GL_EXT_shader_atomic_float2";
-
 impl Analyzer<'_> {
     pub(crate) fn atomic_float_extensions(&mut self, span: Span, name: &str, operands: &[Operand]) {
         let Some(first) = operands.first() else {
@@ -104,57 +104,24 @@ impl Analyzer<'_> {
                 .is_some_and(|opaque| opaque.sampled == crate::types::SampledType::Float);
             match operation {
                 _ if !float => None,
-                "Add" | "Load" | "Store" => Some(ATOMIC_FLOAT),
-                "Min" | "Max" => Some(ATOMIC_FLOAT2),
+                "Add" | "Load" | "Store" => Some(Extension::ExtShaderAtomicFloat),
+                "Min" | "Max" => Some(Extension::ExtShaderAtomicFloat2),
                 _ => None,
             }
         } else {
             match (first.ty.base_scalar(), operation) {
                 (Some(Scalar::Float | Scalar::Double), "Add" | "Exchange" | "Load" | "Store") => {
-                    Some(ATOMIC_FLOAT)
+                    Some(Extension::ExtShaderAtomicFloat)
                 }
                 (Some(Scalar::Float | Scalar::Double), "Min" | "Max")
                 | (Some(Scalar::Float16), "Add" | "Exchange" | "Load" | "Store" | "Min" | "Max") => {
-                    Some(ATOMIC_FLOAT2)
+                    Some(Extension::ExtShaderAtomicFloat2)
                 }
                 _ => None,
             }
         };
         if let Some(extension) = extension {
             self.require_extension(span, extension, name);
-        }
-    }
-
-    fn require_any_extension(&mut self, span: Span, names: &[&'static str], what: &str) -> bool {
-        match self.extensions.request(names) {
-            rglsl_ast::extensions::Request::Enabled => true,
-            rglsl_ast::extensions::Request::Warned(extension) => {
-                self.warnings.push(crate::diagnostic::Diagnostic {
-                    span,
-                    kind: DiagnosticKind::ExtensionWarned {
-                        extension,
-                        feature: String::from(what),
-                    },
-                });
-                true
-            }
-            rglsl_ast::extensions::Request::Missing => {
-                let mut extensions = String::new();
-                for (index, name) in names.iter().enumerate() {
-                    if index > 0 {
-                        extensions.push_str(", ");
-                    }
-                    extensions.push_str(name);
-                }
-                self.error(
-                    span,
-                    DiagnosticKind::ExtensionRequired {
-                        feature: String::from(what),
-                        extensions,
-                    },
-                );
-                false
-            }
         }
     }
 
@@ -189,18 +156,18 @@ impl Analyzer<'_> {
         };
         let mut valid = true;
         if shape.kind == Kind::ControlBarrier {
-            valid &= self.require_extension(span, SCOPE_EXTENSION, name);
+            valid &= self.require_extension(span, Extension::KhrMemoryScopeSemantics, name);
         }
         if !scoped {
             if !name.starts_with("imageAtomic")
                 && matches!(shape.kind, Kind::Modify | Kind::CompareSwap)
                 && first.is_some_and(|operand| is_int64(&operand.ty))
             {
-                valid &= self.require_any_extension(span, &INT64_ATOMICS, name);
+                valid &= self.require_extensions(span, &INT64_ATOMICS, name);
             }
             return valid;
         }
-        valid &= self.require_extension(span, SCOPE_EXTENSION, name);
+        valid &= self.require_extension(span, Extension::KhrMemoryScopeSemantics, name);
         valid && self.memory_semantics_check(span, name, shape, operands)
     }
 

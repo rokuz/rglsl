@@ -9,7 +9,6 @@ use crate::types::{
 
 pub const STRUCT_2D: &str = "gl_TextureFootprint2DNV";
 pub const STRUCT_3D: &str = "gl_TextureFootprint3DNV";
-pub const EXTENSION: &str = "GL_NV_shader_texture_footprint";
 
 pub(crate) fn is_function(name: &str) -> bool {
     matches!(

@@ -562,7 +562,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 member.name != "gl_PrimitiveShadingRateEXT" || shading_rate
             } else {
                 rglsl_sema::builtins::view_extension(&member.name)
-                    .is_none_or(|extension| analysis.extensions.contains(extension))
+                    .is_none_or(|extension| analysis.extensions.contains(extension.name()))
             };
             if !requested {
                 continue;

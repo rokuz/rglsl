@@ -3,20 +3,7 @@ use super::{
     Section,
 };
 use rglsl_types::ShaderStage;
-
-const RT_NV: &str = "GL_NV_ray_tracing";
-const RT_EXT: &str = "GL_EXT_ray_tracing";
-const RAY_QUERY: &str = "GL_EXT_ray_query";
-const MOTION_BLUR: &str = "GL_NV_ray_tracing_motion_blur";
-const CULL_MASK: &str = "GL_EXT_ray_cull_mask";
-const POSITION_FETCH: &str = "GL_EXT_ray_tracing_position_fetch";
-const PRIMITIVE_CULLING: &str = "GL_EXT_ray_flags_primitive_culling";
-const OPACITY_MICROMAP: &str = "GL_EXT_opacity_micromap";
-const REORDER_NV: &str = "GL_NV_shader_invocation_reorder";
-const REORDER_EXT: &str = "GL_EXT_shader_invocation_reorder";
-const CLUSTER: &str = "GL_NV_cluster_acceleration_structure";
-const DISPLACEMENT_MICROMAP: &str = "GL_NV_displacement_micromap";
-const SWEPT_SPHERES: &str = "GL_NV_linear_swept_spheres";
+use rglsl_types::extension::Extension;
 
 const RAY_QUERY_FUNCTIONS: &str = "
 void rayQueryInitializeEXT(rayQueryEXT, accelerationStructureEXT, uint, uint, vec3, float, vec3, float)
@@ -312,31 +299,30 @@ pub(super) const UINT_CONSTANTS: [(&str, u32); 31] = [
     ("gl_RayQueryCandidateIntersectionAABBEXT", 1),
 ];
 
-pub(crate) fn variable_extensions(
-    name: &str,
-    stage: ShaderStage,
-) -> Option<&'static [&'static str]> {
-    const NV: &[&str] = &[RT_NV];
-    const EXT: &[&str] = &[RT_EXT];
-    const EITHER: &[&str] = &[RT_NV, RT_EXT];
+pub(crate) fn variable_extensions(name: &str, stage: ShaderStage) -> Option<&'static [Extension]> {
+    const NV: &[Extension] = &[Extension::NvRayTracing];
+    const EXT: &[Extension] = &[Extension::ExtRayTracing];
+    const EITHER: &[Extension] = &[Extension::NvRayTracing, Extension::ExtRayTracing];
     Some(match name {
         "gl_PrimitiveID" | "gl_InstanceID" if stage.ray_tracing() => EITHER,
-        "gl_CullMaskEXT" => &[CULL_MASK],
-        "gl_CurrentRayTimeNV" => &[MOTION_BLUR],
-        "gl_HitTriangleVertexPositionsEXT" => &[POSITION_FETCH],
-        "gl_RayFlagsSkipAABBEXT" | "gl_RayFlagsSkipTrianglesEXT" => &[PRIMITIVE_CULLING],
-        "gl_RayFlagsForceOpacityMicromap2StateEXT" => &[OPACITY_MICROMAP],
-        "gl_EnableOpacityMicromapEXT" => &["GL_EXT_opacity_micromap_ray_query_mode"],
-        "gl_HitMicroTriangleVertexPositionsNV" | "gl_HitMicroTriangleVertexBarycentricsNV" => {
-            &[DISPLACEMENT_MICROMAP]
+        "gl_CullMaskEXT" => &[Extension::ExtRayCullMask],
+        "gl_CurrentRayTimeNV" => &[Extension::NvRayTracingMotionBlur],
+        "gl_HitTriangleVertexPositionsEXT" => &[Extension::ExtRayTracingPositionFetch],
+        "gl_RayFlagsSkipAABBEXT" | "gl_RayFlagsSkipTrianglesEXT" => {
+            &[Extension::ExtRayFlagsPrimitiveCulling]
         }
-        "gl_ClusterIDNV" => &[CLUSTER],
+        "gl_RayFlagsForceOpacityMicromap2StateEXT" => &[Extension::ExtOpacityMicromap],
+        "gl_EnableOpacityMicromapEXT" => &[Extension::ExtOpacityMicromapRayQueryMode],
+        "gl_HitMicroTriangleVertexPositionsNV" | "gl_HitMicroTriangleVertexBarycentricsNV" => {
+            &[Extension::NvDisplacementMicromap]
+        }
+        "gl_ClusterIDNV" => &[Extension::NvClusterAccelerationStructure],
         "gl_HitIsSphereNV"
         | "gl_HitIsLSSNV"
         | "gl_HitSpherePositionNV"
         | "gl_HitSphereRadiusNV"
         | "gl_HitLSSPositionsNV"
-        | "gl_HitLSSRadiiNV" => &[SWEPT_SPHERES],
+        | "gl_HitLSSRadiiNV" => &[Extension::NvLinearSweptSpheres],
         "gl_HitKindFrontFacingMicroTriangleNV"
         | "gl_HitKindBackFacingMicroTriangleNV"
         | "gl_ClusterIDNoneNV" => return None,
@@ -354,17 +340,23 @@ pub(crate) fn variable_extensions(
     })
 }
 
-pub(crate) fn function_extensions(name: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn function_extensions(name: &str) -> Option<&'static [Extension]> {
     Some(match name {
         "traceNV"
         | "reportIntersectionNV"
         | "ignoreIntersectionNV"
         | "terminateRayNV"
-        | "executeCallableNV" => &[RT_NV],
-        "traceRayEXT" | "reportIntersectionEXT" | "executeCallableEXT" => &[RT_EXT],
-        "traceRayMotionNV" => &[MOTION_BLUR],
-        "rayQueryGetIntersectionTriangleVertexPositionsEXT" => &[POSITION_FETCH],
-        "rayQueryGetIntersectionClusterIdNV" | "hitObjectGetClusterIdNV" => &[CLUSTER],
+        | "executeCallableNV" => &[Extension::NvRayTracing],
+        "traceRayEXT" | "reportIntersectionEXT" | "executeCallableEXT" => {
+            &[Extension::ExtRayTracing]
+        }
+        "traceRayMotionNV" => &[Extension::NvRayTracingMotionBlur],
+        "rayQueryGetIntersectionTriangleVertexPositionsEXT" => {
+            &[Extension::ExtRayTracingPositionFetch]
+        }
+        "rayQueryGetIntersectionClusterIdNV" | "hitObjectGetClusterIdNV" => {
+            &[Extension::NvClusterAccelerationStructure]
+        }
         "rayQueryGetIntersectionSpherePositionNV"
         | "rayQueryGetIntersectionSphereRadiusNV"
         | "rayQueryGetIntersectionLSSHitValueNV"
@@ -377,23 +369,23 @@ pub(crate) fn function_extensions(name: &str) -> Option<&'static [&'static str]>
         | "hitObjectGetLSSPositionsNV"
         | "hitObjectGetLSSRadiiNV"
         | "hitObjectIsSphereHitNV"
-        | "hitObjectIsLSSHitNV" => &[SWEPT_SPHERES],
+        | "hitObjectIsLSSHitNV" => &[Extension::NvLinearSweptSpheres],
         "fetchMicroTriangleVertexPositionNV" | "fetchMicroTriangleVertexBarycentricNV" => {
-            &[DISPLACEMENT_MICROMAP]
+            &[Extension::NvDisplacementMicromap]
         }
-        _ if name.starts_with("rayQuery") => &[RAY_QUERY],
+        _ if name.starts_with("rayQuery") => &[Extension::ExtRayQuery],
         _ if name.starts_with("hitObject") || name.starts_with("reorderThread") => {
             if name.ends_with("NV") {
-                &[REORDER_NV]
+                &[Extension::NvShaderInvocationReorder]
             } else {
-                &[REORDER_EXT]
+                &[Extension::ExtShaderInvocationReorder]
             }
         }
         _ => return None,
     })
 }
 
-pub(crate) fn interacting_extension(name: &str) -> Option<&'static [&'static str]> {
+pub(crate) fn interacting_extension(name: &str) -> Option<&'static [Extension]> {
     Some(match name {
         "hitObjectTraceRayMotionNV"
         | "hitObjectRecordHitMotionNV"
@@ -403,8 +395,10 @@ pub(crate) fn interacting_extension(name: &str) -> Option<&'static [&'static str
         | "hitObjectTraceRayMotionEXT"
         | "hitObjectRecordMissMotionEXT"
         | "hitObjectGetCurrentTimeEXT"
-        | "hitObjectTraceMotionReorderExecuteEXT" => &[MOTION_BLUR],
-        "hitObjectGetIntersectionTriangleVertexPositionsEXT" => &[POSITION_FETCH],
+        | "hitObjectTraceMotionReorderExecuteEXT" => &[Extension::NvRayTracingMotionBlur],
+        "hitObjectGetIntersectionTriangleVertexPositionsEXT" => {
+            &[Extension::ExtRayTracingPositionFetch]
+        }
         _ => return None,
     })
 }

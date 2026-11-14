@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use core::cell::RefCell;
 
+use rglsl_types::extension::Extension;
 use rglsl_types::stack::run;
 
 use rglsl_ast::Span;
@@ -379,13 +380,13 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             statement.kind,
             StatementKind::Selection { .. } | StatementKind::Switch { .. }
         );
-        let extensions: &'static [&'static str] = if selection {
-            &["GL_EXT_control_flow_attributes"]
+        let extensions: &'static [Extension] = if selection {
+            &[Extension::ExtControlFlowAttributes]
         } else {
             &[
-                "GL_EXT_control_flow_attributes",
-                "GL_EXT_control_flow_attributes2",
-                "GL_QCOM_multiple_wait_queues",
+                Extension::ExtControlFlowAttributes,
+                Extension::ExtControlFlowAttributes2,
+                Extension::QcomMultipleWaitQueues,
             ]
         };
         self.with(|analyzer| analyzer.require_extensions(statement.span, extensions, "attribute"));

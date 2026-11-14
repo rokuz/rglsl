@@ -2,23 +2,18 @@ use alloc::format;
 use alloc::string::String;
 
 use rglsl_ast::Span;
+use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{OpaqueKind, TextureDimension};
 use rglsl_types::ShaderStage;
 
-pub const SPARSE_TEXTURE2: &str = "GL_ARB_sparse_texture2";
-pub const SPARSE_TEXTURE_CLAMP: &str = "GL_ARB_sparse_texture_clamp";
-pub const GATHER_BIAS_LOD: &str = "GL_AMD_texture_gather_bias_lod";
-pub const SHADOW_LOD: &str = "GL_EXT_texture_shadow_lod";
-pub const NV_DERIVATIVES: &str = "GL_NV_compute_shader_derivatives";
-pub const KHR_DERIVATIVES: &str = "GL_KHR_compute_shader_derivatives";
-pub const IMAGE_LOAD_STORE_LOD: &str = "GL_AMD_shader_image_load_store_lod";
-pub const SAMPLERLESS: &str = "GL_EXT_samplerless_texture_functions";
-
-const COMPUTE_DERIVATIVES: [&str; 2] = [NV_DERIVATIVES, KHR_DERIVATIVES];
-const KHR_ONLY: [&str; 1] = [KHR_DERIVATIVES];
+const COMPUTE_DERIVATIVES: [Extension; 2] = [
+    Extension::NvComputeShaderDerivatives,
+    Extension::KhrComputeShaderDerivatives,
+];
+const KHR_ONLY: [Extension; 1] = [Extension::KhrComputeShaderDerivatives];
 
 const DERIVATIVE_FUNCTIONS: [&str; 9] = [
     "dFdx",
@@ -32,7 +27,7 @@ const DERIVATIVE_FUNCTIONS: [&str; 9] = [
     "fwidthCoarse",
 ];
 
-pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
+pub(crate) fn function_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "sparseTextureARB"
         | "sparseTextureLodARB"
@@ -45,7 +40,7 @@ pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
         | "sparseTextureGatherARB"
         | "sparseTextureGatherOffsetARB"
         | "sparseTextureGatherOffsetsARB"
-        | "sparseImageLoadARB" => SPARSE_TEXTURE2,
+        | "sparseImageLoadARB" => Extension::ArbSparseTexture2,
         "sparseTextureClampARB"
         | "sparseTextureOffsetClampARB"
         | "sparseTextureGradClampARB"
@@ -53,14 +48,16 @@ pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
         | "textureClampARB"
         | "textureOffsetClampARB"
         | "textureGradClampARB"
-        | "textureGradOffsetClampARB" => SPARSE_TEXTURE_CLAMP,
+        | "textureGradOffsetClampARB" => Extension::ArbSparseTextureClamp,
         "textureGatherLodAMD"
         | "textureGatherLodOffsetAMD"
         | "textureGatherLodOffsetsAMD"
         | "sparseTextureGatherLodAMD"
         | "sparseTextureGatherLodOffsetAMD"
-        | "sparseTextureGatherLodOffsetsAMD" => GATHER_BIAS_LOD,
-        "imageLoadLodAMD" | "imageStoreLodAMD" | "sparseImageLoadLodAMD" => IMAGE_LOAD_STORE_LOD,
+        | "sparseTextureGatherLodOffsetsAMD" => Extension::AmdTextureGatherBiasLod,
+        "imageLoadLodAMD" | "imageStoreLodAMD" | "sparseImageLoadLodAMD" => {
+            Extension::AmdShaderImageLoadStoreLod
+        }
         _ => return None,
     })
 }
@@ -149,14 +146,14 @@ impl Analyzer<'_> {
             .is_some_and(|opaque| opaque.shadow);
         let mut valid = true;
         if samplerless(name, operands) {
-            valid &= self.require_extension(span, SAMPLERLESS, name);
+            valid &= self.require_extension(span, Extension::ExtSamplerlessTextureFunctions, name);
         }
         if let Some(feature) = shadow_lod_feature(name, operands) {
-            valid &= self.require_extension(span, SHADOW_LOD, &feature);
+            valid &= self.require_extension(span, Extension::ExtTextureShadowLod, &feature);
         }
         if biased_gather(name, operands, shadow) {
             let feature = format!("{name}with bias argument");
-            valid &= self.require_extension(span, GATHER_BIAS_LOD, &feature);
+            valid &= self.require_extension(span, Extension::AmdTextureGatherBiasLod, &feature);
         }
         if matches!(
             name,
@@ -164,7 +161,7 @@ impl Analyzer<'_> {
                 | "sparseTextureGatherLodOffsetAMD"
                 | "sparseTextureGatherLodOffsetsAMD"
         ) {
-            valid &= self.require_extension(span, SPARSE_TEXTURE2, name);
+            valid &= self.require_extension(span, Extension::ArbSparseTexture2, name);
         }
         if name == "sparseTextureGatherOffsetsARB" {
             let index = if shadow { 3 } else { 2 };
@@ -203,7 +200,7 @@ impl Analyzer<'_> {
         {
             return false;
         }
-        if self.extensions.is_on(KHR_DERIVATIVES)
+        if self.extensions.is_on(Extension::KhrComputeShaderDerivatives)
             && self.derivative_group.is_none()
             && self.stage_check(span, |stage| {
                 gated(stage).then(|| DiagnosticKind::InvalidBuiltinCall {

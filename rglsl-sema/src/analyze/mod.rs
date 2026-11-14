@@ -34,6 +34,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use rglsl_types::extension::Extension;
 
 use rglsl_types::probe::StageProbe;
 use rglsl_types::{FastHashMap, FastHashSet};
@@ -642,13 +643,13 @@ impl<'a> Analyzer<'a> {
     fn check_derivative_group(&mut self, end: Span) {
         if self
             .extensions
-            .is_requested("GL_KHR_compute_shader_derivatives")
+            .is_requested(Extension::KhrComputeShaderDerivatives)
             && !self.khr_derivative_group
         {
             self.error(
                 end,
                 DiagnosticKind::InvalidQualifier {
-                    qualifier: "GL_KHR_compute_shader_derivatives",
+                    qualifier: Extension::KhrComputeShaderDerivatives.name(),
                     reason: "requires one of derivative_group_quadsKHR or derivative_group_linearKHR layout qualifiers",
                 },
             );
@@ -770,7 +771,7 @@ impl<'a> Analyzer<'a> {
         &mut self,
         span: Span,
         what: &str,
-        required: impl Fn(ShaderStage) -> Option<&'static [&'static str]>,
+        required: impl Fn(ShaderStage) -> Option<&'static [Extension]>,
     ) -> bool {
         if !self.is_library() {
             return match self.probe.map(&required) {
@@ -778,7 +779,7 @@ impl<'a> Analyzer<'a> {
                 None => true,
             };
         }
-        let missing: Vec<(ShaderStage, Option<&'static [&'static str]>)> = ShaderStage::ALL
+        let missing: Vec<(ShaderStage, Option<&'static [Extension]>)> = ShaderStage::ALL
             .into_iter()
             .map(|stage| {
                 (
@@ -799,7 +800,7 @@ impl<'a> Analyzer<'a> {
                 .and_then(|&(_, names)| names)
                 .map(|names| DiagnosticKind::ExtensionRequired {
                     feature: String::from(what),
-                    extensions: names.join(", "),
+                    extensions: names.to_vec(),
                 })
         });
         if let Some(names) = required(self.options.stage)
@@ -867,8 +868,18 @@ impl<'a> Analyzer<'a> {
             calls: self.calls,
             declarations: self.declarations,
             function_declarations: self.function_declarations,
-            extensions: self.extensions.enabled().map(String::from).collect(),
-            requested_extensions: self.extensions.requested().map(String::from).collect(),
+            extensions: self
+                .extensions
+                .enabled()
+                .iter()
+                .map(|extension| String::from(extension.name()))
+                .collect(),
+            requested_extensions: self
+                .extensions
+                .requested()
+                .iter()
+                .map(|extension| String::from(extension.name()))
+                .collect(),
             diagnostics: self.diagnostics,
             warnings: self.warnings,
             vulkan_memory_model: self.vulkan_memory_model,
@@ -1013,9 +1024,5 @@ impl<'a> Analyzer<'a> {
 
     pub(crate) fn is_builtin_symbol(&self, id: SymbolId) -> bool {
         usize::try_from(id.index()).is_ok_and(|index| index < self.builtins.symbols().len())
-    }
-
-    pub(crate) fn extension_enabled(&self, name: &str) -> bool {
-        self.extensions.is_on(name)
     }
 }

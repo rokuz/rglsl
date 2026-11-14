@@ -1,8 +1,8 @@
 use rglsl_ast::Span;
-use rglsl_ast::extensions::Request;
+use rglsl_types::extension::Extension;
 
 use super::Analyzer;
-use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::diagnostic::DiagnosticKind;
 use crate::scope::{LayoutEntry, Qualifiers, Storage};
 use rglsl_types::ShaderStage;
 
@@ -80,9 +80,9 @@ impl StageLayout {
     }
 }
 
-const VIEWPORT_LAYER_EXTENSIONS: [&str; 2] = [
-    "GL_ARB_shader_viewport_layer_array",
-    "GL_NV_viewport_array2",
+const VIEWPORT_LAYER_EXTENSIONS: [Extension; 2] = [
+    Extension::ArbShaderViewportLayerArray,
+    Extension::NvViewportArray2,
 ];
 
 const fn table(stage: ShaderStage) -> &'static [(&'static str, Kind)] {
@@ -128,30 +128,30 @@ impl Analyzer<'_> {
         if let Some(span) = span.filter(|_| self.stage_is(ShaderStage::Geometry)) {
             self.require_extension(
                 span,
-                "GL_NV_geometry_shader_passthrough",
+                Extension::NvGeometryShaderPassthrough,
                 "geometry shader passthrough",
             );
         }
     }
 
     pub(crate) fn view_layout_extensions(&mut self, qualifiers: &Qualifiers) {
-        let required: alloc::vec::Vec<(Span, &'static [&'static str], &'static str, bool)> =
+        let required: alloc::vec::Vec<(Span, &'static [Extension], &'static str, bool)> =
             qualifiers
                 .layout
                 .iter()
                 .filter_map(|entry| {
-                    let (extension, what, fragment): (&'static [&'static str], _, _) =
+                    let (extension, what, fragment): (&'static [Extension], _, _) =
                         match entry.name.as_str() {
                             "viewport_relative" => {
-                                (&["GL_NV_viewport_array2"], "viewport_relative", false)
+                                (&[Extension::NvViewportArray2], "viewport_relative", false)
                             }
                             "secondary_view_offset" => (
-                                &["GL_NV_stereo_view_rendering"],
+                                &[Extension::NvStereoViewRendering],
                                 "secondary_view_offset",
                                 false,
                             ),
                             "override_coverage" => (
-                                &["GL_NV_sample_mask_override_coverage"],
+                                &[Extension::NvSampleMaskOverrideCoverage],
                                 "override_coverage",
                                 true,
                             ),
@@ -412,22 +412,6 @@ impl Analyzer<'_> {
         {
             return;
         }
-        match self.extensions.request(&VIEWPORT_LAYER_EXTENSIONS) {
-            Request::Enabled => {}
-            Request::Warned(extension) => self.warnings.push(Diagnostic {
-                span,
-                kind: DiagnosticKind::ExtensionWarned {
-                    extension,
-                    feature: alloc::string::String::from(name),
-                },
-            }),
-            Request::Missing => self.error(
-                span,
-                DiagnosticKind::ExtensionRequired {
-                    feature: alloc::string::String::from(name),
-                    extensions: VIEWPORT_LAYER_EXTENSIONS.join(", "),
-                },
-            ),
-        }
+        self.require_extensions(span, &VIEWPORT_LAYER_EXTENSIONS, name);
     }
 }

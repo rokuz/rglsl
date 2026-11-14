@@ -15,6 +15,7 @@ use crate::{
     analyze_with_builtins,
 };
 use rglsl_types::ShaderStage;
+use rglsl_types::extension::Extension;
 
 struct Checked {
     source: String,
@@ -756,7 +757,7 @@ fn extension_warnings_and_implied_extensions_are_recorded() -> TestResult {
         [
             &DiagnosticKind::UnsupportedExtension("GL_EXT_demo".to_string()),
             &DiagnosticKind::ExtensionWarned {
-                extension: "GL_EXT_shader_explicit_arithmetic_types_int64",
+                extension: Extension::ExtShaderExplicitArithmeticTypesInt64,
                 feature: "64-bit literal".to_string(),
             },
         ]

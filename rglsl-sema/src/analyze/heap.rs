@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{BlockStructure, Spanned, StructDeclaration};
+use rglsl_types::extension::Extension;
 
 use super::Analyzer;
 use super::frames::Cx;
@@ -11,9 +12,6 @@ use crate::diagnostic::DiagnosticKind;
 use crate::layout::block_size;
 use crate::scope::{LayoutValue, Qualifiers, Storage, SymbolKind};
 use crate::types::{BlockStorage, BlockType, Member, ReferenceLayout, Type, TypeKind};
-
-pub(crate) const DESCRIPTOR_HEAP: &str = "GL_EXT_descriptor_heap";
-pub(crate) const STRUCTURED_DESCRIPTOR_HEAP: &str = "GL_EXT_structured_descriptor_heap";
 
 const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier { qualifier, reason }
@@ -28,10 +26,18 @@ impl Analyzer<'_> {
         for entry in &qualifiers.layout {
             match entry.name.as_str() {
                 "descriptor_heap" => {
-                    self.require_extension(entry.span, DESCRIPTOR_HEAP, "descriptor_heap");
+                    self.require_extension(
+                        entry.span,
+                        Extension::ExtDescriptorHeap,
+                        "descriptor_heap",
+                    );
                 }
                 "descriptor_stride" => {
-                    self.require_extension(entry.span, DESCRIPTOR_HEAP, "descriptor_stride");
+                    self.require_extension(
+                        entry.span,
+                        Extension::ExtDescriptorHeap,
+                        "descriptor_stride",
+                    );
                     if entry
                         .value
                         .constant()
@@ -49,12 +55,20 @@ impl Analyzer<'_> {
                     } else {
                         "descriptor_size"
                     };
-                    if self.require_extension(entry.span, DESCRIPTOR_HEAP, what) {
-                        self.require_extension(entry.span, STRUCTURED_DESCRIPTOR_HEAP, what);
+                    if self.require_extension(entry.span, Extension::ExtDescriptorHeap, what) {
+                        self.require_extension(
+                            entry.span,
+                            Extension::ExtStructuredDescriptorHeap,
+                            what,
+                        );
                     }
                 }
                 "buffer_type" => {
-                    self.require_extension(entry.span, STRUCTURED_DESCRIPTOR_HEAP, "buffer_type");
+                    self.require_extension(
+                        entry.span,
+                        Extension::ExtStructuredDescriptorHeap,
+                        "buffer_type",
+                    );
                 }
                 _ => {}
             }
@@ -91,7 +105,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn heap_requested(&self, qualifiers: &Qualifiers) -> bool {
-        self.extension_enabled(DESCRIPTOR_HEAP)
+        self.extension_enabled(Extension::ExtDescriptorHeap)
             && !qualifiers.has_layout("set")
             && !qualifiers.has_layout("binding")
             && (qualifiers.has_layout("descriptor_heap") || is_heap_storage(qualifiers.storage))
@@ -143,8 +157,8 @@ impl Analyzer<'_> {
         } else {
             (BlockStorage::ResourceHeap, "resourceheap block")
         };
-        if self.require_extension(span, STRUCTURED_DESCRIPTOR_HEAP, what) {
-            self.require_extension(span, DESCRIPTOR_HEAP, what);
+        if self.require_extension(span, Extension::ExtStructuredDescriptorHeap, what) {
+            self.require_extension(span, Extension::ExtDescriptorHeap, what);
         }
         block
     }

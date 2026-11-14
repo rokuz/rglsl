@@ -2,10 +2,10 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::StorageQualifier;
-use rglsl_ast::extensions::Request;
+use rglsl_types::extension::Extension;
 
 use super::Analyzer;
-use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::diagnostic::DiagnosticKind;
 use crate::scope::{PerVertex, Qualifiers, Storage};
 use rglsl_types::ShaderStage;
 
@@ -64,17 +64,19 @@ pub struct FragmentLayout {
     interlock_ended: u32,
 }
 
-const POST_DEPTH_COVERAGE: [&str; 2] = ["GL_ARB_post_depth_coverage", "GL_EXT_post_depth_coverage"];
-const TILE_IMAGE: &str = "GL_EXT_shader_tile_image";
+const POST_DEPTH_COVERAGE: [Extension; 2] = [
+    Extension::ArbPostDepthCoverage,
+    Extension::ExtPostDepthCoverage,
+];
 
-pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
+pub(crate) fn function_extension(name: &str) -> Option<Extension> {
     Some(match name {
-        "helperInvocationEXT" => "GL_EXT_demote_to_helper_invocation",
-        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => "GL_AMD_shader_fragment_mask",
-        _ if crate::builtins::footprint::is_function(name) => crate::builtins::footprint::EXTENSION,
-        "controlBarrierArrive" | "controlBarrierWait" => "GL_EXT_split_barrier",
+        "helperInvocationEXT" => Extension::ExtDemoteToHelperInvocation,
+        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Extension::AmdShaderFragmentMask,
+        _ if crate::builtins::footprint::is_function(name) => Extension::NvShaderTextureFootprint,
+        "controlBarrierArrive" | "controlBarrierWait" => Extension::ExtSplitBarrier,
         "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
-            TILE_IMAGE
+            Extension::ExtShaderTileImage
         }
         _ => return None,
     })
@@ -109,12 +111,16 @@ impl Analyzer<'_> {
             .collect();
         for (name, span) in entries {
             if let Some(interlock) = Interlock::from_layout(&name) {
-                self.require_extension(span, "GL_ARB_fragment_shader_interlock", interlock.name());
+                self.require_extension(
+                    span,
+                    Extension::ArbFragmentShaderInterlock,
+                    interlock.name(),
+                );
                 if matches!(
                     interlock,
                     Interlock::ShadingRateOrdered | Interlock::ShadingRateUnordered
                 ) {
-                    self.require_extension(span, "GL_NV_shading_rate_image", interlock.name());
+                    self.require_extension(span, Extension::NvShadingRateImage, interlock.name());
                 }
                 if !input {
                     self.error(span, invalid(interlock.name(), "can only apply to 'in'"));
@@ -142,7 +148,7 @@ impl Analyzer<'_> {
                 "non_coherent_color_attachment_readext" => {
                     self.require_extension(
                         span,
-                        TILE_IMAGE,
+                        Extension::ExtShaderTileImage,
                         "non_coherent_color_attachment_readEXT",
                     );
                     ("non_coherent_color_attachment_readEXT", 2)
@@ -150,7 +156,7 @@ impl Analyzer<'_> {
                 "non_coherent_depth_attachment_readext" => {
                     self.require_extension(
                         span,
-                        TILE_IMAGE,
+                        Extension::ExtShaderTileImage,
                         "non_coherent_depth_attachment_readEXT",
                     );
                     ("non_coherent_depth_attachment_readEXT", 3)
@@ -158,7 +164,7 @@ impl Analyzer<'_> {
                 "non_coherent_stencil_attachment_readext" => {
                     self.require_extension(
                         span,
-                        TILE_IMAGE,
+                        Extension::ExtShaderTileImage,
                         "non_coherent_stencil_attachment_readEXT",
                     );
                     ("non_coherent_stencil_attachment_readEXT", 4)
@@ -175,7 +181,7 @@ impl Analyzer<'_> {
             match slot {
                 0 => {
                     layout.post_depth_coverage = true;
-                    if self.extension_enabled("GL_ARB_post_depth_coverage") {
+                    if self.extension_enabled(Extension::ArbPostDepthCoverage) {
                         self.fragment_layout.early_fragment_tests = true;
                     }
                 }
@@ -189,23 +195,7 @@ impl Analyzer<'_> {
     }
 
     fn post_depth_coverage_extension(&mut self, span: Span) {
-        match self.extensions.request(&POST_DEPTH_COVERAGE) {
-            Request::Enabled => {}
-            Request::Warned(extension) => self.warnings.push(Diagnostic {
-                span,
-                kind: DiagnosticKind::ExtensionWarned {
-                    extension,
-                    feature: String::from("post depth coverage"),
-                },
-            }),
-            Request::Missing => self.error(
-                span,
-                DiagnosticKind::ExtensionRequired {
-                    feature: String::from("post depth coverage"),
-                    extensions: POST_DEPTH_COVERAGE.join(", "),
-                },
-            ),
-        }
+        self.require_extensions(span, &POST_DEPTH_COVERAGE, "post depth coverage");
     }
 
     pub(crate) fn interlock_call(&mut self, span: Span, name: &str) {
@@ -338,7 +328,7 @@ impl Analyzer<'_> {
                 stage: stage.name(),
             })
         });
-        self.require_extension(span, "GL_EXT_demote_to_helper_invocation", "demote");
+        self.require_extension(span, Extension::ExtDemoteToHelperInvocation, "demote");
     }
 }
 
@@ -350,9 +340,9 @@ impl Analyzer<'_> {
     ) -> Option<PerVertex> {
         let qualifier = storage.keyword();
         let (per_vertex, extension) = if storage == StorageQualifier::PerVertexNV {
-            (PerVertex::Nv, "GL_NV_fragment_shader_barycentric")
+            (PerVertex::Nv, Extension::NvFragmentShaderBarycentric)
         } else {
-            (PerVertex::Ext, "GL_EXT_fragment_shader_barycentric")
+            (PerVertex::Ext, Extension::ExtFragmentShaderBarycentric)
         };
         let reason = if !self.scopes.is_global() {
             "not allowed in nested scope"

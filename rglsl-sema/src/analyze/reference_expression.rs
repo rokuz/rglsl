@@ -104,7 +104,7 @@ impl Analyzer<'_> {
     ) -> Operand {
         self.require_extension(
             span,
-            Extension::ExtBufferReference2.name(),
+            Extension::ExtBufferReference2,
             "buffer reference indexing",
         );
         if self.reference_has_unsized_array(block) {
@@ -167,7 +167,7 @@ impl Analyzer<'_> {
         if left.ty.is_reference() || right.ty.is_reference() {
             self.require_extension(
                 span,
-                Extension::ExtBufferReference2.name(),
+                Extension::ExtBufferReference2,
                 "buffer reference math",
             );
         }
@@ -250,7 +250,7 @@ impl Analyzer<'_> {
         }
         self.require_extension(
             span,
-            Extension::ExtBufferReference2.name(),
+            Extension::ExtBufferReference2,
             "+= and -= on a buffer reference",
         );
         let unsized_target = target
@@ -302,7 +302,7 @@ impl Analyzer<'_> {
             } else if from_uvec2 {
                 self.require_extension(
                     span,
-                    Extension::ExtBufferReferenceUvec2.name(),
+                    Extension::ExtBufferReferenceUvec2,
                     "uvec2 conversion to reference",
                 );
                 value.and_then(|constant| match constant.values.as_slice() {
@@ -335,7 +335,7 @@ impl Analyzer<'_> {
         } else if *target == Type::vector(Scalar::Uint, 2) {
             self.require_extension(
                 span,
-                Extension::ExtBufferReferenceUvec2.name(),
+                Extension::ExtBufferReferenceUvec2,
                 "reference conversion to uvec2",
             );
             address.map(|address| {

@@ -2,18 +2,13 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::Expression;
+use rglsl_types::extension::Extension;
 
 use super::cooperative_call::CooperativeCall;
 use super::{Analyzer, Callee, Operand};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::Qualifiers;
 use crate::types::{ArraySize, CooperativeUse, Scalar, Type, TypeKind};
-
-pub const COOPERATIVE_MATRIX_CONVERSION: &str = "GL_QCOM_cooperative_matrix_conversion";
-pub const IMAGE_PROCESSING: &str = "GL_QCOM_image_processing";
-pub const IMAGE_PROCESSING2: &str = "GL_QCOM_image_processing2";
-pub const IMAGE_PROCESSING3: &str = "GL_QCOM_image_processing3";
-pub const TILE_SHADING: &str = "GL_QCOM_tile_shading";
 
 const SUBGROUP_SCOPE: u32 = 3;
 
@@ -35,17 +30,17 @@ pub(crate) fn conversion(name: &str) -> Option<QcomConversion> {
     })
 }
 
-pub(crate) fn function_extension(name: &str) -> Option<&'static str> {
+pub(crate) fn function_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "textureWeightedQCOM"
         | "textureBoxFilterQCOM"
         | "textureBlockMatchSADQCOM"
-        | "textureBlockMatchSSDQCOM" => IMAGE_PROCESSING,
+        | "textureBlockMatchSSDQCOM" => Extension::QcomImageProcessing,
         "textureBlockMatchWindowSSDQCOM"
         | "textureBlockMatchWindowSADQCOM"
         | "textureBlockMatchGatherSSDQCOM"
-        | "textureBlockMatchGatherSADQCOM" => IMAGE_PROCESSING2,
-        _ if gather_function(name) => IMAGE_PROCESSING3,
+        | "textureBlockMatchGatherSADQCOM" => Extension::QcomImageProcessing2,
+        _ if gather_function(name) => Extension::QcomImageProcessing3,
         _ => return None,
     })
 }
@@ -57,9 +52,11 @@ pub(crate) fn gather_function(name: &str) -> bool {
         .is_some_and(|mode| matches!(mode, "4x1" | "V2" | "H2" | "D"))
 }
 
-pub fn variable_extension(name: &str) -> Option<&'static str> {
+pub fn variable_extension(name: &str) -> Option<Extension> {
     match name {
-        "gl_TileOffsetQCOM" | "gl_TileDimensionQCOM" | "gl_TileApronSizeQCOM" => Some(TILE_SHADING),
+        "gl_TileOffsetQCOM" | "gl_TileDimensionQCOM" | "gl_TileApronSizeQCOM" => {
+            Some(Extension::QcomTileShading)
+        }
         _ => None,
     }
 }
@@ -90,10 +87,10 @@ impl Analyzer<'_> {
             let name = entry.name.as_str();
             match name {
                 "tile_attachmentqcom" | "non_coherent_attachment_readqcom" => {
-                    self.require_extension(span, TILE_SHADING, "tile shading QCOM");
+                    self.require_extension(span, Extension::QcomTileShading, "tile shading QCOM");
                 }
                 "shading_rate_xqcom" | "shading_rate_yqcom" | "shading_rate_zqcom" => {
-                    self.require_extension(span, TILE_SHADING, "tile shading QCOM");
+                    self.require_extension(span, Extension::QcomTileShading, "tile shading QCOM");
                     let Some(value) = entry.value.constant() else {
                         continue;
                     };
@@ -162,7 +159,7 @@ impl Analyzer<'_> {
         if !self.require_lvalue(argument.span, operand) {
             return Operand::error();
         }
-        if !self.require_extension(span, COOPERATIVE_MATRIX_CONVERSION, name) {
+        if !self.require_extension(span, Extension::QcomCooperativeMatrixConversion, name) {
             return Operand::error();
         }
         self.calls.insert(

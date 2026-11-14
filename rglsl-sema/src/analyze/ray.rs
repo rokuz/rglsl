@@ -3,28 +3,23 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::StorageQualifier;
+use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
 use crate::constant::Constant;
-use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Qualifiers, Storage};
 use crate::types::{BlockStorage, OpaqueKind, Scalar, Type, TypeKind};
 use rglsl_types::ShaderStage;
 
-const RT_NV: &str = "GL_NV_ray_tracing";
-const RT_EXT: &str = "GL_EXT_ray_tracing";
-const RAY_QUERY: &str = "GL_EXT_ray_query";
-const SHADER_INVOCATION_REORDER_NV: &str = "GL_NV_shader_invocation_reorder";
-const SHADER_INVOCATION_REORDER_EXT: &str = "GL_EXT_shader_invocation_reorder";
-
-const RT_NV_ONLY: &[&str] = &[RT_NV];
-const RT_EXT_OR_QUERY: &[&str] = &[RT_EXT, RAY_QUERY];
-const SIR_NV: &[&str] = &[SHADER_INVOCATION_REORDER_NV];
-const SIR_EXT: &[&str] = &[SHADER_INVOCATION_REORDER_EXT];
+const RT_NV_ONLY: &[Extension] = &[Extension::NvRayTracing];
+const RT_EXT_OR_QUERY: &[Extension] = &[Extension::ExtRayTracing, Extension::ExtRayQuery];
+const SIR_NV: &[Extension] = &[Extension::NvShaderInvocationReorder];
+const SIR_EXT: &[Extension] = &[Extension::ExtShaderInvocationReorder];
 
 pub(crate) const fn ray_storage(
     qualifier: StorageQualifier,
-) -> Option<(Storage, &'static [&'static str])> {
+) -> Option<(Storage, &'static [Extension])> {
     Some(match qualifier {
         StorageQualifier::RayPayloadNV => (Storage::RayPayload, RT_NV_ONLY),
         StorageQualifier::RayPayloadEXT => (Storage::RayPayload, RT_EXT_OR_QUERY),
@@ -136,37 +131,6 @@ pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn require_extensions(
-        &mut self,
-        span: Span,
-        names: &'static [&'static str],
-        what: &str,
-    ) -> bool {
-        match self.extensions.request(names) {
-            rglsl_ast::extensions::Request::Enabled => true,
-            rglsl_ast::extensions::Request::Warned(extension) => {
-                self.warnings.push(Diagnostic {
-                    span,
-                    kind: DiagnosticKind::ExtensionWarned {
-                        extension,
-                        feature: String::from(what),
-                    },
-                });
-                true
-            }
-            rglsl_ast::extensions::Request::Missing => {
-                self.error(
-                    span,
-                    DiagnosticKind::ExtensionRequired {
-                        feature: String::from(what),
-                        extensions: names.join(", "),
-                    },
-                );
-                false
-            }
-        }
-    }
-
     pub(crate) fn require_stage(&mut self, span: Span, stages: &[ShaderStage], what: &str) -> bool {
         !self.stage_check(span, |stage| {
             (!stages.contains(&stage)).then(|| DiagnosticKind::NotSupportedInStage {
@@ -470,7 +434,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn ray_jump(&mut self, span: Span, keyword: &'static str) {
-        if self.require_extensions(span, &[RT_EXT], keyword) {
+        if self.require_extension(span, Extension::ExtRayTracing, keyword) {
             self.require_stage(span, &[ShaderStage::AnyHit], keyword);
         }
     }
@@ -490,7 +454,7 @@ impl Analyzer<'_> {
         }
         if !self.require_extensions(
             span,
-            &["GL_EXT_ray_flags_primitive_culling"],
+            &[Extension::ExtRayFlagsPrimitiveCulling],
             "primitive culling",
         ) {
             return;

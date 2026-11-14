@@ -310,7 +310,7 @@ impl ExtensionIssue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
     Enabled,
-    Warned(&'static str),
+    Warned(Extension),
     Missing,
 }
 
@@ -343,17 +343,6 @@ impl ExtensionState {
         }
     }
 
-    pub fn extension_behavior(&self, extension: Extension) -> ExtensionBehavior {
-        self.behaviors
-            .get(extension as usize)
-            .copied()
-            .unwrap_or(ExtensionBehavior::Disable)
-    }
-
-    pub const fn is_extension_requested(&self, extension: Extension) -> bool {
-        self.requested.contains(extension)
-    }
-
     pub fn apply(&mut self, name: &str, behavior: ExtensionBehavior) -> Vec<ExtensionIssue> {
         let mut issues = Vec::new();
         if name == ALL {
@@ -381,58 +370,29 @@ impl ExtensionState {
         issues
     }
 
-    pub fn behavior(&self, name: &str) -> ExtensionBehavior {
-        Extension::from_name(name).map_or(ExtensionBehavior::Disable, |extension| {
-            self.extension_behavior(extension)
-        })
+    pub fn behavior(&self, extension: Extension) -> ExtensionBehavior {
+        self.behaviors
+            .get(extension as usize)
+            .copied()
+            .unwrap_or(ExtensionBehavior::Disable)
     }
 
-    pub fn requested(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.requested.iter().map(Extension::name)
+    pub fn is_on(&self, extension: Extension) -> bool {
+        self.behavior(extension) != ExtensionBehavior::Disable
     }
 
-    pub fn is_requested(&self, name: &str) -> bool {
-        Extension::from_name(name).is_some_and(|extension| self.is_extension_requested(extension))
+    pub fn any_on(&self, extensions: &[Extension]) -> bool {
+        extensions.iter().any(|&extension| self.is_on(extension))
     }
 
-    pub fn is_extension_on(&self, extension: Extension) -> bool {
-        self.extension_behavior(extension) != ExtensionBehavior::Disable
+    pub const fn is_requested(&self, extension: Extension) -> bool {
+        self.requested.contains(extension)
     }
 
-    pub fn any_extension_on(&self, extensions: &[Extension]) -> bool {
-        extensions
-            .iter()
-            .any(|&extension| self.is_extension_on(extension))
-    }
-
-    pub fn is_on(&self, name: &str) -> bool {
-        self.behavior(name) != ExtensionBehavior::Disable
-    }
-
-    pub fn any_on(&self, names: &[&str]) -> bool {
-        names.iter().any(|name| self.is_on(name))
-    }
-
-    pub fn request(&self, names: &[&'static str]) -> Request {
-        let enabled = names.iter().any(|name| {
-            matches!(
-                self.behavior(name),
-                ExtensionBehavior::Enable | ExtensionBehavior::Require
-            )
-        });
-        if enabled {
-            return Request::Enabled;
-        }
-        names
-            .iter()
-            .find(|name| self.behavior(name) == ExtensionBehavior::Warn)
-            .map_or(Request::Missing, |name| Request::Warned(name))
-    }
-
-    pub fn request_any(&self, extensions: &[Extension]) -> Request {
+    pub fn request(&self, extensions: &[Extension]) -> Request {
         let enabled = extensions.iter().any(|&extension| {
             matches!(
-                self.extension_behavior(extension),
+                self.behavior(extension),
                 ExtensionBehavior::Enable | ExtensionBehavior::Require
             )
         });
@@ -441,32 +401,35 @@ impl ExtensionState {
         }
         extensions
             .iter()
-            .find(|&&extension| self.extension_behavior(extension) == ExtensionBehavior::Warn)
-            .map_or(Request::Missing, |extension| {
-                Request::Warned(extension.name())
-            })
+            .copied()
+            .find(|&extension| self.behavior(extension) == ExtensionBehavior::Warn)
+            .map_or(Request::Missing, Request::Warned)
     }
 
-    pub fn enabled(&self) -> impl Iterator<Item = &'static str> + '_ {
-        Extension::ALL
-            .into_iter()
-            .filter(|&extension| self.is_extension_on(extension))
-            .map(Extension::name)
+    pub fn enabled(&self) -> ExtensionSet {
+        let mut set = ExtensionSet::EMPTY;
+        for extension in Extension::ALL {
+            set.set(extension, self.is_on(extension));
+        }
+        set
+    }
+
+    pub const fn requested(&self) -> ExtensionSet {
+        self.requested
     }
 
     pub fn keyword_enabled(&self, word: &str) -> bool {
         match Feature::of_type_keyword(word) {
             None => true,
             Some(Feature::Float64Type) => {
-                self.any_extension_on(Feature::Float64Type.extensions())
-                    || (self.is_extension_on(NvGpuShader5)
-                        && self.is_extension_on(ArbGpuShaderFp64))
+                self.any_on(Feature::Float64Type.extensions())
+                    || (self.is_on(NvGpuShader5) && self.is_on(ArbGpuShaderFp64))
             }
-            Some(feature) => self.any_extension_on(feature.extensions()),
+            Some(feature) => self.any_on(feature.extensions()),
         }
     }
 
     pub fn explicit_arithmetic(&self) -> bool {
-        self.any_extension_on(&EXPLICIT_ARITHMETIC)
+        self.any_on(&EXPLICIT_ARITHMETIC)
     }
 }

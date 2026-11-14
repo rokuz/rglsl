@@ -7,6 +7,7 @@ use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExpressionKind, FunctionCall, FunctionIdentifier, Identifier, TypeSpecifier,
 };
+use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
@@ -393,12 +394,7 @@ impl Analyzer<'_> {
             self.error(name.span, DiagnosticKind::UnknownMethod(name.node.clone()));
             return Operand::error();
         }
-        if wide
-            && !self.require_extension(
-                name.span,
-                super::expression::SHADER_64BIT_INDEXING,
-                "length64",
-            )
+        if wide && !self.require_extension(name.span, Extension::ExtShader64bitIndexing, "length64")
         {
             return Operand::error();
         }
@@ -1016,9 +1012,9 @@ impl Analyzer<'_> {
     ) -> Operand {
         let abort = name == ABORT;
         let (extension, callee) = if abort {
-            ("GL_EXT_abort", Callee::Abort)
+            (Extension::ExtAbort, Callee::Abort)
         } else {
-            ("GL_EXT_debug_printf", Callee::DebugPrintf)
+            (Extension::ExtDebugPrintf, Callee::DebugPrintf)
         };
         let mut failed = !self.require_extension(span, extension, name);
         let invalid = |analyzer: &mut Self, reason: &'static str| {
@@ -1078,7 +1074,7 @@ impl Analyzer<'_> {
 
     pub(crate) fn builtin_extensions(&mut self, span: Span, name: &str) {
         if matches!(name, "subgroupQuadAll" | "subgroupQuadAny") {
-            self.require_extension(span, subgroup::QUAD_CONTROL, name);
+            self.require_extension(span, Extension::ExtShaderQuadControl, name);
         }
         if let Some(extension) = subgroup::function_extension(name) {
             self.require_extension(span, extension, name);
@@ -1087,27 +1083,16 @@ impl Analyzer<'_> {
             name,
             "dotEXT" | "dotAccSatEXT" | "dotPacked4x8EXT" | "dotPacked4x8AccSatEXT"
         ) {
-            self.require_extension(span, "GL_EXT_integer_dot_product", name);
+            self.require_extension(span, Extension::ExtIntegerDotProduct, name);
         }
         if matches!(name, "expectEXT" | "assumeEXT") {
-            self.require_extension(span, "GL_EXT_expect_assume", name);
+            self.require_extension(span, Extension::ExtExpectAssume, name);
         }
-        if contains_ignore_ascii_case(name, "bfloat16") {
-            self.require_extension(span, "GL_EXT_bfloat16", name);
-        } else if contains_ignore_ascii_case(name, "floate4m3") {
-            self.require_extension(span, "GL_EXT_float_e4m3", name);
-        } else if contains_ignore_ascii_case(name, "floate5m2") {
-            self.require_extension(span, "GL_EXT_float_e5m2", name);
-        } else if contains_ignore_ascii_case(name, "fe2m1") {
-            self.require_extension(span, "GL_EXT_float_e2m1", name);
-        } else if contains_ignore_ascii_case(name, "fe3m2") {
-            self.require_extension(span, "GL_EXT_float_e3m2", name);
-        } else if contains_ignore_ascii_case(name, "fe2m3") {
-            self.require_extension(span, "GL_EXT_float_e2m3", name);
-        } else if contains_ignore_ascii_case(name, "floatue8m0") {
-            self.require_extension(span, "GL_EXT_float_ue8m0", name);
-        } else if contains_ignore_ascii_case(name, "floatmxint8") {
-            self.require_extension(span, "GL_EXT_float_mxint8", name);
+        if let Some(&(_, extension)) = SMALL_FLOAT_FUNCTIONS
+            .iter()
+            .find(|&&(part, _)| contains_ignore_ascii_case(name, part))
+        {
+            self.require_extension(span, extension, name);
         }
         self.mesh_function_extension(span, name);
         if let Some(extension) = super::qcom::function_extension(name) {
@@ -1202,10 +1187,14 @@ impl Analyzer<'_> {
             .first()
             .and_then(|operand| operand.ty.base_scalar())
             .and_then(|scalar| match scalar {
-                Scalar::Int8 | Scalar::Uint8 => Some(subgroup::EXTENDED_INT8),
-                Scalar::Int16 | Scalar::Uint16 => Some(subgroup::EXTENDED_INT16),
-                Scalar::Int64 | Scalar::Uint64 => Some(subgroup::EXTENDED_INT64),
-                Scalar::Float16 => Some(subgroup::EXTENDED_FLOAT16),
+                Scalar::Int8 | Scalar::Uint8 => Some(Extension::ExtShaderSubgroupExtendedTypesInt8),
+                Scalar::Int16 | Scalar::Uint16 => {
+                    Some(Extension::ExtShaderSubgroupExtendedTypesInt16)
+                }
+                Scalar::Int64 | Scalar::Uint64 => {
+                    Some(Extension::ExtShaderSubgroupExtendedTypesInt64)
+                }
+                Scalar::Float16 => Some(Extension::ExtShaderSubgroupExtendedTypesFloat16),
                 _ => None,
             });
         if let Some(extension) = extension {
@@ -1422,7 +1411,7 @@ impl Analyzer<'_> {
             if !operand.constant {
                 if !self
                     .extensions
-                    .is_requested("GL_EXT_texture_offset_non_const")
+                    .is_requested(Extension::ExtTextureOffsetNonConst)
                 {
                     return invalid(self, span, "the offset must be a constant expression");
                 }
@@ -1633,7 +1622,7 @@ impl Analyzer<'_> {
             || operands
                 .iter()
                 .all(|operand| operand.ty.base_scalar() == ty.base_scalar());
-        let composite_specialization = self.extension_enabled(SPEC_CONSTANT_COMPOSITES)
+        let composite_specialization = self.extension_enabled(Extension::ExtSpecConstantComposites)
             && (matches!(ty.kind, TypeKind::Struct(_)) || operands.len() > 1);
         let constant = operands.iter().all(|operand| operand.constant)
             && (!any_specialization || keeps_specialization || composite_specialization)
@@ -1902,7 +1891,17 @@ fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
             .iter()
             .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
 }
-pub(crate) const SPEC_CONSTANT_COMPOSITES: &str = "GL_EXT_spec_constant_composites";
+
+const SMALL_FLOAT_FUNCTIONS: [(&str, Extension); 8] = [
+    ("bfloat16", Extension::ExtBfloat16),
+    ("floate4m3", Extension::ExtFloatE4m3),
+    ("floate5m2", Extension::ExtFloatE5m2),
+    ("fe2m1", Extension::ExtFloatE2m1),
+    ("fe3m2", Extension::ExtFloatE3m2),
+    ("fe2m3", Extension::ExtFloatE2m3),
+    ("floatue8m0", Extension::ExtFloatUe8m0),
+    ("floatmxint8", Extension::ExtFloatMxint8),
+];
 
 fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
     needle.is_empty()
