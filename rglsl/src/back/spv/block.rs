@@ -19,6 +19,8 @@ const SPV_AMD_GCN_SHADER: &str = "SPV_AMD_gcn_shader";
 const AMD_CUBE_FACE_INDEX: Word = 1;
 const AMD_CUBE_FACE_COORD: Word = 2;
 const AMD_TIME: Word = 3;
+const SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER: &str = "SPV_AMD_shader_explicit_vertex_parameter";
+const AMD_INTERPOLATE_AT_VERTEX: Word = 1;
 
 const fn integer_functions2(
     fun: crate::MathFunction,
@@ -1749,6 +1751,30 @@ impl BlockContext<'_> {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::InterpolateAt {
+                pointer,
+                location: crate::InterpolationLocation::VertexAmd(vertex),
+            } => {
+                let pointer_id =
+                    self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?;
+                if self.is_half(expr_handle) {
+                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
+                }
+                self.writer
+                    .use_extension(SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
+                let set = self
+                    .writer
+                    .spirv_ext_import(SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
+                let id = self.gen_id();
+                block.body.push(Instruction::ext_inst(
+                    set,
+                    AMD_INTERPOLATE_AT_VERTEX,
+                    result_type_id,
+                    id,
+                    &[pointer_id, self.cached.get(vertex)?],
+                ));
+                id
+            }
             crate::Expression::InterpolateAt { pointer, location } => {
                 self.writer.require_any(
                     "interpolation functions",
@@ -1768,6 +1794,11 @@ impl BlockContext<'_> {
                         spirv::GlslStd450Op::InterpolateAtOffset,
                         Some(self.cached.get(offset)?),
                     ),
+                    crate::InterpolationLocation::VertexAmd(_) => {
+                        return Err(Error::Validation(
+                            "vertex interpolation reached the GLSL.std.450 path",
+                        ));
+                    }
                 };
                 let offset = match location {
                     crate::InterpolationLocation::Offset(offset) => Some(offset),

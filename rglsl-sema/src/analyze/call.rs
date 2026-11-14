@@ -1355,6 +1355,37 @@ impl Analyzer<'_> {
             if first.is_some_and(|operand| operand.storage != Storage::In) {
                 return invalid(self, span, "the first argument must be an interpolant");
             }
+            if kind == BuiltinKind::Interpolate(crate::builtins::kind::InterpolateAt::Vertex) {
+                let explicit = first
+                    .and_then(|operand| operand.root)
+                    .and_then(|id| self.symbol(id))
+                    .and_then(|symbol| symbol.variable())
+                    .is_some_and(|variable| {
+                        variable.qualifiers.interpolation
+                            == Some(rglsl_ast::ast::InterpolationQualifier::ExplicitInterpAmd)
+                    });
+                if !explicit {
+                    return invalid(
+                        self,
+                        span,
+                        "the first argument must be qualified as __explicitInterpAMD in",
+                    );
+                }
+                let vertex = operands.get(1);
+                if vertex.is_some_and(|operand| !operand.constant || operand.specialization) {
+                    return invalid(
+                        self,
+                        span,
+                        "the vertex index must be a compile-time constant",
+                    );
+                }
+                let index = vertex
+                    .and_then(|operand| operand.value.as_ref())
+                    .and_then(crate::constant::Constant::scalar_i64);
+                if index.is_some_and(|index| !(0..=2).contains(&index)) {
+                    return invalid(self, span, "the vertex index must be in the range [0, 2]");
+                }
+            }
         } else if let BuiltinKind::Atomic(_) = kind {
             if first.is_some_and(|operand| {
                 !matches!(

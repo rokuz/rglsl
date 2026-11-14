@@ -591,6 +591,7 @@ pub enum InterpolationQualifier {
     Smooth,
     Flat,
     Noperspective,
+    ExplicitInterpAmd,
 }
 
 impl InterpolationQualifier {
@@ -599,6 +600,7 @@ impl InterpolationQualifier {
             Self::Smooth => "smooth",
             Self::Flat => "flat",
             Self::Noperspective => "noperspective",
+            Self::ExplicitInterpAmd => "__explicitInterpAMD",
         }
     }
 
@@ -607,6 +609,7 @@ impl InterpolationQualifier {
             "smooth" => Some(Self::Smooth),
             "flat" => Some(Self::Flat),
             "noperspective" => Some(Self::Noperspective),
+            "__explicitInterpAMD" => Some(Self::ExplicitInterpAmd),
             _ => None,
         }
     }

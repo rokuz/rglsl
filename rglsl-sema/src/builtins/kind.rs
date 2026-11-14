@@ -259,6 +259,7 @@ pub enum InterpolateAt {
     Centroid,
     Sample,
     Offset,
+    Vertex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

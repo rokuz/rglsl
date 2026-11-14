@@ -1794,6 +1794,11 @@ impl super::Validator {
                             return Err(ExpressionError::InvalidImageOtherIndexType(sample));
                         }
                     }
+                    crate::InterpolationLocation::VertexAmd(vertex) => {
+                        if !matches!(*resolver.resolve(vertex)?, Ti::Scalar(Sc::U32)) {
+                            return Err(ExpressionError::InvalidImageOtherIndexType(vertex));
+                        }
+                    }
                     crate::InterpolationLocation::Offset(offset) => {
                         if !matches!(
                             *resolver.resolve(offset)?,

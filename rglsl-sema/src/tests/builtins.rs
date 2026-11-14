@@ -58,7 +58,7 @@ fn the_tables_have_the_expected_sizes() {
         (ShaderStage::TessControl, 7560, 35, 182, 217),
         (ShaderStage::TessEvaluation, 7559, 35, 190, 225),
         (ShaderStage::Geometry, 7563, 35, 189, 224),
-        (ShaderStage::Fragment, 8080, 35, 206, 244),
+        (ShaderStage::Fragment, 8096, 35, 206, 244),
         (ShaderStage::Compute, 8025, 37, 180, 218),
         (ShaderStage::Mesh, 7775, 37, 193, 229),
         (ShaderStage::RayGeneration, 7559, 122, 172, 211),
@@ -430,7 +430,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.functions().names().count(), 460);
+    assert_eq!(table.functions().names().count(), 461);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {

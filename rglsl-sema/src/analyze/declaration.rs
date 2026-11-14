@@ -621,6 +621,13 @@ impl Analyzer<'_> {
             }
             SingleTypeQualifier::Precision(precision) => result.precision = Some(*precision),
             SingleTypeQualifier::Interpolation(interpolation) => {
+                if *interpolation == InterpolationQualifier::ExplicitInterpAmd {
+                    self.require_extension(
+                        single.span,
+                        Extension::AmdShaderExplicitVertexParameter,
+                        "__explicitInterpAMD",
+                    );
+                }
                 result.interpolation = Some(*interpolation);
             }
             SingleTypeQualifier::Invariant => result.flags.insert(QualifierFlags::INVARIANT),

@@ -547,6 +547,7 @@ pub enum Interpolation {
     Linear,
     /// Indicates that no interpolation will be performed.
     Flat,
+    ExplicitVertexAmd,
     /// Indicates the fragment input binding holds an array of per-vertex values.
     /// This is typically used with barycentrics.
     PerVertex {
@@ -1544,6 +1545,7 @@ pub enum InterpolationLocation {
     Centroid,
     Sample(Handle<Expression>),
     Offset(Handle<Expression>),
+    VertexAmd(Handle<Expression>),
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]

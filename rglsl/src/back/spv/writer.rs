@@ -2845,6 +2845,10 @@ impl Writer {
                         Some(crate::Interpolation::Linear) => {
                             others.push(Decoration::NoPerspective);
                         }
+                        Some(crate::Interpolation::ExplicitVertexAmd) => {
+                            self.use_extension("SPV_AMD_shader_explicit_vertex_parameter");
+                            others.push(Decoration::ExplicitInterpAMD);
+                        }
                         Some(crate::Interpolation::PerVertex {
                             flavor,
                             flat,

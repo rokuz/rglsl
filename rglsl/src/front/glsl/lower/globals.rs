@@ -89,6 +89,7 @@ const fn interpolation_of(qualifier: InterpolationQualifier) -> Interpolation {
         InterpolationQualifier::Flat => Interpolation::Flat,
         InterpolationQualifier::Noperspective => Interpolation::Linear,
         InterpolationQualifier::Smooth => Interpolation::Perspective,
+        InterpolationQualifier::ExplicitInterpAmd => Interpolation::ExplicitVertexAmd,
     }
 }
 

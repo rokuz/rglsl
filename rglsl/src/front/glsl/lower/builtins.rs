@@ -2123,6 +2123,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 InterpolateAt::Centroid => "interpolateAtCentroid",
                 InterpolateAt::Sample => "interpolateAtSample",
                 InterpolateAt::Offset => "interpolateAtOffset",
+                InterpolateAt::Vertex => "interpolateAtVertexAMD",
             };
             return Err(semantic(
                 format!(
@@ -2147,8 +2148,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().rvalue(offset);
                 self.nest(frame).await
             }?),
+            (InterpolateAt::Vertex, Some(vertex)) => crate::InterpolationLocation::VertexAmd({
+                let frame = self.clone().rvalue(vertex);
+                self.nest(frame).await
+            }?),
             (InterpolateAt::Centroid, _)
-            | (InterpolateAt::Sample | InterpolateAt::Offset, None) => {
+            | (InterpolateAt::Sample | InterpolateAt::Offset | InterpolateAt::Vertex, None) => {
                 crate::InterpolationLocation::Centroid
             }
         };

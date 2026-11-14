@@ -1,4 +1,4 @@
-FORMAT_VERSION 27
+FORMAT_VERSION 28
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -84,8 +84,8 @@ ImmediateBank 3425a023ab1dec86
 Index 52535335d989c398
 Interlock 56efa74417d7411e
 InterlockScope 11be0ce095cd544e
-Interpolation b6cba676aa3f4e2c
-InterpolationLocation 00eaa14a1ffa4e13
+Interpolation c7591385668298f8
+InterpolationLocation 511cdd8d456fcb1e
 Library e05675b5c96f4f74
 LibraryVariant 7a179ae8b972417e
 Linkage 66a1615157157a52

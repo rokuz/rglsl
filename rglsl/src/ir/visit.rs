@@ -800,7 +800,8 @@ macro_rules! interpolation_location_handles {
         match *$this {
             InterpolationLocation::Centroid => {}
             InterpolationLocation::Sample(ref $($m)? operand)
-            | InterpolationLocation::Offset(ref $($m)? operand) => {
+            | InterpolationLocation::Offset(ref $($m)? operand)
+            | InterpolationLocation::VertexAmd(ref $($m)? operand) => {
                 $v.expression($($d)? operand)?;
             }
         }

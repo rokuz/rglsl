@@ -459,3 +459,67 @@ fn amd_gcn_shader_matches_glslang() -> TestResult {
     assert_eq!(summary.get("extension SPV_AMD_gcn_shader"), None);
     Ok(())
 }
+
+#[test]
+fn amd_interpolate_at_vertex_matches_glslang() -> TestResult {
+    let summary = matches_glslang(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_explicit_vertex_parameter : enable
+        layout(location = 0) __explicitInterpAMD in vec4 v;
+        layout(location = 1) __explicitInterpAMD in float f;
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = interpolateAtVertexAMD(v, 1u) + vec4(interpolateAtVertexAMD(f, 2u));
+        }",
+    )?;
+    for key in [
+        "SPV_AMD_shader_explicit_vertex_parameter 1 [_ 1]",
+        "SPV_AMD_shader_explicit_vertex_parameter 1 [_ 2]",
+        "extension SPV_AMD_shader_explicit_vertex_parameter",
+    ] {
+        assert_eq!(summary.get(key), Some(&1), "{key}: {summary:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn amd_interpolate_at_vertex_is_checked_like_glslang() -> TestResult {
+    let shader = |declaration: &str, body: &str| {
+        format!(
+            "#version 450
+            #extension GL_AMD_shader_explicit_vertex_parameter : enable
+            layout(location = 0) {declaration} vec4 v;
+            layout(location = 1) flat in uint k;
+            layout(location = 0) out vec4 o;
+            void main() {{
+                o = {body};
+            }}"
+        )
+    };
+    for (declaration, body, message) in [
+        (
+            "in",
+            "interpolateAtVertexAMD(v, 1u)",
+            "must be qualified as __explicitInterpAMD",
+        ),
+        (
+            "__explicitInterpAMD in",
+            "interpolateAtVertexAMD(v, k)",
+            "must be a compile-time constant",
+        ),
+        (
+            "__explicitInterpAMD in",
+            "interpolateAtVertexAMD(v, 3u)",
+            "must be in the range [0, 2]",
+        ),
+        (
+            "__explicitInterpAMD in",
+            "v",
+            "can be read only by `interpolateAtVertexAMD`",
+        ),
+    ] {
+        rejected_like_glslang(ShaderStage::Fragment, &shader(declaration, body), message)?;
+    }
+    Ok(())
+}

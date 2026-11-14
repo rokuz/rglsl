@@ -869,7 +869,8 @@ impl FunctionInfo {
                     .or(match location {
                         crate::InterpolationLocation::Centroid => None,
                         crate::InterpolationLocation::Sample(operand)
-                        | crate::InterpolationLocation::Offset(operand) => self.add_ref(operand),
+                        | crate::InterpolationLocation::Offset(operand)
+                        | crate::InterpolationLocation::VertexAmd(operand) => self.add_ref(operand),
                     })
                     .or(Some(handle)),
                 requirements: UniformityRequirements::empty(),

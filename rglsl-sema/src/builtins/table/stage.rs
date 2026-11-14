@@ -1,7 +1,7 @@
 use rglsl_types::extension::Extension::*;
 
 use super::BuiltinFunction;
-use super::Floats::DoublesAndHalves;
+use super::Floats::{DoublesAndHalves, Halves};
 use crate::builtins::kind::{
     AtomicOperation, Attachment, Barrier, BuiltinKind, ClockSource, InterpolateAt, MemoryBarrier,
     Mesh, Primitive, SplitPhase,
@@ -167,6 +167,16 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "interpolateAtOffset": BuiltinKind::Interpolate(InterpolateAt::Offset) => [genF(genF, vec2)] {
         stages: FRAGMENT,
         floats: DoublesAndHalves,
+        precision_operands: Some(1),
+    }
+    "interpolateAtVertexAMD": BuiltinKind::Interpolate(InterpolateAt::Vertex) => [
+        genF(genF, uint),
+        genI(genI, uint),
+        genU(genU, uint),
+    ] {
+        requires: &[AmdShaderExplicitVertexParameter],
+        stages: FRAGMENT,
+        floats: Halves,
         precision_operands: Some(1),
     }
     "EmitStreamVertex": BuiltinKind::Primitive(Primitive::Emit) => [void(int)] {
