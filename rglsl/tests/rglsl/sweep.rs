@@ -130,6 +130,7 @@ fn summary(words: &[u32]) -> TestResult<Summary> {
         .capabilities
         .iter()
         .filter_map(|inst| match inst.operands.first() {
+            Some(&Operand::Capability(spirv::Capability::Shader)) => None,
             Some(Operand::Capability(capability)) => Some(format!("{capability:?}")),
             _ => None,
         })
@@ -334,6 +335,30 @@ fn micro_triangle_fetches_need_no_ray_queries() -> TestResult {
         }",
     )?;
     assert!(summary.capabilities.contains("RayQueryKHR"), "{summary:?}");
+    Ok(())
+}
+
+#[test]
+fn per_view_mesh_outputs_need_only_mesh_shading() -> TestResult {
+    let source = "#version 460
+        #extension GL_NV_mesh_shader : require
+        layout(local_size_x = 1) in;
+        layout(max_vertices = 3, max_primitives = 1, triangles) out;
+        layout(std430, binding = 0) buffer B { float d; int l; };
+        void main() {
+            gl_MeshVerticesNV[0].gl_ClipDistancePerViewNV[0][0] = d;
+            gl_MeshVerticesNV[0].gl_CullDistancePerViewNV[1][0] = d;
+            gl_MeshPrimitivesNV[0].gl_LayerPerViewNV[0] = l;
+        }";
+    let summary = valid_like_glslang(ShaderStage::Mesh, Target::Vulkan11, source)?;
+    assert!(
+        !summary.capabilities.contains("PerViewAttributesNV"),
+        "{summary:?}"
+    );
+    assert!(
+        summary.capabilities.contains("MeshShadingNV"),
+        "{summary:?}"
+    );
     Ok(())
 }
 

@@ -3220,11 +3220,6 @@ impl Writer {
                     Bi::MeshViewCountNV => BuiltIn::MeshViewCountNV,
                     Bi::MeshViewIndicesNV => BuiltIn::MeshViewIndicesNV,
                     Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV | Bi::LayerPerViewNV => {
-                        self.use_extension("SPV_NVX_multiview_per_view_attributes");
-                        self.require_any(
-                            "per-view attributes",
-                            &[spirv::Capability::PerViewAttributesNV],
-                        )?;
                         if built_in == Bi::LayerPerViewNV && mesh_output {
                             others.push(Decoration::PerPrimitiveEXT);
                         }
