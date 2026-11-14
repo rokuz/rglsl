@@ -439,28 +439,28 @@ pub fn literal_text(ty: rglsl_ast::ast::BasicType, values: &[String]) -> String 
     let literals: Vec<String> = values
         .iter()
         .map(|value| match basic::element(ty) {
-            rglsl_ast::ast::ScalarType::Bool => {
+            rglsl_ast::ast::Scalar::Bool => {
                 if value.trim() == "1" { "true" } else { "false" }.to_owned()
             }
-            rglsl_ast::ast::ScalarType::Float
-            | rglsl_ast::ast::ScalarType::Double
-            | rglsl_ast::ast::ScalarType::Float16
-            | rglsl_ast::ast::ScalarType::BFloat16
-            | rglsl_ast::ast::ScalarType::FloatE4M3
-            | rglsl_ast::ast::ScalarType::FloatE5M2
-            | rglsl_ast::ast::ScalarType::FloatE2M1
-            | rglsl_ast::ast::ScalarType::FloatE3M2
-            | rglsl_ast::ast::ScalarType::FloatE2M3
-            | rglsl_ast::ast::ScalarType::FloatUE8M0
-            | rglsl_ast::ast::ScalarType::FloatMXINT8 => float_literal(value),
-            rglsl_ast::ast::ScalarType::Uint
-            | rglsl_ast::ast::ScalarType::Uint8
-            | rglsl_ast::ast::ScalarType::Uint16
-            | rglsl_ast::ast::ScalarType::Uint64 => format!("{}u", value.trim_start_matches('-')),
-            rglsl_ast::ast::ScalarType::Int
-            | rglsl_ast::ast::ScalarType::Int8
-            | rglsl_ast::ast::ScalarType::Int16
-            | rglsl_ast::ast::ScalarType::Int64 => value.clone(),
+            rglsl_ast::ast::Scalar::Float
+            | rglsl_ast::ast::Scalar::Double
+            | rglsl_ast::ast::Scalar::Float16
+            | rglsl_ast::ast::Scalar::BFloat16
+            | rglsl_ast::ast::Scalar::FloatE4M3
+            | rglsl_ast::ast::Scalar::FloatE5M2
+            | rglsl_ast::ast::Scalar::FloatE2M1
+            | rglsl_ast::ast::Scalar::FloatE3M2
+            | rglsl_ast::ast::Scalar::FloatE2M3
+            | rglsl_ast::ast::Scalar::FloatUE8M0
+            | rglsl_ast::ast::Scalar::FloatMXINT8 => float_literal(value),
+            rglsl_ast::ast::Scalar::Uint
+            | rglsl_ast::ast::Scalar::Uint8
+            | rglsl_ast::ast::Scalar::Uint16
+            | rglsl_ast::ast::Scalar::Uint64 => format!("{}u", value.trim_start_matches('-')),
+            rglsl_ast::ast::Scalar::Int
+            | rglsl_ast::ast::Scalar::Int8
+            | rglsl_ast::ast::Scalar::Int16
+            | rglsl_ast::ast::Scalar::Int64 => value.clone(),
         })
         .collect();
     match literals.as_slice() {

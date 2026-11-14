@@ -1352,9 +1352,9 @@ impl<'a> Lowerer<'a> {
                     let boolean = matches!(
                         member.node.ty.node.specifier.node.non_array,
                         rglsl_ast::ast::TypeSpecifierNonArray::Basic(
-                            rglsl_ast::ast::BasicType::Scalar(rglsl_ast::ast::ScalarType::Bool)
+                            rglsl_ast::ast::BasicType::Scalar(rglsl_ast::ast::Scalar::Bool)
                                 | rglsl_ast::ast::BasicType::Vector {
-                                    scalar: rglsl_ast::ast::ScalarType::Bool,
+                                    scalar: rglsl_ast::ast::Scalar::Bool,
                                     ..
                                 }
                         )

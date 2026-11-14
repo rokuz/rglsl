@@ -3138,15 +3138,15 @@ const fn both_derivative_groups() -> DiagnosticKind {
 }
 
 const fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
-    use rglsl_ast::ast::{BasicType, ScalarType};
+    use rglsl_ast::ast::{BasicType, Scalar};
     match specifier.non_array {
         TypeSpecifierNonArray::Basic(
             BasicType::Scalar(scalar)
             | BasicType::Vector { scalar, .. }
             | BasicType::Matrix { scalar, .. },
         ) => match scalar {
-            ScalarType::Float => Some(PrecisionKey::Float),
-            ScalarType::Int | ScalarType::Uint => Some(PrecisionKey::Int),
+            Scalar::Float => Some(PrecisionKey::Float),
+            Scalar::Int | Scalar::Uint => Some(PrecisionKey::Int),
             _ => None,
         },
         TypeSpecifierNonArray::Opaque(keyword) => Some(PrecisionKey::Opaque(keyword)),

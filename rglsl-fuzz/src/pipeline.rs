@@ -1,6 +1,6 @@
 use rglsl_ast::ast::{
     ArrayDimension, BasicType, DeclarationKind, ExpressionKind, ExternalDeclaration,
-    InitDeclarator, ScalarType, StorageQualifier, TranslationUnit, TypeSpecifierNonArray,
+    InitDeclarator, Scalar, StorageQualifier, TranslationUnit, TypeSpecifierNonArray,
 };
 use serde_json::{Map, Number, Value};
 
@@ -117,23 +117,19 @@ pub fn gl_uniform_function_name(ty: BasicType, array: bool) -> String {
         _ => name.push_str(&basic::num_elements(ty).to_string()),
     }
     name.push_str(match basic::element(ty) {
-        ScalarType::Float
-        | ScalarType::Double
-        | ScalarType::Float16
-        | ScalarType::BFloat16
-        | ScalarType::FloatE4M3
-        | ScalarType::FloatE5M2
-        | ScalarType::FloatE2M1
-        | ScalarType::FloatE3M2
-        | ScalarType::FloatE2M3
-        | ScalarType::FloatUE8M0
-        | ScalarType::FloatMXINT8 => "f",
-        ScalarType::Uint | ScalarType::Uint8 | ScalarType::Uint16 | ScalarType::Uint64 => "ui",
-        ScalarType::Int
-        | ScalarType::Bool
-        | ScalarType::Int8
-        | ScalarType::Int16
-        | ScalarType::Int64 => "i",
+        Scalar::Float
+        | Scalar::Double
+        | Scalar::Float16
+        | Scalar::BFloat16
+        | Scalar::FloatE4M3
+        | Scalar::FloatE5M2
+        | Scalar::FloatE2M1
+        | Scalar::FloatE3M2
+        | Scalar::FloatE2M3
+        | Scalar::FloatUE8M0
+        | Scalar::FloatMXINT8 => "f",
+        Scalar::Uint | Scalar::Uint8 | Scalar::Uint16 | Scalar::Uint64 => "ui",
+        Scalar::Int | Scalar::Bool | Scalar::Int8 | Scalar::Int16 | Scalar::Int64 => "i",
     });
     if basic::is_matrix(ty) || array {
         name.push('v');
@@ -316,7 +312,7 @@ impl PipelineInfo {
     pub fn set_uniforms(
         &mut self,
         unit: &TranslationUnit,
-        supply: &mut dyn FnMut(ScalarType) -> Value,
+        supply: &mut dyn FnMut(Scalar) -> Value,
     ) -> Result<(), Error> {
         for declarator in uniform_declarators(unit)? {
             if self.has_uniform(&declarator.name) {
@@ -342,17 +338,17 @@ impl PipelineInfo {
 
     pub fn zero_unset_uniforms(&mut self, unit: &TranslationUnit) -> Result<(), Error> {
         self.set_uniforms(unit, &mut |scalar| match scalar {
-            ScalarType::Float
-            | ScalarType::Double
-            | ScalarType::Float16
-            | ScalarType::BFloat16
-            | ScalarType::FloatE4M3
-            | ScalarType::FloatE5M2
-            | ScalarType::FloatE2M1
-            | ScalarType::FloatE3M2
-            | ScalarType::FloatE2M3
-            | ScalarType::FloatUE8M0
-            | ScalarType::FloatMXINT8 => float_value(0.0),
+            Scalar::Float
+            | Scalar::Double
+            | Scalar::Float16
+            | Scalar::BFloat16
+            | Scalar::FloatE4M3
+            | Scalar::FloatE5M2
+            | Scalar::FloatE2M1
+            | Scalar::FloatE3M2
+            | Scalar::FloatE2M3
+            | Scalar::FloatUE8M0
+            | Scalar::FloatMXINT8 => float_value(0.0),
             _ => Value::from(0),
         })
     }
@@ -363,26 +359,26 @@ impl PipelineInfo {
         random: &mut Random,
     ) -> Result<(), Error> {
         self.set_uniforms(unit, &mut |scalar| match scalar {
-            ScalarType::Float
-            | ScalarType::Double
-            | ScalarType::Float16
-            | ScalarType::BFloat16
-            | ScalarType::FloatE4M3
-            | ScalarType::FloatE5M2
-            | ScalarType::FloatE2M1
-            | ScalarType::FloatE3M2
-            | ScalarType::FloatE2M3
-            | ScalarType::FloatUE8M0
-            | ScalarType::FloatMXINT8 => float_value(random.next_float()),
-            ScalarType::Int
-            | ScalarType::Uint
-            | ScalarType::Int8
-            | ScalarType::Int16
-            | ScalarType::Int64
-            | ScalarType::Uint8
-            | ScalarType::Uint16
-            | ScalarType::Uint64 => Value::from(random.next_int(1 << 15)),
-            ScalarType::Bool => Value::from(random.next_int(2)),
+            Scalar::Float
+            | Scalar::Double
+            | Scalar::Float16
+            | Scalar::BFloat16
+            | Scalar::FloatE4M3
+            | Scalar::FloatE5M2
+            | Scalar::FloatE2M1
+            | Scalar::FloatE3M2
+            | Scalar::FloatE2M3
+            | Scalar::FloatUE8M0
+            | Scalar::FloatMXINT8 => float_value(random.next_float()),
+            Scalar::Int
+            | Scalar::Uint
+            | Scalar::Int8
+            | Scalar::Int16
+            | Scalar::Int64
+            | Scalar::Uint8
+            | Scalar::Uint16
+            | Scalar::Uint64 => Value::from(random.next_int(1 << 15)),
+            Scalar::Bool => Value::from(random.next_int(2)),
         })
     }
 }

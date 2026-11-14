@@ -5,7 +5,7 @@ use super::{TestResult, declaration, rejected, round_trip, unit};
 use crate::ast::{
     ArrayDimension, BasicType, DeclarationKind, Dimension, DirectiveKind, ExtensionBehavior,
     ExternalDeclaration, FullySpecifiedType, Initializer, InterpolationQualifier,
-    PrecisionQualifier, ScalarType, SingleTypeQualifier, StorageQualifier, TypeSpecifierNonArray,
+    PrecisionQualifier, Scalar, SingleTypeQualifier, StorageQualifier, TypeSpecifierNonArray,
 };
 use crate::keywords::{is_keyword, is_opaque_type_keyword, is_reserved_word, is_unavailable_word};
 use crate::opaque::{OpaqueKeyword, SampledFamily, SampledPrefix, SampledShape};
@@ -335,19 +335,19 @@ fn function_prototypes_and_definitions() {
 fn basic_type_keywords() {
     assert_eq!(
         BasicType::from_keyword("double"),
-        Some(BasicType::Scalar(ScalarType::Double))
+        Some(BasicType::Scalar(Scalar::Double))
     );
     assert_eq!(
         BasicType::from_keyword("uvec3"),
         Some(BasicType::Vector {
-            scalar: ScalarType::Uint,
+            scalar: Scalar::Uint,
             size: Dimension::Three
         })
     );
     assert_eq!(
         BasicType::from_keyword("dmat4x2"),
         Some(BasicType::Matrix {
-            scalar: ScalarType::Double,
+            scalar: Scalar::Double,
             columns: Dimension::Four,
             rows: Dimension::Two
         })

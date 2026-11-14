@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use rglsl_ast::ast::{
-    BasicType, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, ScalarType,
+    BasicType, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, Scalar,
     UnaryOperator,
 };
 use rglsl_sema::Builtins;
@@ -79,7 +79,7 @@ impl Identity {
             Self::CompositeConstructorExpansion => !matches!(
                 ty,
                 BasicType::Vector {
-                    scalar: ScalarType::Bool | ScalarType::Int | ScalarType::Uint,
+                    scalar: Scalar::Bool | Scalar::Int | Scalar::Uint,
                     size: rglsl_ast::ast::Dimension::Four,
                 } | BasicType::Matrix {
                     columns: rglsl_ast::ast::Dimension::Four,
@@ -91,7 +91,7 @@ impl Identity {
             Self::DoubleTranspose => basic::is_matrix(ty),
             Self::MatrixMultIdentity => {
                 (basic::is_matrix(ty) && !basic::is_square_matrix(ty))
-                    || (basic::is_vector(ty) && basic::element(ty) == ScalarType::Float)
+                    || (basic::is_vector(ty) && basic::element(ty) == Scalar::Float)
             }
         }
     }
@@ -549,7 +549,7 @@ impl OpaqueGenerator<'_> {
         let y = self.builder.construct(ty, y);
         let a = self
             .builder
-            .construct(basic::vector(ScalarType::Bool, count), a);
+            .construct(basic::vector(Scalar::Bool, count), a);
         let call = self.builder.call("mix", vec![x, y, a]);
         self.identity(expression, call)
     }
@@ -621,7 +621,7 @@ impl OpaqueGenerator<'_> {
             for size in basic::num_elements(ty)..=4 {
                 candidates.push(basic::vector(basic::element(ty), size));
             }
-            if basic::element(ty) == ScalarType::Float {
+            if basic::element(ty) == Scalar::Float {
                 candidates.extend(basic::all_square_matrix_types());
                 candidates.extend(basic::all_non_square_matrix_types());
             }
@@ -778,7 +778,7 @@ impl OpaqueGenerator<'_> {
                 Some(self.builder.call("length", vec![value]))
             }
             Factory::VectorCross => {
-                let vec3 = basic::vector(ScalarType::Float, 3);
+                let vec3 = basic::vector(Scalar::Float, 3);
                 if ty != vec3 || !self.available("cross") {
                     return None;
                 }
@@ -869,7 +869,7 @@ impl OpaqueGenerator<'_> {
                 ));
             }
         }
-        let vector = basic::vector(ScalarType::Float, width);
+        let vector = basic::vector(Scalar::Float, width);
         let first = self.builder.construct(vector, first);
         let second = self.builder.construct(vector, second);
         let dot = self.builder.call("dot", vec![first, second]);
@@ -888,7 +888,7 @@ impl OpaqueGenerator<'_> {
             return None;
         }
         let amount = self.random.next_int(if zero { 9 } else { 8 });
-        let literal = if basic::element(ty) == ScalarType::Uint {
+        let literal = if basic::element(ty) == Scalar::Uint {
             self.builder.uint(u64::from(amount))
         } else {
             self.builder.int(i64::from(amount))
