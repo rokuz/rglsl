@@ -569,22 +569,27 @@ void main() {{ color = vec4(1.0); }}
 
 #[test]
 fn invalid_functions_are_reported_when_linked_code_calls_them() -> TestResult {
-    let library = compile(
+    let program = compile(
         ShaderStage::Fragment,
-        true,
-        &format!("#version 450\n{INVALID_HELPER}"),
+        false,
+        &format!(
+            "#version 450
+{INVALID_HELPER}layout(location = 0) out vec4 color;
+float relay();
+void main() {{ color = vec4(relay()); }}
+"
+        ),
     )?;
     let calling = compile(
         ShaderStage::Fragment,
-        false,
+        true,
         "#version 450
 #extension GL_ARB_gpu_shader_fp64 : enable
-layout(location = 0) out vec4 color;
 dvec2 offsetted();
-void main() { color = vec4(float(offsetted().x)); }
+float relay() { return float(offsetted().x); }
 ",
     )?;
-    let errors = match link_objects(&[calling, library.clone()], &LinkOptions::default()) {
+    let errors = match link_objects(&[program.clone(), calling], &LinkOptions::default()) {
         Ok(_) => return Err("linking succeeded".into()),
         Err(errors) => errors.errors,
     };
@@ -597,13 +602,12 @@ void main() { color = vec4(float(offsetted().x)); }
     );
     let ignoring = compile(
         ShaderStage::Fragment,
-        false,
+        true,
         "#version 450
-layout(location = 0) out vec4 color;
-void main() { color = vec4(1.0); }
+float relay() { return 1.0; }
 ",
     )?;
-    only_stage(&[ignoring, library])?;
+    only_stage(&[program, ignoring])?;
     Ok(())
 }
 
@@ -628,22 +632,27 @@ void main() {{ color = vec4(1.0); }}
 
 #[test]
 fn functions_that_do_not_lower_are_reported_when_linked_code_calls_them() -> TestResult {
-    let library = compile(
+    let program = compile(
         ShaderStage::Fragment,
-        true,
-        &format!("#version 450\n{DOUBLE_DERIVATIVE}"),
+        false,
+        &format!(
+            "#version 450
+{DOUBLE_DERIVATIVE}layout(location = 0) out vec4 color;
+float relay();
+void main() {{ color = vec4(relay()); }}
+"
+        ),
     )?;
     let calling = compile(
         ShaderStage::Fragment,
-        false,
+        true,
         "#version 450
 #extension GL_ARB_gpu_shader_fp64 : enable
-layout(location = 0) out vec4 color;
 double steepness();
-void main() { color = vec4(float(steepness())); }
+float relay() { return float(steepness()); }
 ",
     )?;
-    let errors = match link_objects(&[calling, library], &LinkOptions::default()) {
+    let errors = match link_objects(&[program.clone(), calling], &LinkOptions::default()) {
         Ok(_) => return Err("linking succeeded".into()),
         Err(errors) => errors.errors,
     };
@@ -655,6 +664,66 @@ void main() { color = vec4(float(steepness())); }
         ),
         "{errors:?}"
     );
+    let ignoring = compile(
+        ShaderStage::Fragment,
+        true,
+        "#version 450
+float relay() { return 1.0; }
+",
+    )?;
+    only_stage(&[program, ignoring])?;
+    Ok(())
+}
+
+#[test]
+fn libraries_report_lowering_errors_when_compiled() -> TestResult {
+    for body in [INVALID_HELPER, DOUBLE_DERIVATIVE] {
+        let source = format!("#version 450\n{body}");
+        for library in [true, false] {
+            let options = Options {
+                library,
+                ..frontend_options(ShaderStage::Fragment, false)
+            };
+            let Err(errors) = Frontend::default().compile(&options, &source) else {
+                return Err("a library with a lowering error compiled".into());
+            };
+            let first = errors.errors.first().ok_or("no error reported")?;
+            assert!(
+                first.kind.to_string().contains("is not supported"),
+                "{errors:?}"
+            );
+            assert!(first.meta.is_defined(), "{errors:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn kept_uncalled_functions_report_lowering_errors_when_compiled() -> TestResult {
+    let source = format!(
+        "#version 450
+{DOUBLE_DERIVATIVE}layout(location = 0) out vec4 color;
+void main() {{ color = vec4(1.0); }}
+"
+    );
+    let options = Options {
+        keep_uncalled: true,
+        ..frontend_options(ShaderStage::Fragment, false)
+    };
+    let Err(direct) = Frontend::default().parse(&options, &source) else {
+        return Err(
+            "the direct path accepted an uncalled lowering error with keep_uncalled".into(),
+        );
+    };
+    let Err(object) = Frontend::default().compile(&options, &source) else {
+        return Err(
+            "the object path accepted an uncalled lowering error with keep_uncalled".into(),
+        );
+    };
+    let messages = |errors: &rglsl::front::glsl::ParseErrors| -> Vec<String> {
+        errors.errors.iter().map(ToString::to_string).collect()
+    };
+    assert_eq!(messages(&direct), messages(&object));
     Ok(())
 }
 
