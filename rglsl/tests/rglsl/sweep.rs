@@ -263,6 +263,28 @@ fn double_derivatives_are_not_supported() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn packing_small_integers_is_a_bitcast() -> TestResult {
+    let source = "#version 450
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uint r; u16vec2 v; i8vec4 w; uint64_t q; i16vec4 x; };
+        void main() {
+            const uint e = packUint2x16(u16vec2(3, 4));
+            r = e + packUint2x16(v) + uint(pack32(w)) + uint(pack16(w.xy));
+            q = pack64(v.xyxy) + packUint4x16(u16vec4(x));
+            v = unpack16(r);
+            x = unpackInt4x16(int64_t(q));
+        }";
+    for target in [Target::Vulkan11, Target::Vulkan13] {
+        let summary = valid_like_glslang(ShaderStage::Compute, target, source)?;
+        assert!(opcode(&summary, Op::Bitcast), "{summary:?}");
+        assert!(!opcode(&summary, Op::ShiftLeftLogical), "{summary:?}");
+        assert!(!opcode(&summary, Op::ShiftRightLogical), "{summary:?}");
+    }
+    Ok(())
+}
+
 fn footprint_operands(words: &[u32]) -> TestResult<Vec<String>> {
     let module = dr::load_words(words)?;
     Ok(module

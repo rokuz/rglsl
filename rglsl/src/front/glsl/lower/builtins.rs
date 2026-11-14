@@ -410,11 +410,8 @@ impl FunctionLowerer<'_, '_> {
                     at,
                 );
             }
-            Some(Special::Pack) => {
+            Some(Special::Pack | Special::Unpack) => {
                 return self.pack_bits(arg(0)?, &first_ty, result, at);
-            }
-            Some(Special::Unpack) => {
-                return self.unpack_bits(arg(0)?, &first_ty, result, at);
             }
             Some(Special::Modulo) => {
                 let x = arg(0)?;
@@ -665,88 +662,18 @@ impl FunctionLowerer<'_, '_> {
         result: &GlslType,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let (Some(element), Some(count), Some(target)) = (
-            source.base_scalar(),
-            source.component_count(),
-            result.base_scalar(),
-        ) else {
-            return Err(internal(at));
-        };
-        let element_bits = element.bits();
-        let width = scalar(target).width;
-        let unsigned = self.bitcast(value, crate::ScalarKind::Uint, at)?;
-        let wide = self.as_kind(
-            unsigned,
-            crate::Scalar {
-                kind: crate::ScalarKind::Uint,
-                width,
-            },
-            at,
-        )?;
-        let mut packed = self.add(
-            Expression::AccessIndex {
-                base: wide,
-                index: 0,
-            },
-            at,
-        )?;
-        for index in 1..count {
-            let part = self.add(Expression::AccessIndex { base: wide, index }, at)?;
-            let amount = self.shift_amount(index * element_bits, at)?;
-            let shifted = self.binary_op(BinaryOperator::ShiftLeft, part, amount, at)?;
-            packed = self.binary_op(BinaryOperator::InclusiveOr, packed, shifted, at)?;
-        }
-        let kind = scalar(target).kind;
-        if kind == crate::ScalarKind::Uint {
-            Ok(packed)
-        } else {
-            self.bitcast(packed, kind, at)
-        }
-    }
-
-    fn unpack_bits(
-        &mut self,
-        value: Handle<Expression>,
-        source: &GlslType,
-        result: &GlslType,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let (Some(element), Some(count)) = (result.base_scalar(), result.component_count()) else {
-            return Err(internal(at));
-        };
         if source.base_scalar().is_none() {
             return Err(internal(at));
         }
-        let element_scalar = scalar(element);
-        let unsigned_element = crate::Scalar {
-            kind: crate::ScalarKind::Uint,
-            width: element_scalar.width,
-        };
-        let unsigned = self.bitcast(value, crate::ScalarKind::Uint, at)?;
-        let mut components = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
-        for index in 0..count {
-            let part = if index == 0 {
-                unsigned
-            } else {
-                let amount = self.shift_amount(index * element.bits(), at)?;
-                self.binary_op(BinaryOperator::ShiftRight, unsigned, amount, at)?
-            };
-            components.push(self.as_kind(part, unsigned_element, at)?);
-        }
-        let unsigned_ty = result.with_scalar(match element {
-            GlslScalar::Int8 => GlslScalar::Uint8,
-            GlslScalar::Int16 => GlslScalar::Uint16,
-            GlslScalar::Int64 => GlslScalar::Uint64,
-            GlslScalar::Int => GlslScalar::Uint,
-            other => other,
-        });
-        let ty = self.lw.ir_type(&unsigned_ty, at)?;
-        let composed = self.add(Expression::Compose { ty, components }, at)?;
-        if element_scalar.kind == crate::ScalarKind::Uint {
-            Ok(composed)
-        } else {
-            self.bitcast(composed, element_scalar.kind, at)
-        }
+        let ty = self.lw.ir_type(result, at)?;
+        self.add(
+            Expression::Bitcast {
+                expr: value,
+                ty,
+                offset: None,
+            },
+            at,
+        )
     }
 
     fn resize(

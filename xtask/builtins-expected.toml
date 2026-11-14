@@ -27,18 +27,6 @@ verdicts = ["capabilities-differ"]
 reason = "bug: 8- and 16-bit findLSB is widened through SConvert and the Int8/Int16 capability is not declared"
 
 [[divergence]]
-name = "pack*"
-signature = "8vec"
-verdicts = ["capabilities-differ"]
-reason = "bug: packing of 8- and 16-bit vectors is done with shifts instead of a Bitcast, and the Int8/Int16 capability is not declared"
-
-[[divergence]]
-name = "pack*"
-signature = "16vec"
-verdicts = ["capabilities-differ"]
-reason = "bug: packing of 8- and 16-bit vectors is done with shifts instead of a Bitcast, and the Int8/Int16 capability is not declared"
-
-[[divergence]]
 name = "fetchMicroTriangleVertex*NV"
 verdicts = ["extensions-differ"]
 reason = "bug: the acceleration structure operand adds RayQueryKHR and SPV_KHR_ray_query outside ray tracing stages, glslang declares neither"
