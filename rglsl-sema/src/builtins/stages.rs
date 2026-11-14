@@ -16,8 +16,7 @@ pub const ALL_STAGE_BITS: u16 = rglsl_types::probe::ALL_STAGES;
 
 #[derive(Debug, Clone)]
 struct StageVariables {
-    symbols: Vec<Symbol>,
-    scope: Vec<(String, SymbolId)>,
+    table: variables::Table,
     types: TypeRegistry,
     descriptions: BTreeMap<String, String>,
 }
@@ -119,11 +118,10 @@ impl StageTables {
             .map(|stage| {
                 let mut types = TypeRegistry::new();
                 let _ = footprint::structs(&mut types);
-                let (symbols, scope) = variables::build(version, stage, limits, &mut types);
-                let descriptions = descriptions(&symbols, &scope, &types);
+                let table = variables::build(version, stage, limits, &mut types);
+                let descriptions = descriptions(&table.symbols, &table.scope, &types);
                 StageVariables {
-                    symbols,
-                    scope,
+                    table,
                     types,
                     descriptions,
                 }
@@ -139,23 +137,17 @@ impl StageTables {
     }
 
     pub fn builtins(&self, own: ShaderStage) -> Builtins {
-        let (symbols, scope, types) = self
+        let (table, types) = self
             .variables
             .get(Self::index(own))
-            .map(|table| {
-                (
-                    table.symbols.clone(),
-                    table.scope.clone(),
-                    table.types.clone(),
-                )
-            })
+            .map(|variables| (variables.table.clone(), variables.types.clone()))
             .unwrap_or_default();
         Builtins::assemble(
             self.version,
             own,
             &self.limits,
             types,
-            (symbols, scope),
+            table,
             self.footprints.clone(),
         )
     }

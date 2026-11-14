@@ -8,6 +8,7 @@ use rglsl_ast::ast::{
     SingleTypeQualifier, Spanned, StorageQualifier, TypeQualifier,
 };
 use rglsl_sema::SymbolId;
+use rglsl_sema::builtins::variables::{self, BlockSize, BuiltinVariable, VariableFlags};
 use rglsl_sema::scope::{Origin, PerVertex, Qualifiers, Storage, SymbolKind, Variable};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, OpaqueKind, Scalar, Type as GlslType,
@@ -20,8 +21,8 @@ use super::{specialization, xfb};
 use crate::proc::Alignment;
 use crate::{
     AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
-    Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, ShaderCore, Span,
-    StorageAccess, StorageFormat, SubgroupMask, TypeInner,
+    Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, Span, StorageAccess,
+    StorageFormat, TypeInner,
 };
 
 fn layout_names(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<&str> {
@@ -68,13 +69,6 @@ fn storage_of(qualifier: Option<&Spanned<TypeQualifier>>) -> Option<StorageQuali
             _ => None,
         })
 }
-
-const PER_VERTEX: [&str; 4] = [
-    "gl_Position",
-    "gl_PointSize",
-    "gl_ClipDistance",
-    "gl_CullDistance",
-];
 
 const fn per_vertex_interpolation(
     per_vertex: PerVertex,
@@ -260,125 +254,6 @@ fn memory(qualifiers: &Qualifiers) -> MemoryDecorations {
         }
     }
     decorations
-}
-
-fn builtin_of(name: &str) -> Option<BuiltIn> {
-    Some(match name {
-        "gl_Position" | "gl_FragCoord" => BuiltIn::Position { invariant: false },
-        "gl_PointSize" => BuiltIn::PointSize,
-        "gl_ClipDistance" => BuiltIn::ClipDistances,
-        "gl_CullDistance" => BuiltIn::CullDistance,
-        "gl_VertexIndex" => BuiltIn::VertexIndex,
-        "gl_InstanceIndex" => BuiltIn::InstanceIndex,
-        "gl_BaseVertex" => BuiltIn::BaseVertex,
-        "gl_BaseInstance" => BuiltIn::BaseInstance,
-        "gl_DrawID" => BuiltIn::DrawIndex,
-        "gl_FrontFacing" => BuiltIn::FrontFacing,
-        "gl_FragDepth" => BuiltIn::FragDepth,
-        "gl_PointCoord" => BuiltIn::PointCoord,
-        "gl_PrimitiveID" => BuiltIn::PrimitiveIndex,
-        "gl_SampleID" => BuiltIn::SampleIndex,
-        "gl_SamplePosition" => BuiltIn::SamplePosition,
-        "gl_HelperInvocation" => BuiltIn::HelperInvocation,
-        "gl_BaseVertexARB" => BuiltIn::BaseVertex,
-        "gl_BaseInstanceARB" => BuiltIn::BaseInstance,
-        "gl_DrawIDARB" => BuiltIn::DrawIndex,
-        "gl_DeviceIndex" => BuiltIn::DeviceIndex,
-        "gl_PrimitiveShadingRateEXT" => BuiltIn::PrimitiveShadingRate,
-        "gl_ShadingRateEXT" => BuiltIn::ShadingRate,
-        "gl_FragSizeEXT" => BuiltIn::FragSize { nv: false },
-        "gl_FragInvocationCountEXT" => BuiltIn::FragInvocationCount { nv: false },
-        "gl_FragmentSizeNV" => BuiltIn::FragSize { nv: true },
-        "gl_InvocationsPerPixelNV" => BuiltIn::FragInvocationCount { nv: true },
-        "gl_FragFullyCoveredNV" => BuiltIn::FullyCovered,
-        "gl_BaryCoordNV" => BuiltIn::Barycentric {
-            perspective: true,
-            nv: true,
-        },
-        "gl_BaryCoordNoPerspNV" => BuiltIn::Barycentric {
-            perspective: false,
-            nv: true,
-        },
-        "gl_BaryCoordEXT" => BuiltIn::Barycentric {
-            perspective: true,
-            nv: false,
-        },
-        "gl_BaryCoordNoPerspEXT" => BuiltIn::Barycentric {
-            perspective: false,
-            nv: false,
-        },
-        "gl_FragStencilRefARB" => BuiltIn::FragStencilRef,
-        "gl_NumWorkGroups" => BuiltIn::NumWorkGroups,
-        "gl_WorkGroupID" => BuiltIn::WorkGroupId,
-        "gl_LocalInvocationID" => BuiltIn::LocalInvocationId,
-        "gl_GlobalInvocationID" => BuiltIn::GlobalInvocationId,
-        "gl_LocalInvocationIndex" => BuiltIn::LocalInvocationIndex,
-        "gl_PrimitiveIDIn" => BuiltIn::PrimitiveIndex,
-        "gl_InvocationID" => BuiltIn::InvocationId,
-        "gl_PatchVerticesIn" => BuiltIn::PatchVertices,
-        "gl_TessCoord" => BuiltIn::TessCoord,
-        "gl_TessLevelOuter" => BuiltIn::TessLevelOuter,
-        "gl_TessLevelInner" => BuiltIn::TessLevelInner,
-        "gl_Layer" => BuiltIn::Layer {
-            viewport_relative: false,
-            secondary_view_offset: None,
-        },
-        "gl_ViewportIndex" => BuiltIn::ViewportIndex,
-        "gl_ViewIndex" => BuiltIn::ViewIndex,
-        "gl_ViewportMask" => BuiltIn::ViewportMaskNV,
-        "gl_SecondaryPositionNV" => BuiltIn::SecondaryPositionNV,
-        "gl_SecondaryViewportMaskNV" => BuiltIn::SecondaryViewportMaskNV,
-        "gl_PositionPerViewNV" => BuiltIn::PositionPerViewNV,
-        "gl_ViewportMaskPerViewNV" => BuiltIn::ViewportMaskPerViewNV,
-        "gl_SampleMask" | "gl_SampleMaskIn" => BuiltIn::SampleMask {
-            override_coverage: false,
-        },
-        "gl_SubgroupSize" => BuiltIn::SubgroupSize,
-        "gl_SubgroupInvocationID" => BuiltIn::SubgroupInvocationId,
-        "gl_NumSubgroups" => BuiltIn::NumSubgroups,
-        "gl_SubgroupID" => BuiltIn::SubgroupId,
-        "gl_SubGroupSizeARB" => BuiltIn::ShaderBallot(ShaderBallot::Size),
-        "gl_SubGroupInvocationARB" => BuiltIn::ShaderBallot(ShaderBallot::InvocationId),
-        "gl_TileOffsetQCOM" => BuiltIn::TileOffset,
-        "gl_TileDimensionQCOM" => BuiltIn::TileDimension,
-        "gl_TileApronSizeQCOM" => BuiltIn::TileApronSize,
-        "gl_WarpsPerSMNV" => BuiltIn::ShaderCore(ShaderCore::WarpsPerSmNv),
-        "gl_SMCountNV" => BuiltIn::ShaderCore(ShaderCore::SmCountNv),
-        "gl_WarpIDNV" => BuiltIn::ShaderCore(ShaderCore::WarpIdNv),
-        "gl_SMIDNV" => BuiltIn::ShaderCore(ShaderCore::SmIdNv),
-        "gl_CoreIDARM" => BuiltIn::ShaderCore(ShaderCore::CoreIdArm),
-        "gl_CoreCountARM" => BuiltIn::ShaderCore(ShaderCore::CoreCountArm),
-        "gl_CoreMaxIDARM" => BuiltIn::ShaderCore(ShaderCore::CoreMaxIdArm),
-        "gl_WarpIDARM" => BuiltIn::ShaderCore(ShaderCore::WarpIdArm),
-        "gl_WarpMaxIDARM" => BuiltIn::ShaderCore(ShaderCore::WarpMaxIdArm),
-        _ if super::mesh::mesh_builtin(name).is_some() => super::mesh::mesh_builtin(name)?,
-        _ => {
-            if let Some(mask) = name
-                .strip_prefix("gl_Subgroup")
-                .and_then(|rest| rest.strip_suffix("Mask"))
-                .and_then(subgroup_mask)
-            {
-                BuiltIn::SubgroupMask(mask)
-            } else {
-                let mask = name
-                    .strip_prefix("gl_SubGroup")
-                    .and_then(|rest| rest.strip_suffix("MaskARB"))
-                    .and_then(subgroup_mask)?;
-                BuiltIn::ShaderBallot(ShaderBallot::Mask(mask))
-            }
-        }
-    })
-}
-
-fn subgroup_mask(name: &str) -> Option<SubgroupMask> {
-    Some(match name {
-        "Eq" => SubgroupMask::Eq,
-        "Ge" => SubgroupMask::Ge,
-        "Gt" => SubgroupMask::Gt,
-        "Le" => SubgroupMask::Le,
-        "Lt" => SubgroupMask::Lt,
-        _ => return None,
-    })
 }
 
 impl<'a> Lowerer<'a> {
@@ -1369,7 +1244,8 @@ impl<'a> Lowerer<'a> {
         let Some(&symbol) = analysis.declarations.get(&declaration.id) else {
             return Ok(());
         };
-        if super::mesh::MESH_BLOCKS.contains(&structure.name.node.as_str())
+        if variables::blocks_named(&structure.name.node)
+            .any(|block| block.declared_in(crate::ShaderStage::Mesh))
             && self.is_per_vertex_array(symbol)
         {
             return self.global_ref(symbol, at).map(|_| ());
@@ -2035,9 +1911,12 @@ impl<'a> Lowerer<'a> {
         let block = self
             .builtin_per_vertex()
             .ok_or_else(|| internal(Span::UNDEFINED))?;
+        let outputs = variables::blocks_named("gl_PerVertex")
+            .find(|block| block.size == BlockSize::Single)
+            .ok_or_else(|| internal(Span::UNDEFINED))?;
         let mut requested: Vec<(String, Span)> = Vec::new();
         self.invariant.retain(|&(ref name, at)| {
-            let per_vertex = PER_VERTEX.contains(&name.as_str());
+            let per_vertex = outputs.member(name).is_some();
             if per_vertex {
                 requested.push((name.clone(), at));
             }
@@ -2047,7 +1926,8 @@ impl<'a> Lowerer<'a> {
         let mut names = Vec::new();
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
-        for name in PER_VERTEX {
+        for row in outputs.members() {
+            let name = row.name;
             let Some((_, member)) = block.member(name) else {
                 continue;
             };
@@ -2061,16 +1941,16 @@ impl<'a> Lowerer<'a> {
                 || requested
                     .iter()
                     .any(|&(ref requested, _)| requested == name);
-            let builtin = match name {
-                "gl_Position" => BuiltIn::Position { invariant },
-                _ => {
+            let builtin = match row.builtin().ok_or_else(|| internal(at))? {
+                BuiltIn::Position { .. } => BuiltIn::Position { invariant },
+                other => {
                     if invariant && used {
                         return Err(unsupported(
                             "invariant on built-in outputs other than gl_Position",
                             at,
                         ));
                     }
-                    builtin_of(name).ok_or_else(|| internal(at))?
+                    other
                 }
             };
             let ty = if super::prepass::CLIP_DISTANCES.contains(&name) {
@@ -2518,6 +2398,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             None => GlobalRef::Variable({
                 let frame = self.clone().builtin_variable(
                     String::from(&name),
+                    analysis.builtins.variable(symbol),
                     ty.clone(),
                     output,
                     volatile,
@@ -2533,6 +2414,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     async fn builtin_variable(
         self,
         name: String,
+        row: Option<&'static BuiltinVariable>,
         ty: GlslType,
         output: bool,
         volatile: bool,
@@ -2540,14 +2422,10 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<GlobalVariable>> {
         let name = name.as_str();
         let ty = &ty;
-        let (builtin, key) = match super::ray::ray_builtin(name) {
-            Some((builtin, key)) => (builtin, key),
-            None => (
-                builtin_of(name)
-                    .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?,
-                name,
-            ),
-        };
+        let (row, builtin) = row
+            .and_then(|row| Some((row, row.builtin()?)))
+            .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?;
+        let key = row.global_key();
         if let Some(handle) = self.with(|this| this.builtins.get(key).copied())? {
             return Ok(handle);
         }
@@ -2585,11 +2463,16 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 let frame = self.clone().ir_type(GlslType::vector(Scalar::Uint, 4), at);
                 self.nest(frame).await
             }?
-        } else {
+        } else if row.has(VariableFlags::TRANSPOSED) {
             {
                 let frame = self
                     .clone()
-                    .ray_builtin_type(String::from(name), ty.clone(), at);
+                    .ir_type(GlslType::matrix(Scalar::Float, 4, 3), at);
+                self.nest(frame).await
+            }?
+        } else {
+            {
+                let frame = self.clone().ir_type(ty.clone(), at);
                 self.nest(frame).await
             }?
         };
@@ -2601,7 +2484,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let handle = self.with(|this| {
             this.module.global_variables.append(
                 GlobalVariable {
-                    name: Some(String::from(super::ray::ray_builtin_name(name, key))),
+                    name: Some(String::from(row.global_name())),
                     space: if output {
                         AddressSpace::Output
                     } else {

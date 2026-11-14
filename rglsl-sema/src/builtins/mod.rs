@@ -1,22 +1,19 @@
 pub(crate) mod footprint;
 pub mod kind;
 mod limits;
-pub(crate) mod ray;
 mod stages;
-pub(crate) mod subgroup;
 mod table;
 mod tables;
 mod textures;
-mod variables;
+pub mod variables;
 
+pub use variables::{BuiltinBlock, BuiltinVariable, ConstantValue, VariableFlags, VariableKind};
 pub(crate) use variables::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
-pub use variables::{variable_extension, view_extension};
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use rglsl_ast::Span;
-use rglsl_ast::ast::BasicType;
 
 pub use limits::ResourceLimits;
 pub use stages::{ALL_STAGE_BITS, StageTables};
@@ -25,7 +22,7 @@ pub(crate) use tables::Prebuilt;
 pub use tables::{BuiltinTables, FreshTables};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
-use crate::types::{Opaque, Type, TypeRegistry};
+use crate::types::{Type, TypeRegistry};
 use rglsl_types::{FastHashMap, FastHashSet, ShaderStage};
 
 pub(crate) const fn stage_bit(stage: ShaderStage) -> u16 {
@@ -143,64 +140,6 @@ fn expand(rows: &Rows, name: &str, version: u32, footprints: &Footprints) -> Vec
     prototypes
 }
 
-pub(crate) fn words(text: &str) -> Vec<&str> {
-    let mut found = Vec::new();
-    let mut start = None;
-    for (index, character) in text.char_indices() {
-        let is_word = character.is_ascii_alphanumeric() || character == '_';
-        match (start, is_word) {
-            (None, true) => start = Some(index),
-            (Some(begin), false) => {
-                found.extend(text.get(begin..index));
-                start = None;
-            }
-            _ => {}
-        }
-        if !is_word && !character.is_whitespace() {
-            found.extend(text.get(index..index + character.len_utf8()));
-        }
-    }
-    if let Some(begin) = start {
-        found.extend(text.get(begin..));
-    }
-    found
-}
-
-pub(crate) fn parse_type(word: &str) -> Option<Type> {
-    if word == "void" {
-        return Some(Type::VOID);
-    }
-    if let Some(basic) = BasicType::from_keyword(word) {
-        return Some(Type::from(basic));
-    }
-    if let Some(long) = long_vector_type(word) {
-        return Some(long);
-    }
-    Opaque::from_keyword(word).map(Type::opaque)
-}
-
-fn long_vector_type(word: &str) -> Option<Type> {
-    let digits = word.trim_end_matches(|character: char| character.is_ascii_digit());
-    let size: u32 = word.get(digits.len()..)?.parse().ok()?;
-    if size <= 4 {
-        return None;
-    }
-    let scalar = crate::types::Scalar::ALL
-        .into_iter()
-        .find(|scalar| scalar.vector_prefix() == digits)?;
-    Some(Type::new(crate::types::TypeKind::LongVector {
-        scalar,
-        size: crate::types::ArraySize::Sized(size),
-    }))
-}
-
-pub(crate) fn needs_memory_scope_semantics(name: &str) -> bool {
-    !matches!(name, "gl_ScopeQueueFamily" | "gl_ScopeShaderCallEXT")
-        && variables::MEMORY_SCOPE_CONSTANTS
-            .iter()
-            .any(|(constant, _)| *constant == name)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BuiltinFunctionId(pub(crate) u32);
 
@@ -286,8 +225,7 @@ pub struct Builtins {
     rows: Rows,
     footprints: Footprints,
     types: TypeRegistry,
-    symbols: Vec<Symbol>,
-    scope: Vec<(String, SymbolId)>,
+    table: variables::Table,
 }
 
 impl Builtins {
@@ -303,20 +241,13 @@ impl Builtins {
         stage: ShaderStage,
         limits: &ResourceLimits,
         types: TypeRegistry,
-        table: (Vec<Symbol>, Vec<(String, SymbolId)>),
+        mut table: variables::Table,
         footprints: Footprints,
     ) -> Self {
-        let (mut symbols, mut scope) = table;
         for &(name, id) in &footprints {
-            let Some(symbol) = u32::try_from(symbols.len()).ok().and_then(SymbolId::new) else {
+            if table.structure(name, id).is_none() {
                 break;
-            };
-            symbols.push(Symbol {
-                name: String::from(name),
-                span: Span::default(),
-                kind: crate::scope::SymbolKind::Struct(id),
-            });
-            scope.push((String::from(name), symbol));
+            }
         }
         Self {
             version,
@@ -325,8 +256,7 @@ impl Builtins {
             rows: rows(),
             footprints,
             types,
-            symbols,
-            scope,
+            table,
         }
     }
 
@@ -387,10 +317,29 @@ impl Builtins {
     }
 
     pub fn symbols(&self) -> &[Symbol] {
-        &self.symbols
+        &self.table.symbols
     }
 
     pub fn variables(&self) -> impl Iterator<Item = (&str, SymbolId)> {
-        self.scope.iter().map(|(name, id)| (name.as_str(), *id))
+        self.table
+            .scope
+            .iter()
+            .map(|&(ref name, id)| (name.as_str(), id))
+    }
+
+    pub fn variable(&self, id: SymbolId) -> Option<&'static BuiltinVariable> {
+        self.table
+            .rows
+            .get(usize::try_from(id.index()).ok()?)
+            .copied()
+            .flatten()
+    }
+
+    pub fn block(&self, id: crate::types::BlockId) -> Option<&'static BuiltinBlock> {
+        self.table
+            .blocks
+            .iter()
+            .find(|&&(block, _)| block == id)
+            .map(|&(_, block)| block)
     }
 }

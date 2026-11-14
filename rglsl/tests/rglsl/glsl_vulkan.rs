@@ -6440,6 +6440,19 @@ fn subgroup_features_are_checked_like_glslang() -> crate::TestResult {
 }
 
 #[test]
+fn suffixed_constants_need_no_ray_tracing_extension_in_ray_stages() -> crate::TestResult {
+    let source = "#version 460
+        #extension GL_EXT_ray_tracing : enable
+        layout(location = 0) rayPayloadEXT int payload;
+        void main() {
+            payload = gl_ComponentTypeFloat16NV + gl_ScopeShaderCallEXT
+                + gl_CooperativeMatrixReduceRowNV;
+        }";
+    let words = compile_words_with_names(ShaderStage::RayGeneration, source, (1, 4))?;
+    crate::stage_io::spirv_val_in(&words, &["--target-env", "vulkan1.2"])
+}
+
+#[test]
 fn subgroup_builtins_are_volatile_in_ray_tracing_stages() -> crate::TestResult {
     let source = "#version 460
         #extension GL_EXT_ray_tracing : enable

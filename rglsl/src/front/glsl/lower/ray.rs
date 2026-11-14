@@ -5,8 +5,9 @@ use rglsl_sema::SymbolId;
 use rglsl_sema::builtins::kind::{
     Ray, RayIntersection, RayQueryFunction as QueryFunction, RayQueryValue as QueryValue,
 };
+use rglsl_sema::builtins::variables::VariableFlags;
 use rglsl_sema::scope::Storage;
-use rglsl_sema::types::{BlockId, BlockStorage, Scalar as GlslScalar, Type as GlslType};
+use rglsl_sema::types::{BlockId, BlockStorage};
 use rglsl_types::extension::Extension;
 
 use super::expression::Chain;
@@ -57,90 +58,6 @@ const fn query_value(value: QueryValue) -> RayQueryValue {
         QueryValue::WorldRayDirection => RayQueryValue::WorldRayDirection,
         QueryValue::CandidateAabbOpaque => RayQueryValue::CandidateAabbOpaque,
     }
-}
-
-pub(super) fn ray_builtin(name: &str) -> Option<(BuiltIn, &'static str)> {
-    Some(match name {
-        "gl_LaunchIDNV" | "gl_LaunchIDEXT" => (BuiltIn::RayInvocationId, "gl_LaunchIDEXT"),
-        "gl_LaunchSizeNV" | "gl_LaunchSizeEXT" => (BuiltIn::NumRayInvocations, "gl_LaunchSizeEXT"),
-        "gl_InstanceID" => (BuiltIn::InstanceId, "gl_InstanceID"),
-        "gl_InstanceCustomIndexNV" | "gl_InstanceCustomIndexEXT" => {
-            (BuiltIn::InstanceCustomData, "gl_InstanceCustomIndexEXT")
-        }
-        "gl_GeometryIndexEXT" => (BuiltIn::GeometryIndex, "gl_GeometryIndexEXT"),
-        "gl_WorldRayOriginNV" | "gl_WorldRayOriginEXT" => {
-            (BuiltIn::WorldRayOrigin, "gl_WorldRayOriginEXT")
-        }
-        "gl_WorldRayDirectionNV" | "gl_WorldRayDirectionEXT" => {
-            (BuiltIn::WorldRayDirection, "gl_WorldRayDirectionEXT")
-        }
-        "gl_ObjectRayOriginNV" | "gl_ObjectRayOriginEXT" => {
-            (BuiltIn::ObjectRayOrigin, "gl_ObjectRayOriginEXT")
-        }
-        "gl_ObjectRayDirectionNV" | "gl_ObjectRayDirectionEXT" => {
-            (BuiltIn::ObjectRayDirection, "gl_ObjectRayDirectionEXT")
-        }
-        "gl_RayTminNV" | "gl_RayTminEXT" => (BuiltIn::RayTmin, "gl_RayTminEXT"),
-        "gl_RayTmaxNV" | "gl_RayTmaxEXT" | "gl_HitTNV" | "gl_HitTEXT" => {
-            (BuiltIn::RayTCurrentMax, "gl_RayTmaxEXT")
-        }
-        "gl_HitKindNV" | "gl_HitKindEXT" => (BuiltIn::HitKind, "gl_HitKindEXT"),
-        "gl_ObjectToWorldNV" | "gl_ObjectToWorldEXT" | "gl_ObjectToWorld3x4EXT" => {
-            (BuiltIn::ObjectToWorld, "gl_ObjectToWorldEXT")
-        }
-        "gl_WorldToObjectNV" | "gl_WorldToObjectEXT" | "gl_WorldToObject3x4EXT" => {
-            (BuiltIn::WorldToObject, "gl_WorldToObjectEXT")
-        }
-        "gl_IncomingRayFlagsNV" | "gl_IncomingRayFlagsEXT" => {
-            (BuiltIn::IncomingRayFlags, "gl_IncomingRayFlagsEXT")
-        }
-        "gl_CullMaskEXT" => (BuiltIn::CullMask, "gl_CullMaskEXT"),
-        "gl_HitTriangleVertexPositionsEXT" => (
-            BuiltIn::HitTriangleVertexPositions,
-            "gl_HitTriangleVertexPositionsEXT",
-        ),
-        "gl_CurrentRayTimeNV" => (BuiltIn::CurrentRayTime, "gl_CurrentRayTimeNV"),
-        "gl_ClusterIDNV" => (BuiltIn::ClusterId, "gl_ClusterIDNV"),
-        "gl_HitMicroTriangleVertexPositionsNV" => (
-            BuiltIn::HitMicroTriangleVertexPositions,
-            "gl_HitMicroTriangleVertexPositionsNV",
-        ),
-        "gl_HitMicroTriangleVertexBarycentricsNV" => (
-            BuiltIn::HitMicroTriangleVertexBarycentrics,
-            "gl_HitMicroTriangleVertexBarycentricsNV",
-        ),
-        "gl_HitKindFrontFacingMicroTriangleNV" => (
-            BuiltIn::HitKindFrontFacingMicroTriangle,
-            "gl_HitKindFrontFacingMicroTriangleNV",
-        ),
-        "gl_HitKindBackFacingMicroTriangleNV" => (
-            BuiltIn::HitKindBackFacingMicroTriangle,
-            "gl_HitKindBackFacingMicroTriangleNV",
-        ),
-        "gl_HitIsSphereNV" => (BuiltIn::HitIsSphere, "gl_HitIsSphereNV"),
-        "gl_HitIsLSSNV" => (BuiltIn::HitIsLss, "gl_HitIsLSSNV"),
-        "gl_HitSpherePositionNV" => (BuiltIn::HitSpherePosition, "gl_HitSpherePositionNV"),
-        "gl_HitSphereRadiusNV" => (BuiltIn::HitSphereRadius, "gl_HitSphereRadiusNV"),
-        "gl_HitLSSPositionsNV" => (BuiltIn::HitLssPositions, "gl_HitLSSPositionsNV"),
-        "gl_HitLSSRadiiNV" => (BuiltIn::HitLssRadii, "gl_HitLSSRadiiNV"),
-        _ => return None,
-    })
-}
-
-pub(super) fn ray_builtin_name<'a>(name: &'a str, key: &'a str) -> &'a str {
-    match name {
-        "gl_HitTNV" => "gl_RayTmaxNV",
-        "gl_HitTEXT" => "gl_RayTmaxEXT",
-        _ if transposed_builtin(name) => key,
-        _ => name,
-    }
-}
-
-const fn transposed_builtin(name: &str) -> bool {
-    matches!(
-        name.as_bytes(),
-        b"gl_ObjectToWorld3x4EXT" | b"gl_WorldToObject3x4EXT"
-    )
 }
 
 const fn ray_block_space(storage: BlockStorage) -> Option<(AddressSpace, Option<usize>)> {
@@ -363,39 +280,19 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
-    pub(super) async fn ray_builtin_type(
-        self,
-        name: String,
-        ty: GlslType,
-        at: Span,
-    ) -> Result<Handle<crate::Type>> {
-        let name = name.as_str();
-        let ty = &ty;
-        if transposed_builtin(name) {
-            let transposed = GlslType::matrix(GlslScalar::Float, 4, 3);
-            return {
-                let frame = self.clone().ir_type(transposed.clone(), at);
-                self.nest(frame).await
-            };
-        }
-        {
-            let frame = self.clone().ir_type(ty.clone(), at);
-            self.nest(frame).await
-        }
-    }
-}
-
 impl FunctionLowerer<'_, '_> {
     pub(super) fn ray_builtin_chain(
         &mut self,
         symbol: SymbolId,
         at: Span,
     ) -> Result<Option<Chain>> {
-        let Some(name) = self.lw.symbol(symbol).map(|symbol| symbol.name.as_str()) else {
-            return Ok(None);
-        };
-        if !transposed_builtin(name) {
+        let transposed = self
+            .lw
+            .analysis
+            .builtins
+            .variable(symbol)
+            .is_some_and(|row| row.has(VariableFlags::TRANSPOSED));
+        if !transposed {
             return Ok(None);
         }
         let GlobalRef::Variable(global) = self.lw.global_ref(symbol, at)? else {
