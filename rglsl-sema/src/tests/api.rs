@@ -270,7 +270,7 @@ void main() {
         Callee::Builtin(id) => {
             let function = checked
                 .analysis
-                .builtins
+                .builtin_functions
                 .function(*id)
                 .ok_or("not a built-in function")?;
             assert_eq!(function.name, "max");

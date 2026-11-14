@@ -415,7 +415,7 @@ impl Analyzer<'_> {
                 })
                 .unwrap_or_default(),
             Some(Callee::Builtin(builtin)) => self
-                .builtins
+                .builtin_functions
                 .function(*builtin)
                 .map(|function| {
                     function

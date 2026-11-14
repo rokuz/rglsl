@@ -16,7 +16,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     let builtins = Builtins::new(version, stage, &ResourceLimits::default());
-    for function in builtins.functions() {
+    for function in builtins.functions().iter() {
         let parameters: Vec<String> = function
             .parameters
             .iter()

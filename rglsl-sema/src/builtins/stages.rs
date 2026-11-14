@@ -4,8 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::{
-    BuiltinFunction, BuiltinFunctionId, Builtins, Footprints, ResourceLimits, Signature, add_name,
-    available, expand_prototypes, footprint, variables,
+    Builtins, Footprints, ResourceLimits, Rows, Signature, available, expand, footprint, rows,
+    variables,
 };
 
 use crate::scope::{Function, Symbol, SymbolId, SymbolKind, Variable};
@@ -26,8 +26,7 @@ struct StageVariables {
 pub struct StageTables {
     version: u32,
     limits: ResourceLimits,
-    functions: Vec<(Function, u16, &'static BuiltinFunction)>,
-    names: FastHashMap<String, Vec<usize>>,
+    rows: Rows,
     variables: Vec<StageVariables>,
     footprints: Footprints,
 }
@@ -113,38 +112,8 @@ fn stage_bits(stages: u16) -> u16 {
 
 impl StageTables {
     pub fn new(version: u32, limits: &ResourceLimits) -> Self {
-        let (prototypes, _, footprints) = expand_prototypes(version);
-        let kept: Vec<u16> = {
-            let mut remaining: FastHashMap<Signature<'_>, u16> =
-                FastHashMap::with_capacity_and_hasher(prototypes.len(), Default::default());
-            prototypes
-                .iter()
-                .map(|prototype| {
-                    let bits = stage_bits(prototype.stages);
-                    let left = remaining
-                        .entry(Signature(prototype))
-                        .or_insert(ALL_STAGE_BITS);
-                    let kept = bits & *left;
-                    *left &= !bits;
-                    kept
-                })
-                .collect()
-        };
-        let mut functions: Vec<(Function, u16, &'static BuiltinFunction)> = Vec::new();
-        let mut names: FastHashMap<String, Vec<usize>> = FastHashMap::default();
-        for (prototype, kept) in prototypes.into_iter().zip(kept) {
-            if kept == 0 {
-                continue;
-            }
-            match names.get_mut(prototype.name.as_str()) {
-                Some(indices) => indices.push(functions.len()),
-                None => {
-                    names.insert(prototype.name.clone(), Vec::from([functions.len()]));
-                }
-            }
-            let row = prototype.row;
-            functions.push((prototype.function(), kept, row));
-        }
+        let mut types = TypeRegistry::new();
+        let footprints = footprint::structs(&mut types);
         let variables = ShaderStage::ALL
             .into_iter()
             .map(|stage| {
@@ -163,29 +132,13 @@ impl StageTables {
         Self {
             version,
             limits: *limits,
-            functions,
-            names,
+            rows: rows(),
             variables,
             footprints,
         }
     }
 
     pub fn builtins(&self, own: ShaderStage) -> Builtins {
-        let bit = crate::builtins::stage_bit(own);
-        let mut functions = Vec::new();
-        let mut rows = Vec::new();
-        let mut names: FastHashMap<String, Vec<BuiltinFunctionId>> = FastHashMap::default();
-        for &(ref function, stages, row) in &self.functions {
-            if stages & bit == 0 {
-                continue;
-            }
-            let Ok(index) = u32::try_from(functions.len()) else {
-                break;
-            };
-            add_name(&mut names, &function.name, BuiltinFunctionId(index));
-            rows.push(row);
-            functions.push(function.clone());
-        }
         let (symbols, scope, types) = self
             .variables
             .get(Self::index(own))
@@ -201,7 +154,6 @@ impl StageTables {
             self.version,
             own,
             &self.limits,
-            (functions, rows, names),
             types,
             (symbols, scope),
             self.footprints.clone(),
@@ -230,36 +182,43 @@ impl StageTables {
             .map(String::as_str)
     }
 
-    fn entries(&self, name: &str) -> impl Iterator<Item = (usize, &Function, u16)> {
-        self.names
-            .get(name)
+    pub fn entries(&self, name: &str) -> Vec<(Function, u16)> {
+        let prototypes = expand(&self.rows, name, self.version, &self.footprints);
+        let kept: Vec<u16> = {
+            let mut remaining: FastHashMap<Signature<'_>, u16> =
+                FastHashMap::with_capacity_and_hasher(prototypes.len(), Default::default());
+            prototypes
+                .iter()
+                .map(|prototype| {
+                    let bits = stage_bits(prototype.stages);
+                    let left = remaining
+                        .entry(Signature(prototype))
+                        .or_insert(ALL_STAGE_BITS);
+                    let kept = bits & *left;
+                    *left &= !bits;
+                    kept
+                })
+                .collect()
+        };
+        prototypes
             .into_iter()
-            .flatten()
-            .filter_map(|&index| {
-                self.functions
-                    .get(index)
-                    .map(|&(ref function, stages, _)| (index, function, stages))
-            })
-    }
-
-    pub fn overloads(&self, stage: ShaderStage, name: &str) -> Vec<&Function> {
-        let bit = crate::builtins::stage_bit(stage);
-        self.entries(name)
-            .filter(|&(_, _, stages)| stages & bit != 0)
-            .map(|(_, function, _)| function)
+            .zip(kept)
+            .filter(|&(_, kept)| kept != 0)
+            .map(|(prototype, kept)| (prototype.function(), kept))
             .collect()
     }
 
-    pub fn overload_indices(&self, stage: ShaderStage, name: &str) -> Vec<usize> {
+    pub fn overloads(&self, stage: ShaderStage, name: &str) -> Vec<Function> {
         let bit = crate::builtins::stage_bit(stage);
         self.entries(name)
-            .filter(|&(_, _, stages)| stages & bit != 0)
-            .map(|(index, _, _)| index)
+            .into_iter()
+            .filter(|&(_, stages)| stages & bit != 0)
+            .map(|(function, _)| function)
             .collect()
     }
 
     pub fn has_functions(&self, name: &str) -> bool {
-        self.names.contains_key(name)
+        !self.entries(name).is_empty()
     }
 
     pub fn declares(&self, stage: ShaderStage, name: &str) -> bool {
@@ -275,13 +234,23 @@ impl StageTables {
             crate::builtins::stage_bit(second),
         );
         self.entries(name)
-            .all(|(_, _, stages)| (stages & first != 0) == (stages & second != 0))
+            .iter()
+            .all(|&(_, stages)| (stages & first != 0) == (stages & second != 0))
     }
 
     pub fn same_stages(&self, own: ShaderStage, name: &str) -> u16 {
+        let entries = self.entries(name);
+        let own_variable = self.variable(own, name);
+        let own_bit = crate::builtins::stage_bit(own);
         ShaderStage::ALL
             .into_iter()
-            .filter(|&stage| self.same(own, stage, name))
+            .filter(|&stage| {
+                let bit = crate::builtins::stage_bit(stage);
+                self.variable(stage, name) == own_variable
+                    && entries
+                        .iter()
+                        .all(|&(_, stages)| (stages & own_bit != 0) == (stages & bit != 0))
+            })
             .fold(0, |bits, stage| bits | crate::builtins::stage_bit(stage))
     }
 }

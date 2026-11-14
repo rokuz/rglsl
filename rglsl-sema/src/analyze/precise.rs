@@ -436,7 +436,7 @@ impl<'a> Precise<'a> {
                 if let Some(Callee::Builtin(id)) = callee {
                     let arithmetic = self
                         .analysis
-                        .builtins
+                        .builtin_functions
                         .entry(*id)
                         .is_some_and(|entry| entry.has(BuiltinFlags::PRECISE_ARITHMETIC));
                     if arithmetic {

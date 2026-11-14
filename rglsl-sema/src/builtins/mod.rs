@@ -102,19 +102,6 @@ impl core::hash::Hash for Signature<'_> {
     }
 }
 
-fn add_name(
-    names: &mut FastHashMap<String, Vec<BuiltinFunctionId>>,
-    name: &str,
-    id: BuiltinFunctionId,
-) {
-    match names.get_mut(name) {
-        Some(ids) => ids.push(id),
-        None => {
-            names.insert(String::from(name), Vec::from([id]));
-        }
-    }
-}
-
 impl Prototype {
     fn function(self) -> Function {
         Function {
@@ -134,24 +121,26 @@ impl Prototype {
     }
 }
 
-type Functions = (
-    Vec<Function>,
-    Vec<&'static BuiltinFunction>,
-    FastHashMap<String, Vec<BuiltinFunctionId>>,
-);
-
 pub(crate) type Footprints = Vec<(&'static str, crate::types::StructId)>;
 
-fn expand_prototypes(version: u32) -> (Vec<Prototype>, TypeRegistry, Footprints) {
-    let mut prototypes = Vec::new();
-    let mut types = TypeRegistry::new();
-    let footprints = footprint::structs(&mut types);
+pub(crate) type Rows = FastHashMap<&'static str, Vec<&'static BuiltinFunction>>;
+
+fn rows() -> Rows {
+    let mut rows: Rows = FastHashMap::default();
     for family in table::FAMILIES {
         for row in *family {
-            row.expand(version, &footprints, &mut prototypes);
+            rows.entry(row.name).or_default().push(row);
         }
     }
-    (prototypes, types, footprints)
+    rows
+}
+
+fn expand(rows: &Rows, name: &str, version: u32, footprints: &Footprints) -> Vec<Prototype> {
+    let mut prototypes = Vec::new();
+    for row in rows.get(name).into_iter().flatten() {
+        row.expand(version, footprints, &mut prototypes);
+    }
+    prototypes
 }
 
 pub(crate) fn words(text: &str) -> Vec<&str> {
@@ -221,14 +210,81 @@ impl BuiltinFunctionId {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BuiltinFunctions {
+    functions: Vec<(Function, &'static BuiltinFunction)>,
+    names: FastHashMap<String, Vec<BuiltinFunctionId>>,
+}
+
+impl BuiltinFunctions {
+    pub fn resolve(&mut self, builtins: &Builtins, name: &str) {
+        if self.names.contains_key(name) {
+            return;
+        }
+        let mut ids = Vec::new();
+        for overload in builtins.expand(name) {
+            let Ok(index) = u32::try_from(self.functions.len()) else {
+                break;
+            };
+            ids.push(BuiltinFunctionId(index));
+            self.functions.push(overload);
+        }
+        self.names.insert(String::from(name), ids);
+    }
+
+    pub fn overloads(&self, name: &str) -> &[BuiltinFunctionId] {
+        self.names.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    pub fn function(&self, id: BuiltinFunctionId) -> Option<&Function> {
+        self.functions
+            .get(usize::try_from(id.0).ok()?)
+            .map(|(function, _)| function)
+    }
+
+    pub fn entry(&self, id: BuiltinFunctionId) -> Option<&'static BuiltinFunction> {
+        self.functions
+            .get(usize::try_from(id.0).ok()?)
+            .map(|&(_, entry)| entry)
+    }
+
+    pub fn kind(&self, id: BuiltinFunctionId) -> Option<kind::BuiltinKind> {
+        self.entry(id).map(|entry| entry.kind)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Function> {
+        self.functions.iter().map(|(function, _)| function)
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (&Function, &'static BuiltinFunction)> {
+        self.functions
+            .iter()
+            .map(|&(ref function, entry)| (function, entry))
+    }
+
+    pub const fn len(&self) -> usize {
+        self.functions.len()
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.functions.is_empty()
+    }
+
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.names
+            .iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(name, _)| name.as_str())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Builtins {
     version: u32,
     stage: ShaderStage,
     limits: ResourceLimits,
-    functions: Vec<Function>,
-    rows: Vec<&'static BuiltinFunction>,
-    names: FastHashMap<String, Vec<BuiltinFunctionId>>,
+    rows: Rows,
+    footprints: Footprints,
     types: TypeRegistry,
     symbols: Vec<Symbol>,
     scope: Vec<(String, SymbolId)>,
@@ -236,55 +292,22 @@ pub struct Builtins {
 
 impl Builtins {
     pub fn new(version: u32, stage: ShaderStage, limits: &ResourceLimits) -> Self {
-        let (prototypes, mut types, footprints) = expand_prototypes(version);
-        let kept: Vec<bool> = {
-            let mut seen =
-                FastHashSet::with_capacity_and_hasher(prototypes.len(), Default::default());
-            prototypes
-                .iter()
-                .map(|prototype| {
-                    available(prototype.stages, stage) && seen.insert(Signature(prototype))
-                })
-                .collect()
-        };
-        let mut functions = Vec::new();
-        let mut rows = Vec::new();
-        let mut names: FastHashMap<String, Vec<BuiltinFunctionId>> = FastHashMap::default();
-        for (prototype, kept) in prototypes.into_iter().zip(kept) {
-            if !kept {
-                continue;
-            }
-            let Ok(index) = u32::try_from(functions.len()) else {
-                break;
-            };
-            add_name(&mut names, &prototype.name, BuiltinFunctionId(index));
-            rows.push(prototype.row);
-            functions.push(prototype.function());
-        }
+        let mut types = TypeRegistry::new();
+        let footprints = footprint::structs(&mut types);
         let table = variables::build(version, stage, limits, &mut types);
-        Self::assemble(
-            version,
-            stage,
-            limits,
-            (functions, rows, names),
-            types,
-            table,
-            footprints,
-        )
+        Self::assemble(version, stage, limits, types, table, footprints)
     }
 
     fn assemble(
         version: u32,
         stage: ShaderStage,
         limits: &ResourceLimits,
-        functions: Functions,
         types: TypeRegistry,
         table: (Vec<Symbol>, Vec<(String, SymbolId)>),
         footprints: Footprints,
     ) -> Self {
-        let (functions, rows, names) = functions;
         let (mut symbols, mut scope) = table;
-        for (name, id) in footprints {
+        for &(name, id) in &footprints {
             let Some(symbol) = u32::try_from(symbols.len()).ok().and_then(SymbolId::new) else {
                 break;
             };
@@ -299,13 +322,52 @@ impl Builtins {
             version,
             stage,
             limits: *limits,
-            functions,
-            rows,
-            names,
+            rows: rows(),
+            footprints,
             types,
             symbols,
             scope,
         }
+    }
+
+    fn expand(&self, name: &str) -> Vec<(Function, &'static BuiltinFunction)> {
+        let prototypes = expand(&self.rows, name, self.version, &self.footprints);
+        let kept: Vec<bool> = {
+            let mut seen =
+                FastHashSet::with_capacity_and_hasher(prototypes.len(), Default::default());
+            prototypes
+                .iter()
+                .map(|prototype| {
+                    available(prototype.stages, self.stage) && seen.insert(Signature(prototype))
+                })
+                .collect()
+        };
+        prototypes
+            .into_iter()
+            .zip(kept)
+            .filter(|&(_, kept)| kept)
+            .map(|(prototype, _)| {
+                let row = prototype.row;
+                (prototype.function(), row)
+            })
+            .collect()
+    }
+
+    pub fn overloads(&self, name: &str) -> Vec<Function> {
+        self.expand(name)
+            .into_iter()
+            .map(|(function, _)| function)
+            .collect()
+    }
+
+    pub fn functions(&self) -> BuiltinFunctions {
+        let mut functions = BuiltinFunctions::default();
+        for family in table::FAMILIES {
+            for row in *family {
+                functions.resolve(self, row.name);
+            }
+        }
+        functions
     }
 
     pub const fn version(&self) -> u32 {
@@ -318,30 +380,6 @@ impl Builtins {
 
     pub const fn limits(&self) -> &ResourceLimits {
         &self.limits
-    }
-
-    pub fn functions(&self) -> &[Function] {
-        &self.functions
-    }
-
-    pub fn function(&self, id: BuiltinFunctionId) -> Option<&Function> {
-        self.functions.get(usize::try_from(id.0).ok()?)
-    }
-
-    pub fn entry(&self, id: BuiltinFunctionId) -> Option<&'static BuiltinFunction> {
-        self.rows.get(usize::try_from(id.0).ok()?).copied()
-    }
-
-    pub fn kind(&self, id: BuiltinFunctionId) -> Option<kind::BuiltinKind> {
-        self.entry(id).map(|entry| entry.kind)
-    }
-
-    pub fn overloads(&self, name: &str) -> &[BuiltinFunctionId] {
-        self.names.get(name).map_or(&[], Vec::as_slice)
-    }
-
-    pub fn function_names(&self) -> impl Iterator<Item = &str> {
-        self.names.keys().map(String::as_str)
     }
 
     pub const fn types(&self) -> &TypeRegistry {

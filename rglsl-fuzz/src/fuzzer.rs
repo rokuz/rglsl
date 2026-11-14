@@ -255,7 +255,7 @@ impl Templates {
 }
 
 fn add_builtins(list: &mut Vec<Template>, builtins: &Builtins, hidden: &BTreeSet<String>) {
-    for function in builtins.functions() {
+    for function in builtins.functions().iter() {
         if hidden.contains(&function.name)
             || EXCLUDED_BUILTIN_PREFIXES
                 .iter()

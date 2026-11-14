@@ -21,7 +21,6 @@ fn signatures(builtins: &Builtins, name: &str) -> Vec<String> {
     builtins
         .overloads(name)
         .iter()
-        .filter_map(|id| builtins.function(*id))
         .map(|function| {
             let parameters: Vec<String> = function
                 .parameters
@@ -79,7 +78,7 @@ fn overloads_are_unique() {
     for stage in ShaderStage::ALL {
         let table = builtins(460, stage);
         let mut seen = BTreeSet::new();
-        for function in table.functions() {
+        for function in table.functions().iter() {
             let types: Vec<Type> = function
                 .parameters
                 .iter()
@@ -431,7 +430,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.function_names().count(), 439);
+    assert_eq!(table.functions().names().count(), 439);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {

@@ -840,9 +840,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let analysis = self.with(|this| this.lw.analysis)?;
-        let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
+        let function = analysis
+            .builtin_functions
+            .function(id)
+            .ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
-        match analysis.builtins.kind(id).ok_or_else(|| internal(at))? {
+        match analysis
+            .builtin_functions
+            .kind(id)
+            .ok_or_else(|| internal(at))?
+        {
             BuiltinKind::Subgroup(kind) => {
                 let frame = self.clone().subgroup(kind, arguments, at);
                 self.nest(frame).await

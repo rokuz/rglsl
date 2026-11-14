@@ -141,7 +141,7 @@ pub fn output_parameters(analysis: &Analysis, call: NodeId, count: usize) -> Vec
             })
             .unwrap_or_default(),
         Some(Callee::Builtin(id)) => analysis
-            .builtins
+            .builtin_functions
             .function(*id)
             .map(|function| {
                 function

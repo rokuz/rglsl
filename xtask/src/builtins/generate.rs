@@ -102,7 +102,7 @@ pub fn signature(function: &Function, types: &rglsl_sema::TypeRegistry) -> Strin
 pub fn cases(version: u32, stage: Stage, builtins: &Builtins) -> Vec<Case> {
     let types = builtins.types();
     let mut cases = Vec::new();
-    for function in builtins.functions() {
+    for function in builtins.functions().iter() {
         cases.push(Case {
             version,
             stage,

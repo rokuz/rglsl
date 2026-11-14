@@ -117,7 +117,7 @@ fn relaxes_returns(analysis: &Analysis) -> bool {
 
 fn relaxes_builtin_results(analysis: &Analysis) -> bool {
     analysis.calls.values().any(|callee| match *callee {
-        Callee::Builtin(id) => builtin_result(analysis.builtins.entry(id)).relaxed(),
+        Callee::Builtin(id) => builtin_result(analysis.builtin_functions.entry(id)).relaxed(),
         _ => false,
     })
 }
@@ -475,11 +475,11 @@ impl<'a> Pass<'a> {
         let analysis = self.analysis;
         match analysis.calls.get(&node.id) {
             Some(Callee::Builtin(id)) => {
-                let Some(function) = analysis.builtins.function(*id) else {
+                let Some(function) = analysis.builtin_functions.function(*id) else {
                     self.set_own(node, Precision::None);
                     return;
                 };
-                let entry = analysis.builtins.entry(*id);
+                let entry = analysis.builtin_functions.entry(*id);
                 let counted = counted_arguments(entry, arguments.len());
                 let mut operation = arguments
                     .iter()

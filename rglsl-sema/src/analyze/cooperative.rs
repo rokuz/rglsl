@@ -524,6 +524,7 @@ impl Analyzer<'_> {
         operands: &[Operand],
     ) -> Operand {
         self.builtin_name(name);
+        self.resolve_builtin(name);
         let cooperative_operands = operands
             .iter()
             .any(|operand| operand.ty.is_cooperative_vector());
@@ -578,8 +579,8 @@ impl Analyzer<'_> {
                     .and_then(Scalar::cooperative_vector_family)
                     .is_some()
         };
-        let first_overload = self.builtins.overloads(name).first().copied();
-        let first_entry = first_overload.and_then(|id| self.builtins.entry(id));
+        let first_overload = self.builtin_functions.overloads(name).first().copied();
+        let first_entry = first_overload.and_then(|id| self.builtin_functions.entry(id));
         if cooperative
             && (!first_entry.is_some_and(|entry| entry.has(BuiltinFlags::COOPERATIVE_VECTOR))
                 || !operands.iter().all(builtin_operand))
@@ -595,7 +596,7 @@ impl Analyzer<'_> {
             }
         };
         let first_result = first_overload
-            .and_then(|id| self.builtins.function(id))
+            .and_then(|id| self.builtin_functions.function(id))
             .and_then(|function| function.return_type.base_scalar());
         if !cooperative
             && let Some(entry) = first_entry
@@ -614,39 +615,47 @@ impl Analyzer<'_> {
         }
         let features = self.numeric_features();
         let convertible = |id: &BuiltinFunctionId| {
-            self.builtins
+            self.builtin_functions
                 .entry(*id)
                 .is_some_and(|entry| entry.has(BuiltinFlags::SUBGROUP_OPERATION))
         };
         let candidate = self
-            .builtins
+            .builtin_functions
             .overloads(name)
             .iter()
             .copied()
             .find(|id| {
-                self.builtins
+                self.builtin_functions
                     .function(*id)
                     .is_some_and(|function| function.same_parameter_types(&stand_ins))
             })
             .or_else(|| {
-                self.builtins.overloads(name).iter().copied().find(|id| {
-                    convertible(id)
-                        && self.builtins.function(*id).is_some_and(|function| {
-                            function.parameters.len() == stand_ins.len()
-                                && function.parameters.iter().zip(&stand_ins).all(
-                                    |(parameter, ty)| {
-                                        parameter.ty == *ty
-                                            || (ty.is_scalar()
-                                                && ty.converts_with(&parameter.ty, features))
-                                    },
-                                )
-                        })
-                })
+                self.builtin_functions
+                    .overloads(name)
+                    .iter()
+                    .copied()
+                    .find(|id| {
+                        convertible(id)
+                            && self
+                                .builtin_functions
+                                .function(*id)
+                                .is_some_and(|function| {
+                                    function.parameters.len() == stand_ins.len()
+                                        && function.parameters.iter().zip(&stand_ins).all(
+                                            |(parameter, ty)| {
+                                                parameter.ty == *ty
+                                                    || (ty.is_scalar()
+                                                        && ty
+                                                            .converts_with(&parameter.ty, features))
+                                            },
+                                        )
+                                })
+                    })
             });
         let Some(id) = candidate else {
             return ambiguous(self);
         };
-        let Some(function) = self.builtins.function(id).cloned() else {
+        let Some(function) = self.builtin_functions.function(id).cloned() else {
             return Operand::error();
         };
         let double = stand_ins
@@ -654,7 +663,7 @@ impl Analyzer<'_> {
             .and_then(Type::base_scalar)
             .is_some_and(|scalar| scalar == Scalar::Double);
         let no_double = self
-            .builtins
+            .builtin_functions
             .entry(id)
             .is_some_and(|entry| entry.has(BuiltinFlags::NO_DOUBLE_LONG_VECTOR));
         if double && no_double {
@@ -673,7 +682,7 @@ impl Analyzer<'_> {
         }
         self.builtin_extensions(span, id, name);
         let fixed_result = matches!(
-            self.builtins.kind(id),
+            self.builtin_functions.kind(id),
             Some(BuiltinKind::Subgroup(
                 Subgroup::Ballot | Subgroup::Function(SubgroupFunction::Partition)
             ))

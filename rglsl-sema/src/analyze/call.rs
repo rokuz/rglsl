@@ -362,7 +362,7 @@ impl Analyzer<'_> {
     fn candidate(&self, candidate: Candidate) -> Option<&Function> {
         match candidate {
             Candidate::User(id) => self.function(id),
-            Candidate::Builtin(id) => self.builtins.function(id),
+            Candidate::Builtin(id) => self.builtin_functions.function(id),
         }
     }
 
@@ -608,9 +608,23 @@ impl Analyzer<'_> {
         let Some(tables) = self.tables() else {
             return false;
         };
+        let entries = tables.entries(name);
+        let overloads = |stage: ShaderStage| {
+            let bit = crate::builtins::stage_bit(stage);
+            entries
+                .iter()
+                .filter(move |&&(_, stages)| stages & bit != 0)
+                .map(|(function, _)| function)
+        };
         let mut groups: Vec<(Vec<usize>, u16)> = Vec::new();
         for stage in ShaderStage::ALL {
-            let key = tables.overload_indices(stage, name);
+            let bit = crate::builtins::stage_bit(stage);
+            let key: Vec<usize> = entries
+                .iter()
+                .enumerate()
+                .filter(|&(_, &(_, stages))| stages & bit != 0)
+                .map(|(index, _)| index)
+                .collect();
             match groups.iter_mut().find(|&&mut (ref known, _)| *known == key) {
                 Some(&mut (_, ref mut stages)) => *stages |= crate::builtins::stage_bit(stage),
                 None => groups.push((key, crate::builtins::stage_bit(stage))),
@@ -626,7 +640,8 @@ impl Analyzer<'_> {
                 .into_iter()
                 .find(|&stage| crate::builtins::stage_bit(stage) & stages != 0)
                 .unwrap_or(own);
-            analyzer.call_outcome(name, types, &tables.overloads(stage, name))
+            let functions: Vec<&Function> = overloads(stage).collect();
+            analyzer.call_outcome(name, types, &functions)
         };
         let own_stages = groups
             .iter()
@@ -688,6 +703,7 @@ impl Analyzer<'_> {
                 return Operand::error();
             }
         }
+        self.resolve_builtin(name);
         let types: Vec<Type> = operands.iter().map(|operand| operand.ty.clone()).collect();
         if self.is_library() && self.call_stages(span, name, &types) {
             return Operand::error();
@@ -696,9 +712,9 @@ impl Analyzer<'_> {
             .iter()
             .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
             && self.scopes.function_levels(name).is_empty()
-            && !self.builtins.overloads(name).is_empty()
-            && !self.builtins.overloads(name).iter().any(|id| {
-                self.builtins
+            && !self.builtin_functions.overloads(name).is_empty()
+            && !self.builtin_functions.overloads(name).iter().any(|id| {
+                self.builtin_functions
                     .function(*id)
                     .is_some_and(|function| function.same_parameter_types(&types))
             })
@@ -712,7 +728,7 @@ impl Analyzer<'_> {
             .map(|level| level.iter().copied().map(Candidate::User).collect())
             .collect();
         let builtins: Vec<Candidate> = self
-            .builtins
+            .builtin_functions
             .overloads(name)
             .iter()
             .copied()
@@ -775,7 +791,7 @@ impl Analyzer<'_> {
         if let Some(id) = builtin {
             self.builtin_extensions(span, id, name);
         }
-        let entry = builtin.and_then(|id| self.builtins.entry(id));
+        let entry = builtin.and_then(|id| self.builtin_functions.entry(id));
         let kind = entry.map(|entry| entry.kind);
         if kind == Some(BuiltinKind::Barrier(Barrier::Execution)) {
             self.tessellation_barrier(span);
@@ -1079,7 +1095,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn builtin_extensions(&mut self, span: Span, id: BuiltinFunctionId, name: &str) {
-        let Some(entry) = self.builtins.entry(id) else {
+        let Some(entry) = self.builtin_functions.entry(id) else {
             return;
         };
         if !entry.kind.requirements_gate_call() {
