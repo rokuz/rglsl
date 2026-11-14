@@ -1,6 +1,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use rglsl_types::extension::Extension;
+
 use super::{code, errors, expect_code, first_error, lex, run, run_with, warnings};
 use crate::{DiagnosticKind, Options, Phase, Profile};
 
@@ -231,7 +233,7 @@ fn line_directive_with_a_file_name() {
         kind,
         DiagnosticKind::ExtensionRequired {
             feature: "filename-based #line",
-            extension: "GL_GOOGLE_cpp_style_line_directive"
+            extension: Extension::GoogleCppStyleLineDirective
         }
     );
     assert_eq!(line, 2);

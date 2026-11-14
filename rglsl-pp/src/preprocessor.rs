@@ -614,21 +614,12 @@ impl Preprocessor<'_> {
             }
             if self.if_depth == 0
                 && (token.kind == Kind::String || stringify_depth > 0)
-                && ![
-                    Extension::ExtSpirvIntrinsics,
-                    Extension::ExtDebugPrintf,
-                    Extension::ExtAbort,
-                ]
-                .into_iter()
-                .any(|extension| self.extension_on(extension))
+                && self
+                    .extensions
+                    .intersection(Extension::STRING_LITERALS)
+                    .is_empty()
             {
-                self.report(
-                    DiagnosticKind::ExtensionRequired {
-                        feature: "string literal",
-                        extension: "GL_EXT_debug_printf, GL_EXT_spirv_intrinsics or GL_EXT_abort",
-                    },
-                    token.at,
-                );
+                self.report(DiagnosticKind::StringLiteralWithoutExtension, token.at);
                 continue;
             }
             if stringify_depth > 0 {

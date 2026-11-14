@@ -33,6 +33,7 @@ pub struct Info {
     pub only_stages: &'static [ShaderStage],
     pub conflicts: &'static [Extension],
     pub preprocessor: bool,
+    pub string_literals: bool,
     pub keywords: &'static [&'static str],
 }
 
@@ -45,6 +46,7 @@ impl Info {
         only_stages: &[],
         conflicts: &[],
         preprocessor: false,
+        string_literals: false,
         keywords: &[],
     };
 
@@ -207,7 +209,11 @@ extensions! {
     ArmTensorsFloatE4m3 "GL_ARM_tensors_float_e4m3" { predefined: Since(460) }
     ArmTensorsFloatE5m2 "GL_ARM_tensors_float_e5m2" { predefined: Since(460) }
     ExtYuvTarget "GL_EXT_YUV_target" { keywords: &["__samplerExternal2DY2YEXT"] }
-    ExtAbort "GL_EXT_abort" { predefined: Always, preprocessor: true }
+    ExtAbort "GL_EXT_abort" {
+        predefined: Always,
+        preprocessor: true,
+        string_literals: true,
+    }
     ExtBfloat16 "GL_EXT_bfloat16" { predefined: Always }
     ExtBlendFuncExtended "GL_EXT_blend_func_extended" {}
     ExtBufferReference "GL_EXT_buffer_reference" { predefined: Always }
@@ -227,7 +233,11 @@ extensions! {
         predefined: Always,
         minimum_spirv: Some((1, 3)),
     }
-    ExtDebugPrintf "GL_EXT_debug_printf" { predefined: Always, preprocessor: true }
+    ExtDebugPrintf "GL_EXT_debug_printf" {
+        predefined: Always,
+        preprocessor: true,
+        string_literals: true,
+    }
     ExtDemoteToHelperInvocation "GL_EXT_demote_to_helper_invocation" {
         predefined: Always,
         keywords: &["demote"],
@@ -364,6 +374,7 @@ extensions! {
     ExtSpirvIntrinsics "GL_EXT_spirv_intrinsics" {
         predefined: Always,
         preprocessor: true,
+        string_literals: true,
         keywords: &[
             "spirv_instruction",
             "spirv_execution_mode",
@@ -601,11 +612,22 @@ const fn keyword_table() -> [(&'static str, Extension); keyword_count()] {
     table
 }
 
-const fn preprocessor_extensions() -> ExtensionSet {
+#[derive(Clone, Copy)]
+enum Flag {
+    Preprocessor,
+    StringLiterals,
+}
+
+const fn extensions_with(flag: Flag) -> ExtensionSet {
     let mut set = ExtensionSet::EMPTY;
     let mut rest = Extension::ALL.as_slice();
     while let [extension, tail @ ..] = rest {
-        if extension.info().preprocessor {
+        let info = extension.info();
+        let marked = match flag {
+            Flag::Preprocessor => info.preprocessor,
+            Flag::StringLiterals => info.string_literals,
+        };
+        if marked {
             set = set.with(*extension);
         }
         rest = tail;
@@ -616,7 +638,9 @@ const fn preprocessor_extensions() -> ExtensionSet {
 impl Extension {
     pub const KEYWORDS: [(&'static str, Self); keyword_count()] = keyword_table();
 
-    pub const PREPROCESSOR: ExtensionSet = preprocessor_extensions();
+    pub const PREPROCESSOR: ExtensionSet = extensions_with(Flag::Preprocessor);
+
+    pub const STRING_LITERALS: ExtensionSet = extensions_with(Flag::StringLiterals);
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::NAMES
@@ -653,6 +677,12 @@ impl Extension {
             }
         }
         set
+    }
+}
+
+impl core::fmt::Display for Extension {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(self.name())
     }
 }
 
@@ -702,6 +732,10 @@ impl ExtensionSet {
         }
     }
 
+    pub fn contains_any(&self, extensions: &[Extension]) -> bool {
+        extensions.iter().any(|&extension| self.contains(extension))
+    }
+
     pub fn set(&mut self, extension: Extension, on: bool) {
         let (word, bit) = Self::split(extension);
         if let Some(slot) = self.words.get_mut(word) {
@@ -711,6 +745,17 @@ impl ExtensionSet {
                 *slot &= !bit;
             }
         }
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        let mut rest = self.words.as_slice();
+        while let [word, tail @ ..] = rest {
+            if *word != 0 {
+                return false;
+            }
+            rest = tail;
+        }
+        true
     }
 
     pub fn intersection(self, other: Self) -> Self {
@@ -764,6 +809,14 @@ mod tests {
     }
 
     #[test]
+    fn the_preprocessor_tracks_string_literal_extensions() {
+        assert_eq!(
+            Extension::STRING_LITERALS.intersection(Extension::PREPROCESSOR),
+            Extension::STRING_LITERALS
+        );
+    }
+
+    #[test]
     fn keywords_belong_to_one_extension() {
         let mut words: Vec<&str> = Extension::KEYWORDS.iter().map(|&(word, _)| word).collect();
         words.sort_unstable();
@@ -797,6 +850,10 @@ mod tests {
             [Extension::ExtAbort]
         );
         assert!(Extension::PREPROCESSOR.contains(Extension::ExtSpirvIntrinsics));
+        assert!(ExtensionSet::EMPTY.is_empty());
+        assert!(set.contains_any(&[Extension::ExtAbort, Extension::ExtBfloat16]));
+        assert!(!ExtensionSet::EMPTY.contains_any(&[Extension::ExtBfloat16]));
+        assert!(!Extension::STRING_LITERALS.is_empty());
         assert_eq!(
             Extension::ArmTensors.info().predefined,
             Predefined::Since(460)

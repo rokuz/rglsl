@@ -1,6 +1,8 @@
 use alloc::string::String;
 use core::fmt;
 
+use rglsl_types::extension::Extension;
+
 use crate::include::FileId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -102,8 +104,9 @@ pub enum DiagnosticKind {
     LineWithoutNumber,
     ExtensionRequired {
         feature: &'static str,
-        extension: &'static str,
+        extension: Extension,
     },
+    StringLiteralWithoutExtension,
     ErrorDirective {
         message: String,
     },
@@ -287,9 +290,16 @@ impl DiagnosticKind {
             Self::IncludeFailed { name, message } => ("#include", message, name),
             Self::RecursiveInclude { name } => ("#include", "recursive include:", name),
             Self::LineWithoutNumber => ("#line", "must by followed by an integral literal", ""),
-            Self::ExtensionRequired { feature, extension } => {
-                (feature, "required extension not requested:", extension)
-            }
+            Self::ExtensionRequired { feature, extension } => (
+                feature,
+                "required extension not requested:",
+                extension.name(),
+            ),
+            Self::StringLiteralWithoutExtension => (
+                "string literal",
+                "required extension not requested:",
+                "GL_EXT_debug_printf, GL_EXT_spirv_intrinsics or GL_EXT_abort",
+            ),
             Self::ErrorDirective { message } => ("#error", message, ""),
             Self::PragmaWithoutNewline => ("#pragma", "directive must end with a newline", ""),
             Self::VersionNotFirst => ("#version", "must occur first in shader", ""),

@@ -9,6 +9,7 @@ use rglsl_pp::{
 };
 
 use rglsl_types::ShaderStage;
+use rglsl_types::extension::Extension;
 
 const STAGES: [&str; 14] = [
     "vert", "tesc", "tese", "geom", "frag", "comp", "mesh", "task", "rgen", "rint", "rahit",
@@ -325,7 +326,7 @@ fn compare_file(arguments: &Arguments, name: &str) -> Outcome {
     };
     options
         .defines
-        .push(Define::new("GL_ARB_bindless_texture", Some("1")));
+        .push(Define::new(Extension::ArbBindlessTexture.name(), Some("1")));
     let mut includer = FileSystemIncluder::new(include_dirs.iter().copied());
     let root = includer.add_root(name);
     let result = preprocess(&source, root, &options, &mut includer);
