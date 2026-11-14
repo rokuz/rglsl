@@ -15,7 +15,6 @@ use std::path::Path;
 use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::front::glsl;
-use rglsl::valid::{ValidationFlags, Validator};
 
 pub const EXIT_ACCEPTED: i32 = 0;
 pub const EXIT_REJECTED: i32 = 1;
@@ -103,8 +102,6 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         None => (1, 0),
     };
 
-    // Frontend
-    let frontend = glsl::Frontend::default();
     let options = glsl::Options {
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
@@ -120,7 +117,6 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     let root = includer.add_root(input);
     if object {
         return compile_only(
-            &frontend,
             &options,
             &source,
             root,
@@ -131,7 +127,6 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     }
     if via_object {
         return compile_through_object(
-            &frontend,
             &options,
             &source,
             root,
@@ -140,34 +135,44 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
             out,
         );
     }
-    let module = match frontend.parse_with_includer(&options, &source, root, &mut includer) {
-        Ok(module) => module,
-        Err(errors) => {
+    match rglsl_link::compile_program(&options, &source, root, &mut includer) {
+        Ok(linked) => write_spirv(&linked.module, &linked.info, lang_version, debug, out),
+        Err(error) => {
+            report(&error, &source);
+            EXIT_REJECTED
+        }
+    }
+}
+
+fn report(error: &rglsl_link::CompileError, source: &str) {
+    match *error {
+        rglsl_link::CompileError::Frontend(ref errors) => {
             for error in &errors.errors {
                 let line = error
                     .meta
                     .is_defined()
-                    .then(|| error.meta.location(&source).line_number);
+                    .then(|| error.meta.location(source).line_number);
                 diagnostic("parse", line, &full_message(error));
             }
-            return EXIT_REJECTED;
         }
-    };
-
-    // Validator
-    let info = match Validator::new(ValidationFlags::all()).validate(&module) {
-        Ok(info) => info,
-        Err(error) => {
-            let line = error
-                .spans()
-                .next()
-                .and_then(|(span, _)| span.to_range().map(|_| span.location(&source).line_number));
-            diagnostic("validate", line, &full_message(error.as_inner()));
-            return EXIT_REJECTED;
+        rglsl_link::CompileError::Invalid(ref invalid) => {
+            let line =
+                invalid.error.spans().next().and_then(|(span, _)| {
+                    span.to_range().map(|_| span.location(source).line_number)
+                });
+            diagnostic("validate", line, &full_message(invalid.error.as_inner()));
         }
-    };
-
-    write_spirv(&module, &info, lang_version, debug, out)
+        rglsl_link::CompileError::Object(ref errors) => {
+            for error in errors.iter() {
+                diagnostic("validate", None, &error.to_string());
+            }
+        }
+        rglsl_link::CompileError::Link(ref errors) => {
+            for error in errors.iter() {
+                diagnostic("link", None, &error.to_string());
+            }
+        }
+    }
 }
 
 fn spirv_options(lang_version: (u8, u8), debug: Option<&str>) -> spv::Options<'static> {
@@ -255,33 +260,15 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
         };
         let mut includer = rglsl_pp::FileSystemIncluder::new(Vec::<String>::new());
         let root = includer.add_root(path);
-        match glsl::Frontend::default().compile_with_includer(
-            &frontend_options,
-            &source,
-            root,
-            &mut includer,
-        ) {
-            Ok(mut object) => {
+        match rglsl_link::compile_object(&frontend_options, &source, root, &mut includer) {
+            Ok(rglsl_link::CompiledObject { mut object, .. }) => {
                 object.name = path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned());
-                if let Err(errors) = rglsl_link::validate_object(&object) {
-                    for error in errors.iter() {
-                        diagnostic("validate", None, &error.to_string());
-                    }
-                    rejected = true;
-                    continue;
-                }
                 objects.push(object);
             }
-            Err(errors) => {
-                for error in &errors.errors {
-                    let line = error
-                        .meta
-                        .is_defined()
-                        .then(|| error.meta.location(&source).line_number);
-                    diagnostic("parse", line, &full_message(error));
-                }
+            Err(error) => {
+                report(&error, &source);
                 rejected = true;
             }
         }
@@ -332,7 +319,6 @@ fn parse_version(spv_version: &str) -> (u8, u8) {
 }
 
 fn compile_only(
-    frontend: &glsl::Frontend,
     options: &glsl::Options,
     source: &str,
     root: rglsl_pp::FileId,
@@ -340,35 +326,20 @@ fn compile_only(
     (lang_version, debug): ((u8, u8), Option<&str>),
     out: &Path,
 ) -> i32 {
-    let object = match frontend.compile_with_includer(options, source, root, includer) {
-        Ok(object) => object,
-        Err(errors) => {
-            for error in &errors.errors {
-                let line = error
-                    .meta
-                    .is_defined()
-                    .then(|| error.meta.location(source).line_number);
-                diagnostic("parse", line, &full_message(error));
+    let rglsl_link::CompiledObject { object, info } =
+        match rglsl_link::compile_object(options, source, root, includer) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                report(&error, source);
+                return EXIT_REJECTED;
             }
-            return EXIT_REJECTED;
-        }
-    };
-    let info = match rglsl_link::validate_object(&object) {
-        Ok(info) => info,
-        Err(errors) => {
-            for error in errors.iter() {
-                diagnostic("validate", None, &error.to_string());
-            }
-            return EXIT_REJECTED;
-        }
-    };
+        };
     let mut options = spirv_options(lang_version, debug);
     options.flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
     write_words(&object.unit.module, &info, &options, out)
 }
 
 fn compile_through_object(
-    frontend: &glsl::Frontend,
     options: &glsl::Options,
     source: &str,
     root: rglsl_pp::FileId,
@@ -376,25 +347,13 @@ fn compile_through_object(
     (lang_version, debug): ((u8, u8), Option<&str>),
     out: &Path,
 ) -> i32 {
-    let object = match frontend.compile_with_includer(options, source, root, includer) {
-        Ok(object) => object,
-        Err(errors) => {
-            for error in &errors.errors {
-                let line = error
-                    .meta
-                    .is_defined()
-                    .then(|| error.meta.location(source).line_number);
-                diagnostic("parse", line, &full_message(error));
-            }
+    let object = match rglsl_link::compile_object(options, source, root, includer) {
+        Ok(compiled) => compiled.object,
+        Err(error) => {
+            report(&error, source);
             return EXIT_REJECTED;
         }
     };
-    if let Err(errors) = rglsl_link::validate_object(&object) {
-        for error in errors.iter() {
-            diagnostic("validate", None, &error.to_string());
-        }
-        return EXIT_REJECTED;
-    }
     let object = match rglsl_link::encode(&object).and_then(|text| rglsl_link::decode(&text)) {
         Ok(object) => object,
         Err(error) => {

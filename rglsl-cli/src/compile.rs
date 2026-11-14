@@ -7,7 +7,7 @@ use rglsl::back::spv;
 use rglsl::front::glsl;
 use rglsl::object::ObjectModule;
 use rglsl::proc::{BindingShifts, ResourceClass};
-use rglsl::valid::{ModuleInfo, ValidationFlags, Validator};
+use rglsl::valid::ModuleInfo;
 use rglsl::{Module, ShaderStage};
 
 use crate::args::{
@@ -100,7 +100,18 @@ struct Log {
 
 struct Compiled {
     object: Option<ObjectModule>,
+    info: Option<ModuleInfo>,
     log: Log,
+}
+
+impl Compiled {
+    const fn failed(log: Log) -> Self {
+        Self {
+            object: None,
+            info: None,
+            log,
+        }
+    }
 }
 
 pub struct Session<'a> {
@@ -546,49 +557,54 @@ impl<'a> Session<'a> {
             return match rglsl_link::decode(&unit.text) {
                 Ok(object) => Compiled {
                     object: Some(object),
+                    info: None,
                     log,
                 },
                 Err(error) => {
                     log.compile.push(format!("ERROR: {}: {error}", unit.name));
-                    Compiled { object: None, log }
+                    Compiled::failed(log)
                 }
             };
         }
         let options = self.frontend_options(unit);
         let mut includer = self.includer();
         let root = includer.add_root(&unit.name);
-        let result = glsl::Frontend::default().compile_with_includer(
-            &options,
-            &unit.text,
-            root,
-            &mut includer,
-        );
+        let result = rglsl_link::compile_object(&options, &unit.text, root, &mut includer);
         self.remember_includes(&includer, root);
         match result {
-            Ok(mut object) => {
+            Ok(rglsl_link::CompiledObject { mut object, info }) => {
                 object.name = Path::new(&unit.name)
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned());
-                match rglsl_link::validate_object(&object) {
-                    Ok(_) => Compiled {
-                        object: Some(object),
-                        log,
-                    },
-                    Err(errors) => {
-                        let root = self.root_name(unit).to_owned();
-                        log.compile
-                            .extend(errors.iter().map(|error| format!("ERROR: {root}: {error}")));
-                        Compiled { object: None, log }
-                    }
+                Compiled {
+                    object: Some(object),
+                    info: Some(info),
+                    log,
                 }
             }
-            Err(errors) => {
+            Err(rglsl_link::CompileError::Frontend(errors)) => {
                 let parsed = self.parse_log(unit, &errors);
                 log.compile.extend(parsed.compile);
                 log.compile.extend(parsed.link.into_iter().map(|message| {
                     continued(&format!("ERROR: {}: {message}", self.root_name(unit)))
                 }));
-                Compiled { object: None, log }
+                Compiled::failed(log)
+            }
+            Err(
+                rglsl_link::CompileError::Object(errors) | rglsl_link::CompileError::Link(errors),
+            ) => {
+                let root = self.root_name(unit).to_owned();
+                log.compile
+                    .extend(errors.iter().map(|error| format!("ERROR: {root}: {error}")));
+                Compiled::failed(log)
+            }
+            Err(rglsl_link::CompileError::Invalid(invalid)) => {
+                let root = self.root_name(unit).to_owned();
+                log.compile.push(format!(
+                    "ERROR: {root}: {}",
+                    full_message(invalid.error.as_inner())
+                ));
+                Compiled::failed(log)
             }
         }
     }
@@ -738,7 +754,7 @@ impl<'a> Session<'a> {
             let result = self.compile_object(unit);
             self.report_unit(unit, &result.log);
             match result.object {
-                Some(object) => compiled.push((stage, object, unit.name.clone())),
+                Some(object) => compiled.push((stage, object, result.info, unit.name.clone())),
                 None => failed = true,
             }
         }
@@ -747,10 +763,13 @@ impl<'a> Session<'a> {
             return Ok(EXIT_COMPILE);
         }
         if self.options.spirv {
-            for (stage, mut object, name) in compiled {
-                let info = rglsl_link::validate_object(&object).map_err(|errors| {
-                    Exit::error(format!("cannot validate the module of {name}: {errors}"))
-                })?;
+            for (stage, mut object, info, name) in compiled {
+                let info = match info {
+                    Some(info) => info,
+                    None => rglsl_link::validate_object(&object).map_err(|errors| {
+                        Exit::error(format!("cannot validate the module of {name}: {errors}"))
+                    })?,
+                };
                 self.rename_entry_point(&mut object.unit.module);
                 let code = self.emit(stage, &object.unit.module, &info, &name)?;
                 if code != EXIT_SUCCESS {
@@ -775,17 +794,12 @@ impl<'a> Session<'a> {
         let options = self.frontend_options(unit);
         let mut includer = self.includer();
         let root = includer.add_root(&unit.name);
-        let parsed = glsl::Frontend::default().parse_with_includer(
-            &options,
-            &unit.text,
-            root,
-            &mut includer,
-        );
+        let compiled = rglsl_link::compile_program(&options, &unit.text, root, &mut includer);
         self.remember_includes(&includer, root);
         let notes = self.source_entry_point_notes();
-        let mut module = match parsed {
-            Ok(module) => module,
-            Err(errors) => {
+        let mut linked = match compiled {
+            Ok(linked) => linked,
+            Err(rglsl_link::CompileError::Frontend(errors)) => {
                 let mut log = self.parse_log(unit, &errors);
                 log.notes = notes;
                 self.report_unit(unit, &log);
@@ -808,16 +822,32 @@ impl<'a> Session<'a> {
                     EXIT_COMPILE
                 });
             }
-        };
-        let info = match Validator::new(ValidationFlags::all()).validate(&module) {
-            Ok(info) => info,
-            Err(error) => {
-                let mut log = self.validation_log(unit, &error);
+            Err(rglsl_link::CompileError::Invalid(invalid)) => {
+                let mut log = self.validation_log(unit, &invalid.error);
                 log.notes = notes;
                 self.report_unit(unit, &log);
-                self.reflect(&[(unit, true)], &[(stage, &module)])?;
+                self.reflect(&[(unit, true)], &[(stage, &invalid.module)])?;
                 self.not_generated();
                 return Ok(EXIT_COMPILE);
+            }
+            Err(
+                rglsl_link::CompileError::Object(errors) | rglsl_link::CompileError::Link(errors),
+            ) => {
+                self.report_unit(
+                    unit,
+                    &Log {
+                        notes,
+                        ..Log::default()
+                    },
+                );
+                let lines: Vec<String> = errors
+                    .iter()
+                    .map(|error| link_line(Some(stage), error))
+                    .collect();
+                self.report_link(&lines);
+                self.reflect(&[(unit, true)], &[])?;
+                self.not_generated();
+                return Ok(EXIT_LINK);
             }
         };
         self.report_unit(
@@ -827,10 +857,10 @@ impl<'a> Session<'a> {
                 ..Log::default()
             },
         );
-        self.rename_entry_point(&mut module);
-        self.reflect(&[(unit, true)], &[(stage, &module)])?;
+        self.rename_entry_point(&mut linked.module);
+        self.reflect(&[(unit, true)], &[(stage, &linked.module)])?;
         if self.options.spirv {
-            return self.emit(stage, &module, &info, &unit.name);
+            return self.emit(stage, &linked.module, &linked.info, &unit.name);
         }
         Ok(EXIT_SUCCESS)
     }
