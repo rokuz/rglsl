@@ -6784,6 +6784,54 @@ fn view_index_needs_multiview() -> crate::TestResult {
 }
 
 #[test]
+fn ovr_view_id_is_the_view_index() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_OVR_multiview2 : enable
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(gl_ViewID_OVR, 0, 0, 0); }",
+    )?;
+    assert!(has_capability(&module, spirv::Capability::MultiView));
+    assert_eq!(extensions_of(&module), ["SPV_KHR_multiview"]);
+    let view = named(&module, "gl_ViewID_OVR")?;
+    assert!(has_decoration(&module, view, Decoration::Flat));
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_ViewID_OVR")?,
+        [
+            (Decoration::BuiltIn, vec![spirv::BuiltIn::ViewIndex as u32]),
+            (Decoration::Flat, vec![]),
+        ]
+    );
+    compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_OVR_multiview : enable
+        void main() { gl_Position = vec4(float(gl_ViewID_OVR)); }",
+    )?;
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_Position = vec4(float(gl_ViewID_OVR)); }",
+    )
+    .err()
+    .ok_or("gl_ViewID_OVR without GL_OVR_multiview is accepted")?;
+    assert!(error.contains("GL_OVR_multiview"), "{error}");
+    let error = parse(
+        ShaderStage::Geometry,
+        "#version 450
+        #extension GL_OVR_multiview : enable
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        void main() { gl_Layer = int(gl_ViewID_OVR); EmitVertex(); }",
+    )
+    .err()
+    .ok_or("gl_ViewID_OVR is declared in geometry shaders")?;
+    assert!(error.contains("gl_ViewID_OVR"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn per_view_attributes_match_glslang() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Vertex,

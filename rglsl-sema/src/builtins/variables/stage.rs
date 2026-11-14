@@ -136,6 +136,11 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: &[ExtMultiview],
         precision: Some(High),
     }
+    "gl_ViewID_OVR": Input(ViewIndex) => uint {
+        stages: VERTEX | FRAGMENT,
+        requires_one_of: &[OvrMultiview, OvrMultiview2],
+        precision: Some(High),
+    }
     "gl_PatchVerticesIn": Input(PatchVertices) => int { stages: TESSELLATION }
     "gl_PrimitiveID": Input(PrimitiveIndex) => int { stages: TESSELLATION }
     "gl_InvocationID": Input(InvocationId) => int { stages: TESS_CONTROL }
