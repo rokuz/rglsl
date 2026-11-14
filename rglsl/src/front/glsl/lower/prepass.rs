@@ -4,6 +4,7 @@ use alloc::{
 };
 
 use rglsl_ast::ast::{Expression, ExpressionKind, FunctionDefinition, Node, NodeId};
+use rglsl_sema::builtins::variables;
 use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::{BlockId, OpaqueKind, TypeKind};
 use rglsl_sema::{Callee, FunctionId, SymbolId};
@@ -49,19 +50,6 @@ fn subscript_chain<'e>(
     }
     (depth, root)
 }
-
-pub(super) const CLIP_DISTANCES: [&str; 2] = ["gl_ClipDistance", "gl_CullDistance"];
-
-pub(super) const IMPLICITLY_SIZED: [&str; 8] = [
-    "gl_ClipDistance",
-    "gl_CullDistance",
-    "gl_ViewportMask",
-    "gl_SecondaryViewportMaskNV",
-    "gl_PositionPerViewNV",
-    "gl_ViewportMaskPerViewNV",
-    "gl_SampleMask",
-    "gl_SampleMaskIn",
-];
 
 impl<'a> Lowerer<'a> {
     pub(super) fn variable_symbol(&self, expression: &Expression) -> Option<SymbolId> {
@@ -220,7 +208,7 @@ impl<'a> Lowerer<'a> {
                     let Some(name) = self.symbol(symbol).map(|symbol| symbol.name.clone()) else {
                         continue;
                     };
-                    if IMPLICITLY_SIZED.contains(&name.as_str()) {
+                    if variables::implicitly_sized(&name) {
                         let entry = self.builtin_sizes.entry(name).or_insert(0);
                         *entry = (*entry).max(size);
                     }

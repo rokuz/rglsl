@@ -222,12 +222,110 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
+    "min3": Pure(Math(Min3)) => [
+        genF(genF, genF, genF),
+        genI(genI, genI, genI),
+        genU(genU, genU, genU),
+        genI16(genI16, genI16, genI16),
+        genU16(genU16, genU16, genU16),
+    ] {
+        requires: &[AmdShaderTrinaryMinmax],
+        floats: Halves,
+    }
+    "max3": Pure(Math(Max3)) => [
+        genF(genF, genF, genF),
+        genI(genI, genI, genI),
+        genU(genU, genU, genU),
+        genI16(genI16, genI16, genI16),
+        genU16(genU16, genU16, genU16),
+    ] {
+        requires: &[AmdShaderTrinaryMinmax],
+        floats: Halves,
+    }
+    "mid3": Pure(Math(Mid3)) => [
+        genF(genF, genF, genF),
+        genI(genI, genI, genI),
+        genU(genU, genU, genU),
+        genI16(genI16, genI16, genI16),
+        genU16(genU16, genU16, genU16),
+    ] {
+        requires: &[AmdShaderTrinaryMinmax],
+        floats: Halves,
+    }
+    "countLeadingZeros": Pure(Math(IntelCountLeadingZeros)) => [genU(genU)] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "countTrailingZeros": Pure(Math(IntelCountTrailingZeros)) => [genU(genU)] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "absoluteDifference": Pure(Math(AbsoluteDifference)) => [
+        genU(genI, genI),
+        genU16(genI16, genI16),
+        genU64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "addSaturate": Pure(Math(AddSaturate)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "subtractSaturate": Pure(Math(SubtractSaturate)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "average": Pure(Math(Average)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "averageRounded": Pure(Math(AverageRounded)) => [
+        genI(genI, genI),
+        genI16(genI16, genI16),
+        genI64(genI64, genI64),
+        genU(genU, genU),
+        genU16(genU16, genU16),
+        genU64(genU64, genU64),
+    ] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "multiply32x16": Pure(Math(Multiply32x16)) => [genI(genI, genI), genU(genU, genU)] {
+        requires: &[IntelShaderIntegerFunctions2],
+    }
+    "cubeFaceIndexAMD": Pure(Math(CubeFaceIndex)) => [float(vec3)] {
+        requires: &[AmdGcnShader],
+    }
+    "cubeFaceCoordAMD": Pure(Math(CubeFaceCoord)) => [vec2(vec3)] {
+        requires: &[AmdGcnShader],
+    }
     "mix": Pure(Math(Mix)) => [genF(genF, genF, genF), genF(genF, genF, float)] {
         flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,
     }
+    "mix": Pure(Select) => [genF(genF, genF, genB)] {
+        flags: flags!(FOLD, FUZZ),
+        floats: DoublesAndHalves,
+    }
     "mix": Pure(Select) => [
-        genF(genF, genF, genB),
         genI(genI, genI, genB),
         genU(genU, genU, genB),
         genB(genB, genB, genB),
@@ -238,8 +336,7 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         genI8(genI8, genI8, genB),
         genU8(genU8, genU8, genB),
     ] {
-        flags: flags!(FOLD, FUZZ),
-        floats: DoublesAndHalves,
+        flags: flags!(FUZZ),
     }
     "step": Pure(Math(Step)) => [genF(genF, genF), genF(float, genF)] {
         flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),

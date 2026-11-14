@@ -526,7 +526,20 @@ fn math_component(math: Math, result: Scalar, arguments: &[Value]) -> Option<Val
         },
         Math::Step => floating(if float(1)? < float(0)? { 0.0 } else { 1.0 }),
         Math::SmoothStep => floating(smooth(float(0)?, float(1)?, float(2)?)),
-        Math::Fma
+        Math::Min3
+        | Math::Max3
+        | Math::Mid3
+        | Math::CubeFaceIndex
+        | Math::CubeFaceCoord
+        | Math::IntelCountLeadingZeros
+        | Math::IntelCountTrailingZeros
+        | Math::AbsoluteDifference
+        | Math::AddSaturate
+        | Math::SubtractSaturate
+        | Math::Average
+        | Math::AverageRounded
+        | Math::Multiply32x16
+        | Math::Fma
         | Math::Ldexp
         | Math::Length
         | Math::Distance
@@ -743,6 +756,19 @@ fn geometric(kind: Pure, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
             | Math::Min
             | Math::Max
             | Math::Clamp
+            | Math::Min3
+            | Math::Max3
+            | Math::Mid3
+            | Math::CubeFaceIndex
+            | Math::CubeFaceCoord
+            | Math::IntelCountLeadingZeros
+            | Math::IntelCountTrailingZeros
+            | Math::AbsoluteDifference
+            | Math::AddSaturate
+            | Math::SubtractSaturate
+            | Math::Average
+            | Math::AverageRounded
+            | Math::Multiply32x16
             | Math::Mix
             | Math::Step
             | Math::SmoothStep

@@ -7,6 +7,7 @@ use alloc::{
 use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_sema::FunctionId;
+use rglsl_sema::builtins::variables;
 use rglsl_sema::scope::Direction;
 use rglsl_sema::types::{ArraySize as GlslArraySize, Type as GlslType, TypeKind};
 
@@ -199,7 +200,7 @@ impl Lowerer<'_> {
                 _ => (record.name.clone(), SymbolKind::Variable, None),
             };
             let mut implicit_sizes = Vec::new();
-            let declared = if super::prepass::IMPLICITLY_SIZED.contains(&record.name.as_str())
+            let declared = if variables::implicitly_sized(&record.name)
                 && kind == SymbolKind::BuiltIn
                 && !variable.ty.is_array()
             {
@@ -219,7 +220,7 @@ impl Lowerer<'_> {
             if !covered.insert(handle) {
                 continue;
             }
-            let implicit_sizes = if super::prepass::IMPLICITLY_SIZED.contains(&name.as_str())
+            let implicit_sizes = if variables::implicitly_sized(name)
                 && matches!(
                     self.module.types[self.module.global_variables[handle].ty].inner,
                     TypeInner::Array { .. }
@@ -245,8 +246,7 @@ impl Lowerer<'_> {
             {
                 for (index, member) in (0_u32..).zip(members) {
                     if member.name.as_deref().is_some_and(|name| {
-                        super::prepass::CLIP_DISTANCES.contains(&name)
-                            && !self.per_vertex_redeclared
+                        variables::clip_or_cull_distance(name) && !self.per_vertex_redeclared
                     }) {
                         implicit_sizes.push(alloc::vec![PathStep::Member(index)]);
                     }

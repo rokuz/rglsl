@@ -21,7 +21,9 @@ impl ir::MathFunction {
             Mf::Min | Mf::Max => regular!(2, SCALAR|VECN of NUMERIC).into(),
 
             // Component-wise ternary numeric operations
-            Mf::Clamp => regular!(3, SCALAR|VECN of NUMERIC).into(),
+            Mf::Clamp | Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
+                regular!(3, SCALAR|VECN of NUMERIC).into()
+            }
 
             // Component-wise unary floating-point operations
             Mf::Sin
@@ -98,6 +100,17 @@ impl ir::MathFunction {
             Mf::Ldexp => ldexp().into(),
             Mf::Outer => outer().into(),
             Mf::Cross => regular!(2, VEC3 of FLOAT).into(),
+            Mf::CubeFaceIndex => regular!(1, VEC3 of F32 -> Scalar).into(),
+            Mf::CubeFaceCoord => regular!(1, VEC3 of F32 -> Vec2F).into(),
+            Mf::IntelCountLeadingZeros | Mf::IntelCountTrailingZeros => {
+                regular!(1, SCALAR|VECN of U32).into()
+            }
+            Mf::AbsoluteDifference => regular!(2, SCALAR|VECN of INTEGER -> Unsigned).into(),
+            Mf::AddSaturate
+            | Mf::SubtractSaturate
+            | Mf::Average
+            | Mf::AverageRounded
+            | Mf::Multiply32x16 => regular!(2, SCALAR|VECN of INTEGER).into(),
             Mf::Distance => regular!(2, SCALAR|VECN of FLOAT -> Scalar).into(),
             Mf::Length => regular!(1, SCALAR|VECN of FLOAT -> Scalar).into(),
             Mf::Normalize => regular!(1, SCALAR|VECN of FLOAT).into(),

@@ -902,6 +902,7 @@ impl ExpressionKindTracker {
             | Expression::Expect { .. }
             | Expression::ImageSparseResident { .. }
             | Expression::IsHelperInvocation
+            | Expression::ReadClock { .. }
             | Expression::InterpolateAt { .. }
             | Expression::FragmentFetch { .. }
             | Expression::ImageFootprint { .. }
@@ -1455,6 +1456,9 @@ impl<'a> ConstantEvaluator<'a> {
             )),
             Expression::IsHelperInvocation => Err(ConstantEvaluatorError::NotImplemented(
                 String::from("helper invocation query"),
+            )),
+            Expression::ReadClock { .. } => Err(ConstantEvaluatorError::NotImplemented(
+                String::from("clock reads"),
             )),
             Expression::SubgroupOperationResult { .. } => {
                 Err(ConstantEvaluatorError::SubgroupExpression)
@@ -2153,7 +2157,20 @@ impl<'a> ConstantEvaluator<'a> {
             }
 
             // unimplemented
-            crate::MathFunction::Round
+            crate::MathFunction::Min3
+            | crate::MathFunction::Max3
+            | crate::MathFunction::Mid3
+            | crate::MathFunction::CubeFaceIndex
+            | crate::MathFunction::CubeFaceCoord
+            | crate::MathFunction::IntelCountLeadingZeros
+            | crate::MathFunction::IntelCountTrailingZeros
+            | crate::MathFunction::AbsoluteDifference
+            | crate::MathFunction::AddSaturate
+            | crate::MathFunction::SubtractSaturate
+            | crate::MathFunction::Average
+            | crate::MathFunction::AverageRounded
+            | crate::MathFunction::Multiply32x16
+            | crate::MathFunction::Round
             | crate::MathFunction::Modf
             | crate::MathFunction::Frexp
             | crate::MathFunction::AddCarry

@@ -1,0 +1,20 @@
+#version 450
+#extension GL_AMD_shader_trinary_minmax : require
+layout(local_size_x = 4) in;
+layout(std430, set = 0, binding = 0) buffer Results { ivec4 results[]; };
+
+void main() {
+  int lane = int(gl_LocalInvocationID.x);
+  int a = lane * 3 - 4;
+  int b = 2 - lane * 2;
+  int c = lane;
+  uint ua = uint(lane) * 7u;
+  uint ub = 10u;
+  uint uc = uint(3 - lane) * 5u;
+  float fa = float(lane) * 0.5;
+  float fb = 1.0 - float(lane);
+  float fc = 0.25;
+  results[lane * 3] = ivec4(min3(a, b, c), max3(a, b, c), mid3(a, b, c), 0);
+  results[lane * 3 + 1] = ivec4(uvec4(min3(ua, ub, uc), max3(ua, ub, uc), mid3(ua, ub, uc), 0u));
+  results[lane * 3 + 2] = ivec4(vec4(min3(fa, fb, fc), max3(fa, fb, fc), mid3(fa, fb, fc), 0.0) * 4.0);
+}

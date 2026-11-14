@@ -18,6 +18,7 @@ use rglsl_ast::ast::{
 use super::frames::Cx;
 use super::heap::is_heap_storage;
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
+use crate::builtins::variables::{self, Redeclaration};
 use crate::constant::{Constant, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{
@@ -620,6 +621,13 @@ impl Analyzer<'_> {
             }
             SingleTypeQualifier::Precision(precision) => result.precision = Some(*precision),
             SingleTypeQualifier::Interpolation(interpolation) => {
+                if *interpolation == InterpolationQualifier::ExplicitInterpAmd {
+                    self.require_extension(
+                        single.span,
+                        Extension::AmdShaderExplicitVertexParameter,
+                        "__explicitInterpAMD",
+                    );
+                }
                 result.interpolation = Some(*interpolation);
             }
             SingleTypeQualifier::Invariant => result.flags.insert(QualifierFlags::INVARIANT),
@@ -735,43 +743,19 @@ impl Analyzer<'_> {
     }
 
     fn builtin_array_limit_check(&mut self, span: Span, name: &str, ty: &Type) {
-        let limits = self.options.limits;
-        let (feature, limit, value, dimension) = match name {
-            "gl_ClipDistance" => (
-                "gl_ClipDistance array size",
-                "gl_MaxClipDistances",
-                limits.max_clip_distances,
-                0,
-            ),
-            "gl_CullDistance" => (
-                "gl_CullDistance array size",
-                "gl_MaxCullDistances",
-                limits.max_cull_distances,
-                0,
-            ),
-            "gl_ClipDistancePerViewNV" => (
-                "gl_ClipDistancePerViewNV array size",
-                "gl_MaxClipDistances",
-                limits.max_clip_distances,
-                1,
-            ),
-            "gl_CullDistancePerViewNV" => (
-                "gl_CullDistancePerViewNV array size",
-                "gl_MaxCullDistances",
-                limits.max_cull_distances,
-                1,
-            ),
-            _ => return,
-        };
-        let Some(&ArraySize::Sized(size)) = ty.dimensions().get(dimension) else {
+        let Some(limit) = variables::array_limit(name).filter(|limit| limit.declared) else {
             return;
         };
+        let Some(&ArraySize::Sized(size)) = ty.dimensions().get(limit.dimension) else {
+            return;
+        };
+        let value = (limit.value)(&self.options.limits);
         if i64::from(size) > i64::from(value) {
             self.error(
                 span,
                 DiagnosticKind::ArrayLimit {
-                    feature,
-                    limit,
+                    feature: limit.feature,
+                    limit: limit.limit,
                     value,
                 },
             );
@@ -1446,14 +1430,126 @@ impl Analyzer<'_> {
         }
     }
 
-    fn redeclared_builtin(&self, name: &str) -> Option<SymbolId> {
+    fn redeclared_builtin(&self, name: &str) -> Option<(SymbolId, Redeclaration)> {
         if !self.scopes.is_global() || !name.starts_with("gl_") {
             return None;
         }
         self.builtin_name(name);
         match self.scopes.lookup_level(name) {
-            Some((0, Lookup::Symbol(id))) => Some(id),
+            Some((0, Lookup::Symbol(id))) => {
+                let rule = self.builtins.variable(id)?.redeclaration?;
+                Some((id, rule))
+            }
             _ => None,
+        }
+    }
+
+    fn builtin_qualifiers(&self, id: SymbolId) -> Option<Qualifiers> {
+        match &self.symbol(id)?.kind {
+            SymbolKind::Variable(variable) => Some(variable.qualifiers.clone()),
+            SymbolKind::BlockMember { instance, index } => {
+                let TypeKind::Block(block) = self.symbol(*instance)?.variable()?.ty.kind else {
+                    return None;
+                };
+                let member = self
+                    .types
+                    .block(block)?
+                    .members
+                    .get(usize::try_from(*index).ok()?)?;
+                Some(member.qualifiers.clone())
+            }
+            SymbolKind::Struct(_)
+            | SymbolKind::Reference(_)
+            | SymbolKind::BufferType(_)
+            | SymbolKind::BlockName => None,
+        }
+    }
+
+    fn redeclaration_check(
+        &mut self,
+        name: &Identifier,
+        builtin: SymbolId,
+        rule: Redeclaration,
+        qualifiers: &Qualifiers,
+        ty: &Type,
+    ) {
+        let Some(existing) = self.builtin_qualifiers(builtin) else {
+            return;
+        };
+        let builtin_ty = self.symbol_type(builtin);
+        let changes_type = !builtin_ty.is_error()
+            && !ty.is_error()
+            && (builtin_ty.kind != ty.kind || builtin_ty.is_array() != ty.is_array());
+        if changes_type {
+            self.error(
+                name.span,
+                DiagnosticKind::InvalidRedeclaration {
+                    name: name.node.clone(),
+                    reason: "cannot change its type",
+                },
+            );
+            return;
+        }
+        let has_layout = !qualifiers.layout.is_empty();
+        let flat = |qualifiers: &Qualifiers| {
+            qualifiers.interpolation == Some(InterpolationQualifier::Flat)
+        };
+        let no_perspective = |qualifiers: &Qualifiers| {
+            qualifiers.interpolation == Some(InterpolationQualifier::Noperspective)
+        };
+        let interpolation_changes = flat(qualifiers) != flat(&existing)
+            || no_perspective(qualifiers) != no_perspective(&existing);
+        let memory_or_auxiliary = qualifiers.has_memory_qualifier()
+            || qualifiers.flags.intersects(QualifierFlags::AUXILIARY)
+            || qualifiers.per_vertex.is_some();
+        let reason = match rule {
+            Redeclaration::Interpolant => (has_layout
+                || memory_or_auxiliary
+                || interpolation_changes
+                || qualifiers.storage != existing.storage)
+                .then_some("cannot change its qualification"),
+            Redeclaration::FragmentOutput | Redeclaration::FragmentCoordinate => {
+                let storage = if rule == Redeclaration::FragmentOutput {
+                    Storage::Out
+                } else {
+                    Storage::In
+                };
+                if interpolation_changes || memory_or_auxiliary {
+                    Some("only its layout qualification can change")
+                } else if qualifiers.storage != storage {
+                    Some(if storage == Storage::Out {
+                        "cannot change its output storage qualification"
+                    } else {
+                        "cannot change its input storage qualification"
+                    })
+                } else {
+                    None
+                }
+            }
+            Redeclaration::OverrideCoverage => (!qualifiers.has_layout("override_coverage"))
+                .then_some("only allowed with the override_coverage layout"),
+            Redeclaration::ViewportRelative => (!qualifiers.has_layout("viewport_relative")
+                && !qualifiers.has_layout("secondary_view_offset"))
+            .then_some("only allowed with the viewport_relative or secondary_view_offset layout"),
+            Redeclaration::Output => {
+                if has_layout {
+                    Some("cannot apply a layout qualifier to it")
+                } else if qualifiers.storage != Storage::Out {
+                    Some("cannot change its output storage qualification")
+                } else {
+                    None
+                }
+            }
+            Redeclaration::Free => None,
+        };
+        if let Some(reason) = reason {
+            self.error(
+                name.span,
+                DiagnosticKind::InvalidRedeclaration {
+                    name: name.node.clone(),
+                    reason,
+                },
+            );
         }
     }
 
@@ -1892,7 +1988,8 @@ impl Analyzer<'_> {
             self.vulkan_memory_model = true;
         }
         let name = &declarator.kind.name;
-        if let Some(builtin) = self.redeclared_builtin(&name.node) {
+        if let Some((builtin, rule)) = self.redeclared_builtin(&name.node) {
+            self.redeclaration_check(name, builtin, rule, &qualifiers, &ty);
             self.builtin_array_limit_check(name.span, &name.node, &ty);
             self.declarations.insert(declarator.id, builtin);
             if let Some(SymbolKind::Variable(variable)) =

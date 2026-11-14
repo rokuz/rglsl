@@ -14,6 +14,59 @@ use super::{
 use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 
 const SPV_AMD_GPU_SHADER_HALF_FLOAT: &str = "SPV_AMD_gpu_shader_half_float";
+const SPV_AMD_SHADER_TRINARY_MINMAX: &str = "SPV_AMD_shader_trinary_minmax";
+const SPV_AMD_GCN_SHADER: &str = "SPV_AMD_gcn_shader";
+const AMD_CUBE_FACE_INDEX: Word = 1;
+const AMD_CUBE_FACE_COORD: Word = 2;
+const AMD_TIME: Word = 3;
+const SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER: &str = "SPV_AMD_shader_explicit_vertex_parameter";
+const AMD_INTERPOLATE_AT_VERTEX: Word = 1;
+
+const fn integer_functions2(
+    fun: crate::MathFunction,
+    kind: Option<crate::ScalarKind>,
+) -> Result<spirv::Op, Error> {
+    use crate::MathFunction as Mf;
+    use crate::ScalarKind as Sk;
+    use spirv::Op;
+    Ok(match (fun, kind) {
+        (Mf::IntelCountLeadingZeros, Some(Sk::Uint)) => Op::UCountLeadingZerosINTEL,
+        (Mf::IntelCountTrailingZeros, Some(Sk::Uint)) => Op::UCountTrailingZerosINTEL,
+        (Mf::AbsoluteDifference, Some(Sk::Sint)) => Op::AbsISubINTEL,
+        (Mf::AbsoluteDifference, Some(Sk::Uint)) => Op::AbsUSubINTEL,
+        (Mf::AddSaturate, Some(Sk::Sint)) => Op::IAddSatINTEL,
+        (Mf::AddSaturate, Some(Sk::Uint)) => Op::UAddSatINTEL,
+        (Mf::SubtractSaturate, Some(Sk::Sint)) => Op::ISubSatINTEL,
+        (Mf::SubtractSaturate, Some(Sk::Uint)) => Op::USubSatINTEL,
+        (Mf::Average, Some(Sk::Sint)) => Op::IAverageINTEL,
+        (Mf::Average, Some(Sk::Uint)) => Op::UAverageINTEL,
+        (Mf::AverageRounded, Some(Sk::Sint)) => Op::IAverageRoundedINTEL,
+        (Mf::AverageRounded, Some(Sk::Uint)) => Op::UAverageRoundedINTEL,
+        (Mf::Multiply32x16, Some(Sk::Sint)) => Op::IMul32x16INTEL,
+        (Mf::Multiply32x16, Some(Sk::Uint)) => Op::UMul32x16INTEL,
+        _ => return Err(Error::Validation("integer function of a non-integer value")),
+    })
+}
+
+const fn trinary_minmax(
+    fun: crate::MathFunction,
+    kind: Option<crate::ScalarKind>,
+) -> Result<Word, Error> {
+    use crate::MathFunction as Mf;
+    use crate::ScalarKind as Sk;
+    Ok(match (fun, kind) {
+        (Mf::Min3, Some(Sk::Float)) => 1,
+        (Mf::Min3, Some(Sk::Uint)) => 2,
+        (Mf::Min3, Some(Sk::Sint)) => 3,
+        (Mf::Max3, Some(Sk::Float)) => 4,
+        (Mf::Max3, Some(Sk::Uint)) => 5,
+        (Mf::Max3, Some(Sk::Sint)) => 6,
+        (Mf::Mid3, Some(Sk::Float)) => 7,
+        (Mf::Mid3, Some(Sk::Uint)) => 8,
+        (Mf::Mid3, Some(Sk::Sint)) => 9,
+        _ => return Err(Error::Validation("trinary min/max of a non-numeric value")),
+    })
+}
 
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
@@ -1078,6 +1131,53 @@ impl BlockContext<'_> {
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UClamp,
                         _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     }),
+                    Mf::IntelCountLeadingZeros
+                    | Mf::IntelCountTrailingZeros
+                    | Mf::AbsoluteDifference
+                    | Mf::AddSaturate
+                    | Mf::SubtractSaturate
+                    | Mf::Average
+                    | Mf::AverageRounded
+                    | Mf::Multiply32x16 => {
+                        let op = integer_functions2(fun, arg_scalar_kind)?;
+                        self.writer
+                            .use_extension("SPV_INTEL_shader_integer_functions2");
+                        self.writer.require_any(
+                            "integer functions 2",
+                            &[spirv::Capability::IntegerFunctions2INTEL],
+                        )?;
+                        MathOp::Custom(if fun.argument_count() == 1 {
+                            Instruction::unary(op, result_type_id, id, arg0_id)
+                        } else {
+                            Instruction::binary(op, result_type_id, id, arg0_id, arg1_id)
+                        })
+                    }
+                    Mf::CubeFaceIndex | Mf::CubeFaceCoord => {
+                        let op = if fun == Mf::CubeFaceIndex {
+                            AMD_CUBE_FACE_INDEX
+                        } else {
+                            AMD_CUBE_FACE_COORD
+                        };
+                        let set = self.writer.spirv_ext_import(SPV_AMD_GCN_SHADER);
+                        MathOp::Custom(Instruction::ext_inst(
+                            set,
+                            op,
+                            result_type_id,
+                            id,
+                            &[arg0_id],
+                        ))
+                    }
+                    Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
+                        let op = trinary_minmax(fun, arg_scalar_kind)?;
+                        let set = self.writer.spirv_ext_import(SPV_AMD_SHADER_TRINARY_MINMAX);
+                        MathOp::Custom(Instruction::ext_inst(
+                            set,
+                            op,
+                            result_type_id,
+                            id,
+                            &[arg0_id, arg1_id, arg2_id],
+                        ))
+                    }
                     // trigonometry
                     Mf::Sin => MathOp::Ext(spirv::GlslStd450Op::Sin),
                     Mf::Sinh => MathOp::Ext(spirv::GlslStd450Op::Sinh),
@@ -1651,6 +1751,30 @@ impl BlockContext<'_> {
             | crate::Expression::SubgroupBallotResult
             | crate::Expression::SubgroupOperationResult { .. }
             | crate::Expression::SpirvInstructionResult { .. } => self.cached.get(expr_handle)?,
+            crate::Expression::InterpolateAt {
+                pointer,
+                location: crate::InterpolationLocation::VertexAmd(vertex),
+            } => {
+                let pointer_id =
+                    self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?;
+                if self.is_half(expr_handle) {
+                    self.writer.use_extension(SPV_AMD_GPU_SHADER_HALF_FLOAT);
+                }
+                self.writer
+                    .use_extension(SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
+                let set = self
+                    .writer
+                    .spirv_ext_import(SPV_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER);
+                let id = self.gen_id();
+                block.body.push(Instruction::ext_inst(
+                    set,
+                    AMD_INTERPOLATE_AT_VERTEX,
+                    result_type_id,
+                    id,
+                    &[pointer_id, self.cached.get(vertex)?],
+                ));
+                id
+            }
             crate::Expression::InterpolateAt { pointer, location } => {
                 self.writer.require_any(
                     "interpolation functions",
@@ -1670,6 +1794,11 @@ impl BlockContext<'_> {
                         spirv::GlslStd450Op::InterpolateAtOffset,
                         Some(self.cached.get(offset)?),
                     ),
+                    crate::InterpolationLocation::VertexAmd(_) => {
+                        return Err(Error::Validation(
+                            "vertex interpolation reached the GLSL.std.450 path",
+                        ));
+                    }
                 };
                 let offset = match location {
                     crate::InterpolationLocation::Offset(offset) => Some(offset),
@@ -1738,6 +1867,38 @@ impl BlockContext<'_> {
             }
             crate::Expression::AttachmentRead { aspect, sample } => {
                 self.write_attachment_read(aspect, sample, result_type_id, block)?
+            }
+            crate::Expression::ReadClock { source, .. } => {
+                let id = self.gen_id();
+                let scope = match source {
+                    crate::ClockSource::Subgroup => Some(spirv::Scope::Subgroup),
+                    crate::ClockSource::Device => Some(spirv::Scope::Device),
+                    crate::ClockSource::AmdTime => None,
+                };
+                match scope {
+                    Some(scope) => {
+                        self.writer.use_extension("SPV_KHR_shader_clock");
+                        self.writer
+                            .require_any("clock reads", &[spirv::Capability::ShaderClockKHR])?;
+                        let scope_id = self.get_scope_constant(scope as u32);
+                        let mut instruction = Instruction::new(spirv::Op::ReadClockKHR);
+                        instruction.set_type(result_type_id);
+                        instruction.set_result(id);
+                        instruction.add_operand(scope_id);
+                        block.body.push(instruction);
+                    }
+                    None => {
+                        let set = self.writer.spirv_ext_import(SPV_AMD_GCN_SHADER);
+                        block.body.push(Instruction::ext_inst(
+                            set,
+                            AMD_TIME,
+                            result_type_id,
+                            id,
+                            &[],
+                        ));
+                    }
+                }
+                id
             }
             crate::Expression::IsHelperInvocation => {
                 self.writer.require_demote()?;
@@ -4120,11 +4281,26 @@ impl BlockContext<'_> {
                 let value_id = self.cached.get(value)?;
                 let value_inner = self.fun_info[value].ty.inner_with(&self.ir_module.types);
 
-                let crate::TypeInner::Scalar(scalar) = *value_inner else {
-                    return Err(Error::FeatureNotImplemented(
-                        "Atomics with non-scalar values",
-                    ));
+                let (scalar, vector) = match *value_inner {
+                    crate::TypeInner::Scalar(scalar) => (scalar, false),
+                    crate::TypeInner::Vector {
+                        scalar: scalar @ crate::Scalar::F16,
+                        ..
+                    } => (scalar, true),
+                    _ => {
+                        return Err(Error::FeatureNotImplemented(
+                            "Atomics with non-scalar values",
+                        ));
+                    }
                 };
+                if vector {
+                    self.writer
+                        .use_extension("SPV_NV_shader_atomic_fp16_vector");
+                    self.writer.require_any(
+                        "half-precision vector atomics",
+                        &[spirv::Capability::AtomicFloat16VectorNV],
+                    )?;
+                }
 
                 let instruction = match *fun {
                     crate::AtomicFunction::Add => {
@@ -4132,7 +4308,9 @@ impl BlockContext<'_> {
                             crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                 spirv::Op::AtomicIAdd
                             }
-                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            crate::ScalarKind::Float => {
+                                self.writer.float_atomic(*fun, scalar, vector)?
+                            }
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
@@ -4249,7 +4427,9 @@ impl BlockContext<'_> {
                         let spirv_op = match scalar.kind {
                             crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
                             crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
-                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            crate::ScalarKind::Float => {
+                                self.writer.float_atomic(*fun, scalar, vector)?
+                            }
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
@@ -4270,7 +4450,9 @@ impl BlockContext<'_> {
                         let spirv_op = match scalar.kind {
                             crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
                             crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
-                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            crate::ScalarKind::Float => {
+                                self.writer.float_atomic(*fun, scalar, vector)?
+                            }
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",

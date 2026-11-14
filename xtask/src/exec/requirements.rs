@@ -572,6 +572,7 @@ pub fn extension(name: &str) -> bool {
             | "SPV_AMD_gpu_shader_half_float"
             | "SPV_AMD_gpu_shader_int16"
             | "SPV_AMD_shader_trinary_minmax"
+            | "SPV_AMD_gcn_shader"
             | "SPV_AMD_shader_image_load_store_lod"
             | "SPV_AMD_shader_explicit_vertex_parameter"
             | "SPV_AMD_shader_early_and_late_fragment_tests"
@@ -619,6 +620,7 @@ pub fn extension_needs(name: &str) -> &'static [Need] {
         "SPV_AMD_gpu_shader_half_float" => &[E("VK_AMD_gpu_shader_half_float")],
         "SPV_AMD_gpu_shader_int16" => &[E("VK_AMD_gpu_shader_int16")],
         "SPV_AMD_shader_trinary_minmax" => &[E("VK_AMD_shader_trinary_minmax")],
+        "SPV_AMD_gcn_shader" => &[E("VK_AMD_gcn_shader")],
         "SPV_AMD_shader_explicit_vertex_parameter" => {
             &[E("VK_AMD_shader_explicit_vertex_parameter")]
         }
@@ -690,6 +692,7 @@ pub fn probes() -> Vec<Need> {
         E("VK_AMD_gpu_shader_half_float"),
         E("VK_AMD_gpu_shader_int16"),
         E("VK_AMD_shader_trinary_minmax"),
+        E("VK_AMD_gcn_shader"),
         E("VK_AMD_shader_explicit_vertex_parameter"),
         MAINTENANCE1_REDUCTIONS,
         MAINTENANCE1_PER_ELEMENT,

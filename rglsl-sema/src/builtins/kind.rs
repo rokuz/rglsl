@@ -9,6 +9,7 @@ pub enum BuiltinKind {
     Barrier(Barrier),
     Interlock { begin: bool },
     HelperInvocation,
+    Clock { source: ClockSource, pair: bool },
     Interpolate(InterpolateAt),
     AttachmentRead(Attachment),
     Mesh(Mesh),
@@ -31,6 +32,7 @@ impl BuiltinKind {
             | Self::Barrier(_)
             | Self::Interlock { .. }
             | Self::HelperInvocation
+            | Self::Clock { .. }
             | Self::Interpolate(_)
             | Self::AttachmentRead(_)
             | Self::Mesh(_)
@@ -104,6 +106,19 @@ pub enum Math {
     Min,
     Max,
     Clamp,
+    Min3,
+    Max3,
+    Mid3,
+    CubeFaceIndex,
+    CubeFaceCoord,
+    IntelCountLeadingZeros,
+    IntelCountTrailingZeros,
+    AbsoluteDifference,
+    AddSaturate,
+    SubtractSaturate,
+    Average,
+    AverageRounded,
+    Multiply32x16,
     Mix,
     Step,
     SmoothStep,
@@ -233,10 +248,18 @@ pub enum SplitPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClockSource {
+    Subgroup,
+    Device,
+    AmdTime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InterpolateAt {
     Centroid,
     Sample,
     Offset,
+    Vertex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

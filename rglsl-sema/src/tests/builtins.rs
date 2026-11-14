@@ -54,14 +54,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (ShaderStage::Vertex, 7333, 35, 189, 225),
-        (ShaderStage::TessControl, 7334, 35, 181, 214),
-        (ShaderStage::TessEvaluation, 7333, 35, 189, 222),
-        (ShaderStage::Geometry, 7337, 35, 188, 221),
-        (ShaderStage::Fragment, 7854, 35, 197, 233),
-        (ShaderStage::Compute, 7799, 37, 179, 215),
-        (ShaderStage::Mesh, 7549, 37, 192, 226),
-        (ShaderStage::RayGeneration, 7333, 122, 171, 210),
+        (ShaderStage::Vertex, 7559, 35, 191, 229),
+        (ShaderStage::TessControl, 7560, 35, 182, 217),
+        (ShaderStage::TessEvaluation, 7559, 35, 190, 225),
+        (ShaderStage::Geometry, 7563, 35, 189, 224),
+        (ShaderStage::Fragment, 8096, 35, 206, 244),
+        (ShaderStage::Compute, 8025, 37, 180, 218),
+        (ShaderStage::Mesh, 7775, 37, 193, 229),
+        (ShaderStage::RayGeneration, 7559, 122, 172, 211),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -430,7 +430,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.functions().names().count(), 439);
+    assert_eq!(table.functions().names().count(), 461);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {
@@ -853,4 +853,61 @@ fn structs_are_interned_with_their_properties() -> TestResult {
     assert_eq!(structure.flattened_size, None);
     assert_eq!(registry.structs().len(), 3);
     Ok(())
+}
+
+#[test]
+fn array_properties_of_built_in_variables_come_from_their_rows() {
+    use crate::builtins::variables::{array_limit, clip_or_cull_distance, implicitly_sized};
+    for name in [
+        "gl_ClipDistance",
+        "gl_CullDistance",
+        "gl_ViewportMask",
+        "gl_SecondaryViewportMaskNV",
+        "gl_PositionPerViewNV",
+        "gl_ViewportMaskPerViewNV",
+        "gl_SampleMask",
+        "gl_SampleMaskIn",
+    ] {
+        assert!(implicitly_sized(name), "{name}");
+    }
+    for name in [
+        "gl_Position",
+        "gl_PrimitiveIndicesNV",
+        "gl_ClipDistancePerViewNV",
+    ] {
+        assert!(!implicitly_sized(name), "{name}");
+    }
+    assert!(clip_or_cull_distance("gl_ClipDistance"));
+    assert!(clip_or_cull_distance("gl_CullDistance"));
+    assert!(!clip_or_cull_distance("gl_ClipDistancePerViewNV"));
+    let limits = ResourceLimits::default();
+    let limit = |name: &str| {
+        array_limit(name).map(|limit| {
+            (
+                (limit.value)(&limits),
+                limit.dimension,
+                limit.declared,
+                limit.indexed,
+            )
+        })
+    };
+    assert_eq!(
+        limit("gl_ClipDistance"),
+        Some((limits.max_clip_distances, 0, true, true))
+    );
+    assert_eq!(
+        limit("gl_CullDistance"),
+        Some((limits.max_cull_distances, 0, true, true))
+    );
+    assert_eq!(
+        limit("gl_ClipDistancePerViewNV"),
+        Some((limits.max_clip_distances, 1, true, false))
+    );
+    assert_eq!(
+        limit("gl_CullDistancePerViewNV"),
+        Some((limits.max_cull_distances, 1, true, false))
+    );
+    assert_eq!(limit("gl_SampleMask"), Some((1, 0, false, true)));
+    assert_eq!(limit("gl_SampleMaskIn"), Some((1, 0, false, true)));
+    assert_eq!(limit("gl_Position"), None);
 }

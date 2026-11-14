@@ -259,6 +259,8 @@ pub enum DiagnosticKind {
     NestedStructDefinition,
     #[error("identifier `{0}` is reserved: it starts with `gl_`")]
     ReservedIdentifier(String),
+    #[error("invalid redeclaration of `{name}`: {reason}")]
+    InvalidRedeclaration { name: String, reason: &'static str },
     #[error("invalid block `{name}`: {reason}")]
     InvalidBlock { name: String, reason: &'static str },
     #[error(

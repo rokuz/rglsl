@@ -59,6 +59,19 @@ pub(super) const fn math_function(math: Math) -> MathFunction {
         Math::Min => Mf::Min,
         Math::Max => Mf::Max,
         Math::Clamp => Mf::Clamp,
+        Math::Min3 => Mf::Min3,
+        Math::Max3 => Mf::Max3,
+        Math::Mid3 => Mf::Mid3,
+        Math::CubeFaceIndex => Mf::CubeFaceIndex,
+        Math::CubeFaceCoord => Mf::CubeFaceCoord,
+        Math::IntelCountLeadingZeros => Mf::IntelCountLeadingZeros,
+        Math::IntelCountTrailingZeros => Mf::IntelCountTrailingZeros,
+        Math::AbsoluteDifference => Mf::AbsoluteDifference,
+        Math::AddSaturate => Mf::AddSaturate,
+        Math::SubtractSaturate => Mf::SubtractSaturate,
+        Math::Average => Mf::Average,
+        Math::AverageRounded => Mf::AverageRounded,
+        Math::Multiply32x16 => Mf::Multiply32x16,
         Math::Mix => Mf::Mix,
         Math::Step => Mf::Step,
         Math::SmoothStep => Mf::SmoothStep,
@@ -819,6 +832,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             BuiltinKind::Interlock { begin } => self.with(|this| this.interlock_call(begin, at))?,
             BuiltinKind::HelperInvocation => {
                 self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
+            }
+            BuiltinKind::Clock { source, pair } => {
+                let source = match source {
+                    kind::ClockSource::Subgroup => crate::ClockSource::Subgroup,
+                    kind::ClockSource::Device => crate::ClockSource::Device,
+                    kind::ClockSource::AmdTime => crate::ClockSource::AmdTime,
+                };
+                self.with(|this| {
+                    this.add(Expression::ReadClock { source, pair }, at)
+                        .map(Some)
+                })?
             }
             BuiltinKind::Interpolate(location) => {
                 let frame = self.clone().interpolate(location, arguments, at);
@@ -2092,6 +2116,22 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
+        let double =
+            self.with(|this| this.info(first))??.ty.base_scalar() == Some(GlslScalar::Double);
+        if double {
+            let name = match interpolation {
+                InterpolateAt::Centroid => "interpolateAtCentroid",
+                InterpolateAt::Sample => "interpolateAtSample",
+                InterpolateAt::Offset => "interpolateAtOffset",
+                InterpolateAt::Vertex => "interpolateAtVertexAMD",
+            };
+            return Err(semantic(
+                format!(
+                    "`{name}` on a double-precision interpolant is not supported: the GLSL.std.450 interpolation instructions take 32-bit floats"
+                ),
+                at,
+            ));
+        }
         let super::expression::Chain::Place(place) = {
             let frame = self.clone().chain(first);
             self.nest(frame).await
@@ -2108,8 +2148,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().rvalue(offset);
                 self.nest(frame).await
             }?),
+            (InterpolateAt::Vertex, Some(vertex)) => crate::InterpolationLocation::VertexAmd({
+                let frame = self.clone().rvalue(vertex);
+                self.nest(frame).await
+            }?),
             (InterpolateAt::Centroid, _)
-            | (InterpolateAt::Sample | InterpolateAt::Offset, None) => {
+            | (InterpolateAt::Sample | InterpolateAt::Offset | InterpolateAt::Vertex, None) => {
                 crate::InterpolationLocation::Centroid
             }
         };

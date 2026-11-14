@@ -3,8 +3,10 @@ use rglsl_types::extension::Extension::{self, *};
 
 use super::ConstantValue::{Bool, Int, Uint};
 use super::VariableKind::{Constant, Input};
-use super::{BuiltinVariable, VariableFlags};
-use crate::builtins::{ANY_HIT, CALLABLE, CLOSEST_HIT, INTERSECTION, MISS, RAY_GENERATION};
+use super::{BuiltinVariable, Redeclaration, VariableFlags};
+use crate::builtins::{
+    ALL_STAGE_BITS, ANY_HIT, CALLABLE, CLOSEST_HIT, INTERSECTION, MISS, RAY_GENERATION,
+};
 
 const HIT: u16 = INTERSECTION | ANY_HIT | CLOSEST_HIT;
 const TRAVERSAL: u16 = HIT | MISS;
@@ -56,6 +58,7 @@ pub(super) const CONSTANTS: &[BuiltinVariable] = variables! {
     "gl_ClusterIDNoneNV": Constant(Int(-1)) => int
     "gl_EnableOpacityMicromapEXT": Constant(Bool(false)) => bool {
         requires_one_of: &[ExtOpacityMicromapRayQueryMode],
+        redeclaration: Some(Redeclaration::Free),
     }
 };
 
@@ -265,9 +268,9 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: &[NvLinearSweptSpheres],
     }
     "gl_HitKindFrontFacingMicroTriangleNV": Input(HitKindFrontFacingMicroTriangle) => uint {
-        stages: ALL_RAY,
+        stages: ALL_STAGE_BITS,
     }
     "gl_HitKindBackFacingMicroTriangleNV": Input(HitKindBackFacingMicroTriangle) => uint {
-        stages: ALL_RAY,
+        stages: ALL_STAGE_BITS,
     }
 };

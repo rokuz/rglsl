@@ -472,6 +472,15 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "allInvocationsEqualARB": Subgroup(Function(AllInvocationsEqual)) => [bool(bool)] {
         requires: &[ArbShaderGroupVote],
     }
+    "anyThreadNV": Subgroup(Function(AnyInvocation)) => [bool(bool)] {
+        requires: &[NvGpuShader5],
+    }
+    "allThreadsNV": Subgroup(Function(AllInvocations)) => [bool(bool)] {
+        requires: &[NvGpuShader5],
+    }
+    "allThreadsEqualNV": Subgroup(Function(AllInvocationsEqual)) => [bool(bool)] {
+        requires: &[NvGpuShader5],
+    }
     "anyInvocation": Subgroup(Function(AnyInvocation)) => [bool(bool)] {
         since: 460,
     }

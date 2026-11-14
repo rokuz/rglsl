@@ -1095,6 +1095,9 @@ pub(super) struct Lowerer<'a> {
     pub(super) per_vertex_used: BTreeSet<String>,
     pub(super) per_vertex_first_use: Option<u32>,
     pub(super) per_vertex_redeclared: bool,
+    pub(super) per_vertex_member_redeclared: bool,
+    pub(super) unused_redeclarations: Vec<(SymbolId, String, Span)>,
+    pub(super) redeclared_globals: BTreeSet<Handle<GlobalVariable>>,
     pub(super) block_outputs: BTreeSet<String>,
     pub(super) specialized_sizes: BTreeMap<rglsl_ast::ast::NodeId, Handle<crate::Override>>,
     pub(super) size_expressions: BTreeMap<rglsl_ast::ast::NodeId, &'a rglsl_ast::ast::Expression>,
@@ -1198,6 +1201,9 @@ impl<'a> Lowerer<'a> {
             per_vertex_used: BTreeSet::new(),
             per_vertex_first_use: None,
             per_vertex_redeclared: false,
+            per_vertex_member_redeclared: false,
+            unused_redeclarations: Vec::new(),
+            redeclared_globals: BTreeSet::new(),
             block_outputs: BTreeSet::new(),
             specialized_sizes: BTreeMap::new(),
             size_expressions: BTreeMap::new(),
@@ -1466,6 +1472,8 @@ impl<'a> Lowerer<'a> {
                 self.defer_function(handle, message);
             }
         }
+        let result = self.declare_unused_redeclarations();
+        self.report(result);
         self.on_use_globals = self.globals_on_use(declared_globals);
         let entry = definitions.iter().find(|definition| {
             self.analysis.function_declarations.get(&definition.id) == main.as_ref()
@@ -1523,7 +1531,9 @@ impl<'a> Lowerer<'a> {
             .iter()
             .skip(declared)
             .map(|(handle, _)| handle)
-            .filter(|handle| !referenced.contains(handle))
+            .filter(|handle| {
+                !referenced.contains(handle) && !self.redeclared_globals.contains(handle)
+            })
             .collect()
     }
 

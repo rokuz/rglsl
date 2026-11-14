@@ -95,8 +95,17 @@ impl super::Writer {
         &mut self,
         fun: crate::AtomicFunction,
         scalar: crate::Scalar,
+        vector: bool,
     ) -> Result<spirv::Op, Error> {
         use spirv::Capability as C;
+        let op = match fun {
+            crate::AtomicFunction::Min => spirv::Op::AtomicFMinEXT,
+            crate::AtomicFunction::Max => spirv::Op::AtomicFMaxEXT,
+            _ => spirv::Op::AtomicFAddEXT,
+        };
+        if vector {
+            return Ok(op);
+        }
         let add = matches!(fun, crate::AtomicFunction::Add);
         let capability = match (add, scalar.width) {
             (true, 2) => C::AtomicFloat16AddEXT,
@@ -115,11 +124,7 @@ impl super::Writer {
             self.use_extension("SPV_EXT_shader_atomic_float_min_max");
         }
         self.require_any("floating-point atomics", &[capability])?;
-        Ok(match fun {
-            crate::AtomicFunction::Min => spirv::Op::AtomicFMinEXT,
-            crate::AtomicFunction::Max => spirv::Op::AtomicFMaxEXT,
-            _ => spirv::Op::AtomicFAddEXT,
-        })
+        Ok(op)
     }
 
     pub(super) fn write_split_barrier(
@@ -328,7 +333,7 @@ impl BlockContext<'_> {
             | crate::AtomicFunction::Max
                 if scalar.kind == crate::ScalarKind::Float =>
             {
-                self.writer.float_atomic(fun, scalar)?
+                self.writer.float_atomic(fun, scalar, false)?
             }
             crate::AtomicFunction::Add => spirv::Op::AtomicIAdd,
             crate::AtomicFunction::Subtract => spirv::Op::AtomicISub,

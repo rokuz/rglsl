@@ -800,7 +800,10 @@ impl super::Validator {
                         crate::TypeInner::Scalar(crate::Scalar {
                             kind: crate::ScalarKind::Float,
                             width: 2 | 4 | 8,
-                        })
+                        }) | crate::TypeInner::Vector {
+                            size: crate::VectorSize::Bi | crate::VectorSize::Quad,
+                            scalar: crate::Scalar::F16,
+                        }
                     )
             ) || matches!(
                 *inner,
@@ -810,6 +813,10 @@ impl super::Validator {
                         kind: crate::ScalarKind::Float,
                         width: 2 | 4 | 8,
                     },
+                    ..
+                } | crate::TypeInner::ValuePointer {
+                    size: Some(crate::VectorSize::Bi | crate::VectorSize::Quad),
+                    scalar: crate::Scalar::F16,
                     ..
                 }
             )
@@ -828,6 +835,10 @@ impl super::Validator {
                         width: 2 | 4 | 8,
                     }),
                 ) => (scalar, space),
+                crate::TypeInner::Vector {
+                    size: crate::VectorSize::Bi | crate::VectorSize::Quad,
+                    scalar: scalar @ crate::Scalar::F16,
+                } => (scalar, space),
                 ref other => {
                     log::error!("Atomic pointer to type {other:?}");
                     return Err(AtomicError::InvalidPointer(pointer)
@@ -848,6 +859,11 @@ impl super::Validator {
                     }),
                 space,
             } => (scalar, space),
+            crate::TypeInner::ValuePointer {
+                size: Some(crate::VectorSize::Bi | crate::VectorSize::Quad),
+                scalar: scalar @ crate::Scalar::F16,
+                space,
+            } => (scalar, space),
             ref other => {
                 log::error!("Atomic operation on type {other:?}");
                 return Err(AtomicError::InvalidPointer(pointer)
@@ -858,11 +874,25 @@ impl super::Validator {
 
         // The `value` operand must be a scalar of the same type as the atomic.
         let value_inner = context.resolve_type_inner(value, &self.valid_expression_set)?;
-        let crate::TypeInner::Scalar(value_scalar) = *value_inner else {
-            log::error!("Atomic operand type {:?}", *value_inner);
-            return Err(AtomicError::InvalidOperand(value)
-                .with_span_handle(value, context.expressions)
-                .into_other());
+        let pointee_size = match *pointer_inner {
+            crate::TypeInner::Pointer { base, .. } => match context.types[base].inner {
+                crate::TypeInner::Vector { size, .. } => Some(size),
+                _ => None,
+            },
+            crate::TypeInner::ValuePointer { size, .. } => size,
+            _ => None,
+        };
+        let value_scalar = match (value_inner, pointee_size) {
+            (&crate::TypeInner::Scalar(scalar), None) => scalar,
+            (&crate::TypeInner::Vector { size, scalar }, Some(pointee)) if size == pointee => {
+                scalar
+            }
+            _ => {
+                log::error!("Atomic operand type {:?}", *value_inner);
+                return Err(AtomicError::InvalidOperand(value)
+                    .with_span_handle(value, context.expressions)
+                    .into_other());
+            }
         };
         if pointer_scalar != value_scalar {
             log::error!("Atomic operand type {:?}", *value_inner);
@@ -1414,6 +1444,7 @@ impl super::Validator {
                         | Ex::TensorRead { .. }
                         | Ex::TensorQuerySize { .. }
                         | Ex::IsHelperInvocation
+                        | Ex::ReadClock { .. }
                         | Ex::AttachmentRead { .. }
                         | Ex::InterpolateAt { .. }
                         | Ex::FragmentFetch { .. }

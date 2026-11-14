@@ -89,6 +89,7 @@ const fn interpolation_of(qualifier: InterpolationQualifier) -> Interpolation {
         InterpolationQualifier::Flat => Interpolation::Flat,
         InterpolationQualifier::Noperspective => Interpolation::Linear,
         InterpolationQualifier::Smooth => Interpolation::Perspective,
+        InterpolationQualifier::ExplicitInterpAmd => Interpolation::ExplicitVertexAmd,
     }
 }
 
@@ -1898,7 +1899,9 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn declare_per_vertex(&mut self) -> Result<()> {
-        if (self.per_vertex_used.is_empty() && !self.per_vertex_redeclared)
+        if (self.per_vertex_used.is_empty()
+            && !self.per_vertex_redeclared
+            && !self.per_vertex_member_redeclared)
             || !self.stage_map(|stage| {
                 matches!(
                     stage,
@@ -1956,7 +1959,7 @@ impl<'a> Lowerer<'a> {
                     other
                 }
             };
-            let ty = if super::prepass::CLIP_DISTANCES.contains(&name) {
+            let ty = if variables::clip_or_cull_distance(name) {
                 let size = match member.ty.outer_size() {
                     Some(GlslArraySize::Sized(size)) => Some(size),
                     _ => None,
@@ -2110,6 +2113,36 @@ impl<'a> Lowerer<'a> {
                 ));
             }
             self.conservative_depth = depth;
+        }
+        if self.is_per_vertex_member(symbol) {
+            self.per_vertex_member_redeclared = true;
+        } else if self
+            .analysis
+            .builtins
+            .variable(symbol)
+            .is_some_and(|row| row.builtin().is_some())
+        {
+            let without_size =
+                variables::implicitly_sized(&name) && !self.builtin_sizes.contains_key(&name);
+            if without_size {
+                self.unused_redeclarations.push((symbol, name, at));
+            } else {
+                self.global_ref(symbol, at)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn declare_unused_redeclarations(&mut self) -> Result<()> {
+        let pending = core::mem::take(&mut self.unused_redeclarations);
+        for (symbol, name, at) in pending {
+            if self.globals.contains_key(&symbol) {
+                continue;
+            }
+            self.builtin_sizes.entry(name).or_insert(1);
+            if let GlobalRef::Variable(handle) = self.global_ref(symbol, at)? {
+                self.redeclared_globals.insert(handle);
+            }
         }
         Ok(())
     }
@@ -2442,7 +2475,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
             },
             other => other,
         };
-        let ir = if super::prepass::IMPLICITLY_SIZED.contains(&name) {
+        let ir = if variables::implicitly_sized(name) {
             let size = self.with(|this| {
                 this.builtin_sizes
                     .get(name)

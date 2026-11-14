@@ -1185,6 +1185,256 @@ fn frag_depth_output_replaces_depth() -> crate::TestResult {
 }
 
 #[test]
+fn unused_redeclared_builtins_are_interface_variables() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(depth_greater) out float gl_FragDepth;
+        in float gl_ClipDistance[];
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(1.0); }",
+    )?;
+    let entry = instructions(&module, Op::EntryPoint)
+        .into_iter()
+        .next()
+        .ok_or("no entry point")?;
+    let interface: Vec<String> = entry
+        .operands
+        .iter()
+        .skip(3)
+        .filter_map(|operand| match *operand {
+            Operand::IdRef(id) => Some(name_of(&module, id)),
+            _ => None,
+        })
+        .collect();
+    for name in ["gl_FragDepth", "gl_ClipDistance", "color"] {
+        assert!(interface.iter().any(|found| found == name), "{interface:?}");
+    }
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DepthGreater
+    ));
+    assert!(!has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DepthReplacing
+    ));
+    assert!(has_capability(&module, spirv::Capability::ClipDistance));
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(depth_less) out float gl_FragDepth;
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(gl_FragDepth); }",
+    )?;
+    assert!(has_execution_mode(
+        &module,
+        spirv::ExecutionMode::DepthReplacing
+    ));
+    Ok(())
+}
+
+#[test]
+fn double_interpolants_are_rejected_where_lowered() -> crate::TestResult {
+    for call in [
+        "interpolateAtOffset(v, dvec2(0.25))",
+        "interpolateAtCentroid(v)",
+        "interpolateAtSample(v, 0)",
+    ] {
+        let error = parse(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                layout(location = 0) flat in dvec2 v;
+                layout(location = 0) out vec4 o;
+                void main() {{ o = vec4({call}, 0.0, 1.0); }}"
+            ),
+        )
+        .err()
+        .ok_or("a double interpolant is accepted")?;
+        assert!(
+            error.contains("on a double-precision interpolant is not supported"),
+            "{error}"
+        );
+    }
+    compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) flat in dvec2 v;
+        layout(location = 0) out vec4 o;
+        dvec2 unused() { return interpolateAtCentroid(v); }
+        void main() { o = vec4(1.0); }",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn qcom_array_conversions_need_arrays_of_known_length() -> crate::TestResult {
+    for call in [
+        "bitcastQCOM(packed, halves);",
+        "extractSubArrayQCOM(wide, 8, local);",
+    ] {
+        let error = parse(
+            ShaderStage::Compute,
+            &format!(
+                "#version 450
+                #extension GL_QCOM_cooperative_matrix_conversion : enable
+                #extension GL_EXT_shader_explicit_arithmetic_types : enable
+                layout(local_size_x = 64) in;
+                layout(std430, binding = 0) buffer B {{ uint packed[8]; float16_t halves[]; }};
+                layout(std430, binding = 1) buffer C {{ uint wide[]; }};
+                void main() {{
+                    uint local[8];
+                    {call}
+                }}"
+            ),
+        )
+        .err()
+        .ok_or("a runtime-sized array is accepted")?;
+        assert!(
+            error.contains("on a runtime-sized array is not supported"),
+            "{error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shader_clocks_match_glslang() -> crate::TestResult {
+    use spirv::Capability as C;
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_ARB_shader_clock : enable
+        #extension GL_EXT_shader_realtime_clock : enable
+        #extension GL_ARB_gpu_shader_int64 : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uint64_t a; uvec2 b; uint64_t c; uvec2 d; };
+        void main() {
+            a = clockARB();
+            b = clock2x32ARB();
+            c = clockRealtimeEXT();
+            d = clockRealtime2x32EXT();
+        }",
+    )?;
+    let scopes = instructions(&module, Op::ReadClockKHR)
+        .into_iter()
+        .map(|inst| {
+            inst.operands
+                .first()
+                .map(|operand| constant(&module, operand))
+        })
+        .collect::<Option<Result<Vec<u32>, _>>>()
+        .ok_or("a clock read without a scope")??;
+    assert_eq!(scopes, [3, 3, 1, 1]);
+    assert_eq!(extensions_of(&module), ["SPV_KHR_shader_clock"]);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::Int64, C::ShaderClockKHR])
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { uvec2 b; };
+        void main() { b = clock2x32ARB(); }",
+    )
+    .err()
+    .ok_or("clock2x32ARB without GL_ARB_shader_clock is accepted")?;
+    assert!(error.contains("GL_ARB_shader_clock"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn intel_integer_functions_match_glslang() -> crate::TestResult {
+    use spirv::Capability as C;
+    let module = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_INTEL_shader_integer_functions2 : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { ivec2 i; uvec2 u; uint r[8]; ivec2 s[5]; };
+        void main() {
+            r[0] = countLeadingZeros(u.x);
+            r[1] = countTrailingZeros(u.y);
+            uvec2 d = absoluteDifference(i, i.yx) + absoluteDifference(u, u.yx);
+            r[2] = d.x;
+            s[0] = addSaturate(i, i);
+            s[1] = subtractSaturate(i, i.yx);
+            s[2] = average(i, i.yx);
+            s[3] = averageRounded(i, i.yx);
+            s[4] = multiply32x16(i, i.yx);
+            r[3] = addSaturate(u.x, 1u) + multiply32x16(u.y, 2u);
+        }",
+    )?;
+    for (op, count) in [
+        (Op::UCountLeadingZerosINTEL, 1),
+        (Op::UCountTrailingZerosINTEL, 1),
+        (Op::AbsISubINTEL, 1),
+        (Op::AbsUSubINTEL, 1),
+        (Op::IAddSatINTEL, 1),
+        (Op::UAddSatINTEL, 1),
+        (Op::ISubSatINTEL, 1),
+        (Op::IAverageINTEL, 1),
+        (Op::IAverageRoundedINTEL, 1),
+        (Op::IMul32x16INTEL, 1),
+        (Op::UMul32x16INTEL, 1),
+    ] {
+        assert_eq!(instructions(&module, op).len(), count, "{op:?}");
+    }
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_INTEL_shader_integer_functions2"]
+    );
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::IntegerFunctions2INTEL])
+    );
+    Ok(())
+}
+
+#[test]
+fn amd_barycentrics_match_glslang() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_explicit_vertex_parameter : enable
+        layout(location = 0) out vec4 o;
+        void main() {
+            vec2 a = gl_BaryCoordNoPerspAMD + gl_BaryCoordNoPerspCentroidAMD + gl_BaryCoordNoPerspSampleAMD;
+            vec2 b = gl_BaryCoordSmoothAMD + gl_BaryCoordSmoothCentroidAMD + gl_BaryCoordSmoothSampleAMD;
+            o = vec4(a + b, gl_BaryCoordPullModelAMD.xy);
+        }",
+    )?;
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_AMD_shader_explicit_vertex_parameter"]
+    );
+    use spirv::BuiltIn as B;
+    for (name, builtin) in [
+        ("gl_BaryCoordNoPerspAMD", B::BaryCoordNoPerspAMD),
+        (
+            "gl_BaryCoordNoPerspCentroidAMD",
+            B::BaryCoordNoPerspCentroidAMD,
+        ),
+        ("gl_BaryCoordNoPerspSampleAMD", B::BaryCoordNoPerspSampleAMD),
+        ("gl_BaryCoordSmoothAMD", B::BaryCoordSmoothAMD),
+        (
+            "gl_BaryCoordSmoothCentroidAMD",
+            B::BaryCoordSmoothCentroidAMD,
+        ),
+        ("gl_BaryCoordSmoothSampleAMD", B::BaryCoordSmoothSampleAMD),
+        ("gl_BaryCoordPullModelAMD", B::BaryCoordPullModelAMD),
+    ] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name)?,
+            [(Decoration::BuiltIn, vec![builtin as u32])],
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,
@@ -6285,6 +6535,72 @@ fn shader_ballot_uses_the_khr_extensions() -> crate::TestResult {
 }
 
 #[test]
+fn gpu_shader5_votes_match_glslang() -> crate::TestResult {
+    use spirv::Capability as C;
+    let source = "#version 450
+        #extension GL_NV_gpu_shader5 : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { bool b; bool c; bool d; };
+        void main() {
+            b = anyThreadNV(b);
+            c = allThreadsNV(c);
+            d = allThreadsEqualNV(d);
+        }";
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    for op in [
+        Op::SubgroupAnyKHR,
+        Op::SubgroupAllKHR,
+        Op::SubgroupAllEqualKHR,
+    ] {
+        assert_eq!(instructions(&module, op).len(), 1, "{op:?}");
+    }
+    assert_eq!(extensions_of(&module), ["SPV_KHR_subgroup_vote"]);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::SubgroupVoteKHR])
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        &source.replace("#extension GL_NV_gpu_shader5 : enable", ""),
+    )
+    .err()
+    .ok_or("anyThreadNV without GL_NV_gpu_shader5 is accepted")?;
+    assert!(error.contains("GL_NV_gpu_shader5"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn simd_group_size_is_the_signed_subgroup_size() -> crate::TestResult {
+    use spirv::Capability as C;
+    let source = "#version 450
+        #extension GL_AMD_gcn_shader : enable
+        layout(local_size_x = 8) in;
+        layout(std430, binding = 0) buffer B { int size; };
+        void main() { size = gl_SIMDGroupSizeAMD; }";
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    assert_eq!(extensions_of(&module), ["SPV_KHR_shader_ballot"]);
+    assert_eq!(
+        capabilities_of(&module),
+        sorted(vec![C::Shader, C::SubgroupBallotKHR])
+    );
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_SIMDGroupSizeAMD")?,
+        [(
+            Decoration::BuiltIn,
+            vec![spirv::BuiltIn::SubgroupSize as u32]
+        )]
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        &source.replace("#extension GL_AMD_gcn_shader : enable", ""),
+    )
+    .err()
+    .ok_or("gl_SIMDGroupSizeAMD without GL_AMD_gcn_shader is accepted")?;
+    assert!(error.contains("GL_AMD_gcn_shader"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn rotate_partition_and_quad_control_match_glslang() -> crate::TestResult {
     use spirv::{Capability as C, GroupOperation as G};
     let module = compile_valid_1_3(
@@ -6745,6 +7061,118 @@ fn view_index_needs_multiview() -> crate::TestResult {
     )?;
     let view = named(&module, "gl_ViewIndex")?;
     assert!(!has_decoration(&module, view, Decoration::Flat));
+    Ok(())
+}
+
+#[test]
+fn ovr_view_id_is_the_view_index() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_OVR_multiview2 : enable
+        layout(location = 0) out vec4 color;
+        void main() { color = vec4(gl_ViewID_OVR, 0, 0, 0); }",
+    )?;
+    assert!(has_capability(&module, spirv::Capability::MultiView));
+    assert_eq!(extensions_of(&module), ["SPV_KHR_multiview"]);
+    let view = named(&module, "gl_ViewID_OVR")?;
+    assert!(has_decoration(&module, view, Decoration::Flat));
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_ViewID_OVR")?,
+        [
+            (Decoration::BuiltIn, vec![spirv::BuiltIn::ViewIndex as u32]),
+            (Decoration::Flat, vec![]),
+        ]
+    );
+    compile_valid(
+        ShaderStage::Vertex,
+        "#version 450
+        #extension GL_OVR_multiview : enable
+        void main() { gl_Position = vec4(float(gl_ViewID_OVR)); }",
+    )?;
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_Position = vec4(float(gl_ViewID_OVR)); }",
+    )
+    .err()
+    .ok_or("gl_ViewID_OVR without GL_OVR_multiview is accepted")?;
+    assert!(error.contains("GL_OVR_multiview"), "{error}");
+    let error = parse(
+        ShaderStage::Geometry,
+        "#version 450
+        #extension GL_OVR_multiview : enable
+        layout(points) in;
+        layout(points, max_vertices = 1) out;
+        void main() { gl_Layer = int(gl_ViewID_OVR); EmitVertex(); }",
+    )
+    .err()
+    .ok_or("gl_ViewID_OVR is declared in geometry shaders")?;
+    assert!(error.contains("gl_ViewID_OVR"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn micro_triangle_hit_kinds_are_declared_in_every_stage() -> crate::TestResult {
+    let source = |main: &str| {
+        format!(
+            "#version 460
+            layout(location = 0) out vec4 color;
+            void main() {{ {main} }}"
+        )
+    };
+    for (stage, main) in [
+        (
+            ShaderStage::Vertex,
+            "gl_Position = vec4(float(gl_HitKindFrontFacingMicroTriangleNV));",
+        ),
+        (
+            ShaderStage::Fragment,
+            "color = vec4(float(gl_HitKindBackFacingMicroTriangleNV));",
+        ),
+        (
+            ShaderStage::Compute,
+            "color = vec4(float(gl_HitKindFrontFacingMicroTriangleNV));",
+        ),
+    ] {
+        let source = source(main);
+        let source = if stage == ShaderStage::Compute {
+            source.replace("layout(location = 0) out vec4 color;", "vec4 color;")
+        } else {
+            source
+        };
+        let module = compile_valid(stage, &source)?;
+        assert!(has_capability(
+            &module,
+            spirv::Capability::RayTracingDisplacementMicromapNV
+        ));
+        assert_eq!(extensions_of(&module), ["SPV_NV_displacement_micromap"]);
+    }
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        &source("color = vec4(float(gl_HitKindBackFacingMicroTriangleNV));"),
+    )?;
+    assert_eq!(
+        sorted_variable_decorations(&module, "gl_HitKindBackFacingMicroTriangleNV")?,
+        [
+            (
+                Decoration::BuiltIn,
+                vec![spirv::BuiltIn::HitKindBackFacingMicroTriangleNV as u32]
+            ),
+            (Decoration::Flat, vec![]),
+        ]
+    );
+    let error = parse(
+        ShaderStage::Vertex,
+        "#version 450
+        void main() { gl_Position = vec4(float(gl_HitKindFrontFacingMicroTriangleNV)); }",
+    )
+    .err()
+    .ok_or("gl_HitKindFrontFacingMicroTriangleNV is declared in GLSL 450")?;
+    assert!(
+        error.contains("gl_HitKindFrontFacingMicroTriangleNV"),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -9330,6 +9758,62 @@ fn float_atomics() -> crate::TestResult {
 }
 
 #[test]
+fn half_vector_atomics_match_glslang() -> crate::TestResult {
+    let source = "#version 450
+        #extension GL_NV_shader_atomic_fp16_vector : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        layout(local_size_x = 4) in;
+        layout(std430, binding = 0) buffer B { f16vec2 a; f16vec4 b; f16vec2 r2; f16vec4 r4; };
+        shared f16vec2 s;
+        void main() {
+            r2 = atomicAdd(a, f16vec2(1.0));
+            r4 = atomicMin(b, f16vec4(2.0));
+            atomicMax(a, f16vec2(3.0));
+            r4 = atomicExchange(b, r4);
+            r2 += atomicAdd(s, a);
+        }";
+    let words = valid_words(ShaderStage::Compute, source, (1, 3), "vulkan1.1")?;
+    assert_eq!(opcode_count(&words, Op::AtomicFAddEXT), 2);
+    assert_eq!(opcode_count(&words, Op::AtomicFMinEXT), 1);
+    assert_eq!(opcode_count(&words, Op::AtomicFMaxEXT), 1);
+    assert_eq!(opcode_count(&words, Op::AtomicExchange), 1);
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::AtomicFloat16VectorNV
+    ));
+    for capability in [
+        spirv::Capability::AtomicFloat16AddEXT,
+        spirv::Capability::AtomicFloat16MinMaxEXT,
+    ] {
+        assert!(!declares_capability(&words, capability), "{capability:?}");
+    }
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_KHR_16bit_storage", "SPV_NV_shader_atomic_fp16_vector"]
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        &source.replace("#extension GL_NV_shader_atomic_fp16_vector : enable", ""),
+    )
+    .err()
+    .ok_or("f16vec2 atomics without GL_NV_shader_atomic_fp16_vector are accepted")?;
+    assert!(error.contains("GL_NV_shader_atomic_fp16_vector"), "{error}");
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_NV_shader_atomic_fp16_vector : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        layout(std430, binding = 0) buffer B { f16vec3 a; };
+        void main() { atomicAdd(a, f16vec3(1.0)); }",
+    )
+    .err()
+    .ok_or("f16vec3 atomics are accepted")?;
+    assert!(error.contains("atomicAdd"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn sixty_four_bit_images() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Compute,
@@ -9784,6 +10268,44 @@ fn precise_tells_struct_members_apart_past_the_tenth() -> crate::TestResult {
             decorated_ops(&module, Decoration::NoContraction),
             [expected],
             "{member}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn image_and_texture_results_take_the_precision_glslang_gives_them() -> crate::TestResult {
+    let compile = |call: &str| {
+        compile_valid(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                #extension GL_ARB_texture_query_lod : enable
+                #extension GL_AMD_shader_image_load_store_lod : enable
+                layout(binding = 0) uniform mediump sampler2D s;
+                layout(binding = 1, rgba8) uniform mediump image2D img;
+                layout(location = 0) in highp vec2 uv;
+                layout(location = 0) out highp vec4 o;
+                void main() {{
+                    highp ivec2 c = ivec2(uv);
+                    highp vec2 p = uv * 2.0;
+                    {call}
+                }}"
+            ),
+        )
+    };
+    let module = compile("o = imageLoadLodAMD(img, c, 0);")?;
+    assert!(decorated_ops(&module, Decoration::RelaxedPrecision).contains(&Op::ImageRead));
+    let module = compile("o = imageLoad(img, c);")?;
+    assert!(decorated_ops(&module, Decoration::RelaxedPrecision).contains(&Op::ImageRead));
+    for call in [
+        "o = vec4(textureQueryLOD(s, p), 0.0, 1.0);",
+        "o = vec4(textureQueryLod(s, p), 0.0, 1.0);",
+    ] {
+        let module = compile(call)?;
+        assert!(
+            !decorated_ops(&module, Decoration::RelaxedPrecision).contains(&Op::ImageQueryLod),
+            "{call}"
         );
     }
     Ok(())

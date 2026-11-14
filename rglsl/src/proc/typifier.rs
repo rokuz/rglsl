@@ -1018,6 +1018,14 @@ impl<'a> ResolveContext<'a> {
             crate::Expression::IsHelperInvocation => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
+            crate::Expression::ReadClock { pair, .. } => TypeResolution::Value(if pair {
+                Ti::Vector {
+                    size: crate::VectorSize::Bi,
+                    scalar: crate::Scalar::U32,
+                }
+            } else {
+                Ti::Scalar(crate::Scalar::U64)
+            }),
             crate::Expression::InterpolateAt { pointer, .. } => {
                 match *past(pointer)?.inner_with(types) {
                     Ti::Pointer { base, .. } => TypeResolution::Handle(base),

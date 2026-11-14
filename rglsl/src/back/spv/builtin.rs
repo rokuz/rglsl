@@ -215,6 +215,19 @@ impl Writer {
                     BuiltIn::BaryCoordNoPerspKHR
                 }
             }
+            Bi::AmdBarycentric(barycentric) => {
+                use rglsl_types::builtin::AmdBarycentric as Amd;
+                self.use_extension("SPV_AMD_shader_explicit_vertex_parameter");
+                match barycentric {
+                    Amd::NoPerspective => BuiltIn::BaryCoordNoPerspAMD,
+                    Amd::NoPerspectiveCentroid => BuiltIn::BaryCoordNoPerspCentroidAMD,
+                    Amd::NoPerspectiveSample => BuiltIn::BaryCoordNoPerspSampleAMD,
+                    Amd::Smooth => BuiltIn::BaryCoordSmoothAMD,
+                    Amd::SmoothCentroid => BuiltIn::BaryCoordSmoothCentroidAMD,
+                    Amd::SmoothSample => BuiltIn::BaryCoordSmoothSampleAMD,
+                    Amd::PullModel => BuiltIn::BaryCoordPullModelAMD,
+                }
+            }
             Bi::SampleIndex => {
                 self.require_any(
                     "`sample_index` built-in",

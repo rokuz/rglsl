@@ -120,6 +120,7 @@ pub(crate) const u16vec2: Word = vector(Scalar::Uint16, 2);
 pub(crate) const u16vec3: Word = vector(Scalar::Uint16, 3);
 pub(crate) const u16vec4: Word = vector(Scalar::Uint16, 4);
 pub(crate) const f16vec2: Word = vector(Scalar::Float16, 2);
+pub(crate) const f16vec4: Word = vector(Scalar::Float16, 4);
 pub(crate) const fe2m1vec2: Word = vector(Scalar::FloatE2M1, 2);
 pub(crate) const fe2m1vec4: Word = vector(Scalar::FloatE2M1, 4);
 pub(crate) const fe3m2vec4: Word = vector(Scalar::FloatE3M2, 4);
