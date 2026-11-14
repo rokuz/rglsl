@@ -1234,6 +1234,40 @@ fn unused_redeclared_builtins_are_interface_variables() -> crate::TestResult {
 }
 
 #[test]
+fn double_interpolants_are_rejected_where_lowered() -> crate::TestResult {
+    for call in [
+        "interpolateAtOffset(v, dvec2(0.25))",
+        "interpolateAtCentroid(v)",
+        "interpolateAtSample(v, 0)",
+    ] {
+        let error = parse(
+            ShaderStage::Fragment,
+            &format!(
+                "#version 450
+                layout(location = 0) flat in dvec2 v;
+                layout(location = 0) out vec4 o;
+                void main() {{ o = vec4({call}, 0.0, 1.0); }}"
+            ),
+        )
+        .err()
+        .ok_or("a double interpolant is accepted")?;
+        assert!(
+            error.contains("on a double-precision interpolant is not supported"),
+            "{error}"
+        );
+    }
+    compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) flat in dvec2 v;
+        layout(location = 0) out vec4 o;
+        dvec2 unused() { return interpolateAtCentroid(v); }
+        void main() { o = vec4(1.0); }",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,

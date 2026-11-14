@@ -2095,6 +2095,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         let first = arguments.first().ok_or_else(|| internal(at))?;
+        let double =
+            self.with(|this| this.info(first))??.ty.base_scalar() == Some(GlslScalar::Double);
+        if double {
+            let name = match interpolation {
+                InterpolateAt::Centroid => "interpolateAtCentroid",
+                InterpolateAt::Sample => "interpolateAtSample",
+                InterpolateAt::Offset => "interpolateAtOffset",
+            };
+            return Err(semantic(
+                format!(
+                    "`{name}` on a double-precision interpolant is not supported: the GLSL.std.450 interpolation instructions take 32-bit floats"
+                ),
+                at,
+            ));
+        }
         let super::expression::Chain::Place(place) = {
             let frame = self.clone().chain(first);
             self.nest(frame).await
