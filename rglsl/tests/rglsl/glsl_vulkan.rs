@@ -1268,6 +1268,37 @@ fn double_interpolants_are_rejected_where_lowered() -> crate::TestResult {
 }
 
 #[test]
+fn qcom_array_conversions_need_arrays_of_known_length() -> crate::TestResult {
+    for call in [
+        "bitcastQCOM(packed, halves);",
+        "extractSubArrayQCOM(wide, 8, local);",
+    ] {
+        let error = parse(
+            ShaderStage::Compute,
+            &format!(
+                "#version 450
+                #extension GL_QCOM_cooperative_matrix_conversion : enable
+                #extension GL_EXT_shader_explicit_arithmetic_types : enable
+                layout(local_size_x = 64) in;
+                layout(std430, binding = 0) buffer B {{ uint packed[8]; float16_t halves[]; }};
+                layout(std430, binding = 1) buffer C {{ uint wide[]; }};
+                void main() {{
+                    uint local[8];
+                    {call}
+                }}"
+            ),
+        )
+        .err()
+        .ok_or("a runtime-sized array is accepted")?;
+        assert!(
+            error.contains("on a runtime-sized array is not supported"),
+            "{error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,

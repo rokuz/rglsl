@@ -1,7 +1,7 @@
-use alloc::vec::Vec;
+use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::Expression as AstExpression;
-use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
+use rglsl_sema::types::{ArraySize as GlslArraySize, Scalar as GlslScalar, Type as GlslType};
 use rglsl_sema::{Callee, CooperativeCall, MatrixCall, QcomConversion, TensorCall};
 use rglsl_types::extension::Extension;
 
@@ -12,7 +12,7 @@ use super::builtins::{
 };
 use super::function::FunctionLowerer;
 use super::types::scalar;
-use super::{Result, internal, unsupported};
+use super::{Result, internal, semantic, unsupported};
 use crate::{
     ArrayConversion, BinaryOperator, CooperativeData, CooperativeFamily, CooperativeMatrixFunction,
     CooperativeVectorBias, CooperativeVectorFunction, CooperativeVectorMatMul, Expression, Handle,
@@ -333,6 +333,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     QcomConversion::VectorToMatrix => (ArrayConversion::ToCooperativeMatrix, 1),
                     QcomConversion::MatrixToVector => (ArrayConversion::FromCooperativeMatrix, 1),
                 };
+                let name = match conversion {
+                    ArrayConversion::Bitcast => Some("bitcastQCOM"),
+                    ArrayConversion::SubArray => Some("extractSubArrayQCOM"),
+                    ArrayConversion::ToCooperativeMatrix
+                    | ArrayConversion::FromCooperativeMatrix => None,
+                };
+                if let Some(name) = name {
+                    for array in [argument(0)?, argument(target)?] {
+                        let size = self.with(|this| this.info(array))??.ty.outer_size();
+                        if size == Some(GlslArraySize::Unsized) {
+                            return Err(semantic(
+                                format!(
+                                    "`{name}` on a runtime-sized array is not supported: the SPV_QCOM_cooperative_matrix_conversion array instructions take arrays of known length"
+                                ),
+                                at,
+                            ));
+                        }
+                    }
+                }
                 let expr = {
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
