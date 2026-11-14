@@ -684,6 +684,14 @@ impl Probe {
             self.required.push(chosen);
         }
     }
+
+    fn require_any(&mut self, extensions: &[rglsl_types::extension::Extension]) {
+        let names: Vec<&str> = extensions
+            .iter()
+            .map(|extension| extension.name())
+            .collect();
+        self.require(&names.join(","));
+    }
 }
 
 fn probe(builtins: &Arc<Builtins>, case: &Case, source: &str, spirv: (u8, u8)) -> Probe {
@@ -709,7 +717,7 @@ fn probe(builtins: &Arc<Builtins>, case: &Case, source: &str, spirv: (u8, u8)) -
     let (unit, failure) = rglsl_ast::parse_prefix(text);
     if let Some(failure) = failure {
         if let rglsl_ast::ParseErrorKind::ExtensionRequired { extensions, .. } = &failure.kind {
-            probe.require(extensions);
+            probe.require_any(extensions);
         }
         return probe;
     }
@@ -722,7 +730,7 @@ fn probe(builtins: &Arc<Builtins>, case: &Case, source: &str, spirv: (u8, u8)) -
     let analysis = rglsl_sema::analyze_with_builtins(&unit, &options, builtins);
     for diagnostic in &analysis.diagnostics {
         if let DiagnosticKind::ExtensionRequired { extensions, .. } = &diagnostic.kind {
-            probe.require(extensions);
+            probe.require_any(extensions);
         } else if diagnostic.kind.to_string().contains("constant") {
             probe.wants_constants = true;
         }
