@@ -285,6 +285,24 @@ fn packing_small_integers_is_a_bitcast() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn ldexp_takes_a_16_bit_exponent() -> TestResult {
+    let source = "#version 450
+        #extension GL_EXT_shader_explicit_arithmetic_types : require
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { f16vec2 x; i16vec2 e; float16_t s; int16_t k; };
+        void main() {
+            x = ldexp(x, e);
+            s = ldexp(s, k) + ldexp(float16_t(1.5), int16_t(3));
+        }";
+    for target in [Target::Vulkan11, Target::Vulkan13] {
+        let summary = valid_like_glslang(ShaderStage::Compute, target, source)?;
+        assert!(summary.capabilities.contains("Int16"), "{summary:?}");
+        assert!(!opcode(&summary, Op::SConvert), "{summary:?}");
+    }
+    Ok(())
+}
+
 fn footprint_operands(words: &[u32]) -> TestResult<Vec<String>> {
     let module = dr::load_words(words)?;
     Ok(module

@@ -455,15 +455,6 @@ impl FunctionLowerer<'_, '_> {
         }
         let fun = math(name, values.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        if name == "ldexp" {
-            let narrow = types
-                .get(1)
-                .and_then(GlslType::base_scalar)
-                .is_some_and(|exponent| exponent.bits() < 32);
-            if narrow && let Some(exponent) = values.get_mut(1) {
-                *exponent = self.as_kind(*exponent, crate::Scalar::I32, at)?;
-            }
-        }
         if let Some(size) = vector {
             let splatted = matches!(
                 name,

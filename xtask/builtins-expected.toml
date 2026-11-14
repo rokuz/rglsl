@@ -16,12 +16,6 @@ verdicts = ["extensions-differ"]
 reason = "bug: the int16 exponent of frexp is computed in 32 bits through SConvert, glslang uses SPV_AMD_gpu_shader_int16"
 
 [[divergence]]
-name = "ldexp"
-signature = "16"
-verdicts = ["capabilities-differ"]
-reason = "bug: the int16 exponent of ldexp is widened through SConvert and the Int16 capability is not declared"
-
-[[divergence]]
 name = "findLSB"
 verdicts = ["capabilities-differ"]
 reason = "bug: 8- and 16-bit findLSB is widened through SConvert and the Int8/Int16 capability is not declared"
