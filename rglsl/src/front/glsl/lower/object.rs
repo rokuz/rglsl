@@ -314,10 +314,11 @@ impl Lowerer<'_> {
 
     pub(super) fn is_deferrable(&self, id: FunctionId) -> bool {
         self.object
+            && !self.library
             && self
                 .reachable
                 .as_ref()
-                .is_none_or(|reachable| !reachable.contains(&id))
+                .is_some_and(|reachable| !reachable.contains(&id))
     }
 
     pub(super) fn defer_function(&mut self, handle: Handle<Function>, message: String) {
