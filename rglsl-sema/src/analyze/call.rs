@@ -1878,7 +1878,10 @@ impl Analyzer<'_> {
 
 fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
     if ty.is_array()
-        || !matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. })
+        || !matches!(
+            ty.kind,
+            TypeKind::Scalar(_) | TypeKind::Vector { .. } | TypeKind::LongVector { .. }
+        )
         || !ty.base_scalar().is_some_and(Scalar::is_microscaling)
     {
         return false;

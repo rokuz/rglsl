@@ -5955,6 +5955,16 @@ void main() {
     floate2m1_t b = floate2m1_t(a);
     float g = floatue8m0_t(1.0);
 }
+### microscaling long vectors are not converted at run time | comp 450 | 8:InvalidConstructor
+#extension GL_EXT_float_e2m1 : require
+#extension GL_EXT_long_vector : require
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer B { vector<float, 8> v; uint r; };
+void main() {
+    vector<floate2m1_t, 8> same = vector<floate2m1_t, 8>(1.0);
+    r = packFloat8xfe2m1EXT(vector<floate2m1_t, 8>(v));
+    r += packFloat8xfe2m1EXT(vector<floate2m1_t, 8>(same));
+}
 ### precision statements and precise | frag 450 | ok
 precision mediump float;
 precision lowp sampler2D;
