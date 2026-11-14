@@ -1,6 +1,8 @@
 use rglsl_ast::ast::PrecisionQualifier::{High, Medium};
 use rglsl_types::builtin::BuiltIn::*;
-use rglsl_types::builtin::{ShaderBallot as Ballot, ShaderCore as Core, SubgroupMask as Mask};
+use rglsl_types::builtin::{
+    AmdBarycentric as Amd, ShaderBallot as Ballot, ShaderCore as Core, SubgroupMask as Mask,
+};
 use rglsl_types::extension::Extension::{self, *};
 use rglsl_types::flavor::{BarycentricFlavor as Bary, FragmentDensityFlavor as Density};
 
@@ -106,6 +108,34 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_BaryCoordNoPerspEXT": Input(Barycentric { perspective: false, flavor: Bary::Khr }) => vec3 {
         stages: FRAGMENT,
         requires_one_of: &[ExtFragmentShaderBarycentric],
+    }
+    "gl_BaryCoordNoPerspAMD": Input(AmdBarycentric(Amd::NoPerspective)) => vec2 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
+    }
+    "gl_BaryCoordNoPerspCentroidAMD": Input(AmdBarycentric(Amd::NoPerspectiveCentroid)) => vec2 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
+    }
+    "gl_BaryCoordNoPerspSampleAMD": Input(AmdBarycentric(Amd::NoPerspectiveSample)) => vec2 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
+    }
+    "gl_BaryCoordSmoothAMD": Input(AmdBarycentric(Amd::Smooth)) => vec2 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
+    }
+    "gl_BaryCoordSmoothCentroidAMD": Input(AmdBarycentric(Amd::SmoothCentroid)) => vec2 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
+    }
+    "gl_BaryCoordSmoothSampleAMD": Input(AmdBarycentric(Amd::SmoothSample)) => vec2 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
+    }
+    "gl_BaryCoordPullModelAMD": Input(AmdBarycentric(Amd::PullModel)) => vec3 {
+        stages: FRAGMENT,
+        requires_one_of: &[AmdShaderExplicitVertexParameter],
     }
     "gl_ViewportIndex": Output(ViewportIndex) => int {
         stages: VERTEX | TESSELLATION,

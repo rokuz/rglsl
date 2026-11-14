@@ -1393,6 +1393,48 @@ fn intel_integer_functions_match_glslang() -> crate::TestResult {
 }
 
 #[test]
+fn amd_barycentrics_match_glslang() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_explicit_vertex_parameter : enable
+        layout(location = 0) out vec4 o;
+        void main() {
+            vec2 a = gl_BaryCoordNoPerspAMD + gl_BaryCoordNoPerspCentroidAMD + gl_BaryCoordNoPerspSampleAMD;
+            vec2 b = gl_BaryCoordSmoothAMD + gl_BaryCoordSmoothCentroidAMD + gl_BaryCoordSmoothSampleAMD;
+            o = vec4(a + b, gl_BaryCoordPullModelAMD.xy);
+        }",
+    )?;
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_AMD_shader_explicit_vertex_parameter"]
+    );
+    use spirv::BuiltIn as B;
+    for (name, builtin) in [
+        ("gl_BaryCoordNoPerspAMD", B::BaryCoordNoPerspAMD),
+        (
+            "gl_BaryCoordNoPerspCentroidAMD",
+            B::BaryCoordNoPerspCentroidAMD,
+        ),
+        ("gl_BaryCoordNoPerspSampleAMD", B::BaryCoordNoPerspSampleAMD),
+        ("gl_BaryCoordSmoothAMD", B::BaryCoordSmoothAMD),
+        (
+            "gl_BaryCoordSmoothCentroidAMD",
+            B::BaryCoordSmoothCentroidAMD,
+        ),
+        ("gl_BaryCoordSmoothSampleAMD", B::BaryCoordSmoothSampleAMD),
+        ("gl_BaryCoordPullModelAMD", B::BaryCoordPullModelAMD),
+    ] {
+        assert_eq!(
+            sorted_variable_decorations(&module, name)?,
+            [(Decoration::BuiltIn, vec![builtin as u32])],
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn switch_fall_through_after_grouped_labels() -> crate::TestResult {
     let module = compile(
         ShaderStage::Fragment,

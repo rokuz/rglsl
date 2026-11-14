@@ -24,6 +24,20 @@ pub enum SubgroupMask {
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub enum AmdBarycentric {
+    NoPerspective,
+    NoPerspectiveCentroid,
+    NoPerspectiveSample,
+    Smooth,
+    SmoothCentroid,
+    SmoothSample,
+    PullModel,
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ShaderBallot {
     Size,
     InvocationId,
@@ -108,6 +122,8 @@ pub enum BuiltIn {
         perspective: bool,
         flavor: BarycentricFlavor,
     },
+    /// Read in fragment shaders
+    AmdBarycentric(AmdBarycentric),
     /// Read in fragment shaders
     SampleIndex,
     /// Read or written in fragment shaders
@@ -424,7 +440,10 @@ impl BuiltIn {
             Self::FrontFacing | Self::HelperInvocation | Self::FullyCovered => {
                 input(FRAGMENT, BOOL)
             }
-            Self::Barycentric { .. } => input(FRAGMENT, VEC3),
+            Self::Barycentric { .. } | Self::AmdBarycentric(AmdBarycentric::PullModel) => {
+                input(FRAGMENT, VEC3)
+            }
+            Self::AmdBarycentric(_) => input(FRAGMENT, VEC2),
             Self::SampleIndex => input(FRAGMENT, INDEX),
             Self::SampleMask { .. } => access(
                 FRAGMENT,
