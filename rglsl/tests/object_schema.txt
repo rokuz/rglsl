@@ -1,4 +1,4 @@
-FORMAT_VERSION 19
+FORMAT_VERSION 20
 AddressSpace d34f1902a20913ee
 Arena 283cda9d7570b2b9
 ArrayConversion 0a417e8dd0771234
@@ -60,7 +60,7 @@ Function df7557497317fdf7
 FunctionArgument b85ab3ef72cc06ee
 FunctionControl 61b3c9ece8e2bfb3
 FunctionResult 80afa83135ea2ac0
-FunctionSymbol 6de7ae34a7ec765f
+FunctionSymbol 8aff0a3dddab0277
 GatherMode d35f70413a8bea31
 GeometryInfo c31985b29083461e
 GeometryInputPrimitive e005d048eed94469

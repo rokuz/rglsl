@@ -5,7 +5,9 @@ use rglsl::front::glsl::{Frontend, Options};
 use rglsl::object::ObjectModule;
 use rglsl::valid::{Capabilities, ValidationFlags, Validator};
 use rglsl::{AddressSpace, ShaderStage, TypeInner};
-use rglsl_link::{Linked, Options as LinkOptions, decode, encode, link_objects, validate_object};
+use rglsl_link::{
+    LinkError, Linked, Options as LinkOptions, decode, encode, link_objects, validate_object,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -384,4 +386,64 @@ void main() { color = texture(sampler1D(used_texture, used_sampler), 0.5); }
 ",
         true,
     )
+}
+
+const INVALID_HELPER: &str = "#extension GL_ARB_gpu_shader_fp64 : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_float64 : enable
+layout(location = 1) in flat f64vec2 shifted;
+f64vec2 offsetted() { return interpolateAtOffset(shifted, f64vec2(0.5)); }
+";
+
+#[test]
+fn invalid_functions_nobody_calls_link() -> TestResult {
+    assert_same(
+        ShaderStage::Fragment,
+        &format!(
+            "#version 450
+{INVALID_HELPER}layout(location = 0) out vec4 color;
+void main() {{ color = vec4(1.0); }}
+"
+        ),
+        false,
+    )
+}
+
+#[test]
+fn invalid_functions_are_reported_when_linked_code_calls_them() -> TestResult {
+    let library = compile(
+        ShaderStage::Fragment,
+        true,
+        &format!("#version 450\n{INVALID_HELPER}"),
+    )?;
+    let calling = compile(
+        ShaderStage::Fragment,
+        false,
+        "#version 450
+#extension GL_ARB_gpu_shader_fp64 : enable
+layout(location = 0) out vec4 color;
+dvec2 offsetted();
+void main() { color = vec4(float(offsetted().x)); }
+",
+    )?;
+    let errors = match link_objects(&[calling, library.clone()], &LinkOptions::default()) {
+        Ok(_) => return Err("linking succeeded".into()),
+        Err(errors) => errors.errors,
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [LinkError::InvalidFunction { signature, .. }] if signature == "offsetted()"
+        ),
+        "{errors:?}"
+    );
+    let ignoring = compile(
+        ShaderStage::Fragment,
+        false,
+        "#version 450
+layout(location = 0) out vec4 color;
+void main() { color = vec4(1.0); }
+",
+    )?;
+    only_stage(&[ignoring, library])?;
+    Ok(())
 }

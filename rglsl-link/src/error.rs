@@ -22,6 +22,8 @@ pub enum LinkError {
         "function `{0}` is declared with a different return type or parameter qualifiers than its definition"
     )]
     SignatureMismatch(String),
+    #[error("function `{signature}` cannot be linked: {message}")]
+    InvalidFunction { signature: String, message: String },
     #[error("Recursion detected: {0}")]
     Recursion(String),
     #[error("global `{name}`: {what} must match across modules")]

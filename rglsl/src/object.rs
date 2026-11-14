@@ -11,7 +11,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 19;
+pub const FORMAT_VERSION: u32 = 20;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -288,6 +288,9 @@ pub struct FunctionSymbol {
     pub signature: String,
     pub result: String,
     pub qualifiers: Vec<ParameterQualifier>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    pub invalid: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
