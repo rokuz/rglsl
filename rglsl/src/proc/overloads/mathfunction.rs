@@ -21,7 +21,9 @@ impl ir::MathFunction {
             Mf::Min | Mf::Max => regular!(2, SCALAR|VECN of NUMERIC).into(),
 
             // Component-wise ternary numeric operations
-            Mf::Clamp => regular!(3, SCALAR|VECN of NUMERIC).into(),
+            Mf::Clamp | Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
+                regular!(3, SCALAR|VECN of NUMERIC).into()
+            }
 
             // Component-wise unary floating-point operations
             Mf::Sin

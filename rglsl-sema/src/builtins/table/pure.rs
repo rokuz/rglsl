@@ -222,6 +222,36 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         flags: flags!(FOLD, COOPERATIVE_VECTOR, FUZZ),
         floats: DoublesAndHalves,
     }
+    "min3": Pure(Math(Min3)) => [
+        genF(genF, genF, genF),
+        genI(genI, genI, genI),
+        genU(genU, genU, genU),
+        genI16(genI16, genI16, genI16),
+        genU16(genU16, genU16, genU16),
+    ] {
+        requires: &[AmdShaderTrinaryMinmax],
+        floats: Halves,
+    }
+    "max3": Pure(Math(Max3)) => [
+        genF(genF, genF, genF),
+        genI(genI, genI, genI),
+        genU(genU, genU, genU),
+        genI16(genI16, genI16, genI16),
+        genU16(genU16, genU16, genU16),
+    ] {
+        requires: &[AmdShaderTrinaryMinmax],
+        floats: Halves,
+    }
+    "mid3": Pure(Math(Mid3)) => [
+        genF(genF, genF, genF),
+        genI(genI, genI, genI),
+        genU(genU, genU, genU),
+        genI16(genI16, genI16, genI16),
+        genU16(genU16, genU16, genU16),
+    ] {
+        requires: &[AmdShaderTrinaryMinmax],
+        floats: Halves,
+    }
     "mix": Pure(Math(Mix)) => [genF(genF, genF, genF), genF(genF, genF, float)] {
         flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,

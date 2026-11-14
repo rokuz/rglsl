@@ -2130,7 +2130,10 @@ impl<'a> ConstantEvaluator<'a> {
             }
 
             // unimplemented
-            crate::MathFunction::Round
+            crate::MathFunction::Min3
+            | crate::MathFunction::Max3
+            | crate::MathFunction::Mid3
+            | crate::MathFunction::Round
             | crate::MathFunction::Modf
             | crate::MathFunction::Frexp
             | crate::MathFunction::AddCarry

@@ -384,3 +384,52 @@ fn lane_patterns_out_of_range_are_invalid() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn amd_shader_trinary_minmax_matches_glslang() -> TestResult {
+    let summary = matches_glslang(
+        ShaderStage::Fragment,
+        "#version 450
+        #extension GL_AMD_shader_trinary_minmax : enable
+        layout(location = 0) in vec3 a;
+        layout(location = 1) flat in ivec2 b;
+        layout(location = 2) flat in uint c;
+        layout(location = 0) out vec4 o;
+        void main() {
+            vec3 x = min3(a, a.yzx, vec3(0.5));
+            ivec2 y = max3(b, b.yx, ivec2(1));
+            uint z = mid3(c, 3u, 7u);
+            float h = mid3(a.x, a.y, 1.0);
+            ivec2 i = min3(b, ivec2(2), ivec2(3));
+            uvec3 u = max3(uvec3(c), uvec3(1), uvec3(5));
+            float k = min3(1.0, 2.0, 3.0);
+            o = vec4(x.x, y.x, z, h + i.x + u.z + k);
+        }",
+    )?;
+    for key in [
+        "SPV_AMD_shader_trinary_minmax 1 [_ _ (1056964608, 1056964608, 1056964608)]",
+        "SPV_AMD_shader_trinary_minmax 1 [1065353216 1073741824 1077936128]",
+        "SPV_AMD_shader_trinary_minmax 3 [_ (2, 2) (3, 3)]",
+        "SPV_AMD_shader_trinary_minmax 5 [_ (1, 1, 1) (5, 5, 5)]",
+        "SPV_AMD_shader_trinary_minmax 6 [_ _ (1, 1)]",
+        "SPV_AMD_shader_trinary_minmax 7 [_ _ 1065353216]",
+        "SPV_AMD_shader_trinary_minmax 8 [_ 3 7]",
+    ] {
+        assert_eq!(summary.get(key), Some(&1), "{key}: {summary:?}");
+    }
+    assert_eq!(summary.get("extension SPV_AMD_shader_trinary_minmax"), None);
+    Ok(())
+}
+
+#[test]
+fn amd_shader_trinary_minmax_needs_its_extension() -> TestResult {
+    rejected_like_glslang(
+        ShaderStage::Fragment,
+        "#version 450
+        layout(location = 0) out vec4 o;
+        void main() {
+            o = vec4(min3(1.0, 2.0, 3.0));
+        }",
+        "GL_AMD_shader_trinary_minmax",
+    )
+}

@@ -768,6 +768,9 @@ impl Analyzer<'_> {
                 | Math::Min
                 | Math::Max
                 | Math::Clamp
+                | Math::Min3
+                | Math::Max3
+                | Math::Mid3
                 | Math::Mix
                 | Math::Step
                 | Math::SmoothStep

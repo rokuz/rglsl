@@ -81,11 +81,6 @@ verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
 
 [[divergence]]
-name = "m*3"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_AMD_shader_trinary_minmax built-ins min3, max3 and mid3 are not declared"
-
-[[divergence]]
 name = "gl_BaryCoord*AMD"
 verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_shader_explicit_vertex_parameter built-in variables are not declared"

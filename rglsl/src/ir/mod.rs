@@ -1693,6 +1693,9 @@ pub enum MathFunction {
     Min,
     Max,
     Clamp,
+    Min3,
+    Max3,
+    Mid3,
     // trigonometry
     Cos,
     Cosh,

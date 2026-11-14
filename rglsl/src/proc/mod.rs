@@ -334,6 +334,7 @@ impl super::MathFunction {
             Self::Min => 2,
             Self::Max => 2,
             Self::Clamp => 3,
+            Self::Min3 | Self::Max3 | Self::Mid3 => 3,
             // trigonometry
             Self::Cos => 1,
             Self::Cosh => 1,

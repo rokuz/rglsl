@@ -14,6 +14,27 @@ use super::{
 use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 
 const SPV_AMD_GPU_SHADER_HALF_FLOAT: &str = "SPV_AMD_gpu_shader_half_float";
+const SPV_AMD_SHADER_TRINARY_MINMAX: &str = "SPV_AMD_shader_trinary_minmax";
+
+const fn trinary_minmax(
+    fun: crate::MathFunction,
+    kind: Option<crate::ScalarKind>,
+) -> Result<Word, Error> {
+    use crate::MathFunction as Mf;
+    use crate::ScalarKind as Sk;
+    Ok(match (fun, kind) {
+        (Mf::Min3, Some(Sk::Float)) => 1,
+        (Mf::Min3, Some(Sk::Uint)) => 2,
+        (Mf::Min3, Some(Sk::Sint)) => 3,
+        (Mf::Max3, Some(Sk::Float)) => 4,
+        (Mf::Max3, Some(Sk::Uint)) => 5,
+        (Mf::Max3, Some(Sk::Sint)) => 6,
+        (Mf::Mid3, Some(Sk::Float)) => 7,
+        (Mf::Mid3, Some(Sk::Uint)) => 8,
+        (Mf::Mid3, Some(Sk::Sint)) => 9,
+        _ => return Err(Error::Validation("trinary min/max of a non-numeric value")),
+    })
+}
 
 const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error> {
     match *type_inner {
@@ -1078,6 +1099,17 @@ impl BlockContext<'_> {
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UClamp,
                         _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     }),
+                    Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
+                        let op = trinary_minmax(fun, arg_scalar_kind)?;
+                        let set = self.writer.spirv_ext_import(SPV_AMD_SHADER_TRINARY_MINMAX);
+                        MathOp::Custom(Instruction::ext_inst(
+                            set,
+                            op,
+                            result_type_id,
+                            id,
+                            &[arg0_id, arg1_id, arg2_id],
+                        ))
+                    }
                     // trigonometry
                     Mf::Sin => MathOp::Ext(spirv::GlslStd450Op::Sin),
                     Mf::Sinh => MathOp::Ext(spirv::GlslStd450Op::Sinh),

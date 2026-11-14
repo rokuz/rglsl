@@ -54,14 +54,14 @@ fn variable_names(builtins: &Builtins) -> BTreeSet<String> {
 #[test]
 fn the_tables_have_the_expected_sizes() {
     let expected = [
-        (ShaderStage::Vertex, 7333, 35, 189, 225),
-        (ShaderStage::TessControl, 7334, 35, 181, 214),
-        (ShaderStage::TessEvaluation, 7333, 35, 189, 222),
-        (ShaderStage::Geometry, 7337, 35, 188, 221),
-        (ShaderStage::Fragment, 7854, 35, 197, 233),
-        (ShaderStage::Compute, 7799, 37, 179, 215),
-        (ShaderStage::Mesh, 7549, 37, 192, 226),
-        (ShaderStage::RayGeneration, 7333, 122, 171, 210),
+        (ShaderStage::Vertex, 7405, 35, 189, 225),
+        (ShaderStage::TessControl, 7406, 35, 181, 214),
+        (ShaderStage::TessEvaluation, 7405, 35, 189, 222),
+        (ShaderStage::Geometry, 7409, 35, 188, 221),
+        (ShaderStage::Fragment, 7926, 35, 197, 233),
+        (ShaderStage::Compute, 7871, 37, 179, 215),
+        (ShaderStage::Mesh, 7621, 37, 192, 226),
+        (ShaderStage::RayGeneration, 7405, 122, 171, 210),
     ];
     for (stage, functions, added, variables_450, variables_460) in expected {
         let older = builtins(450, stage);
@@ -430,7 +430,7 @@ fn every_core_function_name_is_known() {
     for name in names.split_whitespace() {
         assert!(!table.overloads(name).is_empty(), "{name}");
     }
-    assert_eq!(table.functions().names().count(), 439);
+    assert_eq!(table.functions().names().count(), 442);
 }
 
 fn storage_of(builtins: &Builtins, name: &str) -> Option<Storage> {
