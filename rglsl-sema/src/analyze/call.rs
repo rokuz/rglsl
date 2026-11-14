@@ -883,16 +883,21 @@ impl Analyzer<'_> {
                 info.output_conversion = Some(Box::new(parameter.ty.clone()));
             }
         }
-        if is_builtin && !failed {
-            if let Some(extensions) = crate::builtins::ray::function_extensions(name) {
-                failed = !self.require_extensions(span, extensions, name);
-            }
-            if let Some(extensions) = crate::builtins::ray::interacting_extension(name) {
-                failed = failed || !self.require_extensions(span, extensions, name);
-            }
+        let entry = builtin.and_then(|id| self.builtins.entry(id));
+        if !failed
+            && let Some(entry) = entry
+            && entry.kind.requirements_gate_call()
+        {
+            failed = !entry
+                .requires
+                .iter()
+                .all(|&extension| self.require_extension(span, extension, name));
         }
-        if is_builtin && !failed {
-            failed = !self.ray_builtin_checks(span, name, operands);
+        if !failed
+            && let Some(entry) = entry
+            && let BuiltinKind::Ray(ray) = entry.kind
+        {
+            failed = !self.ray_builtin_checks(span, ray, name, operands);
         }
         if is_builtin && !failed {
             failed = !self.texture_checks(span, name, operands);
@@ -919,7 +924,6 @@ impl Analyzer<'_> {
                 }
             }
         }
-        let entry = builtin.and_then(|id| self.builtins.entry(id));
         if !failed
             && let Some(entry) = entry
             && entry.has(BuiltinFlags::SUBGROUP_OPERATION)
@@ -1085,8 +1089,10 @@ impl Analyzer<'_> {
 
     pub(crate) fn builtin_extensions(&mut self, span: Span, id: BuiltinFunctionId, name: &str) {
         if let Some(entry) = self.builtins.entry(id) {
-            for &extension in entry.requires {
-                self.require_extension(span, extension, name);
+            if !entry.kind.requirements_gate_call() {
+                for &extension in entry.requires {
+                    self.require_extension(span, extension, name);
+                }
             }
             return;
         }

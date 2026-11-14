@@ -2,6 +2,9 @@ use alloc::{string::String, vec::Vec};
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::SymbolId;
+use rglsl_sema::builtins::kind::{
+    Ray, RayIntersection, RayQueryFunction as QueryFunction, RayQueryValue as QueryValue,
+};
 use rglsl_sema::scope::Storage;
 use rglsl_sema::types::{BlockId, BlockStorage, Scalar as GlslScalar, Type as GlslType};
 use rglsl_types::extension::Extension;
@@ -16,83 +19,44 @@ use crate::{
     Span, Statement,
 };
 
-fn intersection_value(name: &str) -> Option<RayQueryIntersectionValue> {
+const fn intersection(value: RayIntersection) -> RayQueryIntersectionValue {
     use RayQueryIntersectionValue as Iv;
-    match name {
-        "rayQueryGetIntersectionTypeEXT" => Some(Iv::Type),
-        "rayQueryGetIntersectionTEXT" => Some(Iv::T),
-        "rayQueryGetIntersectionInstanceCustomIndexEXT" => Some(Iv::InstanceCustomIndex),
-        "rayQueryGetIntersectionInstanceIdEXT" => Some(Iv::InstanceId),
-        "rayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetEXT" => {
-            Some(Iv::InstanceShaderBindingTableRecordOffset)
+    match value {
+        RayIntersection::Type => Iv::Type,
+        RayIntersection::T => Iv::T,
+        RayIntersection::InstanceCustomIndex => Iv::InstanceCustomIndex,
+        RayIntersection::InstanceId => Iv::InstanceId,
+        RayIntersection::InstanceShaderBindingTableRecordOffset => {
+            Iv::InstanceShaderBindingTableRecordOffset
         }
-        "rayQueryGetIntersectionGeometryIndexEXT" => Some(Iv::GeometryIndex),
-        "rayQueryGetIntersectionPrimitiveIndexEXT" => Some(Iv::PrimitiveIndex),
-        "rayQueryGetIntersectionBarycentricsEXT" => Some(Iv::Barycentrics),
-        "rayQueryGetIntersectionFrontFaceEXT" => Some(Iv::FrontFace),
-        "rayQueryGetIntersectionObjectRayDirectionEXT" => Some(Iv::ObjectRayDirection),
-        "rayQueryGetIntersectionObjectRayOriginEXT" => Some(Iv::ObjectRayOrigin),
-        "rayQueryGetIntersectionObjectToWorldEXT" => Some(Iv::ObjectToWorld),
-        "rayQueryGetIntersectionWorldToObjectEXT" => Some(Iv::WorldToObject),
-        "rayQueryGetIntersectionTriangleVertexPositionsEXT" => Some(Iv::TriangleVertexPositions),
-        "rayQueryGetIntersectionClusterIdNV" => Some(Iv::ClusterId),
-        "rayQueryGetIntersectionSpherePositionNV" => Some(Iv::SpherePosition),
-        "rayQueryGetIntersectionSphereRadiusNV" => Some(Iv::SphereRadius),
-        "rayQueryGetIntersectionLSSHitValueNV" => Some(Iv::LssHitValue),
-        "rayQueryGetIntersectionLSSPositionsNV" => Some(Iv::LssPositions),
-        "rayQueryGetIntersectionLSSRadiiNV" => Some(Iv::LssRadii),
-        "rayQueryIsSphereHitNV" => Some(Iv::IsSphereHit),
-        "rayQueryIsLSSHitNV" => Some(Iv::IsLssHit),
-        _ => None,
+        RayIntersection::GeometryIndex => Iv::GeometryIndex,
+        RayIntersection::PrimitiveIndex => Iv::PrimitiveIndex,
+        RayIntersection::Barycentrics => Iv::Barycentrics,
+        RayIntersection::FrontFace => Iv::FrontFace,
+        RayIntersection::ObjectRayDirection => Iv::ObjectRayDirection,
+        RayIntersection::ObjectRayOrigin => Iv::ObjectRayOrigin,
+        RayIntersection::ObjectToWorld => Iv::ObjectToWorld,
+        RayIntersection::WorldToObject => Iv::WorldToObject,
+        RayIntersection::TriangleVertexPositions => Iv::TriangleVertexPositions,
+        RayIntersection::ClusterId => Iv::ClusterId,
+        RayIntersection::SpherePosition => Iv::SpherePosition,
+        RayIntersection::SphereRadius => Iv::SphereRadius,
+        RayIntersection::LssPositions => Iv::LssPositions,
+        RayIntersection::LssRadii => Iv::LssRadii,
+        RayIntersection::LssHitValue => Iv::LssHitValue,
+        RayIntersection::IsSphereHit => Iv::IsSphereHit,
+        RayIntersection::IsLssHit => Iv::IsLssHit,
     }
 }
 
-fn ray_query_value(name: &str) -> Option<RayQueryValue> {
-    match name {
-        "rayQueryGetRayTMinEXT" => Some(RayQueryValue::RayTMin),
-        "rayQueryGetRayFlagsEXT" => Some(RayQueryValue::RayFlags),
-        "rayQueryGetWorldRayOriginEXT" => Some(RayQueryValue::WorldRayOrigin),
-        "rayQueryGetWorldRayDirectionEXT" => Some(RayQueryValue::WorldRayDirection),
-        "rayQueryGetIntersectionCandidateAABBOpaqueEXT" => Some(RayQueryValue::CandidateAabbOpaque),
-        _ => None,
+const fn query_value(value: QueryValue) -> RayQueryValue {
+    match value {
+        QueryValue::RayFlags => RayQueryValue::RayFlags,
+        QueryValue::RayTMin => RayQueryValue::RayTMin,
+        QueryValue::WorldRayOrigin => RayQueryValue::WorldRayOrigin,
+        QueryValue::WorldRayDirection => RayQueryValue::WorldRayDirection,
+        QueryValue::CandidateAabbOpaque => RayQueryValue::CandidateAabbOpaque,
     }
-}
-
-#[derive(Clone, Copy)]
-enum RayFunction {
-    Initialize,
-    Proceed,
-    Terminate,
-    ConfirmIntersection,
-    GenerateIntersection,
-    TraceRay,
-    ExecuteCallable,
-    ReportIntersection,
-    IgnoreIntersection,
-    TerminateRay,
-}
-
-fn ray_function(name: &str) -> Option<RayFunction> {
-    Some(match name {
-        "rayQueryInitializeEXT" => RayFunction::Initialize,
-        "rayQueryProceedEXT" => RayFunction::Proceed,
-        "rayQueryTerminateEXT" => RayFunction::Terminate,
-        "rayQueryConfirmIntersectionEXT" => RayFunction::ConfirmIntersection,
-        "rayQueryGenerateIntersectionEXT" => RayFunction::GenerateIntersection,
-        "traceNV" | "traceRayEXT" | "traceRayMotionNV" => RayFunction::TraceRay,
-        "executeCallableNV" | "executeCallableEXT" => RayFunction::ExecuteCallable,
-        "reportIntersectionNV" | "reportIntersectionEXT" => RayFunction::ReportIntersection,
-        "ignoreIntersectionNV" => RayFunction::IgnoreIntersection,
-        "terminateRayNV" => RayFunction::TerminateRay,
-        _ => return None,
-    })
-}
-
-pub(super) fn is_ray_call(name: &str) -> bool {
-    intersection_value(name).is_some()
-        || ray_query_value(name).is_some()
-        || ray_function(name).is_some()
-        || super::hit_object::is_hit_object_call(name)
 }
 
 pub(super) fn ray_builtin(name: &str) -> Option<(BuiltIn, &'static str)> {
@@ -519,64 +483,66 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         .pointer)
     }
 
-    pub(super) async fn ray_builtin_call(
+    pub(super) async fn ray_call(
         self,
-        name: &'b str,
+        ray: Ray,
         arguments: &'b [AstExpression],
         at: Span,
-    ) -> Result<Option<Option<Handle<Expression>>>> {
+    ) -> Result<Option<Handle<Expression>>> {
         use RayQueryIntersectionValue as Iv;
-        if let Some(value) = intersection_value(name) {
-            let [ref query, ref committed, ref rest @ ..] = *arguments else {
-                return Err(internal(at));
-            };
-            let committed = self.with(|this| this.constant_bool(committed, at))??;
-            let query = {
-                let frame = self.clone().ray_query_pointer(query);
-                self.nest(frame).await
-            }?;
-            match value {
-                Iv::TriangleVertexPositions => {
-                    self.with(|this| this.lw.module.generate_vertex_return_type())?;
-                }
-                Iv::LssPositions => {
-                    self.with(|this| this.generate_lss_array(Some(crate::VectorSize::Tri)))?;
-                }
-                Iv::LssRadii => self.with(|this| this.generate_lss_array(None))?,
-                _ => {}
-            }
-            let result = self.with(|this| {
-                this.add(
-                    Expression::RayQueryGet {
-                        query,
-                        value: RayQueryValue::Intersection { committed, value },
-                    },
-                    at,
-                )
-            })??;
-            if let [ref output] = *rest {
-                let place = {
-                    let frame = self.clone().place(output);
+        match ray {
+            Ray::Intersection(value) => {
+                let value = intersection(value);
+                let [ref query, ref committed, ref rest @ ..] = *arguments else {
+                    return Err(internal(at));
+                };
+                let committed = self.with(|this| this.constant_bool(committed, at))??;
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
                     self.nest(frame).await
                 }?;
-                self.with(|this| this.store(&place, result, at))??;
-                return Ok(Some(None));
+                match value {
+                    Iv::TriangleVertexPositions => {
+                        self.with(|this| this.lw.module.generate_vertex_return_type())?;
+                    }
+                    Iv::LssPositions => {
+                        self.with(|this| this.generate_lss_array(Some(crate::VectorSize::Tri)))?;
+                    }
+                    Iv::LssRadii => self.with(|this| this.generate_lss_array(None))?,
+                    _ => {}
+                }
+                let result = self.with(|this| {
+                    this.add(
+                        Expression::RayQueryGet {
+                            query,
+                            value: RayQueryValue::Intersection { committed, value },
+                        },
+                        at,
+                    )
+                })??;
+                if let [ref output] = *rest {
+                    let place = {
+                        let frame = self.clone().place(output);
+                        self.nest(frame).await
+                    }?;
+                    self.with(|this| this.store(&place, result, at))??;
+                    return Ok(None);
+                }
+                Ok(Some(result))
             }
-            return Ok(Some(Some(result)));
-        }
-        if let Some(value) = ray_query_value(name) {
-            let query = arguments.first().ok_or_else(|| internal(at))?;
-            let query = {
-                let frame = self.clone().ray_query_pointer(query);
-                self.nest(frame).await
-            }?;
-            return self.with(|this| {
-                this.add(Expression::RayQueryGet { query, value }, at)
-                    .map(|result| Some(Some(result)))
-            })?;
-        }
-        match ray_function(name) {
-            Some(RayFunction::Initialize) => {
+            Ray::Query(value) => {
+                let value = query_value(value);
+                let query = arguments.first().ok_or_else(|| internal(at))?;
+                let query = {
+                    let frame = self.clone().ray_query_pointer(query);
+                    self.nest(frame).await
+                }?;
+                self.with(|this| {
+                    this.add(Expression::RayQueryGet { query, value }, at)
+                        .map(Some)
+                })?
+            }
+            Ray::QueryFunction(QueryFunction::Initialize) => {
                 let [ref query, ref rest @ ..] = *arguments else {
                     return Err(internal(at));
                 };
@@ -617,9 +583,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     );
                 })?;
-                Ok(Some(None))
+                Ok(None)
             }
-            Some(RayFunction::Proceed) => {
+            Ray::QueryFunction(QueryFunction::Proceed) => {
                 let query = arguments.first().ok_or_else(|| internal(at))?;
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
@@ -635,23 +601,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     )
                 })?;
-                Ok(Some(Some(result)))
+                Ok(Some(result))
             }
-            Some(RayFunction::Terminate | RayFunction::ConfirmIntersection) => {
+            Ray::QueryFunction(
+                function @ (QueryFunction::Terminate | QueryFunction::ConfirmIntersection),
+            ) => {
                 let query = arguments.first().ok_or_else(|| internal(at))?;
                 let query = {
                     let frame = self.clone().ray_query_pointer(query);
                     self.nest(frame).await
                 }?;
-                let fun = if name == "rayQueryTerminateEXT" {
+                let fun = if function == QueryFunction::Terminate {
                     RayQueryFunction::Terminate
                 } else {
                     RayQueryFunction::ConfirmIntersection
                 };
                 self.with(|this| this.push(Statement::RayQuery { query, fun }, at))?;
-                Ok(Some(None))
+                Ok(None)
             }
-            Some(RayFunction::GenerateIntersection) => {
+            Ray::QueryFunction(QueryFunction::GenerateIntersection) => {
                 let [ref query, ref hit_t] = *arguments else {
                     return Err(internal(at));
                 };
@@ -672,10 +640,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     );
                 })?;
-                Ok(Some(None))
+                Ok(None)
             }
-            Some(RayFunction::TraceRay) => {
-                let motion = name == "traceRayMotionNV";
+            Ray::TraceRay { nv, motion } => {
                 let (payload, operands) = arguments.split_last().ok_or_else(|| internal(at))?;
                 let operands = {
                     let frame = self.clone().ray_operands(operands);
@@ -702,8 +669,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 else {
                     return Err(internal(at));
                 };
-                let payload =
-                    self.with(|this| this.ray_data(payload, 0, name == "traceNV", at))??;
+                let payload = self.with(|this| this.ray_data(payload, 0, nv, at))??;
                 self.with(|this| {
                     this.push(
                         Statement::RayPipelineFunction(RayPipelineFunction::TraceRay {
@@ -723,9 +689,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     );
                 })?;
-                Ok(Some(None))
+                Ok(None)
             }
-            Some(RayFunction::ExecuteCallable) => {
+            Ray::ExecuteCallable { nv } => {
                 let [ref sbt_index, ref data] = *arguments else {
                     return Err(internal(at));
                 };
@@ -733,8 +699,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().rvalue(sbt_index);
                     self.nest(frame).await
                 }?;
-                let data =
-                    self.with(|this| this.ray_data(data, 1, name == "executeCallableNV", at))??;
+                let data = self.with(|this| this.ray_data(data, 1, nv, at))??;
                 self.with(|this| {
                     this.push(
                         Statement::RayPipelineFunction(RayPipelineFunction::ExecuteCallable {
@@ -744,9 +709,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     );
                 })?;
-                Ok(Some(None))
+                Ok(None)
             }
-            Some(RayFunction::ReportIntersection) => {
+            Ray::ReportIntersection => {
                 let [ref hit_t, ref hit_kind] = *arguments else {
                     return Err(internal(at));
                 };
@@ -773,9 +738,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     )
                 })?;
-                Ok(Some(Some(result)))
+                Ok(Some(result))
             }
-            Some(RayFunction::IgnoreIntersection) => {
+            Ray::IgnoreIntersection => {
                 self.with(|this| {
                     this.push(
                         Statement::RayPipelineFunction(RayPipelineFunction::IgnoreIntersection {
@@ -784,9 +749,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     );
                 })?;
-                Ok(Some(None))
+                Ok(None)
             }
-            Some(RayFunction::TerminateRay) => {
+            Ray::TerminateRay => {
                 self.with(|this| {
                     this.push(
                         Statement::RayPipelineFunction(RayPipelineFunction::TerminateRay {
@@ -795,10 +760,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     );
                 })?;
-                Ok(Some(None))
+                Ok(None)
             }
-            None => {
-                let frame = self.clone().hit_object_call(name, arguments, at);
+            Ray::MicroTriangle(value) => {
+                let frame = self.clone().micro_triangle(value, arguments, at);
+                self.nest(frame).await
+            }
+            Ray::HitObject(flavor, call) => {
+                let frame = self.clone().hit_object_call(flavor, call, arguments, at);
                 self.nest(frame).await
             }
         }

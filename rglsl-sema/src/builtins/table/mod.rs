@@ -42,6 +42,7 @@ macro_rules! builtins {
     };
 }
 
+mod ray;
 mod subgroup;
 mod words;
 
@@ -126,7 +127,7 @@ pub(crate) const fn parameter<const N: usize>(
     }
 }
 
-pub(super) const FAMILIES: &[&[BuiltinFunction]] = &[subgroup::FUNCTIONS];
+pub(super) const FAMILIES: &[&[BuiltinFunction]] = &[ray::FUNCTIONS, subgroup::FUNCTIONS];
 
 fn concrete(word: Word, value: Option<&Type>) -> Option<Type> {
     match word {

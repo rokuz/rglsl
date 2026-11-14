@@ -73,7 +73,6 @@ struct Section {
     doubles: bool,
     halves: bool,
     stages: u16,
-    since: u32,
 }
 
 impl Section {
@@ -83,7 +82,6 @@ impl Section {
             doubles: false,
             halves: false,
             stages: ALL_STAGES,
-            since: 450,
         }
     }
 
@@ -103,10 +101,6 @@ impl Section {
 
     const fn in_stages(self, stages: u16) -> Self {
         Self { stages, ..self }
-    }
-
-    const fn since(self, since: u32) -> Self {
-        Self { since, ..self }
     }
 }
 
@@ -190,8 +184,8 @@ fn expand_prototypes(
     stage: Option<ShaderStage>,
 ) -> (Vec<Prototype>, TypeRegistry, Footprints) {
     let mut prototypes = Vec::new();
-    for section in functions::SECTIONS.iter().chain(ray::SECTIONS) {
-        if version >= section.since && stage.is_none_or(|stage| available(section.stages, stage)) {
+    for section in functions::SECTIONS {
+        if stage.is_none_or(|stage| available(section.stages, stage)) {
             expand_section(section, &mut prototypes);
         }
     }

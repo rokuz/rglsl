@@ -2,6 +2,10 @@ use alloc::vec::Vec;
 
 use rglsl_ast::ast::Expression as AstExpression;
 
+use rglsl_sema::builtins::kind::{
+    HitObject, HitObjectFlavor, HitObjectValue as Value, MicroTriangleValue,
+};
+
 use super::function::FunctionLowerer;
 use super::{Result, internal};
 use crate::{
@@ -13,102 +17,51 @@ use crate::{
 const PAYLOADS: usize = 0;
 const ATTRIBUTES: usize = 2;
 
-fn split_kind(name: &str) -> Option<(&str, HitObjectKind)> {
-    name.strip_suffix("NV")
-        .map(|stem| (stem, HitObjectKind::Nv))
-        .or_else(|| {
-            name.strip_suffix("EXT")
-                .map(|stem| (stem, HitObjectKind::Ext))
-        })
-}
-
-fn hit_object_value(stem: &str) -> Option<HitObjectValue> {
-    use HitObjectValue as Hv;
-    Some(match stem {
-        "hitObjectIsEmpty" => Hv::IsEmpty,
-        "hitObjectIsHit" => Hv::IsHit,
-        "hitObjectIsMiss" => Hv::IsMiss,
-        "hitObjectGetRayTMin" => Hv::RayTMin,
-        "hitObjectGetRayTMax" => Hv::RayTMax,
-        "hitObjectGetRayFlags" => Hv::RayFlags,
-        "hitObjectGetWorldRayOrigin" => Hv::WorldRayOrigin,
-        "hitObjectGetWorldRayDirection" => Hv::WorldRayDirection,
-        "hitObjectGetObjectRayOrigin" => Hv::ObjectRayOrigin,
-        "hitObjectGetObjectRayDirection" => Hv::ObjectRayDirection,
-        "hitObjectGetObjectToWorld" => Hv::ObjectToWorld,
-        "hitObjectGetWorldToObject" => Hv::WorldToObject,
-        "hitObjectGetInstanceCustomIndex" => Hv::InstanceCustomIndex,
-        "hitObjectGetInstanceId" => Hv::InstanceId,
-        "hitObjectGetGeometryIndex" => Hv::GeometryIndex,
-        "hitObjectGetPrimitiveIndex" => Hv::PrimitiveIndex,
-        "hitObjectGetHitKind" => Hv::HitKind,
-        "hitObjectGetCurrentTime" => Hv::CurrentTime,
-        "hitObjectGetShaderBindingTableRecordIndex" => Hv::ShaderBindingTableRecordIndex,
-        "hitObjectGetShaderRecordBufferHandle" => Hv::ShaderRecordBufferHandle,
-        "hitObjectGetClusterId" => Hv::ClusterId,
-        "hitObjectGetSpherePosition" => Hv::SpherePosition,
-        "hitObjectGetSphereRadius" => Hv::SphereRadius,
-        "hitObjectIsSphereHit" => Hv::IsSphereHit,
-        "hitObjectIsLSSHit" => Hv::IsLssHit,
-        "hitObjectGetLSSPositions" => Hv::LssPositions,
-        "hitObjectGetLSSRadii" => Hv::LssRadii,
-        "hitObjectGetIntersectionTriangleVertexPositions" => Hv::TriangleVertexPositions,
-        _ => return None,
-    })
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum HitObjectCall {
-    TraceRay,
-    TraceReorderExecute,
-    RecordHit,
-    RecordMiss,
-    RecordEmpty,
-    RecordFromQuery,
-    ExecuteShader,
-    ReorderExecute,
-    GetAttributes,
-    SetShaderBindingTableRecordIndex,
-    ReorderThread,
-}
-
-fn hit_object_call(stem: &str) -> Option<HitObjectCall> {
-    Some(match stem {
-        "hitObjectTraceRay" | "hitObjectTraceRayMotion" => HitObjectCall::TraceRay,
-        "hitObjectTraceReorderExecute" | "hitObjectTraceMotionReorderExecute" => {
-            HitObjectCall::TraceReorderExecute
-        }
-        "hitObjectRecordHit"
-        | "hitObjectRecordHitMotion"
-        | "hitObjectRecordHitWithIndex"
-        | "hitObjectRecordHitWithIndexMotion" => HitObjectCall::RecordHit,
-        "hitObjectRecordMiss" | "hitObjectRecordMissMotion" => HitObjectCall::RecordMiss,
-        "hitObjectRecordEmpty" => HitObjectCall::RecordEmpty,
-        "hitObjectRecordFromQuery" => HitObjectCall::RecordFromQuery,
-        "hitObjectExecuteShader" => HitObjectCall::ExecuteShader,
-        "hitObjectReorderExecute" => HitObjectCall::ReorderExecute,
-        "hitObjectGetAttributes" => HitObjectCall::GetAttributes,
-        "hitObjectSetShaderBindingTableRecordIndex" => {
-            HitObjectCall::SetShaderBindingTableRecordIndex
-        }
-        "reorderThread" => HitObjectCall::ReorderThread,
-        _ => return None,
-    })
-}
-
-fn micro_triangle_value(name: &str) -> Option<MicroTriangleVertexValue> {
-    match name {
-        "fetchMicroTriangleVertexPositionNV" => Some(MicroTriangleVertexValue::Position),
-        "fetchMicroTriangleVertexBarycentricNV" => Some(MicroTriangleVertexValue::Barycentric),
-        _ => None,
+const fn hit_object_value(value: Value) -> HitObjectValue {
+    match value {
+        Value::IsEmpty => HitObjectValue::IsEmpty,
+        Value::IsHit => HitObjectValue::IsHit,
+        Value::IsMiss => HitObjectValue::IsMiss,
+        Value::RayTMin => HitObjectValue::RayTMin,
+        Value::RayTMax => HitObjectValue::RayTMax,
+        Value::RayFlags => HitObjectValue::RayFlags,
+        Value::WorldRayOrigin => HitObjectValue::WorldRayOrigin,
+        Value::WorldRayDirection => HitObjectValue::WorldRayDirection,
+        Value::ObjectRayOrigin => HitObjectValue::ObjectRayOrigin,
+        Value::ObjectRayDirection => HitObjectValue::ObjectRayDirection,
+        Value::ObjectToWorld => HitObjectValue::ObjectToWorld,
+        Value::WorldToObject => HitObjectValue::WorldToObject,
+        Value::InstanceCustomIndex => HitObjectValue::InstanceCustomIndex,
+        Value::InstanceId => HitObjectValue::InstanceId,
+        Value::GeometryIndex => HitObjectValue::GeometryIndex,
+        Value::PrimitiveIndex => HitObjectValue::PrimitiveIndex,
+        Value::HitKind => HitObjectValue::HitKind,
+        Value::CurrentTime => HitObjectValue::CurrentTime,
+        Value::ShaderBindingTableRecordIndex => HitObjectValue::ShaderBindingTableRecordIndex,
+        Value::ShaderRecordBufferHandle => HitObjectValue::ShaderRecordBufferHandle,
+        Value::ClusterId => HitObjectValue::ClusterId,
+        Value::SpherePosition => HitObjectValue::SpherePosition,
+        Value::SphereRadius => HitObjectValue::SphereRadius,
+        Value::LssPositions => HitObjectValue::LssPositions,
+        Value::LssRadii => HitObjectValue::LssRadii,
+        Value::IsSphereHit => HitObjectValue::IsSphereHit,
+        Value::IsLssHit => HitObjectValue::IsLssHit,
+        Value::TriangleVertexPositions => HitObjectValue::TriangleVertexPositions,
     }
 }
 
-pub(super) fn is_hit_object_call(name: &str) -> bool {
-    micro_triangle_value(name).is_some()
-        || split_kind(name).is_some_and(|(stem, _)| {
-            hit_object_value(stem).is_some() || hit_object_call(stem).is_some()
-        })
+const fn hit_object_kind(flavor: HitObjectFlavor) -> HitObjectKind {
+    match flavor {
+        HitObjectFlavor::Nv => HitObjectKind::Nv,
+        HitObjectFlavor::Ext => HitObjectKind::Ext,
+    }
+}
+
+const fn micro_triangle_value(value: MicroTriangleValue) -> MicroTriangleVertexValue {
+    match value {
+        MicroTriangleValue::Position => MicroTriangleVertexValue::Position,
+        MicroTriangleValue::Barycentric => MicroTriangleVertexValue::Barycentric,
+    }
 }
 
 impl FunctionLowerer<'_, '_> {
@@ -221,13 +174,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
     }
 
-    pub(super) async fn hit_object_call(
+    pub(super) async fn micro_triangle(
         self,
-        name: &'b str,
+        value: MicroTriangleValue,
         arguments: &'b [AstExpression],
         at: Span,
-    ) -> Result<Option<Option<Handle<Expression>>>> {
-        if let Some(value) = micro_triangle_value(name) {
+    ) -> Result<Option<Handle<Expression>>> {
+        let value = micro_triangle_value(value);
+        {
             let [
                 acceleration_structure,
                 instance_id,
@@ -255,17 +209,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     at,
                 )
             })??;
-            return Ok(Some(Some(result)));
+            Ok(Some(result))
         }
-        let Some((stem, kind)) = split_kind(name) else {
-            return Ok(None);
-        };
-        let value = hit_object_value(stem);
-        let call = hit_object_call(stem);
-        if value.is_none() && call.is_none() {
-            return Ok(None);
-        }
-        if call == Some(HitObjectCall::ReorderThread)
+    }
+
+    pub(super) async fn hit_object_call(
+        self,
+        flavor: HitObjectFlavor,
+        call: HitObject,
+        arguments: &'b [AstExpression],
+        at: Span,
+    ) -> Result<Option<Handle<Expression>>> {
+        let kind = hit_object_kind(flavor);
+        if call == HitObject::ReorderThread
             && let [ref hint, ref bits] = *arguments
         {
             let hint = {
@@ -277,14 +233,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }?;
             self.with(|this| this.push(Statement::ReorderThread { kind, hint, bits }, at))?;
-            return Ok(Some(None));
+            return Ok(None);
         }
         let (object, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
         let object = {
             let frame = self.clone().ray_query_pointer(object);
             self.nest(frame).await
         }?;
-        if let Some(value) = value {
+        if let HitObject::Value(value) = call {
+            let value = hit_object_value(value);
             self.with(|this| this.generate_value_type(value))?;
             let result =
                 self.with(|this| this.add(Expression::HitObjectGet { object, value }, at))??;
@@ -294,16 +251,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?;
                 self.with(|this| this.store(&place, result, at))??;
-                return Ok(Some(None));
+                return Ok(None);
             }
-            return Ok(Some(Some(result)));
+            return Ok(Some(result));
         }
         let fun = match call {
-            Some(HitObjectCall::TraceRay) => {
+            HitObject::TraceRay { motion } => {
                 let (trace, hint) = {
-                    let frame =
-                        self.clone()
-                            .hit_object_trace(rest, stem == "hitObjectTraceRayMotion", at);
+                    let frame = self.clone().hit_object_trace(rest, motion, at);
                     self.nest(frame).await
                 }?;
                 if hint.is_some() {
@@ -311,20 +266,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }
                 HitObjectFunction::TraceRay(trace)
             }
-            Some(HitObjectCall::TraceReorderExecute) => {
+            HitObject::TraceReorderExecute { motion } => {
                 let (trace, hint) = {
-                    let frame = self.clone().hit_object_trace(
-                        rest,
-                        stem == "hitObjectTraceMotionReorderExecute",
-                        at,
-                    );
+                    let frame = self.clone().hit_object_trace(rest, motion, at);
                     self.nest(frame).await
                 }?;
                 HitObjectFunction::TraceReorderExecute { trace, hint }
             }
-            Some(HitObjectCall::RecordHit) => {
-                let with_index = stem.starts_with("hitObjectRecordHitWithIndex");
-                let motion = stem.ends_with("Motion");
+            HitObject::RecordHit { with_index, motion } => {
                 let (attributes, operands) = rest.split_last().ok_or_else(|| internal(at))?;
                 let operands = {
                     let frame = self.clone().ray_operands(operands);
@@ -399,7 +348,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     attributes,
                 }
             }
-            Some(HitObjectCall::RecordMiss) => {
+            HitObject::RecordMiss => {
                 let operands = {
                     let frame = self.clone().ray_operands(rest);
                     self.nest(frame).await
@@ -431,8 +380,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     time,
                 }
             }
-            Some(HitObjectCall::RecordEmpty) => HitObjectFunction::RecordEmpty,
-            Some(HitObjectCall::RecordFromQuery) => {
+            HitObject::RecordEmpty => HitObjectFunction::RecordEmpty,
+            HitObject::RecordFromQuery => {
                 let [
                     ref query,
                     ref sbt_record_index,
@@ -466,7 +415,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     hit_kind,
                 }
             }
-            Some(HitObjectCall::ExecuteShader) => {
+            HitObject::ExecuteShader => {
                 let [ref payload] = *rest else {
                     return Err(internal(at));
                 };
@@ -474,7 +423,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     payload: self.with(|this| this.located(payload, PAYLOADS, at))??,
                 }
             }
-            Some(HitObjectCall::ReorderExecute) => {
+            HitObject::ReorderExecute => {
                 let (payload, hint) = rest.split_last().ok_or_else(|| internal(at))?;
                 let hint = {
                     let frame = self.clone().hint(hint, at);
@@ -485,7 +434,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     hint,
                 }
             }
-            Some(HitObjectCall::GetAttributes) => {
+            HitObject::GetAttributes => {
                 let [ref attributes] = *rest else {
                     return Err(internal(at));
                 };
@@ -493,7 +442,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     attributes: self.with(|this| this.located(attributes, ATTRIBUTES, at))??,
                 }
             }
-            Some(HitObjectCall::SetShaderBindingTableRecordIndex) => {
+            HitObject::SetShaderBindingTableRecordIndex => {
                 let [ref index] = *rest else {
                     return Err(internal(at));
                 };
@@ -504,15 +453,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     }?,
                 }
             }
-            Some(HitObjectCall::ReorderThread) => HitObjectFunction::ReorderThread {
+            HitObject::ReorderThread => HitObjectFunction::ReorderThread {
                 hint: {
                     let frame = self.clone().hint(rest, at);
                     self.nest(frame).await
                 }?,
             },
-            None => return Err(internal(at)),
+            HitObject::Value(_) => return Err(internal(at)),
         };
         self.with(|this| this.push(Statement::HitObject { object, fun }, at))?;
-        Ok(Some(None))
+        Ok(None)
     }
 }

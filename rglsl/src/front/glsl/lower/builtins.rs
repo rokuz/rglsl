@@ -843,16 +843,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().subgroup(kind, arguments, at);
                 return self.nest(frame).await;
             }
+            BuiltinKind::Ray(kind) => {
+                let frame = self.clone().ray_call(kind, arguments, at);
+                return self.nest(frame).await;
+            }
             BuiltinKind::Named => {}
         }
         let route = route(name, arguments.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
         match route {
-            Route::Ray => {
-                let frame = self.clone().ray_builtin_call(name, arguments, at);
-                self.nest(frame).await
-            }?
-            .ok_or_else(|| internal(at)),
             Route::Sample => {
                 let frame = self.clone().sample(
                     texture_call(name),
@@ -2462,7 +2461,6 @@ fn microscaling_bitcast(name: &str) -> Option<bool> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Route {
-    Ray,
     Sample,
     PatternGather,
     SparseFetch,
@@ -2494,9 +2492,6 @@ pub(super) enum Route {
 }
 
 pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
-    if super::ray::is_ray_call(name) {
-        return Some(Route::Ray);
-    }
     if sampling_function(&texture_call(name).base) {
         return Some(Route::Sample);
     }
