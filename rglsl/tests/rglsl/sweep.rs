@@ -263,6 +263,66 @@ fn double_derivatives_are_not_supported() -> TestResult {
     Ok(())
 }
 
+fn footprint_operands(words: &[u32]) -> TestResult<Vec<String>> {
+    let module = dr::load_words(words)?;
+    Ok(module
+        .all_inst_iter()
+        .filter(|inst| inst.class.opcode == Op::ImageSampleFootprintNV)
+        .map(|inst| match inst.operands.get(4) {
+            Some(&Operand::ImageOperands(mask)) if mask == spirv::ImageOperands::LOD => {
+                String::from("LOD")
+            }
+            Some(&Operand::ImageOperands(mask)) if mask == spirv::ImageOperands::MIN_LOD => {
+                String::from("MIN_LOD")
+            }
+            Some(&Operand::ImageOperands(mask)) => format!("{mask:?}"),
+            _ => String::from("implicit"),
+        })
+        .collect())
+}
+
+#[test]
+fn footprints_without_implicit_derivatives_use_level_zero() -> TestResult {
+    let body = "
+        layout(binding = 0) uniform sampler2D s;
+        layout(std430, binding = 1) buffer B { vec2 p; float c; uint lod; };
+        void main() {
+            gl_TextureFootprint2DNV f;
+            bool single = textureFootprintNV(s, p, 2, true, f);
+            single = single && textureFootprintClampNV(s, p, c, 2, false, f);
+            lod = f.lod + uint(single);
+        }";
+    let cases = [
+        (ShaderStage::Vertex, "", ["LOD", "LOD"]),
+        (
+            ShaderStage::Compute,
+            "layout(local_size_x = 1) in;",
+            ["LOD", "LOD"],
+        ),
+        (
+            ShaderStage::Compute,
+            "#extension GL_NV_compute_shader_derivatives : require
+            layout(local_size_x = 2, local_size_y = 2) in;
+            layout(derivative_group_quadsNV) in;",
+            ["implicit", "MIN_LOD"],
+        ),
+        (ShaderStage::Fragment, "", ["implicit", "MIN_LOD"]),
+    ];
+    for (stage, layout, expected) in cases {
+        let source = format!(
+            "#version 450
+            #extension GL_NV_shader_texture_footprint : require
+            {layout}
+            {body}"
+        );
+        let words = ours(stage, Target::Vulkan11, &source)
+            .map_err(|errors| format!("rglsl rejects: {errors:?}"))?;
+        validate(&words, Target::Vulkan11)?;
+        assert_eq!(footprint_operands(&words)?, expected, "{source}");
+    }
+    Ok(())
+}
+
 fn declares(words: &[u32], op: Op) -> TestResult<bool> {
     let module = dr::load_words(words)?;
     Ok(module

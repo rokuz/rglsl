@@ -2092,6 +2092,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }?);
         }
+        if matches!(level, SampleLevel::Auto | SampleLevel::Bias(_)) {
+            let group = self.with(|this| this.lw.analysis.derivative_group.is_some())?;
+            let derivatives = self.with(|this| {
+                this.lw.stage_map(|stage| {
+                    stage == ShaderStage::Fragment || (stage == ShaderStage::Compute && group)
+                })
+            })?;
+            if !derivatives {
+                level =
+                    match min_lod.take() {
+                        Some(clamp) => {
+                            let zero = self.with(|this| this.literal(Literal::F32(0.0), at))??;
+                            SampleLevel::Exact(self.with(|this| {
+                                this.math_call(MathFunction::Max, &[clamp, zero], at)
+                            })??)
+                        }
+                        None => SampleLevel::Zero,
+                    };
+            }
+        }
         let output_ty = self.with(|this| this.info(output))??.ty.clone();
         let footprint = self.with(|this| this.lw.ir_type(&output_ty, at))??;
         let three = self.with(|this| {

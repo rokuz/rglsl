@@ -1233,7 +1233,11 @@ impl BlockContext<'_> {
         let mut mask = spirv::ImageOperands::empty();
         let mut operands = alloc::vec::Vec::new();
         match level {
-            crate::SampleLevel::Auto | crate::SampleLevel::Zero => {}
+            crate::SampleLevel::Auto => {}
+            crate::SampleLevel::Zero => {
+                mask |= spirv::ImageOperands::LOD;
+                operands.push(self.writer.get_constant_scalar(crate::Literal::F32(0.0)));
+            }
             crate::SampleLevel::Bias(bias) => {
                 mask |= spirv::ImageOperands::BIAS;
                 operands.push(self.cached.get(bias)?);

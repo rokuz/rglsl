@@ -1798,17 +1798,23 @@ impl super::Validator {
                 if !matches!(*resolver.resolve(coarse)?, Ti::Scalar(Sc::BOOL)) {
                     return Err(ExpressionError::InvalidImageOtherIndexType(coarse));
                 }
-                if let Some(min_lod) = min_lod
-                    && !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32))
-                {
-                    return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
+                if let Some(min_lod) = min_lod {
+                    if !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32)) {
+                        return Err(ExpressionError::InvalidImageOtherIndexType(min_lod));
+                    }
+                    if matches!(
+                        level,
+                        crate::SampleLevel::Zero | crate::SampleLevel::Exact(_)
+                    ) {
+                        return Err(ExpressionError::InvalidMinLod(min_lod));
+                    }
                 }
                 if !matches!(module.types[ty].inner, Ti::Struct { .. }) {
                     return Err(ExpressionError::InvalidSparseResultType(ty));
                 }
                 match level {
                     crate::SampleLevel::Auto | crate::SampleLevel::Bias(_) => {
-                        ShaderStages::FRAGMENT
+                        ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE
                     }
                     crate::SampleLevel::Zero
                     | crate::SampleLevel::Exact(_)
