@@ -1,11 +1,18 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinKind {
-    Named,
     Pure(Pure),
     Decompose(Decompose),
     Wide(Wide),
     Expect,
     Assume,
+    Atomic(AtomicOperation),
+    Barrier(Barrier),
+    Interlock { begin: bool },
+    HelperInvocation,
+    Interpolate(InterpolateAt),
+    AttachmentRead(Attachment),
+    Mesh(Mesh),
+    Primitive(Primitive),
     Subgroup(Subgroup),
     Ray(Ray),
     Texture(Texture),
@@ -15,12 +22,19 @@ impl BuiltinKind {
     pub const fn requirements_gate_call(self) -> bool {
         match self {
             Self::Ray(_) => true,
-            Self::Named
-            | Self::Pure(_)
+            Self::Pure(_)
             | Self::Decompose(_)
             | Self::Wide(_)
             | Self::Expect
             | Self::Assume
+            | Self::Atomic(_)
+            | Self::Barrier(_)
+            | Self::Interlock { .. }
+            | Self::HelperInvocation
+            | Self::Interpolate(_)
+            | Self::AttachmentRead(_)
+            | Self::Mesh(_)
+            | Self::Primitive(_)
             | Self::Subgroup(_)
             | Self::Texture(_) => false,
         }
@@ -179,6 +193,71 @@ pub enum Wide {
     AddCarry,
     SubBorrow,
     MulExtended { signed: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AtomicOperation {
+    Add,
+    Min,
+    Max,
+    And,
+    Or,
+    Xor,
+    Exchange,
+    CompareSwap,
+    Load,
+    Store,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Barrier {
+    Execution,
+    Memory(MemoryBarrier),
+    ScopedMemory,
+    ScopedControl,
+    Split { phase: SplitPhase, scoped: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryBarrier {
+    All,
+    Buffer,
+    Image,
+    Shared,
+    Workgroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SplitPhase {
+    Arrive,
+    Wait,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterpolateAt {
+    Centroid,
+    Sample,
+    Offset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Attachment {
+    Color,
+    Depth,
+    Stencil,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Mesh {
+    SetOutputs,
+    EmitTasks,
+    WritePackedPrimitiveIndices,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Primitive {
+    Emit,
+    End,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -453,20 +532,6 @@ pub enum GatherPattern {
     Vertical2,
     Horizontal2,
     Diagonal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AtomicOperation {
-    Add,
-    Min,
-    Max,
-    And,
-    Or,
-    Xor,
-    Exchange,
-    CompareSwap,
-    Load,
-    Store,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

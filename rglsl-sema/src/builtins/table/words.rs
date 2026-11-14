@@ -1,7 +1,9 @@
 #![allow(non_upper_case_globals)]
 
 use super::{Shape, Size, Word};
-use crate::types::{ArraySize, Opaque, OpaqueKind, Scalar, TypeKind};
+use crate::types::{
+    ArraySize, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, TypeKind,
+};
 
 const fn scalar(scalar: Scalar) -> Word {
     Word::Fixed(TypeKind::Scalar(scalar))
@@ -30,6 +32,17 @@ const fn opaque(kind: OpaqueKind) -> Word {
     Word::Fixed(TypeKind::Opaque(Opaque::ray(kind)))
 }
 
+const fn attachment(sampled: SampledType) -> Word {
+    Word::Fixed(TypeKind::Opaque(Opaque {
+        kind: OpaqueKind::TileImage,
+        sampled,
+        dimension: TextureDimension::D2,
+        arrayed: false,
+        shadow: false,
+        multisample: false,
+    }))
+}
+
 pub(crate) const value: Word = Word::Value;
 pub(crate) const void: Word = Word::Fixed(TypeKind::Void);
 pub(crate) const genF: Word = Word::Gen(Scalar::Float);
@@ -50,6 +63,7 @@ pub(crate) const uint: Word = scalar(Scalar::Uint);
 pub(crate) const uint32_t: Word = scalar(Scalar::Uint);
 pub(crate) const float: Word = scalar(Scalar::Float);
 pub(crate) const double: Word = scalar(Scalar::Double);
+pub(crate) const float16_t: Word = scalar(Scalar::Float16);
 pub(crate) const int8_t: Word = scalar(Scalar::Int8);
 pub(crate) const uint8_t: Word = scalar(Scalar::Uint8);
 pub(crate) const int16_t: Word = scalar(Scalar::Int16);
@@ -88,6 +102,7 @@ pub(crate) const vec2: Word = vector(Scalar::Float, 2);
 pub(crate) const vec3: Word = vector(Scalar::Float, 3);
 pub(crate) const vec4: Word = vector(Scalar::Float, 4);
 pub(crate) const ivec2: Word = vector(Scalar::Int, 2);
+pub(crate) const ivec4: Word = vector(Scalar::Int, 4);
 pub(crate) const uvec2: Word = vector(Scalar::Uint, 2);
 pub(crate) const uvec3: Word = vector(Scalar::Uint, 3);
 pub(crate) const uvec4: Word = vector(Scalar::Uint, 4);
@@ -123,3 +138,6 @@ pub(crate) const accelerationStructureNV: Word = opaque(OpaqueKind::Acceleration
 pub(crate) const rayQueryEXT: Word = opaque(OpaqueKind::RayQuery);
 pub(crate) const hitObjectNV: Word = opaque(OpaqueKind::HitObjectNv);
 pub(crate) const hitObjectEXT: Word = opaque(OpaqueKind::HitObjectExt);
+pub(crate) const attachmentEXT: Word = attachment(SampledType::Float);
+pub(crate) const iattachmentEXT: Word = attachment(SampledType::Int);
+pub(crate) const uattachmentEXT: Word = attachment(SampledType::Uint);

@@ -43,11 +43,15 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         floats: Halves,
     }
     "atan": Pure(Math(Atan2)) => [genF(genF, genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR).union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: BuiltinFlags::FOLD
+            .union(BuiltinFlags::COOPERATIVE_VECTOR)
+            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
         floats: Halves,
     }
     "atan": Pure(Math(Atan)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR).union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: BuiltinFlags::FOLD
+            .union(BuiltinFlags::COOPERATIVE_VECTOR)
+            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
         floats: Halves,
     }
     "sinh": Pure(Math(Sinh)) => [genF(genF)] {
@@ -59,7 +63,9 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         floats: Halves,
     }
     "tanh": Pure(Math(Tanh)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR).union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: BuiltinFlags::FOLD
+            .union(BuiltinFlags::COOPERATIVE_VECTOR)
+            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
         floats: Halves,
     }
     "asinh": Pure(Math(Asinh)) => [genF(genF)] {
@@ -79,11 +85,15 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         floats: Halves,
     }
     "exp": Pure(Math(Exp)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR).union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: BuiltinFlags::FOLD
+            .union(BuiltinFlags::COOPERATIVE_VECTOR)
+            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
         floats: Halves,
     }
     "log": Pure(Math(Log)) => [genF(genF)] {
-        flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR).union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
+        flags: BuiltinFlags::FOLD
+            .union(BuiltinFlags::COOPERATIVE_VECTOR)
+            .union(BuiltinFlags::NO_DOUBLE_LONG_VECTOR),
         floats: Halves,
     }
     "exp2": Pure(Math(Exp2)) => [genF(genF)] {
@@ -102,11 +112,23 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "abs": Pure(Math(Abs)) => [genF(genF), genI(genI), genI64(genI64), genI16(genI16), genI8(genI8)] {
+    "abs": Pure(Math(Abs)) => [
+        genF(genF),
+        genI(genI),
+        genI64(genI64),
+        genI16(genI16),
+        genI8(genI8),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "sign": Pure(Math(Sign)) => [genF(genF), genI(genI), genI64(genI64), genI16(genI16), genI8(genI8)] {
+    "sign": Pure(Math(Sign)) => [
+        genF(genF),
+        genI(genI),
+        genI64(genI64),
+        genI16(genI16),
+        genI8(genI8),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
@@ -141,15 +163,72 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "modf": Decompose(Modf) => [genF(genF, out genF)] {
         floats: DoublesAndHalves,
     }
-    "min": Pure(Math(Min)) => [genF(genF, genF), genF(genF, float), genI(genI, genI), genI(genI, int), genU(genU, genU), genU(genU, uint), genI64(genI64, genI64), genI64(genI64, int64_t), genU64(genU64, genU64), genU64(genU64, uint64_t), genI16(genI16, genI16), genI16(genI16, int16_t), genU16(genU16, genU16), genU16(genU16, uint16_t), genI8(genI8, genI8), genI8(genI8, int8_t), genU8(genU8, genU8), genU8(genU8, uint8_t)] {
+    "min": Pure(Math(Min)) => [
+        genF(genF, genF),
+        genF(genF, float),
+        genI(genI, genI),
+        genI(genI, int),
+        genU(genU, genU),
+        genU(genU, uint),
+        genI64(genI64, genI64),
+        genI64(genI64, int64_t),
+        genU64(genU64, genU64),
+        genU64(genU64, uint64_t),
+        genI16(genI16, genI16),
+        genI16(genI16, int16_t),
+        genU16(genU16, genU16),
+        genU16(genU16, uint16_t),
+        genI8(genI8, genI8),
+        genI8(genI8, int8_t),
+        genU8(genU8, genU8),
+        genU8(genU8, uint8_t),
+    ] {
         flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
         floats: DoublesAndHalves,
     }
-    "max": Pure(Math(Max)) => [genF(genF, genF), genF(genF, float), genI(genI, genI), genI(genI, int), genU(genU, genU), genU(genU, uint), genI64(genI64, genI64), genI64(genI64, int64_t), genU64(genU64, genU64), genU64(genU64, uint64_t), genI16(genI16, genI16), genI16(genI16, int16_t), genU16(genU16, genU16), genU16(genU16, uint16_t), genI8(genI8, genI8), genI8(genI8, int8_t), genU8(genU8, genU8), genU8(genU8, uint8_t)] {
+    "max": Pure(Math(Max)) => [
+        genF(genF, genF),
+        genF(genF, float),
+        genI(genI, genI),
+        genI(genI, int),
+        genU(genU, genU),
+        genU(genU, uint),
+        genI64(genI64, genI64),
+        genI64(genI64, int64_t),
+        genU64(genU64, genU64),
+        genU64(genU64, uint64_t),
+        genI16(genI16, genI16),
+        genI16(genI16, int16_t),
+        genU16(genU16, genU16),
+        genU16(genU16, uint16_t),
+        genI8(genI8, genI8),
+        genI8(genI8, int8_t),
+        genU8(genU8, genU8),
+        genU8(genU8, uint8_t),
+    ] {
         flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
         floats: DoublesAndHalves,
     }
-    "clamp": Pure(Math(Clamp)) => [genF(genF, genF, genF), genF(genF, float, float), genI(genI, genI, genI), genI(genI, int, int), genU(genU, genU, genU), genU(genU, uint, uint), genI64(genI64, genI64, genI64), genI64(genI64, int64_t, int64_t), genU64(genU64, genU64, genU64), genU64(genU64, uint64_t, uint64_t), genI16(genI16, genI16, genI16), genI16(genI16, int16_t, int16_t), genU16(genU16, genU16, genU16), genU16(genU16, uint16_t, uint16_t), genI8(genI8, genI8, genI8), genI8(genI8, int8_t, int8_t), genU8(genU8, genU8, genU8), genU8(genU8, uint8_t, uint8_t)] {
+    "clamp": Pure(Math(Clamp)) => [
+        genF(genF, genF, genF),
+        genF(genF, float, float),
+        genI(genI, genI, genI),
+        genI(genI, int, int),
+        genU(genU, genU, genU),
+        genU(genU, uint, uint),
+        genI64(genI64, genI64, genI64),
+        genI64(genI64, int64_t, int64_t),
+        genU64(genU64, genU64, genU64),
+        genU64(genU64, uint64_t, uint64_t),
+        genI16(genI16, genI16, genI16),
+        genI16(genI16, int16_t, int16_t),
+        genU16(genU16, genU16, genU16),
+        genU16(genU16, uint16_t, uint16_t),
+        genI8(genI8, genI8, genI8),
+        genI8(genI8, int8_t, int8_t),
+        genU8(genU8, genU8, genU8),
+        genU8(genU8, uint8_t, uint8_t),
+    ] {
         flags: BuiltinFlags::FOLD.union(BuiltinFlags::COOPERATIVE_VECTOR),
         floats: DoublesAndHalves,
     }
@@ -157,7 +236,18 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "mix": Pure(Select) => [genF(genF, genF, genB), genI(genI, genI, genB), genU(genU, genU, genB), genB(genB, genB, genB), genI64(genI64, genI64, genB), genU64(genU64, genU64, genB), genI16(genI16, genI16, genB), genU16(genU16, genU16, genB), genI8(genI8, genI8, genB), genU8(genU8, genU8, genB)] {
+    "mix": Pure(Select) => [
+        genF(genF, genF, genB),
+        genI(genI, genI, genB),
+        genU(genU, genU, genB),
+        genB(genB, genB, genB),
+        genI64(genI64, genI64, genB),
+        genU64(genU64, genU64, genB),
+        genI16(genI16, genI16, genB),
+        genU16(genU16, genU16, genB),
+        genI8(genI8, genI8, genB),
+        genU8(genU8, genU8, genB),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
@@ -239,33 +329,122 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     }
     "packFloat2x16": Pure(PackedBitcast { extract: false }) => [uint(f16vec2)]
     "unpackFloat2x16": Pure(PackedBitcast { extract: false }) => [f16vec2(uint)]
-    "lessThan": Pure(Compare(Less)) => [bvecN(i64vecN, i64vecN), bvecN(u64vecN, u64vecN), bvecN(i16vecN, i16vecN), bvecN(u16vecN, u16vecN), bvecN(i8vecN, i8vecN), bvecN(u8vecN, u8vecN), bvecN(vecN, vecN), bvecN(ivecN, ivecN), bvecN(uvecN, uvecN)] {
+    "lessThan": Pure(Compare(Less)) => [
+        bvecN(i64vecN, i64vecN),
+        bvecN(u64vecN, u64vecN),
+        bvecN(i16vecN, i16vecN),
+        bvecN(u16vecN, u16vecN),
+        bvecN(i8vecN, i8vecN),
+        bvecN(u8vecN, u8vecN),
+        bvecN(vecN, vecN),
+        bvecN(ivecN, ivecN),
+        bvecN(uvecN, uvecN),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "lessThanEqual": Pure(Compare(LessEqual)) => [bvecN(i64vecN, i64vecN), bvecN(u64vecN, u64vecN), bvecN(i16vecN, i16vecN), bvecN(u16vecN, u16vecN), bvecN(i8vecN, i8vecN), bvecN(u8vecN, u8vecN), bvecN(vecN, vecN), bvecN(ivecN, ivecN), bvecN(uvecN, uvecN)] {
+    "lessThanEqual": Pure(Compare(LessEqual)) => [
+        bvecN(i64vecN, i64vecN),
+        bvecN(u64vecN, u64vecN),
+        bvecN(i16vecN, i16vecN),
+        bvecN(u16vecN, u16vecN),
+        bvecN(i8vecN, i8vecN),
+        bvecN(u8vecN, u8vecN),
+        bvecN(vecN, vecN),
+        bvecN(ivecN, ivecN),
+        bvecN(uvecN, uvecN),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "greaterThan": Pure(Compare(Greater)) => [bvecN(i64vecN, i64vecN), bvecN(u64vecN, u64vecN), bvecN(i16vecN, i16vecN), bvecN(u16vecN, u16vecN), bvecN(i8vecN, i8vecN), bvecN(u8vecN, u8vecN), bvecN(vecN, vecN), bvecN(ivecN, ivecN), bvecN(uvecN, uvecN)] {
+    "greaterThan": Pure(Compare(Greater)) => [
+        bvecN(i64vecN, i64vecN),
+        bvecN(u64vecN, u64vecN),
+        bvecN(i16vecN, i16vecN),
+        bvecN(u16vecN, u16vecN),
+        bvecN(i8vecN, i8vecN),
+        bvecN(u8vecN, u8vecN),
+        bvecN(vecN, vecN),
+        bvecN(ivecN, ivecN),
+        bvecN(uvecN, uvecN),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "greaterThanEqual": Pure(Compare(GreaterEqual)) => [bvecN(i64vecN, i64vecN), bvecN(u64vecN, u64vecN), bvecN(i16vecN, i16vecN), bvecN(u16vecN, u16vecN), bvecN(i8vecN, i8vecN), bvecN(u8vecN, u8vecN), bvecN(vecN, vecN), bvecN(ivecN, ivecN), bvecN(uvecN, uvecN)] {
+    "greaterThanEqual": Pure(Compare(GreaterEqual)) => [
+        bvecN(i64vecN, i64vecN),
+        bvecN(u64vecN, u64vecN),
+        bvecN(i16vecN, i16vecN),
+        bvecN(u16vecN, u16vecN),
+        bvecN(i8vecN, i8vecN),
+        bvecN(u8vecN, u8vecN),
+        bvecN(vecN, vecN),
+        bvecN(ivecN, ivecN),
+        bvecN(uvecN, uvecN),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "equal": Pure(Compare(Equal)) => [bvecN(i64vecN, i64vecN), bvecN(u64vecN, u64vecN), bvecN(i16vecN, i16vecN), bvecN(u16vecN, u16vecN), bvecN(i8vecN, i8vecN), bvecN(u8vecN, u8vecN), bvecN(vecN, vecN), bvecN(ivecN, ivecN), bvecN(uvecN, uvecN), bvecN(bvecN, bvecN)] {
+    "equal": Pure(Compare(Equal)) => [
+        bvecN(i64vecN, i64vecN),
+        bvecN(u64vecN, u64vecN),
+        bvecN(i16vecN, i16vecN),
+        bvecN(u16vecN, u16vecN),
+        bvecN(i8vecN, i8vecN),
+        bvecN(u8vecN, u8vecN),
+        bvecN(vecN, vecN),
+        bvecN(ivecN, ivecN),
+        bvecN(uvecN, uvecN),
+        bvecN(bvecN, bvecN),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "notEqual": Pure(Compare(NotEqual)) => [bvecN(i64vecN, i64vecN), bvecN(u64vecN, u64vecN), bvecN(i16vecN, i16vecN), bvecN(u16vecN, u16vecN), bvecN(i8vecN, i8vecN), bvecN(u8vecN, u8vecN), bvecN(vecN, vecN), bvecN(ivecN, ivecN), bvecN(uvecN, uvecN), bvecN(bvecN, bvecN)] {
+    "notEqual": Pure(Compare(NotEqual)) => [
+        bvecN(i64vecN, i64vecN),
+        bvecN(u64vecN, u64vecN),
+        bvecN(i16vecN, i16vecN),
+        bvecN(u16vecN, u16vecN),
+        bvecN(i8vecN, i8vecN),
+        bvecN(u8vecN, u8vecN),
+        bvecN(vecN, vecN),
+        bvecN(ivecN, ivecN),
+        bvecN(uvecN, uvecN),
+        bvecN(bvecN, bvecN),
+    ] {
         flags: BuiltinFlags::FOLD,
         floats: DoublesAndHalves,
     }
-    "bitCount": Pure(Bits(Count)) => [genI64(genI64), genI64(genU64), genI16(genI16), genI16(genU16), genI8(genI8), genI8(genU8), genI(genI), genI(genU)]
-    "findLSB": Pure(Bits(FindLsb)) => [genI64(genI64), genI64(genU64), genI16(genI16), genI16(genU16), genI8(genI8), genI8(genU8), genI(genI), genI(genU)]
-    "findMSB": Pure(Bits(FindMsb)) => [genI64(genI64), genI64(genU64), genI16(genI16), genI16(genU16), genI8(genI8), genI8(genU8), genI(genI), genI(genU)] {
+    "bitCount": Pure(Bits(Count)) => [
+        genI64(genI64),
+        genI64(genU64),
+        genI16(genI16),
+        genI16(genU16),
+        genI8(genI8),
+        genI8(genU8),
+        genI(genI),
+        genI(genU),
+    ]
+    "findLSB": Pure(Bits(FindLsb)) => [
+        genI64(genI64),
+        genI64(genU64),
+        genI16(genI16),
+        genI16(genU16),
+        genI8(genI8),
+        genI8(genU8),
+        genI(genI),
+        genI(genU),
+    ]
+    "findMSB": Pure(Bits(FindMsb)) => [
+        genI64(genI64),
+        genI64(genU64),
+        genI16(genI16),
+        genI16(genU16),
+        genI8(genI8),
+        genI8(genU8),
+        genI(genI),
+        genI(genU),
+    ] {
         flags: BuiltinFlags::HIGHP_OPERANDS,
     }
     "doubleBitsToInt64": Pure(Bitcast) => [genI64(genD)]
@@ -276,13 +455,34 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "packUint2x32": Pure(PackBits) => [uint64_t(uvec2)]
     "unpackInt2x32": Pure(UnpackBits) => [ivec2(int64_t)]
     "unpackUint2x32": Pure(UnpackBits) => [uvec2(uint64_t)]
-    "bitfieldExtract": Pure(Bits(Extract)) => [genI16(genI16, int16_t, int16_t), genU16(genU16, int16_t, int16_t), genI8(genI8, int8_t, int8_t), genU8(genU8, int8_t, int8_t), genI(genI, int, int), genU(genU, int, int)] {
+    "bitfieldExtract": Pure(Bits(Extract)) => [
+        genI16(genI16, int16_t, int16_t),
+        genU16(genU16, int16_t, int16_t),
+        genI8(genI8, int8_t, int8_t),
+        genU8(genU8, int8_t, int8_t),
+        genI(genI, int, int),
+        genU(genU, int, int),
+    ] {
         precision_operands: Some(1),
     }
-    "bitfieldInsert": Pure(Bits(Insert)) => [genI16(genI16, genI16, int16_t, int16_t), genU16(genU16, genU16, int16_t, int16_t), genI8(genI8, genI8, int8_t, int8_t), genU8(genU8, genU8, int8_t, int8_t), genI(genI, genI, int, int), genU(genU, genU, int, int)] {
+    "bitfieldInsert": Pure(Bits(Insert)) => [
+        genI16(genI16, genI16, int16_t, int16_t),
+        genU16(genU16, genU16, int16_t, int16_t),
+        genI8(genI8, genI8, int8_t, int8_t),
+        genU8(genU8, genU8, int8_t, int8_t),
+        genI(genI, genI, int, int),
+        genU(genU, genU, int, int),
+    ] {
         precision_operands: Some(2),
     }
-    "bitfieldReverse": Pure(Bits(Reverse)) => [genI16(genI16), genU16(genU16), genI8(genI8), genU8(genU8), genI(genI), genU(genU)] {
+    "bitfieldReverse": Pure(Bits(Reverse)) => [
+        genI16(genI16),
+        genU16(genU16),
+        genI8(genI8),
+        genU8(genU8),
+        genI(genI),
+        genU(genU),
+    ] {
         flags: BuiltinFlags::HIGHP_OPERANDS,
     }
     "halfBitsToInt16": Pure(Bitcast) => [genI16(genH)]
@@ -303,9 +503,19 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "unpackUint4x16": Pure(UnpackBits) => [u16vec4(uint64_t)]
     "pack16": Pure(PackBits) => [int16_t(i8vec2), uint16_t(u8vec2)]
     "pack32": Pure(PackBits) => [int(i8vec4), uint(u8vec4), int(i16vec2), uint(u16vec2)]
-    "pack64": Pure(PackBits) => [int64_t(i16vec4), uint64_t(u16vec4), int64_t(ivec2), uint64_t(uvec2)]
+    "pack64": Pure(PackBits) => [
+        int64_t(i16vec4),
+        uint64_t(u16vec4),
+        int64_t(ivec2),
+        uint64_t(uvec2),
+    ]
     "unpack8": Pure(UnpackBits) => [i8vec2(int16_t), u8vec2(uint16_t), i8vec4(int), u8vec4(uint)]
-    "unpack16": Pure(UnpackBits) => [i16vec2(int), u16vec2(uint), i16vec4(int64_t), u16vec4(uint64_t)]
+    "unpack16": Pure(UnpackBits) => [
+        i16vec2(int),
+        u16vec2(uint),
+        i16vec4(int64_t),
+        u16vec4(uint64_t),
+    ]
     "unpack32": Pure(UnpackBits) => [ivec2(int64_t), uvec2(uint64_t)]
     "length": Pure(Math(Length)) => [float(genF)] {
         flags: BuiltinFlags::FOLD,
@@ -377,19 +587,63 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "imulExtended": Wide(MulExtended { signed: true }) => [void(genI, genI, out genI, out genI)] {
         flags: BuiltinFlags::HIGHP_OPERANDS,
     }
-    "dotEXT": Pure(Math(IntegerDot)) => [uint(uvecN, uvecN), int(ivecN, uvecN), int(uvecN, ivecN), int(ivecN, ivecN), uint(u8vecN, u8vecN), int(i8vecN, u8vecN), int(u8vecN, i8vecN), int(i8vecN, i8vecN), uint(u16vecN, u16vecN), int(i16vecN, u16vecN), int(u16vecN, i16vecN), int(i16vecN, i16vecN), uint64_t(u64vecN, u64vecN), int64_t(i64vecN, u64vecN), int64_t(u64vecN, i64vecN), int64_t(i64vecN, i64vecN)] {
+    "dotEXT": Pure(Math(IntegerDot)) => [
+        uint(uvecN, uvecN),
+        int(ivecN, uvecN),
+        int(uvecN, ivecN),
+        int(ivecN, ivecN),
+        uint(u8vecN, u8vecN),
+        int(i8vecN, u8vecN),
+        int(u8vecN, i8vecN),
+        int(i8vecN, i8vecN),
+        uint(u16vecN, u16vecN),
+        int(i16vecN, u16vecN),
+        int(u16vecN, i16vecN),
+        int(i16vecN, i16vecN),
+        uint64_t(u64vecN, u64vecN),
+        int64_t(i64vecN, u64vecN),
+        int64_t(u64vecN, i64vecN),
+        int64_t(i64vecN, i64vecN),
+    ] {
         requires: &[ExtIntegerDotProduct],
         flags: BuiltinFlags::PRECISE_ARITHMETIC,
     }
-    "dotAccSatEXT": Pure(Math(IntegerDotAccSat)) => [uint(uvecN, uvecN, uint), int(ivecN, uvecN, int), int(uvecN, ivecN, int), int(ivecN, ivecN, int), uint(u8vecN, u8vecN, uint), int(i8vecN, u8vecN, int), int(u8vecN, i8vecN, int), int(i8vecN, i8vecN, int), uint(u16vecN, u16vecN, uint), int(i16vecN, u16vecN, int), int(u16vecN, i16vecN, int), int(i16vecN, i16vecN, int), uint64_t(u64vecN, u64vecN, uint64_t), int64_t(i64vecN, u64vecN, int64_t), int64_t(u64vecN, i64vecN, int64_t), int64_t(i64vecN, i64vecN, int64_t)] {
+    "dotAccSatEXT": Pure(Math(IntegerDotAccSat)) => [
+        uint(uvecN, uvecN, uint),
+        int(ivecN, uvecN, int),
+        int(uvecN, ivecN, int),
+        int(ivecN, ivecN, int),
+        uint(u8vecN, u8vecN, uint),
+        int(i8vecN, u8vecN, int),
+        int(u8vecN, i8vecN, int),
+        int(i8vecN, i8vecN, int),
+        uint(u16vecN, u16vecN, uint),
+        int(i16vecN, u16vecN, int),
+        int(u16vecN, i16vecN, int),
+        int(i16vecN, i16vecN, int),
+        uint64_t(u64vecN, u64vecN, uint64_t),
+        int64_t(i64vecN, u64vecN, int64_t),
+        int64_t(u64vecN, i64vecN, int64_t),
+        int64_t(i64vecN, i64vecN, int64_t),
+    ] {
         requires: &[ExtIntegerDotProduct],
         flags: BuiltinFlags::PRECISE_ARITHMETIC,
     }
-    "dotPacked4x8EXT": Pure(Math(PackedIntegerDot4x8)) => [uint(uint, uint), int(int, uint), int(uint, int), int(int, int)] {
+    "dotPacked4x8EXT": Pure(Math(PackedIntegerDot4x8)) => [
+        uint(uint, uint),
+        int(int, uint),
+        int(uint, int),
+        int(int, int),
+    ] {
         requires: &[ExtIntegerDotProduct],
         flags: BuiltinFlags::PRECISE_ARITHMETIC,
     }
-    "dotPacked4x8AccSatEXT": Pure(Math(PackedIntegerDot4x8AccSat)) => [uint(uint, uint, uint), int(int, uint, int), int(uint, int, int), int(int, int, int)] {
+    "dotPacked4x8AccSatEXT": Pure(Math(PackedIntegerDot4x8AccSat)) => [
+        uint(uint, uint, uint),
+        int(int, uint, int),
+        int(uint, int, int),
+        int(int, int, int),
+    ] {
         requires: &[ExtIntegerDotProduct],
         flags: BuiltinFlags::PRECISE_ARITHMETIC,
     }
@@ -441,7 +695,17 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "assumeEXT": Assume => [void(bool)] {
         requires: &[ExtExpectAssume],
     }
-    "expectEXT": Expect => [genB(genB, genB), genI(genI, genI), genU(genU, genU), genI8(genI8, genI8), genU8(genU8, genU8), genI16(genI16, genI16), genU16(genU16, genU16), genI64(genI64, genI64), genU64(genU64, genU64)] {
+    "expectEXT": Expect => [
+        genB(genB, genB),
+        genI(genI, genI),
+        genU(genU, genU),
+        genI8(genI8, genI8),
+        genU8(genU8, genU8),
+        genI16(genI16, genI16),
+        genU16(genU16, genU16),
+        genI64(genI64, genI64),
+        genU64(genU64, genU64),
+    ] {
         requires: &[ExtExpectAssume],
     }
     "bfloat16BitsToIntEXT": Pure(Bitcast) => [int16_t(bfloat16_t), i16vecN(bf16vecN)] {
@@ -564,13 +828,22 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "packFloat16xfe2m3EXT": Pure(PackedBitcast { extract: false }) => [u32vec3(fe2m3vec16)] {
         requires: &[ExtFloatE2m3],
     }
-    "bitcastExtractfe2m1EXT": Pure(PackedBitcast { extract: true }) => [floate2m1_t(uint8_t, uint), fe2m1vecN(u8vecN, uint)] {
+    "bitcastExtractfe2m1EXT": Pure(PackedBitcast { extract: true }) => [
+        floate2m1_t(uint8_t, uint),
+        fe2m1vecN(u8vecN, uint),
+    ] {
         requires: &[ExtFloatE2m1],
     }
-    "bitcastExtractfe3m2EXT": Pure(PackedBitcast { extract: true }) => [floate3m2_t(uint8_t, uint), fe3m2vecN(u8vecN, uint)] {
+    "bitcastExtractfe3m2EXT": Pure(PackedBitcast { extract: true }) => [
+        floate3m2_t(uint8_t, uint),
+        fe3m2vecN(u8vecN, uint),
+    ] {
         requires: &[ExtFloatE3m2],
     }
-    "bitcastExtractfe2m3EXT": Pure(PackedBitcast { extract: true }) => [floate2m3_t(uint8_t, uint), fe2m3vecN(u8vecN, uint)] {
+    "bitcastExtractfe2m3EXT": Pure(PackedBitcast { extract: true }) => [
+        floate2m3_t(uint8_t, uint),
+        fe2m3vecN(u8vecN, uint),
+    ] {
         requires: &[ExtFloatE2m3],
     }
 };

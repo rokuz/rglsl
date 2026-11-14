@@ -29,14 +29,12 @@ macro_rules! builtins {
     )*) => {
         &[$(
             $crate::builtins::table::BuiltinFunction {
-                name: $name,
-                kind: $kind,
                 signatures: &[$($crate::builtins::table::Signature {
                     result: $crate::builtins::table::words::$result,
                     parameters: parameters!($($parameters)*),
                 }),*],
                 $($($field: $value,)*)?
-                ..$crate::builtins::table::BuiltinFunction::DEFAULT
+                ..$crate::builtins::table::BuiltinFunction::new($name, $kind)
             }
         ),*]
     };
@@ -44,6 +42,7 @@ macro_rules! builtins {
 
 mod pure;
 mod ray;
+mod stage;
 mod subgroup;
 mod texture;
 mod words;
@@ -153,25 +152,27 @@ impl Emitter<'_> {
             result,
             parameters,
             stages,
-            row: Some(self.row),
+            row: self.row,
         });
     }
 }
 
 impl BuiltinFunction {
-    pub(crate) const DEFAULT: Self = Self {
-        name: "",
-        kind: BuiltinKind::Named,
-        requires: &[],
-        flags: BuiltinFlags::empty(),
-        precision_operands: None,
-        stages: ALL_STAGES,
-        since: 450,
-        floats: Floats::Single,
-        values: &[],
-        signatures: &[],
-        generate: None,
-    };
+    pub(crate) const fn new(name: &'static str, kind: BuiltinKind) -> Self {
+        Self {
+            name,
+            kind,
+            requires: &[],
+            flags: BuiltinFlags::empty(),
+            precision_operands: None,
+            stages: ALL_STAGES,
+            since: 450,
+            floats: Floats::Single,
+            values: &[],
+            signatures: &[],
+            generate: None,
+        }
+    }
 
     pub const fn has(&self, flags: BuiltinFlags) -> bool {
         self.flags.contains(flags)
@@ -196,6 +197,7 @@ pub(crate) const fn parameter<const N: usize>(
 
 pub(super) const FAMILIES: &[&[BuiltinFunction]] = &[
     pure::FUNCTIONS,
+    stage::FUNCTIONS,
     ray::FUNCTIONS,
     texture::FUNCTIONS,
     subgroup::FUNCTIONS,
@@ -373,7 +375,7 @@ impl BuiltinFunction {
             result,
             parameters,
             stages: self.stages,
-            row: Some(self),
+            row: self,
         });
     }
 }

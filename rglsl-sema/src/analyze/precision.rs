@@ -43,11 +43,10 @@ pub struct RelaxedPrecision {
     pub conversions: FastHashSet<NodeId>,
 }
 
-fn builtin_result(entry: Option<&BuiltinFunction>, name: &str) -> Precision {
+const fn builtin_result(entry: Option<&BuiltinFunction>) -> Precision {
     match entry {
         Some(entry) if entry.has(BuiltinFlags::HIGHP_RESULT) => Precision::High,
         Some(entry) if entry.has(BuiltinFlags::LOWP_RESULT) => Precision::Low,
-        None if name == "stencilAttachmentReadEXT" => Precision::Low,
         Some(_) | None => Precision::None,
     }
 }
@@ -76,12 +75,10 @@ fn is_image_or_texture(name: &str) -> bool {
     .any(|prefix| name.starts_with(prefix))
 }
 
-fn counted_arguments(entry: Option<&BuiltinFunction>, name: &str, count: usize) -> usize {
-    match entry.and_then(|entry| entry.precision_operands) {
-        Some(limit) => count.min(limit),
-        None if name.starts_with("interpolateAt") => count.min(1),
-        None => count,
-    }
+fn counted_arguments(entry: Option<&BuiltinFunction>, count: usize) -> usize {
+    entry
+        .and_then(|entry| entry.precision_operands)
+        .map_or(count, |limit| count.min(limit))
 }
 
 fn symbol_precision(analysis: &Analysis, symbol: SymbolId) -> Precision {
@@ -143,9 +140,7 @@ fn relaxes_returns(analysis: &Analysis) -> bool {
 
 fn relaxes_builtin_results(analysis: &Analysis) -> bool {
     analysis.calls.values().any(|callee| match *callee {
-        Callee::Builtin(id) => analysis.builtins.function(id).is_some_and(|function| {
-            builtin_result(analysis.builtins.entry(id), &function.name).relaxed()
-        }),
+        Callee::Builtin(id) => builtin_result(analysis.builtins.entry(id)).relaxed(),
         _ => false,
     })
 }
@@ -509,7 +504,7 @@ impl<'a> Pass<'a> {
                 };
                 let name = function.name.as_str();
                 let entry = analysis.builtins.entry(*id);
-                let counted = counted_arguments(entry, name, arguments.len());
+                let counted = counted_arguments(entry, arguments.len());
                 let mut operation = arguments
                     .iter()
                     .take(counted)
@@ -526,7 +521,7 @@ impl<'a> Pass<'a> {
                 } else if function.return_type.is_bool() {
                     Precision::None
                 } else {
-                    match builtin_result(entry, name) {
+                    match builtin_result(entry) {
                         Precision::None => operation,
                         declared => declared,
                     }

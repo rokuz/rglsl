@@ -1,5 +1,4 @@
 pub(crate) mod footprint;
-mod functions;
 pub mod kind;
 mod limits;
 pub(crate) mod ray;
@@ -26,7 +25,7 @@ pub(crate) use tables::Prebuilt;
 pub use tables::{BuiltinTables, FreshTables};
 
 use crate::scope::{Direction, Function, Parameter, Qualifiers, Symbol, SymbolId};
-use crate::types::{ArraySize, Opaque, Type, TypeRegistry};
+use crate::types::{Opaque, Type, TypeRegistry};
 use rglsl_types::{FastHashMap, FastHashSet, ShaderStage};
 
 pub(crate) const fn stage_bit(stage: ShaderStage) -> u16 {
@@ -68,48 +67,12 @@ const fn available(stages: u16, stage: ShaderStage) -> bool {
     stages == ALL_STAGES || stages & stage_bit(stage) != 0
 }
 
-struct Section {
-    text: &'static str,
-    doubles: bool,
-    halves: bool,
-    stages: u16,
-}
-
-impl Section {
-    const fn new(text: &'static str) -> Self {
-        Self {
-            text,
-            doubles: false,
-            halves: false,
-            stages: ALL_STAGES,
-        }
-    }
-
-    const fn with_doubles(self) -> Self {
-        Self {
-            doubles: true,
-            ..self
-        }
-    }
-
-    const fn with_halves(self) -> Self {
-        Self {
-            halves: true,
-            ..self
-        }
-    }
-
-    const fn in_stages(self, stages: u16) -> Self {
-        Self { stages, ..self }
-    }
-}
-
 struct Prototype {
     name: String,
     result: Type,
     parameters: Vec<(Type, Direction)>,
     stages: u16,
-    row: Option<&'static BuiltinFunction>,
+    row: &'static BuiltinFunction,
 }
 
 struct Signature<'a>(&'a Prototype);
@@ -173,22 +136,14 @@ impl Prototype {
 
 type Functions = (
     Vec<Function>,
-    Vec<Option<&'static BuiltinFunction>>,
+    Vec<&'static BuiltinFunction>,
     FastHashMap<String, Vec<BuiltinFunctionId>>,
 );
 
 pub(crate) type Footprints = Vec<(&'static str, crate::types::StructId)>;
 
-fn expand_prototypes(
-    version: u32,
-    stage: Option<ShaderStage>,
-) -> (Vec<Prototype>, TypeRegistry, Footprints) {
+fn expand_prototypes(version: u32) -> (Vec<Prototype>, TypeRegistry, Footprints) {
     let mut prototypes = Vec::new();
-    for section in functions::SECTIONS {
-        if stage.is_none_or(|stage| available(section.stages, stage)) {
-            expand_section(section, &mut prototypes);
-        }
-    }
     let mut types = TypeRegistry::new();
     let footprints = footprint::structs(&mut types);
     for family in table::FAMILIES {
@@ -197,6 +152,29 @@ fn expand_prototypes(
         }
     }
     (prototypes, types, footprints)
+}
+
+pub(crate) fn words(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    let mut start = None;
+    for (index, character) in text.char_indices() {
+        let is_word = character.is_ascii_alphanumeric() || character == '_';
+        match (start, is_word) {
+            (None, true) => start = Some(index),
+            (Some(begin), false) => {
+                found.extend(text.get(begin..index));
+                start = None;
+            }
+            _ => {}
+        }
+        if !is_word && !character.is_whitespace() {
+            found.extend(text.get(index..index + character.len_utf8()));
+        }
+    }
+    if let Some(begin) = start {
+        found.extend(text.get(begin..));
+    }
+    found
 }
 
 pub(crate) fn parse_type(word: &str) -> Option<Type> {
@@ -227,218 +205,6 @@ fn long_vector_type(word: &str) -> Option<Type> {
     }))
 }
 
-fn words(text: &str) -> Vec<&str> {
-    let mut found = Vec::new();
-    let mut start = None;
-    for (index, character) in text.char_indices() {
-        let is_word = character.is_ascii_alphanumeric() || character == '_';
-        match (start, is_word) {
-            (None, true) => start = Some(index),
-            (Some(begin), false) => {
-                found.extend(text.get(begin..index));
-                start = None;
-            }
-            _ => {}
-        }
-        if !is_word && !character.is_whitespace() {
-            found.extend(text.get(index..index + character.len_utf8()));
-        }
-    }
-    if let Some(begin) = start {
-        found.extend(text.get(begin..));
-    }
-    found
-}
-
-const SIZED_STEMS: [&str; 23] = [
-    "vec",
-    "ivec",
-    "uvec",
-    "bvec",
-    "dvec",
-    "mat",
-    "dmat",
-    "f16vec",
-    "f16mat",
-    "i64vec",
-    "u64vec",
-    "i16vec",
-    "u16vec",
-    "i8vec",
-    "u8vec",
-    "bf16vec",
-    "fe4m3vec",
-    "fe5m2vec",
-    "fe2m1vec",
-    "fe3m2vec",
-    "fe2m3vec",
-    "fue8m0vec",
-    "fmxint8vec",
-];
-
-#[derive(Clone, Copy, Default)]
-struct Sizes {
-    generic: u8,
-    size: u8,
-    columns: u8,
-    rows: u8,
-}
-
-fn generic_scalar(word: &str) -> Option<(&'static str, &'static str)> {
-    Some(match word {
-        "genF" => ("float", "vec"),
-        "genD" => ("double", "dvec"),
-        "genI" => ("int", "ivec"),
-        "genU" => ("uint", "uvec"),
-        "genB" => ("bool", "bvec"),
-        "genH" => ("float16_t", "f16vec"),
-        "genI64" => ("int64_t", "i64vec"),
-        "genU64" => ("uint64_t", "u64vec"),
-        "genI16" => ("int16_t", "i16vec"),
-        "genU16" => ("uint16_t", "u16vec"),
-        "genI8" => ("int8_t", "i8vec"),
-        "genU8" => ("uint8_t", "u8vec"),
-        _ => return None,
-    })
-}
-
-fn shaped(word: &str) -> Option<(&str, &str)> {
-    for suffix in ["CxR", "RxC", "C", "R", "N"] {
-        if let Some(stem) = word.strip_suffix(suffix)
-            && SIZED_STEMS.contains(&stem)
-        {
-            return Some((stem, suffix));
-        }
-    }
-    None
-}
-
-fn substitute(word: &str, sizes: Sizes) -> String {
-    use alloc::format;
-    if let Some((scalar, vector)) = generic_scalar(word) {
-        return if sizes.generic <= 1 {
-            String::from(scalar)
-        } else {
-            format!("{vector}{}", sizes.generic)
-        };
-    }
-    match shaped(word) {
-        Some((stem, "N")) => format!("{stem}{}", sizes.size),
-        Some((stem, "C")) => format!("{stem}{}", sizes.columns),
-        Some((stem, "R")) => format!("{stem}{}", sizes.rows),
-        Some((stem, "CxR")) => format!("{stem}{}x{}", sizes.columns, sizes.rows),
-        Some((stem, "RxC")) => format!("{stem}{}x{}", sizes.rows, sizes.columns),
-        _ => String::from(word),
-    }
-}
-
-fn variant_word(word: &str, half: bool) -> String {
-    use alloc::format;
-    let (generic, scalar, prefix) = if half {
-        ("genH", "float16_t", "f16")
-    } else {
-        ("genD", "double", "d")
-    };
-    match word {
-        "genF" => String::from(generic),
-        "float" => String::from(scalar),
-        _ if matches!(shaped(word), Some(("vec" | "mat", _)))
-            || (parse_type(word).is_some()
-                && (word.starts_with("vec") || word.starts_with("mat"))) =>
-        {
-            format!("{prefix}{word}")
-        }
-        _ => String::from(word),
-    }
-}
-
-fn parse_prototype(words: &[String], stages: u16) -> Option<Prototype> {
-    let mut iterator = words.iter().map(String::as_str).peekable();
-    let result = parse_type(iterator.next()?)?;
-    let name = String::from(iterator.next()?);
-    if iterator.next()? != "(" {
-        return None;
-    }
-    let mut parameters = Vec::new();
-    loop {
-        let mut word = iterator.next()?;
-        if word == ")" {
-            break;
-        }
-        if word == "," {
-            continue;
-        }
-        let direction = match word {
-            "out" => Direction::Out,
-            "inout" => Direction::Inout,
-            _ => Direction::In,
-        };
-        if direction != Direction::In {
-            word = iterator.next()?;
-        }
-        let mut ty = parse_type(word)?;
-        if iterator.peek() == Some(&"[") {
-            iterator.next();
-            let size = iterator.next()?.parse::<u32>().ok()?;
-            iterator.next();
-            ty = ty.array_of(ArraySize::Sized(size));
-        }
-        parameters.push((ty, direction));
-    }
-    Some(Prototype {
-        name,
-        result,
-        parameters,
-        stages,
-        row: None,
-    })
-}
-
-fn expand_line(line: &[&str], stages: u16, prototypes: &mut Vec<Prototype>) {
-    let uses = |test: &dyn Fn(&str) -> bool| line.iter().any(|word| test(word));
-    let range = |used: bool, low: u8| if used { low..=4 } else { 0..=0 };
-    let generic = uses(&|word| generic_scalar(word).is_some());
-    let size = uses(&|word| matches!(shaped(word), Some((_, "N"))));
-    let shape = uses(&|word| matches!(shaped(word), Some((_, "C" | "R" | "CxR" | "RxC"))));
-    for generic in range(generic, 1) {
-        for size in range(size, 2) {
-            for columns in range(shape, 2) {
-                for rows in range(shape, 2) {
-                    let sizes = Sizes {
-                        generic,
-                        size,
-                        columns,
-                        rows,
-                    };
-                    let concrete: Vec<String> =
-                        line.iter().map(|word| substitute(word, sizes)).collect();
-                    prototypes.extend(parse_prototype(&concrete, stages));
-                }
-            }
-        }
-    }
-}
-
-fn expand_section(section: &Section, prototypes: &mut Vec<Prototype>) {
-    for line in section.text.lines() {
-        let line = words(line);
-        if line.is_empty() {
-            continue;
-        }
-        expand_line(&line, section.stages, prototypes);
-        for (enabled, half) in [(section.doubles, false), (section.halves, true)] {
-            if !enabled {
-                continue;
-            }
-            let variant: Vec<String> = line.iter().map(|word| variant_word(word, half)).collect();
-            let variant: Vec<&str> = variant.iter().map(String::as_str).collect();
-            if variant != line {
-                expand_line(&variant, section.stages, prototypes);
-            }
-        }
-    }
-}
-
 pub(crate) fn needs_memory_scope_semantics(name: &str) -> bool {
     !matches!(name, "gl_ScopeQueueFamily" | "gl_ScopeShaderCallEXT")
         && variables::MEMORY_SCOPE_CONSTANTS
@@ -461,7 +227,7 @@ pub struct Builtins {
     stage: ShaderStage,
     limits: ResourceLimits,
     functions: Vec<Function>,
-    rows: Vec<Option<&'static BuiltinFunction>>,
+    rows: Vec<&'static BuiltinFunction>,
     names: FastHashMap<String, Vec<BuiltinFunctionId>>,
     types: TypeRegistry,
     symbols: Vec<Symbol>,
@@ -470,7 +236,7 @@ pub struct Builtins {
 
 impl Builtins {
     pub fn new(version: u32, stage: ShaderStage, limits: &ResourceLimits) -> Self {
-        let (prototypes, mut types, footprints) = expand_prototypes(version, Some(stage));
+        let (prototypes, mut types, footprints) = expand_prototypes(version);
         let kept: Vec<bool> = {
             let mut seen =
                 FastHashSet::with_capacity_and_hasher(prototypes.len(), Default::default());
@@ -563,15 +329,11 @@ impl Builtins {
     }
 
     pub fn entry(&self, id: BuiltinFunctionId) -> Option<&'static BuiltinFunction> {
-        self.rows
-            .get(usize::try_from(id.0).ok()?)
-            .copied()
-            .flatten()
+        self.rows.get(usize::try_from(id.0).ok()?).copied()
     }
 
-    pub fn kind(&self, id: BuiltinFunctionId) -> kind::BuiltinKind {
-        self.entry(id)
-            .map_or(kind::BuiltinKind::Named, |entry| entry.kind)
+    pub fn kind(&self, id: BuiltinFunctionId) -> Option<kind::BuiltinKind> {
+        self.entry(id).map(|entry| entry.kind)
     }
 
     pub fn overloads(&self, name: &str) -> &[BuiltinFunctionId] {

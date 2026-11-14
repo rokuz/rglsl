@@ -66,14 +66,6 @@ fn variable_extension(name: &str) -> Option<&'static [Extension]> {
     })
 }
 
-pub fn function_extension(name: &str) -> Option<Extension> {
-    match name {
-        "SetMeshOutputsEXT" | "EmitMeshTasksEXT" => Some(Extension::ExtMeshShader),
-        "writePackedPrimitiveIndices4x8NV" => Some(Extension::NvMeshShader),
-        _ => None,
-    }
-}
-
 impl Analyzer<'_> {
     pub(crate) fn mesh_qualifier(&mut self, span: Span, storage: StorageQualifier) {
         let keyword = storage.keyword();
@@ -150,12 +142,6 @@ impl Analyzer<'_> {
         };
         if builtin {
             self.require_extension(span, Extension::ExtFragmentShadingRate, field);
-        }
-    }
-
-    pub(crate) fn mesh_function_extension(&mut self, span: Span, name: &str) {
-        if let Some(extension) = function_extension(name) {
-            self.require_extension(span, extension, name);
         }
     }
 

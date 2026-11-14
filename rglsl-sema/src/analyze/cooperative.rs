@@ -594,13 +594,13 @@ impl Analyzer<'_> {
                 Type::new(TypeKind::LongVector { scalar, size })
             }
         };
-        let first_kind = first_entry.map_or(BuiltinKind::Named, |entry| entry.kind);
         let first_result = first_overload
             .and_then(|id| self.builtins.function(id))
             .and_then(|function| function.return_type.base_scalar());
         if !cooperative
+            && let Some(entry) = first_entry
             && let Some(result) =
-                Self::special_long_builtin(first_kind, first_result, operands, long)
+                Self::special_long_builtin(entry.kind, first_result, operands, long)
         {
             let Some(result) = result else {
                 return ambiguous(self);
@@ -674,9 +674,9 @@ impl Analyzer<'_> {
         self.builtin_extensions(span, id, name);
         let fixed_result = matches!(
             self.builtins.kind(id),
-            BuiltinKind::Subgroup(
+            Some(BuiltinKind::Subgroup(
                 Subgroup::Ballot | Subgroup::Function(SubgroupFunction::Partition)
-            )
+            ))
         );
         let result = match function.return_type.kind {
             TypeKind::Vector { scalar, .. } if !fixed_result => long(scalar),
@@ -828,8 +828,7 @@ impl Analyzer<'_> {
             .then(|| target.map(&long))
             .flatten(),
             BuiltinKind::Decompose(Decompose::Frexp) => exponent(),
-            BuiltinKind::Named
-            | BuiltinKind::Pure(
+            BuiltinKind::Pure(
                 Pure::Relational(_)
                 | Pure::Compare(_)
                 | Pure::Not
@@ -844,6 +843,14 @@ impl Analyzer<'_> {
             )
             | BuiltinKind::Decompose(Decompose::Modf)
             | BuiltinKind::Assume
+            | BuiltinKind::Atomic(_)
+            | BuiltinKind::Barrier(_)
+            | BuiltinKind::Interlock { .. }
+            | BuiltinKind::HelperInvocation
+            | BuiltinKind::Interpolate(_)
+            | BuiltinKind::AttachmentRead(_)
+            | BuiltinKind::Mesh(_)
+            | BuiltinKind::Primitive(_)
             | BuiltinKind::Subgroup(_)
             | BuiltinKind::Ray(_)
             | BuiltinKind::Texture(_) => return None,

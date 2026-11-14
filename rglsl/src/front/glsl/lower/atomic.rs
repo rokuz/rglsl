@@ -1,5 +1,5 @@
 use rglsl_ast::ast::Expression as AstExpression;
-use rglsl_sema::builtins::kind::AtomicOperation;
+use rglsl_sema::builtins::kind::{AtomicOperation, Barrier, MemoryBarrier, SplitPhase};
 use rglsl_sema::types::Opaque;
 
 use super::function::FunctionLowerer;
@@ -10,43 +10,7 @@ use crate::{
     MemoryScope, MemorySemantics, NonUniform, PredeclaredType, Span, Statement, Texel, TypeInner,
 };
 
-const fn atomic_function(name: &str) -> Option<AtomicFunction> {
-    Some(match name.as_bytes() {
-        b"atomicAdd" => AtomicFunction::Add,
-        b"atomicMin" => AtomicFunction::Min,
-        b"atomicMax" => AtomicFunction::Max,
-        b"atomicAnd" => AtomicFunction::And,
-        b"atomicOr" => AtomicFunction::InclusiveOr,
-        b"atomicXor" => AtomicFunction::ExclusiveOr,
-        b"atomicExchange" => AtomicFunction::Exchange { compare: None },
-        _ => return None,
-    })
-}
-
-const fn operand_count(name: &str) -> usize {
-    match name.as_bytes() {
-        b"atomicLoad" => 0,
-        b"atomicCompSwap" => 2,
-        _ => 1,
-    }
-}
-
-const fn operation_operands(operation: AtomicOperation) -> usize {
-    match operation {
-        AtomicOperation::Load => 0,
-        AtomicOperation::CompareSwap => 2,
-        AtomicOperation::Add
-        | AtomicOperation::Min
-        | AtomicOperation::Max
-        | AtomicOperation::And
-        | AtomicOperation::Or
-        | AtomicOperation::Xor
-        | AtomicOperation::Exchange
-        | AtomicOperation::Store => 1,
-    }
-}
-
-const fn operation_function(operation: AtomicOperation) -> Option<AtomicFunction> {
+const fn read_modify_write(operation: AtomicOperation) -> Option<AtomicFunction> {
     Some(match operation {
         AtomicOperation::Add => AtomicFunction::Add,
         AtomicOperation::Min => AtomicFunction::Min,
@@ -59,6 +23,21 @@ const fn operation_function(operation: AtomicOperation) -> Option<AtomicFunction
             return None;
         }
     })
+}
+
+const fn atomic_operands(operation: AtomicOperation) -> usize {
+    match operation {
+        AtomicOperation::Load => 0,
+        AtomicOperation::CompareSwap => 2,
+        AtomicOperation::Add
+        | AtomicOperation::Min
+        | AtomicOperation::Max
+        | AtomicOperation::And
+        | AtomicOperation::Or
+        | AtomicOperation::Xor
+        | AtomicOperation::Exchange
+        | AtomicOperation::Store => 1,
+    }
 }
 
 const fn memory_scope(value: i64) -> Option<MemoryScope> {
@@ -173,13 +152,13 @@ impl FunctionLowerer<'_, '_> {
 
     pub(super) fn barrier(
         &mut self,
-        name: &str,
+        barrier: Barrier,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<()> {
         let all = MemorySemantics::ACQUIRE_RELEASE;
-        let statement = match (name, arguments) {
-            ("barrier", &[]) if self.lw.stage_is(crate::ShaderStage::TessControl) => {
+        let statement = match (barrier, arguments) {
+            (Barrier::Execution, &[]) if self.lw.stage_is(crate::ShaderStage::TessControl) => {
                 if self.lw.analysis.vulkan_memory_model {
                     Statement::ScopedBarrier {
                         execution: Some(MemoryScope::Workgroup),
@@ -194,47 +173,39 @@ impl FunctionLowerer<'_, '_> {
                     }
                 }
             }
-            ("barrier", &[]) => Statement::ControlBarrier(crate::Barrier::WORK_GROUP),
-            ("memoryBarrier", &[]) => Statement::ScopedBarrier {
-                execution: None,
-                memory: self.default_scope(),
-                semantics: ALL_MEMORY | all,
-            },
-            ("memoryBarrierBuffer", &[]) => Statement::ScopedBarrier {
-                execution: None,
-                memory: self.default_scope(),
-                semantics: MemorySemantics::UNIFORM_MEMORY | all,
-            },
-            ("memoryBarrierShared", &[]) => Statement::ScopedBarrier {
-                execution: None,
-                memory: self.default_scope(),
-                semantics: MemorySemantics::WORKGROUP_MEMORY | all,
-            },
-            ("memoryBarrierImage", &[]) => Statement::ScopedBarrier {
-                execution: None,
-                memory: self.default_scope(),
-                semantics: MemorySemantics::IMAGE_MEMORY | all,
-            },
-            ("groupMemoryBarrier", &[]) => Statement::ScopedBarrier {
-                execution: None,
-                memory: MemoryScope::Workgroup,
-                semantics: ALL_MEMORY | all,
-            },
-            ("memoryBarrier", &[ref memory, ref storage, ref semantics]) => {
+            (Barrier::Execution, &[]) => Statement::ControlBarrier(crate::Barrier::WORK_GROUP),
+            (Barrier::Memory(memory), &[]) => {
+                let (scope, semantics) = match memory {
+                    MemoryBarrier::All => (self.default_scope(), ALL_MEMORY),
+                    MemoryBarrier::Buffer => {
+                        (self.default_scope(), MemorySemantics::UNIFORM_MEMORY)
+                    }
+                    MemoryBarrier::Shared => {
+                        (self.default_scope(), MemorySemantics::WORKGROUP_MEMORY)
+                    }
+                    MemoryBarrier::Image => (self.default_scope(), MemorySemantics::IMAGE_MEMORY),
+                    MemoryBarrier::Workgroup => (MemoryScope::Workgroup, ALL_MEMORY),
+                };
+                Statement::ScopedBarrier {
+                    execution: None,
+                    memory: scope,
+                    semantics: semantics | all,
+                }
+            }
+            (Barrier::ScopedMemory, &[ref memory, ref storage, ref semantics]) => {
                 Statement::ScopedBarrier {
                     execution: None,
                     memory: self.scope_argument(memory, at)?,
                     semantics: self.semantics_arguments(storage, semantics, at)?,
                 }
             }
-            ("controlBarrierArrive" | "controlBarrierWait", arguments) => {
-                let phase = if name == "controlBarrierArrive" {
-                    crate::BarrierPhase::Arrive
-                } else {
-                    crate::BarrierPhase::Wait
+            (Barrier::Split { phase, scoped }, arguments) => {
+                let phase = match phase {
+                    SplitPhase::Arrive => crate::BarrierPhase::Arrive,
+                    SplitPhase::Wait => crate::BarrierPhase::Wait,
                 };
-                let (execution, memory, semantics) = match *arguments {
-                    [] => (
+                let (execution, memory, semantics) = match (scoped, arguments) {
+                    (false, &[]) => (
                         MemoryScope::Workgroup,
                         MemoryScope::Workgroup,
                         MemorySemantics::WORKGROUP_MEMORY
@@ -243,12 +214,12 @@ impl FunctionLowerer<'_, '_> {
                                 crate::BarrierPhase::Wait => MemorySemantics::ACQUIRE,
                             },
                     ),
-                    [ref execution, ref memory, ref storage, ref semantics] => (
+                    (true, &[ref execution, ref memory, ref storage, ref semantics]) => (
                         self.scope_argument(execution, at)?,
                         self.scope_argument(memory, at)?,
                         self.semantics_arguments(storage, semantics, at)?,
                     ),
-                    _ => return Err(internal(at)),
+                    (false | true, _) => return Err(internal(at)),
                 };
                 Statement::SplitBarrier {
                     phase,
@@ -257,14 +228,20 @@ impl FunctionLowerer<'_, '_> {
                     semantics,
                 }
             }
-            ("controlBarrier", &[ref execution, ref memory, ref storage, ref semantics]) => {
+            (Barrier::ScopedControl, &[ref execution, ref memory, ref storage, ref semantics]) => {
                 Statement::ScopedBarrier {
                     execution: Some(self.scope_argument(execution, at)?),
                     memory: self.scope_argument(memory, at)?,
                     semantics: self.semantics_arguments(storage, semantics, at)?,
                 }
             }
-            _ => return Err(internal(at)),
+            (
+                Barrier::Execution
+                | Barrier::Memory(_)
+                | Barrier::ScopedMemory
+                | Barrier::ScopedControl,
+                _,
+            ) => return Err(internal(at)),
         };
         self.push(statement, at);
         Ok(())
@@ -274,7 +251,7 @@ impl FunctionLowerer<'_, '_> {
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn atomic(
         self,
-        name: &'b str,
+        operation: AtomicOperation,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -286,7 +263,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self.clone().place(memory);
             self.nest(frame).await
         }?;
-        let count = operand_count(name).min(rest.len());
+        let count = atomic_operands(operation).min(rest.len());
         let (values, scope) = rest.split_at(count);
         let mut operands = alloc::vec::Vec::with_capacity(values.len());
         for argument in values {
@@ -302,8 +279,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Some(self.with(|this| this.memory_order(scope, at))??)
         };
         let pointer = place.pointer;
-        match (name, order, operands.as_slice()) {
-            ("atomicLoad", Some(order), &[]) => {
+        let (fun, value, comparison) = match (operation, order, operands.as_slice()) {
+            (AtomicOperation::Load, Some(order), &[]) => {
                 let ty = self.with(|this| this.lw.insert_type(TypeInner::Scalar(element)))?;
                 let result = self.with(|this| {
                     this.push_with_result(
@@ -321,7 +298,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 return Ok(Some(result));
             }
-            ("atomicStore", Some(order), &[value]) => {
+            (AtomicOperation::Store, Some(order), &[value]) => {
                 self.with(|this| {
                     this.push(
                         Statement::AtomicStore {
@@ -334,18 +311,42 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 return Ok(None);
             }
-            _ => {}
-        }
-        let (fun, value, comparison) = match (atomic_function(name), operands.as_slice()) {
-            (Some(fun), &[value]) => (fun, value, false),
-            (None, &[compare, value]) if name == "atomicCompSwap" => (
+            (AtomicOperation::CompareSwap, _, &[compare, value]) => (
                 AtomicFunction::Exchange {
                     compare: Some(compare),
                 },
                 value,
                 true,
             ),
-            _ => return Err(internal(at)),
+            (
+                operation @ (AtomicOperation::Add
+                | AtomicOperation::Min
+                | AtomicOperation::Max
+                | AtomicOperation::And
+                | AtomicOperation::Or
+                | AtomicOperation::Xor
+                | AtomicOperation::Exchange),
+                _,
+                &[value],
+            ) => (
+                read_modify_write(operation).ok_or_else(|| internal(at))?,
+                value,
+                false,
+            ),
+            (
+                AtomicOperation::Add
+                | AtomicOperation::Min
+                | AtomicOperation::Max
+                | AtomicOperation::And
+                | AtomicOperation::Or
+                | AtomicOperation::Xor
+                | AtomicOperation::Exchange
+                | AtomicOperation::CompareSwap
+                | AtomicOperation::Load
+                | AtomicOperation::Store,
+                _,
+                _,
+            ) => return Err(internal(at)),
         };
         let ty = if comparison {
             self.with(|this| {
@@ -416,7 +417,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         } else {
             None
         };
-        let count = operation_operands(operation).min(rest.len());
+        let count = atomic_operands(operation).min(rest.len());
         let (values, scope) = rest.split_at(count);
         let mut operands = alloc::vec::Vec::with_capacity(values.len());
         for argument in values {
@@ -488,7 +489,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         value,
                     ),
                     (operation, &[value]) => (
-                        operation_function(operation).ok_or_else(|| internal(at))?,
+                        read_modify_write(operation).ok_or_else(|| internal(at))?,
                         value,
                     ),
                     _ => return Err(internal(at)),

@@ -2,9 +2,9 @@ use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
 use rglsl_sema::builtins::kind::{
-    self, AtomicOperation, Axis, BitOperation, BuiltinKind, Comparison, Control, Decompose,
-    GatherOffsets, GatherPattern, ImageProcessing, Math, Pure, Relation, Sample, Texture,
-    TextureGather, TextureLevel, TextureQuery, Wide,
+    self, AtomicOperation, Attachment, Axis, Barrier, BitOperation, BuiltinKind, Comparison,
+    Control, Decompose, GatherOffsets, GatherPattern, ImageProcessing, InterpolateAt, Math, Mesh,
+    Primitive, Pure, Relation, Sample, Texture, TextureGather, TextureLevel, TextureQuery, Wide,
 };
 use rglsl_sema::scope::Function;
 use rglsl_sema::types::{
@@ -286,17 +286,17 @@ impl FunctionLowerer<'_, '_> {
 
     fn barrier_call(
         &mut self,
-        name: &str,
+        barrier: Barrier,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        self.barrier(name, arguments, at)?;
+        self.barrier(barrier, arguments, at)?;
         Ok(None)
     }
 
-    fn interlock_call(&mut self, name: &str, at: Span) -> Result<Option<Handle<Expression>>> {
+    fn interlock_call(&mut self, begin: bool, at: Span) -> Result<Option<Handle<Expression>>> {
         self.flush();
-        let statement = if name == "beginInvocationInterlockARB" {
+        let statement = if begin {
             Statement::BeginInvocationInterlock
         } else {
             Statement::EndInvocationInterlock
@@ -307,11 +307,11 @@ impl FunctionLowerer<'_, '_> {
 
     fn primitive_statement_call(
         &mut self,
-        name: &str,
+        primitive: Primitive,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        self.primitive_statement(name, arguments, at)?;
+        self.primitive_statement(primitive, arguments, at)?;
         Ok(None)
     }
 
@@ -842,70 +842,66 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let analysis = self.with(|this| this.lw.analysis)?;
         let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
-        match analysis.builtins.kind(id) {
+        match analysis.builtins.kind(id).ok_or_else(|| internal(at))? {
             BuiltinKind::Subgroup(kind) => {
                 let frame = self.clone().subgroup(kind, arguments, at);
-                return self.nest(frame).await;
+                self.nest(frame).await
             }
             BuiltinKind::Ray(kind) => {
                 let frame = self.clone().ray_call(kind, arguments, at);
-                return self.nest(frame).await;
+                self.nest(frame).await
             }
             BuiltinKind::Texture(kind) => {
                 let frame = self.clone().texture_call(kind, function, arguments, at);
-                return self.nest(frame).await;
+                self.nest(frame).await
             }
             BuiltinKind::Pure(pure) => {
                 let frame = self
                     .clone()
                     .generic(pure, name, function, call_type, arguments, at);
-                return self.nest(frame).await.map(Some);
+                self.nest(frame).await.map(Some)
             }
             BuiltinKind::Decompose(decompose) => {
                 let frame = self.clone().split(decompose, arguments, at);
-                return self.nest(frame).await.map(Some);
+                self.nest(frame).await.map(Some)
             }
             BuiltinKind::Wide(wide) => {
                 let frame = self.clone().wide(wide, arguments, at);
-                return self.nest(frame).await;
+                self.nest(frame).await
             }
             BuiltinKind::Expect => {
                 let frame = self.clone().expect_call(arguments, at);
-                return self.nest(frame).await;
+                self.nest(frame).await
             }
             BuiltinKind::Assume => {
                 let frame = self.clone().assume_call(arguments, at);
-                return self.nest(frame).await;
+                self.nest(frame).await
             }
-            BuiltinKind::Named => {}
-        }
-        let route = route(name)
-            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        match route {
-            Route::Barrier => self.with(|this| this.barrier_call(name, arguments, at))?,
-            Route::Interlock => self.with(|this| this.interlock_call(name, at))?,
-            Route::HelperInvocation => {
+            BuiltinKind::Atomic(operation) => {
+                let frame = self.clone().atomic(operation, arguments, at);
+                self.nest(frame).await
+            }
+            BuiltinKind::Barrier(barrier) => {
+                self.with(|this| this.barrier_call(barrier, arguments, at))?
+            }
+            BuiltinKind::Interlock { begin } => self.with(|this| this.interlock_call(begin, at))?,
+            BuiltinKind::HelperInvocation => {
                 self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
             }
-            Route::Interpolate => {
-                let frame = self.clone().interpolate(name, arguments, at);
+            BuiltinKind::Interpolate(location) => {
+                let frame = self.clone().interpolate(location, arguments, at);
+                self.nest(frame).await.map(Some)
+            }
+            BuiltinKind::AttachmentRead(attachment) => {
+                let frame = self.clone().attachment_read_call(attachment, arguments, at);
                 self.nest(frame).await
             }
-            .map(Some),
-            Route::AttachmentRead => {
-                let frame = self.clone().attachment_read_call(name, arguments, at);
+            BuiltinKind::Mesh(mesh) => {
+                let frame = self.clone().mesh_statement_call(mesh, arguments, at);
                 self.nest(frame).await
             }
-            Route::Mesh => {
-                let frame = self.clone().mesh_statement_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Primitive => {
-                self.with(|this| this.primitive_statement_call(name, arguments, at))?
-            }
-            Route::Atomic => {
-                let frame = self.clone().atomic(name, arguments, at);
-                self.nest(frame).await
+            BuiltinKind::Primitive(primitive) => {
+                self.with(|this| this.primitive_statement_call(primitive, arguments, at))?
             }
         }
     }
@@ -1093,21 +1089,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn attachment_read_call(
         self,
-        name: &'b str,
+        attachment: Attachment,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let mut rest = arguments.iter();
-        let aspect = match name {
-            "colorAttachmentReadEXT" => {
+        let aspect = match attachment {
+            Attachment::Color => {
                 let image = rest.next().ok_or_else(|| internal(at))?;
                 crate::AttachmentAspect::Color({
                     let frame = self.clone().rvalue(image);
                     self.nest(frame).await
                 }?)
             }
-            "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
-            _ => crate::AttachmentAspect::Stencil,
+            Attachment::Depth => crate::AttachmentAspect::Depth,
+            Attachment::Stencil => crate::AttachmentAspect::Stencil,
         };
         let sample = match rest.next() {
             Some(sample) => Some({
@@ -1124,12 +1120,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn mesh_statement_call(
         self,
-        name: &'b str,
+        mesh: Mesh,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         {
-            let frame = self.clone().mesh_statement(name, arguments, at);
+            let frame = self.clone().mesh_statement(mesh, arguments, at);
             self.nest(frame).await
         }?;
         Ok(None)
@@ -2139,7 +2135,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn interpolate(
         self,
-        name: &'b str,
+        interpolation: InterpolateAt,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -2151,16 +2147,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         else {
             return Err(internal(at));
         };
-        let location = match (name, arguments.get(1)) {
-            ("interpolateAtSample", Some(sample)) => crate::InterpolationLocation::Sample({
+        let location = match (interpolation, arguments.get(1)) {
+            (InterpolateAt::Sample, Some(sample)) => crate::InterpolationLocation::Sample({
                 let frame = self.clone().rvalue(sample);
                 self.nest(frame).await
             }?),
-            ("interpolateAtOffset", Some(offset)) => crate::InterpolationLocation::Offset({
+            (InterpolateAt::Offset, Some(offset)) => crate::InterpolationLocation::Offset({
                 let frame = self.clone().rvalue(offset);
                 self.nest(frame).await
             }?),
-            _ => crate::InterpolationLocation::Centroid,
+            (InterpolateAt::Centroid, _)
+            | (InterpolateAt::Sample | InterpolateAt::Offset, None) => {
+                crate::InterpolationLocation::Centroid
+            }
         };
         let value = self.with(|this| {
             this.add(
@@ -2418,47 +2417,4 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         self.with(|this| this.as_kind(value, crate::Scalar::I32, at))?
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Route {
-    Barrier,
-    Interlock,
-    HelperInvocation,
-    Interpolate,
-    AttachmentRead,
-    Mesh,
-    Primitive,
-    Atomic,
-}
-
-pub(super) fn route(name: &str) -> Option<Route> {
-    Some(match name {
-        "barrier"
-        | "memoryBarrier"
-        | "memoryBarrierBuffer"
-        | "memoryBarrierShared"
-        | "memoryBarrierImage"
-        | "groupMemoryBarrier"
-        | "controlBarrier"
-        | "controlBarrierArrive"
-        | "controlBarrierWait" => Route::Barrier,
-        "beginInvocationInterlockARB" | "endInvocationInterlockARB" => Route::Interlock,
-        "helperInvocationEXT" => Route::HelperInvocation,
-        "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
-            Route::Interpolate
-        }
-        "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
-            Route::AttachmentRead
-        }
-        "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
-            Route::Mesh
-        }
-        "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
-            Route::Primitive
-        }
-        "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
-        | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => Route::Atomic,
-        _ => return None,
-    })
 }

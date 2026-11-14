@@ -4,6 +4,7 @@ use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
 use rglsl_sema::SymbolId;
+use rglsl_sema::builtins::kind::Primitive;
 use rglsl_sema::scope::{Origin, Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockStorage, Scalar, Type as GlslType, TypeKind,
@@ -692,7 +693,7 @@ fn format_member(name: &str) -> String {
 impl FunctionLowerer<'_, '_> {
     pub(super) fn primitive_statement(
         &mut self,
-        name: &str,
+        primitive: Primitive,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<()> {
@@ -706,10 +707,9 @@ impl FunctionLowerer<'_, '_> {
         if stream.is_some() {
             self.lw.stage_layout.multi_stream = true;
         }
-        let statement = match name {
-            "EmitVertex" | "EmitStreamVertex" => Statement::EmitVertex { stream },
-            "EndPrimitive" | "EndStreamPrimitive" => Statement::EndPrimitive { stream },
-            _ => return Err(internal(at)),
+        let statement = match primitive {
+            Primitive::Emit => Statement::EmitVertex { stream },
+            Primitive::End => Statement::EndPrimitive { stream },
         };
         self.push(statement, at);
         Ok(())

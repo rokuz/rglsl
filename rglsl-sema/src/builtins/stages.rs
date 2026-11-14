@@ -26,7 +26,7 @@ struct StageVariables {
 pub struct StageTables {
     version: u32,
     limits: ResourceLimits,
-    functions: Vec<(Function, u16, Option<&'static BuiltinFunction>)>,
+    functions: Vec<(Function, u16, &'static BuiltinFunction)>,
     names: FastHashMap<String, Vec<usize>>,
     variables: Vec<StageVariables>,
     footprints: Footprints,
@@ -113,7 +113,7 @@ fn stage_bits(stages: u16) -> u16 {
 
 impl StageTables {
     pub fn new(version: u32, limits: &ResourceLimits) -> Self {
-        let (prototypes, _, footprints) = expand_prototypes(version, None);
+        let (prototypes, _, footprints) = expand_prototypes(version);
         let kept: Vec<u16> = {
             let mut remaining: FastHashMap<Signature<'_>, u16> =
                 FastHashMap::with_capacity_and_hasher(prototypes.len(), Default::default());
@@ -130,7 +130,7 @@ impl StageTables {
                 })
                 .collect()
         };
-        let mut functions: Vec<(Function, u16, Option<&'static BuiltinFunction>)> = Vec::new();
+        let mut functions: Vec<(Function, u16, &'static BuiltinFunction)> = Vec::new();
         let mut names: FastHashMap<String, Vec<usize>> = FastHashMap::default();
         for (prototype, kept) in prototypes.into_iter().zip(kept) {
             if kept == 0 {

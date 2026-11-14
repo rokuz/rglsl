@@ -12,8 +12,8 @@ use rglsl_types::extension::Extension;
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::kind::{
-    AmdShaderBallot, BuiltinKind, Collective, Gather, GatherOffsets, Pure, Relation, Sample,
-    Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
+    AmdShaderBallot, Barrier, BuiltinKind, Collective, Gather, GatherOffsets, Pure, Relation,
+    Sample, Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
 };
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
@@ -775,11 +775,13 @@ impl Analyzer<'_> {
         if let Some(id) = builtin {
             self.builtin_extensions(span, id, name);
         }
-        if is_builtin && name == "barrier" {
+        let entry = builtin.and_then(|id| self.builtins.entry(id));
+        let kind = entry.map(|entry| entry.kind);
+        if kind == Some(BuiltinKind::Barrier(Barrier::Execution)) {
             self.tessellation_barrier(span);
         }
-        if is_builtin {
-            self.interlock_call(span, name);
+        if let Some(BuiltinKind::Interlock { begin }) = kind {
+            self.interlock_call(span, begin, name);
         }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
@@ -864,7 +866,6 @@ impl Analyzer<'_> {
                 info.output_conversion = Some(Box::new(parameter.ty.clone()));
             }
         }
-        let entry = builtin.and_then(|id| self.builtins.entry(id));
         if !failed
             && let Some(entry) = entry
             && entry.kind.requirements_gate_call()
@@ -880,11 +881,10 @@ impl Analyzer<'_> {
         {
             failed = !self.ray_builtin_checks(span, ray, name, operands);
         }
-        let kind = entry.map_or(BuiltinKind::Named, |entry| entry.kind);
-        if is_builtin && !failed {
+        if !failed && let Some(kind) = kind {
             failed = !self.texture_checks(span, kind, name, operands);
         }
-        if is_builtin && !failed {
+        if !failed && let Some(kind) = kind {
             failed = !self.builtin_checks(span, kind, name, operands);
             let reason = "{} types can only be in uniform block or buffer storage";
             if !self.require_small_arithmetic(
@@ -1079,17 +1079,13 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn builtin_extensions(&mut self, span: Span, id: BuiltinFunctionId, name: &str) {
-        if let Some(entry) = self.builtins.entry(id) {
-            if !entry.kind.requirements_gate_call() {
-                for &extension in entry.requires {
-                    self.require_extension(span, extension, name);
-                }
-            }
+        let Some(entry) = self.builtins.entry(id) else {
             return;
-        }
-        self.mesh_function_extension(span, name);
-        if let Some(extension) = super::fragment::function_extension(name) {
-            self.require_extension(span, extension, name);
+        };
+        if !entry.kind.requirements_gate_call() {
+            for &extension in entry.requires {
+                self.require_extension(span, extension, name);
+            }
         }
     }
 
@@ -1321,18 +1317,20 @@ impl Analyzer<'_> {
             false
         };
         let image = image_access(kind);
-        if name.starts_with("atomic") || image == Some(ImageAccess::Atomic) {
-            self.atomic_float_extensions(span, name, operands);
+        if let BuiltinKind::Atomic(operation) = kind {
+            self.atomic_float_extensions(span, operation, name, operands);
+        } else if image == Some(ImageAccess::Atomic) {
+            self.image_atomic_float_extensions(span, name, operands);
         }
-        if !self.memory_scope_checks(span, name, operands) {
+        if !self.memory_scope_checks(span, kind, name, operands) {
             return false;
         }
         let first = operands.first();
-        if name.starts_with("interpolateAt") {
+        if let BuiltinKind::Interpolate(_) = kind {
             if first.is_some_and(|operand| operand.storage != Storage::In) {
                 return invalid(self, span, "the first argument must be an interpolant");
             }
-        } else if name.starts_with("atomic") {
+        } else if let BuiltinKind::Atomic(_) = kind {
             if first.is_some_and(|operand| {
                 !matches!(
                     operand.storage,
