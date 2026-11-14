@@ -606,7 +606,18 @@ fn constants_take_their_values_from_the_resource_limits() {
     assert_eq!(limits.max_patch_vertices, 32);
     assert_eq!(limits.min_program_texel_offset, -8);
     assert_eq!(limits.max_compute_work_group_size(), [1024, 1024, 64]);
-    assert_eq!(limits.integer_constants().len(), 77);
+    let limit_constants: BTreeSet<&str> = crate::builtins::variables::FAMILIES
+        .iter()
+        .flat_map(|family| family.iter())
+        .filter(|row| {
+            matches!(
+                row.kind,
+                crate::builtins::VariableKind::Constant(crate::builtins::ConstantValue::Limit(_))
+            )
+        })
+        .map(|row| row.name)
+        .collect();
+    assert_eq!(limit_constants.len(), 77);
     limits.max_patch_vertices = 12;
     let table = Builtins::new(450, ShaderStage::TessControl, &limits);
     let value = |name: &str| {

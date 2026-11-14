@@ -52,7 +52,7 @@ mod ray;
 mod stage;
 mod subgroup;
 mod texture;
-mod words;
+pub(super) mod words;
 
 use alloc::string::String;
 use alloc::vec::Vec;

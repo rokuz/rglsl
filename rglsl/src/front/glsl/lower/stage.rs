@@ -5,6 +5,7 @@ use rglsl_types::extension::Extension;
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
 use rglsl_sema::SymbolId;
 use rglsl_sema::builtins::kind::Primitive;
+use rglsl_sema::builtins::variables::{self, BuiltinVariable};
 use rglsl_sema::scope::{Origin, Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockStorage, Scalar, Type as GlslType, TypeKind,
@@ -104,19 +105,11 @@ const fn vertex_order(name: &str) -> Option<TessellationVertexOrder> {
     })
 }
 
-fn per_vertex_builtin(name: &str, invariant: bool) -> Option<BuiltIn> {
-    Some(match name {
-        "gl_Position" => BuiltIn::Position { invariant },
-        "gl_PointSize" => BuiltIn::PointSize,
-        "gl_ClipDistance" => BuiltIn::ClipDistances,
-        "gl_CullDistance" => BuiltIn::CullDistance,
-        "gl_ViewportMask" => BuiltIn::ViewportMaskNV,
-        "gl_SecondaryPositionNV" => BuiltIn::SecondaryPositionNV,
-        "gl_SecondaryViewportMaskNV" => BuiltIn::SecondaryViewportMaskNV,
-        "gl_PositionPerViewNV" => BuiltIn::PositionPerViewNV,
-        "gl_ViewportMaskPerViewNV" => BuiltIn::ViewportMaskPerViewNV,
-        _ => return None,
-    })
+pub(super) const fn with_invariant(builtin: BuiltIn, invariant: bool) -> BuiltIn {
+    match builtin {
+        BuiltIn::Position { .. } => BuiltIn::Position { invariant },
+        other => other,
+    }
 }
 
 impl<'a> Lowerer<'a> {
@@ -330,7 +323,8 @@ impl<'a> Lowerer<'a> {
                 let (_, member) = block
                     .member(name)
                     .ok_or_else(|| unsupported(format_member(name), at))?;
-                let builtin = per_vertex_builtin(name, false)
+                let builtin = variables::member(&block.name, name)
+                    .and_then(BuiltinVariable::builtin)
                     .ok_or_else(|| unsupported(format_member(name), at))?;
                 let ty = if super::prepass::CLIP_DISTANCES.contains(&name.as_str()) {
                     let size = match member.ty.outer_size() {
@@ -524,10 +518,11 @@ impl<'a> Lowerer<'a> {
         };
         variable.origin == Origin::BuiltIn
             && variable.ty.is_array()
-            && self.analysis.types.block(id).is_some_and(|block| {
-                block.name == "gl_PerVertex"
-                    || super::mesh::MESH_BLOCKS.contains(&block.name.as_str())
-            })
+            && self
+                .analysis
+                .types
+                .block(id)
+                .is_some_and(|block| variables::blocks_named(&block.name).next().is_some())
     }
 }
 
@@ -554,41 +549,25 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let mut members = Vec::with_capacity(block.members.len());
         let mut offset = 0_u32;
         let mut alignment = Alignment::ONE;
-        let shading_rate = self.with(|this| {
-            this.analysis
-                .extensions
-                .contains(Extension::ExtFragmentShadingRate)
-        })?;
         for (index, member) in block.members.iter().enumerate() {
             let index = u32::try_from(index).map_err(|_| internal(at))?;
-            let requested = if self.with(|this| this.stage())? == ShaderStage::Mesh {
-                member.name != "gl_PrimitiveShadingRateEXT" || shading_rate
-            } else {
-                rglsl_sema::builtins::view_extension(&member.name)
-                    .is_none_or(|extension| analysis.extensions.contains(extension))
-            };
-            if !requested {
+            let row = variables::member(&block.name, &member.name)
+                .ok_or_else(|| unsupported(format_member(&member.name), at))?;
+            if !row.requires_one_of.is_empty()
+                && !analysis.extensions.contains_any(row.requires_one_of)
+            {
                 continue;
             }
             let position = u32::try_from(members.len()).map_err(|_| internal(at))?;
             if position != index {
                 self.with(|this| this.member_indices.insert((id, index), position))?;
             }
-            let builtin = per_vertex_builtin(
-                &member.name,
+            let builtin = with_invariant(
+                row.builtin()
+                    .ok_or_else(|| unsupported(format_member(&member.name), at))?,
                 member.qualifiers.flags.contains(QualifierFlags::INVARIANT)
                     || (!input && self.with(|this| this.invariant_all)?),
-            )
-            .or_else(|| match member.name.as_str() {
-                "gl_PrimitiveID" => Some(BuiltIn::PrimitiveIndex),
-                "gl_Layer" => Some(BuiltIn::Layer {
-                    viewport_relative: false,
-                    secondary_view_offset: None,
-                }),
-                "gl_ViewportIndex" => Some(BuiltIn::ViewportIndex),
-                name => super::mesh::mesh_builtin(name),
-            })
-            .ok_or_else(|| unsupported(format_member(&member.name), at))?;
+            );
             let mut sized = member.ty.clone();
             for (depth, size) in member.ty.dimensions().iter().enumerate() {
                 if *size == GlslArraySize::Unsized {

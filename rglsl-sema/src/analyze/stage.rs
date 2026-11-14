@@ -80,11 +80,6 @@ impl StageLayout {
     }
 }
 
-const VIEWPORT_LAYER_EXTENSIONS: [Extension; 2] = [
-    Extension::ArbShaderViewportLayerArray,
-    Extension::NvViewportArray2,
-];
-
 const fn table(stage: ShaderStage) -> &'static [(&'static str, Kind)] {
     match stage {
         ShaderStage::Geometry => GEOMETRY,
@@ -401,17 +396,5 @@ impl Analyzer<'_> {
         if let Some(reason) = reason {
             self.error(span, invalid("barrier", reason));
         }
-    }
-
-    pub(crate) fn viewport_layer_extension(&mut self, span: Span, name: &str) {
-        if !matches!(name, "gl_Layer" | "gl_ViewportIndex")
-            || !matches!(
-                self.stage(),
-                ShaderStage::Vertex | ShaderStage::TessControl | ShaderStage::TessEvaluation
-            )
-        {
-            return;
-        }
-        self.require_extensions(span, &VIEWPORT_LAYER_EXTENSIONS, name);
     }
 }

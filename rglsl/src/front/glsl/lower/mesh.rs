@@ -11,47 +11,16 @@ use rglsl_sema::scope::{Qualifiers, Storage};
 use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, semantic};
 use crate::{
-    AddressSpace, Binding, BuiltIn, GlobalVariable, MemoryDecorations, MeshFunction,
-    MeshOutputLayout, MeshOutputTopology, MeshShaderExtension, MeshShaderInfo, ShaderStage, Span,
-    Statement, TypeInner,
+    AddressSpace, Binding, GlobalVariable, MemoryDecorations, MeshFunction, MeshOutputLayout,
+    MeshOutputTopology, MeshShaderExtension, MeshShaderInfo, ShaderStage, Span, Statement,
+    TypeInner,
 };
-
-pub(super) const MESH_BLOCKS: [&str; 4] = [
-    "gl_MeshPerVertexNV",
-    "gl_MeshPerPrimitiveNV",
-    "gl_MeshPerVertexEXT",
-    "gl_MeshPerPrimitiveEXT",
-];
 
 pub(super) const fn mesh_topology(name: &str) -> Option<MeshOutputTopology> {
     Some(match name.as_bytes() {
         b"points" => MeshOutputTopology::Points,
         b"lines" => MeshOutputTopology::Lines,
         b"triangles" => MeshOutputTopology::Triangles,
-        _ => return None,
-    })
-}
-
-pub(super) fn mesh_builtin(name: &str) -> Option<BuiltIn> {
-    Some(match name {
-        "gl_CullPrimitiveEXT" => BuiltIn::CullPrimitive,
-        "gl_PrimitiveShadingRateEXT" => BuiltIn::PrimitiveShadingRate,
-        "gl_ViewportMask" => BuiltIn::ViewportMaskNV,
-        "gl_PositionPerViewNV" => BuiltIn::PositionPerViewNV,
-        "gl_ClipDistancePerViewNV" => BuiltIn::ClipDistancePerViewNV,
-        "gl_CullDistancePerViewNV" => BuiltIn::CullDistancePerViewNV,
-        "gl_LayerPerViewNV" => BuiltIn::LayerPerViewNV,
-        "gl_ViewportMaskPerViewNV" => BuiltIn::ViewportMaskPerViewNV,
-        "gl_PrimitiveCountNV" => BuiltIn::PrimitiveCountNV,
-        "gl_PrimitiveIndicesNV" => BuiltIn::PrimitiveIndicesNV,
-        "gl_PrimitivePointIndicesEXT" => BuiltIn::PointIndex,
-        "gl_PrimitiveLineIndicesEXT" => BuiltIn::LineIndices,
-        "gl_PrimitiveTriangleIndicesEXT" => BuiltIn::TriangleIndices,
-        "gl_MeshViewCountNV" => BuiltIn::MeshViewCountNV,
-        "gl_MeshViewIndicesNV" => BuiltIn::MeshViewIndicesNV,
-        "gl_TaskCountNV" => BuiltIn::TaskCountNV,
-        "gl_ViewIndex" => BuiltIn::ViewIndex,
-        "gl_DrawIDARB" => BuiltIn::DrawIndex,
         _ => return None,
     })
 }

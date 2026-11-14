@@ -2473,9 +2473,9 @@ impl Analyzer<'_> {
         dimensions: &[ArraySize],
     ) -> bool {
         let name = structure.name.node.as_str();
-        let Some(&(_, instance_name)) = super::mesh::MESH_BLOCK_NAMES
-            .iter()
-            .find(|(block, _)| *block == name)
+        let Some(instance_name) = crate::builtins::variables::blocks_named(name)
+            .find(|block| block.declared_in(ShaderStage::Mesh))
+            .map(|block| block.instance)
         else {
             return false;
         };

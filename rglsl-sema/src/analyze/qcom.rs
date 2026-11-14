@@ -30,15 +30,6 @@ pub(crate) fn conversion(name: &str) -> Option<QcomConversion> {
     })
 }
 
-pub fn variable_extension(name: &str) -> Option<Extension> {
-    match name {
-        "gl_TileOffsetQCOM" | "gl_TileDimensionQCOM" | "gl_TileApronSizeQCOM" => {
-            Some(Extension::QcomTileShading)
-        }
-        _ => None,
-    }
-}
-
 const BITCAST_ELEMENTS: [Scalar; 4] = [Scalar::Uint, Scalar::Int, Scalar::Float, Scalar::Float16];
 const VECTOR_ELEMENTS: [Scalar; 6] = [
     Scalar::Float,

@@ -17,13 +17,6 @@ use rglsl_types::ShaderStage;
 
 pub(crate) const MESH_ANY: [Extension; 2] = [Extension::NvMeshShader, Extension::ExtMeshShader];
 
-pub const MESH_BLOCK_NAMES: [(&str, &str); 4] = [
-    ("gl_MeshPerVertexNV", "gl_MeshVerticesNV"),
-    ("gl_MeshPerPrimitiveNV", "gl_MeshPrimitivesNV"),
-    ("gl_MeshPerVertexEXT", "gl_MeshVerticesEXT"),
-    ("gl_MeshPerPrimitiveEXT", "gl_MeshPrimitivesEXT"),
-];
-
 const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier { qualifier, reason }
 }
@@ -35,35 +28,6 @@ pub fn primitive_vertices(primitive: &str) -> Option<u32> {
         "triangles" => Some(3),
         _ => None,
     }
-}
-
-fn variable_extension(name: &str) -> Option<&'static [Extension]> {
-    Some(match name {
-        "gl_MeshVerticesNV"
-        | "gl_MeshPrimitivesNV"
-        | "gl_PrimitiveCountNV"
-        | "gl_PrimitiveIndicesNV"
-        | "gl_MeshViewCountNV"
-        | "gl_MeshViewIndicesNV"
-        | "gl_TaskCountNV"
-        | "gl_MaxMeshOutputVerticesNV"
-        | "gl_MaxMeshOutputPrimitivesNV"
-        | "gl_MaxMeshWorkGroupSizeNV"
-        | "gl_MaxTaskWorkGroupSizeNV"
-        | "gl_MaxMeshViewCountNV" => &[Extension::NvMeshShader],
-        "gl_MeshVerticesEXT"
-        | "gl_MeshPrimitivesEXT"
-        | "gl_PrimitivePointIndicesEXT"
-        | "gl_PrimitiveLineIndicesEXT"
-        | "gl_PrimitiveTriangleIndicesEXT"
-        | "gl_NumWorkGroups" => &[Extension::ExtMeshShader],
-        "gl_WorkGroupSize"
-        | "gl_WorkGroupID"
-        | "gl_LocalInvocationID"
-        | "gl_GlobalInvocationID"
-        | "gl_LocalInvocationIndex" => &MESH_ANY,
-        _ => return None,
-    })
 }
 
 impl Analyzer<'_> {
@@ -91,57 +55,6 @@ impl Analyzer<'_> {
                 Extension::NvMeshShader
             };
             self.require_extension(span, extension, keyword);
-        }
-    }
-
-    pub(crate) fn mesh_variable_extension(&mut self, span: Span, name: &str) {
-        let indices = matches!(
-            name,
-            "gl_PrimitivePointIndicesEXT"
-                | "gl_PrimitiveLineIndicesEXT"
-                | "gl_PrimitiveTriangleIndicesEXT"
-        );
-        if variable_extension(name).is_none() && !indices {
-            return;
-        }
-        if let Some(extensions) = variable_extension(name) {
-            self.require_stage_extensions(span, name, |stage| {
-                matches!(stage, ShaderStage::Mesh | ShaderStage::Task).then_some(extensions)
-            });
-        }
-        if !indices || !self.stage_is(ShaderStage::Mesh) {
-            return;
-        }
-        let required = match name {
-            "gl_PrimitivePointIndicesEXT" => "points",
-            "gl_PrimitiveLineIndicesEXT" => "lines",
-            "gl_PrimitiveTriangleIndicesEXT" => "triangles",
-            _ => return,
-        };
-        if self.stage_layout.output_primitive() != Some(required) {
-            self.error(
-                span,
-                invalid(
-                    "output primitive",
-                    "cannot be used (output primitive type mismatch)",
-                ),
-            );
-        }
-    }
-
-    pub(crate) fn mesh_member_extension(&mut self, span: Span, base: &Type, field: &str) {
-        if field != "gl_PrimitiveShadingRateEXT" || !self.stage_is(ShaderStage::Mesh) {
-            return;
-        }
-        let builtin = match base.kind {
-            TypeKind::Block(id) => self
-                .types
-                .block(id)
-                .is_some_and(|block| block.name == "gl_MeshPerPrimitiveEXT"),
-            _ => false,
-        };
-        if builtin {
-            self.require_extension(span, Extension::ExtFragmentShadingRate, field);
         }
     }
 

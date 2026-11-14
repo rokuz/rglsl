@@ -784,45 +784,8 @@ impl Analyzer<'_> {
             .symbol(id)
             .and_then(|symbol| symbol.variable())
             .is_some_and(|variable| variable.origin == Origin::BuiltIn);
-        if builtin
-            && !self.require_stage_extensions(expression.span, name, |stage| {
-                crate::builtins::ray::variable_extensions(name, stage)
-            })
-        {
+        if builtin && !self.builtin_variable_extensions(expression.span, id, name) {
             return Operand::error();
-        }
-        if crate::builtins::needs_memory_scope_semantics(name)
-            && self
-                .symbol(id)
-                .and_then(|symbol| symbol.variable())
-                .is_some_and(|variable| variable.origin == Origin::BuiltIn)
-        {
-            self.require_scope_extension(expression.span, name);
-        }
-        if let Some(extension) = crate::builtins::subgroup::variable_extension(name)
-            && self
-                .symbol(id)
-                .and_then(|symbol| symbol.variable())
-                .is_some_and(|variable| variable.origin == Origin::BuiltIn)
-        {
-            self.require_extension(expression.span, extension, name);
-        }
-        if self
-            .symbol(id)
-            .and_then(|symbol| symbol.variable())
-            .is_some_and(|variable| variable.origin == Origin::BuiltIn)
-        {
-            self.viewport_layer_extension(expression.span, name);
-            self.mesh_variable_extension(expression.span, name);
-            if let Some(extension) = crate::builtins::view_extension(name) {
-                self.require_extension(expression.span, extension, name);
-            }
-            if let Some(extension) = crate::builtins::variable_extension(name) {
-                self.require_extension(expression.span, extension, name);
-            }
-            if let Some(extension) = super::qcom::variable_extension(name) {
-                self.require_extension(expression.span, extension, name);
-            }
         }
         let (constant, value) = match self.symbol(id).map(|symbol| &symbol.kind) {
             Some(SymbolKind::Struct(_) | SymbolKind::Reference(_)) => {
@@ -1170,18 +1133,7 @@ impl Analyzer<'_> {
         if let TypeKind::Reference(id) = base_operand.ty.kind {
             return self.reference_field(&base_operand, id, field);
         }
-        self.mesh_member_extension(field.span, &base_operand.ty, &field.node);
-        let per_vertex_member = match base_operand.ty.kind {
-            TypeKind::Block(id) => self.types.block(id).is_some_and(|block| {
-                block.name == "gl_PerVertex" && block.member(&field.node).is_some()
-            }),
-            _ => false,
-        };
-        if let Some(extension) =
-            crate::builtins::view_extension(&field.node).filter(|_| per_vertex_member)
-        {
-            self.require_extension(field.span, extension, &field.node);
-        }
+        self.builtin_member_extensions(field, &base_operand.ty);
         let members = match base_operand.ty.kind {
             TypeKind::Struct(id) => self.types.structure(id).map(|structure| &structure.members),
             TypeKind::Block(id) => self.types.block(id).map(|block| &block.members),
