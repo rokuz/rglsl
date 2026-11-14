@@ -2804,11 +2804,12 @@ impl Analyzer<'_> {
             .map(|parameter| parameter.ty.clone())
             .collect();
         self.builtin_name(&name.node);
+        self.resolve_builtin(&name.node);
         let builtin_conflict = self
-            .builtins
+            .builtin_functions
             .overloads(&name.node)
             .iter()
-            .filter_map(|id| self.builtins.function(*id))
+            .filter_map(|id| self.builtin_functions.function(*id))
             .any(|function| {
                 function.same_parameter_types(&types) && function.return_type != return_type
             });

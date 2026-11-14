@@ -7,6 +7,10 @@ use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Operand};
+use crate::builtins::kind::{
+    BitOperation, BuiltinKind, Decompose, Math, Pure, Subgroup, SubgroupFunction, Wide,
+};
+use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{
@@ -520,6 +524,7 @@ impl Analyzer<'_> {
         operands: &[Operand],
     ) -> Operand {
         self.builtin_name(name);
+        self.resolve_builtin(name);
         let cooperative_operands = operands
             .iter()
             .any(|operand| operand.ty.is_cooperative_vector());
@@ -574,8 +579,10 @@ impl Analyzer<'_> {
                     .and_then(Scalar::cooperative_vector_family)
                     .is_some()
         };
+        let first_overload = self.builtin_functions.overloads(name).first().copied();
+        let first_entry = first_overload.and_then(|id| self.builtin_functions.entry(id));
         if cooperative
-            && (!COOPERATIVE_VECTOR_BUILTINS.contains(&name)
+            && (!first_entry.is_some_and(|entry| entry.has(BuiltinFlags::COOPERATIVE_VECTOR))
                 || !operands.iter().all(builtin_operand))
         {
             self.error(span, DiagnosticKind::NoMatchingFunction(String::from(name)));
@@ -588,56 +595,78 @@ impl Analyzer<'_> {
                 Type::new(TypeKind::LongVector { scalar, size })
             }
         };
-        if !cooperative && let Some(result) = Self::special_long_builtin(name, operands, long) {
+        let first_result = first_overload
+            .and_then(|id| self.builtin_functions.function(id))
+            .and_then(|function| function.return_type.base_scalar());
+        if !cooperative
+            && let Some(entry) = first_entry
+            && let Some(result) =
+                Self::special_long_builtin(entry.kind, first_result, operands, long)
+        {
             let Some(result) = result else {
                 return ambiguous(self);
             };
-            let id = self.builtins.overloads(name).first().copied();
-            let Some(id) = id else {
+            let Some(id) = first_overload else {
                 return ambiguous(self);
             };
-            self.builtin_extensions(span, name);
+            self.builtin_extensions(span, id, name);
             self.calls.insert(expression.id, super::Callee::Builtin(id));
             return Operand::temporary(result);
         }
         let features = self.numeric_features();
-        let convertible = name.starts_with("subgroup");
+        let convertible = |id: &BuiltinFunctionId| {
+            self.builtin_functions
+                .entry(*id)
+                .is_some_and(|entry| entry.has(BuiltinFlags::SUBGROUP_OPERATION))
+        };
         let candidate = self
-            .builtins
+            .builtin_functions
             .overloads(name)
             .iter()
             .copied()
             .find(|id| {
-                self.builtins
+                self.builtin_functions
                     .function(*id)
                     .is_some_and(|function| function.same_parameter_types(&stand_ins))
             })
             .or_else(|| {
-                self.builtins.overloads(name).iter().copied().find(|id| {
-                    convertible
-                        && self.builtins.function(*id).is_some_and(|function| {
-                            function.parameters.len() == stand_ins.len()
-                                && function.parameters.iter().zip(&stand_ins).all(
-                                    |(parameter, ty)| {
-                                        parameter.ty == *ty
-                                            || (ty.is_scalar()
-                                                && ty.converts_with(&parameter.ty, features))
-                                    },
-                                )
-                        })
-                })
+                self.builtin_functions
+                    .overloads(name)
+                    .iter()
+                    .copied()
+                    .find(|id| {
+                        convertible(id)
+                            && self
+                                .builtin_functions
+                                .function(*id)
+                                .is_some_and(|function| {
+                                    function.parameters.len() == stand_ins.len()
+                                        && function.parameters.iter().zip(&stand_ins).all(
+                                            |(parameter, ty)| {
+                                                parameter.ty == *ty
+                                                    || (ty.is_scalar()
+                                                        && ty
+                                                            .converts_with(&parameter.ty, features))
+                                            },
+                                        )
+                                })
+                    })
             });
         let Some(id) = candidate else {
             return ambiguous(self);
         };
-        let Some(function) = self.builtins.function(id).cloned() else {
+        let Some(function) = self.builtin_functions.function(id).cloned() else {
             return Operand::error();
         };
         let double = stand_ins
             .first()
             .and_then(Type::base_scalar)
             .is_some_and(|scalar| scalar == Scalar::Double);
-        if double && NO_DOUBLE_LONG_VECTOR.contains(&name) {
+        let no_double = self
+            .builtin_functions
+            .entry(id)
+            .is_some_and(|entry| entry.has(BuiltinFlags::NO_DOUBLE_LONG_VECTOR));
+        if double && no_double {
             return ambiguous(self);
         }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
@@ -651,8 +680,13 @@ impl Analyzer<'_> {
                 self.record_conversion(argument, &operand.ty, &parameter.ty);
             }
         }
-        self.builtin_extensions(span, name);
-        let fixed_result = matches!(name, "subgroupPartitionNV" | "subgroupBallot");
+        self.builtin_extensions(span, id, name);
+        let fixed_result = matches!(
+            self.builtin_functions.kind(id),
+            Some(BuiltinKind::Subgroup(
+                Subgroup::Ballot | Subgroup::Function(SubgroupFunction::Partition)
+            ))
+        );
         let result = match function.return_type.kind {
             TypeKind::Vector { scalar, .. } if !fixed_result => long(scalar),
             _ => function.return_type.clone(),
@@ -664,7 +698,8 @@ impl Analyzer<'_> {
 
 impl Analyzer<'_> {
     fn special_long_builtin(
-        name: &str,
+        kind: BuiltinKind,
+        target: Option<Scalar>,
         operands: &[Operand],
         long: impl Fn(Scalar) -> Type,
     ) -> Option<Option<Type>> {
@@ -686,63 +721,150 @@ impl Analyzer<'_> {
             other => other,
         };
         let long_first = first.sized_vector_length().is_some();
-        Some(match name {
-            "fma" => (all_same(3) && element.is_floating()).then_some(first),
-            "uaddCarry" | "usubBorrow" => (all_same(3) && element.is_unsigned()).then_some(first),
-            "umulExtended" => (all_same(4) && element.is_unsigned()).then_some(Type::VOID),
-            "imulExtended" => (all_same(4) && element.is_signed()).then_some(Type::VOID),
-            "bitfieldExtract" => {
+        let exponent = || {
+            let exponent = operands.get(1).map(|operand| &operand.ty);
+            (operands.len() == 2
+                && long_first
+                && element.is_floating()
+                && exponent.is_some_and(|ty| {
+                    ty.base_scalar().is_some_and(Scalar::is_signed) && ty.same_shape(&first)
+                }))
+            .then_some(first.clone())
+        };
+        Some(match kind {
+            BuiltinKind::Pure(Pure::Math(math)) => match math {
+                Math::Fma => (all_same(3) && element.is_floating()).then_some(first),
+                Math::Ldexp => exponent(),
+                Math::Radians
+                | Math::Degrees
+                | Math::Sin
+                | Math::Cos
+                | Math::Tan
+                | Math::Asin
+                | Math::Acos
+                | Math::Atan
+                | Math::Atan2
+                | Math::Sinh
+                | Math::Cosh
+                | Math::Tanh
+                | Math::Asinh
+                | Math::Acosh
+                | Math::Atanh
+                | Math::Pow
+                | Math::Exp
+                | Math::Log
+                | Math::Exp2
+                | Math::Log2
+                | Math::Sqrt
+                | Math::InverseSqrt
+                | Math::Abs
+                | Math::Sign
+                | Math::Floor
+                | Math::Trunc
+                | Math::Round
+                | Math::RoundEven
+                | Math::Ceil
+                | Math::Fract
+                | Math::Min
+                | Math::Max
+                | Math::Clamp
+                | Math::Mix
+                | Math::Step
+                | Math::SmoothStep
+                | Math::Length
+                | Math::Distance
+                | Math::Dot
+                | Math::IntegerDot
+                | Math::IntegerDotAccSat
+                | Math::PackedIntegerDot4x8
+                | Math::PackedIntegerDot4x8AccSat
+                | Math::Cross
+                | Math::Normalize
+                | Math::FaceForward
+                | Math::Reflect
+                | Math::Refract
+                | Math::Outer
+                | Math::Transpose
+                | Math::Determinant
+                | Math::Inverse
+                | Math::Pack2x16unorm
+                | Math::Pack2x16snorm
+                | Math::Pack4x8unorm
+                | Math::Pack4x8snorm
+                | Math::Unpack2x16unorm
+                | Math::Unpack2x16snorm
+                | Math::Unpack4x8unorm
+                | Math::Unpack4x8snorm
+                | Math::Pack2x16float
+                | Math::Unpack2x16float
+                | Math::PackDouble2x32
+                | Math::UnpackDouble2x32 => return None,
+            },
+            BuiltinKind::Wide(Wide::AddCarry | Wide::SubBorrow) => {
+                (all_same(3) && element.is_unsigned()).then_some(first)
+            }
+            BuiltinKind::Wide(Wide::MulExtended { signed: false }) => {
+                (all_same(4) && element.is_unsigned()).then_some(Type::VOID)
+            }
+            BuiltinKind::Wide(Wide::MulExtended { signed: true }) => {
+                (all_same(4) && element.is_signed()).then_some(Type::VOID)
+            }
+            BuiltinKind::Pure(Pure::Bits(BitOperation::Extract)) => {
                 (operands.len() == 3 && long_first && element.is_integer() && scalar_integers(1..3))
                     .then_some(first)
             }
-            "bitfieldInsert" => (operands.len() == 4
+            BuiltinKind::Pure(Pure::Bits(BitOperation::Insert)) => (operands.len() == 4
                 && long_first
                 && element.is_integer()
                 && operands.get(1).is_some_and(|operand| operand.ty == first)
                 && scalar_integers(2..4))
             .then_some(first),
-            "bitfieldReverse" => {
+            BuiltinKind::Pure(Pure::Bits(BitOperation::Reverse)) => {
                 (all_same(1) && long_first && element.is_integer()).then_some(first)
             }
-            "findLSB" | "findMSB" | "bitCount" => {
+            BuiltinKind::Pure(Pure::Bits(
+                BitOperation::Count | BitOperation::FindLsb | BitOperation::FindMsb,
+            )) => {
                 (all_same(1) && long_first && element.is_integer()).then(|| long(signed(element)))
             }
-            "expectEXT" => (all_same(2) && long_first && !element.is_floating()).then_some(first),
-            "bitcastExtractfe2m1EXT" | "bitcastExtractfe3m2EXT" | "bitcastExtractfe2m3EXT" => {
-                let target = match name {
-                    "bitcastExtractfe2m1EXT" => Scalar::FloatE2M1,
-                    "bitcastExtractfe3m2EXT" => Scalar::FloatE3M2,
-                    _ => Scalar::FloatE2M3,
-                };
-                (operands.len() == 2
-                    && long_first
-                    && element == Scalar::Uint8
-                    && scalar_integers(1..2))
-                .then(|| long(target))
+            BuiltinKind::Expect => {
+                (all_same(2) && long_first && !element.is_floating()).then_some(first)
             }
-            "frexp" | "ldexp" => {
-                let exponent = operands.get(1).map(|operand| &operand.ty);
-                (operands.len() == 2
-                    && long_first
-                    && element.is_floating()
-                    && exponent.is_some_and(|ty| {
-                        ty.base_scalar().is_some_and(Scalar::is_signed) && ty.same_shape(&first)
-                    }))
-                .then_some(first)
-            }
-            _ => return None,
+            BuiltinKind::Pure(Pure::PackedBitcast { extract: true }) => (operands.len() == 2
+                && long_first
+                && element == Scalar::Uint8
+                && scalar_integers(1..2))
+            .then(|| target.map(&long))
+            .flatten(),
+            BuiltinKind::Decompose(Decompose::Frexp) => exponent(),
+            BuiltinKind::Pure(
+                Pure::Relational(_)
+                | Pure::Compare(_)
+                | Pure::Not
+                | Pure::Select
+                | Pure::Modulo
+                | Pure::MatrixCompMult
+                | Pure::Bitcast
+                | Pure::RepackBits
+                | Pure::PackedBitcast { extract: false }
+                | Pure::Derivative(..),
+            )
+            | BuiltinKind::Decompose(Decompose::Modf)
+            | BuiltinKind::Assume
+            | BuiltinKind::Atomic(_)
+            | BuiltinKind::Barrier(_)
+            | BuiltinKind::Interlock { .. }
+            | BuiltinKind::HelperInvocation
+            | BuiltinKind::Interpolate(_)
+            | BuiltinKind::AttachmentRead(_)
+            | BuiltinKind::Mesh(_)
+            | BuiltinKind::Primitive(_)
+            | BuiltinKind::Subgroup(_)
+            | BuiltinKind::Ray(_)
+            | BuiltinKind::Texture(_) => return None,
         })
     }
 }
-
-const COOPERATIVE_VECTOR_BUILTINS: [&str; 9] = [
-    "fma", "min", "max", "step", "exp", "log", "tanh", "atan", "clamp",
-];
-
-const NO_DOUBLE_LONG_VECTOR: [&str; 19] = [
-    "radians", "degrees", "sin", "cos", "tan", "acos", "asin", "atan", "acosh", "asinh", "atanh",
-    "tanh", "cosh", "sinh", "pow", "exp", "log", "exp2", "log2",
-];
 
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn ignored_type_parameters(self, parameters: &'b Spanned<TypeParameters>) {

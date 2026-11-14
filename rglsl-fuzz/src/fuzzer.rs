@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{BasicType, BinaryOperator, Expression, ScalarType, UnaryOperator};
 use rglsl_sema::Builtins;
+use rglsl_sema::builtins::BuiltinFlags;
 use rglsl_sema::scope::Direction;
 use rglsl_types::ShaderStage;
 
@@ -116,37 +117,6 @@ pub struct Templates {
 
 const SCALAR_NUMERIC: [ScalarType; 3] = [ScalarType::Float, ScalarType::Uint, ScalarType::Int];
 const INTEGERS: [ScalarType; 2] = [ScalarType::Uint, ScalarType::Int];
-const EXCLUDED_BUILTIN_PREFIXES: [&str; 28] = [
-    "sparse",
-    "dotEXT",
-    "dotAccSatEXT",
-    "dotPacked4x8",
-    "helperInvocationEXT",
-    "depthAttachmentReadEXT",
-    "stencilAttachmentReadEXT",
-    "beginInvocationInterlock",
-    "endInvocationInterlock",
-    "controlBarrier",
-    "expectEXT",
-    "assumeEXT",
-    "interpolateAt",
-    "atomic",
-    "anyInvocation",
-    "allInvocations",
-    "barrier",
-    "memoryBarrier",
-    "subgroup",
-    "ballot",
-    "readInvocation",
-    "readFirstInvocation",
-    "minInvocations",
-    "maxInvocations",
-    "addInvocations",
-    "swizzleInvocations",
-    "writeInvocation",
-    "mbcnt",
-];
-
 impl Templates {
     pub fn new(builtins: &Builtins, hidden: &BTreeSet<String>) -> Self {
         let mut list = Vec::new();
@@ -255,12 +225,8 @@ impl Templates {
 }
 
 fn add_builtins(list: &mut Vec<Template>, builtins: &Builtins, hidden: &BTreeSet<String>) {
-    for function in builtins.functions() {
-        if hidden.contains(&function.name)
-            || EXCLUDED_BUILTIN_PREFIXES
-                .iter()
-                .any(|prefix| function.name.starts_with(prefix))
-        {
+    for (function, entry) in builtins.functions().entries() {
+        if hidden.contains(&function.name) || !entry.has(BuiltinFlags::FUZZ) {
             continue;
         }
         let Some(result) = basic::from_sema(&function.return_type) else {

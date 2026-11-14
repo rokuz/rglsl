@@ -11,7 +11,11 @@ use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
-use crate::builtins::subgroup;
+use crate::builtins::kind::{
+    AmdShaderBallot, Barrier, BuiltinKind, Collective, Gather, GatherOffsets, Pure, Relation,
+    Sample, Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
+};
+use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
@@ -122,92 +126,71 @@ fn equivalent(rules: Rules, arguments: &[Type], first: &Function, second: &Funct
         && !has_better_parameter(rules, arguments, second, first)
 }
 
-fn image_load(name: &str) -> bool {
-    matches!(
-        name,
-        "imageLoad" | "imageLoadLodAMD" | "sparseImageLoadLodAMD"
-    )
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageAccess {
+    Load,
+    Store,
+    Atomic,
 }
 
-fn image_store(name: &str) -> bool {
-    matches!(name, "imageStore" | "imageStoreLodAMD")
+const fn image_access(kind: BuiltinKind) -> Option<ImageAccess> {
+    let BuiltinKind::Texture(texture) = kind else {
+        return None;
+    };
+    match texture {
+        Texture::ImageLoad {
+            lod: false,
+            sparse: true,
+        } => None,
+        Texture::ImageLoad { .. } => Some(ImageAccess::Load),
+        Texture::ImageStore { .. } => Some(ImageAccess::Store),
+        Texture::ImageAtomic(_) => Some(ImageAccess::Atomic),
+        Texture::Footprint { .. }
+        | Texture::Sample(_)
+        | Texture::Gather(_)
+        | Texture::Fetch { .. }
+        | Texture::Query(_)
+        | Texture::QueryLod
+        | Texture::SparseTexelsResident
+        | Texture::ImageProcessing(_)
+        | Texture::SubpassLoad
+        | Texture::FragmentFetch { .. } => None,
+    }
+}
+
+const fn offset_index(kind: BuiltinKind) -> Option<usize> {
+    let BuiltinKind::Texture(texture) = kind else {
+        return None;
+    };
+    match texture {
+        Texture::Sample(Sample {
+            offset: true,
+            level,
+            ..
+        }) => Some(match level {
+            TextureLevel::Implicit => 2,
+            TextureLevel::Lod => 3,
+            TextureLevel::Gradient => 4,
+        }),
+        Texture::Fetch { offset: true, .. } => Some(3),
+        Texture::Sample(_)
+        | Texture::Fetch { .. }
+        | Texture::Footprint { .. }
+        | Texture::Gather(_)
+        | Texture::ImageLoad { .. }
+        | Texture::ImageStore { .. }
+        | Texture::ImageAtomic(_)
+        | Texture::Query(_)
+        | Texture::QueryLod
+        | Texture::SparseTexelsResident
+        | Texture::ImageProcessing(_)
+        | Texture::SubpassLoad
+        | Texture::FragmentFetch { .. } => None,
+    }
 }
 
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
 const ABORT: &str = "abortEXT";
-
-const FOLDED_BUILTINS: [&str; 68] = [
-    "radians",
-    "degrees",
-    "sin",
-    "cos",
-    "tan",
-    "asin",
-    "acos",
-    "atan",
-    "sinh",
-    "cosh",
-    "tanh",
-    "asinh",
-    "acosh",
-    "atanh",
-    "dFdx",
-    "dFdy",
-    "fwidth",
-    "dFdxFine",
-    "dFdyFine",
-    "fwidthFine",
-    "dFdxCoarse",
-    "dFdyCoarse",
-    "fwidthCoarse",
-    "pow",
-    "exp",
-    "log",
-    "exp2",
-    "log2",
-    "sqrt",
-    "inversesqrt",
-    "abs",
-    "sign",
-    "floor",
-    "trunc",
-    "round",
-    "roundEven",
-    "ceil",
-    "fract",
-    "mod",
-    "min",
-    "max",
-    "clamp",
-    "mix",
-    "step",
-    "smoothstep",
-    "isnan",
-    "isinf",
-    "floatBitsToInt",
-    "floatBitsToUint",
-    "intBitsToFloat",
-    "uintBitsToFloat",
-    "length",
-    "distance",
-    "dot",
-    "cross",
-    "normalize",
-    "faceforward",
-    "reflect",
-    "refract",
-    "matrixCompMult",
-    "outerProduct",
-    "lessThan",
-    "lessThanEqual",
-    "greaterThan",
-    "greaterThanEqual",
-    "equal",
-    "notEqual",
-    "any",
-];
-
-const FOLDED_VECTOR_BUILTINS: [&str; 2] = ["all", "not"];
 
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn operands(self, arguments: &'b [Expression]) -> Vec<Operand> {
@@ -378,7 +361,7 @@ impl Analyzer<'_> {
     fn candidate(&self, candidate: Candidate) -> Option<&Function> {
         match candidate {
             Candidate::User(id) => self.function(id),
-            Candidate::Builtin(id) => self.builtins.function(id),
+            Candidate::Builtin(id) => self.builtin_functions.function(id),
         }
     }
 
@@ -624,9 +607,23 @@ impl Analyzer<'_> {
         let Some(tables) = self.tables() else {
             return false;
         };
+        let entries = tables.entries(name);
+        let overloads = |stage: ShaderStage| {
+            let bit = crate::builtins::stage_bit(stage);
+            entries
+                .iter()
+                .filter(move |&&(_, stages)| stages & bit != 0)
+                .map(|(function, _)| function)
+        };
         let mut groups: Vec<(Vec<usize>, u16)> = Vec::new();
         for stage in ShaderStage::ALL {
-            let key = tables.overload_indices(stage, name);
+            let bit = crate::builtins::stage_bit(stage);
+            let key: Vec<usize> = entries
+                .iter()
+                .enumerate()
+                .filter(|&(_, &(_, stages))| stages & bit != 0)
+                .map(|(index, _)| index)
+                .collect();
             match groups.iter_mut().find(|&&mut (ref known, _)| *known == key) {
                 Some(&mut (_, ref mut stages)) => *stages |= crate::builtins::stage_bit(stage),
                 None => groups.push((key, crate::builtins::stage_bit(stage))),
@@ -642,7 +639,8 @@ impl Analyzer<'_> {
                 .into_iter()
                 .find(|&stage| crate::builtins::stage_bit(stage) & stages != 0)
                 .unwrap_or(own);
-            analyzer.call_outcome(name, types, &tables.overloads(stage, name))
+            let functions: Vec<&Function> = overloads(stage).collect();
+            analyzer.call_outcome(name, types, &functions)
         };
         let own_stages = groups
             .iter()
@@ -704,6 +702,7 @@ impl Analyzer<'_> {
                 return Operand::error();
             }
         }
+        self.resolve_builtin(name);
         let types: Vec<Type> = operands.iter().map(|operand| operand.ty.clone()).collect();
         if self.is_library() && self.call_stages(span, name, &types) {
             return Operand::error();
@@ -712,9 +711,9 @@ impl Analyzer<'_> {
             .iter()
             .any(|ty| ty.sized_vector_length().is_some() && !ty.is_array())
             && self.scopes.function_levels(name).is_empty()
-            && !self.builtins.overloads(name).is_empty()
-            && !self.builtins.overloads(name).iter().any(|id| {
-                self.builtins
+            && !self.builtin_functions.overloads(name).is_empty()
+            && !self.builtin_functions.overloads(name).iter().any(|id| {
+                self.builtin_functions
                     .function(*id)
                     .is_some_and(|function| function.same_parameter_types(&types))
             })
@@ -728,7 +727,7 @@ impl Analyzer<'_> {
             .map(|level| level.iter().copied().map(Candidate::User).collect())
             .collect();
         let builtins: Vec<Candidate> = self
-            .builtins
+            .builtin_functions
             .overloads(name)
             .iter()
             .copied()
@@ -783,15 +782,21 @@ impl Analyzer<'_> {
                 Candidate::Builtin(id) => Callee::Builtin(id),
             },
         );
-        let is_builtin = matches!(chosen, Candidate::Builtin(_));
-        if is_builtin {
-            self.builtin_extensions(span, name);
+        let builtin = match chosen {
+            Candidate::Builtin(id) => Some(id),
+            Candidate::User(_) => None,
+        };
+        let is_builtin = builtin.is_some();
+        if let Some(id) = builtin {
+            self.builtin_extensions(span, id, name);
         }
-        if is_builtin && name == "barrier" {
+        let entry = builtin.and_then(|id| self.builtin_functions.entry(id));
+        let kind = entry.map(|entry| entry.kind);
+        if kind == Some(BuiltinKind::Barrier(Barrier::Execution)) {
             self.tessellation_barrier(span);
         }
-        if is_builtin {
-            self.interlock_call(span, name);
+        if let Some(BuiltinKind::Interlock { begin }) = kind {
+            self.interlock_call(span, begin, name);
         }
         let first_argument = arguments.first().map_or(span, |argument| argument.span);
         let mut failed = false;
@@ -876,22 +881,26 @@ impl Analyzer<'_> {
                 info.output_conversion = Some(Box::new(parameter.ty.clone()));
             }
         }
-        if is_builtin && !failed {
-            if let Some(extensions) = crate::builtins::ray::function_extensions(name) {
-                failed = !self.require_extensions(span, extensions, name);
-            }
-            if let Some(extensions) = crate::builtins::ray::interacting_extension(name) {
-                failed = failed || !self.require_extensions(span, extensions, name);
-            }
+        if !failed
+            && let Some(entry) = entry
+            && entry.kind.requirements_gate_call()
+        {
+            failed = !entry
+                .requires
+                .iter()
+                .all(|&extension| self.require_extension(span, extension, name));
         }
-        if is_builtin && !failed {
-            failed = !self.ray_builtin_checks(span, name, operands);
+        if !failed
+            && let Some(entry) = entry
+            && let BuiltinKind::Ray(ray) = entry.kind
+        {
+            failed = !self.ray_builtin_checks(span, ray, name, operands);
         }
-        if is_builtin && !failed {
-            failed = !self.texture_checks(span, name, operands);
+        if !failed && let Some(kind) = kind {
+            failed = !self.texture_checks(span, kind, name, operands);
         }
-        if is_builtin && !failed {
-            failed = !self.builtin_checks(span, name, operands);
+        if !failed && let Some(kind) = kind {
+            failed = !self.builtin_checks(span, kind, name, operands);
             let reason = "{} types can only be in uniform block or buffer storage";
             if !self.require_small_arithmetic(
                 span,
@@ -912,17 +921,25 @@ impl Analyzer<'_> {
                 }
             }
         }
-        if is_builtin && !failed && subgroup::is_subgroup_operation(name) {
-            failed = !self.subgroup_checks(span, name, operands);
+        if !failed
+            && let Some(entry) = entry
+            && entry.has(BuiltinFlags::SUBGROUP_OPERATION)
+        {
+            failed = !self.subgroup_checks(span, entry.kind, name, operands);
         }
-        if is_builtin && !failed {
-            failed = !self.lane_pattern_check(span, name, operands);
+        if !failed && let Some(entry) = entry {
+            failed = !self.lane_pattern_check(span, entry.kind, name, operands);
         }
         if failed {
             return Operand::error();
         }
-        let constant = is_builtin
-            && (FOLDED_BUILTINS.contains(&name) || FOLDED_VECTOR_BUILTINS.contains(&name))
+        let folded = entry
+            .filter(|entry| entry.has(BuiltinFlags::FOLD))
+            .and_then(|entry| match entry.kind {
+                BuiltinKind::Pure(pure) => Some(pure),
+                _ => None,
+            });
+        let constant = folded.is_some()
             && operands
                 .iter()
                 .all(|operand| operand.constant && !operand.specialization);
@@ -935,14 +952,18 @@ impl Analyzer<'_> {
                     operand.value.as_ref().map(|value| value.convert(scalar))
                 })
                 .collect();
-            let result = if matches!(name, "any" | "all") {
+            let result = if matches!(
+                folded,
+                Some(Pure::Relational(Relation::Any | Relation::All))
+            ) {
                 Some(Scalar::Bool)
             } else {
                 function.return_type.base_scalar()
             };
             converted
                 .zip(result)
-                .and_then(|(converted, result)| fold_builtin(name, &converted, result))
+                .zip(folded)
+                .and_then(|((converted, result), pure)| fold_builtin(pure, &converted, result))
         } else {
             None
         };
@@ -1072,58 +1093,45 @@ impl Analyzer<'_> {
         Operand::temporary(Type::VOID)
     }
 
-    pub(crate) fn builtin_extensions(&mut self, span: Span, name: &str) {
-        if matches!(name, "subgroupQuadAll" | "subgroupQuadAny") {
-            self.require_extension(span, Extension::ExtShaderQuadControl, name);
+    pub(crate) fn builtin_extensions(&mut self, span: Span, id: BuiltinFunctionId, name: &str) {
+        let Some(entry) = self.builtin_functions.entry(id) else {
+            return;
+        };
+        if !entry.kind.requirements_gate_call() {
+            for &extension in entry.requires {
+                self.require_extension(span, extension, name);
+            }
         }
-        if let Some(extension) = subgroup::function_extension(name) {
-            self.require_extension(span, extension, name);
-        }
-        if matches!(
-            name,
-            "dotEXT" | "dotAccSatEXT" | "dotPacked4x8EXT" | "dotPacked4x8AccSatEXT"
-        ) {
-            self.require_extension(span, Extension::ExtIntegerDotProduct, name);
-        }
-        if matches!(name, "expectEXT" | "assumeEXT") {
-            self.require_extension(span, Extension::ExtExpectAssume, name);
-        }
-        if let Some(&(_, extension)) = SMALL_FLOAT_FUNCTIONS
-            .iter()
-            .find(|&&(part, _)| contains_ignore_ascii_case(name, part))
-        {
-            self.require_extension(span, extension, name);
-        }
-        self.mesh_function_extension(span, name);
-        if let Some(extension) = super::qcom::function_extension(name) {
-            self.require_extension(span, extension, name);
-            if matches!(
-                extension,
-                Extension::QcomImageProcessing | Extension::QcomImageProcessing2
-            ) && self
+        if let BuiltinKind::Texture(Texture::ImageProcessing(_)) = entry.kind
+            && self
                 .options
                 .spirv_version
                 .is_some_and(|version| version < (1, 4))
-            {
-                self.error(
-                    span,
-                    DiagnosticKind::SpirvVersionRequired {
-                        feature: "QCOM image processing",
-                        version: "1.4",
-                    },
-                );
-            }
+        {
+            self.error(
+                span,
+                DiagnosticKind::SpirvVersionRequired {
+                    feature: "QCOM image processing",
+                    version: "1.4",
+                },
+            );
         }
-        if let Some(extension) = super::fragment::function_extension(name) {
-            self.require_extension(span, extension, name);
-        }
-        self.texture_extensions(span, name);
     }
 
-    fn lane_pattern_check(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
-        let (limit, range) = match name {
-            "swizzleInvocationsAMD" => (3, "components must be in the range [0, 3]"),
-            "swizzleInvocationsMaskedAMD" => (31, "components must be in the range [0, 31]"),
+    fn lane_pattern_check(
+        &mut self,
+        span: Span,
+        kind: BuiltinKind,
+        name: &str,
+        operands: &[Operand],
+    ) -> bool {
+        let (limit, range) = match kind {
+            BuiltinKind::Subgroup(Subgroup::Function(SubgroupFunction::Amd(
+                AmdShaderBallot::Swizzle,
+            ))) => (3, "components must be in the range [0, 3]"),
+            BuiltinKind::Subgroup(Subgroup::Function(SubgroupFunction::Amd(
+                AmdShaderBallot::SwizzleMasked,
+            ))) => (31, "components must be in the range [0, 31]"),
             _ => return true,
         };
         let pattern = operands
@@ -1153,7 +1161,13 @@ impl Analyzer<'_> {
         false
     }
 
-    fn subgroup_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
+    fn subgroup_checks(
+        &mut self,
+        span: Span,
+        kind: BuiltinKind,
+        name: &str,
+        operands: &[Operand],
+    ) -> bool {
         let invalid = |analyzer: &mut Self, reason: &'static str| {
             analyzer.error(
                 span,
@@ -1166,7 +1180,7 @@ impl Analyzer<'_> {
         };
         let spirv = self.options.spirv_version;
         let mut valid = true;
-        if name.starts_with("subgroupClustered") && name != "subgroupClusteredRotate" {
+        if let BuiltinKind::Subgroup(Subgroup::Collective(_, Collective::Clustered)) = kind {
             let size = operands.get(1).filter(|operand| {
                 operand.constant && !operand.specialization && operand.value.is_some()
             });
@@ -1181,8 +1195,10 @@ impl Analyzer<'_> {
                 Some(_) => {}
             }
         }
-        if matches!(name, "subgroupBroadcast" | "subgroupQuadBroadcast")
-            && spirv.is_some_and(|version| version < (1, 5))
+        if matches!(
+            kind,
+            BuiltinKind::Subgroup(Subgroup::Gather(Gather::Broadcast | Gather::QuadBroadcast))
+        ) && spirv.is_some_and(|version| version < (1, 5))
             && operands
                 .get(1)
                 .is_some_and(|operand| !operand.constant || operand.specialization)
@@ -1312,7 +1328,13 @@ impl Analyzer<'_> {
             .is_none()
     }
 
-    fn builtin_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
+    fn builtin_checks(
+        &mut self,
+        span: Span,
+        kind: BuiltinKind,
+        name: &str,
+        operands: &[Operand],
+    ) -> bool {
         let invalid = |analyzer: &mut Self, span: Span, reason: &'static str| {
             analyzer.error(
                 span,
@@ -1323,18 +1345,21 @@ impl Analyzer<'_> {
             );
             false
         };
-        if name.starts_with("atomic") || name.starts_with("imageAtomic") {
-            self.atomic_float_extensions(span, name, operands);
+        let image = image_access(kind);
+        if let BuiltinKind::Atomic(operation) = kind {
+            self.atomic_float_extensions(span, operation, name, operands);
+        } else if let BuiltinKind::Texture(Texture::ImageAtomic(operation)) = kind {
+            self.image_atomic_float_extensions(span, operation, name, operands);
         }
-        if !self.memory_scope_checks(span, name, operands) {
+        if !self.memory_scope_checks(span, kind, name, operands) {
             return false;
         }
         let first = operands.first();
-        if name.starts_with("interpolateAt") {
+        if let BuiltinKind::Interpolate(_) = kind {
             if first.is_some_and(|operand| operand.storage != Storage::In) {
                 return invalid(self, span, "the first argument must be an interpolant");
             }
-        } else if name.starts_with("atomic") {
+        } else if let BuiltinKind::Atomic(_) = kind {
             if first.is_some_and(|operand| {
                 !matches!(
                     operand.storage,
@@ -1347,7 +1372,7 @@ impl Analyzer<'_> {
                     "the first argument must be a buffer or shared variable",
                 );
             }
-        } else if name.starts_with("imageAtomic") || image_load(name) || image_store(name) {
+        } else if let Some(image) = image {
             let qualifiers = first
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
@@ -1373,7 +1398,8 @@ impl Analyzer<'_> {
                         .iter()
                         .any(|format| variable.qualifiers.has_layout(format))
                 });
-            if name.starts_with("imageAtomic") && integer_image && !has_atomic_format {
+            let atomic = image == ImageAccess::Atomic;
+            if atomic && integer_image && !has_atomic_format {
                 return invalid(self, span, "the image format must be r32i or r32ui");
             }
             let wide = first
@@ -1384,7 +1410,7 @@ impl Analyzer<'_> {
                     crate::types::SampledType::Uint64 => Some("r64ui"),
                     _ => None,
                 });
-            if let Some(format) = wide.filter(|_| name.starts_with("imageAtomic")) {
+            if let Some(format) = wide.filter(|_| atomic) {
                 let matches = first
                     .and_then(|operand| operand.root)
                     .and_then(|id| self.symbol(id))
@@ -1403,33 +1429,15 @@ impl Analyzer<'_> {
                 }
             }
             if let Some((readonly, writeonly)) = qualifiers {
-                if readonly && !image_load(name) {
+                if readonly && image != ImageAccess::Load {
                     return invalid(self, span, "the image is `readonly`");
                 }
-                if writeonly && !image_store(name) {
+                if writeonly && image != ImageAccess::Store {
                     return invalid(self, span, "the image is `writeonly`");
                 }
             }
         }
-        let offset_index = match name {
-            "textureOffset"
-            | "textureProjOffset"
-            | "sparseTextureOffsetARB"
-            | "textureOffsetClampARB"
-            | "sparseTextureOffsetClampARB" => Some(2),
-            "texelFetchOffset"
-            | "textureLodOffset"
-            | "textureProjLodOffset"
-            | "sparseTextureLodOffsetARB"
-            | "sparseTexelFetchOffsetARB" => Some(3),
-            "textureGradOffset"
-            | "textureProjGradOffset"
-            | "sparseTextureGradOffsetARB"
-            | "textureGradOffsetClampARB"
-            | "sparseTextureGradOffsetClampARB" => Some(4),
-            _ => None,
-        };
-        if let Some(index) = offset_index
+        if let Some(index) = offset_index(kind)
             && let Some(operand) = operands.get(index)
         {
             if !operand.constant {
@@ -1456,7 +1464,16 @@ impl Analyzer<'_> {
         let shadow = first
             .and_then(|operand| operand.ty.as_opaque())
             .is_some_and(|opaque| opaque.shadow);
-        if name == "textureGatherOffsets" {
+        let BuiltinKind::Texture(Texture::Gather(TextureGather {
+            offsets,
+            lod: false,
+            sparse: false,
+            ..
+        })) = kind
+        else {
+            return true;
+        };
+        if offsets == GatherOffsets::Four {
             let index = if shadow { 3 } else { 2 };
             if let Some(operand) = operands.get(index)
                 && (!operand.constant || operand.specialization)
@@ -1464,13 +1481,10 @@ impl Analyzer<'_> {
                 return invalid(self, span, "the offsets must be constant");
             }
         }
-        if name.starts_with("textureGather") && !name.contains("Lod") && !shadow {
-            let index = if name == "textureGather"
-                || (super::qcom::gather_function(name) && !name.contains("Offset"))
-            {
-                2
-            } else {
-                3
+        if !shadow {
+            let index = match offsets {
+                GatherOffsets::None => 2,
+                GatherOffsets::One | GatherOffsets::Four => 3,
             };
             if let Some(operand) = operands.get(index) {
                 if !operand.constant || operand.specialization {
@@ -1917,23 +1931,4 @@ fn microscaling_conversion(ty: &Type, operands: &[Operand]) -> bool {
         && operands
             .iter()
             .any(|operand| operand.ty.base_scalar() != ty.base_scalar())
-}
-
-const SMALL_FLOAT_FUNCTIONS: [(&str, Extension); 8] = [
-    ("bfloat16", Extension::ExtBfloat16),
-    ("floate4m3", Extension::ExtFloatE4m3),
-    ("floate5m2", Extension::ExtFloatE5m2),
-    ("fe2m1", Extension::ExtFloatE2m1),
-    ("fe3m2", Extension::ExtFloatE3m2),
-    ("fe2m3", Extension::ExtFloatE2m3),
-    ("floatue8m0", Extension::ExtFloatUe8m0),
-    ("floatmxint8", Extension::ExtFloatMxint8),
-];
-
-fn contains_ignore_ascii_case(text: &str, needle: &str) -> bool {
-    needle.is_empty()
-        || text
-            .as_bytes()
-            .windows(needle.len())
-            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }

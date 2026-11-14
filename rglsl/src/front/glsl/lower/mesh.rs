@@ -5,6 +5,7 @@ use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::SymbolId;
+use rglsl_sema::builtins::kind::Mesh;
 use rglsl_sema::scope::{Qualifiers, Storage};
 
 use super::function::FunctionLowerer;
@@ -191,7 +192,7 @@ impl FunctionLowerer<'_, '_> {}
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn mesh_statement(
         self,
-        name: &'b str,
+        mesh: Mesh,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<()> {
@@ -202,23 +203,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }?);
         }
-        let function = match (name, values.as_slice()) {
-            ("SetMeshOutputsEXT", &[vertex_count, primitive_count]) => {
-                MeshFunction::SetMeshOutputs {
-                    vertex_count,
-                    primitive_count,
-                }
-            }
-            ("EmitMeshTasksEXT", &[x, y, z]) => MeshFunction::EmitMeshTasks {
+        let function = match (mesh, values.as_slice()) {
+            (Mesh::SetOutputs, &[vertex_count, primitive_count]) => MeshFunction::SetMeshOutputs {
+                vertex_count,
+                primitive_count,
+            },
+            (Mesh::EmitTasks, &[x, y, z]) => MeshFunction::EmitMeshTasks {
                 group_count: [x, y, z],
             },
-            ("writePackedPrimitiveIndices4x8NV", &[index_offset, packed_indices]) => {
+            (Mesh::WritePackedPrimitiveIndices, &[index_offset, packed_indices]) => {
                 MeshFunction::WritePackedPrimitiveIndices {
                     index_offset,
                     packed_indices,
                 }
             }
-            _ => return Err(internal(at)),
+            (Mesh::SetOutputs | Mesh::EmitTasks | Mesh::WritePackedPrimitiveIndices, _) => {
+                return Err(internal(at));
+            }
         };
         self.with(|this| this.push(Statement::MeshFunction(function), at))?;
         Ok(())

@@ -5,6 +5,7 @@ use rglsl_types::ShaderStage;
 use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
+use crate::builtins::kind::{AtomicOperation, Barrier, BuiltinKind, SplitPhase, Texture};
 use crate::diagnostic::DiagnosticKind;
 use crate::types::{Scalar, Type};
 
@@ -44,40 +45,68 @@ struct Shape {
     storage: usize,
 }
 
-fn image_shape(name: &str, multisample: bool) -> Option<Shape> {
-    let offset = usize::from(multisample);
-    let (kind, first_constant) = match name {
-        "imageAtomicLoad" => (Kind::Load, 2),
-        "imageAtomicStore" => (Kind::Store, 3),
-        "imageAtomicCompSwap" => (Kind::CompareSwap, 4),
-        "imageAtomicAdd"
-        | "imageAtomicMin"
-        | "imageAtomicMax"
-        | "imageAtomicAnd"
-        | "imageAtomicOr"
-        | "imageAtomicXor"
-        | "imageAtomicExchange" => (Kind::Modify, 3),
-        _ => return None,
+const fn image_shape(operation: AtomicOperation, multisample: bool) -> Shape {
+    let offset = if multisample { 1 } else { 0 };
+    let (kind, first_constant) = match operation {
+        AtomicOperation::Load => (Kind::Load, 2),
+        AtomicOperation::Store => (Kind::Store, 3),
+        AtomicOperation::CompareSwap => (Kind::CompareSwap, 4),
+        AtomicOperation::Add
+        | AtomicOperation::Min
+        | AtomicOperation::Max
+        | AtomicOperation::And
+        | AtomicOperation::Or
+        | AtomicOperation::Xor
+        | AtomicOperation::Exchange => (Kind::Modify, 3),
     };
-    Some(Shape {
+    Shape {
         kind,
         first_constant: first_constant + offset,
         storage: first_constant + offset + 1,
-    })
+    }
 }
 
-fn shape(name: &str) -> Option<Shape> {
-    let (kind, first_constant, storage) = match name {
-        "atomicLoad" => (Kind::Load, 1, 2),
-        "atomicStore" => (Kind::Store, 2, 3),
-        "atomicCompSwap" => (Kind::CompareSwap, 3, 4),
-        "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
-        | "atomicExchange" => (Kind::Modify, 2, 3),
-        "controlBarrier" => (Kind::ControlBarrier, 0, 2),
-        "controlBarrierArrive" => (Kind::BarrierArrive, 0, 2),
-        "controlBarrierWait" => (Kind::BarrierWait, 0, 2),
-        "memoryBarrier" => (Kind::MemoryBarrier, 0, 1),
-        _ => return None,
+const fn shape(builtin: BuiltinKind) -> Option<Shape> {
+    let (kind, first_constant, storage) = match builtin {
+        BuiltinKind::Atomic(AtomicOperation::Load) => (Kind::Load, 1, 2),
+        BuiltinKind::Atomic(AtomicOperation::Store) => (Kind::Store, 2, 3),
+        BuiltinKind::Atomic(AtomicOperation::CompareSwap) => (Kind::CompareSwap, 3, 4),
+        BuiltinKind::Atomic(
+            AtomicOperation::Add
+            | AtomicOperation::Min
+            | AtomicOperation::Max
+            | AtomicOperation::And
+            | AtomicOperation::Or
+            | AtomicOperation::Xor
+            | AtomicOperation::Exchange,
+        ) => (Kind::Modify, 2, 3),
+        BuiltinKind::Barrier(Barrier::ScopedControl) => (Kind::ControlBarrier, 0, 2),
+        BuiltinKind::Barrier(Barrier::Split {
+            phase: SplitPhase::Arrive,
+            ..
+        }) => (Kind::BarrierArrive, 0, 2),
+        BuiltinKind::Barrier(Barrier::Split {
+            phase: SplitPhase::Wait,
+            ..
+        }) => (Kind::BarrierWait, 0, 2),
+        BuiltinKind::Barrier(Barrier::Memory(_) | Barrier::ScopedMemory) => {
+            (Kind::MemoryBarrier, 0, 1)
+        }
+        BuiltinKind::Barrier(Barrier::Execution)
+        | BuiltinKind::Pure(_)
+        | BuiltinKind::Decompose(_)
+        | BuiltinKind::Wide(_)
+        | BuiltinKind::Expect
+        | BuiltinKind::Assume
+        | BuiltinKind::Interlock { .. }
+        | BuiltinKind::HelperInvocation
+        | BuiltinKind::Interpolate(_)
+        | BuiltinKind::AttachmentRead(_)
+        | BuiltinKind::Mesh(_)
+        | BuiltinKind::Primitive(_)
+        | BuiltinKind::Subgroup(_)
+        | BuiltinKind::Ray(_)
+        | BuiltinKind::Texture(_) => return None,
     };
     Some(Shape {
         kind,
@@ -91,37 +120,69 @@ const fn is_int64(ty: &Type) -> bool {
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn atomic_float_extensions(&mut self, span: Span, name: &str, operands: &[Operand]) {
+    pub(crate) fn atomic_float_extensions(
+        &mut self,
+        span: Span,
+        operation: AtomicOperation,
+        name: &str,
+        operands: &[Operand],
+    ) {
         let Some(first) = operands.first() else {
             return;
         };
-        let image = name.starts_with("imageAtomic");
-        let operation = name
-            .strip_prefix("imageAtomic")
-            .or_else(|| name.strip_prefix("atomic"))
-            .unwrap_or_default();
-        let extension = if image {
-            let float = first
-                .ty
-                .as_opaque()
-                .is_some_and(|opaque| opaque.sampled == crate::types::SampledType::Float);
-            match operation {
-                _ if !float => None,
-                "Add" | "Load" | "Store" => Some(Extension::ExtShaderAtomicFloat),
-                "Min" | "Max" => Some(Extension::ExtShaderAtomicFloat2),
-                _ => None,
-            }
-        } else {
-            match (first.ty.base_scalar(), operation) {
-                (Some(Scalar::Float | Scalar::Double), "Add" | "Exchange" | "Load" | "Store") => {
+        let float = matches!(first.ty.base_scalar(), Some(Scalar::Float | Scalar::Double));
+        let half = first.ty.base_scalar() == Some(Scalar::Float16);
+        let extension = match operation {
+            AtomicOperation::Add
+            | AtomicOperation::Exchange
+            | AtomicOperation::Load
+            | AtomicOperation::Store => {
+                if float {
                     Some(Extension::ExtShaderAtomicFloat)
-                }
-                (Some(Scalar::Float | Scalar::Double), "Min" | "Max")
-                | (Some(Scalar::Float16), "Add" | "Exchange" | "Load" | "Store" | "Min" | "Max") => {
+                } else if half {
                     Some(Extension::ExtShaderAtomicFloat2)
+                } else {
+                    None
                 }
-                _ => None,
             }
+            AtomicOperation::Min | AtomicOperation::Max => {
+                (float || half).then_some(Extension::ExtShaderAtomicFloat2)
+            }
+            AtomicOperation::And
+            | AtomicOperation::Or
+            | AtomicOperation::Xor
+            | AtomicOperation::CompareSwap => None,
+        };
+        if let Some(extension) = extension {
+            self.require_extension(span, extension, name);
+        }
+    }
+
+    pub(crate) fn image_atomic_float_extensions(
+        &mut self,
+        span: Span,
+        operation: AtomicOperation,
+        name: &str,
+        operands: &[Operand],
+    ) {
+        let Some(first) = operands.first() else {
+            return;
+        };
+        let float = first
+            .ty
+            .as_opaque()
+            .is_some_and(|opaque| opaque.sampled == crate::types::SampledType::Float);
+        let extension = match operation {
+            _ if !float => None,
+            AtomicOperation::Add | AtomicOperation::Load | AtomicOperation::Store => {
+                Some(Extension::ExtShaderAtomicFloat)
+            }
+            AtomicOperation::Min | AtomicOperation::Max => Some(Extension::ExtShaderAtomicFloat2),
+            AtomicOperation::And
+            | AtomicOperation::Or
+            | AtomicOperation::Xor
+            | AtomicOperation::Exchange
+            | AtomicOperation::CompareSwap => None,
         };
         if let Some(extension) = extension {
             self.require_extension(span, extension, name);
@@ -131,6 +192,7 @@ impl Analyzer<'_> {
     pub(crate) fn memory_scope_checks(
         &mut self,
         span: Span,
+        kind: BuiltinKind,
         name: &str,
         operands: &[Operand],
     ) -> bool {
@@ -138,14 +200,12 @@ impl Analyzer<'_> {
         let multisample = first
             .and_then(|operand| operand.ty.as_opaque())
             .is_some_and(|opaque| opaque.multisample);
-        let (shape, scoped) = if name.starts_with("imageAtomic") {
-            let Some(shape) = image_shape(name, multisample) else {
-                return true;
-            };
+        let image = matches!(kind, BuiltinKind::Texture(Texture::ImageAtomic(_)));
+        let (shape, scoped) = if let BuiltinKind::Texture(Texture::ImageAtomic(operation)) = kind {
             let limit = if multisample { 5 } else { 4 };
-            (shape, operands.len() > limit)
+            (image_shape(operation, multisample), operands.len() > limit)
         } else {
-            let Some(shape) = shape(name) else {
+            let Some(shape) = shape(kind) else {
                 return true;
             };
             let scoped = match shape.kind {
@@ -172,7 +232,7 @@ impl Analyzer<'_> {
             return false;
         }
         if !scoped {
-            if !name.starts_with("imageAtomic")
+            if !image
                 && matches!(shape.kind, Kind::Modify | Kind::CompareSwap)
                 && first.is_some_and(|operand| is_int64(&operand.ty))
             {

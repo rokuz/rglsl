@@ -1,7 +1,11 @@
-use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::{COMPUTE, FRAGMENT, MESH, Prototype, TASK};
+use super::kind::{
+    AtomicOperation, BuiltinKind, GatherOffsets, GatherPattern, Sample, Texture, TextureGather,
+    TextureLevel,
+};
+use super::table::Emitter;
+use super::{ALL_STAGES, COMPUTE, FRAGMENT, MESH, TASK};
 use crate::scope::Direction;
 use crate::types::{ArraySize, Opaque, OpaqueKind, SampledType, Scalar, TextureDimension, Type};
 
@@ -17,41 +21,32 @@ const fn input(ty: Type) -> (Type, Direction) {
     (ty, Direction::In)
 }
 
-struct Emitter<'a> {
-    prototypes: &'a mut Vec<Prototype>,
+fn common(emitter: &mut Emitter<'_>, result: Type, parameters: Vec<Type>) {
+    staged(emitter, result, parameters, ALL_STAGES);
 }
 
-impl Emitter<'_> {
-    fn common(&mut self, name: &str, result: Type, parameters: Vec<Type>) {
-        self.staged(name, result, parameters, 0);
-    }
+fn staged(emitter: &mut Emitter<'_>, result: Type, parameters: Vec<Type>, stages: u16) {
+    emitter.push(result, parameters.into_iter().map(input).collect(), stages);
+}
 
-    fn staged(&mut self, name: &str, result: Type, parameters: Vec<Type>, stages: u16) {
-        self.prototypes.push(Prototype {
-            name: String::from(name),
-            result,
-            parameters: parameters.into_iter().map(input).collect(),
-            stages,
-        });
-    }
+fn sparse(
+    emitter: &mut Emitter<'_>,
+    parameters: Vec<Type>,
+    texel: Type,
+    trailing: &[Type],
+    stages: u16,
+) {
+    let mut parameters: Vec<(Type, Direction)> = parameters.into_iter().map(input).collect();
+    parameters.push((texel, Direction::Out));
+    parameters.extend(trailing.iter().cloned().map(input));
+    emitter.push(Type::INT, parameters, stages);
+}
 
-    fn sparse(
-        &mut self,
-        name: &str,
-        parameters: Vec<Type>,
-        texel: Type,
-        trailing: &[Type],
-        stages: u16,
-    ) {
-        let mut parameters: Vec<(Type, Direction)> = parameters.into_iter().map(input).collect();
-        parameters.push((texel, Direction::Out));
-        parameters.extend(trailing.iter().cloned().map(input));
-        self.prototypes.push(Prototype {
-            name: String::from(name),
-            result: Type::INT,
-            parameters,
-            stages,
-        });
+const fn texture(emitter: &Emitter<'_>) -> Option<Texture> {
+    if let BuiltinKind::Texture(texture) = emitter.kind() {
+        Some(texture)
+    } else {
+        None
     }
 }
 
@@ -91,6 +86,28 @@ fn opaque_types() -> Vec<Opaque> {
     types
 }
 
+fn samplers() -> impl Iterator<Item = Opaque> {
+    opaque_types()
+        .into_iter()
+        .filter(|opaque| opaque.kind == OpaqueKind::CombinedSampler)
+}
+
+fn images() -> impl Iterator<Item = Opaque> {
+    opaque_types()
+        .into_iter()
+        .filter(|opaque| opaque.is_image())
+}
+
+fn sampled() -> impl Iterator<Item = Opaque> {
+    let textures = samplers()
+        .filter(|opaque| !opaque.shadow)
+        .map(|opaque| Opaque {
+            kind: OpaqueKind::Texture,
+            ..opaque
+        });
+    samplers().chain(textures)
+}
+
 fn is_valid(opaque: Opaque) -> bool {
     let dimension = opaque.dimension;
     if opaque.shadow && (opaque.multisample || opaque.is_image()) {
@@ -108,117 +125,155 @@ fn is_valid(opaque: Opaque) -> bool {
     !(opaque.shadow && opaque.sampled != SampledType::Float)
 }
 
-fn queries(emitter: &mut Emitter<'_>, opaque: Opaque) {
-    let ty = Type::opaque(opaque);
+fn size(opaque: Opaque) -> Type {
     let cube = opaque.dimension == TextureDimension::Cube;
-    let size_count =
-        opaque.dimension.coordinate_count() + u8::from(opaque.arrayed) - u8::from(cube);
-    let size = sized(Scalar::Int, size_count);
-    if opaque.is_image() {
-        emitter.common("imageSize", size, alloc::vec![ty.clone()]);
-    } else if opaque.is_buffer() || opaque.multisample {
-        emitter.common("textureSize", size, alloc::vec![ty.clone()]);
-    } else {
-        emitter.common("textureSize", size, alloc::vec![ty.clone(), Type::INT]);
-    }
-    if opaque.multisample {
-        let name = if opaque.is_image() {
-            "imageSamples"
-        } else {
-            "textureSamples"
-        };
-        emitter.common(name, Type::INT, alloc::vec![ty.clone()]);
-    }
-    if opaque.is_image() || opaque.multisample || opaque.is_buffer() {
-        return;
-    }
-    let coordinate = sized(Scalar::Float, opaque.dimension.coordinate_count());
-    if opaque.kind == OpaqueKind::CombinedSampler {
-        for name in ["textureQueryLod", "textureQueryLOD"] {
-            emitter.staged(
-                name,
-                Type::vector(Scalar::Float, 2),
-                alloc::vec![ty.clone(), coordinate.clone()],
-                DERIVATIVE_STAGES,
-            );
-        }
-    }
-    emitter.common("textureQueryLevels", Type::INT, alloc::vec![ty]);
+    sized(
+        Scalar::Int,
+        opaque.dimension.coordinate_count() + u8::from(opaque.arrayed) - u8::from(cube),
+    )
 }
 
-fn images(emitter: &mut Emitter<'_>, opaque: Opaque) {
+pub(crate) fn texture_size(emitter: &mut Emitter<'_>) {
+    for opaque in sampled() {
+        let ty = Type::opaque(opaque);
+        if opaque.is_buffer() || opaque.multisample {
+            common(emitter, size(opaque), alloc::vec![ty]);
+        } else {
+            common(emitter, size(opaque), alloc::vec![ty, Type::INT]);
+        }
+    }
+}
+
+pub(crate) fn image_size(emitter: &mut Emitter<'_>) {
+    for opaque in images() {
+        common(emitter, size(opaque), alloc::vec![Type::opaque(opaque)]);
+    }
+}
+
+pub(crate) fn texture_samples(emitter: &mut Emitter<'_>) {
+    for opaque in sampled().filter(|opaque| opaque.multisample) {
+        common(emitter, Type::INT, alloc::vec![Type::opaque(opaque)]);
+    }
+}
+
+pub(crate) fn image_samples(emitter: &mut Emitter<'_>) {
+    for opaque in images().filter(|opaque| opaque.multisample) {
+        common(emitter, Type::INT, alloc::vec![Type::opaque(opaque)]);
+    }
+}
+
+const fn has_levels(opaque: Opaque) -> bool {
+    !opaque.multisample && !opaque.is_buffer()
+}
+
+pub(crate) fn query_lod(emitter: &mut Emitter<'_>) {
+    for opaque in samplers().filter(|&opaque| has_levels(opaque)) {
+        let coordinate = sized(Scalar::Float, opaque.dimension.coordinate_count());
+        staged(
+            emitter,
+            Type::vector(Scalar::Float, 2),
+            alloc::vec![Type::opaque(opaque), coordinate],
+            DERIVATIVE_STAGES,
+        );
+    }
+}
+
+pub(crate) fn query_levels(emitter: &mut Emitter<'_>) {
+    for opaque in sampled().filter(|&opaque| has_levels(opaque)) {
+        common(emitter, Type::INT, alloc::vec![Type::opaque(opaque)]);
+    }
+}
+
+fn image_base(opaque: Opaque) -> Vec<Type> {
     let cube = opaque.dimension == TextureDimension::Cube;
     let count = opaque.dimension.coordinate_count() + u8::from(opaque.arrayed && !cube);
     let mut base = alloc::vec![Type::opaque(opaque), sized(Scalar::Int, count)];
     if opaque.multisample {
         base.push(Type::INT);
     }
-    let with = |extra: &[Type]| {
-        let mut parameters = base.clone();
-        parameters.extend_from_slice(extra);
-        parameters
+    base
+}
+
+fn with(mut parameters: Vec<Type>, extra: &[Type]) -> Vec<Type> {
+    parameters.extend_from_slice(extra);
+    parameters
+}
+
+pub(crate) fn image_load(emitter: &mut Emitter<'_>) {
+    let Some(Texture::ImageLoad { lod, sparse: load }) = texture(emitter) else {
+        return;
     };
-    emitter.common("imageLoad", texel(opaque), base.clone());
-    if opaque.dimension != TextureDimension::D1 && !opaque.is_buffer() {
-        emitter.sparse("sparseImageLoadARB", base.clone(), texel(opaque), &[], 0);
-    }
-    emitter.common("imageStore", Type::VOID, with(&[texel(opaque)]));
-    if !opaque.multisample && !opaque.is_buffer() {
-        let lod = with(&[Type::INT]);
-        emitter.common("imageLoadLodAMD", texel(opaque), lod.clone());
-        let mut store = lod.clone();
-        store.push(texel(opaque));
-        emitter.common("imageStoreLodAMD", Type::VOID, store);
-        if opaque.dimension != TextureDimension::D1 {
-            emitter.sparse("sparseImageLoadLodAMD", lod, texel(opaque), &[], 0);
+    for opaque in images() {
+        let linear = opaque.dimension == TextureDimension::D1;
+        let mut parameters = image_base(opaque);
+        if lod {
+            if opaque.multisample || opaque.is_buffer() {
+                continue;
+            }
+            parameters.push(Type::INT);
+        }
+        if !load {
+            common(emitter, texel(opaque), parameters);
+        } else if !linear && !opaque.is_buffer() {
+            sparse(emitter, parameters, texel(opaque), &[], ALL_STAGES);
         }
     }
-    let data = Type::scalar(opaque.sampled.scalar());
-    let scope = [Type::INT, Type::INT, Type::INT];
-    let scoped = |extra: &[Type]| {
-        let mut parameters = with(extra);
-        parameters.extend_from_slice(&scope);
-        parameters
-    };
-    emitter.common("imageAtomicLoad", data.clone(), scoped(&[]));
-    emitter.common(
-        "imageAtomicStore",
-        Type::VOID,
-        scoped(core::slice::from_ref(&data)),
-    );
-    let names: &[&str] = if opaque.sampled == SampledType::Float {
-        &[
-            "imageAtomicAdd",
-            "imageAtomicMin",
-            "imageAtomicMax",
-            "imageAtomicExchange",
-        ]
-    } else {
-        &[
-            "imageAtomicAdd",
-            "imageAtomicMin",
-            "imageAtomicMax",
-            "imageAtomicAnd",
-            "imageAtomicOr",
-            "imageAtomicXor",
-            "imageAtomicExchange",
-        ]
-    };
-    for name in names {
-        emitter.common(name, data.clone(), with(core::slice::from_ref(&data)));
-        emitter.common(name, data.clone(), scoped(core::slice::from_ref(&data)));
-    }
-    if opaque.sampled == SampledType::Float {
+}
+
+pub(crate) fn image_store(emitter: &mut Emitter<'_>) {
+    let Some(Texture::ImageStore { lod }) = texture(emitter) else {
         return;
+    };
+    for opaque in images() {
+        let mut parameters = image_base(opaque);
+        if lod {
+            if opaque.multisample || opaque.is_buffer() {
+                continue;
+            }
+            parameters.push(Type::INT);
+        }
+        parameters.push(texel(opaque));
+        common(emitter, Type::VOID, parameters);
     }
-    emitter.common(
-        "imageAtomicCompSwap",
-        data.clone(),
-        with(&[data.clone(), data.clone()]),
-    );
-    let mut parameters = with(&[data.clone(), data.clone()]);
-    parameters.extend_from_slice(&[Type::INT; 5]);
-    emitter.common("imageAtomicCompSwap", data, parameters);
+}
+
+pub(crate) fn image_atomic(emitter: &mut Emitter<'_>) {
+    let Some(Texture::ImageAtomic(operation)) = texture(emitter) else {
+        return;
+    };
+    let scope = [Type::INT, Type::INT, Type::INT];
+    for opaque in images() {
+        let data = Type::scalar(opaque.sampled.scalar());
+        let float = opaque.sampled == SampledType::Float;
+        let base = image_base(opaque);
+        let scoped = |extra: &[Type]| with(with(base.clone(), extra), &scope);
+        let single = core::slice::from_ref(&data);
+        match operation {
+            AtomicOperation::Load => common(emitter, data.clone(), scoped(&[])),
+            AtomicOperation::Store => common(emitter, Type::VOID, scoped(single)),
+            AtomicOperation::Add
+            | AtomicOperation::Min
+            | AtomicOperation::Max
+            | AtomicOperation::Exchange => {
+                common(emitter, data.clone(), with(base.clone(), single));
+                common(emitter, data.clone(), scoped(single));
+            }
+            AtomicOperation::And | AtomicOperation::Or | AtomicOperation::Xor => {
+                if !float {
+                    common(emitter, data.clone(), with(base.clone(), single));
+                    common(emitter, data.clone(), scoped(single));
+                }
+            }
+            AtomicOperation::CompareSwap => {
+                if !float {
+                    let pair = [data.clone(), data.clone()];
+                    common(emitter, data.clone(), with(base.clone(), &pair));
+                    let parameters = with(with(base.clone(), &pair), &[Type::INT; 5]);
+                    common(emitter, data.clone(), parameters);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -235,41 +290,6 @@ struct Variant {
 }
 
 impl Variant {
-    fn all() -> Vec<Self> {
-        let mut variants = Vec::new();
-        let flags = [false, true];
-        for proj in flags {
-            for lod in flags {
-                for bias in flags {
-                    for offset in flags {
-                        for fetch in flags {
-                            for grad in flags {
-                                for extra_proj in flags {
-                                    for clamp in flags {
-                                        for sparse in flags {
-                                            variants.push(Self {
-                                                proj,
-                                                lod,
-                                                bias,
-                                                offset,
-                                                fetch,
-                                                grad,
-                                                extra_proj,
-                                                clamp,
-                                                sparse,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        variants
-    }
-
     fn exists_for(self, opaque: Opaque) -> bool {
         let dimension = opaque.dimension;
         let cube = dimension == TextureDimension::Cube;
@@ -325,296 +345,153 @@ impl Variant {
         }
         !(self.extra_proj && (dimension == TextureDimension::D3 || opaque.shadow))
     }
+}
 
-    fn name(self) -> String {
-        let mut name = String::from(match (self.sparse, self.fetch) {
-            (true, true) => "sparseTexel",
-            (true, false) => "sparseTexture",
-            (false, true) => "texel",
-            (false, false) => "texture",
-        });
-        for (enabled, part) in [
-            (self.proj, "Proj"),
-            (self.lod, "Lod"),
-            (self.grad, "Grad"),
-            (self.fetch, "Fetch"),
-            (self.offset, "Offset"),
-            (self.clamp, "Clamp"),
-            (self.clamp || self.sparse, "ARB"),
-        ] {
-            if enabled {
-                name.push_str(part);
+fn sampling(emitter: &mut Emitter<'_>, base: Variant) {
+    for opaque in sampled() {
+        for bias in [false, true] {
+            for extra_proj in [false, true] {
+                let variant = Variant {
+                    bias,
+                    extra_proj,
+                    ..base
+                };
+                sampling_variant(emitter, opaque, variant);
             }
         }
-        name
     }
 }
 
-fn sampling(emitter: &mut Emitter<'_>, opaque: Opaque) {
+fn sampling_variant(emitter: &mut Emitter<'_>, opaque: Opaque, variant: Variant) {
+    if !variant.exists_for(opaque) {
+        return;
+    }
+    if opaque.kind == OpaqueKind::Texture && (!variant.fetch || variant.grad) {
+        return;
+    }
     let dimensions = opaque.dimension.coordinate_count();
-    for variant in Variant::all() {
-        if !variant.exists_for(opaque) {
-            continue;
-        }
-        if opaque.kind == OpaqueKind::Texture && (!variant.fetch || variant.grad) {
-            continue;
-        }
-        let mut total = dimensions + u8::from(opaque.arrayed);
-        if opaque.shadow && total < 2 {
-            total = 2;
-        }
-        total += u8::from(opaque.shadow) + u8::from(variant.proj);
-        let mut compare = false;
-        if total > 4 && opaque.shadow {
-            compare = true;
-            total = 4;
-        }
-        let mut parameters = alloc::vec![Type::opaque(opaque)];
-        if variant.extra_proj {
-            parameters.push(Type::vector(Scalar::Float, 4));
-        } else if variant.fetch {
-            parameters.push(sized(Scalar::Int, total));
-        } else {
-            parameters.push(sized(Scalar::Float, total));
-        }
-        if compare {
-            parameters.push(Type::FLOAT);
-        }
-        if variant.fetch && !opaque.is_buffer() {
-            parameters.push(Type::INT);
-        }
-        if variant.lod {
-            parameters.push(Type::FLOAT);
-        }
-        if variant.grad {
-            parameters.push(sized(Scalar::Float, dimensions));
-            parameters.push(sized(Scalar::Float, dimensions));
-        }
-        if variant.offset {
-            parameters.push(sized(Scalar::Int, dimensions));
-        }
-        if variant.clamp {
-            parameters.push(Type::FLOAT);
-        }
-        let bias = if variant.bias {
-            alloc::vec![Type::FLOAT]
-        } else {
-            Vec::new()
-        };
-        let result = if opaque.shadow {
-            Type::FLOAT
-        } else {
-            texel(opaque)
-        };
-        let stages = if !variant.grad && (variant.bias || variant.clamp) {
-            IMPLICIT_LOD_STAGES
-        } else {
-            0
-        };
-        if variant.sparse {
-            emitter.sparse(&variant.name(), parameters, result, &bias, stages);
-        } else {
-            parameters.extend(bias);
-            emitter.staged(&variant.name(), result, parameters, stages);
-        }
+    let mut total = dimensions + u8::from(opaque.arrayed);
+    if opaque.shadow && total < 2 {
+        total = 2;
     }
-}
-
-fn gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
-    let cube = opaque.dimension == TextureDimension::Cube;
-    if !(cube || opaque.dimension == TextureDimension::D2) || opaque.multisample {
-        return;
+    total += u8::from(opaque.shadow) + u8::from(variant.proj);
+    let mut compare = false;
+    if total > 4 && opaque.shadow {
+        compare = true;
+        total = 4;
     }
-    let coordinate = sized(
-        Scalar::Float,
-        opaque.dimension.coordinate_count() + u8::from(opaque.arrayed),
-    );
-    let offsets = [
-        ("textureGather", None),
-        ("textureGatherOffset", Some(Type::vector(Scalar::Int, 2))),
-        (
-            "textureGatherOffsets",
-            Some(Type::vector(Scalar::Int, 2).array_of(ArraySize::Sized(4))),
-        ),
-    ];
-    for (name, offset) in &offsets {
-        if offset.is_some() && cube {
-            continue;
-        }
-        for component in [false, true] {
-            if component && opaque.shadow {
-                continue;
-            }
-            let mut parameters = alloc::vec![Type::opaque(opaque), coordinate.clone()];
-            if opaque.shadow {
-                parameters.push(Type::FLOAT);
-            }
-            if let Some(offset) = offset {
-                parameters.push(offset.clone());
-            }
-            let trailing = if component {
-                alloc::vec![Type::INT]
-            } else {
-                Vec::new()
-            };
-            let sparse_name = alloc::format!("sparse{}ARB", capitalized(name));
-            emitter.sparse(
-                &sparse_name,
-                parameters.clone(),
-                texel(opaque),
-                &trailing,
-                0,
-            );
-            parameters.extend(trailing);
-            emitter.common(name, texel(opaque), parameters);
-        }
+    let mut parameters = alloc::vec![Type::opaque(opaque)];
+    if variant.extra_proj {
+        parameters.push(Type::vector(Scalar::Float, 4));
+    } else if variant.fetch {
+        parameters.push(sized(Scalar::Int, total));
+    } else {
+        parameters.push(sized(Scalar::Float, total));
     }
-    if opaque.shadow {
-        return;
+    if compare {
+        parameters.push(Type::FLOAT);
     }
-    for (name, offset) in &offsets {
-        if offset.is_some() && cube {
-            continue;
-        }
-        let mut biased = alloc::vec![Type::opaque(opaque), coordinate.clone()];
-        let mut lod = alloc::vec![Type::opaque(opaque), coordinate.clone(), Type::FLOAT];
-        if let Some(offset) = offset {
-            biased.push(offset.clone());
-            lod.push(offset.clone());
-        }
-        let biased_trailing = [Type::INT, Type::FLOAT];
-        emitter.sparse(
-            &alloc::format!("sparse{}ARB", capitalized(name)),
-            biased.clone(),
-            texel(opaque),
-            &biased_trailing,
-            DERIVATIVE_STAGES,
-        );
-        biased.extend(biased_trailing);
-        emitter.staged(name, texel(opaque), biased, DERIVATIVE_STAGES);
-        let lod_name = name.replacen("textureGather", "textureGatherLod", 1);
-        for component in [false, true] {
-            let trailing = if component {
-                alloc::vec![Type::INT]
-            } else {
-                Vec::new()
-            };
-            emitter.sparse(
-                &alloc::format!("sparse{}AMD", capitalized(&lod_name)),
-                lod.clone(),
-                texel(opaque),
-                &trailing,
-                0,
-            );
-            let mut parameters = lod.clone();
-            parameters.extend(trailing);
-            emitter.common(&alloc::format!("{lod_name}AMD"), texel(opaque), parameters);
-        }
+    if variant.fetch && !opaque.is_buffer() {
+        parameters.push(Type::INT);
     }
-}
-
-fn capitalized(name: &str) -> String {
-    let mut characters = name.chars();
-    characters.next().map_or_else(String::new, |first| {
-        let mut capitalized = String::new();
-        capitalized.extend(first.to_uppercase());
-        capitalized.push_str(characters.as_str());
-        capitalized
-    })
-}
-
-fn qcom_gathers(emitter: &mut Emitter<'_>, opaque: Opaque) {
-    if opaque.dimension != TextureDimension::D2 || opaque.multisample || opaque.shadow {
-        return;
+    if variant.lod {
+        parameters.push(Type::FLOAT);
     }
-    let coordinate = sized(Scalar::Float, 2 + u8::from(opaque.arrayed));
-    for mode in ["4x1", "V2", "H2", "D"] {
-        for offset in [false, true] {
-            let name = if offset {
-                alloc::format!("textureGather{mode}OffsetQCOM")
-            } else {
-                alloc::format!("textureGather{mode}QCOM")
-            };
-            for component in [false, true] {
-                let mut parameters = alloc::vec![Type::opaque(opaque), coordinate.clone()];
-                if offset {
-                    parameters.push(Type::vector(Scalar::Int, 2));
-                }
-                if component {
-                    parameters.push(Type::INT);
-                }
-                emitter.common(&name, texel(opaque), parameters);
-            }
-        }
+    if variant.grad {
+        parameters.push(sized(Scalar::Float, dimensions));
+        parameters.push(sized(Scalar::Float, dimensions));
     }
-}
-
-fn image_processing(emitter: &mut Emitter<'_>) {
-    let sampler = |dimension, arrayed| {
-        Type::opaque(Opaque {
-            kind: OpaqueKind::CombinedSampler,
-            sampled: SampledType::Float,
-            dimension,
-            arrayed,
-            shadow: false,
-            multisample: false,
-        })
+    if variant.offset {
+        parameters.push(sized(Scalar::Int, dimensions));
+    }
+    if variant.clamp {
+        parameters.push(Type::FLOAT);
+    }
+    let bias = if variant.bias {
+        alloc::vec![Type::FLOAT]
+    } else {
+        Vec::new()
     };
-    let source = sampler(TextureDimension::D2, false);
-    let result = Type::vector(Scalar::Float, 4);
-    let coordinate = Type::vector(Scalar::Float, 2);
-    for weights in [
-        sampler(TextureDimension::D2, true),
-        sampler(TextureDimension::D1, true),
-    ] {
-        emitter.common(
-            "textureWeightedQCOM",
-            result.clone(),
-            alloc::vec![source.clone(), coordinate.clone(), weights],
-        );
+    let result = if opaque.shadow {
+        Type::FLOAT
+    } else {
+        texel(opaque)
+    };
+    let stages = if !variant.grad && (variant.bias || variant.clamp) {
+        IMPLICIT_LOD_STAGES
+    } else {
+        ALL_STAGES
+    };
+    if variant.sparse {
+        sparse(emitter, parameters, result, &bias, stages);
+    } else {
+        parameters.extend(bias);
+        staged(emitter, result, parameters, stages);
     }
-    emitter.common(
-        "textureBoxFilterQCOM",
-        result.clone(),
-        alloc::vec![source.clone(), coordinate.clone(), coordinate],
+}
+
+const PLAIN: Sample = Sample {
+    proj: false,
+    level: TextureLevel::Implicit,
+    offset: false,
+    clamp: false,
+    sparse: false,
+};
+const LOD: Sample = Sample {
+    level: TextureLevel::Lod,
+    ..PLAIN
+};
+const OFFSET: Sample = Sample {
+    offset: true,
+    ..PLAIN
+};
+const LOD_OFFSET: Sample = Sample {
+    offset: true,
+    ..LOD
+};
+
+pub(crate) fn sample(emitter: &mut Emitter<'_>) {
+    let Some(Texture::Sample(sample)) = texture(emitter) else {
+        return;
+    };
+    sampling(
+        emitter,
+        Variant {
+            proj: sample.proj,
+            lod: sample.level == TextureLevel::Lod,
+            bias: false,
+            offset: sample.offset,
+            fetch: false,
+            grad: sample.level == TextureLevel::Gradient,
+            extra_proj: false,
+            clamp: sample.clamp,
+            sparse: sample.sparse,
+        },
     );
-    let texel_coordinate = Type::vector(Scalar::Uint, 2);
-    for name in [
-        "textureBlockMatchSADQCOM",
-        "textureBlockMatchSSDQCOM",
-        "textureBlockMatchWindowSSDQCOM",
-        "textureBlockMatchWindowSADQCOM",
-        "textureBlockMatchGatherSSDQCOM",
-        "textureBlockMatchGatherSADQCOM",
-    ] {
-        emitter.common(
-            name,
-            result.clone(),
-            alloc::vec![
-                source.clone(),
-                texel_coordinate.clone(),
-                source.clone(),
-                texel_coordinate.clone(),
-                texel_coordinate.clone(),
-            ],
-        );
-    }
+    shadow_lod(emitter, sample);
 }
 
-fn subpasses(emitter: &mut Emitter<'_>) {
-    for sampled in SampledType::ALL {
-        for multisample in [false, true] {
-            let opaque = Opaque::subpass_input(sampled, multisample);
-            let mut parameters = alloc::vec![Type::opaque(opaque)];
-            if multisample {
-                parameters.push(Type::INT);
-            }
-            emitter.staged("subpassLoad", texel(opaque), parameters, FRAGMENT);
-        }
-    }
+pub(crate) fn fetch(emitter: &mut Emitter<'_>) {
+    let Some(Texture::Fetch { offset, sparse }) = texture(emitter) else {
+        return;
+    };
+    sampling(
+        emitter,
+        Variant {
+            proj: false,
+            lod: false,
+            bias: false,
+            offset,
+            fetch: true,
+            grad: false,
+            extra_proj: false,
+            clamp: false,
+            sparse,
+        },
+    );
 }
 
-fn shadow_lod(emitter: &mut Emitter<'_>) {
+fn shadow_lod(emitter: &mut Emitter<'_>, sample: Sample) {
     let shadow = |dimension, arrayed| {
         Type::opaque(Opaque {
             kind: OpaqueKind::CombinedSampler,
@@ -631,80 +508,235 @@ fn shadow_lod(emitter: &mut Emitter<'_>) {
     let coordinate = Type::vector(Scalar::Float, 4);
     let offset = Type::vector(Scalar::Int, 2);
     let float = Type::FLOAT;
-    for (name, parameters) in [
-        (
-            "texture",
-            alloc::vec![array.clone(), coordinate.clone(), float.clone()],
-        ),
-        (
-            "texture",
-            alloc::vec![
-                cube_array.clone(),
-                coordinate.clone(),
-                float.clone(),
-                float.clone()
-            ],
-        ),
-        (
-            "textureLod",
-            alloc::vec![array.clone(), coordinate.clone(), float.clone()],
-        ),
-        (
-            "textureLod",
+    let prototypes = if sample == PLAIN {
+        alloc::vec![
+            alloc::vec![array, coordinate.clone(), float.clone()],
+            alloc::vec![cube_array, coordinate, float.clone(), float],
+        ]
+    } else if sample == LOD {
+        alloc::vec![
+            alloc::vec![array, coordinate.clone(), float.clone()],
             alloc::vec![cube, coordinate.clone(), float.clone()],
-        ),
-        (
-            "textureLod",
-            alloc::vec![cube_array, coordinate.clone(), float.clone(), float.clone()],
-        ),
-        (
-            "textureLodOffset",
-            alloc::vec![
-                array.clone(),
-                coordinate.clone(),
-                float.clone(),
-                offset.clone()
-            ],
-        ),
-        (
-            "textureOffset",
-            alloc::vec![array, coordinate, offset, float],
-        ),
-    ] {
-        emitter.common(name, Type::FLOAT, parameters);
+            alloc::vec![cube_array, coordinate, float.clone(), float],
+        ]
+    } else if sample == LOD_OFFSET {
+        alloc::vec![alloc::vec![array, coordinate, float, offset]]
+    } else if sample == OFFSET {
+        alloc::vec![alloc::vec![array, coordinate, offset, float]]
+    } else {
+        Vec::new()
+    };
+    for parameters in prototypes {
+        common(emitter, Type::FLOAT, parameters);
     }
 }
 
-pub(super) fn prototypes() -> Vec<Prototype> {
-    let mut prototypes = Vec::new();
-    let mut emitter = Emitter {
-        prototypes: &mut prototypes,
+pub(crate) fn gather(emitter: &mut Emitter<'_>) {
+    let Some(Texture::Gather(gather)) = texture(emitter) else {
+        return;
     };
-    for opaque in opaque_types() {
-        queries(&mut emitter, opaque);
-        if opaque.is_image() {
-            images(&mut emitter, opaque);
-        } else {
-            sampling(&mut emitter, opaque);
-            gathers(&mut emitter, opaque);
-            if opaque.kind == OpaqueKind::CombinedSampler {
-                qcom_gathers(&mut emitter, opaque);
+    match gather.pattern {
+        GatherPattern::Quad => {
+            for opaque in samplers() {
+                quad_gather(emitter, opaque, gather);
+            }
+        }
+        GatherPattern::Linear4x1
+        | GatherPattern::Vertical2
+        | GatherPattern::Horizontal2
+        | GatherPattern::Diagonal => {
+            for opaque in samplers() {
+                pattern_gather(emitter, opaque, gather.offsets);
             }
         }
     }
-    for opaque in opaque_types() {
-        if opaque.kind != OpaqueKind::CombinedSampler || opaque.shadow {
+}
+
+fn gather_offset(offsets: GatherOffsets) -> Option<Type> {
+    match offsets {
+        GatherOffsets::None => None,
+        GatherOffsets::One => Some(Type::vector(Scalar::Int, 2)),
+        GatherOffsets::Four => Some(Type::vector(Scalar::Int, 2).array_of(ArraySize::Sized(4))),
+    }
+}
+
+fn quad_gather(emitter: &mut Emitter<'_>, opaque: Opaque, gather: TextureGather) {
+    let cube = opaque.dimension == TextureDimension::Cube;
+    if !(cube || opaque.dimension == TextureDimension::D2) || opaque.multisample {
+        return;
+    }
+    let offset = gather_offset(gather.offsets);
+    if offset.is_some() && cube {
+        return;
+    }
+    let coordinate = sized(
+        Scalar::Float,
+        opaque.dimension.coordinate_count() + u8::from(opaque.arrayed),
+    );
+    if gather.lod {
+        if opaque.shadow {
+            return;
+        }
+        let mut lod = alloc::vec![Type::opaque(opaque), coordinate, Type::FLOAT];
+        lod.extend(offset);
+        for component in [false, true] {
+            let trailing = if component {
+                alloc::vec![Type::INT]
+            } else {
+                Vec::new()
+            };
+            if gather.sparse {
+                sparse(emitter, lod.clone(), texel(opaque), &trailing, ALL_STAGES);
+            } else {
+                common(emitter, texel(opaque), with(lod.clone(), &trailing));
+            }
+        }
+        return;
+    }
+    for component in [false, true] {
+        if component && opaque.shadow {
             continue;
         }
-        let texture = Opaque {
-            kind: OpaqueKind::Texture,
-            ..opaque
+        let mut parameters = alloc::vec![Type::opaque(opaque), coordinate.clone()];
+        if opaque.shadow {
+            parameters.push(Type::FLOAT);
+        }
+        parameters.extend(offset.clone());
+        let trailing = if component {
+            alloc::vec![Type::INT]
+        } else {
+            Vec::new()
         };
-        queries(&mut emitter, texture);
-        sampling(&mut emitter, texture);
+        if gather.sparse {
+            sparse(emitter, parameters, texel(opaque), &trailing, ALL_STAGES);
+        } else {
+            common(emitter, texel(opaque), with(parameters, &trailing));
+        }
     }
-    shadow_lod(&mut emitter);
-    subpasses(&mut emitter);
-    image_processing(&mut emitter);
-    prototypes
+    if opaque.shadow {
+        return;
+    }
+    let mut biased = alloc::vec![Type::opaque(opaque), coordinate];
+    biased.extend(offset);
+    let trailing = [Type::INT, Type::FLOAT];
+    if gather.sparse {
+        sparse(emitter, biased, texel(opaque), &trailing, DERIVATIVE_STAGES);
+    } else {
+        staged(
+            emitter,
+            texel(opaque),
+            with(biased, &trailing),
+            DERIVATIVE_STAGES,
+        );
+    }
+}
+
+fn pattern_gather(emitter: &mut Emitter<'_>, opaque: Opaque, offsets: GatherOffsets) {
+    if opaque.dimension != TextureDimension::D2 || opaque.multisample || opaque.shadow {
+        return;
+    }
+    let coordinate = sized(Scalar::Float, 2 + u8::from(opaque.arrayed));
+    for component in [false, true] {
+        let mut parameters = alloc::vec![Type::opaque(opaque), coordinate.clone()];
+        parameters.extend(gather_offset(offsets));
+        if component {
+            parameters.push(Type::INT);
+        }
+        common(emitter, texel(opaque), parameters);
+    }
+}
+
+const fn processing_sampler(dimension: TextureDimension, arrayed: bool) -> Type {
+    Type::opaque(Opaque {
+        kind: OpaqueKind::CombinedSampler,
+        sampled: SampledType::Float,
+        dimension,
+        arrayed,
+        shadow: false,
+        multisample: false,
+    })
+}
+
+pub(crate) fn weighted(emitter: &mut Emitter<'_>) {
+    let source = processing_sampler(TextureDimension::D2, false);
+    for weights in [
+        processing_sampler(TextureDimension::D2, true),
+        processing_sampler(TextureDimension::D1, true),
+    ] {
+        common(
+            emitter,
+            Type::vector(Scalar::Float, 4),
+            alloc::vec![source.clone(), Type::vector(Scalar::Float, 2), weights],
+        );
+    }
+}
+
+pub(crate) fn box_filter(emitter: &mut Emitter<'_>) {
+    let coordinate = Type::vector(Scalar::Float, 2);
+    common(
+        emitter,
+        Type::vector(Scalar::Float, 4),
+        alloc::vec![
+            processing_sampler(TextureDimension::D2, false),
+            coordinate.clone(),
+            coordinate,
+        ],
+    );
+}
+
+pub(crate) fn block_match(emitter: &mut Emitter<'_>) {
+    let source = processing_sampler(TextureDimension::D2, false);
+    let coordinate = Type::vector(Scalar::Uint, 2);
+    common(
+        emitter,
+        Type::vector(Scalar::Float, 4),
+        alloc::vec![
+            source.clone(),
+            coordinate.clone(),
+            source,
+            coordinate.clone(),
+            coordinate,
+        ],
+    );
+}
+
+pub(crate) fn subpass_load(emitter: &mut Emitter<'_>) {
+    for sampled in SampledType::ALL {
+        for multisample in [false, true] {
+            let opaque = Opaque::subpass_input(sampled, multisample);
+            let mut parameters = alloc::vec![Type::opaque(opaque)];
+            if multisample {
+                parameters.push(Type::INT);
+            }
+            staged(emitter, texel(opaque), parameters, FRAGMENT);
+        }
+    }
+}
+
+pub(crate) fn fragment_fetch(emitter: &mut Emitter<'_>) {
+    let Some(Texture::FragmentFetch { mask }) = texture(emitter) else {
+        return;
+    };
+    let result = |opaque: Opaque| if mask { Type::UINT } else { texel(opaque) };
+    let fragment: &[Type] = if mask { &[] } else { &[Type::UINT] };
+    for arrayed in [false, true] {
+        for sampled in SampledType::ALL {
+            let opaque = Opaque {
+                kind: OpaqueKind::CombinedSampler,
+                sampled,
+                dimension: TextureDimension::D2,
+                arrayed,
+                shadow: false,
+                multisample: true,
+            };
+            let coordinate = sized(Scalar::Int, 2 + u8::from(arrayed));
+            let parameters = with(alloc::vec![Type::opaque(opaque), coordinate], fragment);
+            common(emitter, result(opaque), parameters);
+        }
+    }
+    for sampled in SampledType::ALL {
+        let opaque = Opaque::subpass_input(sampled, true);
+        let parameters = with(alloc::vec![Type::opaque(opaque)], fragment);
+        staged(emitter, result(opaque), parameters, FRAGMENT);
+    }
 }

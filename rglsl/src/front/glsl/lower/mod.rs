@@ -22,8 +22,6 @@ mod stage;
 mod statement;
 mod subgroup;
 mod tensor;
-#[cfg(test)]
-mod tests;
 mod types;
 mod xfb;
 

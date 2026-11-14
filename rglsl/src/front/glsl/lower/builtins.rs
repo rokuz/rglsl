@@ -1,6 +1,11 @@
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
+use rglsl_sema::builtins::kind::{
+    self, AtomicOperation, Attachment, Axis, Barrier, BitOperation, BuiltinKind, Comparison,
+    Control, Decompose, GatherOffsets, GatherPattern, ImageProcessing, InterpolateAt, Math, Mesh,
+    Primitive, Pure, Relation, Sample, Texture, TextureGather, TextureLevel, TextureQuery, Wide,
+};
 use rglsl_sema::scope::Function;
 use rglsl_sema::types::{
     Opaque, OpaqueKind, Scalar as GlslScalar, TextureDimension, Type as GlslType, TypeKind,
@@ -18,197 +23,215 @@ use crate::{
     Statement, SwizzleComponent, UnaryOperator,
 };
 
-pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
+pub(super) const fn math_function(math: Math) -> MathFunction {
     use MathFunction as Mf;
-    Some(match name {
-        "radians" => Mf::Radians,
-        "degrees" => Mf::Degrees,
-        "sin" => Mf::Sin,
-        "cos" => Mf::Cos,
-        "tan" => Mf::Tan,
-        "asin" => Mf::Asin,
-        "acos" => Mf::Acos,
-        "atan" if arguments == 2 => Mf::Atan2,
-        "atan" => Mf::Atan,
-        "sinh" => Mf::Sinh,
-        "cosh" => Mf::Cosh,
-        "tanh" => Mf::Tanh,
-        "asinh" => Mf::Asinh,
-        "acosh" => Mf::Acosh,
-        "atanh" => Mf::Atanh,
-        "pow" => Mf::Pow,
-        "exp" => Mf::Exp,
-        "log" => Mf::Log,
-        "exp2" => Mf::Exp2,
-        "log2" => Mf::Log2,
-        "sqrt" => Mf::Sqrt,
-        "inversesqrt" => Mf::InverseSqrt,
-        "abs" => Mf::Abs,
-        "sign" => Mf::Sign,
-        "floor" => Mf::Floor,
-        "trunc" => Mf::Trunc,
-        "round" => Mf::Round,
-        "roundEven" => Mf::RoundEven,
-        "ceil" => Mf::Ceil,
-        "fract" => Mf::Fract,
-        "min" => Mf::Min,
-        "max" => Mf::Max,
-        "clamp" => Mf::Clamp,
-        "mix" => Mf::Mix,
-        "step" => Mf::Step,
-        "smoothstep" => Mf::SmoothStep,
-        "fma" => Mf::Fma,
-        "ldexp" => Mf::Ldexp,
-        "length" => Mf::Length,
-        "distance" => Mf::Distance,
-        "dot" => Mf::Dot,
-        "dotEXT" => Mf::IntegerDot,
-        "dotAccSatEXT" => Mf::IntegerDotAccSat,
-        "dotPacked4x8EXT" => Mf::PackedIntegerDot4x8,
-        "dotPacked4x8AccSatEXT" => Mf::PackedIntegerDot4x8AccSat,
-        "cross" => Mf::Cross,
-        "normalize" => Mf::Normalize,
-        "faceforward" => Mf::FaceForward,
-        "reflect" => Mf::Reflect,
-        "refract" => Mf::Refract,
-        "outerProduct" => Mf::Outer,
-        "transpose" => Mf::Transpose,
-        "determinant" => Mf::Determinant,
-        "inverse" => Mf::Inverse,
-        "bitfieldReverse" => Mf::ReverseBits,
-        "bitCount" => Mf::CountOneBits,
-        "findLSB" => Mf::FirstTrailingBit,
-        "findMSB" => Mf::FirstLeadingBit,
-        "packUnorm2x16" => Mf::Pack2x16unorm,
-        "packSnorm2x16" => Mf::Pack2x16snorm,
-        "packUnorm4x8" => Mf::Pack4x8unorm,
-        "packSnorm4x8" => Mf::Pack4x8snorm,
-        "unpackUnorm2x16" => Mf::Unpack2x16unorm,
-        "unpackSnorm2x16" => Mf::Unpack2x16snorm,
-        "unpackUnorm4x8" => Mf::Unpack4x8unorm,
-        "unpackSnorm4x8" => Mf::Unpack4x8snorm,
-        "packHalf2x16" => Mf::Pack2x16float,
-        "unpackHalf2x16" => Mf::Unpack2x16float,
-        "packDouble2x32" => Mf::PackDouble2x32,
-        "unpackDouble2x32" => Mf::UnpackDouble2x32,
-        _ => return None,
-    })
+    match math {
+        Math::Radians => Mf::Radians,
+        Math::Degrees => Mf::Degrees,
+        Math::Sin => Mf::Sin,
+        Math::Cos => Mf::Cos,
+        Math::Tan => Mf::Tan,
+        Math::Asin => Mf::Asin,
+        Math::Acos => Mf::Acos,
+        Math::Atan => Mf::Atan,
+        Math::Atan2 => Mf::Atan2,
+        Math::Sinh => Mf::Sinh,
+        Math::Cosh => Mf::Cosh,
+        Math::Tanh => Mf::Tanh,
+        Math::Asinh => Mf::Asinh,
+        Math::Acosh => Mf::Acosh,
+        Math::Atanh => Mf::Atanh,
+        Math::Pow => Mf::Pow,
+        Math::Exp => Mf::Exp,
+        Math::Log => Mf::Log,
+        Math::Exp2 => Mf::Exp2,
+        Math::Log2 => Mf::Log2,
+        Math::Sqrt => Mf::Sqrt,
+        Math::InverseSqrt => Mf::InverseSqrt,
+        Math::Abs => Mf::Abs,
+        Math::Sign => Mf::Sign,
+        Math::Floor => Mf::Floor,
+        Math::Trunc => Mf::Trunc,
+        Math::Round => Mf::Round,
+        Math::RoundEven => Mf::RoundEven,
+        Math::Ceil => Mf::Ceil,
+        Math::Fract => Mf::Fract,
+        Math::Min => Mf::Min,
+        Math::Max => Mf::Max,
+        Math::Clamp => Mf::Clamp,
+        Math::Mix => Mf::Mix,
+        Math::Step => Mf::Step,
+        Math::SmoothStep => Mf::SmoothStep,
+        Math::Fma => Mf::Fma,
+        Math::Ldexp => Mf::Ldexp,
+        Math::Length => Mf::Length,
+        Math::Distance => Mf::Distance,
+        Math::Dot => Mf::Dot,
+        Math::IntegerDot => Mf::IntegerDot,
+        Math::IntegerDotAccSat => Mf::IntegerDotAccSat,
+        Math::PackedIntegerDot4x8 => Mf::PackedIntegerDot4x8,
+        Math::PackedIntegerDot4x8AccSat => Mf::PackedIntegerDot4x8AccSat,
+        Math::Cross => Mf::Cross,
+        Math::Normalize => Mf::Normalize,
+        Math::FaceForward => Mf::FaceForward,
+        Math::Reflect => Mf::Reflect,
+        Math::Refract => Mf::Refract,
+        Math::Outer => Mf::Outer,
+        Math::Transpose => Mf::Transpose,
+        Math::Determinant => Mf::Determinant,
+        Math::Inverse => Mf::Inverse,
+        Math::Pack2x16unorm => Mf::Pack2x16unorm,
+        Math::Pack2x16snorm => Mf::Pack2x16snorm,
+        Math::Pack4x8unorm => Mf::Pack4x8unorm,
+        Math::Pack4x8snorm => Mf::Pack4x8snorm,
+        Math::Unpack2x16unorm => Mf::Unpack2x16unorm,
+        Math::Unpack2x16snorm => Mf::Unpack2x16snorm,
+        Math::Unpack4x8unorm => Mf::Unpack4x8unorm,
+        Math::Unpack4x8snorm => Mf::Unpack4x8snorm,
+        Math::Pack2x16float => Mf::Pack2x16float,
+        Math::Unpack2x16float => Mf::Unpack2x16float,
+        Math::PackDouble2x32 => Mf::PackDouble2x32,
+        Math::UnpackDouble2x32 => Mf::UnpackDouble2x32,
+    }
 }
 
-fn gather_pattern(name: &str) -> Option<(&'static str, ImageGatherPattern)> {
-    let rest = name.strip_prefix("textureGather")?.strip_suffix("QCOM")?;
-    let (mode, base) = match rest.strip_suffix("Offset") {
-        Some(mode) => (mode, "textureGatherOffset"),
-        None => (rest, "textureGather"),
+pub(super) const fn bit_function(operation: BitOperation) -> MathFunction {
+    match operation {
+        BitOperation::Extract => MathFunction::ExtractBits,
+        BitOperation::Insert => MathFunction::InsertBits,
+        BitOperation::Reverse => MathFunction::ReverseBits,
+        BitOperation::Count => MathFunction::CountOneBits,
+        BitOperation::FindLsb => MathFunction::FirstTrailingBit,
+        BitOperation::FindMsb => MathFunction::FirstLeadingBit,
+    }
+}
+
+pub(super) const fn relational_function(relation: Relation) -> RelationalFunction {
+    match relation {
+        Relation::IsNan => RelationalFunction::IsNan,
+        Relation::IsInf => RelationalFunction::IsInf,
+        Relation::Any => RelationalFunction::Any,
+        Relation::All => RelationalFunction::All,
+    }
+}
+
+pub(super) const fn comparison_operator(comparison: Comparison) -> BinaryOperator {
+    match comparison {
+        Comparison::Less => BinaryOperator::Less,
+        Comparison::LessEqual => BinaryOperator::LessEqual,
+        Comparison::Greater => BinaryOperator::Greater,
+        Comparison::GreaterEqual => BinaryOperator::GreaterEqual,
+        Comparison::Equal => BinaryOperator::Equal,
+        Comparison::NotEqual => BinaryOperator::NotEqual,
+    }
+}
+
+pub(super) const fn derivative(
+    axis: Axis,
+    control: Control,
+) -> (DerivativeAxis, DerivativeControl) {
+    let axis = match axis {
+        Axis::X => DerivativeAxis::X,
+        Axis::Y => DerivativeAxis::Y,
+        Axis::Width => DerivativeAxis::Width,
     };
-    let pattern = match mode {
-        "4x1" => ImageGatherPattern::Linear4x1,
-        "V2" => ImageGatherPattern::Vertical2,
-        "H2" => ImageGatherPattern::Horizontal2,
-        "D" => ImageGatherPattern::Diagonal,
-        _ => return None,
+    let control = match control {
+        Control::Plain => DerivativeControl::None,
+        Control::Fine => DerivativeControl::Fine,
+        Control::Coarse => DerivativeControl::Coarse,
     };
-    Some((base, pattern))
+    (axis, control)
 }
 
-fn image_processing(name: &str) -> Option<ImageProcessingOperation> {
-    use BlockMatchMetric as Metric;
-    use BlockMatchSearch as Search;
-    let block_match = |metric, search| ImageProcessingOperation::BlockMatch { metric, search };
-    Some(match name {
-        "textureWeightedQCOM" => ImageProcessingOperation::SampleWeighted,
-        "textureBoxFilterQCOM" => ImageProcessingOperation::BoxFilter,
-        "textureBlockMatchSADQCOM" => block_match(Metric::SumOfAbsoluteDifferences, Search::Block),
-        "textureBlockMatchSSDQCOM" => block_match(Metric::SumOfSquaredDifferences, Search::Block),
-        "textureBlockMatchWindowSADQCOM" => {
-            block_match(Metric::SumOfAbsoluteDifferences, Search::Window)
-        }
-        "textureBlockMatchWindowSSDQCOM" => {
-            block_match(Metric::SumOfSquaredDifferences, Search::Window)
-        }
-        "textureBlockMatchGatherSADQCOM" => {
-            block_match(Metric::SumOfAbsoluteDifferences, Search::Gather)
-        }
-        "textureBlockMatchGatherSSDQCOM" => {
-            block_match(Metric::SumOfSquaredDifferences, Search::Gather)
-        }
-        _ => return None,
-    })
+const fn wide_function(wide: Wide) -> MathFunction {
+    match wide {
+        Wide::AddCarry => MathFunction::AddCarry,
+        Wide::SubBorrow => MathFunction::SubBorrow,
+        Wide::MulExtended { .. } => MathFunction::MulExtended,
+    }
 }
 
-pub(super) struct TextureCall {
-    base: String,
-    sparse: bool,
+const fn gather_pattern(pattern: GatherPattern) -> ImageGatherPattern {
+    match pattern {
+        GatherPattern::Quad => ImageGatherPattern::Quad,
+        GatherPattern::Linear4x1 => ImageGatherPattern::Linear4x1,
+        GatherPattern::Vertical2 => ImageGatherPattern::Vertical2,
+        GatherPattern::Horizontal2 => ImageGatherPattern::Horizontal2,
+        GatherPattern::Diagonal => ImageGatherPattern::Diagonal,
+    }
+}
+
+const fn image_processing(operation: ImageProcessing) -> ImageProcessingOperation {
+    match operation {
+        ImageProcessing::Weighted => ImageProcessingOperation::SampleWeighted,
+        ImageProcessing::BoxFilter => ImageProcessingOperation::BoxFilter,
+        ImageProcessing::BlockMatch { metric, search } => ImageProcessingOperation::BlockMatch {
+            metric: match metric {
+                kind::BlockMatchMetric::AbsoluteDifferences => {
+                    BlockMatchMetric::SumOfAbsoluteDifferences
+                }
+                kind::BlockMatchMetric::SquaredDifferences => {
+                    BlockMatchMetric::SumOfSquaredDifferences
+                }
+            },
+            search: match search {
+                kind::BlockMatchSearch::Block => BlockMatchSearch::Block,
+                kind::BlockMatchSearch::Window => BlockMatchSearch::Window,
+                kind::BlockMatchSearch::Gather => BlockMatchSearch::Gather,
+            },
+        },
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Sampling {
+    gather: Option<ImageGatherPattern>,
+    proj: bool,
+    lod: bool,
+    grad: bool,
+    offset: bool,
     clamp: bool,
+    sparse: bool,
 }
 
-fn texture_call(name: &str) -> TextureCall {
-    let stripped = name
-        .strip_suffix("ARB")
-        .or_else(|| name.strip_suffix("AMD"))
-        .unwrap_or(name);
-    let (stripped, clamp) = match stripped.strip_suffix("Clamp") {
-        Some(base) if stripped != name => (base, true),
-        _ => (stripped, false),
-    };
-    let (rest, sparse) = match stripped.strip_prefix("sparse") {
-        Some(rest) if stripped != name => (rest, true),
-        _ => (stripped, false),
-    };
-    let mut characters = rest.chars();
-    let mut base = String::new();
-    if let Some(first) = characters.next() {
-        base.extend(first.to_lowercase());
-        base.push_str(characters.as_str());
+impl Sampling {
+    const fn sample(sample: Sample) -> Self {
+        let (lod, grad) = match sample.level {
+            TextureLevel::Implicit => (false, false),
+            TextureLevel::Lod => (true, false),
+            TextureLevel::Gradient => (false, true),
+        };
+        Self {
+            gather: None,
+            proj: sample.proj,
+            lod,
+            grad,
+            offset: sample.offset,
+            clamp: sample.clamp,
+            sparse: sample.sparse,
+        }
     }
-    TextureCall {
-        base,
-        sparse,
-        clamp,
+
+    const fn gather(gather: TextureGather) -> Self {
+        Self {
+            gather: Some(gather_pattern(gather.pattern)),
+            proj: false,
+            lod: gather.lod,
+            grad: false,
+            offset: match gather.offsets {
+                GatherOffsets::None => false,
+                GatherOffsets::One | GatherOffsets::Four => true,
+            },
+            clamp: false,
+            sparse: gather.sparse,
+        }
     }
 }
 
-const fn sampling_function(base: &str) -> bool {
-    matches!(
-        base.as_bytes(),
-        b"texture"
-            | b"textureProj"
-            | b"textureLod"
-            | b"textureOffset"
-            | b"textureProjOffset"
-            | b"textureLodOffset"
-            | b"textureProjLod"
-            | b"textureProjLodOffset"
-            | b"textureGrad"
-            | b"textureGradOffset"
-            | b"textureProjGrad"
-            | b"textureProjGradOffset"
-            | b"textureGather"
-            | b"textureGatherOffset"
-            | b"textureGatherOffsets"
-            | b"textureGatherLod"
-            | b"textureGatherLodOffset"
-            | b"textureGatherLodOffsets"
-    )
-}
-
-pub(super) fn derivative(name: &str) -> Option<(DerivativeAxis, DerivativeControl)> {
-    let (axis, rest) = if let Some(rest) = name.strip_prefix("dFdx") {
-        (DerivativeAxis::X, rest)
-    } else if let Some(rest) = name.strip_prefix("dFdy") {
-        (DerivativeAxis::Y, rest)
-    } else if let Some(rest) = name.strip_prefix("fwidth") {
-        (DerivativeAxis::Width, rest)
-    } else {
-        return None;
-    };
-    let control = match rest {
-        "" => DerivativeControl::None,
-        "Fine" => DerivativeControl::Fine,
-        "Coarse" => DerivativeControl::Coarse,
-        _ => return None,
-    };
-    Some((axis, control))
+#[derive(Clone, Copy)]
+enum ImageAccess {
+    Load { sparse: bool },
+    Store,
 }
 
 struct Sampled {
@@ -263,17 +286,17 @@ impl FunctionLowerer<'_, '_> {
 
     fn barrier_call(
         &mut self,
-        name: &str,
+        barrier: Barrier,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        self.barrier(name, arguments, at)?;
+        self.barrier(barrier, arguments, at)?;
         Ok(None)
     }
 
-    fn interlock_call(&mut self, name: &str, at: Span) -> Result<Option<Handle<Expression>>> {
+    fn interlock_call(&mut self, begin: bool, at: Span) -> Result<Option<Handle<Expression>>> {
         self.flush();
-        let statement = if name == "beginInvocationInterlockARB" {
+        let statement = if begin {
             Statement::BeginInvocationInterlock
         } else {
             Statement::EndInvocationInterlock
@@ -284,24 +307,25 @@ impl FunctionLowerer<'_, '_> {
 
     fn primitive_statement_call(
         &mut self,
-        name: &str,
+        primitive: Primitive,
         arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        self.primitive_statement(name, arguments, at)?;
+        self.primitive_statement(primitive, arguments, at)?;
         Ok(None)
     }
 
     fn generic_values(
         &mut self,
-        name: &str,
+        pure: Pure,
         function: &Function,
         call_type: &GlslType,
         at: Span,
         mut values: Vec<Handle<Expression>>,
         types: Vec<GlslType>,
     ) -> Result<Handle<Expression>> {
-        if let Some(extract) = microscaling_bitcast(name) {
+        let name = function.name.as_str();
+        if let Pure::PackedBitcast { extract } = pure {
             let ty = self.lw.ir_type(call_type, at)?;
             let expr = values.first().copied().ok_or_else(|| internal(at))?;
             let offset = if extract {
@@ -323,7 +347,9 @@ impl FunctionLowerer<'_, '_> {
             .find(|ty| ty.sized_vector_length().is_some())
             .cloned();
         if let Some(ref shape) = long_shape {
-            return self.long_generic(name, call_type, shape, values, &types, at);
+            return self
+                .long_generic(pure, call_type, shape, values, &types, at)?
+                .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at));
         }
         let result = &function.return_type;
         let first_ty = types.first().cloned().unwrap_or(GlslType::VOID);
@@ -335,94 +361,88 @@ impl FunctionLowerer<'_, '_> {
         let narrow = first_ty
             .base_scalar()
             .filter(|element| element.is_integer() && element.bits() < 32);
-        if let (Some(element), true) = (
-            narrow,
-            matches!(
-                name,
-                "findMSB"
-                    | "findLSB"
-                    | "bitCount"
-                    | "bitfieldReverse"
-                    | "bitfieldExtract"
-                    | "bitfieldInsert"
-            ),
-        ) {
-            return self.narrow_bit_operation(name, &values, element, result, vector, at);
+        if let (Some(element), Pure::Bits(operation)) = (narrow, pure) {
+            return self.narrow_bit_operation(operation, &values, element, result, vector, at);
         }
         let wide = first_ty
             .base_scalar()
             .filter(|element| element.is_integer() && element.bits() == 64);
-        if let (Some(element), true) = (wide, matches!(name, "findMSB" | "findLSB" | "bitCount")) {
-            return self.wide_bit_operation(name, arg(0)?, element, result, vector, at);
+        if let (
+            Some(element),
+            Pure::Bits(
+                operation @ (BitOperation::Count | BitOperation::FindLsb | BitOperation::FindMsb),
+            ),
+        ) = (wide, pure)
+        {
+            return self.wide_bit_operation(operation, arg(0)?, element, result, vector, at);
         }
-        if let Some((axis, ctrl)) = derivative(name) {
-            if first_ty.base_scalar() == Some(GlslScalar::Double) {
-                return Err(semantic(
-                    format!(
-                        "`{name}` of a double is not supported: SPIR-V derivatives take 16- or 32-bit floats"
-                    ),
+        match pure {
+            Pure::Derivative(axis, control) => {
+                if first_ty.base_scalar() == Some(GlslScalar::Double) {
+                    return Err(semantic(
+                        format!(
+                            "`{name}` of a double is not supported: SPIR-V derivatives take 16- or 32-bit floats"
+                        ),
+                        at,
+                    ));
+                }
+                let (axis, ctrl) = derivative(axis, control);
+                self.add(
+                    Expression::Derivative {
+                        axis,
+                        ctrl,
+                        expr: arg(0)?,
+                    },
                     at,
-                ));
+                )
             }
-            let expr = arg(0)?;
-            return self.add(Expression::Derivative { axis, ctrl, expr }, at);
-        }
-        if name == "mix" && types.get(2).and_then(GlslType::base_scalar) == Some(GlslScalar::Bool) {
-            return self.add(
+            Pure::Select => self.add(
                 Expression::Select {
                     condition: arg(2)?,
                     accept: arg(1)?,
                     reject: arg(0)?,
                 },
                 at,
-            );
-        }
-        match special(name) {
-            Some(Special::Relational(fun)) => {
-                return self.add(
-                    Expression::Relational {
-                        fun,
-                        argument: arg(0)?,
-                    },
-                    at,
-                );
+            ),
+            Pure::Relational(relation) => self.add(
+                Expression::Relational {
+                    fun: relational_function(relation),
+                    argument: arg(0)?,
+                },
+                at,
+            ),
+            Pure::Not => self.add(
+                Expression::Unary {
+                    op: UnaryOperator::LogicalNot,
+                    expr: arg(0)?,
+                },
+                at,
+            ),
+            Pure::Compare(comparison) => {
+                self.binary_op(comparison_operator(comparison), arg(0)?, arg(1)?, at)
             }
-            Some(Special::Not) => {
-                return self.add(
-                    Expression::Unary {
-                        op: UnaryOperator::LogicalNot,
-                        expr: arg(0)?,
-                    },
-                    at,
-                );
-            }
-            Some(Special::Compare(op)) => {
-                return self.binary_op(op, arg(0)?, arg(1)?, at);
-            }
-            Some(Special::Bitcast) => {
+            Pure::Bitcast => {
                 let kind = scalar(result.base_scalar().ok_or_else(|| internal(at))?).kind;
-                return self.add(
+                self.add(
                     Expression::As {
                         expr: arg(0)?,
                         kind,
                         convert: None,
                     },
                     at,
-                );
+                )
             }
-            Some(Special::Pack | Special::Unpack) => {
-                return self.pack_bits(arg(0)?, &first_ty, result, at);
-            }
-            Some(Special::Modulo) => {
+            Pure::RepackBits => self.pack_bits(arg(0)?, &first_ty, result, at),
+            Pure::Modulo => {
                 let x = arg(0)?;
                 let mut y = arg(1)?;
                 if let (Some(size), true) = (vector, types.get(1).is_some_and(GlslType::is_scalar))
                 {
                     y = self.splat(y, size, at)?;
                 }
-                return self.binary_op(BinaryOperator::Modulo, x, y, at);
+                self.binary_op(BinaryOperator::Modulo, x, y, at)
             }
-            Some(Special::MatrixCompMult) => {
+            Pure::MatrixCompMult => {
                 let TypeKind::Matrix { columns, .. } = result.kind else {
                     return Err(internal(at));
                 };
@@ -434,11 +454,11 @@ impl FunctionLowerer<'_, '_> {
                     components.push(self.binary_op(BinaryOperator::Multiply, l, r, at)?);
                 }
                 let ty = self.lw.ir_type(result, at)?;
-                return self.add(Expression::Compose { ty, components }, at);
+                self.add(Expression::Compose { ty, components }, at)
             }
-            Some(Special::Bitfield(fun)) => {
+            Pure::Bits(operation @ (BitOperation::Extract | BitOperation::Insert)) => {
                 let mut converted = values.clone();
-                let start = if fun == MathFunction::ExtractBits {
+                let start = if operation == BitOperation::Extract {
                     1
                 } else {
                     2
@@ -446,40 +466,44 @@ impl FunctionLowerer<'_, '_> {
                 for slot in converted.iter_mut().skip(start) {
                     *slot = self.as_kind(*slot, crate::Scalar::U32, at)?;
                 }
-                return self.math_call(fun, &converted, at);
+                self.math_call(bit_function(operation), &converted, at)
             }
-            None => {}
-        }
-        if first_ty.is_scalar() && name == "dot" {
-            return self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at);
-        }
-        let fun = math(name, values.len())
-            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        if let Some(size) = vector {
-            let splatted = matches!(
-                name,
-                "min" | "max" | "clamp" | "mix" | "step" | "smoothstep"
-            );
-            if splatted {
-                for (value, ty) in values.iter_mut().zip(&types) {
-                    if ty.is_scalar() {
-                        *value = self.splat(*value, size, at)?;
+            Pure::Bits(
+                operation @ (BitOperation::Reverse
+                | BitOperation::Count
+                | BitOperation::FindLsb
+                | BitOperation::FindMsb),
+            ) => {
+                let value = self.math_call(bit_function(operation), &values, at)?;
+                let unsigned_input = first_ty.base_scalar().is_some_and(GlslScalar::is_unsigned);
+                if operation != BitOperation::Reverse && unsigned_input {
+                    let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
+                    return self.as_kind(value, target, at);
+                }
+                Ok(value)
+            }
+            Pure::Math(Math::Dot) if first_ty.is_scalar() => {
+                self.binary_op(BinaryOperator::Multiply, arg(0)?, arg(1)?, at)
+            }
+            Pure::Math(math) => {
+                if let Some(size) = vector
+                    && pure.replicates_scalars()
+                {
+                    for (value, ty) in values.iter_mut().zip(&types) {
+                        if ty.is_scalar() {
+                            *value = self.splat(*value, size, at)?;
+                        }
                     }
                 }
+                self.math_call(math_function(math), &values, at)
             }
+            Pure::PackedBitcast { .. } => Err(internal(at)),
         }
-        let value = self.math_call(fun, &values, at)?;
-        let unsigned_input = first_ty.base_scalar().is_some_and(GlslScalar::is_unsigned);
-        if matches!(name, "bitCount" | "findLSB" | "findMSB") && unsigned_input {
-            let target = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
-            return self.as_kind(value, target, at);
-        }
-        Ok(value)
     }
 
     fn wide_bit_operation(
         &mut self,
-        name: &str,
+        operation: BitOperation,
         value: Handle<Expression>,
         element: GlslScalar,
         result: &GlslType,
@@ -494,8 +518,9 @@ impl FunctionLowerer<'_, '_> {
                 None => Ok(value),
             }
         };
+        let msb = operation == BitOperation::FindMsb;
         let mut source = value;
-        if name == "findMSB" && element.is_signed() {
+        if msb && element.is_signed() {
             let amount = filled(self, Literal::U32(63))?;
             let sign = self.binary_op(BinaryOperator::ShiftRight, source, amount, at)?;
             source = self.binary_op(BinaryOperator::ExclusiveOr, source, sign, at)?;
@@ -505,60 +530,53 @@ impl FunctionLowerer<'_, '_> {
         let amount = filled(self, Literal::U32(32))?;
         let shifted = self.binary_op(BinaryOperator::ShiftRight, unsigned, amount, at)?;
         let high = self.as_kind(shifted, crate::Scalar::U32, at)?;
-        let combined = match name {
-            "bitCount" => {
-                let low = self.math_call(MathFunction::CountOneBits, &[low], at)?;
-                let high = self.math_call(MathFunction::CountOneBits, &[high], at)?;
-                self.binary_op(BinaryOperator::Add, low, high, at)?
-            }
-            _ => {
-                let fun = if name == "findMSB" {
-                    MathFunction::FirstLeadingBit
-                } else {
-                    MathFunction::FirstTrailingBit
-                };
-                let low_bit = self.math_call(fun, &[low], at)?;
-                let high_bit = self.math_call(fun, &[high], at)?;
-                let thirty_two = filled(self, Literal::U32(32))?;
-                let high_bit = self.binary_op(BinaryOperator::Add, high_bit, thirty_two, at)?;
-                let zero = filled(self, Literal::U32(0))?;
-                let (tested, chosen, other) = if name == "findMSB" {
-                    (high, high_bit, low_bit)
-                } else {
-                    (low, low_bit, high_bit)
-                };
-                let condition = self.binary_op(BinaryOperator::NotEqual, tested, zero, at)?;
-                let fallback = if name == "findMSB" {
-                    other
-                } else {
-                    let none = filled(self, Literal::U32(u32::MAX))?;
-                    let high_zero = self.binary_op(BinaryOperator::Equal, high, zero, at)?;
-                    self.add(
-                        Expression::Select {
-                            condition: high_zero,
-                            accept: none,
-                            reject: other,
-                        },
-                        at,
-                    )?
-                };
-                let selected = self.add(
+        let combined = if operation == BitOperation::Count {
+            let low = self.math_call(MathFunction::CountOneBits, &[low], at)?;
+            let high = self.math_call(MathFunction::CountOneBits, &[high], at)?;
+            self.binary_op(BinaryOperator::Add, low, high, at)?
+        } else {
+            let fun = bit_function(operation);
+            let low_bit = self.math_call(fun, &[low], at)?;
+            let high_bit = self.math_call(fun, &[high], at)?;
+            let thirty_two = filled(self, Literal::U32(32))?;
+            let high_bit = self.binary_op(BinaryOperator::Add, high_bit, thirty_two, at)?;
+            let zero = filled(self, Literal::U32(0))?;
+            let (tested, chosen, other) = if msb {
+                (high, high_bit, low_bit)
+            } else {
+                (low, low_bit, high_bit)
+            };
+            let condition = self.binary_op(BinaryOperator::NotEqual, tested, zero, at)?;
+            let fallback = if msb {
+                other
+            } else {
+                let none = filled(self, Literal::U32(u32::MAX))?;
+                let high_zero = self.binary_op(BinaryOperator::Equal, high, zero, at)?;
+                self.add(
                     Expression::Select {
-                        condition,
-                        accept: chosen,
-                        reject: fallback,
+                        condition: high_zero,
+                        accept: none,
+                        reject: other,
                     },
                     at,
-                )?;
-                self.bitcast(selected, crate::ScalarKind::Sint, at)?
-            }
+                )?
+            };
+            let selected = self.add(
+                Expression::Select {
+                    condition,
+                    accept: chosen,
+                    reject: fallback,
+                },
+                at,
+            )?;
+            self.bitcast(selected, crate::ScalarKind::Sint, at)?
         };
         self.as_kind(combined, result_scalar, at)
     }
 
     fn narrow_bit_operation(
         &mut self,
-        name: &str,
+        operation: BitOperation,
         values: &[Handle<Expression>],
         element: GlslScalar,
         result: &GlslType,
@@ -576,24 +594,19 @@ impl FunctionLowerer<'_, '_> {
             width: 4,
         };
         let result_scalar = scalar(result.base_scalar().ok_or_else(|| internal(at))?);
-        match name {
-            "findMSB" | "findLSB" => {
+        match operation {
+            BitOperation::FindMsb | BitOperation::FindLsb => {
                 let extended = self.as_kind(arg(0)?, wide, at)?;
-                let fun = if name == "findMSB" {
-                    MathFunction::FirstLeadingBit
-                } else {
-                    MathFunction::FirstTrailingBit
-                };
-                let found = self.math_call(fun, &[extended], at)?;
+                let found = self.math_call(bit_function(operation), &[extended], at)?;
                 self.as_kind(found, result_scalar, at)
             }
-            "bitCount" => {
+            BitOperation::Count => {
                 let unsigned = self.bitcast(arg(0)?, crate::ScalarKind::Uint, at)?;
                 let extended = self.as_kind(unsigned, crate::Scalar::U32, at)?;
                 let counted = self.math_call(MathFunction::CountOneBits, &[extended], at)?;
                 self.as_kind(counted, result_scalar, at)
             }
-            "bitfieldReverse" => {
+            BitOperation::Reverse => {
                 let unsigned = self.bitcast(arg(0)?, crate::ScalarKind::Uint, at)?;
                 let extended = self.as_kind(unsigned, crate::Scalar::U32, at)?;
                 let reversed = self.math_call(MathFunction::ReverseBits, &[extended], at)?;
@@ -606,7 +619,7 @@ impl FunctionLowerer<'_, '_> {
                 let truncated = self.as_kind(shifted, unsigned_narrow, at)?;
                 self.bitcast(truncated, narrow.kind, at)
             }
-            "bitfieldExtract" => {
+            BitOperation::Extract => {
                 let extended = self.as_kind(arg(0)?, wide, at)?;
                 let offset = self.as_kind(arg(1)?, crate::Scalar::U32, at)?;
                 let count = self.as_kind(arg(2)?, crate::Scalar::U32, at)?;
@@ -614,7 +627,7 @@ impl FunctionLowerer<'_, '_> {
                     self.math_call(MathFunction::ExtractBits, &[extended, offset, count], at)?;
                 self.as_kind(extracted, narrow, at)
             }
-            _ => {
+            BitOperation::Insert => {
                 let base = self.as_kind(arg(0)?, wide, at)?;
                 let insert = self.as_kind(arg(1)?, wide, at)?;
                 let offset = self.as_kind(arg(2)?, crate::Scalar::U32, at)?;
@@ -752,162 +765,156 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let analysis = self.with(|this| this.lw.analysis)?;
-        let function = analysis.builtins.function(id).ok_or_else(|| internal(at))?;
+        let function = analysis
+            .builtin_functions
+            .function(id)
+            .ok_or_else(|| internal(at))?;
         let name = function.name.as_str();
-        let route = route(name, arguments.len())
-            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
-        match route {
-            Route::Ray => {
-                let frame = self.clone().ray_builtin_call(name, arguments, at);
-                self.nest(frame).await
-            }?
-            .ok_or_else(|| internal(at)),
-            Route::Sample => {
-                let frame = self.clone().sample(
-                    texture_call(name),
-                    function,
-                    arguments,
-                    ImageGatherPattern::Quad,
-                    at,
-                );
+        match analysis
+            .builtin_functions
+            .kind(id)
+            .ok_or_else(|| internal(at))?
+        {
+            BuiltinKind::Subgroup(kind) => {
+                let frame = self.clone().subgroup(kind, arguments, at);
                 self.nest(frame).await
             }
-            .map(Some),
-            Route::PatternGather => {
-                let frame = self.clone().gather_call(name, function, arguments, at);
+            BuiltinKind::Ray(kind) => {
+                let frame = self.clone().ray_call(kind, arguments, at);
                 self.nest(frame).await
             }
-            Route::SparseFetch => {
-                let frame = self.clone().fetch(function, arguments, false, true, at);
+            BuiltinKind::Texture(kind) => {
+                let frame = self.clone().texture_call(kind, function, arguments, at);
                 self.nest(frame).await
             }
-            .map(Some),
-            Route::SparseFetchOffset => {
-                let frame = self.clone().fetch(function, arguments, true, true, at);
+            BuiltinKind::Pure(pure) => {
+                let frame = self
+                    .clone()
+                    .generic(pure, name, function, call_type, arguments, at);
+                self.nest(frame).await.map(Some)
+            }
+            BuiltinKind::Decompose(decompose) => {
+                let frame = self.clone().split(decompose, arguments, at);
+                self.nest(frame).await.map(Some)
+            }
+            BuiltinKind::Wide(wide) => {
+                let frame = self.clone().wide(wide, arguments, at);
                 self.nest(frame).await
             }
-            .map(Some),
-            Route::Image => {
-                let frame = self.clone().image(name, function, arguments, at);
-                self.nest(frame).await
-            }
-            Route::SparseTexelsResident => {
-                let frame = self.clone().sparse_texels_resident_call(arguments, at);
-                self.nest(frame).await
-            }
-            Route::QueryLod => {
-                let frame = self.clone().query_lod(arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::ImageProcessing => {
-                let frame = self.clone().image_processing_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Fetch => {
-                let frame = self.clone().fetch(function, arguments, false, false, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::FetchOffset => {
-                let frame = self.clone().fetch(function, arguments, true, false, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::Query => {
-                let frame = self.clone().query(name, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::ImageAtomic => {
-                let frame = self.clone().image_atomic_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::SubpassLoad => {
-                let frame = self.clone().subpass_load(arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::Barrier => self.with(|this| this.barrier_call(name, arguments, at))?,
-            Route::Interlock => self.with(|this| this.interlock_call(name, at))?,
-            Route::HelperInvocation => {
-                self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
-            }
-            Route::Footprint => {
-                let frame = self.clone().footprint(name, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::FragmentFetch => {
-                let frame = self.clone().fragment_fetch_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Interpolate => {
-                let frame = self.clone().interpolate(name, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::AttachmentRead => {
-                let frame = self.clone().attachment_read_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Mesh => {
-                let frame = self.clone().mesh_statement_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Primitive => {
-                self.with(|this| this.primitive_statement_call(name, arguments, at))?
-            }
-            Route::Expect => {
+            BuiltinKind::Expect => {
                 let frame = self.clone().expect_call(arguments, at);
                 self.nest(frame).await
             }
-            Route::Assume => {
+            BuiltinKind::Assume => {
                 let frame = self.clone().assume_call(arguments, at);
                 self.nest(frame).await
             }
-            Route::Split => {
-                let frame = self.clone().split(name, arguments, at);
+            BuiltinKind::Atomic(operation) => {
+                let frame = self.clone().atomic(operation, arguments, at);
                 self.nest(frame).await
             }
-            .map(Some),
-            Route::Atomic => {
-                let frame = self.clone().atomic(name, arguments, at);
+            BuiltinKind::Barrier(barrier) => {
+                self.with(|this| this.barrier_call(barrier, arguments, at))?
+            }
+            BuiltinKind::Interlock { begin } => self.with(|this| this.interlock_call(begin, at))?,
+            BuiltinKind::HelperInvocation => {
+                self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
+            }
+            BuiltinKind::Interpolate(location) => {
+                let frame = self.clone().interpolate(location, arguments, at);
+                self.nest(frame).await.map(Some)
+            }
+            BuiltinKind::AttachmentRead(attachment) => {
+                let frame = self.clone().attachment_read_call(attachment, arguments, at);
                 self.nest(frame).await
             }
-            Route::Wide => {
-                let frame = self.clone().wide(name, arguments, at);
+            BuiltinKind::Mesh(mesh) => {
+                let frame = self.clone().mesh_statement_call(mesh, arguments, at);
                 self.nest(frame).await
             }
-            Route::Subgroup => {
-                let frame = self.clone().subgroup(name, arguments, at);
-                self.nest(frame).await
+            BuiltinKind::Primitive(primitive) => {
+                self.with(|this| this.primitive_statement_call(primitive, arguments, at))?
             }
-            Route::Generic => {
-                let frame = self
-                    .clone()
-                    .generic(name, function, call_type, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
         }
     }
 
-    async fn gather_call(
+    async fn texture_call(
         self,
-        name: &'b str,
+        kind: Texture,
         function: &'b Function,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
-        {
-            let frame = self
-                .clone()
-                .sample(texture_call(base), function, arguments, pattern, at);
-            self.nest(frame).await
+        match kind {
+            Texture::Footprint { level, clamp } => {
+                let frame = self.clone().footprint(level, clamp, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::Sample(sample) => {
+                let frame = self
+                    .clone()
+                    .sample(Sampling::sample(sample), function, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::Gather(gather) => {
+                let frame = self
+                    .clone()
+                    .sample(Sampling::gather(gather), function, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::Fetch { offset, sparse } => {
+                let frame = self.clone().fetch(function, arguments, offset, sparse, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::ImageLoad { lod, sparse } => {
+                let access = ImageAccess::Load { sparse };
+                let frame = self.clone().image(access, lod, function, arguments, at);
+                self.nest(frame).await
+            }
+            Texture::ImageStore { lod } => {
+                let access = ImageAccess::Store;
+                let frame = self.clone().image(access, lod, function, arguments, at);
+                self.nest(frame).await
+            }
+            Texture::ImageAtomic(operation) => {
+                let frame = self.clone().image_atomic_call(operation, arguments, at);
+                self.nest(frame).await
+            }
+            Texture::Query(query) => {
+                let frame = self.clone().query(query, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::QueryLod => {
+                let frame = self.clone().query_lod(arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::SparseTexelsResident => {
+                let frame = self.clone().sparse_texels_resident_call(arguments, at);
+                self.nest(frame).await
+            }
+            Texture::ImageProcessing(operation) => {
+                let frame =
+                    self.clone()
+                        .image_processing(image_processing(operation), arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::SubpassLoad => {
+                let frame = self.clone().subpass_load(arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::FragmentFetch { mask } => {
+                let frame = self.clone().fragment_fetch_call(mask, arguments, at);
+                self.nest(frame).await
+            }
         }
-        .map(Some)
     }
 
     async fn sparse_texels_resident_call(
@@ -927,23 +934,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })?
     }
 
-    async fn image_processing_call(
-        self,
-        name: &'b str,
-        arguments: &'b [AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let operation = image_processing(name).ok_or_else(|| internal(at))?;
-        {
-            let frame = self.clone().image_processing(operation, arguments, at);
-            self.nest(frame).await
-        }
-        .map(Some)
-    }
-
     async fn image_atomic_call(
         self,
-        name: &'b str,
+        operation: AtomicOperation,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -958,16 +951,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             self.nest(frame).await
         }?;
         {
-            let frame = self
-                .clone()
-                .image_atomic(name, image, opaque, non_uniform, arguments, at);
+            let frame =
+                self.clone()
+                    .image_atomic(operation, image, opaque, non_uniform, arguments, at);
             self.nest(frame).await
         }
     }
 
     async fn fragment_fetch_call(
         self,
-        name: &'b str,
+        mask: bool,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1007,7 +1000,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }?
         };
         let fragment = match rest.next() {
-            Some(fragment) if name == "fragmentFetchAMD" => Some({
+            Some(fragment) if !mask => Some({
                 let frame = self.clone().rvalue(fragment);
                 self.nest(frame).await
             }?),
@@ -1028,21 +1021,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn attachment_read_call(
         self,
-        name: &'b str,
+        attachment: Attachment,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let mut rest = arguments.iter();
-        let aspect = match name {
-            "colorAttachmentReadEXT" => {
+        let aspect = match attachment {
+            Attachment::Color => {
                 let image = rest.next().ok_or_else(|| internal(at))?;
                 crate::AttachmentAspect::Color({
                     let frame = self.clone().rvalue(image);
                     self.nest(frame).await
                 }?)
             }
-            "depthAttachmentReadEXT" => crate::AttachmentAspect::Depth,
-            _ => crate::AttachmentAspect::Stencil,
+            Attachment::Depth => crate::AttachmentAspect::Depth,
+            Attachment::Stencil => crate::AttachmentAspect::Stencil,
         };
         let sample = match rest.next() {
             Some(sample) => Some({
@@ -1059,12 +1052,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn mesh_statement_call(
         self,
-        name: &'b str,
+        mesh: Mesh,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         {
-            let frame = self.clone().mesh_statement(name, arguments, at);
+            let frame = self.clone().mesh_statement(mesh, arguments, at);
             self.nest(frame).await
         }?;
         Ok(None)
@@ -1111,6 +1104,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn generic(
         self,
+        pure: Pure,
         name: &'b str,
         function: &'b Function,
         call_type: &'b GlslType,
@@ -1134,12 +1128,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             values.push(value);
             types.push(ty);
         }
-        self.with(|this| this.generic_values(name, function, call_type, at, values, types))?
+        self.with(|this| this.generic_values(pure, function, call_type, at, values, types))?
     }
 
     async fn split(
         self,
-        name: &'b str,
+        decompose: Decompose,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -1155,22 +1149,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             TypeKind::Vector { size, .. } => vector_size(size),
             _ => None,
         };
-        let (special, fun) = if name == "modf" {
-            (
+        let (special, fun) = match decompose {
+            Decompose::Modf => (
                 PredeclaredType::ModfResult {
                     size,
                     scalar: scalar(base),
                 },
                 MathFunction::Modf,
-            )
-        } else {
-            (
+            ),
+            Decompose::Frexp => (
                 PredeclaredType::FrexpResult {
                     size,
                     scalar: scalar(base),
                 },
                 MathFunction::Frexp,
-            )
+            ),
         };
         if ty.sized_vector_length().is_some() {
             self.with(|this| this.long_math_result(fun, &ty, at))??;
@@ -1201,10 +1194,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let frame = self.clone().place(output);
             self.nest(frame).await
         }?;
-        let other_ty = if name == "modf" {
-            ty.clone()
-        } else {
-            ty.with_scalar(GlslScalar::Int)
+        let other_ty = match decompose {
+            Decompose::Modf => ty.clone(),
+            Decompose::Frexp => ty.with_scalar(GlslScalar::Int),
         };
         let other = self.with(|this| this.convert(other, &other_ty, &output_ty, at))??;
         self.with(|this| this.store(&place, other, at))??;
@@ -1213,7 +1205,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn wide(
         self,
-        name: &'b str,
+        wide: Wide,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1233,11 +1225,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             TypeKind::Vector { size, .. } => vector_size(size),
             _ => None,
         };
-        let fun = match name {
-            "uaddCarry" => MathFunction::AddCarry,
-            "usubBorrow" => MathFunction::SubBorrow,
-            _ => MathFunction::MulExtended,
-        };
+        let fun = wide_function(wide);
         if ty.sized_vector_length().is_some() {
             self.with(|this| this.long_math_result(fun, &ty, at))??;
         } else {
@@ -1431,13 +1419,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn sample(
         self,
-        call: TextureCall,
+        call: Sampling,
         function: &'b Function,
         arguments: &'b [AstExpression],
-        gather_pattern: ImageGatherPattern,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let name = call.base;
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -1451,11 +1437,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
             return Err(internal(at));
         }
-        let gather = name.starts_with("textureGather");
-        let proj = name.contains("Proj");
-        let lod = name.contains("Lod");
-        let grad = name.contains("Grad");
-        let offset = name.ends_with("Offset") || name.ends_with("Offsets");
+        let Sampling {
+            gather: gather_pattern,
+            proj,
+            lod,
+            grad,
+            offset,
+            ..
+        } = call;
+        let gather = gather_pattern.is_some();
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, coordinate_ty) = {
             let frame = self.clone().typed(coordinate_argument);
@@ -1687,7 +1677,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     image,
                     sampler,
                     gather: gather_component,
-                    gather_pattern,
+                    gather_pattern: gather_pattern.unwrap_or(ImageGatherPattern::Quad),
                     coordinate: point,
                     array_index,
                     offset: sample_offset,
@@ -1884,7 +1874,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn footprint(
         self,
-        name: &'b str,
+        footprint: TextureLevel,
+        clamp: bool,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -1913,8 +1904,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }?;
         let mut level = SampleLevel::Auto;
         let mut min_lod = None;
-        match name {
-            "textureFootprintLodNV" => {
+        match footprint {
+            TextureLevel::Lod => {
                 level = SampleLevel::Exact({
                     let frame = self.clone().next_argument(
                         arguments,
@@ -1927,7 +1918,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?);
             }
-            "textureFootprintGradNV" | "textureFootprintGradClampNV" => {
+            TextureLevel::Gradient => {
                 let x = {
                     let frame = self.clone().next_argument(
                         arguments,
@@ -1951,7 +1942,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?;
                 level = SampleLevel::Gradient { x, y };
-                if name == "textureFootprintGradClampNV" {
+                if clamp {
                     min_lod = Some({
                         let frame = self.clone().next_argument(
                             arguments,
@@ -1965,7 +1956,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     }?);
                 }
             }
-            "textureFootprintClampNV" => {
+            TextureLevel::Implicit if clamp => {
                 min_lod = Some({
                     let frame = self.clone().next_argument(
                         arguments,
@@ -1978,7 +1969,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?);
             }
-            _ => {}
+            TextureLevel::Implicit => {}
         }
         let granularity = {
             let frame = self.clone().next_argument(
@@ -2096,7 +2087,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn interpolate(
         self,
-        name: &'b str,
+        interpolation: InterpolateAt,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -2108,16 +2099,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         else {
             return Err(internal(at));
         };
-        let location = match (name, arguments.get(1)) {
-            ("interpolateAtSample", Some(sample)) => crate::InterpolationLocation::Sample({
+        let location = match (interpolation, arguments.get(1)) {
+            (InterpolateAt::Sample, Some(sample)) => crate::InterpolationLocation::Sample({
                 let frame = self.clone().rvalue(sample);
                 self.nest(frame).await
             }?),
-            ("interpolateAtOffset", Some(offset)) => crate::InterpolationLocation::Offset({
+            (InterpolateAt::Offset, Some(offset)) => crate::InterpolationLocation::Offset({
                 let frame = self.clone().rvalue(offset);
                 self.nest(frame).await
             }?),
-            _ => crate::InterpolationLocation::Centroid,
+            (InterpolateAt::Centroid, _)
+            | (InterpolateAt::Sample | InterpolateAt::Offset, None) => {
+                crate::InterpolationLocation::Centroid
+            }
         };
         let value = self.with(|this| {
             this.add(
@@ -2199,7 +2193,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn image(
         self,
-        name: &'b str,
+        access: ImageAccess,
+        lod: bool,
         function: &'b Function,
         arguments: &'b [AstExpression],
         at: Span,
@@ -2234,7 +2229,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         } else {
             None
         };
-        let lod = name.ends_with("LodAMD");
         let level = if lod {
             let level = arguments.get(2).ok_or_else(|| internal(at))?;
             Some({
@@ -2245,48 +2239,51 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             None
         };
         let operands = 2 + usize::from(opaque.multisample) + usize::from(lod);
-        if name.starts_with("sparseImageLoad") {
-            let texel = crate::TypeInner::Vector {
-                size: crate::VectorSize::Quad,
-                scalar: super::types::sampled_scalar(opaque.sampled),
-            };
-            let sparse = Some(self.with(|this| this.lw.sparse_result_type(texel))?);
-            let result = self.with(|this| {
-                this.add(
-                    Expression::ImageLoad {
-                        image,
-                        coordinate: point,
-                        array_index,
-                        sample,
-                        level,
-                        sparse,
-                    },
-                    at,
-                )
-            })??;
-            return {
-                let frame = self
-                    .clone()
-                    .sparse_result(result, function, arguments, operands, at);
-                self.nest(frame).await
+        match access {
+            ImageAccess::Load { sparse: true } => {
+                let texel = crate::TypeInner::Vector {
+                    size: crate::VectorSize::Quad,
+                    scalar: super::types::sampled_scalar(opaque.sampled),
+                };
+                let sparse = Some(self.with(|this| this.lw.sparse_result_type(texel))?);
+                let result = self.with(|this| {
+                    this.add(
+                        Expression::ImageLoad {
+                            image,
+                            coordinate: point,
+                            array_index,
+                            sample,
+                            level,
+                            sparse,
+                        },
+                        at,
+                    )
+                })??;
+                return {
+                    let frame = self
+                        .clone()
+                        .sparse_result(result, function, arguments, operands, at);
+                    self.nest(frame).await
+                }
+                .map(Some);
             }
-            .map(Some);
-        }
-        if name.starts_with("imageLoad") {
-            return self.with(|this| {
-                this.add(
-                    Expression::ImageLoad {
-                        image,
-                        coordinate: point,
-                        array_index,
-                        sample,
-                        level,
-                        sparse: None,
-                    },
-                    at,
-                )
-                .map(Some)
-            })?;
+            ImageAccess::Load { sparse: false } => {
+                return self.with(|this| {
+                    this.add(
+                        Expression::ImageLoad {
+                            image,
+                            coordinate: point,
+                            array_index,
+                            sample,
+                            level,
+                            sparse: None,
+                        },
+                        at,
+                    )
+                    .map(Some)
+                })?;
+            }
+            ImageAccess::Store => {}
         }
         let value = arguments.get(operands).ok_or_else(|| internal(at))?;
         let value = {
@@ -2311,7 +2308,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn query(
         self,
-        name: &'b str,
+        query: TextureQuery,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -2328,10 +2325,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if non_uniform {
             self.with(|this| this.mark(image, NonUniform::VALUE))?;
         }
-        let query = match name {
-            "textureQueryLevels" => ImageQuery::NumLevels,
-            "textureSamples" | "imageSamples" => ImageQuery::NumSamples,
-            _ => {
+        let query = match query {
+            TextureQuery::Levels => ImageQuery::NumLevels,
+            TextureQuery::Samples => ImageQuery::NumSamples,
+            TextureQuery::Size => {
                 let level = match arguments.get(1) {
                     Some(level) => Some({
                         let frame = self.clone().rvalue(level);
@@ -2372,204 +2369,4 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         self.with(|this| this.as_kind(value, crate::Scalar::I32, at))?
     }
-}
-
-fn microscaling_bitcast(name: &str) -> Option<bool> {
-    if matches!(name, "packFloat2x16" | "unpackFloat2x16") {
-        return Some(false);
-    }
-    let microscaling = ["fe2m1EXT", "fe3m2EXT", "fe2m3EXT"]
-        .iter()
-        .any(|suffix| name.ends_with(suffix));
-    if !microscaling {
-        return None;
-    }
-    if name.starts_with("bitcastExtract") {
-        Some(true)
-    } else if name.starts_with("packFloat") || name.starts_with("unpackFloat") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Route {
-    Ray,
-    Sample,
-    PatternGather,
-    SparseFetch,
-    SparseFetchOffset,
-    Image,
-    SparseTexelsResident,
-    QueryLod,
-    ImageProcessing,
-    Fetch,
-    FetchOffset,
-    Query,
-    ImageAtomic,
-    SubpassLoad,
-    Barrier,
-    Interlock,
-    HelperInvocation,
-    Footprint,
-    FragmentFetch,
-    Interpolate,
-    AttachmentRead,
-    Mesh,
-    Primitive,
-    Expect,
-    Assume,
-    Split,
-    Atomic,
-    Wide,
-    Subgroup,
-    Generic,
-}
-
-pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
-    if super::ray::is_ray_call(name) {
-        return Some(Route::Ray);
-    }
-    if sampling_function(&texture_call(name).base) {
-        return Some(Route::Sample);
-    }
-    Some(match name {
-        _ if gather_pattern(name).is_some() => Route::PatternGather,
-        "sparseTexelFetchARB" => Route::SparseFetch,
-        "sparseTexelFetchOffsetARB" => Route::SparseFetchOffset,
-        "sparseImageLoadARB" | "sparseImageLoadLodAMD" => Route::Image,
-        "sparseTexelsResidentARB" => Route::SparseTexelsResident,
-        "textureQueryLod" | "textureQueryLOD" => Route::QueryLod,
-        _ if image_processing(name).is_some() => Route::ImageProcessing,
-        "texelFetch" => Route::Fetch,
-        "texelFetchOffset" => Route::FetchOffset,
-        "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize" | "imageSamples" => {
-            Route::Query
-        }
-        "imageLoad" | "imageStore" | "imageLoadLodAMD" | "imageStoreLodAMD" => Route::Image,
-        _ if super::atomic::is_image_atomic(name) => Route::ImageAtomic,
-        "subpassLoad" => Route::SubpassLoad,
-        "barrier"
-        | "memoryBarrier"
-        | "memoryBarrierBuffer"
-        | "memoryBarrierShared"
-        | "memoryBarrierImage"
-        | "groupMemoryBarrier"
-        | "controlBarrier"
-        | "controlBarrierArrive"
-        | "controlBarrierWait" => Route::Barrier,
-        "beginInvocationInterlockARB" | "endInvocationInterlockARB" => Route::Interlock,
-        "helperInvocationEXT" => Route::HelperInvocation,
-        "textureFootprintNV"
-        | "textureFootprintClampNV"
-        | "textureFootprintLodNV"
-        | "textureFootprintGradNV"
-        | "textureFootprintGradClampNV" => Route::Footprint,
-        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Route::FragmentFetch,
-        "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
-            Route::Interpolate
-        }
-        "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
-            Route::AttachmentRead
-        }
-        "SetMeshOutputsEXT" | "EmitMeshTasksEXT" | "writePackedPrimitiveIndices4x8NV" => {
-            Route::Mesh
-        }
-        "EmitVertex" | "EndPrimitive" | "EmitStreamVertex" | "EndStreamPrimitive" => {
-            Route::Primitive
-        }
-        "expectEXT" => Route::Expect,
-        "assumeEXT" => Route::Assume,
-        "modf" | "frexp" => Route::Split,
-        "atomicAdd" | "atomicMin" | "atomicMax" | "atomicAnd" | "atomicOr" | "atomicXor"
-        | "atomicExchange" | "atomicCompSwap" | "atomicLoad" | "atomicStore" => Route::Atomic,
-        "uaddCarry" | "usubBorrow" | "umulExtended" | "imulExtended" => Route::Wide,
-        _ if super::subgroup::is_subgroup_function(name) => Route::Subgroup,
-        _ if is_generic(name, arguments) => Route::Generic,
-        _ => return None,
-    })
-}
-
-fn is_generic(name: &str, arguments: usize) -> bool {
-    microscaling_bitcast(name).is_some()
-        || derivative(name).is_some()
-        || special(name).is_some()
-        || math(name, arguments).is_some()
-}
-
-#[derive(Clone, Copy)]
-enum Special {
-    Relational(RelationalFunction),
-    Not,
-    Compare(BinaryOperator),
-    Bitcast,
-    Pack,
-    Unpack,
-    Modulo,
-    MatrixCompMult,
-    Bitfield(MathFunction),
-}
-
-fn special(name: &str) -> Option<Special> {
-    Some(match name {
-        "isnan" => Special::Relational(RelationalFunction::IsNan),
-        "isinf" => Special::Relational(RelationalFunction::IsInf),
-        "any" => Special::Relational(RelationalFunction::Any),
-        "all" => Special::Relational(RelationalFunction::All),
-        "not" => Special::Not,
-        "lessThan" => Special::Compare(BinaryOperator::Less),
-        "lessThanEqual" => Special::Compare(BinaryOperator::LessEqual),
-        "greaterThan" => Special::Compare(BinaryOperator::Greater),
-        "greaterThanEqual" => Special::Compare(BinaryOperator::GreaterEqual),
-        "equal" => Special::Compare(BinaryOperator::Equal),
-        "notEqual" => Special::Compare(BinaryOperator::NotEqual),
-        "floatBitsToInt"
-        | "floatBitsToUint"
-        | "intBitsToFloat"
-        | "uintBitsToFloat"
-        | "doubleBitsToInt64"
-        | "doubleBitsToUint64"
-        | "int64BitsToDouble"
-        | "uint64BitsToDouble"
-        | "halfBitsToInt16"
-        | "halfBitsToUint16"
-        | "float16BitsToInt16"
-        | "float16BitsToUint16"
-        | "int16BitsToFloat16"
-        | "uint16BitsToFloat16"
-        | "int16BitsToHalf"
-        | "uint16BitsToHalf"
-        | "bfloat16BitsToIntEXT"
-        | "bfloat16BitsToUintEXT"
-        | "intBitsToBFloat16EXT"
-        | "uintBitsToBFloat16EXT"
-        | "floate4m3BitsToIntEXT"
-        | "floate4m3BitsToUintEXT"
-        | "intBitsToFloate4m3EXT"
-        | "uintBitsToFloate4m3EXT"
-        | "floate5m2BitsToIntEXT"
-        | "floate5m2BitsToUintEXT"
-        | "intBitsToFloate5m2EXT"
-        | "uintBitsToFloate5m2EXT"
-        | "floatue8m0BitsToIntEXT"
-        | "floatue8m0BitsToUintEXT"
-        | "intBitsToFloatue8m0EXT"
-        | "uintBitsToFloatue8m0EXT"
-        | "floatmxint8BitsToIntEXT"
-        | "floatmxint8BitsToUintEXT"
-        | "intBitsToFloatmxint8EXT"
-        | "uintBitsToFloatmxint8EXT" => Special::Bitcast,
-        "packInt2x32" | "packUint2x32" | "packInt2x16" | "packUint2x16" | "packInt4x16"
-        | "packUint4x16" | "pack16" | "pack32" | "pack64" => Special::Pack,
-        "unpackInt2x32" | "unpackUint2x32" | "unpackInt2x16" | "unpackUint2x16"
-        | "unpackInt4x16" | "unpackUint4x16" | "unpack8" | "unpack16" | "unpack32" => {
-            Special::Unpack
-        }
-        "mod" => Special::Modulo,
-        "matrixCompMult" => Special::MatrixCompMult,
-        "bitfieldExtract" => Special::Bitfield(MathFunction::ExtractBits),
-        "bitfieldInsert" => Special::Bitfield(MathFunction::InsertBits),
-        _ => return None,
-    })
 }

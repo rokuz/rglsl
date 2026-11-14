@@ -30,28 +30,6 @@ pub(crate) fn conversion(name: &str) -> Option<QcomConversion> {
     })
 }
 
-pub(crate) fn function_extension(name: &str) -> Option<Extension> {
-    Some(match name {
-        "textureWeightedQCOM"
-        | "textureBoxFilterQCOM"
-        | "textureBlockMatchSADQCOM"
-        | "textureBlockMatchSSDQCOM" => Extension::QcomImageProcessing,
-        "textureBlockMatchWindowSSDQCOM"
-        | "textureBlockMatchWindowSADQCOM"
-        | "textureBlockMatchGatherSSDQCOM"
-        | "textureBlockMatchGatherSADQCOM" => Extension::QcomImageProcessing2,
-        _ if gather_function(name) => Extension::QcomImageProcessing3,
-        _ => return None,
-    })
-}
-
-pub(crate) fn gather_function(name: &str) -> bool {
-    name.strip_prefix("textureGather")
-        .and_then(|rest| rest.strip_suffix("QCOM"))
-        .map(|rest| rest.strip_suffix("Offset").unwrap_or(rest))
-        .is_some_and(|mode| matches!(mode, "4x1" | "V2" | "H2" | "D"))
-}
-
 pub fn variable_extension(name: &str) -> Option<Extension> {
     match name {
         "gl_TileOffsetQCOM" | "gl_TileDimensionQCOM" | "gl_TileApronSizeQCOM" => {

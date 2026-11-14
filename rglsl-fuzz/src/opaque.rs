@@ -166,13 +166,11 @@ pub fn side_effect_free(expression: &Expression, builtins: &Builtins) -> bool {
                         is_macro(name) || {
                             let overloads = builtins.overloads(name);
                             !overloads.is_empty()
-                                && overloads.iter().all(|id| {
-                                    builtins.function(*id).is_some_and(|function| {
-                                        function
-                                            .parameters
-                                            .iter()
-                                            .all(|parameter| !parameter.direction.is_output())
-                                    })
+                                && overloads.iter().all(|function| {
+                                    function
+                                        .parameters
+                                        .iter()
+                                        .all(|parameter| !parameter.direction.is_output())
                                 })
                         }
                     }

@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::ast::{BinaryOperator, UnaryOperator};
 
+use crate::builtins::kind::{Comparison, Math, Pure, Relation};
 use crate::types::Scalar;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -455,54 +456,12 @@ fn round_even(value: f64) -> f64 {
     }
 }
 
-fn unary_float(name: &str, value: f64) -> Option<f64> {
-    use core::f64::consts::PI;
-    Some(match name {
-        "radians" => value * PI / 180.0,
-        "degrees" => value * 180.0 / PI,
-        "sin" => libm::sin(value),
-        "cos" => libm::cos(value),
-        "tan" => libm::tan(value),
-        "asin" => libm::asin(value),
-        "acos" => libm::acos(value),
-        "atan" => libm::atan(value),
-        "sinh" => libm::sinh(value),
-        "cosh" => libm::cosh(value),
-        "tanh" => libm::tanh(value),
-        "asinh" => libm::asinh(value),
-        "acosh" => libm::acosh(value),
-        "atanh" => libm::atanh(value),
-        "dFdx" | "dFdy" | "fwidth" | "dFdxFine" | "dFdyFine" | "fwidthFine" | "dFdxCoarse"
-        | "dFdyCoarse" | "fwidthCoarse" => 0.0,
-        "exp" => libm::exp(value),
-        "log" => libm::log(value),
-        "exp2" => libm::exp2(value),
-        "log2" => libm::log2(value),
-        "sqrt" => libm::sqrt(value),
-        "inversesqrt" => 1.0 / libm::sqrt(value),
-        "floor" => libm::floor(value),
-        "ceil" => libm::ceil(value),
-        "trunc" if value > 0.0 => libm::floor(value),
-        "trunc" => libm::ceil(value),
-        "round" => libm::floor(0.5 + value),
-        "roundEven" => round_even(value),
-        "fract" => value - libm::floor(value),
-        _ => return None,
-    })
-}
-
-fn bits(name: &str, value: Value) -> Option<Value> {
-    Some(match name {
-        "floatBitsToInt" => Value::Int((value.float()? as f32).to_bits() as i32),
-        "floatBitsToUint" => Value::Uint((value.float()? as f32).to_bits()),
-        "intBitsToFloat" => match value {
-            Value::Int(bits) => Value::Float(f64::from(f32::from_bits(bits as u32))),
-            _ => return None,
-        },
-        "uintBitsToFloat" => match value {
-            Value::Uint(bits) => Value::Float(f64::from(f32::from_bits(bits))),
-            _ => return None,
-        },
+fn bits(result: Scalar, value: Value) -> Option<Value> {
+    Some(match (result, value) {
+        (Scalar::Int, _) => Value::Int((value.float()? as f32).to_bits() as i32),
+        (Scalar::Uint, _) => Value::Uint((value.float()? as f32).to_bits()),
+        (Scalar::Float, Value::Int(bits)) => Value::Float(f64::from(f32::from_bits(bits as u32))),
+        (Scalar::Float, Value::Uint(bits)) => Value::Float(f64::from(f32::from_bits(bits))),
         _ => return None,
     })
 }
@@ -512,46 +471,133 @@ fn smooth(edge0: f64, edge1: f64, value: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn componentwise(name: &str, result: Scalar, arguments: &[Value]) -> Option<Value> {
+fn math_component(math: Math, result: Scalar, arguments: &[Value]) -> Option<Value> {
+    use core::f64::consts::PI;
     let float = |index: usize| arguments.get(index).and_then(|value| value.float());
     let value = |index: usize| arguments.get(index).copied();
     let floating = |number: f64| Some(Value::floating(result, number));
-    match (name, arguments.len()) {
-        ("abs", 1) => absolute(value(0)?),
-        ("sign", 1) => sign(value(0)?),
-        ("isnan", 1) => Some(Value::Bool(float(0)?.is_nan())),
-        ("isinf", 1) => Some(Value::Bool(float(0)?.is_infinite())),
-        ("not", 1) => Some(Value::Bool(!value(0)?.as_bool()?)),
-        ("floatBitsToInt" | "floatBitsToUint" | "intBitsToFloat" | "uintBitsToFloat", 1) => {
-            bits(name, value(0)?)
-        }
-        (_, 1) => floating(unary_float(name, float(0)?)?),
-        ("atan", 2) => floating(libm::atan2(float(0)?, float(1)?)),
-        ("pow", 2) => floating(libm::pow(float(0)?, float(1)?)),
-        ("mod", 2) => {
-            let (left, right) = (float(0)?, float(1)?);
-            floating(left - right * libm::floor(left / right))
-        }
-        ("min", 2) => smaller(value(0)?, value(1)?),
-        ("max", 2) => larger(value(0)?, value(1)?),
-        ("clamp", 3) => smaller(larger(value(0)?, value(1)?)?, value(2)?),
-        ("lessThan", 2) => less(value(0)?, value(1)?).map(Value::Bool),
-        ("greaterThan", 2) => less(value(1)?, value(0)?).map(Value::Bool),
-        ("lessThanEqual", 2) => less(value(1)?, value(0)?).map(|greater| Value::Bool(!greater)),
-        ("greaterThanEqual", 2) => less(value(0)?, value(1)?).map(|less| Value::Bool(!less)),
-        ("equal", 2) => equal(value(0)?, value(1)?).map(Value::Bool),
-        ("notEqual", 2) => equal(value(0)?, value(1)?).map(|equal| Value::Bool(!equal)),
-        ("mix", 3) => match value(2)? {
+    let unary = |function: fn(f64) -> f64| floating(function(float(0)?));
+    match math {
+        Math::Abs => absolute(value(0)?),
+        Math::Sign => sign(value(0)?),
+        Math::Radians => unary(|value| value * PI / 180.0),
+        Math::Degrees => unary(|value| value * 180.0 / PI),
+        Math::Sin => unary(libm::sin),
+        Math::Cos => unary(libm::cos),
+        Math::Tan => unary(libm::tan),
+        Math::Asin => unary(libm::asin),
+        Math::Acos => unary(libm::acos),
+        Math::Atan => unary(libm::atan),
+        Math::Sinh => unary(libm::sinh),
+        Math::Cosh => unary(libm::cosh),
+        Math::Tanh => unary(libm::tanh),
+        Math::Asinh => unary(libm::asinh),
+        Math::Acosh => unary(libm::acosh),
+        Math::Atanh => unary(libm::atanh),
+        Math::Exp => unary(libm::exp),
+        Math::Log => unary(libm::log),
+        Math::Exp2 => unary(libm::exp2),
+        Math::Log2 => unary(libm::log2),
+        Math::Sqrt => unary(libm::sqrt),
+        Math::InverseSqrt => unary(|value| 1.0 / libm::sqrt(value)),
+        Math::Floor => unary(libm::floor),
+        Math::Ceil => unary(libm::ceil),
+        Math::Trunc => unary(|value| {
+            if value > 0.0 {
+                libm::floor(value)
+            } else {
+                libm::ceil(value)
+            }
+        }),
+        Math::Round => unary(|value| libm::floor(0.5 + value)),
+        Math::RoundEven => unary(round_even),
+        Math::Fract => unary(|value| value - libm::floor(value)),
+        Math::Atan2 => floating(libm::atan2(float(0)?, float(1)?)),
+        Math::Pow => floating(libm::pow(float(0)?, float(1)?)),
+        Math::Min => smaller(value(0)?, value(1)?),
+        Math::Max => larger(value(0)?, value(1)?),
+        Math::Clamp => smaller(larger(value(0)?, value(1)?)?, value(2)?),
+        Math::Mix => match value(2)? {
             Value::Bool(select) => floating(if select { float(1)? } else { float(0)? }),
             _ => {
                 let (left, right, weight) = (float(0)?, float(1)?, float(2)?);
                 floating(left * (1.0 - weight) + right * weight)
             }
         },
-        ("step", 2) => floating(if float(1)? < float(0)? { 0.0 } else { 1.0 }),
-        ("smoothstep", 3) => floating(smooth(float(0)?, float(1)?, float(2)?)),
-        ("matrixCompMult", 2) => floating(float(0)? * float(1)?),
-        _ => None,
+        Math::Step => floating(if float(1)? < float(0)? { 0.0 } else { 1.0 }),
+        Math::SmoothStep => floating(smooth(float(0)?, float(1)?, float(2)?)),
+        Math::Fma
+        | Math::Ldexp
+        | Math::Length
+        | Math::Distance
+        | Math::Dot
+        | Math::IntegerDot
+        | Math::IntegerDotAccSat
+        | Math::PackedIntegerDot4x8
+        | Math::PackedIntegerDot4x8AccSat
+        | Math::Cross
+        | Math::Normalize
+        | Math::FaceForward
+        | Math::Reflect
+        | Math::Refract
+        | Math::Outer
+        | Math::Transpose
+        | Math::Determinant
+        | Math::Inverse
+        | Math::Pack2x16unorm
+        | Math::Pack2x16snorm
+        | Math::Pack4x8unorm
+        | Math::Pack4x8snorm
+        | Math::Unpack2x16unorm
+        | Math::Unpack2x16snorm
+        | Math::Unpack4x8unorm
+        | Math::Unpack4x8snorm
+        | Math::Pack2x16float
+        | Math::Unpack2x16float
+        | Math::PackDouble2x32
+        | Math::UnpackDouble2x32 => None,
+    }
+}
+
+fn component(kind: Pure, result: Scalar, arguments: &[Value]) -> Option<Value> {
+    let float = |index: usize| arguments.get(index).and_then(|value| value.float());
+    let value = |index: usize| arguments.get(index).copied();
+    let floating = |number: f64| Some(Value::floating(result, number));
+    match kind {
+        Pure::Math(math) => math_component(math, result, arguments),
+        Pure::Relational(Relation::IsNan) => Some(Value::Bool(float(0)?.is_nan())),
+        Pure::Relational(Relation::IsInf) => Some(Value::Bool(float(0)?.is_infinite())),
+        Pure::Not => Some(Value::Bool(!value(0)?.as_bool()?)),
+        Pure::Bitcast => bits(result, value(0)?),
+        Pure::Derivative(..) => float(0).and_then(|_| floating(0.0)),
+        Pure::Modulo => {
+            let (left, right) = (float(0)?, float(1)?);
+            floating(left - right * libm::floor(left / right))
+        }
+        Pure::Compare(Comparison::Less) => less(value(0)?, value(1)?).map(Value::Bool),
+        Pure::Compare(Comparison::Greater) => less(value(1)?, value(0)?).map(Value::Bool),
+        Pure::Compare(Comparison::LessEqual) => {
+            less(value(1)?, value(0)?).map(|greater| Value::Bool(!greater))
+        }
+        Pure::Compare(Comparison::GreaterEqual) => {
+            less(value(0)?, value(1)?).map(|less| Value::Bool(!less))
+        }
+        Pure::Compare(Comparison::Equal) => equal(value(0)?, value(1)?).map(Value::Bool),
+        Pure::Compare(Comparison::NotEqual) => {
+            equal(value(0)?, value(1)?).map(|equal| Value::Bool(!equal))
+        }
+        Pure::Select => match value(2)? {
+            Value::Bool(select) => floating(if select { float(1)? } else { float(0)? }),
+            _ => {
+                let (left, right, weight) = (float(0)?, float(1)?, float(2)?);
+                floating(left * (1.0 - weight) + right * weight)
+            }
+        },
+        Pure::MatrixCompMult => floating(float(0)? * float(1)?),
+        Pure::Relational(Relation::Any | Relation::All)
+        | Pure::Bits(_)
+        | Pure::RepackBits
+        | Pure::PackedBitcast { .. } => None,
     }
 }
 
@@ -565,7 +611,7 @@ fn dot(left: &[f64], right: &[f64]) -> f64 {
         .fold(0.0, |sum, (left, right)| sum + left * right)
 }
 
-fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<Value>> {
+fn geometric(kind: Pure, result: Scalar, arguments: &[Constant]) -> Option<Vec<Value>> {
     let float = |index: usize| arguments.get(index).and_then(floats);
     let wrap = |numbers: Vec<f64>| {
         numbers
@@ -581,17 +627,17 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
             .map(|value| value.as_bool())
             .collect()
     };
-    Some(match name {
-        "length" => {
+    Some(match kind {
+        Pure::Math(Math::Length) => {
             let vector = float(0)?;
             wrap(alloc::vec![libm::sqrt(dot(&vector, &vector))])
         }
-        "normalize" => {
+        Pure::Math(Math::Normalize) => {
             let vector = float(0)?;
             let length = libm::sqrt(dot(&vector, &vector));
             wrap(vector.iter().map(|component| component / length).collect())
         }
-        "distance" => {
+        Pure::Math(Math::Distance) => {
             let (from, to) = (float(0)?, float(1)?);
             let sum = from
                 .iter()
@@ -599,8 +645,8 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
                 .fold(0.0, |sum, (from, to)| sum + (to - from) * (to - from));
             wrap(alloc::vec![libm::sqrt(sum)])
         }
-        "dot" => wrap(alloc::vec![dot(&float(0)?, &float(1)?)]),
-        "cross" => {
+        Pure::Math(Math::Dot) => wrap(alloc::vec![dot(&float(0)?, &float(1)?)]),
+        Pure::Math(Math::Cross) => {
             let (a, b) = (float(0)?, float(1)?);
             let (&[a0, a1, a2], &[b0, b1, b2]) = (a.as_slice(), b.as_slice()) else {
                 return None;
@@ -611,7 +657,7 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
                 a0 * b1 - a1 * b0
             ])
         }
-        "faceforward" => {
+        Pure::Math(Math::FaceForward) => {
             let (normal, incident, reference) = (float(0)?, float(1)?, float(2)?);
             let facing = dot(&incident, &reference) < 0.0;
             wrap(
@@ -621,7 +667,7 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
                     .collect(),
             )
         }
-        "reflect" => {
+        Pure::Math(Math::Reflect) => {
             let (incident, normal) = (float(0)?, float(1)?);
             let twice = dot(&incident, &normal) * 2.0;
             wrap(
@@ -632,7 +678,7 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
                     .collect(),
             )
         }
-        "refract" => {
+        Pure::Math(Math::Refract) => {
             let (incident, normal) = (float(0)?, float(1)?);
             let eta = *float(2)?.first()?;
             let cosine = dot(&incident, &normal);
@@ -649,7 +695,7 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
                     .collect()
             })
         }
-        "outerProduct" => {
+        Pure::Math(Math::Outer) => {
             let (column, row) = (float(0)?, float(1)?);
             wrap(
                 row.iter()
@@ -657,14 +703,87 @@ fn geometric(name: &str, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
                     .collect(),
             )
         }
-        "any" => alloc::vec![Value::Bool(booleans(0)?.into_iter().any(|value| value))],
-        "all" => alloc::vec![Value::Bool(booleans(0)?.into_iter().all(|value| value))],
-        _ => return None,
+        Pure::Relational(Relation::Any) => {
+            alloc::vec![Value::Bool(booleans(0)?.into_iter().any(|value| value))]
+        }
+        Pure::Relational(Relation::All) => {
+            alloc::vec![Value::Bool(booleans(0)?.into_iter().all(|value| value))]
+        }
+        Pure::Math(
+            Math::Abs
+            | Math::Sign
+            | Math::Radians
+            | Math::Degrees
+            | Math::Sin
+            | Math::Cos
+            | Math::Tan
+            | Math::Asin
+            | Math::Acos
+            | Math::Atan
+            | Math::Atan2
+            | Math::Sinh
+            | Math::Cosh
+            | Math::Tanh
+            | Math::Asinh
+            | Math::Acosh
+            | Math::Atanh
+            | Math::Pow
+            | Math::Exp
+            | Math::Log
+            | Math::Exp2
+            | Math::Log2
+            | Math::Sqrt
+            | Math::InverseSqrt
+            | Math::Floor
+            | Math::Trunc
+            | Math::Round
+            | Math::RoundEven
+            | Math::Ceil
+            | Math::Fract
+            | Math::Min
+            | Math::Max
+            | Math::Clamp
+            | Math::Mix
+            | Math::Step
+            | Math::SmoothStep
+            | Math::Fma
+            | Math::Ldexp
+            | Math::IntegerDot
+            | Math::IntegerDotAccSat
+            | Math::PackedIntegerDot4x8
+            | Math::PackedIntegerDot4x8AccSat
+            | Math::Transpose
+            | Math::Determinant
+            | Math::Inverse
+            | Math::Pack2x16unorm
+            | Math::Pack2x16snorm
+            | Math::Pack4x8unorm
+            | Math::Pack4x8snorm
+            | Math::Unpack2x16unorm
+            | Math::Unpack2x16snorm
+            | Math::Unpack4x8unorm
+            | Math::Unpack4x8snorm
+            | Math::Pack2x16float
+            | Math::Unpack2x16float
+            | Math::PackDouble2x32
+            | Math::UnpackDouble2x32,
+        )
+        | Pure::Relational(Relation::IsNan | Relation::IsInf)
+        | Pure::Bits(_)
+        | Pure::Compare(_)
+        | Pure::Not
+        | Pure::Select
+        | Pure::Modulo
+        | Pure::MatrixCompMult
+        | Pure::Bitcast
+        | Pure::RepackBits
+        | Pure::PackedBitcast { .. }
+        | Pure::Derivative(..) => return None,
     })
 }
 
-pub fn fold_builtin(name: &str, arguments: &[Constant], result: Scalar) -> Option<Constant> {
-    if let Some(values) = geometric(name, result, arguments) {
+pub fn fold_builtin(kind: Pure, arguments: &[Constant], result: Scalar) -> Option<Constant> {
+    if let Some(values) = geometric(kind, result, arguments) {
         return Some(Constant::new(values));
     }
     let length = arguments
@@ -683,7 +802,7 @@ pub fn fold_builtin(name: &str, arguments: &[Constant], result: Scalar) -> Optio
                 .iter()
                 .map(|argument| pick(argument, index))
                 .collect::<Option<Vec<_>>>()?;
-            componentwise(name, result, &components)
+            component(kind, result, &components)
         })
         .collect::<Option<Vec<_>>>()?;
     Some(Constant::new(values))

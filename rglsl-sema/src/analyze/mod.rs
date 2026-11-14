@@ -50,8 +50,8 @@ pub use qcom::QcomConversion;
 pub use tensor::TensorArmCall;
 
 use crate::builtins::{
-    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, Prebuilt,
-    ResourceLimits, StageTables,
+    ALL_STAGE_BITS, BuiltinFunctionId, BuiltinFunctions, BuiltinTables, Builtins, FreshTables,
+    Prebuilt, ResourceLimits, StageTables,
 };
 
 use crate::constant::Constant;
@@ -121,6 +121,7 @@ pub struct Analysis {
     pub version: Option<u32>,
     pub stage: ShaderStage,
     pub builtins: Arc<Builtins>,
+    pub builtin_functions: BuiltinFunctions,
     pub types: TypeRegistry,
     pub symbols: Vec<Symbol>,
     pub functions: Vec<Function>,
@@ -379,6 +380,7 @@ pub(crate) struct Analyzer<'a> {
     pub options: &'a Options,
     pub version: Option<u32>,
     pub builtins: Arc<Builtins>,
+    pub builtin_functions: BuiltinFunctions,
     pub types: TypeRegistry,
     pub symbols: Vec<Symbol>,
     pub functions: Vec<Function>,
@@ -466,6 +468,7 @@ impl<'a> Analyzer<'a> {
             types: builtins.types().clone(),
             symbols: builtins.symbols().to_vec(),
             builtins,
+            builtin_functions: BuiltinFunctions::default(),
             functions: Vec::new(),
             scopes,
             expressions: FastHashMap::default(),
@@ -711,6 +714,10 @@ impl<'a> Analyzer<'a> {
         self.probe.map(answer)
     }
 
+    pub(crate) fn resolve_builtin(&mut self, name: &str) {
+        self.builtin_functions.resolve(&self.builtins, name);
+    }
+
     pub(crate) fn builtin_name(&self, name: &str) {
         match self.library {
             Some(ref tables) => self
@@ -860,6 +867,7 @@ impl<'a> Analyzer<'a> {
             version: self.version,
             stage: self.options.stage,
             builtins: self.builtins,
+            builtin_functions: self.builtin_functions,
             types: self.types,
             symbols: self.symbols,
             functions: self.functions,

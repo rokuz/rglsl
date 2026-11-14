@@ -69,19 +69,6 @@ const POST_DEPTH_COVERAGE: [Extension; 2] = [
     Extension::ExtPostDepthCoverage,
 ];
 
-pub(crate) fn function_extension(name: &str) -> Option<Extension> {
-    Some(match name {
-        "helperInvocationEXT" => Extension::ExtDemoteToHelperInvocation,
-        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Extension::AmdShaderFragmentMask,
-        _ if crate::builtins::footprint::is_function(name) => Extension::NvShaderTextureFootprint,
-        "controlBarrierArrive" | "controlBarrierWait" => Extension::ExtSplitBarrier,
-        "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
-            Extension::ExtShaderTileImage
-        }
-        _ => return None,
-    })
-}
-
 const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKind {
     DiagnosticKind::InvalidQualifier { qualifier, reason }
 }
@@ -198,12 +185,7 @@ impl Analyzer<'_> {
         self.require_extensions(span, &POST_DEPTH_COVERAGE, "post depth coverage");
     }
 
-    pub(crate) fn interlock_call(&mut self, span: Span, name: &str) {
-        let begin = match name {
-            "beginInvocationInterlockARB" => true,
-            "endInvocationInterlockARB" => false,
-            _ => return,
-        };
+    pub(crate) fn interlock_call(&mut self, span: Span, begin: bool, name: &str) {
         let report = |analyzer: &mut Self, reason: &'static str| {
             analyzer.error(
                 span,

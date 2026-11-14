@@ -6,6 +6,7 @@ use rglsl_ast::ast::StorageQualifier;
 use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Operand};
+use crate::builtins::kind::{HitObject, HitObjectFlavor, Ray};
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Qualifiers, Storage};
@@ -97,20 +98,35 @@ pub(crate) const fn storage_of_block(storage: BlockStorage) -> Option<Storage> {
     })
 }
 
-fn hit_object_location(name: &str, count: usize) -> Option<(usize, usize)> {
-    Some(match name {
-        "hitObjectExecuteShaderNV" | "hitObjectExecuteShaderEXT" => (1, 0),
-        "hitObjectTraceRayNV" | "hitObjectTraceRayEXT" => (11, 0),
-        "hitObjectTraceRayMotionNV" | "hitObjectTraceRayMotionEXT" => (12, 0),
-        "hitObjectReorderExecuteEXT"
-        | "hitObjectTraceReorderExecuteEXT"
-        | "hitObjectTraceMotionReorderExecuteEXT" => (count.checked_sub(1)?, 0),
-        "hitObjectGetAttributesNV" | "hitObjectGetAttributesEXT" => (1, 2),
-        "hitObjectRecordFromQueryEXT" => (3, 2),
-        "hitObjectRecordHitNV" | "hitObjectRecordHitWithIndexMotionNV" => (12, 2),
-        "hitObjectRecordHitMotionNV" => (13, 2),
-        "hitObjectRecordHitWithIndexNV" => (11, 2),
-        _ => return None,
+fn location_operand(ray: Ray, count: usize) -> Option<(usize, usize)> {
+    let last = count.checked_sub(1)?;
+    Some(match ray {
+        Ray::HitObject(
+            _,
+            HitObject::ExecuteShader
+            | HitObject::TraceRay { .. }
+            | HitObject::TraceReorderExecute { .. }
+            | HitObject::ReorderExecute,
+        ) => (last, 0),
+        Ray::HitObject(_, HitObject::GetAttributes | HitObject::RecordHit { .. }) => (last, 2),
+        Ray::HitObject(_, HitObject::RecordFromQuery) => (3, 2),
+        Ray::HitObject(
+            _,
+            HitObject::Value(_)
+            | HitObject::RecordMiss
+            | HitObject::RecordEmpty
+            | HitObject::SetShaderBindingTableRecordIndex
+            | HitObject::ReorderThread,
+        )
+        | Ray::Intersection(_)
+        | Ray::Query(_)
+        | Ray::QueryFunction(_)
+        | Ray::TraceRay { .. }
+        | Ray::ExecuteCallable { .. }
+        | Ray::ReportIntersection
+        | Ray::IgnoreIntersection
+        | Ray::TerminateRay
+        | Ray::MicroTriangle(_) => return None,
     })
 }
 
@@ -320,6 +336,7 @@ impl Analyzer<'_> {
     pub(crate) fn ray_builtin_checks(
         &mut self,
         span: Span,
+        ray: Ray,
         name: &str,
         operands: &[Operand],
     ) -> bool {
@@ -336,48 +353,24 @@ impl Analyzer<'_> {
                     .and_then(|value| u32::try_from(value).ok()),
             )
         };
-        let hit_object = hit_object_location(name, operands.len());
-        let (index, description, missing, set) = match (name, hit_object) {
-            ("traceNV", _) => (10, "payload number", None, 0),
-            ("traceRayEXT", _) => (
-                10,
+        let (index, description, missing, set) = match ray {
+            Ray::TraceRay { nv: true, .. } => {
+                (operands.len().saturating_sub(1), "payload number", None, 0)
+            }
+            Ray::TraceRay { nv: false, .. } => (
+                operands.len().saturating_sub(1),
                 "payload number",
                 Some("no rayPayloadEXT/rayPayloadInEXT declared"),
                 0,
             ),
-            ("traceRayMotionNV", _) => (
-                11,
-                "payload number",
-                Some("no rayPayloadEXT/rayPayloadInEXT declared"),
-                0,
-            ),
-            ("executeCallableNV", _) => (1, "callable data number", None, 1),
-            ("executeCallableEXT", _) => (
+            Ray::ExecuteCallable { nv: true } => (1, "callable data number", None, 1),
+            Ray::ExecuteCallable { nv: false } => (
                 1,
                 "callable data number",
                 Some("no callableDataEXT/callableDataInEXT declared"),
                 1,
             ),
-            (_, Some((index, 0))) => (
-                index,
-                "payload number",
-                Some("no rayPayloadEXT/rayPayloadInEXT declared"),
-                0,
-            ),
-            (_, Some((index, _))) => (
-                index,
-                "hitobjectattribute number",
-                Some(if name.ends_with("NV") {
-                    "no hitObjectAttributeNV declared"
-                } else {
-                    "no hitObjectAttributeEXT declared"
-                }),
-                2,
-            ),
-            _ if (name.starts_with("rayQueryGetIntersection")
-                || name.starts_with("rayQueryIs"))
-                && name != "rayQueryGetIntersectionCandidateAABBOpaqueEXT" =>
-            {
+            Ray::Intersection(_) => {
                 let constant = operands
                     .get(1)
                     .is_none_or(|operand| operand.constant && !operand.specialization);
@@ -392,7 +385,30 @@ impl Analyzer<'_> {
                 }
                 return constant;
             }
-            _ => return true,
+            Ray::HitObject(flavor, _) => match location_operand(ray, operands.len()) {
+                Some((index, 0)) => (
+                    index,
+                    "payload number",
+                    Some("no rayPayloadEXT/rayPayloadInEXT declared"),
+                    0,
+                ),
+                Some((index, set)) => (
+                    index,
+                    "hitobjectattribute number",
+                    Some(match flavor {
+                        HitObjectFlavor::Nv => "no hitObjectAttributeNV declared",
+                        HitObjectFlavor::Ext => "no hitObjectAttributeEXT declared",
+                    }),
+                    set,
+                ),
+                None => return true,
+            },
+            Ray::Query(_)
+            | Ray::QueryFunction(_)
+            | Ray::ReportIntersection
+            | Ray::IgnoreIntersection
+            | Ray::TerminateRay
+            | Ray::MicroTriangle(_) => return true,
         };
         match location(index) {
             None => true,

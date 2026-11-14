@@ -9,6 +9,8 @@ use rglsl_ast::ast::{
 };
 
 use super::{Analysis, Callee};
+use crate::builtins::kind::BuiltinKind;
+use crate::builtins::{BuiltinFlags, BuiltinFunction};
 use crate::scope::{SymbolId, SymbolKind};
 use crate::types::{Scalar, Type, TypeKind};
 
@@ -42,71 +44,18 @@ pub struct RelaxedPrecision {
     pub conversions: FastHashSet<NodeId>,
 }
 
-const HIGHP_PARAMETERS: [&str; 19] = [
-    "floatBitsToInt",
-    "floatBitsToUint",
-    "intBitsToFloat",
-    "uintBitsToFloat",
-    "frexp",
-    "ldexp",
-    "unpackUnorm2x16",
-    "unpackSnorm2x16",
-    "unpackHalf2x16",
-    "unpackSnorm4x8",
-    "unpackUnorm4x8",
-    "findMSB",
-    "uaddCarry",
-    "usubBorrow",
-    "umulExtended",
-    "imulExtended",
-    "bitfieldReverse",
-    "packDouble2x32",
-    "unpackDouble2x32",
-];
-
-const fn builtin_result(name: &str) -> Precision {
-    match name.as_bytes() {
-        b"packUnorm2x16" | b"packSnorm2x16" | b"packHalf2x16" | b"packSnorm4x8"
-        | b"packUnorm4x8" => Precision::High,
-        b"stencilAttachmentReadEXT" => Precision::Low,
-        _ => Precision::None,
+const fn builtin_result(entry: Option<&BuiltinFunction>) -> Precision {
+    match entry {
+        Some(entry) if entry.has(BuiltinFlags::HIGHP_RESULT) => Precision::High,
+        Some(entry) if entry.has(BuiltinFlags::LOWP_RESULT) => Precision::Low,
+        Some(_) | None => Precision::None,
     }
 }
 
-fn is_sampling(name: &str) -> bool {
-    let texture = name.starts_with("texture") || name.starts_with("texel");
-    let query = matches!(
-        name,
-        "textureSize" | "textureQueryLod" | "textureQueryLevels" | "textureSamples"
-    );
-    (texture && !query)
-        || name.starts_with("sparseTex")
-        || matches!(name, "fragmentFetchAMD" | "fragmentMaskFetchAMD")
-}
-
-fn is_image_or_texture(name: &str) -> bool {
-    [
-        "texture",
-        "texel",
-        "image",
-        "sparse",
-        "subpassLoad",
-        "fragment",
-    ]
-    .iter()
-    .any(|prefix| name.starts_with(prefix))
-}
-
-fn counted_arguments(name: &str, count: usize) -> usize {
-    match name {
-        "bitfieldExtract"
-        | "interpolateAtCentroid"
-        | "interpolateAtOffset"
-        | "interpolateAtSample" => count.min(1),
-        "bitfieldInsert" => count.min(2),
-        "debugPrintfEXT" | "abortEXT" => 0,
-        _ => count,
-    }
+fn counted_arguments(entry: Option<&BuiltinFunction>, count: usize) -> usize {
+    entry
+        .and_then(|entry| entry.precision_operands)
+        .map_or(count, |limit| count.min(limit))
 }
 
 fn symbol_precision(analysis: &Analysis, symbol: SymbolId) -> Precision {
@@ -168,10 +117,7 @@ fn relaxes_returns(analysis: &Analysis) -> bool {
 
 fn relaxes_builtin_results(analysis: &Analysis) -> bool {
     analysis.calls.values().any(|callee| match *callee {
-        Callee::Builtin(id) => analysis
-            .builtins
-            .function(id)
-            .is_some_and(|function| builtin_result(&function.name).relaxed()),
+        Callee::Builtin(id) => builtin_result(analysis.builtin_functions.entry(id)).relaxed(),
         _ => false,
     })
 }
@@ -529,29 +475,29 @@ impl<'a> Pass<'a> {
         let analysis = self.analysis;
         match analysis.calls.get(&node.id) {
             Some(Callee::Builtin(id)) => {
-                let Some(function) = analysis.builtins.function(*id) else {
+                let Some(function) = analysis.builtin_functions.function(*id) else {
                     self.set_own(node, Precision::None);
                     return;
                 };
-                let name = function.name.as_str();
-                let counted = counted_arguments(name, arguments.len());
+                let entry = analysis.builtin_functions.entry(*id);
+                let counted = counted_arguments(entry, arguments.len());
                 let mut operation = arguments
                     .iter()
                     .take(counted)
                     .map(|argument| self.visible(argument))
                     .max()
                     .unwrap_or_default();
-                if HIGHP_PARAMETERS.contains(&name) {
+                if entry.is_some_and(|entry| entry.has(BuiltinFlags::HIGHP_OPERANDS)) {
                     operation = Precision::High;
                 }
-                let result = if is_sampling(name) || matches!(name, "imageLoad" | "imageStore") {
+                let result = if entry.is_some_and(|entry| entry.has(BuiltinFlags::SAMPLED_RESULT)) {
                     arguments
                         .first()
                         .map_or(Precision::None, |first| self.visible(first))
                 } else if function.return_type.is_bool() {
                     Precision::None
                 } else {
-                    match builtin_result(name) {
+                    match builtin_result(entry) {
                         Precision::None => operation,
                         declared => declared,
                     }
@@ -559,7 +505,7 @@ impl<'a> Pass<'a> {
                 self.set_own(node, Precision::None);
                 if operation != Precision::None {
                     self.propagate_inner(node, operation);
-                    if !is_image_or_texture(name) {
+                    if !entry.is_some_and(|entry| matches!(entry.kind, BuiltinKind::Texture(_))) {
                         self.operation.insert(node.id, operation);
                     }
                 }

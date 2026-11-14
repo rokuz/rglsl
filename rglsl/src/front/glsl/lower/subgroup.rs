@@ -1,6 +1,8 @@
-use alloc::format;
-
 use rglsl_ast::ast::Expression as AstExpression;
+use rglsl_sema::builtins::kind::{
+    AmdShaderBallot, Collective, Gather, QuadDirection, Subgroup, SubgroupFunction as Function,
+    SubgroupMemory, SubgroupOperation as Operation,
+};
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
 
 use super::function::FunctionLowerer;
@@ -15,205 +17,40 @@ const ALL_MEMORY: MemorySemantics = MemorySemantics::UNIFORM_MEMORY
     .union(MemorySemantics::ATOMIC_COUNTER_MEMORY)
     .union(MemorySemantics::IMAGE_MEMORY);
 
-enum Lowered {
-    Barrier {
-        execution: bool,
-        semantics: MemorySemantics,
-    },
-    Ballot,
-    Collective(SubgroupOperation, Collective),
-    Gather(Gather),
-    Function(Function),
-}
-
-#[derive(Clone, Copy)]
-enum Collective {
-    Reduce,
-    InclusiveScan,
-    ExclusiveScan,
-    Clustered,
-    PartitionedReduce,
-    PartitionedInclusiveScan,
-    PartitionedExclusiveScan,
-}
-
-#[derive(Clone, Copy)]
-enum Gather {
-    BroadcastFirst,
-    Broadcast,
-    Shuffle,
-    ShuffleXor,
-    ShuffleUp,
-    ShuffleDown,
-    QuadBroadcast,
-    QuadSwap(Direction),
-    Rotate,
-    ClusteredRotate,
-}
-
 enum ResultType {
     Fixed(TypeInner),
     Argument(GlslType),
 }
 
-#[derive(Clone, Copy)]
-enum Function {
-    Elect,
-    AllEqual,
-    QuadAll,
-    QuadAny,
-    InverseBallot,
-    BallotBitExtract,
-    BallotBitCount(Collective),
-    BallotFindLsb,
-    BallotFindMsb,
-    Partition,
-    KhrBallot,
-    KhrReadInvocation,
-    KhrReadFirstInvocation,
-    KhrAll,
-    KhrAny,
-    KhrAllEqual,
-    Group(SubgroupOperation, Collective, bool),
-    Amd(AmdShaderBallot),
-}
-
-#[derive(Clone, Copy)]
-enum AmdShaderBallot {
-    Swizzle,
-    SwizzleMasked,
-    WriteInvocation,
-    Mbcnt,
-}
-
-fn operation(word: &str) -> Option<SubgroupOperation> {
-    Some(match word {
-        "Add" => SubgroupOperation::Add,
-        "Mul" => SubgroupOperation::Mul,
-        "Min" => SubgroupOperation::Min,
-        "Max" => SubgroupOperation::Max,
-        "And" => SubgroupOperation::And,
-        "Or" => SubgroupOperation::Or,
-        "Xor" => SubgroupOperation::Xor,
-        _ => return None,
-    })
-}
-
-fn collective(name: &str) -> Option<(SubgroupOperation, Collective)> {
-    let suffix = name.strip_prefix("subgroup")?;
-    if let Some(rest) = suffix
-        .strip_prefix("Partitioned")
-        .and_then(|rest| rest.strip_suffix("NV"))
-    {
-        return Some(if let Some(word) = rest.strip_prefix("Inclusive") {
-            (operation(word)?, Collective::PartitionedInclusiveScan)
-        } else if let Some(word) = rest.strip_prefix("Exclusive") {
-            (operation(word)?, Collective::PartitionedExclusiveScan)
-        } else {
-            (operation(rest)?, Collective::PartitionedReduce)
-        });
+const fn operation(operation: Operation) -> SubgroupOperation {
+    match operation {
+        Operation::All => SubgroupOperation::All,
+        Operation::Any => SubgroupOperation::Any,
+        Operation::Add => SubgroupOperation::Add,
+        Operation::Mul => SubgroupOperation::Mul,
+        Operation::Min => SubgroupOperation::Min,
+        Operation::Max => SubgroupOperation::Max,
+        Operation::And => SubgroupOperation::And,
+        Operation::Or => SubgroupOperation::Or,
+        Operation::Xor => SubgroupOperation::Xor,
     }
-    Some(if let Some(word) = suffix.strip_prefix("Inclusive") {
-        (operation(word)?, Collective::InclusiveScan)
-    } else if let Some(word) = suffix.strip_prefix("Exclusive") {
-        (operation(word)?, Collective::ExclusiveScan)
-    } else if let Some(word) = suffix.strip_prefix("Clustered") {
-        (operation(word)?, Collective::Clustered)
-    } else {
-        (operation(suffix)?, Collective::Reduce)
-    })
 }
 
-fn classify(name: &str) -> Option<Lowered> {
-    let barrier = |execution, semantics| Lowered::Barrier {
-        execution,
-        semantics: semantics | MemorySemantics::ACQUIRE_RELEASE,
-    };
-    Some(match name {
-        "subgroupBarrier" => barrier(true, ALL_MEMORY),
-        "subgroupMemoryBarrier" => barrier(false, ALL_MEMORY),
-        "subgroupMemoryBarrierBuffer" => barrier(false, MemorySemantics::UNIFORM_MEMORY),
-        "subgroupMemoryBarrierImage" => barrier(false, MemorySemantics::IMAGE_MEMORY),
-        "subgroupMemoryBarrierShared" => barrier(false, MemorySemantics::WORKGROUP_MEMORY),
-        "subgroupElect" => Lowered::Function(Function::Elect),
-        "subgroupAll" => Lowered::Collective(SubgroupOperation::All, Collective::Reduce),
-        "subgroupAny" => Lowered::Collective(SubgroupOperation::Any, Collective::Reduce),
-        "subgroupAllEqual" => Lowered::Function(Function::AllEqual),
-        "subgroupQuadAll" => Lowered::Function(Function::QuadAll),
-        "subgroupQuadAny" => Lowered::Function(Function::QuadAny),
-        "subgroupBallot" => Lowered::Ballot,
-        "subgroupInverseBallot" => Lowered::Function(Function::InverseBallot),
-        "subgroupBallotBitExtract" => Lowered::Function(Function::BallotBitExtract),
-        "subgroupBallotBitCount" => Lowered::Function(Function::BallotBitCount(Collective::Reduce)),
-        "subgroupBallotInclusiveBitCount" => {
-            Lowered::Function(Function::BallotBitCount(Collective::InclusiveScan))
-        }
-        "subgroupBallotExclusiveBitCount" => {
-            Lowered::Function(Function::BallotBitCount(Collective::ExclusiveScan))
-        }
-        "subgroupBallotFindLSB" => Lowered::Function(Function::BallotFindLsb),
-        "subgroupBallotFindMSB" => Lowered::Function(Function::BallotFindMsb),
-        "subgroupBroadcast" => Lowered::Gather(Gather::Broadcast),
-        "subgroupBroadcastFirst" => Lowered::Gather(Gather::BroadcastFirst),
-        "subgroupShuffle" => Lowered::Gather(Gather::Shuffle),
-        "subgroupShuffleXor" => Lowered::Gather(Gather::ShuffleXor),
-        "subgroupShuffleUp" => Lowered::Gather(Gather::ShuffleUp),
-        "subgroupShuffleDown" => Lowered::Gather(Gather::ShuffleDown),
-        "subgroupRotate" => Lowered::Gather(Gather::Rotate),
-        "subgroupClusteredRotate" => Lowered::Gather(Gather::ClusteredRotate),
-        "subgroupQuadBroadcast" => Lowered::Gather(Gather::QuadBroadcast),
-        "subgroupQuadSwapHorizontal" => Lowered::Gather(Gather::QuadSwap(Direction::X)),
-        "subgroupQuadSwapVertical" => Lowered::Gather(Gather::QuadSwap(Direction::Y)),
-        "subgroupQuadSwapDiagonal" => Lowered::Gather(Gather::QuadSwap(Direction::Diagonal)),
-        "subgroupPartitionNV" => Lowered::Function(Function::Partition),
-        "ballotARB" | "ballotAMD" => Lowered::Function(Function::KhrBallot),
-        "readInvocationARB" => Lowered::Function(Function::KhrReadInvocation),
-        "readFirstInvocationARB" => Lowered::Function(Function::KhrReadFirstInvocation),
-        "anyInvocationARB" | "anyInvocation" => Lowered::Function(Function::KhrAny),
-        "allInvocationsARB" | "allInvocations" => Lowered::Function(Function::KhrAll),
-        "allInvocationsEqualARB" | "allInvocationsEqual" => {
-            Lowered::Function(Function::KhrAllEqual)
-        }
-        "swizzleInvocationsAMD" => Lowered::Function(Function::Amd(AmdShaderBallot::Swizzle)),
-        "swizzleInvocationsMaskedAMD" => {
-            Lowered::Function(Function::Amd(AmdShaderBallot::SwizzleMasked))
-        }
-        "writeInvocationAMD" => Lowered::Function(Function::Amd(AmdShaderBallot::WriteInvocation)),
-        "mbcntAMD" => Lowered::Function(Function::Amd(AmdShaderBallot::Mbcnt)),
-        _ => {
-            if let Some(group) = amd_group(name) {
-                return Some(Lowered::Function(group));
-            }
-            let (op, collective) = collective(name)?;
-            Lowered::Collective(op, collective)
-        }
-    })
+const fn memory(memory: SubgroupMemory) -> MemorySemantics {
+    match memory {
+        SubgroupMemory::All => ALL_MEMORY,
+        SubgroupMemory::Buffer => MemorySemantics::UNIFORM_MEMORY,
+        SubgroupMemory::Image => MemorySemantics::IMAGE_MEMORY,
+        SubgroupMemory::Shared => MemorySemantics::WORKGROUP_MEMORY,
+    }
 }
 
-fn amd_group(name: &str) -> Option<Function> {
-    let rest = name.strip_suffix("AMD")?;
-    let (op, rest) = if let Some(rest) = rest.strip_prefix("minInvocations") {
-        (SubgroupOperation::Min, rest)
-    } else if let Some(rest) = rest.strip_prefix("maxInvocations") {
-        (SubgroupOperation::Max, rest)
-    } else {
-        (SubgroupOperation::Add, rest.strip_prefix("addInvocations")?)
-    };
-    let (rest, non_uniform) = match rest.strip_suffix("NonUniform") {
-        Some(rest) => (rest, true),
-        None => (rest, false),
-    };
-    let collective = match rest {
-        "" => Collective::Reduce,
-        "InclusiveScan" => Collective::InclusiveScan,
-        "ExclusiveScan" => Collective::ExclusiveScan,
-        _ => return None,
-    };
-    Some(Function::Group(op, collective, non_uniform))
-}
-
-pub(super) fn is_subgroup_function(name: &str) -> bool {
-    classify(name).is_some()
+const fn direction(direction: QuadDirection) -> Direction {
+    match direction {
+        QuadDirection::Horizontal => Direction::X,
+        QuadDirection::Vertical => Direction::Y,
+        QuadDirection::Diagonal => Direction::Diagonal,
+    }
 }
 
 impl FunctionLowerer<'_, '_> {
@@ -298,18 +135,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     pub(super) async fn subgroup(
         self,
-        name: &'b str,
+        kind: Subgroup,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let lowered = classify(name)
-            .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
-        match lowered {
-            Lowered::Barrier {
+        match kind {
+            Subgroup::Barrier {
                 execution,
-                semantics,
+                memory: used,
             } => {
+                let semantics = memory(used) | MemorySemantics::ACQUIRE_RELEASE;
                 self.with(|this| {
                     this.push(
                         Statement::ScopedBarrier {
@@ -322,7 +158,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 Ok(None)
             }
-            Lowered::Ballot => {
+            Subgroup::Ballot => {
                 let predicate = {
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
@@ -339,7 +175,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 Ok(Some(result))
             }
-            Lowered::Collective(op, collective) => {
+            Subgroup::Collective(op, collective) => {
+                let op = operation(op);
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
                     self.nest(frame).await
@@ -363,14 +200,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 Ok(Some(result))
             }
-            Lowered::Gather(gather) => {
+            Subgroup::Gather(gather) => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
                     self.nest(frame).await
                 }?;
                 let mode = match gather {
                     Gather::BroadcastFirst => GatherMode::BroadcastFirst,
-                    Gather::QuadSwap(direction) => GatherMode::QuadSwap(direction),
+                    Gather::QuadSwap(quad) => GatherMode::QuadSwap(direction(quad)),
                     Gather::Broadcast => GatherMode::Broadcast({
                         let frame = self.clone().rvalue(argument(1)?);
                         self.nest(frame).await
@@ -432,7 +269,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 Ok(Some(result))
             }
-            Lowered::Function(function) => {
+            Subgroup::Function(function) => {
                 let frame = self.clone().subgroup_function(function, arguments, at);
                 self.nest(frame).await
             }
@@ -529,7 +366,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }?),
                 ResultType::Fixed(ballot),
             ),
-            Function::KhrBallot => {
+            Function::ArbBallot => {
                 let predicate = {
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
@@ -547,7 +384,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 })?;
                 return self.with(|this| this.ballot_to_u64(mask, at).map(Some))?;
             }
-            Function::KhrReadInvocation => {
+            Function::ReadInvocation => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
                     self.nest(frame).await
@@ -564,7 +401,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ResultType::Argument(ty),
                 )
             }
-            Function::KhrReadFirstInvocation => {
+            Function::ReadFirstInvocation => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
                     self.nest(frame).await
@@ -574,7 +411,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ResultType::Argument(ty),
                 )
             }
-            Function::Group(op, collective, non_uniform) => {
+            Function::AmdGroup {
+                operation: op,
+                collective,
+                non_uniform,
+            } => {
                 let (value, ty) = {
                     let frame = self.clone().typed(argument(0)?);
                     self.nest(frame).await
@@ -585,7 +426,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }?;
                 (
                     SubgroupFunction::Group {
-                        op,
+                        op: operation(op),
                         collective_op,
                         argument: value,
                         non_uniform,
@@ -597,21 +438,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().amd_shader_ballot(amd, arguments, at);
                 self.nest(frame).await?
             }
-            Function::KhrAll => (
+            Function::AllInvocations => (
                 SubgroupFunction::KhrAll({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
                 ResultType::Fixed(boolean),
             ),
-            Function::KhrAny => (
+            Function::AnyInvocation => (
                 SubgroupFunction::KhrAny({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
                 }?),
                 ResultType::Fixed(boolean),
             ),
-            Function::KhrAllEqual => (
+            Function::AllInvocationsEqual => (
                 SubgroupFunction::KhrAllEqual({
                     let frame = self.clone().rvalue(argument(0)?);
                     self.nest(frame).await
