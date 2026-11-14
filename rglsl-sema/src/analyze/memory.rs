@@ -134,6 +134,14 @@ impl Analyzer<'_> {
         let half = first.ty.base_scalar() == Some(Scalar::Float16);
         let extension = match operation {
             AtomicOperation::Add
+            | AtomicOperation::Min
+            | AtomicOperation::Max
+            | AtomicOperation::Exchange
+                if half && first.ty.is_vector() =>
+            {
+                Some(Extension::NvShaderAtomicFp16Vector)
+            }
+            AtomicOperation::Add
             | AtomicOperation::Exchange
             | AtomicOperation::Load
             | AtomicOperation::Store => {

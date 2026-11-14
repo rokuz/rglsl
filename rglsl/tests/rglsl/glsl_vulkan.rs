@@ -9477,6 +9477,62 @@ fn float_atomics() -> crate::TestResult {
 }
 
 #[test]
+fn half_vector_atomics_match_glslang() -> crate::TestResult {
+    let source = "#version 450
+        #extension GL_NV_shader_atomic_fp16_vector : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        layout(local_size_x = 4) in;
+        layout(std430, binding = 0) buffer B { f16vec2 a; f16vec4 b; f16vec2 r2; f16vec4 r4; };
+        shared f16vec2 s;
+        void main() {
+            r2 = atomicAdd(a, f16vec2(1.0));
+            r4 = atomicMin(b, f16vec4(2.0));
+            atomicMax(a, f16vec2(3.0));
+            r4 = atomicExchange(b, r4);
+            r2 += atomicAdd(s, a);
+        }";
+    let words = valid_words(ShaderStage::Compute, source, (1, 3), "vulkan1.1")?;
+    assert_eq!(opcode_count(&words, Op::AtomicFAddEXT), 2);
+    assert_eq!(opcode_count(&words, Op::AtomicFMinEXT), 1);
+    assert_eq!(opcode_count(&words, Op::AtomicFMaxEXT), 1);
+    assert_eq!(opcode_count(&words, Op::AtomicExchange), 1);
+    assert!(declares_capability(
+        &words,
+        spirv::Capability::AtomicFloat16VectorNV
+    ));
+    for capability in [
+        spirv::Capability::AtomicFloat16AddEXT,
+        spirv::Capability::AtomicFloat16MinMaxEXT,
+    ] {
+        assert!(!declares_capability(&words, capability), "{capability:?}");
+    }
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_KHR_16bit_storage", "SPV_NV_shader_atomic_fp16_vector"]
+    );
+    let error = parse(
+        ShaderStage::Compute,
+        &source.replace("#extension GL_NV_shader_atomic_fp16_vector : enable", ""),
+    )
+    .err()
+    .ok_or("f16vec2 atomics without GL_NV_shader_atomic_fp16_vector are accepted")?;
+    assert!(error.contains("GL_NV_shader_atomic_fp16_vector"), "{error}");
+    let error = parse(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_NV_shader_atomic_fp16_vector : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        layout(std430, binding = 0) buffer B { f16vec3 a; };
+        void main() { atomicAdd(a, f16vec3(1.0)); }",
+    )
+    .err()
+    .ok_or("f16vec3 atomics are accepted")?;
+    assert!(error.contains("atomicAdd"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn sixty_four_bit_images() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Compute,

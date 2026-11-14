@@ -79,9 +79,3 @@ reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
 name = "gl_BaryCoord*AMD"
 verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_shader_explicit_vertex_parameter built-in variables are not declared"
-
-[[divergence]]
-name = "atomic*"
-signature = "f16vec"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the f16vec2 and f16vec4 atomics of GL_NV_shader_atomic_fp16_vector are not declared"

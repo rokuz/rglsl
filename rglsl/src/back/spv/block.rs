@@ -4152,11 +4152,26 @@ impl BlockContext<'_> {
                 let value_id = self.cached.get(value)?;
                 let value_inner = self.fun_info[value].ty.inner_with(&self.ir_module.types);
 
-                let crate::TypeInner::Scalar(scalar) = *value_inner else {
-                    return Err(Error::FeatureNotImplemented(
-                        "Atomics with non-scalar values",
-                    ));
+                let (scalar, vector) = match *value_inner {
+                    crate::TypeInner::Scalar(scalar) => (scalar, false),
+                    crate::TypeInner::Vector {
+                        scalar: scalar @ crate::Scalar::F16,
+                        ..
+                    } => (scalar, true),
+                    _ => {
+                        return Err(Error::FeatureNotImplemented(
+                            "Atomics with non-scalar values",
+                        ));
+                    }
                 };
+                if vector {
+                    self.writer
+                        .use_extension("SPV_NV_shader_atomic_fp16_vector");
+                    self.writer.require_any(
+                        "half-precision vector atomics",
+                        &[spirv::Capability::AtomicFloat16VectorNV],
+                    )?;
+                }
 
                 let instruction = match *fun {
                     crate::AtomicFunction::Add => {
@@ -4164,7 +4179,9 @@ impl BlockContext<'_> {
                             crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                                 spirv::Op::AtomicIAdd
                             }
-                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            crate::ScalarKind::Float => {
+                                self.writer.float_atomic(*fun, scalar, vector)?
+                            }
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
@@ -4281,7 +4298,9 @@ impl BlockContext<'_> {
                         let spirv_op = match scalar.kind {
                             crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
                             crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
-                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            crate::ScalarKind::Float => {
+                                self.writer.float_atomic(*fun, scalar, vector)?
+                            }
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",
@@ -4302,7 +4321,9 @@ impl BlockContext<'_> {
                         let spirv_op = match scalar.kind {
                             crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
                             crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
-                            crate::ScalarKind::Float => self.writer.float_atomic(*fun, scalar)?,
+                            crate::ScalarKind::Float => {
+                                self.writer.float_atomic(*fun, scalar, vector)?
+                            }
                             _ => {
                                 return Err(Error::Validation(
                                     "atomic operation on an unsupported scalar type",

@@ -24,6 +24,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicMin": BuiltinKind::Atomic(AtomicOperation::Min) => [
         uint(inout uint, uint),
@@ -40,6 +42,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicMax": BuiltinKind::Atomic(AtomicOperation::Max) => [
         uint(inout uint, uint),
@@ -56,6 +60,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicAnd": BuiltinKind::Atomic(AtomicOperation::And) => [
         uint(inout uint, uint),
@@ -102,6 +108,8 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         float(inout float, float, int, int, int),
         double(inout double, double),
         double(inout double, double, int, int, int),
+        f16vec2(inout f16vec2, f16vec2),
+        f16vec4(inout f16vec4, f16vec4),
     ]
     "atomicCompSwap": BuiltinKind::Atomic(AtomicOperation::CompareSwap) => [
         uint(inout uint, uint, uint),

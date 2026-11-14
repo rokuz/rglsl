@@ -1,9 +1,9 @@
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::builtins::kind::{AtomicOperation, Barrier, MemoryBarrier, SplitPhase};
-use rglsl_sema::types::Opaque;
+use rglsl_sema::types::{Opaque, TypeKind};
 
 use super::function::FunctionLowerer;
-use super::types::scalar;
+use super::types::{scalar, vector_size};
 use super::{Result, internal, unsupported};
 use crate::{
     AtomicFunction, AtomicLocation, Expression, Handle, MemoryDecorations, MemoryOrder,
@@ -259,6 +259,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let memory_ty = self.with(|this| this.info(memory))??.ty.clone();
         let element = memory_ty.scalar_type().ok_or_else(|| internal(at))?;
         let element = scalar(element);
+        let value_inner = match memory_ty.kind {
+            TypeKind::Vector { size, .. } if !memory_ty.is_array() => TypeInner::Vector {
+                size: vector_size(size).ok_or_else(|| internal(at))?,
+                scalar: element,
+            },
+            _ => TypeInner::Scalar(element),
+        };
         let place = {
             let frame = self.clone().place(memory);
             self.nest(frame).await
@@ -355,7 +362,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             })?
         } else {
-            self.with(|this| this.lw.insert_type(TypeInner::Scalar(element)))?
+            self.with(|this| this.lw.insert_type(value_inner))?
         };
         let result = self.with(|this| {
             this.push_with_result(
