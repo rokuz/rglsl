@@ -1,4 +1,5 @@
 use rglsl_ast::ast::Expression as AstExpression;
+use rglsl_sema::builtins::kind::AtomicOperation;
 use rglsl_sema::types::Opaque;
 
 use super::function::FunctionLowerer;
@@ -9,25 +10,55 @@ use crate::{
     MemoryScope, MemorySemantics, NonUniform, PredeclaredType, Span, Statement, Texel, TypeInner,
 };
 
-pub(super) const fn atomic_function(name: &str) -> Option<AtomicFunction> {
+const fn atomic_function(name: &str) -> Option<AtomicFunction> {
     Some(match name.as_bytes() {
-        b"atomicAdd" | b"imageAtomicAdd" => AtomicFunction::Add,
-        b"atomicMin" | b"imageAtomicMin" => AtomicFunction::Min,
-        b"atomicMax" | b"imageAtomicMax" => AtomicFunction::Max,
-        b"atomicAnd" | b"imageAtomicAnd" => AtomicFunction::And,
-        b"atomicOr" | b"imageAtomicOr" => AtomicFunction::InclusiveOr,
-        b"atomicXor" | b"imageAtomicXor" => AtomicFunction::ExclusiveOr,
-        b"atomicExchange" | b"imageAtomicExchange" => AtomicFunction::Exchange { compare: None },
+        b"atomicAdd" => AtomicFunction::Add,
+        b"atomicMin" => AtomicFunction::Min,
+        b"atomicMax" => AtomicFunction::Max,
+        b"atomicAnd" => AtomicFunction::And,
+        b"atomicOr" => AtomicFunction::InclusiveOr,
+        b"atomicXor" => AtomicFunction::ExclusiveOr,
+        b"atomicExchange" => AtomicFunction::Exchange { compare: None },
         _ => return None,
     })
 }
 
 const fn operand_count(name: &str) -> usize {
     match name.as_bytes() {
-        b"atomicLoad" | b"imageAtomicLoad" => 0,
-        b"atomicCompSwap" | b"imageAtomicCompSwap" => 2,
+        b"atomicLoad" => 0,
+        b"atomicCompSwap" => 2,
         _ => 1,
     }
+}
+
+const fn operation_operands(operation: AtomicOperation) -> usize {
+    match operation {
+        AtomicOperation::Load => 0,
+        AtomicOperation::CompareSwap => 2,
+        AtomicOperation::Add
+        | AtomicOperation::Min
+        | AtomicOperation::Max
+        | AtomicOperation::And
+        | AtomicOperation::Or
+        | AtomicOperation::Xor
+        | AtomicOperation::Exchange
+        | AtomicOperation::Store => 1,
+    }
+}
+
+const fn operation_function(operation: AtomicOperation) -> Option<AtomicFunction> {
+    Some(match operation {
+        AtomicOperation::Add => AtomicFunction::Add,
+        AtomicOperation::Min => AtomicFunction::Min,
+        AtomicOperation::Max => AtomicFunction::Max,
+        AtomicOperation::And => AtomicFunction::And,
+        AtomicOperation::Or => AtomicFunction::InclusiveOr,
+        AtomicOperation::Xor => AtomicFunction::ExclusiveOr,
+        AtomicOperation::Exchange => AtomicFunction::Exchange { compare: None },
+        AtomicOperation::CompareSwap | AtomicOperation::Load | AtomicOperation::Store => {
+            return None;
+        }
+    })
 }
 
 const fn memory_scope(value: i64) -> Option<MemoryScope> {
@@ -356,7 +387,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     pub(super) async fn image_atomic(
         self,
-        name: &'b str,
+        operation: AtomicOperation,
         image: Handle<Expression>,
         opaque: Opaque,
         non_uniform: bool,
@@ -385,7 +416,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         } else {
             None
         };
-        let count = operand_count(name).min(rest.len());
+        let count = operation_operands(operation).min(rest.len());
         let (values, scope) = rest.split_at(count);
         let mut operands = alloc::vec::Vec::with_capacity(values.len());
         for argument in values {
@@ -423,8 +454,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ty,
             comparison: false,
         };
-        match (name, operands.as_slice()) {
-            ("imageAtomicLoad", &[]) => Ok(Some(self.with(|this| {
+        match (operation, operands.as_slice()) {
+            (AtomicOperation::Load, &[]) => Ok(Some(self.with(|this| {
                 this.push_with_result(
                     result,
                     |result| Statement::AtomicLoad {
@@ -435,7 +466,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     at,
                 )
             })?)),
-            ("imageAtomicStore", &[value]) => {
+            (AtomicOperation::Store, &[value]) => {
                 self.with(|this| {
                     this.push(
                         Statement::AtomicStore {
@@ -449,12 +480,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 Ok(None)
             }
             _ => {
-                let (fun, value) = match (atomic_function(name), operands.as_slice()) {
-                    (Some(fun), &[value]) => (fun, value),
-                    (None, &[compare, value]) if name == "imageAtomicCompSwap" => (
+                let (fun, value) = match (operation, operands.as_slice()) {
+                    (AtomicOperation::CompareSwap, &[compare, value]) => (
                         AtomicFunction::Exchange {
                             compare: Some(compare),
                         },
+                        value,
+                    ),
+                    (operation, &[value]) => (
+                        operation_function(operation).ok_or_else(|| internal(at))?,
                         value,
                     ),
                     _ => return Err(internal(at)),
@@ -478,13 +512,4 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
         }
     }
-}
-
-pub(super) fn is_image_atomic(name: &str) -> bool {
-    name.starts_with("imageAtomic")
-        && (atomic_function(name).is_some()
-            || matches!(
-                name,
-                "imageAtomicLoad" | "imageAtomicStore" | "imageAtomicCompSwap"
-            ))
 }

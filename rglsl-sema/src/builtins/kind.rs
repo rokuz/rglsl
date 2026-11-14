@@ -234,12 +234,101 @@ pub enum HitObjectValue {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Texture {
-    Footprint { level: FootprintLevel, clamp: bool },
+    Footprint { level: TextureLevel, clamp: bool },
+    Sample(Sample),
+    Gather(TextureGather),
+    Fetch { offset: bool, sparse: bool },
+    ImageLoad { lod: bool, sparse: bool },
+    ImageStore { lod: bool },
+    ImageAtomic(AtomicOperation),
+    Query(TextureQuery),
+    QueryLod,
+    SparseTexelsResident,
+    ImageProcessing(ImageProcessing),
+    SubpassLoad,
+    FragmentFetch { mask: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FootprintLevel {
+pub enum TextureLevel {
     Implicit,
     Lod,
     Gradient,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Sample {
+    pub proj: bool,
+    pub level: TextureLevel,
+    pub offset: bool,
+    pub clamp: bool,
+    pub sparse: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextureGather {
+    pub offsets: GatherOffsets,
+    pub lod: bool,
+    pub sparse: bool,
+    pub pattern: GatherPattern,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GatherOffsets {
+    None,
+    One,
+    Four,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GatherPattern {
+    Quad,
+    Linear4x1,
+    Vertical2,
+    Horizontal2,
+    Diagonal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AtomicOperation {
+    Add,
+    Min,
+    Max,
+    And,
+    Or,
+    Xor,
+    Exchange,
+    CompareSwap,
+    Load,
+    Store,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextureQuery {
+    Size,
+    Samples,
+    Levels,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImageProcessing {
+    Weighted,
+    BoxFilter,
+    BlockMatch {
+        metric: BlockMatchMetric,
+        search: BlockMatchSearch,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlockMatchMetric {
+    AbsoluteDifferences,
+    SquaredDifferences,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlockMatchSearch {
+    Block,
+    Window,
+    Gather,
 }

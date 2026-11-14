@@ -466,30 +466,6 @@ uvec4 colorAttachmentReadEXT(uattachmentEXT)
 uvec4 colorAttachmentReadEXT(uattachmentEXT, int)
 ";
 
-const FRAGMENT_MASK: &str = "
-uint fragmentMaskFetchAMD(sampler2DMS, ivec2)
-uint fragmentMaskFetchAMD(isampler2DMS, ivec2)
-uint fragmentMaskFetchAMD(usampler2DMS, ivec2)
-uint fragmentMaskFetchAMD(sampler2DMSArray, ivec3)
-uint fragmentMaskFetchAMD(isampler2DMSArray, ivec3)
-uint fragmentMaskFetchAMD(usampler2DMSArray, ivec3)
-vec4 fragmentFetchAMD(sampler2DMS, ivec2, uint)
-ivec4 fragmentFetchAMD(isampler2DMS, ivec2, uint)
-uvec4 fragmentFetchAMD(usampler2DMS, ivec2, uint)
-vec4 fragmentFetchAMD(sampler2DMSArray, ivec3, uint)
-ivec4 fragmentFetchAMD(isampler2DMSArray, ivec3, uint)
-uvec4 fragmentFetchAMD(usampler2DMSArray, ivec3, uint)
-";
-
-const FRAGMENT_MASK_SUBPASS: &str = "
-uint fragmentMaskFetchAMD(subpassInputMS)
-uint fragmentMaskFetchAMD(isubpassInputMS)
-uint fragmentMaskFetchAMD(usubpassInputMS)
-vec4 fragmentFetchAMD(subpassInputMS, uint)
-ivec4 fragmentFetchAMD(isubpassInputMS, uint)
-uvec4 fragmentFetchAMD(usubpassInputMS, uint)
-";
-
 const COMPUTE_MEMORY_BARRIERS: &str = "
 void memoryBarrierShared()
 void groupMemoryBarrier()
@@ -678,12 +654,7 @@ uint packFloat2x16(f16vec2)
 f16vec2 unpackFloat2x16(uint)
 ";
 
-const SPARSE: &str = "
-bool sparseTexelsResidentARB(int)
-";
-
 pub(super) const SECTIONS: &[Section] = &[
-    Section::new(SPARSE),
     Section::new(ANGLE_AND_TRIGONOMETRY).with_halves(),
     Section::new(EXPONENTIAL).with_halves(),
     Section::new(EXPONENTIAL_WITH_DOUBLE)
@@ -722,8 +693,6 @@ pub(super) const SECTIONS: &[Section] = &[
     Section::new(SPLIT_BARRIERS),
     Section::new(COMPUTE_SPLIT_BARRIERS).in_stages(COMPUTE),
     Section::new(FRAGMENT_ONLY).in_stages(FRAGMENT),
-    Section::new(FRAGMENT_MASK),
-    Section::new(FRAGMENT_MASK_SUBPASS).in_stages(FRAGMENT),
     Section::new(COMPUTE_MEMORY_BARRIERS).in_stages(COMPUTE | MESH | TASK),
     Section::new(MESH_SHADER).in_stages(MESH),
     Section::new(TASK_SHADER).in_stages(TASK),

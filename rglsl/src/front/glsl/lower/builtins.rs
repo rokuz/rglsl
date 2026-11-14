@@ -1,7 +1,10 @@
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind};
-use rglsl_sema::builtins::kind::{BuiltinKind, FootprintLevel, Texture};
+use rglsl_sema::builtins::kind::{
+    self, AtomicOperation, BuiltinKind, GatherOffsets, GatherPattern, ImageProcessing, Sample,
+    Texture, TextureGather, TextureLevel, TextureQuery,
+};
 use rglsl_sema::scope::Function;
 use rglsl_sema::types::{
     Opaque, OpaqueKind, Scalar as GlslScalar, TextureDimension, Type as GlslType, TypeKind,
@@ -96,101 +99,87 @@ pub(super) fn math(name: &str, arguments: usize) -> Option<MathFunction> {
     })
 }
 
-fn gather_pattern(name: &str) -> Option<(&'static str, ImageGatherPattern)> {
-    let rest = name.strip_prefix("textureGather")?.strip_suffix("QCOM")?;
-    let (mode, base) = match rest.strip_suffix("Offset") {
-        Some(mode) => (mode, "textureGatherOffset"),
-        None => (rest, "textureGather"),
-    };
-    let pattern = match mode {
-        "4x1" => ImageGatherPattern::Linear4x1,
-        "V2" => ImageGatherPattern::Vertical2,
-        "H2" => ImageGatherPattern::Horizontal2,
-        "D" => ImageGatherPattern::Diagonal,
-        _ => return None,
-    };
-    Some((base, pattern))
+const fn gather_pattern(pattern: GatherPattern) -> ImageGatherPattern {
+    match pattern {
+        GatherPattern::Quad => ImageGatherPattern::Quad,
+        GatherPattern::Linear4x1 => ImageGatherPattern::Linear4x1,
+        GatherPattern::Vertical2 => ImageGatherPattern::Vertical2,
+        GatherPattern::Horizontal2 => ImageGatherPattern::Horizontal2,
+        GatherPattern::Diagonal => ImageGatherPattern::Diagonal,
+    }
 }
 
-fn image_processing(name: &str) -> Option<ImageProcessingOperation> {
-    use BlockMatchMetric as Metric;
-    use BlockMatchSearch as Search;
-    let block_match = |metric, search| ImageProcessingOperation::BlockMatch { metric, search };
-    Some(match name {
-        "textureWeightedQCOM" => ImageProcessingOperation::SampleWeighted,
-        "textureBoxFilterQCOM" => ImageProcessingOperation::BoxFilter,
-        "textureBlockMatchSADQCOM" => block_match(Metric::SumOfAbsoluteDifferences, Search::Block),
-        "textureBlockMatchSSDQCOM" => block_match(Metric::SumOfSquaredDifferences, Search::Block),
-        "textureBlockMatchWindowSADQCOM" => {
-            block_match(Metric::SumOfAbsoluteDifferences, Search::Window)
-        }
-        "textureBlockMatchWindowSSDQCOM" => {
-            block_match(Metric::SumOfSquaredDifferences, Search::Window)
-        }
-        "textureBlockMatchGatherSADQCOM" => {
-            block_match(Metric::SumOfAbsoluteDifferences, Search::Gather)
-        }
-        "textureBlockMatchGatherSSDQCOM" => {
-            block_match(Metric::SumOfSquaredDifferences, Search::Gather)
-        }
-        _ => return None,
-    })
+const fn image_processing(operation: ImageProcessing) -> ImageProcessingOperation {
+    match operation {
+        ImageProcessing::Weighted => ImageProcessingOperation::SampleWeighted,
+        ImageProcessing::BoxFilter => ImageProcessingOperation::BoxFilter,
+        ImageProcessing::BlockMatch { metric, search } => ImageProcessingOperation::BlockMatch {
+            metric: match metric {
+                kind::BlockMatchMetric::AbsoluteDifferences => {
+                    BlockMatchMetric::SumOfAbsoluteDifferences
+                }
+                kind::BlockMatchMetric::SquaredDifferences => {
+                    BlockMatchMetric::SumOfSquaredDifferences
+                }
+            },
+            search: match search {
+                kind::BlockMatchSearch::Block => BlockMatchSearch::Block,
+                kind::BlockMatchSearch::Window => BlockMatchSearch::Window,
+                kind::BlockMatchSearch::Gather => BlockMatchSearch::Gather,
+            },
+        },
+    }
 }
 
-pub(super) struct TextureCall {
-    base: String,
-    sparse: bool,
+#[derive(Clone, Copy)]
+struct Sampling {
+    gather: Option<ImageGatherPattern>,
+    proj: bool,
+    lod: bool,
+    grad: bool,
+    offset: bool,
     clamp: bool,
+    sparse: bool,
 }
 
-fn texture_call(name: &str) -> TextureCall {
-    let stripped = name
-        .strip_suffix("ARB")
-        .or_else(|| name.strip_suffix("AMD"))
-        .unwrap_or(name);
-    let (stripped, clamp) = match stripped.strip_suffix("Clamp") {
-        Some(base) if stripped != name => (base, true),
-        _ => (stripped, false),
-    };
-    let (rest, sparse) = match stripped.strip_prefix("sparse") {
-        Some(rest) if stripped != name => (rest, true),
-        _ => (stripped, false),
-    };
-    let mut characters = rest.chars();
-    let mut base = String::new();
-    if let Some(first) = characters.next() {
-        base.extend(first.to_lowercase());
-        base.push_str(characters.as_str());
+impl Sampling {
+    const fn sample(sample: Sample) -> Self {
+        let (lod, grad) = match sample.level {
+            TextureLevel::Implicit => (false, false),
+            TextureLevel::Lod => (true, false),
+            TextureLevel::Gradient => (false, true),
+        };
+        Self {
+            gather: None,
+            proj: sample.proj,
+            lod,
+            grad,
+            offset: sample.offset,
+            clamp: sample.clamp,
+            sparse: sample.sparse,
+        }
     }
-    TextureCall {
-        base,
-        sparse,
-        clamp,
+
+    const fn gather(gather: TextureGather) -> Self {
+        Self {
+            gather: Some(gather_pattern(gather.pattern)),
+            proj: false,
+            lod: gather.lod,
+            grad: false,
+            offset: match gather.offsets {
+                GatherOffsets::None => false,
+                GatherOffsets::One | GatherOffsets::Four => true,
+            },
+            clamp: false,
+            sparse: gather.sparse,
+        }
     }
 }
 
-const fn sampling_function(base: &str) -> bool {
-    matches!(
-        base.as_bytes(),
-        b"texture"
-            | b"textureProj"
-            | b"textureLod"
-            | b"textureOffset"
-            | b"textureProjOffset"
-            | b"textureLodOffset"
-            | b"textureProjLod"
-            | b"textureProjLodOffset"
-            | b"textureGrad"
-            | b"textureGradOffset"
-            | b"textureProjGrad"
-            | b"textureProjGradOffset"
-            | b"textureGather"
-            | b"textureGatherOffset"
-            | b"textureGatherOffsets"
-            | b"textureGatherLod"
-            | b"textureGatherLodOffset"
-            | b"textureGatherLodOffsets"
-    )
+#[derive(Clone, Copy)]
+enum ImageAccess {
+    Load { sparse: bool },
+    Store,
 }
 
 pub(super) fn derivative(name: &str) -> Option<(DerivativeAxis, DerivativeControl)> {
@@ -847,89 +836,19 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let frame = self.clone().ray_call(kind, arguments, at);
                 return self.nest(frame).await;
             }
-            BuiltinKind::Texture(Texture::Footprint { level, clamp }) => {
-                let frame = self.clone().footprint(level, clamp, arguments, at);
-                return self.nest(frame).await.map(Some);
+            BuiltinKind::Texture(kind) => {
+                let frame = self.clone().texture_call(kind, function, arguments, at);
+                return self.nest(frame).await;
             }
             BuiltinKind::Named => {}
         }
         let route = route(name, arguments.len())
             .ok_or_else(|| unsupported(format!("the built-in function `{name}`"), at))?;
         match route {
-            Route::Sample => {
-                let frame = self.clone().sample(
-                    texture_call(name),
-                    function,
-                    arguments,
-                    ImageGatherPattern::Quad,
-                    at,
-                );
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::PatternGather => {
-                let frame = self.clone().gather_call(name, function, arguments, at);
-                self.nest(frame).await
-            }
-            Route::SparseFetch => {
-                let frame = self.clone().fetch(function, arguments, false, true, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::SparseFetchOffset => {
-                let frame = self.clone().fetch(function, arguments, true, true, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::Image => {
-                let frame = self.clone().image(name, function, arguments, at);
-                self.nest(frame).await
-            }
-            Route::SparseTexelsResident => {
-                let frame = self.clone().sparse_texels_resident_call(arguments, at);
-                self.nest(frame).await
-            }
-            Route::QueryLod => {
-                let frame = self.clone().query_lod(arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::ImageProcessing => {
-                let frame = self.clone().image_processing_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::Fetch => {
-                let frame = self.clone().fetch(function, arguments, false, false, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::FetchOffset => {
-                let frame = self.clone().fetch(function, arguments, true, false, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::Query => {
-                let frame = self.clone().query(name, arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
-            Route::ImageAtomic => {
-                let frame = self.clone().image_atomic_call(name, arguments, at);
-                self.nest(frame).await
-            }
-            Route::SubpassLoad => {
-                let frame = self.clone().subpass_load(arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some),
             Route::Barrier => self.with(|this| this.barrier_call(name, arguments, at))?,
             Route::Interlock => self.with(|this| this.interlock_call(name, at))?,
             Route::HelperInvocation => {
                 self.with(|this| this.add(Expression::IsHelperInvocation, at).map(Some))?
-            }
-            Route::FragmentFetch => {
-                let frame = self.clone().fragment_fetch_call(name, arguments, at);
-                self.nest(frame).await
             }
             Route::Interpolate => {
                 let frame = self.clone().interpolate(name, arguments, at);
@@ -978,21 +897,83 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
     }
 
-    async fn gather_call(
+    async fn texture_call(
         self,
-        name: &'b str,
+        kind: Texture,
         function: &'b Function,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let (base, pattern) = gather_pattern(name).ok_or_else(|| internal(at))?;
-        {
-            let frame = self
-                .clone()
-                .sample(texture_call(base), function, arguments, pattern, at);
-            self.nest(frame).await
+        match kind {
+            Texture::Footprint { level, clamp } => {
+                let frame = self.clone().footprint(level, clamp, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::Sample(sample) => {
+                let frame = self
+                    .clone()
+                    .sample(Sampling::sample(sample), function, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::Gather(gather) => {
+                let frame = self
+                    .clone()
+                    .sample(Sampling::gather(gather), function, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::Fetch { offset, sparse } => {
+                let frame = self.clone().fetch(function, arguments, offset, sparse, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::ImageLoad { lod, sparse } => {
+                let access = ImageAccess::Load { sparse };
+                let frame = self.clone().image(access, lod, function, arguments, at);
+                self.nest(frame).await
+            }
+            Texture::ImageStore { lod } => {
+                let access = ImageAccess::Store;
+                let frame = self.clone().image(access, lod, function, arguments, at);
+                self.nest(frame).await
+            }
+            Texture::ImageAtomic(operation) => {
+                let frame = self.clone().image_atomic_call(operation, arguments, at);
+                self.nest(frame).await
+            }
+            Texture::Query(query) => {
+                let frame = self.clone().query(query, arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::QueryLod => {
+                let frame = self.clone().query_lod(arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::SparseTexelsResident => {
+                let frame = self.clone().sparse_texels_resident_call(arguments, at);
+                self.nest(frame).await
+            }
+            Texture::ImageProcessing(operation) => {
+                let frame =
+                    self.clone()
+                        .image_processing(image_processing(operation), arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::SubpassLoad => {
+                let frame = self.clone().subpass_load(arguments, at);
+                self.nest(frame).await
+            }
+            .map(Some),
+            Texture::FragmentFetch { mask } => {
+                let frame = self.clone().fragment_fetch_call(mask, arguments, at);
+                self.nest(frame).await
+            }
         }
-        .map(Some)
     }
 
     async fn sparse_texels_resident_call(
@@ -1012,23 +993,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })?
     }
 
-    async fn image_processing_call(
-        self,
-        name: &'b str,
-        arguments: &'b [AstExpression],
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
-        let operation = image_processing(name).ok_or_else(|| internal(at))?;
-        {
-            let frame = self.clone().image_processing(operation, arguments, at);
-            self.nest(frame).await
-        }
-        .map(Some)
-    }
-
     async fn image_atomic_call(
         self,
-        name: &'b str,
+        operation: AtomicOperation,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1043,16 +1010,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             self.nest(frame).await
         }?;
         {
-            let frame = self
-                .clone()
-                .image_atomic(name, image, opaque, non_uniform, arguments, at);
+            let frame =
+                self.clone()
+                    .image_atomic(operation, image, opaque, non_uniform, arguments, at);
             self.nest(frame).await
         }
     }
 
     async fn fragment_fetch_call(
         self,
-        name: &'b str,
+        mask: bool,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
@@ -1092,7 +1059,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }?
         };
         let fragment = match rest.next() {
-            Some(fragment) if name == "fragmentFetchAMD" => Some({
+            Some(fragment) if !mask => Some({
                 let frame = self.clone().rvalue(fragment);
                 self.nest(frame).await
             }?),
@@ -1516,13 +1483,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn sample(
         self,
-        call: TextureCall,
+        call: Sampling,
         function: &'b Function,
         arguments: &'b [AstExpression],
-        gather_pattern: ImageGatherPattern,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let name = call.base;
         let first = arguments.first().ok_or_else(|| internal(at))?;
         let Sampled {
             image,
@@ -1536,11 +1501,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if sampler.is_none() && opaque.kind != OpaqueKind::CombinedSampler {
             return Err(internal(at));
         }
-        let gather = name.starts_with("textureGather");
-        let proj = name.contains("Proj");
-        let lod = name.contains("Lod");
-        let grad = name.contains("Grad");
-        let offset = name.ends_with("Offset") || name.ends_with("Offsets");
+        let Sampling {
+            gather: gather_pattern,
+            proj,
+            lod,
+            grad,
+            offset,
+            ..
+        } = call;
+        let gather = gather_pattern.is_some();
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
         let (coordinate, coordinate_ty) = {
             let frame = self.clone().typed(coordinate_argument);
@@ -1772,7 +1741,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     image,
                     sampler,
                     gather: gather_component,
-                    gather_pattern,
+                    gather_pattern: gather_pattern.unwrap_or(ImageGatherPattern::Quad),
                     coordinate: point,
                     array_index,
                     offset: sample_offset,
@@ -1969,7 +1938,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn footprint(
         self,
-        footprint: FootprintLevel,
+        footprint: TextureLevel,
         clamp: bool,
         arguments: &'b [AstExpression],
         at: Span,
@@ -2000,7 +1969,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let mut level = SampleLevel::Auto;
         let mut min_lod = None;
         match footprint {
-            FootprintLevel::Lod => {
+            TextureLevel::Lod => {
                 level = SampleLevel::Exact({
                     let frame = self.clone().next_argument(
                         arguments,
@@ -2013,7 +1982,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?);
             }
-            FootprintLevel::Gradient => {
+            TextureLevel::Gradient => {
                 let x = {
                     let frame = self.clone().next_argument(
                         arguments,
@@ -2051,7 +2020,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     }?);
                 }
             }
-            FootprintLevel::Implicit if clamp => {
+            TextureLevel::Implicit if clamp => {
                 min_lod = Some({
                     let frame = self.clone().next_argument(
                         arguments,
@@ -2064,7 +2033,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     self.nest(frame).await
                 }?);
             }
-            FootprintLevel::Implicit => {}
+            TextureLevel::Implicit => {}
         }
         let granularity = {
             let frame = self.clone().next_argument(
@@ -2265,7 +2234,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn image(
         self,
-        name: &'b str,
+        access: ImageAccess,
+        lod: bool,
         function: &'b Function,
         arguments: &'b [AstExpression],
         at: Span,
@@ -2300,7 +2270,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         } else {
             None
         };
-        let lod = name.ends_with("LodAMD");
         let level = if lod {
             let level = arguments.get(2).ok_or_else(|| internal(at))?;
             Some({
@@ -2311,48 +2280,51 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             None
         };
         let operands = 2 + usize::from(opaque.multisample) + usize::from(lod);
-        if name.starts_with("sparseImageLoad") {
-            let texel = crate::TypeInner::Vector {
-                size: crate::VectorSize::Quad,
-                scalar: super::types::sampled_scalar(opaque.sampled),
-            };
-            let sparse = Some(self.with(|this| this.lw.sparse_result_type(texel))?);
-            let result = self.with(|this| {
-                this.add(
-                    Expression::ImageLoad {
-                        image,
-                        coordinate: point,
-                        array_index,
-                        sample,
-                        level,
-                        sparse,
-                    },
-                    at,
-                )
-            })??;
-            return {
-                let frame = self
-                    .clone()
-                    .sparse_result(result, function, arguments, operands, at);
-                self.nest(frame).await
+        match access {
+            ImageAccess::Load { sparse: true } => {
+                let texel = crate::TypeInner::Vector {
+                    size: crate::VectorSize::Quad,
+                    scalar: super::types::sampled_scalar(opaque.sampled),
+                };
+                let sparse = Some(self.with(|this| this.lw.sparse_result_type(texel))?);
+                let result = self.with(|this| {
+                    this.add(
+                        Expression::ImageLoad {
+                            image,
+                            coordinate: point,
+                            array_index,
+                            sample,
+                            level,
+                            sparse,
+                        },
+                        at,
+                    )
+                })??;
+                return {
+                    let frame = self
+                        .clone()
+                        .sparse_result(result, function, arguments, operands, at);
+                    self.nest(frame).await
+                }
+                .map(Some);
             }
-            .map(Some);
-        }
-        if name.starts_with("imageLoad") {
-            return self.with(|this| {
-                this.add(
-                    Expression::ImageLoad {
-                        image,
-                        coordinate: point,
-                        array_index,
-                        sample,
-                        level,
-                        sparse: None,
-                    },
-                    at,
-                )
-                .map(Some)
-            })?;
+            ImageAccess::Load { sparse: false } => {
+                return self.with(|this| {
+                    this.add(
+                        Expression::ImageLoad {
+                            image,
+                            coordinate: point,
+                            array_index,
+                            sample,
+                            level,
+                            sparse: None,
+                        },
+                        at,
+                    )
+                    .map(Some)
+                })?;
+            }
+            ImageAccess::Store => {}
         }
         let value = arguments.get(operands).ok_or_else(|| internal(at))?;
         let value = {
@@ -2377,7 +2349,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
 
     async fn query(
         self,
-        name: &'b str,
+        query: TextureQuery,
         arguments: &'b [AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
@@ -2394,10 +2366,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         if non_uniform {
             self.with(|this| this.mark(image, NonUniform::VALUE))?;
         }
-        let query = match name {
-            "textureQueryLevels" => ImageQuery::NumLevels,
-            "textureSamples" | "imageSamples" => ImageQuery::NumSamples,
-            _ => {
+        let query = match query {
+            TextureQuery::Levels => ImageQuery::NumLevels,
+            TextureQuery::Samples => ImageQuery::NumSamples,
+            TextureQuery::Size => {
                 let level = match arguments.get(1) {
                     Some(level) => Some({
                         let frame = self.clone().rvalue(level);
@@ -2461,23 +2433,9 @@ fn microscaling_bitcast(name: &str) -> Option<bool> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Route {
-    Sample,
-    PatternGather,
-    SparseFetch,
-    SparseFetchOffset,
-    Image,
-    SparseTexelsResident,
-    QueryLod,
-    ImageProcessing,
-    Fetch,
-    FetchOffset,
-    Query,
-    ImageAtomic,
-    SubpassLoad,
     Barrier,
     Interlock,
     HelperInvocation,
-    FragmentFetch,
     Interpolate,
     AttachmentRead,
     Mesh,
@@ -2491,25 +2449,7 @@ pub(super) enum Route {
 }
 
 pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
-    if sampling_function(&texture_call(name).base) {
-        return Some(Route::Sample);
-    }
     Some(match name {
-        _ if gather_pattern(name).is_some() => Route::PatternGather,
-        "sparseTexelFetchARB" => Route::SparseFetch,
-        "sparseTexelFetchOffsetARB" => Route::SparseFetchOffset,
-        "sparseImageLoadARB" | "sparseImageLoadLodAMD" => Route::Image,
-        "sparseTexelsResidentARB" => Route::SparseTexelsResident,
-        "textureQueryLod" | "textureQueryLOD" => Route::QueryLod,
-        _ if image_processing(name).is_some() => Route::ImageProcessing,
-        "texelFetch" => Route::Fetch,
-        "texelFetchOffset" => Route::FetchOffset,
-        "textureSize" | "textureQueryLevels" | "textureSamples" | "imageSize" | "imageSamples" => {
-            Route::Query
-        }
-        "imageLoad" | "imageStore" | "imageLoadLodAMD" | "imageStoreLodAMD" => Route::Image,
-        _ if super::atomic::is_image_atomic(name) => Route::ImageAtomic,
-        "subpassLoad" => Route::SubpassLoad,
         "barrier"
         | "memoryBarrier"
         | "memoryBarrierBuffer"
@@ -2521,7 +2461,6 @@ pub(super) fn route(name: &str, arguments: usize) -> Option<Route> {
         | "controlBarrierWait" => Route::Barrier,
         "beginInvocationInterlockARB" | "endInvocationInterlockARB" => Route::Interlock,
         "helperInvocationEXT" => Route::HelperInvocation,
-        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Route::FragmentFetch,
         "interpolateAtCentroid" | "interpolateAtSample" | "interpolateAtOffset" => {
             Route::Interpolate
         }

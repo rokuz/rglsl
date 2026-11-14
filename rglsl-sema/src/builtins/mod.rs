@@ -189,7 +189,6 @@ fn expand_prototypes(
             expand_section(section, &mut prototypes);
         }
     }
-    prototypes.append(&mut textures::prototypes());
     let mut types = TypeRegistry::new();
     let footprints = footprint::structs(&mut types);
     for family in table::FAMILIES {

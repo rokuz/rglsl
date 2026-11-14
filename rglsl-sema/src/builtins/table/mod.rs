@@ -105,6 +105,10 @@ pub(crate) struct Emitter<'a> {
 }
 
 impl Emitter<'_> {
+    pub(crate) const fn kind(&self) -> BuiltinKind {
+        self.row.kind
+    }
+
     pub(crate) const fn footprints(&self) -> &Footprints {
         self.footprints
     }

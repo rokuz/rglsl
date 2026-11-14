@@ -12,7 +12,8 @@ use rglsl_types::extension::Extension;
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::kind::{
-    AmdShaderBallot, BuiltinKind, Collective, Gather, Subgroup, SubgroupFunction,
+    AmdShaderBallot, BuiltinKind, Collective, Gather, GatherOffsets, Sample, Subgroup,
+    SubgroupFunction, Texture, TextureGather, TextureLevel,
 };
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
@@ -125,15 +126,68 @@ fn equivalent(rules: Rules, arguments: &[Type], first: &Function, second: &Funct
         && !has_better_parameter(rules, arguments, second, first)
 }
 
-fn image_load(name: &str) -> bool {
-    matches!(
-        name,
-        "imageLoad" | "imageLoadLodAMD" | "sparseImageLoadLodAMD"
-    )
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageAccess {
+    Load,
+    Store,
+    Atomic,
 }
 
-fn image_store(name: &str) -> bool {
-    matches!(name, "imageStore" | "imageStoreLodAMD")
+const fn image_access(kind: BuiltinKind) -> Option<ImageAccess> {
+    let BuiltinKind::Texture(texture) = kind else {
+        return None;
+    };
+    match texture {
+        Texture::ImageLoad {
+            lod: false,
+            sparse: true,
+        } => None,
+        Texture::ImageLoad { .. } => Some(ImageAccess::Load),
+        Texture::ImageStore { .. } => Some(ImageAccess::Store),
+        Texture::ImageAtomic(_) => Some(ImageAccess::Atomic),
+        Texture::Footprint { .. }
+        | Texture::Sample(_)
+        | Texture::Gather(_)
+        | Texture::Fetch { .. }
+        | Texture::Query(_)
+        | Texture::QueryLod
+        | Texture::SparseTexelsResident
+        | Texture::ImageProcessing(_)
+        | Texture::SubpassLoad
+        | Texture::FragmentFetch { .. } => None,
+    }
+}
+
+const fn offset_index(kind: BuiltinKind) -> Option<usize> {
+    let BuiltinKind::Texture(texture) = kind else {
+        return None;
+    };
+    match texture {
+        Texture::Sample(Sample {
+            offset: true,
+            clamp: false,
+            level,
+            ..
+        }) => Some(match level {
+            TextureLevel::Implicit => 2,
+            TextureLevel::Lod => 3,
+            TextureLevel::Gradient => 4,
+        }),
+        Texture::Fetch { offset: true, .. } => Some(3),
+        Texture::Sample(_)
+        | Texture::Fetch { .. }
+        | Texture::Footprint { .. }
+        | Texture::Gather(_)
+        | Texture::ImageLoad { .. }
+        | Texture::ImageStore { .. }
+        | Texture::ImageAtomic(_)
+        | Texture::Query(_)
+        | Texture::QueryLod
+        | Texture::SparseTexelsResident
+        | Texture::ImageProcessing(_)
+        | Texture::SubpassLoad
+        | Texture::FragmentFetch { .. } => None,
+    }
 }
 
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
@@ -899,11 +953,12 @@ impl Analyzer<'_> {
         {
             failed = !self.ray_builtin_checks(span, ray, name, operands);
         }
+        let kind = entry.map_or(BuiltinKind::Named, |entry| entry.kind);
         if is_builtin && !failed {
-            failed = !self.texture_checks(span, name, operands);
+            failed = !self.texture_checks(span, kind, name, operands);
         }
         if is_builtin && !failed {
-            failed = !self.builtin_checks(span, name, operands);
+            failed = !self.builtin_checks(span, kind, name, operands);
             let reason = "{} types can only be in uniform block or buffer storage";
             if !self.require_small_arithmetic(
                 span,
@@ -1112,13 +1167,9 @@ impl Analyzer<'_> {
             self.require_extension(span, extension, name);
         }
         self.mesh_function_extension(span, name);
-        if let Some(extension) = super::qcom::function_extension(name) {
-            self.require_extension(span, extension, name);
-        }
         if let Some(extension) = super::fragment::function_extension(name) {
             self.require_extension(span, extension, name);
         }
-        self.texture_extensions(span, name);
     }
 
     fn lane_pattern_check(
@@ -1331,7 +1382,13 @@ impl Analyzer<'_> {
             .is_none()
     }
 
-    fn builtin_checks(&mut self, span: Span, name: &str, operands: &[Operand]) -> bool {
+    fn builtin_checks(
+        &mut self,
+        span: Span,
+        kind: BuiltinKind,
+        name: &str,
+        operands: &[Operand],
+    ) -> bool {
         let invalid = |analyzer: &mut Self, span: Span, reason: &'static str| {
             analyzer.error(
                 span,
@@ -1342,7 +1399,8 @@ impl Analyzer<'_> {
             );
             false
         };
-        if name.starts_with("atomic") || name.starts_with("imageAtomic") {
+        let image = image_access(kind);
+        if name.starts_with("atomic") || image == Some(ImageAccess::Atomic) {
             self.atomic_float_extensions(span, name, operands);
         }
         if !self.memory_scope_checks(span, name, operands) {
@@ -1366,7 +1424,7 @@ impl Analyzer<'_> {
                     "the first argument must be a buffer or shared variable",
                 );
             }
-        } else if name.starts_with("imageAtomic") || image_load(name) || image_store(name) {
+        } else if let Some(image) = image {
             let qualifiers = first
                 .and_then(|operand| operand.root)
                 .and_then(|id| self.symbol(id))
@@ -1392,7 +1450,8 @@ impl Analyzer<'_> {
                         .iter()
                         .any(|format| variable.qualifiers.has_layout(format))
                 });
-            if name.starts_with("imageAtomic") && integer_image && !has_atomic_format {
+            let atomic = image == ImageAccess::Atomic;
+            if atomic && integer_image && !has_atomic_format {
                 return invalid(self, span, "the image format must be r32i or r32ui");
             }
             let wide = first
@@ -1403,7 +1462,7 @@ impl Analyzer<'_> {
                     crate::types::SampledType::Uint64 => Some("r64ui"),
                     _ => None,
                 });
-            if let Some(format) = wide.filter(|_| name.starts_with("imageAtomic")) {
+            if let Some(format) = wide.filter(|_| atomic) {
                 let matches = first
                     .and_then(|operand| operand.root)
                     .and_then(|id| self.symbol(id))
@@ -1422,25 +1481,15 @@ impl Analyzer<'_> {
                 }
             }
             if let Some((readonly, writeonly)) = qualifiers {
-                if readonly && !image_load(name) {
+                if readonly && image != ImageAccess::Load {
                     return invalid(self, span, "the image is `readonly`");
                 }
-                if writeonly && !image_store(name) {
+                if writeonly && image != ImageAccess::Store {
                     return invalid(self, span, "the image is `writeonly`");
                 }
             }
         }
-        let offset_index = match name {
-            "textureOffset" | "textureProjOffset" | "sparseTextureOffsetARB" => Some(2),
-            "texelFetchOffset"
-            | "textureLodOffset"
-            | "textureProjLodOffset"
-            | "sparseTextureLodOffsetARB"
-            | "sparseTexelFetchOffsetARB" => Some(3),
-            "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
-            _ => None,
-        };
-        if let Some(index) = offset_index
+        if let Some(index) = offset_index(kind)
             && let Some(operand) = operands.get(index)
         {
             if !operand.constant {
@@ -1467,7 +1516,16 @@ impl Analyzer<'_> {
         let shadow = first
             .and_then(|operand| operand.ty.as_opaque())
             .is_some_and(|opaque| opaque.shadow);
-        if name == "textureGatherOffsets" {
+        let BuiltinKind::Texture(Texture::Gather(TextureGather {
+            offsets,
+            lod: false,
+            sparse: false,
+            ..
+        })) = kind
+        else {
+            return true;
+        };
+        if offsets == GatherOffsets::Four {
             let index = if shadow { 3 } else { 2 };
             if let Some(operand) = operands.get(index)
                 && (!operand.constant || operand.specialization)
@@ -1475,13 +1533,10 @@ impl Analyzer<'_> {
                 return invalid(self, span, "the offsets must be constant");
             }
         }
-        if name.starts_with("textureGather") && !name.contains("Lod") && !shadow {
-            let index = if name == "textureGather"
-                || (super::qcom::gather_function(name) && !name.contains("Offset"))
-            {
-                2
-            } else {
-                3
+        if !shadow {
+            let index = match offsets {
+                GatherOffsets::None => 2,
+                GatherOffsets::One | GatherOffsets::Four => 3,
             };
             if let Some(operand) = operands.get(index) {
                 if !operand.constant || operand.specialization {

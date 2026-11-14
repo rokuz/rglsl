@@ -72,7 +72,6 @@ const POST_DEPTH_COVERAGE: [Extension; 2] = [
 pub(crate) fn function_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "helperInvocationEXT" => Extension::ExtDemoteToHelperInvocation,
-        "fragmentMaskFetchAMD" | "fragmentFetchAMD" => Extension::AmdShaderFragmentMask,
         "controlBarrierArrive" | "controlBarrierWait" => Extension::ExtSplitBarrier,
         "colorAttachmentReadEXT" | "depthAttachmentReadEXT" | "stencilAttachmentReadEXT" => {
             Extension::ExtShaderTileImage
