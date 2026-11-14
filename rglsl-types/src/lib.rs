@@ -4,6 +4,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+pub mod builtin;
 pub mod extension;
 pub mod probe;
 pub mod small_float;

@@ -6,6 +6,7 @@ Backend for [SPIR-V][spv] (Standard Portable Intermediate Representation).
 
 mod atomic;
 mod block;
+mod builtin;
 mod cooperative;
 mod debug;
 mod frames;

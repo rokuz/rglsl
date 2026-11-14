@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 
 use bit_set::BitSet;
+use rglsl_types::builtin::{ArrayLength, BuiltInType, BuiltInValue, Component, MeshAccess};
 
 use super::{
     Capabilities, Disalignment, FunctionError, ImmediateError, ModuleInfo,
@@ -429,22 +430,75 @@ fn is_array_of(
     false
 }
 
-const fn is_pre_rasterization(stage: crate::ShaderStage) -> bool {
-    matches!(
-        stage,
-        crate::ShaderStage::Vertex
-            | crate::ShaderStage::TessControl
-            | crate::ShaderStage::TessEvaluation
-            | crate::ShaderStage::Geometry
-            | crate::ShaderStage::Mesh
-    )
+const fn component_matches(component: Component, scalar: crate::Scalar) -> bool {
+    match component {
+        Component::F32 => matches!(scalar, crate::Scalar::F32),
+        Component::I32 => matches!(scalar, crate::Scalar::I32),
+        Component::U32 => matches!(scalar, crate::Scalar::U32),
+        Component::Bool => matches!(scalar, crate::Scalar::BOOL),
+        Component::Index => matches!(scalar, crate::Scalar::I32 | crate::Scalar::U32),
+    }
 }
 
-const fn is_index_type(ty: &crate::TypeInner) -> bool {
-    matches!(
-        *ty,
-        crate::TypeInner::Scalar(crate::Scalar::U32 | crate::Scalar::I32)
-    )
+fn value_matches(value: BuiltInValue, ty: &crate::TypeInner) -> bool {
+    match (value, ty) {
+        (BuiltInValue::Scalar(component), &crate::TypeInner::Scalar(scalar)) => {
+            component_matches(component, scalar)
+        }
+        (
+            BuiltInValue::Vector(size, component),
+            &crate::TypeInner::Vector {
+                size: actual,
+                scalar,
+            },
+        ) => u8::from(actual) == size && component_matches(component, scalar),
+        (
+            BuiltInValue::Matrix { columns, rows },
+            &crate::TypeInner::Matrix {
+                columns: actual_columns,
+                rows: actual_rows,
+                scalar,
+            },
+        ) => {
+            u8::from(actual_columns) == columns
+                && u8::from(actual_rows) == rows
+                && scalar == crate::Scalar::F32
+        }
+        _ => false,
+    }
+}
+
+fn built_in_type_matches(
+    types: &UniqueArena<crate::Type>,
+    ty: &crate::TypeInner,
+    expected: BuiltInType,
+) -> bool {
+    match expected {
+        BuiltInType::Any => true,
+        BuiltInType::AnyArray => matches!(*ty, crate::TypeInner::Array { .. }),
+        BuiltInType::Value(value) => value_matches(value, ty),
+        BuiltInType::Array { element, length } => match *ty {
+            crate::TypeInner::Array { base, size, .. } => {
+                let length_good = match (length, size) {
+                    (ArrayLength::Any, _) => true,
+                    (ArrayLength::Constant, crate::ArraySize::Constant(_)) => true,
+                    (ArrayLength::Exactly(wanted), crate::ArraySize::Constant(actual)) => {
+                        actual.get() == wanted
+                    }
+                    (ArrayLength::Constant | ArrayLength::Exactly(_), _) => false,
+                };
+                length_good && value_matches(element, &types[base].inner)
+            }
+            _ => false,
+        },
+        BuiltInType::NestedArray(element) => {
+            is_array_of(types, ty, &|inner| value_matches(element, inner))
+        }
+        BuiltInType::ValueOrNestedArray { value, element } => {
+            value_matches(value, ty)
+                || is_array_of(types, ty, &|inner| value_matches(element, inner))
+        }
+    }
 }
 
 impl VaryingContext<'_> {
@@ -468,33 +522,12 @@ impl VaryingContext<'_> {
         ty: Handle<crate::Type>,
         binding: &crate::Binding,
     ) -> Result<(), VaryingError> {
-        use crate::{BuiltIn as Bi, ShaderStage as St, TypeInner as Ti, VectorSize as Vs};
+        use crate::{BuiltIn as Bi, TypeInner as Ti};
 
         let ty_inner = &self.types[ty].inner;
         match *binding {
             crate::Binding::BuiltIn(built_in) => {
-                // Ignore the `invariant` field for the sake of duplicate checks,
-                // but use the original in error messages.
-                let canonical = match built_in {
-                    crate::BuiltIn::Position { .. } => {
-                        crate::BuiltIn::Position { invariant: false }
-                    }
-                    crate::BuiltIn::Barycentric { perspective, .. } => {
-                        crate::BuiltIn::Barycentric {
-                            perspective,
-                            nv: false,
-                        }
-                    }
-                    crate::BuiltIn::Layer { .. } => crate::BuiltIn::Layer {
-                        viewport_relative: false,
-                        secondary_view_offset: None,
-                    },
-                    crate::BuiltIn::SampleMask { .. } => crate::BuiltIn::SampleMask {
-                        override_coverage: false,
-                    },
-                    x => x,
-                };
-
+                let canonical = built_in.canonical();
                 if self.built_ins.contains(&canonical) {
                     return Err(VaryingError::DuplicateBuiltIn(built_in));
                 }
@@ -520,492 +553,22 @@ impl VaryingContext<'_> {
                     return Err(VaryingError::UnsupportedCapability(required));
                 }
 
-                let mesh_interface = self.stage == St::Mesh && self.output && self.interface;
-                let pre_rasterization_output = self.output
-                    && matches!(
-                        self.stage,
-                        St::Vertex | St::TessControl | St::TessEvaluation | St::Geometry | St::Mesh
-                    );
-                let array_of = |element: Ti| match *ty_inner {
-                    Ti::Array { base, .. } => self.types[base].inner == element,
-                    _ => false,
+                let info = built_in.info();
+                let stages = if self.output {
+                    info.outputs
+                } else {
+                    info.inputs
                 };
-                let is_array = matches!(*ty_inner, Ti::Array { .. });
-                let (visible, type_good) = match built_in {
-                    Bi::BaseInstance | Bi::BaseVertex | Bi::VertexIndex => (
-                        self.stage == St::Vertex && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::InstanceIndex => (
-                        self.stage == St::Vertex && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::InvocationId => (
-                        matches!(self.stage, St::TessControl | St::Geometry) && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::PatchVertices => (
-                        matches!(self.stage, St::TessControl | St::TessEvaluation) && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::TessCoord => (
-                        self.stage == St::TessEvaluation && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::TessLevelOuter | Bi::TessLevelInner => (
-                        (self.stage == St::TessControl && self.output)
-                            || (self.stage == St::TessEvaluation && !self.output),
-                        match *ty_inner {
-                            Ti::Array {
-                                base,
-                                size: crate::ArraySize::Constant(length),
-                                ..
-                            } => {
-                                self.types[base].inner == Ti::Scalar(crate::Scalar::F32)
-                                    && length.get()
-                                        == if built_in == Bi::TessLevelOuter { 4 } else { 2 }
-                            }
-                            _ => false,
-                        },
-                    ),
-                    Bi::Layer { .. } | Bi::ViewportIndex => (
-                        match self.stage {
-                            St::Vertex
-                            | St::TessControl
-                            | St::TessEvaluation
-                            | St::Geometry
-                            | St::Mesh => self.output,
-                            St::Fragment => !self.output,
-                            St::Compute
-                            | St::Task
-                            | St::RayGeneration
-                            | St::AnyHit
-                            | St::ClosestHit
-                            | St::Miss
-                            | St::Intersection
-                            | St::Callable => false,
-                        },
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::DrawIndex => (
-                        // Always allowed in task/vertex stage. Allowed in mesh stage if there is no task stage in the pipeline.
-                        (self.stage == St::Vertex
-                            || self.stage == St::Task
-                            || (self.stage == St::Mesh
-                                && (!self.has_task_payload || self.interface)))
-                            && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::ClipDistances | Bi::CullDistance => (
-                        // Written by the stages before rasterization, and
-                        // readable in the fragment stage.
-                        ((self.stage == St::Vertex || self.stage == St::Mesh) && self.output)
-                            || (self.stage == St::Fragment && !self.output)
-                            || self.stage.has_arrayed_io(),
-                        match *ty_inner {
-                            Ti::Array { base, size, .. } => {
-                                self.types[base].inner == Ti::Scalar(crate::Scalar::F32)
-                                    && matches!(size, crate::ArraySize::Constant(_))
-                            }
-                            _ => false,
-                        },
-                    ),
-                    Bi::PointSize => (
-                        ((self.stage == St::Vertex || self.stage == St::Mesh) && self.output)
-                            || self.stage.has_arrayed_io(),
-                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
-                    ),
-                    Bi::PointCoord => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Bi,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::Position { .. } => (
-                        match self.stage {
-                            St::Vertex | St::Mesh => self.output,
-                            St::Fragment => !self.output,
-                            St::TessControl | St::TessEvaluation | St::Geometry => true,
-                            St::Compute | St::Task => false,
-                            St::RayGeneration
-                            | St::AnyHit
-                            | St::ClosestHit
-                            | St::Miss
-                            | St::Intersection
-                            | St::Callable => false,
-                        },
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Quad,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::ViewIndex => (
-                        match self.stage {
-                            St::Vertex | St::Fragment | St::Task | St::Mesh => !self.output,
-                            St::TessControl | St::TessEvaluation | St::Geometry => !self.output,
-                            St::Compute
-                            | St::RayGeneration
-                            | St::AnyHit
-                            | St::ClosestHit
-                            | St::Miss
-                            | St::Intersection
-                            | St::Callable => false,
-                        },
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::FragDepth => (
-                        self.stage == St::Fragment && self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
-                    ),
-                    Bi::FrontFacing => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
-                    ),
-                    Bi::PrimitiveIndex => (
-                        (matches!(
-                            self.stage,
-                            St::Fragment
-                                | St::AnyHit
-                                | St::ClosestHit
-                                | St::Intersection
-                                | St::TessControl
-                                | St::TessEvaluation
-                                | St::Geometry
-                        ) && !self.output)
-                            || (self.stage == St::Geometry && self.output)
-                            || mesh_interface,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::Barycentric { .. } => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::SampleIndex => (
-                        self.stage == St::Fragment && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::SampleMask { .. } => (
-                        self.stage == St::Fragment,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32)
-                            || is_array_of(self.types, ty_inner, &|inner| is_index_type(inner)),
-                    ),
-                    Bi::ViewportMaskNV
-                    | Bi::SecondaryViewportMaskNV
-                    | Bi::ViewportMaskPerViewNV => (
-                        self.output && is_pre_rasterization(self.stage),
-                        is_array_of(self.types, ty_inner, &|inner| {
-                            *inner == Ti::Scalar(crate::Scalar::I32)
-                        }),
-                    ),
-                    Bi::SecondaryPositionNV | Bi::PositionPerViewNV => (
-                        (self.output && is_pre_rasterization(self.stage))
-                            || (!self.output
-                                && matches!(
-                                    self.stage,
-                                    St::TessControl | St::TessEvaluation | St::Geometry
-                                )),
-                        {
-                            let vec4 = |inner: &Ti| {
-                                *inner
-                                    == Ti::Vector {
-                                        size: Vs::Quad,
-                                        scalar: crate::Scalar::F32,
-                                    }
-                            };
-                            if built_in == Bi::SecondaryPositionNV {
-                                vec4(ty_inner)
-                            } else {
-                                is_array_of(self.types, ty_inner, &vec4)
-                            }
-                        },
-                    ),
-                    Bi::LocalInvocationIndex => (
-                        self.stage.compute_like() && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::GlobalInvocationId
-                    | Bi::LocalInvocationId
-                    | Bi::WorkGroupId
-                    | Bi::WorkGroupSize
-                    | Bi::NumWorkGroups => (
-                        self.stage.compute_like() && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::U32,
-                            },
-                    ),
-                    Bi::TileOffset | Bi::TileDimension | Bi::TileApronSize => (
-                        matches!(self.stage, St::Compute | St::Fragment) && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: if built_in == Bi::TileDimension {
-                                    Vs::Tri
-                                } else {
-                                    Vs::Bi
-                                },
-                                scalar: crate::Scalar::U32,
-                            },
-                    ),
-                    Bi::NumSubgroups | Bi::SubgroupId => (
-                        self.stage.compute_like() && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::SubgroupSize
-                    | Bi::SubgroupInvocationId
-                    | Bi::ShaderBallot(
-                        crate::ShaderBallot::Size | crate::ShaderBallot::InvocationId,
-                    ) => (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32)),
-                    Bi::SubgroupMask(_) | Bi::ShaderBallot(crate::ShaderBallot::Mask(_)) => (
-                        !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Quad,
-                                scalar: crate::Scalar::U32,
-                            },
-                    ),
-                    Bi::CullPrimitive => {
-                        (mesh_interface, *ty_inner == Ti::Scalar(crate::Scalar::BOOL))
-                    }
-                    Bi::PointIndex | Bi::LineIndices | Bi::TriangleIndices => {
-                        let element = match built_in {
-                            Bi::PointIndex => Ti::Scalar(crate::Scalar::U32),
-                            Bi::LineIndices => Ti::Vector {
-                                size: Vs::Bi,
-                                scalar: crate::Scalar::U32,
-                            },
-                            _ => Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::U32,
-                            },
-                        };
-                        if mesh_interface {
-                            (true, array_of(element))
-                        } else {
-                            (false, *ty_inner == element)
+                let mesh = self.stage == crate::ShaderStage::Mesh;
+                let visible = stages.has(self.stage)
+                    || match info.mesh {
+                        MeshAccess::Stages => false,
+                        MeshAccess::InterfaceOutput => mesh && self.output && self.interface,
+                        MeshAccess::InputWithoutTaskPayload => {
+                            mesh && !self.output && (!self.has_task_payload || self.interface)
                         }
-                    }
-                    Bi::SamplePosition => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Bi,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::HelperInvocation | Bi::FullyCovered => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
-                    ),
-                    Bi::DeviceIndex => (!self.output, is_index_type(ty_inner)),
-                    Bi::ShadingRate | Bi::FragInvocationCount { .. } => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
-                    ),
-                    Bi::FragSize { .. } => (
-                        self.stage == St::Fragment && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Bi,
-                                scalar: crate::Scalar::I32,
-                            },
-                    ),
-                    Bi::FragStencilRef => (
-                        self.stage == St::Fragment && self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
-                    ),
-                    Bi::PrimitiveShadingRate => (
-                        pre_rasterization_output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
-                    ),
-                    Bi::TaskCountNV => (
-                        self.stage == St::Task && self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::PrimitiveCountNV => {
-                        (mesh_interface, *ty_inner == Ti::Scalar(crate::Scalar::U32))
-                    }
-                    Bi::PrimitiveIndicesNV => {
-                        (mesh_interface, array_of(Ti::Scalar(crate::Scalar::U32)))
-                    }
-                    Bi::ShaderCore(_) => {
-                        (!self.output, *ty_inner == Ti::Scalar(crate::Scalar::U32))
-                    }
-                    Bi::MeshViewCountNV => (
-                        self.stage.mesh_like() && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::MeshViewIndicesNV => (
-                        self.stage.mesh_like() && !self.output,
-                        array_of(Ti::Scalar(crate::Scalar::U32)),
-                    ),
-                    Bi::LayerPerViewNV => (
-                        pre_rasterization_output,
-                        array_of(Ti::Scalar(crate::Scalar::I32)),
-                    ),
-                    Bi::ClipDistancePerViewNV | Bi::CullDistancePerViewNV => {
-                        (pre_rasterization_output, is_array)
-                    }
-                    Bi::MeshTaskSize => (
-                        self.stage == St::Task && self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::U32,
-                            },
-                    ),
-                    Bi::RayInvocationId | Bi::NumRayInvocations => (
-                        self.stage.ray_tracing() && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::U32,
-                            },
-                    ),
-                    Bi::InstanceCustomData | Bi::GeometryIndex | Bi::InstanceId => (
-                        matches!(self.stage, St::Intersection | St::AnyHit | St::ClosestHit)
-                            && !self.output,
-                        is_index_type(ty_inner),
-                    ),
-                    Bi::WorldRayOrigin | Bi::WorldRayDirection => (
-                        matches!(
-                            self.stage,
-                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
-                        ) && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::ObjectRayOrigin | Bi::ObjectRayDirection => (
-                        matches!(
-                            self.stage,
-                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
-                        ) && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::RayTmin | Bi::RayTCurrentMax | Bi::CurrentRayTime => (
-                        matches!(
-                            self.stage,
-                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
-                        ) && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
-                    ),
-                    Bi::IncomingRayFlags | Bi::CullMask => (
-                        matches!(
-                            self.stage,
-                            St::Intersection | St::AnyHit | St::ClosestHit | St::Miss
-                        ) && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::ObjectToWorld | Bi::WorldToObject => (
-                        matches!(self.stage, St::Intersection | St::AnyHit | St::ClosestHit)
-                            && !self.output,
-                        *ty_inner
-                            == Ti::Matrix {
-                                columns: crate::VectorSize::Quad,
-                                rows: crate::VectorSize::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::HitKind => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::HitTriangleVertexPositions => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        match *ty_inner {
-                            Ti::Array {
-                                base,
-                                size: crate::ArraySize::Constant(size),
-                                ..
-                            } => {
-                                size.get() == 3
-                                    && self.types[base].inner
-                                        == Ti::Vector {
-                                            size: Vs::Tri,
-                                            scalar: crate::Scalar::F32,
-                                        }
-                            }
-                            _ => false,
-                        },
-                    ),
-                    Bi::ClusterId => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::I32),
-                    ),
-                    Bi::HitKindFrontFacingMicroTriangle | Bi::HitKindBackFacingMicroTriangle => (
-                        self.stage.ray_tracing() && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::U32),
-                    ),
-                    Bi::HitMicroTriangleVertexPositions
-                    | Bi::HitMicroTriangleVertexBarycentrics
-                    | Bi::HitLssPositions => {
-                        let (size, length) = match built_in {
-                            Bi::HitMicroTriangleVertexPositions => (Vs::Tri, 3),
-                            Bi::HitMicroTriangleVertexBarycentrics => (Vs::Bi, 3),
-                            _ => (Vs::Tri, 2),
-                        };
-                        (
-                            matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                            match *ty_inner {
-                                Ti::Array {
-                                    base,
-                                    size: crate::ArraySize::Constant(count),
-                                    ..
-                                } => {
-                                    count.get() == length
-                                        && self.types[base].inner
-                                            == Ti::Vector {
-                                                size,
-                                                scalar: crate::Scalar::F32,
-                                            }
-                                }
-                                _ => false,
-                            },
-                        )
-                    }
-                    Bi::HitLssRadii => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        array_of(Ti::Scalar(crate::Scalar::F32)),
-                    ),
-                    Bi::HitIsSphere | Bi::HitIsLss => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::BOOL),
-                    ),
-                    Bi::HitSpherePosition => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        *ty_inner
-                            == Ti::Vector {
-                                size: Vs::Tri,
-                                scalar: crate::Scalar::F32,
-                            },
-                    ),
-                    Bi::HitSphereRadius => (
-                        matches!(self.stage, St::AnyHit | St::ClosestHit) && !self.output,
-                        *ty_inner == Ti::Scalar(crate::Scalar::F32),
-                    ),
-                    // Validated elsewhere, shouldn't be here
-                    Bi::VertexCount | Bi::PrimitiveCount | Bi::Vertices | Bi::Primitives => {
-                        (false, true)
-                    }
-                };
+                    };
+                let type_good = built_in_type_matches(self.types, ty_inner, info.ty);
                 match built_in {
                     Bi::CullPrimitive
                     | Bi::PointIndex
