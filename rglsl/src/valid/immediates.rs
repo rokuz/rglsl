@@ -49,7 +49,30 @@ impl ImmediateSlots {
                     size: crate::ArraySize::Pending(_),
                     ..
                 } => slots |= Self::from_range(offset, u32::MAX - offset),
-                _ => {
+                crate::TypeInner::Scalar(_)
+                | crate::TypeInner::Vector { .. }
+                | crate::TypeInner::Matrix { .. }
+                | crate::TypeInner::CooperativeMatrix { .. }
+                | crate::TypeInner::LongVector { .. }
+                | crate::TypeInner::TensorLayout { .. }
+                | crate::TypeInner::TensorView { .. }
+                | crate::TypeInner::Tensor { .. }
+                | crate::TypeInner::Atomic(_)
+                | crate::TypeInner::Pointer { .. }
+                | crate::TypeInner::ValuePointer { .. }
+                | crate::TypeInner::Array {
+                    size: crate::ArraySize::Constant(_) | crate::ArraySize::Dynamic,
+                    ..
+                }
+                | crate::TypeInner::Image { .. }
+                | crate::TypeInner::Sampler { .. }
+                | crate::TypeInner::SampledImage { .. }
+                | crate::TypeInner::AccelerationStructure
+                | crate::TypeInner::RayQuery
+                | crate::TypeInner::HitObject { .. }
+                | crate::TypeInner::BindingArray { .. }
+                | crate::TypeInner::BufferDescriptor { .. }
+                | crate::TypeInner::Spirv { .. } => {
                     slots |=
                         Self::from_range(offset, ty.try_size(gctx).unwrap_or(u32::MAX - offset));
                 }
@@ -104,20 +127,15 @@ impl ImmediateSlots {
 
         let global_ty = &types[global_vars[global].ty].inner;
 
-        match expression_arena[pointer] {
-            E::GlobalVariable(_) => Self::from_type(global_ty, 0, types, gctx),
-            E::AccessIndex { base, index } => {
-                if let E::GlobalVariable(_) = expression_arena[base]
-                    && let TypeInner::Struct { ref members, .. } = *global_ty
-                {
-                    let member = &members[index as usize];
-                    let member_ty = &types[member.ty].inner;
-                    return Self::from_type(member_ty, member.offset, types, gctx);
-                }
-                Self::from_type(global_ty, 0, types, gctx)
-            }
-            _ => Self::from_type(global_ty, 0, types, gctx),
+        if let E::AccessIndex { base, index } = expression_arena[pointer]
+            && let E::GlobalVariable(_) = expression_arena[base]
+            && let TypeInner::Struct { ref members, .. } = *global_ty
+        {
+            let member = &members[index as usize];
+            let member_ty = &types[member.ty].inner;
+            return Self::from_type(member_ty, member.offset, types, gctx);
         }
+        Self::from_type(global_ty, 0, types, gctx)
     }
 }
 

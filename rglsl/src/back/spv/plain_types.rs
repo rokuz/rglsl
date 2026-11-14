@@ -310,23 +310,88 @@ impl Writer {
         expr: Handle<Expression>,
     ) -> Result<PlainConstant<'m>, Error> {
         let id = self.constant_ids[expr];
-        let ty = match module.global_expressions[expr] {
-            Expression::Constant(constant) => {
-                return Ok(PlainConstant::Constant(module.constants[constant].init));
-            }
-            Expression::ZeroValue(ty) | Expression::Compose { ty, .. } => ty,
-            _ => return Ok(PlainConstant::Done(id)),
-        };
-        let type_id = self.get_handle_type_id(ty)?;
-        let plain = self.plain_type_id(type_id);
-        if plain == type_id {
-            return Ok(PlainConstant::Done(id));
-        }
         match module.global_expressions[expr] {
-            Expression::Compose { ref components, .. } => {
-                Ok(PlainConstant::Compose { plain, components })
+            Expression::Constant(constant) => {
+                Ok(PlainConstant::Constant(module.constants[constant].init))
             }
-            _ => Ok(PlainConstant::Done(self.get_constant_null(plain))),
+            Expression::ZeroValue(ty) => {
+                let type_id = self.get_handle_type_id(ty)?;
+                let plain = self.plain_type_id(type_id);
+                if plain == type_id {
+                    Ok(PlainConstant::Done(id))
+                } else {
+                    Ok(PlainConstant::Done(self.get_constant_null(plain)))
+                }
+            }
+            Expression::Compose { ty, ref components } => {
+                let type_id = self.get_handle_type_id(ty)?;
+                let plain = self.plain_type_id(type_id);
+                if plain == type_id {
+                    Ok(PlainConstant::Done(id))
+                } else {
+                    Ok(PlainConstant::Compose { plain, components })
+                }
+            }
+            Expression::Literal(_)
+            | Expression::Override(_)
+            | Expression::Splat { .. }
+            | Expression::Replicate { .. }
+            | Expression::Access { .. }
+            | Expression::AccessIndex { .. }
+            | Expression::Swizzle { .. }
+            | Expression::FunctionArgument(_)
+            | Expression::GlobalVariable(_)
+            | Expression::LocalVariable(_)
+            | Expression::Load { .. }
+            | Expression::ImageSample { .. }
+            | Expression::ImageLoad { .. }
+            | Expression::ImageQuery { .. }
+            | Expression::Unary { .. }
+            | Expression::Binary { .. }
+            | Expression::Select { .. }
+            | Expression::Derivative { .. }
+            | Expression::Relational { .. }
+            | Expression::Math { .. }
+            | Expression::As { .. }
+            | Expression::CallResult(_)
+            | Expression::AtomicResult { .. }
+            | Expression::ArrayLength(_)
+            | Expression::WideArrayLength(_)
+            | Expression::PhysicalPointer { .. }
+            | Expression::PhysicalAddress { .. }
+            | Expression::BufferPointer { .. }
+            | Expression::HeapOffset { .. }
+            | Expression::RayQueryProceedResult
+            | Expression::RayQueryGet { .. }
+            | Expression::ReportIntersectionResult
+            | Expression::AccelerationStructureFromAddress { .. }
+            | Expression::HitObjectGet { .. }
+            | Expression::FetchMicroTriangleVertex { .. }
+            | Expression::SubgroupBallotResult
+            | Expression::SubgroupOperationResult { .. }
+            | Expression::SpirvInstructionResult { .. }
+            | Expression::CooperativeLoad { .. }
+            | Expression::CooperativeMultiplyAdd { .. }
+            | Expression::CooperativeMatrixLength { .. }
+            | Expression::Expect { .. }
+            | Expression::ImageSparseResident { .. }
+            | Expression::IsHelperInvocation
+            | Expression::ReadClock { .. }
+            | Expression::InterpolateAt { .. }
+            | Expression::FragmentFetch { .. }
+            | Expression::ImageFootprint { .. }
+            | Expression::AttachmentRead { .. }
+            | Expression::CooperativeVectorLoad { .. }
+            | Expression::CooperativeVectorMatMul { .. }
+            | Expression::Convert { .. }
+            | Expression::CooperativeMatrixResult { .. }
+            | Expression::TensorCreate { .. }
+            | Expression::ImageProcessing { .. }
+            | Expression::ArrayConversion { .. }
+            | Expression::Bitcast { .. }
+            | Expression::TensorSet { .. }
+            | Expression::TensorRead { .. }
+            | Expression::TensorQuerySize { .. } => Ok(PlainConstant::Done(id)),
         }
     }
 }

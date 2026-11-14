@@ -41,14 +41,11 @@ impl ResourceClass {
 
     pub fn of(module: &Module, global: &GlobalVariable) -> Option<Self> {
         let mut ty = global.ty;
-        loop {
-            match module.types[ty].inner {
-                TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. }
-                    if global.space == AddressSpace::Handle =>
-                {
-                    ty = base;
-                }
-                _ => break,
+        if global.space == AddressSpace::Handle {
+            while let TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. } =
+                module.types[ty].inner
+            {
+                ty = base;
             }
         }
         match global.space {
@@ -59,13 +56,48 @@ impl ResourceClass {
                     class: crate::ImageClass::Storage { .. },
                     ..
                 } => Some(Self::Image),
-                TypeInner::Image { .. } => Some(Self::Texture),
+                TypeInner::Image {
+                    class: crate::ImageClass::Sampled { .. } | crate::ImageClass::Depth { .. },
+                    ..
+                } => Some(Self::Texture),
                 TypeInner::SampledImage { .. } => Some(Self::CombinedSampler),
                 TypeInner::Sampler { .. } => Some(Self::Sampler),
                 TypeInner::AccelerationStructure => Some(Self::AccelerationStructure),
-                _ => None,
+                TypeInner::Scalar(_)
+                | TypeInner::Vector { .. }
+                | TypeInner::Matrix { .. }
+                | TypeInner::CooperativeMatrix { .. }
+                | TypeInner::LongVector { .. }
+                | TypeInner::TensorLayout { .. }
+                | TypeInner::TensorView { .. }
+                | TypeInner::Tensor { .. }
+                | TypeInner::Atomic(_)
+                | TypeInner::Pointer { .. }
+                | TypeInner::ValuePointer { .. }
+                | TypeInner::Array { .. }
+                | TypeInner::Struct { .. }
+                | TypeInner::RayQuery
+                | TypeInner::HitObject { .. }
+                | TypeInner::BindingArray { .. }
+                | TypeInner::BufferDescriptor { .. }
+                | TypeInner::Spirv { .. } => None,
             },
-            _ => None,
+            AddressSpace::Function
+            | AddressSpace::Private
+            | AddressSpace::WorkGroup
+            | AddressSpace::Immediate
+            | AddressSpace::TaskPayload
+            | AddressSpace::RayPayload
+            | AddressSpace::IncomingRayPayload
+            | AddressSpace::HitAttribute
+            | AddressSpace::CallableData
+            | AddressSpace::IncomingCallableData
+            | AddressSpace::ShaderRecord
+            | AddressSpace::HitObjectAttribute { .. }
+            | AddressSpace::Input
+            | AddressSpace::Output
+            | AddressSpace::PhysicalStorage { .. }
+            | AddressSpace::DescriptorHeap(_) => None,
         }
     }
 }

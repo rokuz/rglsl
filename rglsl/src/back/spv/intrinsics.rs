@@ -172,15 +172,16 @@ impl BlockContext<'_> {
         let mut words: Vec<Word> = Vec::with_capacity(operands.len());
         for operand in operands {
             words.push(match *operand {
-                SpirvOperand::Value(value) => match self.ir_function.expressions[value] {
-                    Expression::GlobalVariable(global)
-                        if self.ir_module.global_variables[global].space
-                            == crate::AddressSpace::Handle =>
+                SpirvOperand::Value(value) => {
+                    if let Expression::GlobalVariable(global) = self.ir_function.expressions[value]
+                        && self.ir_module.global_variables[global].space
+                            == crate::AddressSpace::Handle
                     {
                         self.get_handle_id(value)?
+                    } else {
+                        self.cached.get(value)?
                     }
-                    _ => self.cached.get(value)?,
-                },
+                }
                 SpirvOperand::Literal(literal) => literal,
                 SpirvOperand::Pointer(pointer) => {
                     self.write_access_chain(pointer, block, AccessTypeAdjustment::None)?

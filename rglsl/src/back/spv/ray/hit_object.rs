@@ -349,21 +349,29 @@ impl BlockContext<'_> {
                     .require(&feature::CLUSTER_ACCELERATION_STRUCTURE)?;
                 Op::HitObjectGetClusterIdNV
             }
-            Hv::SpherePosition | Hv::SphereRadius | Hv::IsSphereHit => {
+            Hv::SpherePosition => {
                 self.writer.require(&feature::SPHERE_GEOMETRY)?;
-                match value {
-                    Hv::SpherePosition => Op::HitObjectGetSpherePositionNV,
-                    Hv::SphereRadius => Op::HitObjectGetSphereRadiusNV,
-                    _ => Op::HitObjectIsSphereHitNV,
-                }
+                Op::HitObjectGetSpherePositionNV
             }
-            Hv::LssPositions | Hv::LssRadii | Hv::IsLssHit => {
+            Hv::SphereRadius => {
+                self.writer.require(&feature::SPHERE_GEOMETRY)?;
+                Op::HitObjectGetSphereRadiusNV
+            }
+            Hv::IsSphereHit => {
+                self.writer.require(&feature::SPHERE_GEOMETRY)?;
+                Op::HitObjectIsSphereHitNV
+            }
+            Hv::LssPositions => {
                 self.writer.require(&feature::LSS_GEOMETRY)?;
-                match value {
-                    Hv::LssPositions => Op::HitObjectGetLSSPositionsNV,
-                    Hv::LssRadii => Op::HitObjectGetLSSRadiiNV,
-                    _ => Op::HitObjectIsLSSHitNV,
-                }
+                Op::HitObjectGetLSSPositionsNV
+            }
+            Hv::LssRadii => {
+                self.writer.require(&feature::LSS_GEOMETRY)?;
+                Op::HitObjectGetLSSRadiiNV
+            }
+            Hv::IsLssHit => {
+                self.writer.require(&feature::LSS_GEOMETRY)?;
+                Op::HitObjectIsLSSHitNV
             }
             Hv::TriangleVertexPositions => {
                 self.writer.require(&feature::RAY_TRACING_POSITION_FETCH)?;

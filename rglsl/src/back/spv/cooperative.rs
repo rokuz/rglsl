@@ -25,7 +25,27 @@ pub(super) const fn replicate_shape(inner: &TypeInner) -> Result<ReplicateShape,
             ..
         } => ReplicateShape::Copies(size.get()),
         TypeInner::LongVector { .. } => ReplicateShape::Replicated,
-        _ => return Err(Error::Validation("replicating into a non-composite type")),
+        TypeInner::Scalar(_)
+        | TypeInner::Matrix { .. }
+        | TypeInner::TensorLayout { .. }
+        | TypeInner::TensorView { .. }
+        | TypeInner::Tensor { .. }
+        | TypeInner::Atomic(_)
+        | TypeInner::Pointer { .. }
+        | TypeInner::ValuePointer { .. }
+        | TypeInner::Array { .. }
+        | TypeInner::Struct { .. }
+        | TypeInner::Image { .. }
+        | TypeInner::Sampler { .. }
+        | TypeInner::SampledImage { .. }
+        | TypeInner::AccelerationStructure
+        | TypeInner::RayQuery
+        | TypeInner::HitObject { .. }
+        | TypeInner::BindingArray { .. }
+        | TypeInner::BufferDescriptor { .. }
+        | TypeInner::Spirv { .. } => {
+            return Err(Error::Validation("replicating into a non-composite type"));
+        }
     })
 }
 
@@ -133,17 +153,38 @@ impl BlockContext<'_> {
     }
 
     fn matrix_class(&self, ty: Handle<crate::Type>) -> Result<CooperativeMatrixClass, Error> {
-        match self.ir_module.types[ty].inner {
-            TypeInner::CooperativeMatrix { class, .. } => Ok(class),
-            _ => Err(Error::Validation("not a cooperative matrix")),
+        if let TypeInner::CooperativeMatrix { class, .. } = self.ir_module.types[ty].inner {
+            Ok(class)
+        } else {
+            Err(Error::Validation("not a cooperative matrix"))
         }
     }
 
     fn note_matrix_layout(&mut self, layout: Handle<Expression>) -> Result<(), Error> {
-        let value = match self.ir_function.expressions[layout] {
-            Expression::Literal(crate::Literal::I32(value)) => i64::from(value),
-            Expression::Literal(crate::Literal::U32(value)) => i64::from(value),
-            _ => return Ok(()),
+        let Expression::Literal(literal) = self.ir_function.expressions[layout] else {
+            return Ok(());
+        };
+        let value = match literal {
+            crate::Literal::I32(value) => i64::from(value),
+            crate::Literal::U32(value) => i64::from(value),
+            crate::Literal::F64(_)
+            | crate::Literal::F32(_)
+            | crate::Literal::F16(_)
+            | crate::Literal::U8(_)
+            | crate::Literal::I8(_)
+            | crate::Literal::U16(_)
+            | crate::Literal::I16(_)
+            | crate::Literal::U64(_)
+            | crate::Literal::I64(_)
+            | crate::Literal::Bool(_)
+            | crate::Literal::BF16(_)
+            | crate::Literal::FE4M3(_)
+            | crate::Literal::FE5M2(_)
+            | crate::Literal::FE2M1(_)
+            | crate::Literal::FE3M2(_)
+            | crate::Literal::FE2M3(_)
+            | crate::Literal::FUE8M0(_)
+            | crate::Literal::FMXINT8(_) => return Ok(()),
         };
         let blocked_interleaved = [
             spirv::CooperativeMatrixLayout::RowBlockedInterleavedARM,
@@ -382,9 +423,10 @@ impl BlockContext<'_> {
             (_, _, None) => Op::Bitcast,
             (Sk::Bool, Sk::Bool, _) => Op::CopyObject,
             (Sk::Sint | Sk::Uint | Sk::Float, Sk::Bool, Some(_)) => {
-                let op = match source.kind {
-                    Sk::Float => Op::FUnordNotEqual,
-                    _ => Op::INotEqual,
+                let op = if source.kind == Sk::Float {
+                    Op::FUnordNotEqual
+                } else {
+                    Op::INotEqual
                 };
                 let zero = self.writer.get_constant_scalar_with(0, source)?;
                 let lookup = self
@@ -465,7 +507,8 @@ impl BlockContext<'_> {
     }
 
     fn result_inner(&self, expr: Handle<Expression>, scalar: crate::Scalar) -> TypeInner {
-        match *self.fun_info[expr].ty.inner_with(&self.ir_module.types) {
+        let inner = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
+        match *inner {
             TypeInner::CooperativeMatrix {
                 columns,
                 rows,
@@ -486,7 +529,26 @@ impl BlockContext<'_> {
                 scalar,
                 class,
             },
-            ref other => other.clone(),
+            TypeInner::Scalar(_)
+            | TypeInner::Vector { .. }
+            | TypeInner::Matrix { .. }
+            | TypeInner::TensorLayout { .. }
+            | TypeInner::TensorView { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Pointer { .. }
+            | TypeInner::ValuePointer { .. }
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => inner.clone(),
         }
     }
 
@@ -733,7 +795,28 @@ impl BlockContext<'_> {
         let op = match self.ir_module.types[ty].inner {
             TypeInner::TensorLayout { .. } => Op::CreateTensorLayoutNV,
             TypeInner::TensorView { .. } => Op::CreateTensorViewNV,
-            _ => return Err(Error::Validation("creating a non-tensor type")),
+            TypeInner::Scalar(_)
+            | TypeInner::Vector { .. }
+            | TypeInner::Matrix { .. }
+            | TypeInner::CooperativeMatrix { .. }
+            | TypeInner::LongVector { .. }
+            | TypeInner::Tensor { .. }
+            | TypeInner::Atomic(_)
+            | TypeInner::Pointer { .. }
+            | TypeInner::ValuePointer { .. }
+            | TypeInner::Array { .. }
+            | TypeInner::Struct { .. }
+            | TypeInner::Image { .. }
+            | TypeInner::Sampler { .. }
+            | TypeInner::SampledImage { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::RayQuery
+            | TypeInner::HitObject { .. }
+            | TypeInner::BindingArray { .. }
+            | TypeInner::BufferDescriptor { .. }
+            | TypeInner::Spirv { .. } => {
+                return Err(Error::Validation("creating a non-tensor type"));
+            }
         };
         let id = self.gen_id();
         let mut instruction = Instruction::new(op);

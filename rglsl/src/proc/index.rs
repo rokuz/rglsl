@@ -104,10 +104,39 @@ impl crate::TypeInner {
                     Ti::Array { size, .. } | Ti::BindingArray { size, .. } => {
                         return size.to_indexable_length(module);
                     }
-                    _ => return Err(IndexableLengthError::TypeNotIndexable),
+                    Ti::Scalar(_)
+                    | Ti::TensorLayout { .. }
+                    | Ti::TensorView { .. }
+                    | Ti::Tensor { .. }
+                    | Ti::Atomic(_)
+                    | Ti::Pointer { .. }
+                    | Ti::ValuePointer { .. }
+                    | Ti::Struct { .. }
+                    | Ti::Image { .. }
+                    | Ti::Sampler { .. }
+                    | Ti::SampledImage { .. }
+                    | Ti::AccelerationStructure
+                    | Ti::RayQuery
+                    | Ti::HitObject { .. }
+                    | Ti::BufferDescriptor { .. }
+                    | Ti::Spirv { .. } => return Err(IndexableLengthError::TypeNotIndexable),
                 }
             }
-            _ => return Err(IndexableLengthError::TypeNotIndexable),
+            Ti::Scalar(_)
+            | Ti::TensorLayout { .. }
+            | Ti::TensorView { .. }
+            | Ti::Tensor { .. }
+            | Ti::Atomic(_)
+            | Ti::ValuePointer { size: None, .. }
+            | Ti::Struct { .. }
+            | Ti::Image { .. }
+            | Ti::Sampler { .. }
+            | Ti::SampledImage { .. }
+            | Ti::AccelerationStructure
+            | Ti::RayQuery
+            | Ti::HitObject { .. }
+            | Ti::BufferDescriptor { .. }
+            | Ti::Spirv { .. } => return Err(IndexableLengthError::TypeNotIndexable),
         };
         Ok(IndexableLength::Known(known_length))
     }

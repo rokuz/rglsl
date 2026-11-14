@@ -190,7 +190,7 @@ fn sampled_image_name(
         .replacen("image", "sampler", 1);
     match class {
         crate::ImageClass::Depth { .. } => format!("{name}Shadow"),
-        _ => name,
+        crate::ImageClass::Sampled { .. } | crate::ImageClass::Storage { .. } => name,
     }
 }
 
@@ -279,23 +279,21 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
 fn parameter_copies(function: &crate::Function) -> FastHashMap<u32, Handle<crate::LocalVariable>> {
     let mut copies = FastHashMap::default();
     for statement in function.body.iter() {
-        match *statement {
-            crate::Statement::Emit(_) => {}
-            crate::Statement::Store { pointer, value } => {
-                let Ok(&crate::Expression::LocalVariable(local)) =
-                    function.expressions.try_get(pointer)
-                else {
-                    break;
-                };
-                let Ok(&crate::Expression::FunctionArgument(index)) =
-                    function.expressions.try_get(value)
-                else {
-                    break;
-                };
-                copies.entry(index).or_insert(local);
-            }
-            _ => break,
+        if matches!(*statement, crate::Statement::Emit(_)) {
+            continue;
         }
+        let crate::Statement::Store { pointer, value } = *statement else {
+            break;
+        };
+        let Ok(&crate::Expression::LocalVariable(local)) = function.expressions.try_get(pointer)
+        else {
+            break;
+        };
+        let Ok(&crate::Expression::FunctionArgument(index)) = function.expressions.try_get(value)
+        else {
+            break;
+        };
+        copies.entry(index).or_insert(local);
     }
     copies
 }

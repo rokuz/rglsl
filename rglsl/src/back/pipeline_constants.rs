@@ -179,42 +179,37 @@ pub fn process_overrides<'a>(
     // expressions. Because we know they form a DAG, we know the
     // `Override` expressions we encounter can only have initializers
     // referring to global expressions we've already simplified.
-    for (old_h, expr, span) in module.global_expressions.drain() {
-        let mut expr = match expr {
-            Expression::Override(h) => {
-                let c_h = if let Some(new_h) = override_map.get(h) {
-                    *new_h
-                } else {
-                    let mut found = None;
-                    for entry in override_iter.by_ref() {
-                        let stop = entry.0 == h;
-                        let new_h = process_override(
-                            entry,
-                            pipeline_constants,
-                            &mut module,
-                            &mut override_map,
-                            &adjusted_global_expressions,
-                            &mut adjusted_constant_initializers,
-                            &mut global_expression_kind_tracker,
-                        )?;
-                        if stop {
-                            found = Some(new_h);
-                            break;
-                        }
+    for (old_h, mut expr, span) in module.global_expressions.drain() {
+        if let Expression::Override(h) = expr {
+            let c_h = if let Some(new_h) = override_map.get(h) {
+                *new_h
+            } else {
+                let mut found = None;
+                for entry in override_iter.by_ref() {
+                    let stop = entry.0 == h;
+                    let new_h = process_override(
+                        entry,
+                        pipeline_constants,
+                        &mut module,
+                        &mut override_map,
+                        &adjusted_global_expressions,
+                        &mut adjusted_constant_initializers,
+                        &mut global_expression_kind_tracker,
+                    )?;
+                    if stop {
+                        found = Some(new_h);
+                        break;
                     }
-                    found.ok_or(PipelineConstantError::UnresolvedOverride)?
-                };
-                Expression::Constant(c_h)
-            }
-            Expression::Constant(c_h) => {
-                if adjusted_constant_initializers.insert(c_h) {
-                    let init = &mut module.constants[c_h].init;
-                    *init = adjusted_global_expressions[*init];
                 }
-                expr
-            }
-            expr => expr,
-        };
+                found.ok_or(PipelineConstantError::UnresolvedOverride)?
+            };
+            expr = Expression::Constant(c_h);
+        } else if let Expression::Constant(c_h) = expr
+            && adjusted_constant_initializers.insert(c_h)
+        {
+            let init = &mut module.constants[c_h].init;
+            *init = adjusted_global_expressions[*init];
+        }
         let mut evaluator = ConstantEvaluator::for_glsl_module(
             &mut module,
             &mut global_expression_kind_tracker,
@@ -541,27 +536,26 @@ fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {
 fn filter_emits(block: &mut Block, expressions: &Arena<Expression>) {
     let original = mem::replace(block, Block::with_capacity(block.len()));
     for (stmt, span) in original.span_into_iter() {
-        match stmt {
-            Statement::Emit(range) => {
-                let mut current = None;
-                for expr_h in range {
-                    if expressions[expr_h].needs_pre_emit() {
-                        if let Some((first, last)) = current {
-                            block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
-                        }
-
-                        current = None;
-                    } else if let Some((_, ref mut last)) = current {
-                        *last = expr_h;
-                    } else {
-                        current = Some((expr_h, expr_h));
+        if let Statement::Emit(range) = stmt {
+            let mut current = None;
+            for expr_h in range {
+                if expressions[expr_h].needs_pre_emit() {
+                    if let Some((first, last)) = current {
+                        block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
                     }
-                }
-                if let Some((first, last)) = current {
-                    block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
+
+                    current = None;
+                } else if let Some((_, ref mut last)) = current {
+                    *last = expr_h;
+                } else {
+                    current = Some((expr_h, expr_h));
                 }
             }
-            stmt => block.push(stmt, span),
+            if let Some((first, last)) = current {
+                block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
+            }
+        } else {
+            block.push(stmt, span);
         }
     }
 }

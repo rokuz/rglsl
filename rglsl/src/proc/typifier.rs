@@ -1,10 +1,14 @@
-use alloc::{format, string::String};
+mod access;
+mod image;
+mod operator;
+mod ray;
+
+use alloc::string::String;
 
 use thiserror::Error;
 
 use crate::{
     arena::{Arena, Handle, UniqueArena},
-    common::ForDebugWithTypes,
     ir,
 };
 
@@ -203,18 +207,6 @@ impl<'a> ResolveContext<'a> {
         }
     }
 
-    fn f32_array(
-        &self,
-        size: Option<crate::VectorSize>,
-        length: core::num::NonZeroU32,
-    ) -> Result<TypeResolution, ResolveError> {
-        self.special_types
-            .predeclared_types
-            .get(&crate::PredeclaredType::F32Array { size, length })
-            .map(|&handle| TypeResolution::Handle(handle))
-            .ok_or(ResolveError::MissingSpecialType)
-    }
-
     /// Determine the type of `expr`.
     ///
     /// The `past` argument must be a closure that can resolve the types of any
@@ -236,212 +228,23 @@ impl<'a> ResolveContext<'a> {
         past: impl Fn(Handle<crate::Expression>) -> Result<&'a TypeResolution, ResolveError>,
     ) -> Result<TypeResolution, ResolveError> {
         use crate::TypeInner as Ti;
-        let types = self.types;
         Ok(match *expr {
-            crate::Expression::Access { base, .. } => match *past(base)?.inner_with(types) {
-                // Arrays and matrices can only be indexed dynamically behind a
-                // pointer, but that's a validation error, not a type error, so
-                // go ahead provide a type here.
-                Ti::Array { base, .. } => TypeResolution::Handle(base),
-                Ti::Matrix { rows, scalar, .. } => {
-                    TypeResolution::Value(Ti::Vector { size: rows, scalar })
-                }
-                Ti::Vector { size: _, scalar }
-                | Ti::LongVector { scalar, .. }
-                | Ti::CooperativeMatrix { scalar, .. } => TypeResolution::Value(Ti::Scalar(scalar)),
-                Ti::ValuePointer {
-                    size: Some(_),
-                    scalar,
-                    space,
-                } => TypeResolution::Value(Ti::ValuePointer {
-                    size: None,
-                    scalar,
-                    space,
-                }),
-                Ti::Pointer { base, space } => {
-                    TypeResolution::Value(match types[base].inner {
-                        Ti::Array { base, .. } => Ti::Pointer { base, space },
-                        Ti::Vector { size: _, scalar }
-                        | Ti::LongVector { scalar, .. }
-                        | Ti::CooperativeMatrix { scalar, .. } => Ti::ValuePointer {
-                            size: None,
-                            scalar,
-                            space,
-                        },
-                        // Matrices are only dynamically indexed behind a pointer
-                        Ti::Matrix {
-                            columns: _,
-                            rows,
-                            scalar,
-                        } => Ti::ValuePointer {
-                            size: Some(rows),
-                            scalar,
-                            space,
-                        },
-                        Ti::BindingArray { base, .. } => Ti::Pointer { base, space },
-                        ref other => {
-                            log::error!("Access sub-type {other:?}");
-                            return Err(ResolveError::InvalidSubAccess {
-                                ty: base,
-                                indexed: false,
-                            });
-                        }
-                    })
-                }
-                Ti::BindingArray { base, .. } => TypeResolution::Handle(base),
-                ref other => {
-                    log::error!("Access type {other:?}");
-                    return Err(ResolveError::InvalidAccess {
-                        expr: base,
-                        indexed: false,
-                    });
-                }
-            },
+            crate::Expression::Access { base, .. } => self.resolve_access(base, past)?,
             crate::Expression::AccessIndex { base, index } => {
-                match *past(base)?.inner_with(types) {
-                    Ti::Vector { size, scalar } => {
-                        if index >= size as u32 {
-                            return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                        }
-                        TypeResolution::Value(Ti::Scalar(scalar))
-                    }
-                    Ti::LongVector { size, scalar, .. } => {
-                        if size.known().is_some_and(|size| index >= size) {
-                            return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                        }
-                        TypeResolution::Value(Ti::Scalar(scalar))
-                    }
-                    Ti::CooperativeMatrix { scalar, .. } => {
-                        TypeResolution::Value(Ti::Scalar(scalar))
-                    }
-                    Ti::Matrix {
-                        columns,
-                        rows,
-                        scalar,
-                    } => {
-                        if index >= columns as u32 {
-                            return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                        }
-                        TypeResolution::Value(crate::TypeInner::Vector { size: rows, scalar })
-                    }
-                    Ti::Array { base, .. } => TypeResolution::Handle(base),
-                    Ti::Struct { ref members, .. } => {
-                        let member = members
-                            .get(index as usize)
-                            .ok_or(ResolveError::OutOfBoundsIndex { expr: base, index })?;
-                        TypeResolution::Handle(member.ty)
-                    }
-                    Ti::ValuePointer {
-                        size: Some(size),
-                        scalar,
-                        space,
-                    } => {
-                        if index >= size as u32 {
-                            return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                        }
-                        TypeResolution::Value(Ti::ValuePointer {
-                            size: None,
-                            scalar,
-                            space,
-                        })
-                    }
-                    Ti::Pointer {
-                        base: ty_base,
-                        space,
-                    } => TypeResolution::Value(match types[ty_base].inner {
-                        Ti::Array { base, .. } => Ti::Pointer { base, space },
-                        Ti::Vector { size, scalar } => {
-                            if index >= size as u32 {
-                                return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                            }
-                            Ti::ValuePointer {
-                                size: None,
-                                scalar,
-                                space,
-                            }
-                        }
-                        Ti::LongVector { size, scalar, .. } => {
-                            if size.known().is_some_and(|size| index >= size) {
-                                return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                            }
-                            Ti::ValuePointer {
-                                size: None,
-                                scalar,
-                                space,
-                            }
-                        }
-                        Ti::CooperativeMatrix { scalar, .. } => Ti::ValuePointer {
-                            size: None,
-                            scalar,
-                            space,
-                        },
-                        Ti::Matrix {
-                            rows,
-                            columns,
-                            scalar,
-                        } => {
-                            if index >= columns as u32 {
-                                return Err(ResolveError::OutOfBoundsIndex { expr: base, index });
-                            }
-                            Ti::ValuePointer {
-                                size: Some(rows),
-                                scalar,
-                                space,
-                            }
-                        }
-                        Ti::Struct { ref members, .. } => {
-                            let member = members
-                                .get(index as usize)
-                                .ok_or(ResolveError::OutOfBoundsIndex { expr: base, index })?;
-                            Ti::Pointer {
-                                base: member.ty,
-                                space,
-                            }
-                        }
-                        Ti::BindingArray { base, .. } => Ti::Pointer { base, space },
-                        ref other => {
-                            log::error!("Access index sub-type {other:?}");
-                            return Err(ResolveError::InvalidSubAccess {
-                                ty: ty_base,
-                                indexed: true,
-                            });
-                        }
-                    }),
-                    Ti::BindingArray { base, .. } => TypeResolution::Handle(base),
-                    ref other => {
-                        log::error!("Access index type {other:?}");
-                        return Err(ResolveError::InvalidAccess {
-                            expr: base,
-                            indexed: true,
-                        });
-                    }
-                }
+                self.resolve_access_index(base, index, past)?
             }
-            crate::Expression::Splat { size, value } => match *past(value)?.inner_with(types) {
-                Ti::Scalar(scalar) => TypeResolution::Value(Ti::Vector { size, scalar }),
-                ref other => {
-                    log::error!("Scalar type {other:?}");
-                    return Err(ResolveError::InvalidScalar(value));
-                }
-            },
+            crate::Expression::Splat { size, value } => self.resolve_splat(size, value, past)?,
             crate::Expression::Swizzle {
                 size,
                 vector,
                 pattern: _,
-            } => match *past(vector)?.inner_with(types) {
-                Ti::Vector { size: _, scalar } => {
-                    TypeResolution::Value(Ti::Vector { size, scalar })
-                }
-                ref other => {
-                    log::error!("Vector type {other:?}");
-                    return Err(ResolveError::InvalidVector(vector));
-                }
-            },
+            } => self.resolve_swizzle(size, vector, past)?,
             crate::Expression::Literal(lit) => TypeResolution::Value(lit.ty_inner()),
             crate::Expression::Constant(h) => TypeResolution::Handle(self.constants[h].ty),
             crate::Expression::Override(h) => TypeResolution::Handle(self.overrides[h].ty),
-            crate::Expression::ZeroValue(ty) => TypeResolution::Handle(ty),
-            crate::Expression::Compose { ty, .. } => TypeResolution::Handle(ty),
+            crate::Expression::ZeroValue(ty) | crate::Expression::Compose { ty, .. } => {
+                TypeResolution::Handle(ty)
+            }
             crate::Expression::FunctionArgument(index) => {
                 let arg = self
                     .arguments
@@ -467,387 +270,48 @@ impl<'a> ResolveContext<'a> {
                     space: crate::AddressSpace::Function,
                 })
             }
-            crate::Expression::Load { pointer } => match *past(pointer)?.inner_with(types) {
-                Ti::Pointer { base, space: _ } => {
-                    if let Ti::Atomic(scalar) = types[base].inner {
-                        TypeResolution::Value(Ti::Scalar(scalar))
-                    } else {
-                        TypeResolution::Handle(base)
-                    }
-                }
-                Ti::ValuePointer {
-                    size,
-                    scalar,
-                    space: _,
-                } => TypeResolution::Value(match size {
-                    Some(size) => Ti::Vector { size, scalar },
-                    None => Ti::Scalar(scalar),
-                }),
-                ref other => {
-                    log::error!("Pointer {pointer:?} type {other:?}");
-                    return Err(ResolveError::InvalidPointer(pointer));
-                }
-            },
-            crate::Expression::ImageSample {
-                sparse: Some(ty), ..
-            }
-            | crate::Expression::ImageLoad {
-                sparse: Some(ty), ..
-            } => TypeResolution::Handle(ty),
+            crate::Expression::Load { pointer } => self.resolve_load(pointer, past)?,
             crate::Expression::ImageSample {
                 image,
-                gather: Some(_),
+                gather,
+                depth_ref,
+                sparse,
                 ..
-            } => match *past(image)?.inner_with(types) {
-                Ti::Image { class, .. } | Ti::SampledImage { class, .. } => {
-                    TypeResolution::Value(Ti::Vector {
-                        scalar: crate::Scalar {
-                            kind: match class {
-                                crate::ImageClass::Sampled { kind, multi: _ } => kind,
-                                _ => crate::ScalarKind::Float,
-                            },
-                            width: 4,
-                        },
-                        size: crate::VectorSize::Quad,
-                    })
-                }
-                ref other => {
-                    log::error!("Image type {other:?}");
-                    return Err(ResolveError::InvalidImage(image));
-                }
-            },
-            crate::Expression::ImageSample {
-                depth_ref: Some(_), ..
-            } => TypeResolution::Value(Ti::Scalar(crate::Scalar::F32)),
-            crate::Expression::ImageSample { image, .. }
-            | crate::Expression::ImageLoad { image, .. } => match *past(image)?.inner_with(types) {
-                Ti::Image { class, .. } | Ti::SampledImage { class, .. } => {
-                    TypeResolution::Value(match class {
-                        crate::ImageClass::Depth { multi: _ } => Ti::Scalar(crate::Scalar::F32),
-                        crate::ImageClass::Sampled { kind, multi: _ } => Ti::Vector {
-                            scalar: crate::Scalar { kind, width: 4 },
-                            size: crate::VectorSize::Quad,
-                        },
-                        crate::ImageClass::Storage { format, .. } => Ti::Vector {
-                            scalar: format.into(),
-                            size: crate::VectorSize::Quad,
-                        },
-                    })
-                }
-                ref other => {
-                    log::error!("Image type {other:?}");
-                    return Err(ResolveError::InvalidImage(image));
-                }
-            },
-            crate::Expression::ImageQuery { image, query } => TypeResolution::Value(match query {
-                crate::ImageQuery::Size { level: _ } => match *past(image)?.inner_with(types) {
-                    Ti::Image { dim, .. } | Ti::SampledImage { dim, .. } => match dim {
-                        crate::ImageDimension::D1 | crate::ImageDimension::Buffer => {
-                            Ti::Scalar(crate::Scalar::U32)
-                        }
-                        crate::ImageDimension::D2
-                        | crate::ImageDimension::Cube
-                        | crate::ImageDimension::Subpass
-                        | crate::ImageDimension::TileImageData => Ti::Vector {
-                            size: crate::VectorSize::Bi,
-                            scalar: crate::Scalar::U32,
-                        },
-                        crate::ImageDimension::D3 => Ti::Vector {
-                            size: crate::VectorSize::Tri,
-                            scalar: crate::Scalar::U32,
-                        },
-                    },
-                    ref other => {
-                        log::error!("Image type {other:?}");
-                        return Err(ResolveError::InvalidImage(image));
-                    }
-                },
-                crate::ImageQuery::NumLevels
-                | crate::ImageQuery::NumLayers
-                | crate::ImageQuery::NumSamples => Ti::Scalar(crate::Scalar::U32),
-                crate::ImageQuery::Lod { .. } => Ti::Vector {
-                    size: crate::VectorSize::Bi,
-                    scalar: crate::Scalar::F32,
-                },
-            }),
+            } => self.resolve_image_sample(image, gather, depth_ref, sparse, past)?,
+            crate::Expression::ImageLoad { image, sparse, .. } => {
+                self.resolve_image_load(image, sparse, past)?
+            }
+            crate::Expression::ImageQuery { image, query } => {
+                self.resolve_image_query(image, query, past)?
+            }
             crate::Expression::ImageSparseResident { .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
-            crate::Expression::Unary { expr, .. } => past(expr)?.clone(),
-            crate::Expression::Binary { op, left, right } => match op {
-                crate::BinaryOperator::Add
-                | crate::BinaryOperator::Subtract
-                | crate::BinaryOperator::Divide
-                | crate::BinaryOperator::Modulo => past(left)?.clone(),
-                crate::BinaryOperator::Multiply => {
-                    let (res_left, res_right) = (past(left)?, past(right)?);
-                    match (res_left.inner_with(types), res_right.inner_with(types)) {
-                        (
-                            &Ti::Matrix {
-                                columns: _,
-                                rows,
-                                scalar,
-                            },
-                            &Ti::Matrix { columns, .. },
-                        ) => TypeResolution::Value(Ti::Matrix {
-                            columns,
-                            rows,
-                            scalar,
-                        }),
-                        (
-                            &Ti::Matrix {
-                                columns: _,
-                                rows,
-                                scalar,
-                            },
-                            &Ti::Vector { .. },
-                        ) => TypeResolution::Value(Ti::Vector { size: rows, scalar }),
-                        (
-                            &Ti::Vector { .. },
-                            &Ti::Matrix {
-                                columns,
-                                rows: _,
-                                scalar,
-                            },
-                        ) => TypeResolution::Value(Ti::Vector {
-                            size: columns,
-                            scalar,
-                        }),
-                        (&Ti::Scalar { .. }, _) => res_right.clone(),
-                        (_, &Ti::Scalar { .. }) => res_left.clone(),
-                        (&Ti::Vector { .. }, &Ti::Vector { .. })
-                        | (&Ti::LongVector { .. }, &Ti::LongVector { .. })
-                        | (&Ti::CooperativeMatrix { .. }, &Ti::CooperativeMatrix { .. }) => {
-                            res_left.clone()
-                        }
-                        (tl, tr) => {
-                            return Err(ResolveError::IncompatibleOperands(format!(
-                                "{tl:?} * {tr:?}"
-                            )));
-                        }
-                    }
-                }
-                crate::BinaryOperator::Equal
-                | crate::BinaryOperator::NotEqual
-                | crate::BinaryOperator::Less
-                | crate::BinaryOperator::LessEqual
-                | crate::BinaryOperator::Greater
-                | crate::BinaryOperator::GreaterEqual => {
-                    // These accept scalars or vectors.
-                    let scalar = crate::Scalar::BOOL;
-                    let inner = match *past(left)?.inner_with(types) {
-                        Ti::Scalar { .. } => Ti::Scalar(scalar),
-                        Ti::Vector { size, .. } => Ti::Vector { size, scalar },
-                        Ti::LongVector { size, class, .. } => Ti::LongVector {
-                            size,
-                            scalar,
-                            class,
-                        },
-                        ref other => {
-                            return Err(ResolveError::IncompatibleOperands(format!(
-                                "{op:?}({other:?}, _)"
-                            )));
-                        }
-                    };
-                    TypeResolution::Value(inner)
-                }
-                crate::BinaryOperator::LogicalAnd | crate::BinaryOperator::LogicalOr => {
-                    // These accept scalars only.
-                    let bool = Ti::Scalar(crate::Scalar::BOOL);
-                    let ty = past(left)?.inner_with(types);
-                    if *ty == bool {
-                        TypeResolution::Value(bool)
-                    } else {
-                        return Err(ResolveError::IncompatibleOperands(format!(
-                            "{op:?}({:?}, _)",
-                            ty.for_debug(types),
-                        )));
-                    }
-                }
-                crate::BinaryOperator::And
-                | crate::BinaryOperator::ExclusiveOr
-                | crate::BinaryOperator::InclusiveOr
-                | crate::BinaryOperator::ShiftLeft
-                | crate::BinaryOperator::ShiftRight => past(left)?.clone(),
-            },
-            crate::Expression::AtomicResult { ty, .. } => TypeResolution::Handle(ty),
-            crate::Expression::SubgroupOperationResult { ty } => TypeResolution::Handle(ty),
-            crate::Expression::SpirvInstructionResult { ty } => TypeResolution::Handle(ty),
-            crate::Expression::Select { accept, .. } => past(accept)?.clone(),
-            crate::Expression::Derivative { expr, .. } => past(expr)?.clone(),
-            crate::Expression::Relational { fun, argument } => match fun {
-                crate::RelationalFunction::All | crate::RelationalFunction::Any => {
-                    TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
-                }
-                crate::RelationalFunction::IsNan | crate::RelationalFunction::IsInf => {
-                    match *past(argument)?.inner_with(types) {
-                        Ti::Scalar { .. } => TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL)),
-                        Ti::Vector { size, .. } => TypeResolution::Value(Ti::Vector {
-                            scalar: crate::Scalar::BOOL,
-                            size,
-                        }),
-                        Ti::LongVector { size, class, .. } => {
-                            TypeResolution::Value(Ti::LongVector {
-                                scalar: crate::Scalar::BOOL,
-                                size,
-                                class,
-                            })
-                        }
-                        ref other => {
-                            return Err(ResolveError::IncompatibleOperands(format!(
-                                "{fun:?}({other:?})"
-                            )));
-                        }
-                    }
-                }
-            },
+            crate::Expression::Unary { expr, .. }
+            | crate::Expression::Select { accept: expr, .. }
+            | crate::Expression::Derivative { expr, .. }
+            | crate::Expression::HeapOffset { pointer: expr, .. }
+            | crate::Expression::CooperativeMultiplyAdd { c: expr, .. }
+            | crate::Expression::Expect { value: expr, .. }
+            | crate::Expression::TensorSet { base: expr, .. } => past(expr)?.clone(),
+            crate::Expression::Binary { op, left, right } => {
+                self.resolve_binary(op, left, right, past)?
+            }
+            crate::Expression::Relational { fun, argument } => {
+                self.resolve_relational(fun, argument, past)?
+            }
             crate::Expression::Math {
                 fun,
                 arg,
                 arg1,
                 arg2: _,
                 arg3: _,
-            } => {
-                use crate::proc::OverloadSet as _;
-
-                if let (
-                    crate::MathFunction::Dot,
-                    &Ti::Vector {
-                        scalar:
-                            scalar @ crate::Scalar {
-                                kind: crate::ScalarKind::BFloat,
-                                ..
-                            },
-                        ..
-                    },
-                ) = (fun, past(arg)?.inner_with(types))
-                {
-                    return Ok(TypeResolution::Value(Ti::Scalar(scalar)));
-                }
-                if let Ti::LongVector { scalar, .. } = *past(arg)?.inner_with(types) {
-                    if let Some(result) =
-                        crate::proc::long_math_result(fun, past(arg)?.inner_with(types), types)
-                    {
-                        return types
-                            .get(&result)
-                            .map(TypeResolution::Handle)
-                            .ok_or(ResolveError::BuiltinArgumentsInvalid(format!("{fun:?}")));
-                    }
-                    return Ok(match fun {
-                        crate::MathFunction::Dot
-                        | crate::MathFunction::Length
-                        | crate::MathFunction::Distance => {
-                            TypeResolution::Value(Ti::Scalar(scalar))
-                        }
-                        _ => past(arg)?.clone(),
-                    });
-                }
-
-                let mut overloads = fun.overloads();
-                log::debug!(
-                    "initial overloads for {fun:?}, {:#?}",
-                    overloads.for_debug(types)
-                );
-
-                let res_arg = past(arg)?;
-                overloads = overloads.arg(0, res_arg.inner_with(types), types);
-                log::debug!(
-                    "overloads after arg 0 of type {:?}: {:#?}",
-                    res_arg.for_debug(types),
-                    overloads.for_debug(types)
-                );
-
-                if let Some(arg1) = arg1 {
-                    let res_arg1 = past(arg1)?;
-                    overloads = overloads.arg(1, res_arg1.inner_with(types), types);
-                    log::debug!(
-                        "overloads after arg 1 of type {:?}: {:#?}",
-                        res_arg1.for_debug(types),
-                        overloads.for_debug(types)
-                    );
-                }
-
-                if overloads.is_empty() {
-                    return Err(ResolveError::BuiltinArgumentsInvalid(format!("{fun:?}")));
-                }
-
-                let rule = overloads
-                    .most_preferred()
-                    .ok_or_else(|| ResolveError::BuiltinArgumentsInvalid(format!("{fun:?}")))?;
-
-                rule.conclusion.into_resolution(self.special_types)?
-            }
+            } => self.resolve_math(fun, arg, arg1, past)?,
             crate::Expression::As {
                 expr,
                 kind,
                 convert,
-            } => match *past(expr)?.inner_with(types) {
-                Ti::Scalar(crate::Scalar { width, .. }) => {
-                    TypeResolution::Value(Ti::Scalar(crate::Scalar {
-                        kind,
-                        width: convert.unwrap_or(width),
-                    }))
-                }
-                Ti::Vector {
-                    size,
-                    scalar: crate::Scalar { kind: _, width },
-                } => TypeResolution::Value(Ti::Vector {
-                    size,
-                    scalar: crate::Scalar {
-                        kind,
-                        width: convert.unwrap_or(width),
-                    },
-                }),
-                Ti::Matrix {
-                    columns,
-                    rows,
-                    mut scalar,
-                } => {
-                    if let Some(width) = convert {
-                        scalar.width = width;
-                    }
-                    TypeResolution::Value(Ti::Matrix {
-                        columns,
-                        rows,
-                        scalar,
-                    })
-                }
-                Ti::LongVector {
-                    size,
-                    scalar: crate::Scalar { kind: _, width },
-                    class,
-                } => TypeResolution::Value(Ti::LongVector {
-                    size,
-                    scalar: crate::Scalar {
-                        kind,
-                        width: convert.unwrap_or(width),
-                    },
-                    class,
-                }),
-                Ti::CooperativeMatrix {
-                    columns,
-                    rows,
-                    scalar: crate::Scalar { kind: _, width },
-                    role,
-                    scope,
-                    class,
-                } => TypeResolution::Value(Ti::CooperativeMatrix {
-                    columns,
-                    rows,
-                    scalar: crate::Scalar {
-                        kind,
-                        width: convert.unwrap_or(width),
-                    },
-                    role,
-                    scope,
-                    class,
-                }),
-                ref other => {
-                    return Err(ResolveError::IncompatibleOperands(format!(
-                        "{other:?} as {kind:?}"
-                    )));
-                }
-            },
+            } => self.resolve_as(expr, kind, convert, past)?,
             crate::Expression::CallResult(function) => {
                 let result = self.functions[function]
                     .result
@@ -855,31 +319,32 @@ impl<'a> ResolveContext<'a> {
                     .ok_or(ResolveError::FunctionReturnsVoid)?;
                 TypeResolution::Handle(result.ty)
             }
-            crate::Expression::ArrayLength(_) => {
+            crate::Expression::AtomicResult { ty, .. }
+            | crate::Expression::SubgroupOperationResult { ty }
+            | crate::Expression::SpirvInstructionResult { ty }
+            | crate::Expression::PhysicalPointer { ty, .. }
+            | crate::Expression::ImageFootprint { ty, .. }
+            | crate::Expression::CooperativeLoad { ty, .. }
+            | crate::Expression::Replicate { ty, .. }
+            | crate::Expression::CooperativeVectorLoad { ty, .. }
+            | crate::Expression::CooperativeVectorMatMul { ty, .. }
+            | crate::Expression::Convert { ty, .. }
+            | crate::Expression::ArrayConversion { ty, .. }
+            | crate::Expression::Bitcast { ty, .. }
+            | crate::Expression::CooperativeMatrixResult { ty }
+            | crate::Expression::TensorCreate { ty }
+            | crate::Expression::TensorRead { ty, .. } => TypeResolution::Handle(ty),
+            crate::Expression::ArrayLength(_)
+            | crate::Expression::TensorQuerySize { .. }
+            | crate::Expression::CooperativeMatrixLength { .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
             }
             crate::Expression::WideArrayLength(_) => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U64))
             }
-            crate::Expression::PhysicalPointer { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::BufferPointer { descriptor } => {
-                match *past(descriptor)?.inner_with(types) {
-                    Ti::Pointer { base, .. } => match types[base].inner {
-                        Ti::BufferDescriptor { base, space } => {
-                            TypeResolution::Value(Ti::Pointer { base, space })
-                        }
-                        ref other => {
-                            log::error!("Buffer pointer of {other:?}");
-                            return Err(ResolveError::InvalidPointer(descriptor));
-                        }
-                    },
-                    ref other => {
-                        log::error!("Buffer pointer of {other:?}");
-                        return Err(ResolveError::InvalidPointer(descriptor));
-                    }
-                }
+                self.resolve_buffer_pointer(descriptor, past)?
             }
-            crate::Expression::HeapOffset { pointer, .. } => past(pointer)?.clone(),
             crate::Expression::PhysicalAddress { split: false, .. } => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::U64))
             }
@@ -889,134 +354,18 @@ impl<'a> ResolveContext<'a> {
                     scalar: crate::Scalar::U32,
                 })
             }
-            crate::Expression::RayQueryProceedResult => {
+            crate::Expression::RayQueryProceedResult
+            | crate::Expression::ReportIntersectionResult
+            | crate::Expression::IsHelperInvocation => {
                 TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
-            crate::Expression::RayQueryGet { value, .. } => {
-                use crate::RayQueryIntersectionValue as Iv;
-                let vector = |size, scalar| Ti::Vector { size, scalar };
-                let f32_3 = vector(crate::VectorSize::Tri, crate::Scalar::F32);
-                let matrix = Ti::Matrix {
-                    columns: crate::VectorSize::Quad,
-                    rows: crate::VectorSize::Tri,
-                    scalar: crate::Scalar::F32,
-                };
-                match value {
-                    crate::RayQueryValue::RayFlags => {
-                        TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
-                    }
-                    crate::RayQueryValue::RayTMin => {
-                        TypeResolution::Value(Ti::Scalar(crate::Scalar::F32))
-                    }
-                    crate::RayQueryValue::WorldRayOrigin
-                    | crate::RayQueryValue::WorldRayDirection => TypeResolution::Value(f32_3),
-                    crate::RayQueryValue::CandidateAabbOpaque => {
-                        TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
-                    }
-                    crate::RayQueryValue::Intersection { value, .. } => match value {
-                        Iv::Type | Iv::InstanceShaderBindingTableRecordOffset => {
-                            TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
-                        }
-                        Iv::T => TypeResolution::Value(Ti::Scalar(crate::Scalar::F32)),
-                        Iv::InstanceCustomIndex
-                        | Iv::InstanceId
-                        | Iv::GeometryIndex
-                        | Iv::PrimitiveIndex => {
-                            TypeResolution::Value(Ti::Scalar(crate::Scalar::I32))
-                        }
-                        Iv::Barycentrics => {
-                            TypeResolution::Value(vector(crate::VectorSize::Bi, crate::Scalar::F32))
-                        }
-                        Iv::FrontFace => TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL)),
-                        Iv::ObjectRayDirection | Iv::ObjectRayOrigin => {
-                            TypeResolution::Value(f32_3)
-                        }
-                        Iv::ObjectToWorld | Iv::WorldToObject => TypeResolution::Value(matrix),
-                        Iv::TriangleVertexPositions => TypeResolution::Handle(
-                            self.special_types
-                                .ray_vertex_return
-                                .ok_or(ResolveError::MissingSpecialType)?,
-                        ),
-                        Iv::ClusterId => TypeResolution::Value(Ti::Scalar(crate::Scalar::I32)),
-                        Iv::SpherePosition => TypeResolution::Value(f32_3),
-                        Iv::SphereRadius | Iv::LssHitValue => {
-                            TypeResolution::Value(Ti::Scalar(crate::Scalar::F32))
-                        }
-                        Iv::IsSphereHit | Iv::IsLssHit => {
-                            TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
-                        }
-                        Iv::LssPositions => {
-                            self.f32_array(Some(crate::VectorSize::Tri), LSS_ARRAY_LENGTH)?
-                        }
-                        Iv::LssRadii => self.f32_array(None, LSS_ARRAY_LENGTH)?,
-                    },
-                }
-            }
-            crate::Expression::HitObjectGet { value, .. } => {
-                use crate::HitObjectValue as Hv;
-                let scalar = |scalar| TypeResolution::Value(Ti::Scalar(scalar));
-                let f32_3 = TypeResolution::Value(Ti::Vector {
-                    size: crate::VectorSize::Tri,
-                    scalar: crate::Scalar::F32,
-                });
-                match value {
-                    Hv::IsEmpty | Hv::IsHit | Hv::IsMiss | Hv::IsSphereHit | Hv::IsLssHit => {
-                        scalar(crate::Scalar::BOOL)
-                    }
-                    Hv::RayTMin | Hv::RayTMax | Hv::CurrentTime | Hv::SphereRadius => {
-                        scalar(crate::Scalar::F32)
-                    }
-                    Hv::RayFlags | Hv::HitKind | Hv::ShaderBindingTableRecordIndex => {
-                        scalar(crate::Scalar::U32)
-                    }
-                    Hv::InstanceCustomIndex
-                    | Hv::InstanceId
-                    | Hv::GeometryIndex
-                    | Hv::PrimitiveIndex
-                    | Hv::ClusterId => scalar(crate::Scalar::I32),
-                    Hv::WorldRayOrigin
-                    | Hv::WorldRayDirection
-                    | Hv::ObjectRayOrigin
-                    | Hv::ObjectRayDirection
-                    | Hv::SpherePosition => f32_3,
-                    Hv::ObjectToWorld | Hv::WorldToObject => TypeResolution::Value(Ti::Matrix {
-                        columns: crate::VectorSize::Quad,
-                        rows: crate::VectorSize::Tri,
-                        scalar: crate::Scalar::F32,
-                    }),
-                    Hv::ShaderRecordBufferHandle => TypeResolution::Value(Ti::Vector {
-                        size: crate::VectorSize::Bi,
-                        scalar: crate::Scalar::U32,
-                    }),
-                    Hv::LssPositions => {
-                        self.f32_array(Some(crate::VectorSize::Tri), LSS_ARRAY_LENGTH)?
-                    }
-                    Hv::LssRadii => self.f32_array(None, LSS_ARRAY_LENGTH)?,
-                    Hv::TriangleVertexPositions => TypeResolution::Handle(
-                        self.special_types
-                            .ray_vertex_return
-                            .ok_or(ResolveError::MissingSpecialType)?,
-                    ),
-                }
-            }
+            crate::Expression::RayQueryGet { value, .. } => self.resolve_ray_query_get(value)?,
+            crate::Expression::HitObjectGet { value, .. } => self.resolve_hit_object_get(value)?,
             crate::Expression::FetchMicroTriangleVertex { value, .. } => {
-                let size = match value {
-                    crate::MicroTriangleVertexValue::Position => crate::VectorSize::Tri,
-                    crate::MicroTriangleVertexValue::Barycentric => crate::VectorSize::Bi,
-                };
-                TypeResolution::Value(Ti::Vector {
-                    size,
-                    scalar: crate::Scalar::F32,
-                })
-            }
-            crate::Expression::ReportIntersectionResult => {
-                TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
+                Self::resolve_fetch_micro_triangle_vertex(value)
             }
             crate::Expression::AccelerationStructureFromAddress { .. } => {
                 TypeResolution::Value(Ti::AccelerationStructure)
-            }
-            crate::Expression::IsHelperInvocation => {
-                TypeResolution::Value(Ti::Scalar(crate::Scalar::BOOL))
             }
             crate::Expression::ReadClock { pair, .. } => TypeResolution::Value(if pair {
                 Ti::Vector {
@@ -1027,89 +376,22 @@ impl<'a> ResolveContext<'a> {
                 Ti::Scalar(crate::Scalar::U64)
             }),
             crate::Expression::InterpolateAt { pointer, .. } => {
-                match *past(pointer)?.inner_with(types) {
-                    Ti::Pointer { base, .. } => TypeResolution::Handle(base),
-                    Ti::ValuePointer { size, scalar, .. } => TypeResolution::Value(match size {
-                        Some(size) => Ti::Vector { size, scalar },
-                        None => Ti::Scalar(scalar),
-                    }),
-                    ref other => {
-                        log::error!("Interpolant type {other:?}");
-                        return Err(ResolveError::InvalidPointer(pointer));
-                    }
-                }
+                self.resolve_interpolate_at(pointer, past)?
             }
-            crate::Expression::ImageFootprint { ty, .. } => TypeResolution::Handle(ty),
             crate::Expression::FragmentFetch {
                 image, fragment, ..
-            } => match fragment {
-                None => TypeResolution::Value(Ti::Scalar(crate::Scalar::U32)),
-                Some(_) => match *past(image)?.inner_with(types) {
-                    Ti::Image {
-                        class: crate::ImageClass::Sampled { kind, .. },
-                        ..
-                    }
-                    | Ti::SampledImage {
-                        class: crate::ImageClass::Sampled { kind, .. },
-                        ..
-                    } => TypeResolution::Value(Ti::Vector {
-                        size: crate::VectorSize::Quad,
-                        scalar: crate::Scalar { kind, width: 4 },
-                    }),
-                    ref other => {
-                        log::error!("Fragment fetch image type {other:?}");
-                        return Err(ResolveError::InvalidImage(image));
-                    }
-                },
-            },
-            crate::Expression::AttachmentRead { aspect, .. } => match aspect {
-                crate::AttachmentAspect::Color(image) => match *past(image)?.inner_with(types) {
-                    Ti::Image {
-                        class: crate::ImageClass::Sampled { kind, .. },
-                        ..
-                    } => TypeResolution::Value(Ti::Vector {
-                        size: crate::VectorSize::Quad,
-                        scalar: crate::Scalar { kind, width: 4 },
-                    }),
-                    ref other => {
-                        log::error!("Attachment type {other:?}");
-                        return Err(ResolveError::InvalidImage(image));
-                    }
-                },
-                crate::AttachmentAspect::Depth => {
-                    TypeResolution::Value(Ti::Scalar(crate::Scalar::F32))
-                }
-                crate::AttachmentAspect::Stencil => {
-                    TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
-                }
-            },
+            } => self.resolve_fragment_fetch(image, fragment, past)?,
+            crate::Expression::AttachmentRead { aspect, .. } => {
+                self.resolve_attachment_read(aspect, past)?
+            }
             crate::Expression::SubgroupBallotResult => TypeResolution::Value(Ti::Vector {
                 scalar: crate::Scalar::U32,
                 size: crate::VectorSize::Quad,
             }),
-            crate::Expression::CooperativeLoad { ty, .. }
-            | crate::Expression::Replicate { ty, .. } => TypeResolution::Handle(ty),
-            crate::Expression::CooperativeMultiplyAdd { c, .. } => past(c)?.clone(),
-            crate::Expression::Expect { value, .. } => past(value)?.clone(),
-            crate::Expression::CooperativeVectorLoad { ty, .. }
-            | crate::Expression::CooperativeVectorMatMul { ty, .. }
-            | crate::Expression::Convert { ty, .. }
-            | crate::Expression::ArrayConversion { ty, .. }
-            | crate::Expression::Bitcast { ty, .. }
-            | crate::Expression::CooperativeMatrixResult { ty }
-            | crate::Expression::TensorCreate { ty }
-            | crate::Expression::TensorRead { ty, .. } => TypeResolution::Handle(ty),
-            crate::Expression::TensorQuerySize { .. } => {
-                TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
-            }
-            crate::Expression::TensorSet { base, .. } => past(base)?.clone(),
             crate::Expression::ImageProcessing { .. } => TypeResolution::Value(Ti::Vector {
                 scalar: crate::Scalar::F32,
                 size: crate::VectorSize::Quad,
             }),
-            crate::Expression::CooperativeMatrixLength { .. } => {
-                TypeResolution::Value(Ti::Scalar(crate::Scalar::U32))
-            }
         })
     }
 }
@@ -1132,8 +414,8 @@ pub fn compare_types(
     rhs: &TypeResolution,
     types: &UniqueArena<crate::Type>,
 ) -> bool {
-    match lhs {
-        &TypeResolution::Handle(lhs_handle)
+    match *lhs {
+        TypeResolution::Handle(lhs_handle)
             if matches!(
                 types[lhs_handle],
                 ir::Type {
@@ -1142,11 +424,10 @@ pub fn compare_types(
                 }
             ) =>
         {
-            // Structs can only be in the arena, not in a TypeResolution::Value
             rhs.handle()
                 .is_some_and(|rhs_handle| lhs_handle == rhs_handle)
         }
-        _ => lhs
+        TypeResolution::Handle(_) | TypeResolution::Value(_) => lhs
             .inner_with(types)
             .non_struct_equivalent(rhs.inner_with(types), types),
     }

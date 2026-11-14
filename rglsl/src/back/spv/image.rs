@@ -89,7 +89,7 @@ impl Load {
                 size: crate::VectorSize::Quad,
                 scalar: crate::Scalar::F32,
             }),
-            _ => result_type_id,
+            crate::ImageClass::Sampled { .. } | crate::ImageClass::Storage { .. } => result_type_id,
         };
 
         Ok(Load {
@@ -227,32 +227,73 @@ impl BlockContext<'_> {
         let ty = &self.fun_info[coordinates].ty;
         let inner_ty = ty.inner_with(&self.ir_module.types);
 
-        // If there's no array index, the image coordinates are exactly the
-        // `coordinate` field of the `Expression::ImageLoad`. No work is needed.
         let Some(array_index) = array_index else {
             return match *inner_ty {
                 Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
-                _ => Err(Error::Validation("coordinate type")),
+                Ti::Matrix { .. }
+                | Ti::CooperativeMatrix { .. }
+                | Ti::LongVector { .. }
+                | Ti::TensorLayout { .. }
+                | Ti::TensorView { .. }
+                | Ti::Tensor { .. }
+                | Ti::Atomic(_)
+                | Ti::Pointer { .. }
+                | Ti::ValuePointer { .. }
+                | Ti::Array { .. }
+                | Ti::Struct { .. }
+                | Ti::Image { .. }
+                | Ti::Sampler { .. }
+                | Ti::SampledImage { .. }
+                | Ti::AccelerationStructure
+                | Ti::RayQuery
+                | Ti::HitObject { .. }
+                | Ti::BindingArray { .. }
+                | Ti::BufferDescriptor { .. }
+                | Ti::Spirv { .. } => Err(Error::Validation("coordinate type")),
             };
         };
 
-        // Find the component type of `coordinates`, and figure out the size the
-        // combined coordinate vector will have.
         let (component_scalar, size) = match *inner_ty {
-            Ti::Scalar(scalar @ crate::Scalar { width: 4, .. }) => (scalar, Vs::Bi),
-            Ti::Vector {
-                scalar: scalar @ crate::Scalar { width: 4, .. },
-                size: Vs::Bi,
-            } => (scalar, Vs::Tri),
-            Ti::Vector {
-                scalar: scalar @ crate::Scalar { width: 4, .. },
-                size: Vs::Tri,
-            } => (scalar, Vs::Quad),
-            Ti::Vector { size: Vs::Quad, .. } => {
-                return Err(Error::Validation("extending vec4 coordinate"));
+            Ti::Scalar(scalar) => {
+                if scalar.width != 4 {
+                    log::error!("wrong coordinate type {inner_ty:?}");
+                    return Err(Error::Validation("coordinate type"));
+                }
+                (scalar, Vs::Bi)
             }
-            ref other => {
-                log::error!("wrong coordinate type {other:?}");
+            Ti::Vector { scalar, size } => {
+                let next_size = match size {
+                    Vs::Bi => Vs::Tri,
+                    Vs::Tri => Vs::Quad,
+                    Vs::Quad => return Err(Error::Validation("extending vec4 coordinate")),
+                };
+                if scalar.width != 4 {
+                    log::error!("wrong coordinate type {inner_ty:?}");
+                    return Err(Error::Validation("coordinate type"));
+                }
+                (scalar, next_size)
+            }
+            Ti::Matrix { .. }
+            | Ti::CooperativeMatrix { .. }
+            | Ti::LongVector { .. }
+            | Ti::TensorLayout { .. }
+            | Ti::TensorView { .. }
+            | Ti::Tensor { .. }
+            | Ti::Atomic(_)
+            | Ti::Pointer { .. }
+            | Ti::ValuePointer { .. }
+            | Ti::Array { .. }
+            | Ti::Struct { .. }
+            | Ti::Image { .. }
+            | Ti::Sampler { .. }
+            | Ti::SampledImage { .. }
+            | Ti::AccelerationStructure
+            | Ti::RayQuery
+            | Ti::HitObject { .. }
+            | Ti::BindingArray { .. }
+            | Ti::BufferDescriptor { .. }
+            | Ti::Spirv { .. } => {
+                log::error!("wrong coordinate type {inner_ty:?}");
                 return Err(Error::Validation("coordinate type"));
             }
         };
@@ -356,7 +397,64 @@ impl BlockContext<'_> {
             | crate::Expression::AccelerationStructureFromAddress { .. } => {
                 self.cached.get(expr_handle)?
             }
-            _ => return Err(Error::Validation("unexpected opaque handle expression")),
+            crate::Expression::Literal(_)
+            | crate::Expression::Constant(_)
+            | crate::Expression::Override(_)
+            | crate::Expression::ZeroValue(_)
+            | crate::Expression::Compose { .. }
+            | crate::Expression::Splat { .. }
+            | crate::Expression::Swizzle { .. }
+            | crate::Expression::LocalVariable(_)
+            | crate::Expression::ImageSample { .. }
+            | crate::Expression::ImageLoad { .. }
+            | crate::Expression::ImageQuery { .. }
+            | crate::Expression::Unary { .. }
+            | crate::Expression::Binary { .. }
+            | crate::Expression::Select { .. }
+            | crate::Expression::Derivative { .. }
+            | crate::Expression::Relational { .. }
+            | crate::Expression::Math { .. }
+            | crate::Expression::As { .. }
+            | crate::Expression::AtomicResult { .. }
+            | crate::Expression::ArrayLength(_)
+            | crate::Expression::WideArrayLength(_)
+            | crate::Expression::PhysicalPointer { .. }
+            | crate::Expression::PhysicalAddress { .. }
+            | crate::Expression::BufferPointer { .. }
+            | crate::Expression::HeapOffset { .. }
+            | crate::Expression::RayQueryProceedResult
+            | crate::Expression::RayQueryGet { .. }
+            | crate::Expression::ReportIntersectionResult
+            | crate::Expression::HitObjectGet { .. }
+            | crate::Expression::FetchMicroTriangleVertex { .. }
+            | crate::Expression::SubgroupBallotResult
+            | crate::Expression::SubgroupOperationResult { .. }
+            | crate::Expression::SpirvInstructionResult { .. }
+            | crate::Expression::CooperativeLoad { .. }
+            | crate::Expression::CooperativeMultiplyAdd { .. }
+            | crate::Expression::CooperativeMatrixLength { .. }
+            | crate::Expression::Replicate { .. }
+            | crate::Expression::Expect { .. }
+            | crate::Expression::ImageSparseResident { .. }
+            | crate::Expression::IsHelperInvocation
+            | crate::Expression::ReadClock { .. }
+            | crate::Expression::InterpolateAt { .. }
+            | crate::Expression::FragmentFetch { .. }
+            | crate::Expression::ImageFootprint { .. }
+            | crate::Expression::AttachmentRead { .. }
+            | crate::Expression::CooperativeVectorLoad { .. }
+            | crate::Expression::CooperativeVectorMatMul { .. }
+            | crate::Expression::Convert { .. }
+            | crate::Expression::CooperativeMatrixResult { .. }
+            | crate::Expression::TensorCreate { .. }
+            | crate::Expression::ImageProcessing { .. }
+            | crate::Expression::ArrayConversion { .. }
+            | crate::Expression::Bitcast { .. }
+            | crate::Expression::TensorSet { .. }
+            | crate::Expression::TensorRead { .. }
+            | crate::Expression::TensorQuerySize { .. } => {
+                return Err(Error::Validation("unexpected opaque handle expression"));
+            }
         };
 
         if id == 0 {
@@ -372,31 +470,31 @@ impl BlockContext<'_> {
         block: &mut Block,
     ) -> Result<Word, Error> {
         let id = self.get_non_uniform_handle_id(expr_handle, block)?;
-        match *self.fun_info[expr_handle]
+        if let crate::TypeInner::SampledImage {
+            dim,
+            arrayed,
+            class,
+        } = *self.fun_info[expr_handle]
             .ty
             .inner_with(&self.ir_module.types)
+            && !self.writer.sampled_buffer_is_image(dim)
         {
-            crate::TypeInner::SampledImage {
-                dim,
-                arrayed,
-                class,
-            } if !self.writer.sampled_buffer_is_image(dim) => {
-                let image_type_id = self.get_localtype_id(LocalType::Image(
-                    LocalImageType::from_inner(dim, arrayed, class)?,
-                ));
-                let image_id = self.gen_id();
-                block
-                    .body
-                    .push(Instruction::image_of_sampled(image_type_id, image_id, id));
-                if self
-                    .non_uniform(expr_handle)
-                    .contains(crate::NonUniform::VALUE)
-                {
-                    self.writer.decorate_non_uniform(image_id)?;
-                }
-                Ok(image_id)
+            let image_type_id = self.get_localtype_id(LocalType::Image(
+                LocalImageType::from_inner(dim, arrayed, class)?,
+            ));
+            let image_id = self.gen_id();
+            block
+                .body
+                .push(Instruction::image_of_sampled(image_type_id, image_id, id));
+            if self
+                .non_uniform(expr_handle)
+                .contains(crate::NonUniform::VALUE)
+            {
+                self.writer.decorate_non_uniform(image_id)?;
             }
-            _ => Ok(id),
+            Ok(image_id)
+        } else {
+            Ok(id)
         }
     }
 
@@ -445,9 +543,10 @@ impl BlockContext<'_> {
             }
             self.writer
                 .require_any("sparse residency", &[spirv::Capability::SparseResidency])?;
-            access.opcode = match access.opcode {
-                spirv::Op::ImageRead => spirv::Op::ImageSparseRead,
-                _ => spirv::Op::ImageSparseFetch,
+            access.opcode = if access.opcode == spirv::Op::ImageRead {
+                spirv::Op::ImageSparseRead
+            } else {
+                spirv::Op::ImageSparseFetch
             };
         }
         if matches!(image_class, crate::ImageClass::Storage { .. }) {
@@ -544,7 +643,7 @@ impl BlockContext<'_> {
         // `vec4<f32>`, so we need to grab the first component out of it.
         let needs_sub_access = match class {
             crate::ImageClass::Depth { .. } => depth_ref.is_none() && gather.is_none(),
-            _ => false,
+            crate::ImageClass::Sampled { .. } | crate::ImageClass::Storage { .. } => false,
         };
         if sparse && needs_sub_access {
             return Err(Error::FeatureNotImplemented(
@@ -767,19 +866,27 @@ impl BlockContext<'_> {
                 // SPIR-V expects the LOD to be a float for all image classes.
                 // The IR allows an integer level for depth images (as WGSL
                 // has it), which must be converted.
-                let convert_op = match *self.fun_info[lod_handle]
+                let convert_op = if let crate::TypeInner::Scalar(scalar) = *self.fun_info
+                    [lod_handle]
                     .ty
                     .inner_with(&self.ir_module.types)
                 {
-                    crate::TypeInner::Scalar(crate::Scalar {
-                        kind: crate::ScalarKind::Uint,
-                        ..
-                    }) => Some(spirv::Op::ConvertUToF),
-                    crate::TypeInner::Scalar(crate::Scalar {
-                        kind: crate::ScalarKind::Sint,
-                        ..
-                    }) => Some(spirv::Op::ConvertSToF),
-                    _ => None,
+                    match scalar.kind {
+                        crate::ScalarKind::Uint => Some(spirv::Op::ConvertUToF),
+                        crate::ScalarKind::Sint => Some(spirv::Op::ConvertSToF),
+                        crate::ScalarKind::Float
+                        | crate::ScalarKind::Bool
+                        | crate::ScalarKind::BFloat
+                        | crate::ScalarKind::FloatE4M3
+                        | crate::ScalarKind::FloatE5M2
+                        | crate::ScalarKind::FloatE2M1
+                        | crate::ScalarKind::FloatE3M2
+                        | crate::ScalarKind::FloatE2M3
+                        | crate::ScalarKind::FloatUE8M0
+                        | crate::ScalarKind::FloatMXINT8 => None,
+                    }
+                } else {
+                    None
                 };
                 if let Some(convert_op) = convert_op {
                     let lod_f32_id = self.gen_id();
@@ -932,22 +1039,23 @@ impl BlockContext<'_> {
 
                 let extended_size_type_id = self.get_numeric_type_id(vector_numeric_type);
 
-                let (query_op, level_id) = match class {
-                    _ if dim == Id::Buffer => (spirv::Op::ImageQuerySize, None),
-                    Ic::Sampled { multi: true, .. }
-                    | Ic::Depth { multi: true }
-                    | Ic::Storage { .. } => (spirv::Op::ImageQuerySize, None),
-                    _ => {
-                        let level_id = match level {
-                            Some(expr) => self.cached.get(expr)?,
-                            None => self.get_index_constant(0),
-                        };
-                        (spirv::Op::ImageQuerySizeLod, Some(level_id))
+                let (query_op, level_id) = if dim == Id::Buffer {
+                    (spirv::Op::ImageQuerySize, None)
+                } else {
+                    match class {
+                        Ic::Sampled { multi: true, .. }
+                        | Ic::Depth { multi: true }
+                        | Ic::Storage { .. } => (spirv::Op::ImageQuerySize, None),
+                        Ic::Sampled { multi: false, .. } | Ic::Depth { multi: false } => {
+                            let level_id = match level {
+                                Some(expr) => self.cached.get(expr)?,
+                                None => self.get_index_constant(0),
+                            };
+                            (spirv::Op::ImageQuerySizeLod, Some(level_id))
+                        }
                     }
                 };
 
-                // The ID of the vector returned by SPIR-V, which contains the dimensions
-                // as well as the layer count.
                 let id_extended = self.gen_id();
                 let mut inst = Instruction::image_query(
                     query_op,
@@ -971,10 +1079,10 @@ impl BlockContext<'_> {
                     id
                 } else if result_type_id != extended_size_type_id {
                     let id = self.gen_id();
-                    let components = match dim {
-                        // always pick the first component, and duplicate it for all 3 dimensions
-                        Id::Cube => &[0u32, 0][..],
-                        _ => &[0u32, 1, 2, 3][..dim_coords],
+                    let components = if dim == Id::Cube {
+                        &[0u32, 0][..]
+                    } else {
+                        &[0u32, 1, 2, 3][..dim_coords]
                     };
                     block.body.push(Instruction::vector_shuffle(
                         result_type_id,
@@ -1144,30 +1252,22 @@ impl BlockContext<'_> {
             memory,
         };
 
-        match *self.fun_info[image].ty.inner_with(&self.ir_module.types) {
-            crate::TypeInner::Image {
-                class:
-                    crate::ImageClass::Storage {
-                        format: crate::StorageFormat::Bgra8Unorm,
-                        ..
-                    },
-                ..
-            } => self.writer.require_any(
-                "Bgra8Unorm storage write",
-                &[spirv::Capability::StorageImageWriteWithoutFormat],
-            )?,
-            crate::TypeInner::Image {
-                class:
-                    crate::ImageClass::Storage {
-                        format: crate::StorageFormat::Unknown(_),
-                        ..
-                    },
-                ..
-            } => self.writer.require_any(
-                "storage image write without a format",
-                &[spirv::Capability::StorageImageWriteWithoutFormat],
-            )?,
-            _ => {}
+        if let crate::TypeInner::Image {
+            class: crate::ImageClass::Storage { format, .. },
+            ..
+        } = *self.fun_info[image].ty.inner_with(&self.ir_module.types)
+        {
+            if format == crate::StorageFormat::Bgra8Unorm {
+                self.writer.require_any(
+                    "Bgra8Unorm storage write",
+                    &[spirv::Capability::StorageImageWriteWithoutFormat],
+                )?;
+            } else if matches!(format, crate::StorageFormat::Unknown(_)) {
+                self.writer.require_any(
+                    "storage image write without a format",
+                    &[spirv::Capability::StorageImageWriteWithoutFormat],
+                )?;
+            }
         }
 
         write.generate(

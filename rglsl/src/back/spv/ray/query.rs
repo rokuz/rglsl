@@ -107,23 +107,36 @@ impl BlockContext<'_> {
                             .require(&feature::CLUSTER_ACCELERATION_STRUCTURE)?;
                         Op::RayQueryGetIntersectionClusterIdNV
                     }
-                    Iv::SpherePosition | Iv::SphereRadius | Iv::IsSphereHit => {
+                    Iv::SpherePosition => {
                         self.writer.require(&feature::SPHERE_GEOMETRY)?;
                         self.writer.require(&feature::LSS_GEOMETRY)?;
-                        match value {
-                            Iv::SpherePosition => Op::RayQueryGetIntersectionSpherePositionNV,
-                            Iv::SphereRadius => Op::RayQueryGetIntersectionSphereRadiusNV,
-                            _ => Op::RayQueryIsSphereHitNV,
-                        }
+                        Op::RayQueryGetIntersectionSpherePositionNV
                     }
-                    Iv::LssPositions | Iv::LssRadii | Iv::LssHitValue | Iv::IsLssHit => {
+                    Iv::SphereRadius => {
+                        self.writer.require(&feature::SPHERE_GEOMETRY)?;
                         self.writer.require(&feature::LSS_GEOMETRY)?;
-                        match value {
-                            Iv::LssPositions => Op::RayQueryGetIntersectionLSSPositionsNV,
-                            Iv::LssRadii => Op::RayQueryGetIntersectionLSSRadiiNV,
-                            Iv::LssHitValue => Op::RayQueryGetIntersectionLSSHitValueNV,
-                            _ => Op::RayQueryIsLSSHitNV,
-                        }
+                        Op::RayQueryGetIntersectionSphereRadiusNV
+                    }
+                    Iv::IsSphereHit => {
+                        self.writer.require(&feature::SPHERE_GEOMETRY)?;
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
+                        Op::RayQueryIsSphereHitNV
+                    }
+                    Iv::LssPositions => {
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
+                        Op::RayQueryGetIntersectionLSSPositionsNV
+                    }
+                    Iv::LssRadii => {
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
+                        Op::RayQueryGetIntersectionLSSRadiiNV
+                    }
+                    Iv::LssHitValue => {
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
+                        Op::RayQueryGetIntersectionLSSHitValueNV
+                    }
+                    Iv::IsLssHit => {
+                        self.writer.require(&feature::LSS_GEOMETRY)?;
+                        Op::RayQueryIsLSSHitNV
                     }
                     Iv::TriangleVertexPositions => {
                         self.writer.require(&feature::RAY_QUERY_POSITION_FETCH)?;
