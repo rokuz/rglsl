@@ -3,10 +3,11 @@
 use core::hash::Hash;
 
 use super::ValidationError;
+use crate::visit::Visitor;
 use crate::{Arena, UniqueArena};
 use crate::{
     Handle,
-    arena::{BadHandle, BadRangeError},
+    arena::{BadHandle, BadRangeError, Range},
 };
 
 #[cfg(test)]
@@ -291,7 +292,17 @@ impl super::Validator {
                 )?;
             }
 
-            Self::validate_block_handles(body, expressions, functions, function_handle, types)?;
+            Self::validate_block_handles(
+                body,
+                expressions,
+                constants,
+                overrides,
+                types,
+                local_variables,
+                global_variables,
+                functions,
+                function_handle,
+            )?;
 
             Ok(())
         };
@@ -541,48 +552,22 @@ impl super::Validator {
         types: &UniqueArena<crate::Type>,
         global_variables: &Arena<crate::GlobalVariable>,
     ) -> Result<Option<Handle<crate::Type>>, InvalidHandleError> {
-        let validate_constant = |handle| Self::validate_constant_handle(handle, constants);
-        let validate_override = |handle| Self::validate_override_handle(handle, overrides);
-
-        let max_type = match *expression {
-            crate::Expression::Literal(_) => None,
-            crate::Expression::Constant(constant) => {
-                validate_constant(constant)?;
-                handle.check_dep(constants[constant].init)?;
-                None
-            }
-            crate::Expression::Override(r#override) => {
-                validate_override(r#override)?;
-                if let Some(init) = overrides[r#override].init {
-                    handle.check_dep(init)?;
-                }
-                None
-            }
-            crate::Expression::ZeroValue(ty) => Some(ty),
-            crate::Expression::Compose { ty, ref components } => {
-                handle.check_dep_iter(components.iter().copied())?;
-                Some(ty)
-            }
-            crate::Expression::Replicate { ty, value } => {
-                handle.check_dep(value)?;
-                Some(ty)
-            }
-            _ => {
-                Self::validate_expression_handles(
-                    (handle, expression),
-                    constants,
-                    overrides,
-                    types,
-                    &Arena::new(),
-                    global_variables,
-                    &[],
-                    &Arena::new(),
-                    None,
-                )?;
-                None
-            }
+        let mut checker = HandleChecker {
+            dependent: Some(handle),
+            global: true,
+            max_type: None,
+            expressions: &Arena::new(),
+            constants,
+            overrides,
+            types,
+            local_variables: &Arena::new(),
+            global_variables,
+            functions: &Arena::new(),
+            current_function: None,
         };
-        Ok(max_type)
+        HandleChecker::check_argument(expression, &[])?;
+        expression.visit(&mut checker)?;
+        Ok(checker.max_type)
     }
 
     #[expect(
@@ -598,697 +583,166 @@ impl super::Validator {
         global_variables: &Arena<crate::GlobalVariable>,
         arguments: &[crate::FunctionArgument],
         functions: &Arena<crate::Function>,
-        // The handle of the current function or `None` if it's an entry point
         current_function: Option<Handle<crate::Function>>,
     ) -> Result<(), InvalidHandleError> {
-        let validate_constant = |handle| Self::validate_constant_handle(handle, constants);
-        let validate_override = |handle| Self::validate_override_handle(handle, overrides);
-        let validate_type = |handle| Self::validate_type_handle(handle, types);
-
-        match *expression {
-            crate::Expression::Access { base, index } => {
-                handle.check_dep(base)?.check_dep(index)?;
-            }
-            crate::Expression::AccessIndex { base, .. } => {
-                handle.check_dep(base)?;
-            }
-            crate::Expression::Splat { value, .. } => {
-                handle.check_dep(value)?;
-            }
-            crate::Expression::Swizzle { vector, .. } => {
-                handle.check_dep(vector)?;
-            }
-            crate::Expression::Literal(_) => {}
-            crate::Expression::Constant(constant) => {
-                validate_constant(constant)?;
-            }
-            crate::Expression::Override(r#override) => {
-                validate_override(r#override)?;
-            }
-            crate::Expression::ZeroValue(ty) => {
-                validate_type(ty)?;
-            }
-            crate::Expression::Compose { ty, ref components } => {
-                validate_type(ty)?;
-                handle.check_dep_iter(components.iter().copied())?;
-            }
-            crate::Expression::FunctionArgument(index) => {
-                let index = index as usize;
-                if index >= arguments.len() {
-                    return Err(BadHandle {
-                        kind: "FunctionArgument",
-                        index,
-                    }
-                    .into());
-                }
-            }
-            crate::Expression::GlobalVariable(global_variable) => {
-                global_variable.check_valid_for(global_variables)?;
-            }
-            crate::Expression::LocalVariable(local_variable) => {
-                local_variable.check_valid_for(local_variables)?;
-            }
-            crate::Expression::Load { pointer } => {
-                handle.check_dep(pointer)?;
-            }
-            crate::Expression::ImageSample {
-                image,
-                sampler,
-                gather: _,
-                gather_pattern: _,
-                coordinate,
-                array_index,
-                offset,
-                level,
-                depth_ref,
-                min_lod,
-                sparse,
-            } => {
-                if let Some(ty) = sparse {
-                    validate_type(ty)?;
-                }
-                handle
-                    .check_dep(image)?
-                    .check_dep_opt(sampler)?
-                    .check_dep_opt(min_lod)?
-                    .check_dep(coordinate)?
-                    .check_dep_opt(array_index)?
-                    .check_dep_opt(offset)?;
-
-                match level {
-                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => (),
-                    crate::SampleLevel::Exact(expr) => {
-                        handle.check_dep(expr)?;
-                    }
-                    crate::SampleLevel::Bias(expr) => {
-                        handle.check_dep(expr)?;
-                    }
-                    crate::SampleLevel::Gradient { x, y } => {
-                        handle.check_dep(x)?.check_dep(y)?;
-                    }
-                };
-
-                handle.check_dep_opt(depth_ref)?;
-            }
-            crate::Expression::ImageLoad {
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                sparse,
-            } => {
-                if let Some(ty) = sparse {
-                    validate_type(ty)?;
-                }
-                handle
-                    .check_dep(image)?
-                    .check_dep(coordinate)?
-                    .check_dep_opt(array_index)?
-                    .check_dep_opt(sample)?
-                    .check_dep_opt(level)?;
-            }
-            crate::Expression::ImageQuery { image, query } => {
-                handle.check_dep(image)?;
-                match query {
-                    crate::ImageQuery::Size { level } => {
-                        handle.check_dep_opt(level)?;
-                    }
-                    crate::ImageQuery::NumLevels
-                    | crate::ImageQuery::NumLayers
-                    | crate::ImageQuery::NumSamples => (),
-                    crate::ImageQuery::Lod {
-                        sampler,
-                        coordinate,
-                    } => {
-                        handle.check_dep_opt(sampler)?.check_dep(coordinate)?;
-                    }
-                };
-            }
-            crate::Expression::ImageSparseResident { code } => {
-                handle.check_dep(code)?;
-            }
-            crate::Expression::InterpolateAt { pointer, location } => {
-                handle.check_dep(pointer)?;
-                match location {
-                    crate::InterpolationLocation::Centroid => {}
-                    crate::InterpolationLocation::Sample(operand)
-                    | crate::InterpolationLocation::Offset(operand) => {
-                        handle.check_dep(operand)?;
-                    }
-                }
-            }
-            crate::Expression::ImageFootprint {
-                image,
-                coordinate,
-                granularity,
-                coarse,
-                level,
-                min_lod,
-                ty,
-            } => {
-                validate_type(ty)?;
-                handle
-                    .check_dep(image)?
-                    .check_dep(coordinate)?
-                    .check_dep(granularity)?
-                    .check_dep(coarse)?
-                    .check_dep_opt(min_lod)?;
-                match level {
-                    crate::SampleLevel::Auto | crate::SampleLevel::Zero => (),
-                    crate::SampleLevel::Exact(expr) | crate::SampleLevel::Bias(expr) => {
-                        handle.check_dep(expr)?;
-                    }
-                    crate::SampleLevel::Gradient { x, y } => {
-                        handle.check_dep(x)?.check_dep(y)?;
-                    }
-                };
-            }
-            crate::Expression::FragmentFetch {
-                image,
-                coordinate,
-                fragment,
-            } => {
-                handle
-                    .check_dep(image)?
-                    .check_dep(coordinate)?
-                    .check_dep_opt(fragment)?;
-            }
-            crate::Expression::AttachmentRead { aspect, sample } => {
-                if let crate::AttachmentAspect::Color(image) = aspect {
-                    handle.check_dep(image)?;
-                }
-                handle.check_dep_opt(sample)?;
-            }
-            crate::Expression::Unary {
-                op: _,
-                expr: operand,
-            } => {
-                handle.check_dep(operand)?;
-            }
-            crate::Expression::Binary { op: _, left, right } => {
-                handle.check_dep(left)?.check_dep(right)?;
-            }
-            crate::Expression::Select {
-                condition,
-                accept,
-                reject,
-            } => {
-                handle
-                    .check_dep(condition)?
-                    .check_dep(accept)?
-                    .check_dep(reject)?;
-            }
-            crate::Expression::Derivative { expr: argument, .. } => {
-                handle.check_dep(argument)?;
-            }
-            crate::Expression::Relational { fun: _, argument } => {
-                handle.check_dep(argument)?;
-            }
-            crate::Expression::Math {
-                fun: _,
-                arg,
-                arg1,
-                arg2,
-                arg3,
-            } => {
-                handle
-                    .check_dep(arg)?
-                    .check_dep_opt(arg1)?
-                    .check_dep_opt(arg2)?
-                    .check_dep_opt(arg3)?;
-            }
-            crate::Expression::As {
-                expr: input,
-                kind: _,
-                convert: _,
-            } => {
-                handle.check_dep(input)?;
-            }
-            crate::Expression::CallResult(function) => {
-                Self::validate_callee_handle(function, functions, current_function)?;
-            }
-            crate::Expression::AtomicResult { ty, comparison: _ }
-            | crate::Expression::SubgroupOperationResult { ty }
-            | crate::Expression::SpirvInstructionResult { ty } => {
-                validate_type(ty)?;
-            }
-            crate::Expression::RayQueryProceedResult
-            | crate::Expression::ReportIntersectionResult
-            | crate::Expression::SubgroupBallotResult
-            | crate::Expression::IsHelperInvocation => (),
-            crate::Expression::ArrayLength(array) | crate::Expression::WideArrayLength(array) => {
-                handle.check_dep(array)?;
-            }
-            crate::Expression::PhysicalAddress { pointer, split: _ } => {
-                handle.check_dep(pointer)?;
-            }
-            crate::Expression::BufferPointer { descriptor } => {
-                handle.check_dep(descriptor)?;
-            }
-            crate::Expression::HeapOffset { pointer, offset } => {
-                handle.check_dep(pointer)?;
-                handle.check_dep(offset)?;
-            }
-            crate::Expression::PhysicalPointer { value, ty } => {
-                validate_type(ty)?;
-                handle.check_dep(value)?;
-            }
-            crate::Expression::RayQueryGet { query, value: _ } => {
-                handle.check_dep(query)?;
-            }
-            crate::Expression::AccelerationStructureFromAddress { address } => {
-                handle.check_dep(address)?;
-            }
-            crate::Expression::HitObjectGet { object, value: _ } => {
-                handle.check_dep(object)?;
-            }
-            crate::Expression::FetchMicroTriangleVertex {
-                acceleration_structure,
-                instance_id,
-                geometry_index,
-                primitive_index,
-                barycentric,
-                value: _,
-            } => {
-                handle.check_dep_iter(
-                    [
-                        acceleration_structure,
-                        instance_id,
-                        geometry_index,
-                        primitive_index,
-                        barycentric,
-                    ]
-                    .into_iter(),
-                )?;
-            }
-            crate::Expression::CooperativeLoad { ty, ref data } => {
-                validate_type(ty)?;
-                handle.check_dep_iter(data.operands())?;
-            }
-            crate::Expression::CooperativeMultiplyAdd { a, b, c, .. } => {
-                handle.check_dep(a)?.check_dep(b)?.check_dep(c)?;
-            }
-            crate::Expression::CooperativeMatrixLength { ty } => {
-                validate_type(ty)?;
-            }
-            crate::Expression::Replicate { ty, value } => {
-                validate_type(ty)?;
-                handle.check_dep(value)?;
-            }
-            crate::Expression::Expect { value, expected } => {
-                handle.check_dep(value)?.check_dep(expected)?;
-            }
-            crate::Expression::Convert { expr, ty, .. } => {
-                validate_type(ty)?;
-                handle.check_dep(expr)?;
-            }
-            crate::Expression::CooperativeMatrixResult { ty }
-            | crate::Expression::TensorCreate { ty } => {
-                validate_type(ty)?;
-            }
-            crate::Expression::ImageProcessing {
-                operation: _,
-                image,
-                sampler,
-                coordinate,
-                reference,
-                reference_sampler,
-                reference_coordinate,
-                size,
-            } => {
-                handle
-                    .check_dep(image)?
-                    .check_dep_opt(sampler)?
-                    .check_dep(coordinate)?
-                    .check_dep_opt(reference)?
-                    .check_dep_opt(reference_sampler)?
-                    .check_dep_opt(reference_coordinate)?
-                    .check_dep_opt(size)?;
-            }
-            crate::Expression::ArrayConversion {
-                conversion: _,
-                expr,
-                index,
-                ty,
-            } => {
-                validate_type(ty)?;
-                handle.check_dep(expr)?.check_dep_opt(index)?;
-            }
-            crate::Expression::Bitcast { expr, ty, offset } => {
-                validate_type(ty)?;
-                handle.check_dep(expr)?.check_dep_opt(offset)?;
-            }
-            crate::Expression::TensorSet {
-                base, ref operands, ..
-            } => {
-                handle
-                    .check_dep(base)?
-                    .check_dep_iter(operands.iter().copied())?;
-            }
-            crate::Expression::CooperativeVectorLoad {
-                ty,
-                pointer,
-                offset,
-            } => {
-                validate_type(ty)?;
-                handle.check_dep(pointer)?.check_dep(offset)?;
-            }
-            crate::Expression::CooperativeVectorMatMul { ty, ref operation } => {
-                validate_type(ty)?;
-                handle.check_dep_iter(operation.operands())?;
-            }
-            crate::Expression::TensorRead {
-                ty,
-                tensor,
-                coordinates,
-                out_of_bounds,
-                ..
-            } => {
-                validate_type(ty)?;
-                handle
-                    .check_dep(tensor)?
-                    .check_dep(coordinates)?
-                    .check_dep_opt(out_of_bounds)?;
-            }
-            crate::Expression::TensorQuerySize { tensor, .. } => {
-                handle.check_dep(tensor)?;
-            }
-        }
-        Ok(())
+        let mut checker = HandleChecker {
+            dependent: Some(handle),
+            global: false,
+            max_type: None,
+            expressions: &Arena::new(),
+            constants,
+            overrides,
+            types,
+            local_variables,
+            global_variables,
+            functions,
+            current_function,
+        };
+        HandleChecker::check_argument(expression, arguments)?;
+        expression.visit(&mut checker)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the parts of one request"
+    )]
     fn validate_block_handles(
         block: &crate::Block,
         expressions: &Arena<crate::Expression>,
+        constants: &Arena<crate::Constant>,
+        overrides: &Arena<crate::Override>,
+        types: &UniqueArena<crate::Type>,
+        local_variables: &Arena<crate::LocalVariable>,
+        global_variables: &Arena<crate::GlobalVariable>,
         functions: &Arena<crate::Function>,
         current_function: Option<Handle<crate::Function>>,
-        types: &UniqueArena<crate::Type>,
     ) -> Result<(), InvalidHandleError> {
+        let mut checker = HandleChecker {
+            dependent: None,
+            global: false,
+            max_type: None,
+            expressions,
+            constants,
+            overrides,
+            types,
+            local_variables,
+            global_variables,
+            functions,
+            current_function,
+        };
         for statement in block.walk() {
-            let condition = match *statement {
-                crate::Statement::Block(_) => None,
-                crate::Statement::If { condition, .. } => Some(condition),
-                crate::Statement::Switch { selector, .. } => Some(selector),
-                crate::Statement::Loop { break_if, .. } => break_if,
-                _ => {
-                    Self::validate_statement_handles(
-                        statement,
-                        expressions,
-                        functions,
-                        current_function,
-                        types,
-                    )?;
-                    continue;
+            statement.visit(&mut checker)?;
+        }
+        Ok(())
+    }
+}
+
+struct HandleChecker<'r> {
+    dependent: Option<Handle<crate::Expression>>,
+    global: bool,
+    max_type: Option<Handle<crate::Type>>,
+    expressions: &'r Arena<crate::Expression>,
+    constants: &'r Arena<crate::Constant>,
+    overrides: &'r Arena<crate::Override>,
+    types: &'r UniqueArena<crate::Type>,
+    local_variables: &'r Arena<crate::LocalVariable>,
+    global_variables: &'r Arena<crate::GlobalVariable>,
+    functions: &'r Arena<crate::Function>,
+    current_function: Option<Handle<crate::Function>>,
+}
+
+impl HandleChecker<'_> {
+    fn check_argument(
+        expression: &crate::Expression,
+        arguments: &[crate::FunctionArgument],
+    ) -> Result<(), InvalidHandleError> {
+        if let crate::Expression::FunctionArgument(index) = *expression {
+            let index = index as usize;
+            if index >= arguments.len() {
+                return Err(BadHandle {
+                    kind: "FunctionArgument",
+                    index,
                 }
-            };
-            if let Some(condition) = condition {
-                Self::validate_expression_handle(condition, expressions)?;
+                .into());
             }
         }
         Ok(())
     }
 
-    fn validate_statement_handles(
-        statement: &crate::Statement,
-        expressions: &Arena<crate::Expression>,
-        functions: &Arena<crate::Function>,
-        current_function: Option<Handle<crate::Function>>,
-        types: &UniqueArena<crate::Type>,
-    ) -> Result<(), InvalidHandleError> {
-        let validate_expr = |handle| Self::validate_expression_handle(handle, expressions);
-        let validate_expr_opt = |handle_opt| {
-            if let Some(handle) = handle_opt {
-                validate_expr(handle)?;
-            }
-            Ok(())
-        };
-
-        match *statement {
-            crate::Statement::Emit(ref expr_range) => {
-                expr_range.check_valid_for(expressions)?;
+    fn operand(&self, operand: Handle<crate::Expression>) -> Result<(), InvalidHandleError> {
+        match self.dependent {
+            Some(handle) => {
+                handle.check_dep(operand)?;
                 Ok(())
             }
-            crate::Statement::Block(_)
-            | crate::Statement::If { .. }
-            | crate::Statement::Switch { .. }
-            | crate::Statement::Loop { .. } => Ok(()),
-            crate::Statement::Return { value } => validate_expr_opt(value),
-            crate::Statement::Store { pointer, value } => {
-                validate_expr(pointer)?;
-                validate_expr(value)?;
-                Ok(())
-            }
-            crate::Statement::ImageStore {
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                value,
-            } => {
-                validate_expr(image)?;
-                validate_expr(coordinate)?;
-                validate_expr_opt(array_index)?;
-                validate_expr_opt(sample)?;
-                validate_expr_opt(level)?;
-                validate_expr(value)?;
-                Ok(())
-            }
-            crate::Statement::Atomic {
-                pointer,
-                fun,
-                value,
-                result,
-                order: _,
-            } => {
-                validate_expr(pointer)?;
-                match fun {
-                    crate::AtomicFunction::Add
-                    | crate::AtomicFunction::Subtract
-                    | crate::AtomicFunction::And
-                    | crate::AtomicFunction::ExclusiveOr
-                    | crate::AtomicFunction::InclusiveOr
-                    | crate::AtomicFunction::Min
-                    | crate::AtomicFunction::Max => (),
-                    crate::AtomicFunction::Exchange { compare } => validate_expr_opt(compare)?,
-                };
-                validate_expr(value)?;
-                if let Some(result) = result {
-                    validate_expr(result)?;
-                }
-                Ok(())
-            }
-            crate::Statement::ImageAtomic {
-                image,
-                coordinate,
-                array_index,
-                fun,
-                value,
-                sample,
-                result,
-                order: _,
-            } => {
-                validate_expr(image)?;
-                validate_expr(coordinate)?;
-                validate_expr_opt(array_index)?;
-                if let crate::AtomicFunction::Exchange { compare } = fun {
-                    validate_expr_opt(compare)?;
-                }
-                validate_expr(value)?;
-                validate_expr_opt(sample)?;
-                validate_expr_opt(result)?;
-                Ok(())
-            }
-            crate::Statement::AtomicLoad {
-                ref location,
-                order: _,
-                result,
-            } => {
-                for handle in location.expressions() {
-                    validate_expr(handle)?;
-                }
-                validate_expr(result)?;
-                Ok(())
-            }
-            crate::Statement::AtomicStore {
-                ref location,
-                value,
-                order: _,
-            } => {
-                for handle in location.expressions() {
-                    validate_expr(handle)?;
-                }
-                validate_expr(value)?;
-                Ok(())
-            }
-            crate::Statement::ScopedBarrier { .. } => Ok(()),
-            crate::Statement::Call {
-                function,
-                ref arguments,
-                result,
-            } => {
-                Self::validate_callee_handle(function, functions, current_function)?;
-                for arg in arguments.iter().copied() {
-                    validate_expr(arg)?;
-                }
-                validate_expr_opt(result)?;
-                Ok(())
-            }
-            crate::Statement::RayQuery { query, ref fun } => {
-                validate_expr(query)?;
-                for operand in fun.operands() {
-                    validate_expr(operand)?;
-                }
-                validate_expr_opt(fun.result())?;
-                Ok(())
-            }
-            crate::Statement::SubgroupBallot { result, predicate } => {
-                validate_expr_opt(predicate)?;
-                validate_expr(result)?;
-                Ok(())
-            }
-            crate::Statement::SubgroupCollectiveOperation {
-                op: _,
-                ref collective_op,
-                argument,
-                result,
-            } => {
-                validate_expr_opt(collective_op.partition())?;
-                validate_expr(argument)?;
-                validate_expr(result)?;
-                Ok(())
-            }
-            crate::Statement::SubgroupGather {
-                ref mode,
-                argument,
-                result,
-            } => {
-                validate_expr(argument)?;
-                validate_expr_opt(mode.index())?;
-                validate_expr(result)?;
-                Ok(())
-            }
-            crate::Statement::SubgroupFunction { ref fun, result } => {
-                for operand in fun.operands() {
-                    validate_expr_opt(operand)?;
-                }
-                validate_expr(result)?;
-                Ok(())
-            }
-            crate::Statement::CooperativeStore { target, ref data } => {
-                validate_expr(target)?;
-                for operand in data.operands() {
-                    validate_expr(operand)?;
-                }
-                Ok(())
-            }
-            crate::Statement::RayPipelineFunction(ref fun) => {
-                for operand in fun.operands() {
-                    validate_expr(operand)?;
-                }
-                validate_expr_opt(fun.result())?;
-                Ok(())
-            }
-            crate::Statement::HitObject { object, ref fun } => {
-                validate_expr(object)?;
-                for operand in fun.operands() {
-                    validate_expr(operand)?;
-                }
-                Ok(())
-            }
-            crate::Statement::ReorderThread { hint, bits, .. } => {
-                validate_expr(hint)?;
-                validate_expr(bits)?;
-                Ok(())
-            }
-            crate::Statement::CooperativeMatrix {
-                ref function,
-                result,
-            } => {
-                for callee in function.functions() {
-                    Self::validate_callee_handle(callee, functions, current_function)?;
-                }
-                for operand in function.operands() {
-                    validate_expr(operand)?;
-                }
-                validate_expr_opt(result)?;
-                Ok(())
-            }
-            crate::Statement::CooperativeVector(ref function) => {
-                for operand in function.operands() {
-                    validate_expr(operand)?;
-                }
-                Ok(())
-            }
-            crate::Statement::Assume { condition } => {
-                validate_expr(condition)?;
-                Ok(())
-            }
-            crate::Statement::MeshFunction(ref function) => {
-                for operand in function.operands() {
-                    validate_expr(operand)?;
-                }
-                Ok(())
-            }
-            crate::Statement::DebugPrintf { ref arguments, .. } => {
-                for argument in arguments {
-                    if let crate::DebugPrintfArgument::Value(value) = *argument {
-                        validate_expr(value)?;
-                    }
-                }
-                Ok(())
-            }
-            crate::Statement::Abort {
-                ty, ref arguments, ..
-            } => {
-                Self::validate_type_handle(ty, types)?;
-                for &argument in arguments {
-                    validate_expr(argument)?;
-                }
-                Ok(())
-            }
-            crate::Statement::TensorWrite {
-                tensor,
-                coordinates,
-                value,
-                ..
-            } => {
-                validate_expr(tensor)?;
-                validate_expr(coordinates)?;
-                validate_expr(value)?;
-                Ok(())
-            }
-            crate::Statement::SpirvInstruction {
-                ref operands,
-                result,
-                ..
-            } => {
-                for operand in operands {
-                    match *operand {
-                        crate::SpirvOperand::Value(value) | crate::SpirvOperand::Pointer(value) => {
-                            validate_expr(value)?;
-                        }
-                        crate::SpirvOperand::Literal(_) => {}
-                    }
-                }
-                if let Some(result) = result {
-                    validate_expr(result)?;
-                }
-                Ok(())
-            }
-            crate::Statement::Break
-            | crate::Statement::Continue
-            | crate::Statement::Kill
-            | crate::Statement::Demote
-            | crate::Statement::BeginInvocationInterlock
-            | crate::Statement::EndInvocationInterlock
-            | crate::Statement::SplitBarrier { .. }
-            | crate::Statement::EmitVertex { .. }
-            | crate::Statement::EndPrimitive { .. }
-            | crate::Statement::ControlBarrier(_)
-            | crate::Statement::MemoryBarrier(_) => Ok(()),
+            None => super::Validator::validate_expression_handle(operand, self.expressions),
         }
+    }
+}
+
+impl<'a> Visitor<'a> for HandleChecker<'_> {
+    type Error = InvalidHandleError;
+
+    fn expression(&mut self, handle: Handle<crate::Expression>) -> Result<(), InvalidHandleError> {
+        self.operand(handle)
+    }
+
+    fn result(&mut self, handle: Handle<crate::Expression>) -> Result<(), InvalidHandleError> {
+        self.operand(handle)
+    }
+
+    fn emitted(&mut self, range: &Range<crate::Expression>) -> Result<(), InvalidHandleError> {
+        range.check_valid_for(self.expressions)?;
+        Ok(())
+    }
+
+    fn ty(&mut self, handle: Handle<crate::Type>) -> Result<(), InvalidHandleError> {
+        if self.global {
+            self.max_type = Some(self.max_type.map_or(handle, |max| max.max(handle)));
+            Ok(())
+        } else {
+            super::Validator::validate_type_handle(handle, self.types)
+        }
+    }
+
+    fn constant(&mut self, handle: Handle<crate::Constant>) -> Result<(), InvalidHandleError> {
+        super::Validator::validate_constant_handle(handle, self.constants)?;
+        if let (true, Some(dependent)) = (self.global, self.dependent) {
+            dependent.check_dep(self.constants[handle].init)?;
+        }
+        Ok(())
+    }
+
+    fn r#override(&mut self, handle: Handle<crate::Override>) -> Result<(), InvalidHandleError> {
+        super::Validator::validate_override_handle(handle, self.overrides)?;
+        if let (true, Some(dependent), Some(init)) =
+            (self.global, self.dependent, self.overrides[handle].init)
+        {
+            dependent.check_dep(init)?;
+        }
+        Ok(())
+    }
+
+    fn global_variable(
+        &mut self,
+        handle: Handle<crate::GlobalVariable>,
+    ) -> Result<(), InvalidHandleError> {
+        handle.check_valid_for(self.global_variables)
+    }
+
+    fn local_variable(
+        &mut self,
+        handle: Handle<crate::LocalVariable>,
+    ) -> Result<(), InvalidHandleError> {
+        handle.check_valid_for(self.local_variables)
+    }
+
+    fn function(&mut self, handle: Handle<crate::Function>) -> Result<(), InvalidHandleError> {
+        super::Validator::validate_callee_handle(handle, self.functions, self.current_function)
+    }
+
+    fn block(&mut self, _: &'a crate::Block) -> Result<(), InvalidHandleError> {
+        Ok(())
     }
 }
 
@@ -1379,11 +833,6 @@ impl<T> Handle<T> {
         }
     }
 
-    /// Like [`Self::check_dep`], except for [`Option`]al handle values.
-    pub(self) fn check_dep_opt(self, depends_on: Option<Self>) -> Result<Self, FwdDepError> {
-        self.check_dep_iter(depends_on.into_iter())
-    }
-
     /// Like [`Self::check_dep`], except for [`Iterator`]s over handle values.
     pub(self) fn check_dep_iter(
         self,
@@ -1396,7 +845,7 @@ impl<T> Handle<T> {
     }
 }
 
-impl<T> crate::arena::Range<T> {
+impl<T> Range<T> {
     pub(self) fn check_valid_for(&self, arena: &Arena<T>) -> Result<(), BadRangeError> {
         arena.check_contains_range(self)
     }

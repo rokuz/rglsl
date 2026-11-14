@@ -203,9 +203,10 @@ impl BlockContext<'_> {
         function: &crate::MeshFunction,
     ) -> Result<Option<Block>, Error> {
         let mut operands = Vec::new();
-        for operand in function.operands() {
+        function.try_for_each_operand(|operand| {
             operands.push(self.cached.get(operand)?);
-        }
+            Ok::<(), Error>(())
+        })?;
         let op = match *function {
             crate::MeshFunction::SetMeshOutputs { .. } => spirv::Op::SetMeshOutputsEXT,
             crate::MeshFunction::EmitMeshTasks { .. } => spirv::Op::EmitMeshTasksEXT,

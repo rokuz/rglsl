@@ -1117,9 +1117,7 @@ impl super::Validator {
         result: Handle<crate::Expression>,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
-        if let Some(index) = mode.index() {
-            self.subgroup_operand(index, context, is_u32)?;
-        }
+        mode.try_for_each_operand(|index| self.subgroup_operand(index, context, is_u32))?;
         if let crate::GatherMode::Rotate {
             cluster_size: Some(size),
             ..
@@ -1498,17 +1496,19 @@ impl super::Validator {
                 ref function,
                 result,
             } => {
-                for operand in function.operands() {
+                function.try_for_each_operand(|operand| {
                     context.resolve_type_inner(operand, &self.valid_expression_set)?;
-                }
+                    Ok::<(), WithSpan<FunctionError>>(())
+                })?;
                 if let Some(result) = result {
                     self.emit_expression(result, context)?;
                 }
             }
             S::CooperativeVector(ref function) => {
-                for operand in function.operands() {
+                function.try_for_each_operand(|operand| {
                     context.resolve_type_inner(operand, &self.valid_expression_set)?;
-                }
+                    Ok::<(), WithSpan<FunctionError>>(())
+                })?;
             }
             S::SpirvInstruction {
                 ref operands,
@@ -1557,13 +1557,15 @@ impl super::Validator {
                         super::ShaderStages::MESH
                     }
                 };
-                for operand in function.operands() {
+                function.try_for_each_operand(|operand| {
                     let inner = context.resolve_type_inner(operand, &self.valid_expression_set)?;
-                    if *inner != Ti::Scalar(crate::Scalar::U32) {
-                        return Err(FunctionError::InvalidMeshFunctionCall(operand)
-                            .with_span_handle(operand, context.expressions));
+                    if *inner == Ti::Scalar(crate::Scalar::U32) {
+                        Ok(())
+                    } else {
+                        Err(FunctionError::InvalidMeshFunctionCall(operand)
+                            .with_span_handle(operand, context.expressions))
                     }
-                }
+                })?;
             }
             S::DebugPrintf { ref arguments, .. } => {
                 for argument in arguments {
@@ -2658,10 +2660,12 @@ impl super::Validator {
             )
         };
         let hint = |hint: Option<crate::ReorderHint>| -> Result<(), WithSpan<FunctionError>> {
-            for operand in hint.iter().flat_map(crate::ReorderHint::operands) {
-                self.validate_ray_operand(operand, RayOperand::Uint, context)?;
+            match hint {
+                Some(hint) => hint.try_for_each_operand(|operand| {
+                    self.validate_ray_operand(operand, RayOperand::Uint, context)
+                }),
+                None => Ok(()),
             }
-            Ok(())
         };
         match *fun {
             Hf::TraceRay(ref data) => trace(data),
@@ -2698,17 +2702,14 @@ impl super::Validator {
                     (tmin, RayOperand::Float),
                     (direction, RayOperand::Vector),
                     (tmax, RayOperand::Float),
-                ]
-                .into_iter()
-                .chain(
-                    sbt_record
-                        .operands()
-                        .into_iter()
-                        .map(|operand| (operand, RayOperand::Uint)),
-                )
-                .chain(time.map(|time| (time, RayOperand::Float)))
-                {
+                ] {
                     self.validate_ray_operand(operand, operand_kind, context)?;
+                }
+                sbt_record.try_for_each_operand(|operand| {
+                    self.validate_ray_operand(operand, RayOperand::Uint, context)
+                })?;
+                if let Some(time) = time {
+                    self.validate_ray_operand(time, RayOperand::Float, context)?;
                 }
                 self.validate_hit_object_pointer(pointer, attributes, context)
             }

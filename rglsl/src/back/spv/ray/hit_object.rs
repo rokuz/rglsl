@@ -60,7 +60,7 @@ impl BlockContext<'_> {
 
     fn hint_ids(&mut self, hint: Option<ReorderHint>) -> Result<Vec<spirv::Word>, Error> {
         match hint {
-            Some(hint) => self.ids(&hint.operands()),
+            Some(hint) => self.ids(&[hint.hint, hint.bits]),
             None => Ok(Vec::new()),
         }
     }
@@ -135,13 +135,11 @@ impl BlockContext<'_> {
                 attributes,
             } => {
                 operands.push(self.get_handle_id(acceleration_structure)?);
-                let rest: Vec<_> = [instance_id, primitive_id, geometry_index, hit_kind]
-                    .into_iter()
-                    .chain(sbt_record.operands())
-                    .chain([origin, tmin, direction, tmax])
-                    .chain(time)
-                    .chain(core::iter::once(attributes))
-                    .collect();
+                let mut rest = Vec::from([instance_id, primitive_id, geometry_index, hit_kind]);
+                sbt_record.for_each_operand(|operand| rest.push(operand));
+                rest.extend([origin, tmin, direction, tmax]);
+                rest.extend(time);
+                rest.push(attributes);
                 operands.extend(self.ids(&rest)?);
                 if time.is_some() {
                     self.writer.require_motion_blur()?;

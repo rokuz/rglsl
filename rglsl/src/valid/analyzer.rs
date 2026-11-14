@@ -496,6 +496,14 @@ impl FunctionInfo {
     /// [`Access`]: crate::Expression::Access
     /// [`AccessIndex`]: crate::Expression::AccessIndex
     #[must_use]
+    fn add_operand_refs(&mut self, expression: &crate::Expression) -> NonUniformResult {
+        let mut non_uniform_result = None;
+        expression.for_each_operand(|operand| {
+            non_uniform_result = non_uniform_result.or(self.add_ref(operand));
+        });
+        non_uniform_result
+    }
+
     fn add_assignable_ref(
         &mut self,
         expr: Handle<crate::Expression>,
@@ -654,24 +662,44 @@ impl FunctionInfo {
                 requirements: UniformityRequirements::empty(),
             },
             // always uniform
-            E::Splat { size: _, value } => Uniformity {
-                non_uniform_result: self.add_ref(value),
+            E::Literal(_)
+            | E::Constant(_)
+            | E::Override(_)
+            | E::ZeroValue(_)
+            | E::Compose { .. }
+            | E::Splat { .. }
+            | E::Swizzle { .. }
+            | E::Unary { .. }
+            | E::Binary { .. }
+            | E::Select { .. }
+            | E::Relational { .. }
+            | E::Math { .. }
+            | E::As { .. }
+            | E::AccelerationStructureFromAddress { .. }
+            | E::RayQueryGet { .. }
+            | E::HitObjectGet { .. }
+            | E::FetchMicroTriangleVertex { .. }
+            | E::ImageSparseResident { .. }
+            | E::ImageLoad { .. }
+            | E::FragmentFetch { .. }
+            | E::PhysicalPointer { .. }
+            | E::PhysicalAddress { .. }
+            | E::BufferPointer { .. }
+            | E::HeapOffset { .. }
+            | E::Replicate { .. }
+            | E::Expect { .. }
+            | E::Bitcast { .. }
+            | E::ArrayConversion { .. }
+            | E::TensorSet { .. }
+            | E::Convert { .. }
+            | E::CooperativeVectorLoad { .. }
+            | E::CooperativeVectorMatMul { .. }
+            | E::CooperativeMatrixLength { .. }
+            | E::CooperativeMatrixResult { .. }
+            | E::TensorCreate { .. } => Uniformity {
+                non_uniform_result: self.add_operand_refs(expression),
                 requirements: UniformityRequirements::empty(),
             },
-            E::Swizzle { vector, .. } => Uniformity {
-                non_uniform_result: self.add_ref(vector),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::Literal(_) | E::Constant(_) | E::Override(_) | E::ZeroValue(_) => Uniformity::new(),
-            E::Compose { ref components, .. } => {
-                let non_uniform_result = components
-                    .iter()
-                    .fold(None, |nur, &comp| nur.or(self.add_ref(comp)));
-                Uniformity {
-                    non_uniform_result,
-                    requirements: UniformityRequirements::empty(),
-                }
-            }
             // depends on the builtin
             E::FunctionArgument(index) => {
                 let arg = &resolve_context.arguments[index as usize];
@@ -801,27 +829,6 @@ impl FunctionInfo {
                     },
                 }
             }
-            E::ImageLoad {
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                sparse: _,
-            } => {
-                let array_nur = array_index.and_then(|h| self.add_ref(h));
-                let sample_nur = sample.and_then(|h| self.add_ref(h));
-                let level_nur = level.and_then(|h| self.add_ref(h));
-                Uniformity {
-                    non_uniform_result: self
-                        .add_ref(image)
-                        .or(self.add_ref(coordinate))
-                        .or(array_nur)
-                        .or(sample_nur)
-                        .or(level_nur),
-                    requirements: UniformityRequirements::empty(),
-                }
-            }
             E::ImageQuery { image, query } => {
                 let query_nur = match query {
                     crate::ImageQuery::Size { level: Some(h) } => self.add_ref(h),
@@ -843,57 +850,11 @@ impl FunctionInfo {
                     },
                 }
             }
-            E::ImageSparseResident { code } => Uniformity {
-                non_uniform_result: self.add_ref(code),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::Unary { expr, .. } => Uniformity {
-                non_uniform_result: self.add_ref(expr),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::Binary { left, right, .. } => Uniformity {
-                non_uniform_result: self.add_ref(left).or(self.add_ref(right)),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::Select {
-                condition,
-                accept,
-                reject,
-            } => Uniformity {
-                non_uniform_result: self
-                    .add_ref(condition)
-                    .or(self.add_ref(accept))
-                    .or(self.add_ref(reject)),
-                requirements: UniformityRequirements::empty(),
-            },
             // explicit derivatives require uniform
             E::Derivative { expr, .. } => Uniformity {
                 //Note: taking a derivative of a uniform doesn't make it non-uniform
                 non_uniform_result: self.add_ref(expr),
                 requirements: UniformityRequirements::DERIVATIVE,
-            },
-            E::Relational { argument, .. } => Uniformity {
-                non_uniform_result: self.add_ref(argument),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::Math {
-                fun: _,
-                arg,
-                arg1,
-                arg2,
-                arg3,
-            } => {
-                let arg1_nur = arg1.and_then(|h| self.add_ref(h));
-                let arg2_nur = arg2.and_then(|h| self.add_ref(h));
-                let arg3_nur = arg3.and_then(|h| self.add_ref(h));
-                Uniformity {
-                    non_uniform_result: self.add_ref(arg).or(arg1_nur).or(arg2_nur).or(arg3_nur),
-                    requirements: UniformityRequirements::empty(),
-                }
-            }
-            E::As { expr, .. } => Uniformity {
-                non_uniform_result: self.add_ref(expr),
-                requirements: UniformityRequirements::empty(),
             },
             E::CallResult(function) => other_functions[function.index()].uniformity.clone(),
             E::AtomicResult { .. } | E::RayQueryProceedResult | E::ReportIntersectionResult => {
@@ -902,34 +863,6 @@ impl FunctionInfo {
                     requirements: UniformityRequirements::empty(),
                 }
             }
-            E::AccelerationStructureFromAddress { address } => Uniformity {
-                non_uniform_result: self.add_ref(address),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::RayQueryGet { query, value: _ } => Uniformity {
-                non_uniform_result: self.add_ref(query),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::HitObjectGet { object, value: _ } => Uniformity {
-                non_uniform_result: self.add_ref(object),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::FetchMicroTriangleVertex {
-                acceleration_structure,
-                instance_id,
-                geometry_index,
-                primitive_index,
-                barycentric,
-                value: _,
-            } => Uniformity {
-                non_uniform_result: self
-                    .add_ref(acceleration_structure)
-                    .or(self.add_ref(instance_id))
-                    .or(self.add_ref(geometry_index))
-                    .or(self.add_ref(primitive_index))
-                    .or(self.add_ref(barycentric)),
-                requirements: UniformityRequirements::empty(),
-            },
             E::InterpolateAt { pointer, location } => Uniformity {
                 non_uniform_result: self
                     .add_ref(pointer)
@@ -978,17 +911,6 @@ impl FunctionInfo {
                     },
                 }
             }
-            E::FragmentFetch {
-                image,
-                coordinate,
-                fragment,
-            } => Uniformity {
-                non_uniform_result: self
-                    .add_ref(image)
-                    .or(self.add_ref(coordinate))
-                    .or(fragment.and_then(|fragment| self.add_ref(fragment))),
-                requirements: UniformityRequirements::empty(),
-            },
             E::AttachmentRead { aspect, sample } => Uniformity {
                 non_uniform_result: match aspect {
                     crate::AttachmentAspect::Color(image) => self.add_ref(image),
@@ -1016,44 +938,14 @@ impl FunctionInfo {
                 non_uniform_result: self.add_ref_impl(expr, GlobalUse::QUERY),
                 requirements: UniformityRequirements::empty(),
             },
-            E::PhysicalPointer { value: expr, .. }
-            | E::PhysicalAddress { pointer: expr, .. }
-            | E::BufferPointer { descriptor: expr } => Uniformity {
-                non_uniform_result: self.add_ref(expr),
-                requirements: UniformityRequirements::empty(),
+            E::CooperativeLoad { .. } => Uniformity {
+                non_uniform_result: self.add_operand_refs(expression),
+                requirements: UniformityRequirements::COOP_OPS,
             },
-            E::HeapOffset { pointer, offset } => {
-                let pointer = self.add_ref(pointer);
-                let offset = self.add_ref(offset);
-                Uniformity {
-                    non_uniform_result: pointer.or(offset),
-                    requirements: UniformityRequirements::empty(),
-                }
-            }
-            E::CooperativeLoad { ref data, .. } => {
-                let mut non_uniform_result = None;
-                for operand in data.operands() {
-                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
-                }
-                Uniformity {
-                    non_uniform_result,
-                    requirements: UniformityRequirements::COOP_OPS,
-                }
-            }
             E::CooperativeMultiplyAdd { a, b, c, .. } => Uniformity {
                 non_uniform_result: self.add_ref(a).or(self.add_ref(b).or(self.add_ref(c))),
                 requirements: UniformityRequirements::COOP_OPS,
             },
-            E::CooperativeMatrixLength { .. } => Uniformity::new(),
-            E::Replicate { value, .. } => Uniformity {
-                non_uniform_result: self.add_ref(value),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::Expect { value, expected } => Uniformity {
-                non_uniform_result: self.add_ref(value).or(self.add_ref(expected)),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::CooperativeMatrixResult { .. } | E::TensorCreate { .. } => Uniformity::new(),
             E::ImageProcessing {
                 operation: _,
                 image,
@@ -1075,50 +967,6 @@ impl FunctionInfo {
                 .into_iter()
                 .flatten()
                 {
-                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
-                }
-                Uniformity {
-                    non_uniform_result,
-                    requirements: UniformityRequirements::empty(),
-                }
-            }
-            E::Bitcast { expr, offset, .. } => Uniformity {
-                non_uniform_result: self
-                    .add_ref(expr)
-                    .or(offset.and_then(|offset| self.add_ref(offset))),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::ArrayConversion { expr, index, .. } => Uniformity {
-                non_uniform_result: self
-                    .add_ref(expr)
-                    .or(index.and_then(|index| self.add_ref(index))),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::TensorSet {
-                base, ref operands, ..
-            } => {
-                let mut non_uniform_result = self.add_ref(base);
-                for &operand in operands {
-                    non_uniform_result = non_uniform_result.or(self.add_ref(operand));
-                }
-                Uniformity {
-                    non_uniform_result,
-                    requirements: UniformityRequirements::empty(),
-                }
-            }
-            E::Convert { expr, .. } => Uniformity {
-                non_uniform_result: self.add_ref(expr),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::CooperativeVectorLoad {
-                pointer, offset, ..
-            } => Uniformity {
-                non_uniform_result: self.add_ref(pointer).or(self.add_ref(offset)),
-                requirements: UniformityRequirements::empty(),
-            },
-            E::CooperativeVectorMatMul { ref operation, .. } => {
-                let mut non_uniform_result = None;
-                for operand in operation.operands() {
                     non_uniform_result = non_uniform_result.or(self.add_ref(operand));
                 }
                 Uniformity {
@@ -1548,9 +1396,9 @@ impl FunctionInfo {
             }
             S::RayQuery { query, ref fun } => {
                 self.add_operand_ref(query, GlobalUse::READ);
-                for operand in fun.operands() {
+                fun.for_each_operand(|operand| {
                     self.add_operand_ref(operand, GlobalUse::READ);
-                }
+                });
                 FunctionUniformity::new()
             }
             S::SubgroupBallot {
@@ -1568,9 +1416,9 @@ impl FunctionInfo {
                 argument,
                 result: _,
             } => {
-                if let Some(ballot) = collective_op.partition() {
+                collective_op.for_each_operand(|ballot| {
                     self.add_operand_ref(ballot, GlobalUse::READ);
-                }
+                });
                 self.add_operand_ref(argument, GlobalUse::READ);
                 FunctionUniformity::new()
             }
@@ -1580,15 +1428,13 @@ impl FunctionInfo {
                 result: _,
             } => {
                 self.add_operand_ref(argument, GlobalUse::READ);
-                if let Some(index) = mode.index() {
-                    self.add_operand_ref(index, GlobalUse::READ);
-                }
+                mode.for_each_operand(|index| self.add_operand_ref(index, GlobalUse::READ));
                 FunctionUniformity::new()
             }
             S::SubgroupFunction { ref fun, result: _ } => {
-                for operand in fun.operands().into_iter().flatten() {
+                fun.for_each_operand(|operand| {
                     self.add_operand_ref(operand, GlobalUse::READ);
-                }
+                });
                 FunctionUniformity::new()
             }
             S::CooperativeStore { target, ref data } => FunctionUniformity {
@@ -1619,14 +1465,14 @@ impl FunctionInfo {
                     | crate::HitObjectFunction::SetShaderBindingTableRecordIndex { .. }
                     | crate::HitObjectFunction::ReorderThread { .. } => None,
                 };
-                for operand in fun.operands() {
+                fun.for_each_operand(|operand| {
                     let usage = if Some(operand) == written {
                         GlobalUse::READ | GlobalUse::WRITE
                     } else {
                         GlobalUse::READ
                     };
                     self.add_operand_ref(operand, usage);
-                }
+                });
                 FunctionUniformity::new()
             }
             S::ReorderThread { hint, bits, .. } => {
@@ -1642,14 +1488,14 @@ impl FunctionInfo {
                     | crate::RayPipelineFunction::IgnoreIntersection { .. }
                     | crate::RayPipelineFunction::TerminateRay { .. } => None,
                 };
-                for operand in fun.operands() {
+                fun.for_each_operand(|operand| {
                     let usage = if Some(operand) == data {
                         GlobalUse::READ | GlobalUse::WRITE
                     } else {
                         GlobalUse::READ
                     };
                     self.add_operand_ref(operand, usage);
-                }
+                });
                 if fun.is_terminator() {
                     FunctionUniformity {
                         result: Uniformity::new(),
@@ -1668,14 +1514,14 @@ impl FunctionInfo {
                     crate::CooperativeMatrixFunction::StoreTensor { pointer, .. } => Some(pointer),
                     _ => None,
                 };
-                for operand in function.operands() {
+                function.for_each_operand(|operand| {
                     let reference = if Some(operand) == written {
                         self.add_ref_impl(operand, GlobalUse::WRITE)
                     } else {
                         self.add_ref(operand)
                     };
                     non_uniform_result = non_uniform_result.or(reference);
-                }
+                });
                 FunctionUniformity {
                     result: Uniformity {
                         non_uniform_result,
@@ -1687,14 +1533,14 @@ impl FunctionInfo {
             S::CooperativeVector(ref function) => {
                 let mut non_uniform_result = None;
                 let written = function.writes();
-                for operand in function.operands() {
+                function.for_each_operand(|operand| {
                     let reference = if operand == written {
                         self.add_ref_impl(operand, GlobalUse::WRITE)
                     } else {
                         self.add_ref(operand)
                     };
                     non_uniform_result = non_uniform_result.or(reference);
-                }
+                });
                 FunctionUniformity {
                     result: Uniformity {
                         non_uniform_result,
@@ -1712,9 +1558,9 @@ impl FunctionInfo {
             },
             S::MeshFunction(ref function) => {
                 let mut non_uniform_result = None;
-                for operand in function.operands() {
+                function.for_each_operand(|operand| {
                     non_uniform_result = non_uniform_result.or(self.add_ref(operand));
-                }
+                });
                 FunctionUniformity {
                     result: Uniformity {
                         non_uniform_result,

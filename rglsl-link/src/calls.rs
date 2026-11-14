@@ -1,66 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl::object::{FunctionSymbol, ObjectModule};
-use rglsl::{Block, FastHashMap, Function, Handle, Statement};
+use rglsl::{Block, FastHashMap, Function, Handle};
 
 use crate::error::LinkError;
 
 pub(crate) fn callees(block: &Block, found: &mut Vec<Handle<Function>>) {
     for statement in block.walk() {
-        match *statement {
-            Statement::Block(_)
-            | Statement::If { .. }
-            | Statement::Switch { .. }
-            | Statement::Loop { .. } => {}
-            Statement::Call { function, .. } => {
-                if !found.contains(&function) {
-                    found.push(function);
-                }
+        statement.for_each_callee(|callee| {
+            if !found.contains(&callee) {
+                found.push(callee);
             }
-            Statement::CooperativeMatrix { ref function, .. } => {
-                for callee in function.functions() {
-                    if !found.contains(&callee) {
-                        found.push(callee);
-                    }
-                }
-            }
-            Statement::Emit(_)
-            | Statement::SpirvInstruction { .. }
-            | Statement::Break
-            | Statement::Continue
-            | Statement::Return { .. }
-            | Statement::Kill
-            | Statement::Demote
-            | Statement::BeginInvocationInterlock
-            | Statement::EndInvocationInterlock
-            | Statement::SplitBarrier { .. }
-            | Statement::EmitVertex { .. }
-            | Statement::EndPrimitive { .. }
-            | Statement::ControlBarrier(_)
-            | Statement::MemoryBarrier(_)
-            | Statement::ScopedBarrier { .. }
-            | Statement::Store { .. }
-            | Statement::ImageStore { .. }
-            | Statement::Atomic { .. }
-            | Statement::AtomicLoad { .. }
-            | Statement::AtomicStore { .. }
-            | Statement::ImageAtomic { .. }
-            | Statement::RayQuery { .. }
-            | Statement::RayPipelineFunction(_)
-            | Statement::HitObject { .. }
-            | Statement::ReorderThread { .. }
-            | Statement::MeshFunction(_)
-            | Statement::SubgroupBallot { .. }
-            | Statement::SubgroupGather { .. }
-            | Statement::SubgroupCollectiveOperation { .. }
-            | Statement::SubgroupFunction { .. }
-            | Statement::CooperativeStore { .. }
-            | Statement::DebugPrintf { .. }
-            | Statement::Assume { .. }
-            | Statement::CooperativeVector(_)
-            | Statement::TensorWrite { .. }
-            | Statement::Abort { .. } => {}
-        }
+        });
     }
 }
 

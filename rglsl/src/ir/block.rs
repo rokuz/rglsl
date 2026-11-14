@@ -91,7 +91,9 @@ impl Block {
         while let Some(block) = pending.pop() {
             visit(block);
             for statement in block.body.iter_mut().rev() {
-                statement.push_child_blocks_mut(&mut pending);
+                let start = pending.len();
+                statement.for_each_child_block_mut(|child| pending.push(child));
+                pending[start..].reverse();
             }
         }
     }
@@ -119,14 +121,17 @@ impl Block {
         target: &'d mut Self,
         source: &'s Self,
         pending: &mut Vec<(&'d mut Self, &'s Self)>,
+        sources: &mut Vec<&'s Self>,
     ) {
         for (target, source) in target.body.iter_mut().zip(&source.body) {
-            pending.extend(
-                target
-                    .child_blocks_mut()
-                    .into_iter()
-                    .zip(source.child_blocks()),
-            );
+            sources.clear();
+            source.for_each_child_block(|child| sources.push(child));
+            let mut children = sources.iter();
+            target.for_each_child_block_mut(|child| {
+                if let Some(&source) = children.next() {
+                    pending.push((child, source));
+                }
+            });
         }
     }
 }
@@ -146,29 +151,9 @@ impl<'a> Iterator for Walk<'a> {
                 self.pending.pop();
                 continue;
             };
-            match *statement {
-                Statement::Block(ref block) => self.pending.push(block.iter()),
-                Statement::If {
-                    ref accept,
-                    ref reject,
-                    ..
-                } => {
-                    self.pending.push(reject.iter());
-                    self.pending.push(accept.iter());
-                }
-                Statement::Switch { ref cases, .. } => self
-                    .pending
-                    .extend(cases.iter().rev().map(|case| case.body.iter())),
-                Statement::Loop {
-                    ref body,
-                    ref continuing,
-                    ..
-                } => {
-                    self.pending.push(continuing.iter());
-                    self.pending.push(body.iter());
-                }
-                _ => {}
-            }
+            let start = self.pending.len();
+            statement.for_each_child_block(|child| self.pending.push(child.iter()));
+            self.pending[start..].reverse();
             return Some(statement);
         }
     }
@@ -181,11 +166,11 @@ impl Drop for Block {
         }
         let mut pending = Vec::new();
         for statement in &mut self.body {
-            statement.take_child_blocks(&mut pending);
+            statement.for_each_child_block_mut(|child| pending.push(core::mem::take(child)));
         }
         while let Some(mut block) = pending.pop() {
             for statement in &mut block.body {
-                statement.take_child_blocks(&mut pending);
+                statement.for_each_child_block_mut(|child| pending.push(core::mem::take(child)));
             }
         }
     }
@@ -195,10 +180,11 @@ impl Clone for Block {
     fn clone(&self) -> Self {
         let mut root = self.shallow_clone();
         let mut pending = Vec::new();
-        Self::pair_children(&mut root, self, &mut pending);
+        let mut sources = Vec::new();
+        Self::pair_children(&mut root, self, &mut pending, &mut sources);
         while let Some((target, source)) = pending.pop() {
             *target = source.shallow_clone();
-            Self::pair_children(target, source, &mut pending);
+            Self::pair_children(target, source, &mut pending, &mut sources);
         }
         drop(pending);
         root
@@ -245,101 +231,22 @@ impl Statement {
         }
     }
 
-    const fn has_child_blocks(&self) -> bool {
-        matches!(
-            *self,
-            Self::Block(_) | Self::If { .. } | Self::Switch { .. } | Self::Loop { .. }
-        )
-    }
-
-    fn push_child_blocks_mut<'a>(&'a mut self, into: &mut Vec<&'a mut Block>) {
-        match *self {
-            Self::Block(ref mut block) => into.push(block),
-            Self::If {
-                ref mut accept,
-                ref mut reject,
-                ..
-            } => {
-                into.push(reject);
-                into.push(accept);
-            }
-            Self::Switch { ref mut cases, .. } => {
-                into.extend(cases.iter_mut().rev().map(|case| &mut case.body));
-            }
-            Self::Loop {
-                ref mut body,
-                ref mut continuing,
-                ..
-            } => {
-                into.push(continuing);
-                into.push(body);
-            }
-            _ => {}
-        }
-    }
-
-    fn take_child_blocks(&mut self, into: &mut Vec<Block>) {
-        match *self {
-            Self::Block(ref mut block) => into.push(core::mem::take(block)),
-            Self::If {
-                ref mut accept,
-                ref mut reject,
-                ..
-            } => {
-                into.push(core::mem::take(accept));
-                into.push(core::mem::take(reject));
-            }
-            Self::Switch { ref mut cases, .. } => {
-                into.extend(cases.iter_mut().map(|case| core::mem::take(&mut case.body)));
-            }
-            Self::Loop {
-                ref mut body,
-                ref mut continuing,
-                ..
-            } => {
-                into.push(core::mem::take(body));
-                into.push(core::mem::take(continuing));
-            }
-            _ => {}
-        }
+    fn has_child_blocks(&self) -> bool {
+        let mut found = false;
+        self.for_each_child_block(|_| found = true);
+        found
     }
 
     pub fn child_blocks(&self) -> Vec<&Block> {
-        match *self {
-            Self::Block(ref block) => Vec::from([block]),
-            Self::If {
-                ref accept,
-                ref reject,
-                ..
-            } => Vec::from([accept, reject]),
-            Self::Switch { ref cases, .. } => cases.iter().map(|case| &case.body).collect(),
-            Self::Loop {
-                ref body,
-                ref continuing,
-                ..
-            } => Vec::from([body, continuing]),
-            _ => Vec::new(),
-        }
+        let mut children = Vec::new();
+        self.for_each_child_block(|child| children.push(child));
+        children
     }
 
     pub fn child_blocks_mut(&mut self) -> Vec<&mut Block> {
-        match *self {
-            Self::Block(ref mut block) => Vec::from([block]),
-            Self::If {
-                ref mut accept,
-                ref mut reject,
-                ..
-            } => Vec::from([accept, reject]),
-            Self::Switch { ref mut cases, .. } => {
-                cases.iter_mut().map(|case| &mut case.body).collect()
-            }
-            Self::Loop {
-                ref mut body,
-                ref mut continuing,
-                ..
-            } => Vec::from([body, continuing]),
-            _ => Vec::new(),
-        }
+        let mut children = Vec::new();
+        self.for_each_child_block_mut(|child| children.push(child));
+        children
     }
 }
 

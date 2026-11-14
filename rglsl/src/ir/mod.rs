@@ -221,6 +221,7 @@ An override expression can be evaluated at pipeline creation time.
 
 mod block;
 mod debug;
+pub mod visit;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 
@@ -1628,27 +1629,6 @@ pub enum AtomicLocation {
     Texel(Texel),
 }
 
-impl Texel {
-    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        [self.image, self.coordinate]
-            .into_iter()
-            .chain(self.array_index)
-            .chain(self.sample)
-    }
-}
-
-impl AtomicLocation {
-    pub fn expressions(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        let (pointer, texel) = match *self {
-            Self::Pointer(pointer) => (Some(pointer), None),
-            Self::Texel(texel) => (None, Some(texel)),
-        };
-        pointer
-            .into_iter()
-            .chain(texel.into_iter().flat_map(|texel| texel.expressions()))
-    }
-}
-
 /// Hint at which precision to compute a derivative.
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -2103,116 +2083,6 @@ pub enum CooperativeMatrixFunction {
     },
 }
 
-impl CooperativeMatrixFunction {
-    pub fn operands(&self) -> Vec<Handle<Expression>> {
-        match *self {
-            Self::Transpose { matrix, .. } | Self::Reduce { matrix, .. } => alloc::vec![matrix],
-            Self::PerElement {
-                matrix,
-                ref arguments,
-                ..
-            } => core::iter::once(matrix)
-                .chain(arguments.iter().copied())
-                .collect(),
-            Self::GetCoordinate { matrix, index } => alloc::vec![matrix, index],
-            Self::LoadTensor {
-                pointer,
-                object,
-                layout,
-                view,
-                ..
-            } => [Some(pointer), Some(object), Some(layout), view]
-                .into_iter()
-                .flatten()
-                .collect(),
-            Self::StoreTensor {
-                pointer,
-                value,
-                layout,
-                view,
-            } => [Some(pointer), Some(value), Some(layout), view]
-                .into_iter()
-                .flatten()
-                .collect(),
-        }
-    }
-
-    pub fn operands_mut(&mut self) -> Vec<&mut Handle<Expression>> {
-        match *self {
-            Self::Transpose { ref mut matrix, .. } | Self::Reduce { ref mut matrix, .. } => {
-                alloc::vec![matrix]
-            }
-            Self::PerElement {
-                ref mut matrix,
-                ref mut arguments,
-                ..
-            } => core::iter::once(matrix)
-                .chain(arguments.iter_mut())
-                .collect(),
-            Self::GetCoordinate {
-                ref mut matrix,
-                ref mut index,
-            } => alloc::vec![matrix, index],
-            Self::LoadTensor {
-                ref mut pointer,
-                ref mut object,
-                ref mut layout,
-                ref mut view,
-                ..
-            } => [Some(pointer), Some(object), Some(layout), view.as_mut()]
-                .into_iter()
-                .flatten()
-                .collect(),
-            Self::StoreTensor {
-                ref mut pointer,
-                ref mut value,
-                ref mut layout,
-                ref mut view,
-            } => [Some(pointer), Some(value), Some(layout), view.as_mut()]
-                .into_iter()
-                .flatten()
-                .collect(),
-        }
-    }
-
-    pub fn functions(&self) -> Vec<Handle<Function>> {
-        match *self {
-            Self::Reduce { combine, .. } => alloc::vec![combine],
-            Self::PerElement { function, .. } => alloc::vec![function],
-            Self::LoadTensor {
-                decode,
-                decode_vector,
-                ..
-            } => [decode, decode_vector].into_iter().flatten().collect(),
-            Self::Transpose { .. } | Self::GetCoordinate { .. } | Self::StoreTensor { .. } => {
-                Vec::new()
-            }
-        }
-    }
-
-    pub fn functions_mut(&mut self) -> Vec<&mut Handle<Function>> {
-        match *self {
-            Self::Reduce {
-                ref mut combine, ..
-            } => alloc::vec![combine],
-            Self::PerElement {
-                ref mut function, ..
-            } => alloc::vec![function],
-            Self::LoadTensor {
-                ref mut decode,
-                ref mut decode_vector,
-                ..
-            } => [decode.as_mut(), decode_vector.as_mut()]
-                .into_iter()
-                .flatten()
-                .collect(),
-            Self::Transpose { .. } | Self::GetCoordinate { .. } | Self::StoreTensor { .. } => {
-                Vec::new()
-            }
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
@@ -2239,52 +2109,6 @@ pub struct CooperativeVectorMatMul {
     pub layout: Handle<Expression>,
     pub transpose: Handle<Expression>,
     pub stride: Handle<Expression>,
-}
-
-impl CooperativeVectorMatMul {
-    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        let bias = self
-            .bias
-            .map(|bias| [bias.pointer, bias.offset, bias.interpretation]);
-        [
-            self.input,
-            self.input_interpretation,
-            self.matrix,
-            self.matrix_offset,
-            self.matrix_interpretation,
-            self.rows,
-            self.columns,
-            self.layout,
-            self.transpose,
-            self.stride,
-        ]
-        .into_iter()
-        .chain(bias.into_iter().flatten())
-    }
-
-    pub fn operands_mut(&mut self) -> impl Iterator<Item = &mut Handle<Expression>> {
-        let bias = self.bias.as_mut().map(|bias| {
-            [
-                &mut bias.pointer,
-                &mut bias.offset,
-                &mut bias.interpretation,
-            ]
-        });
-        [
-            &mut self.input,
-            &mut self.input_interpretation,
-            &mut self.matrix,
-            &mut self.matrix_offset,
-            &mut self.matrix_interpretation,
-            &mut self.rows,
-            &mut self.columns,
-            &mut self.layout,
-            &mut self.transpose,
-            &mut self.stride,
-        ]
-        .into_iter()
-        .chain(bias.into_iter().flatten())
-    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
@@ -2314,54 +2138,6 @@ pub enum CooperativeVectorFunction {
 }
 
 impl CooperativeVectorFunction {
-    pub fn operands(&self) -> Vec<Handle<Expression>> {
-        match *self {
-            Self::Store {
-                value,
-                pointer,
-                offset,
-            }
-            | Self::ReduceSumAccumulate {
-                value,
-                pointer,
-                offset,
-            } => alloc::vec![value, pointer, offset],
-            Self::OuterProductAccumulate {
-                a,
-                b,
-                matrix,
-                offset,
-                stride,
-                layout,
-                interpretation,
-            } => alloc::vec![a, b, matrix, offset, stride, layout, interpretation],
-        }
-    }
-
-    pub fn operands_mut(&mut self) -> Vec<&mut Handle<Expression>> {
-        match *self {
-            Self::Store {
-                ref mut value,
-                ref mut pointer,
-                ref mut offset,
-            }
-            | Self::ReduceSumAccumulate {
-                ref mut value,
-                ref mut pointer,
-                ref mut offset,
-            } => alloc::vec![value, pointer, offset],
-            Self::OuterProductAccumulate {
-                ref mut a,
-                ref mut b,
-                ref mut matrix,
-                ref mut offset,
-                ref mut stride,
-                ref mut layout,
-                ref mut interpretation,
-            } => alloc::vec![a, b, matrix, offset, stride, layout, interpretation],
-        }
-    }
-
     pub const fn writes(&self) -> Handle<Expression> {
         match *self {
             Self::Store { pointer, .. } | Self::ReduceSumAccumulate { pointer, .. } => pointer,
@@ -2378,24 +2154,6 @@ pub struct CooperativeData {
     pub pointer: Handle<Expression>,
     pub stride: Option<Handle<Expression>>,
     pub layout: Handle<Expression>,
-}
-
-impl CooperativeData {
-    pub fn operands(&self) -> impl Iterator<Item = Handle<Expression>> + use<> {
-        [Some(self.pointer), self.stride, Some(self.layout)]
-            .into_iter()
-            .flatten()
-    }
-
-    pub fn operands_mut(&mut self) -> impl Iterator<Item = &mut Handle<Expression>> {
-        [
-            Some(&mut self.pointer),
-            self.stride.as_mut(),
-            Some(&mut self.layout),
-        ]
-        .into_iter()
-        .flatten()
-    }
 }
 
 /// An expression that can be evaluated to obtain a value.
