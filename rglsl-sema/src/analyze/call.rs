@@ -1396,13 +1396,21 @@ impl Analyzer<'_> {
             }
         }
         let offset_index = match name {
-            "textureOffset" | "textureProjOffset" | "sparseTextureOffsetARB" => Some(2),
+            "textureOffset"
+            | "textureProjOffset"
+            | "sparseTextureOffsetARB"
+            | "textureOffsetClampARB"
+            | "sparseTextureOffsetClampARB" => Some(2),
             "texelFetchOffset"
             | "textureLodOffset"
             | "textureProjLodOffset"
             | "sparseTextureLodOffsetARB"
             | "sparseTexelFetchOffsetARB" => Some(3),
-            "textureGradOffset" | "textureProjGradOffset" | "sparseTextureGradOffsetARB" => Some(4),
+            "textureGradOffset"
+            | "textureProjGradOffset"
+            | "sparseTextureGradOffsetARB"
+            | "textureGradOffsetClampARB"
+            | "sparseTextureGradOffsetClampARB" => Some(4),
             _ => None,
         };
         if let Some(index) = offset_index

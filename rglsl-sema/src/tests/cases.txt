@@ -3192,6 +3192,25 @@ void main() { const ivec2 o[4] = ivec2[4](ivec2(0), ivec2(1), ivec2(2), ivec2(3)
 ### gather offsets not const | frag | 3:InvalidBuiltinCall
 layout(binding=0) uniform sampler2D s;
 void main() { ivec2 o[4]; vec4 r = textureGatherOffsets(s, vec2(0.0), o); }
+### clamped offsets not const | frag | 8:InvalidBuiltinCall, 9:InvalidBuiltinCall, 10:InvalidBuiltinCall, 11:InvalidBuiltinCall
+#extension GL_ARB_sparse_texture_clamp : require
+layout(binding=0) uniform sampler2D s;
+layout(location=0) flat in ivec2 o;
+layout(location=0) out vec4 r;
+void main() {
+  r = textureOffsetClampARB(s, vec2(0.0), ivec2(1), 0.5) + textureGradOffsetClampARB(s, vec2(0.0), vec2(0.0), vec2(0.0), ivec2(1), 0.5);
+  r += textureOffsetClampARB(s, vec2(0.0), o, 0.5);
+  r += textureGradOffsetClampARB(s, vec2(0.0), vec2(0.0), vec2(0.0), o, 0.5);
+  int k = sparseTextureOffsetClampARB(s, vec2(0.0), o, 0.5, r);
+  k += sparseTextureGradOffsetClampARB(s, vec2(0.0), vec2(0.0), vec2(0.0), o, 0.5, r);
+}
+### clamped offsets with GL_EXT_texture_offset_non_const | frag | ok
+#extension GL_ARB_sparse_texture_clamp : require
+#extension GL_EXT_texture_offset_non_const : require
+layout(binding=0) uniform sampler2D s;
+layout(location=0) flat in ivec2 o;
+layout(location=0) out vec4 r;
+void main() { r = textureOffsetClampARB(s, vec2(0.0), o, 0.5); }
 ### lod gather offsets not const | frag | 10:InvalidBuiltinCall, 11:InvalidBuiltinCall
 #extension GL_AMD_texture_gather_bias_lod : require
 #extension GL_ARB_sparse_texture2 : require
