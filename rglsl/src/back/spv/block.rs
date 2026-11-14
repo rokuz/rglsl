@@ -16,6 +16,8 @@ use crate::{Statement, arena::Handle, proc::index::GuardedIndex};
 const SPV_AMD_GPU_SHADER_HALF_FLOAT: &str = "SPV_AMD_gpu_shader_half_float";
 const SPV_AMD_SHADER_TRINARY_MINMAX: &str = "SPV_AMD_shader_trinary_minmax";
 const SPV_AMD_GCN_SHADER: &str = "SPV_AMD_gcn_shader";
+const AMD_CUBE_FACE_INDEX: Word = 1;
+const AMD_CUBE_FACE_COORD: Word = 2;
 const AMD_TIME: Word = 3;
 
 const fn trinary_minmax(
@@ -1101,6 +1103,21 @@ impl BlockContext<'_> {
                         Some(crate::ScalarKind::Uint) => spirv::GlslStd450Op::UClamp,
                         _ => return Err(Error::Validation("clamp of a non-numeric value")),
                     }),
+                    Mf::CubeFaceIndex | Mf::CubeFaceCoord => {
+                        let op = if fun == Mf::CubeFaceIndex {
+                            AMD_CUBE_FACE_INDEX
+                        } else {
+                            AMD_CUBE_FACE_COORD
+                        };
+                        let set = self.writer.spirv_ext_import(SPV_AMD_GCN_SHADER);
+                        MathOp::Custom(Instruction::ext_inst(
+                            set,
+                            op,
+                            result_type_id,
+                            id,
+                            &[arg0_id],
+                        ))
+                    }
                     Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
                         let op = trinary_minmax(fun, arg_scalar_kind)?;
                         let set = self.writer.spirv_ext_import(SPV_AMD_SHADER_TRINARY_MINMAX);

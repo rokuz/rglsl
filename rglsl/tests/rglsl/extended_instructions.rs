@@ -433,3 +433,29 @@ fn amd_shader_trinary_minmax_needs_its_extension() -> TestResult {
         "GL_AMD_shader_trinary_minmax",
     )
 }
+
+#[test]
+fn amd_gcn_shader_matches_glslang() -> TestResult {
+    let summary = matches_glslang(
+        ShaderStage::Compute,
+        "#version 450
+        #extension GL_AMD_gcn_shader : enable
+        #extension GL_ARB_gpu_shader_int64 : enable
+        layout(local_size_x = 1) in;
+        layout(std430, binding = 0) buffer B { vec3 d; uint64_t t; float f; vec2 g; };
+        void main() {
+            t = timeAMD();
+            f = cubeFaceIndexAMD(d);
+            g = cubeFaceCoordAMD(vec3(1.0, 0.5, 0.25));
+        }",
+    )?;
+    for key in [
+        "SPV_AMD_gcn_shader 1 [_]",
+        "SPV_AMD_gcn_shader 2 [(1065353216, 1056964608, 1048576000)]",
+        "SPV_AMD_gcn_shader 3 []",
+    ] {
+        assert_eq!(summary.get(key), Some(&1), "{key}: {summary:?}");
+    }
+    assert_eq!(summary.get("extension SPV_AMD_gcn_shader"), None);
+    Ok(())
+}

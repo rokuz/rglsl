@@ -100,6 +100,8 @@ impl ir::MathFunction {
             Mf::Ldexp => ldexp().into(),
             Mf::Outer => outer().into(),
             Mf::Cross => regular!(2, VEC3 of FLOAT).into(),
+            Mf::CubeFaceIndex => regular!(1, VEC3 of F32 -> Scalar).into(),
+            Mf::CubeFaceCoord => regular!(1, VEC3 of F32 -> Vec2F).into(),
             Mf::Distance => regular!(2, SCALAR|VECN of FLOAT -> Scalar).into(),
             Mf::Length => regular!(1, SCALAR|VECN of FLOAT -> Scalar).into(),
             Mf::Normalize => regular!(1, SCALAR|VECN of FLOAT).into(),

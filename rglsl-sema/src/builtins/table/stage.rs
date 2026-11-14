@@ -15,6 +15,9 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
     "clock2x32ARB": BuiltinKind::Clock { source: ClockSource::Subgroup, pair: true } => [uvec2()] {
         requires: &[ArbShaderClock],
     }
+    "timeAMD": BuiltinKind::Clock { source: ClockSource::AmdTime, pair: false } => [uint64_t()] {
+        requires: &[AmdGcnShader],
+    }
     "clockRealtimeEXT": BuiltinKind::Clock { source: ClockSource::Device, pair: false } => [uint64_t()] {
         requires: &[ExtShaderRealtimeClock],
     }

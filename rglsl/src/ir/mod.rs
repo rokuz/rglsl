@@ -1687,6 +1687,8 @@ pub enum MathFunction {
     Min3,
     Max3,
     Mid3,
+    CubeFaceIndex,
+    CubeFaceCoord,
     // trigonometry
     Cos,
     Cosh,

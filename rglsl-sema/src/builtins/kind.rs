@@ -109,6 +109,8 @@ pub enum Math {
     Min3,
     Max3,
     Mid3,
+    CubeFaceIndex,
+    CubeFaceCoord,
     Mix,
     Step,
     SmoothStep,

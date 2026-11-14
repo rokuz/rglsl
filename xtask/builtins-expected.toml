@@ -51,16 +51,6 @@ verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_INTEL_shader_integer_functions2 built-ins are not declared"
 
 [[divergence]]
-name = "cubeFace*AMD"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
-
-[[divergence]]
-name = "timeAMD"
-verdicts = ["only-glslang-accepts"]
-reason = "bug: the GL_AMD_gcn_shader built-ins are not declared"
-
-[[divergence]]
 name = "gl_BaryCoord*AMD"
 verdicts = ["only-glslang-accepts"]
 reason = "bug: the GL_AMD_shader_explicit_vertex_parameter built-in variables are not declared"

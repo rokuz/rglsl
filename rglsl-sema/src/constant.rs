@@ -529,6 +529,8 @@ fn math_component(math: Math, result: Scalar, arguments: &[Value]) -> Option<Val
         Math::Min3
         | Math::Max3
         | Math::Mid3
+        | Math::CubeFaceIndex
+        | Math::CubeFaceCoord
         | Math::Fma
         | Math::Ldexp
         | Math::Length
@@ -749,6 +751,8 @@ fn geometric(kind: Pure, result: Scalar, arguments: &[Constant]) -> Option<Vec<V
             | Math::Min3
             | Math::Max3
             | Math::Mid3
+            | Math::CubeFaceIndex
+            | Math::CubeFaceCoord
             | Math::Mix
             | Math::Step
             | Math::SmoothStep

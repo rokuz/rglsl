@@ -252,6 +252,12 @@ pub(super) const FUNCTIONS: &[BuiltinFunction] = builtins! {
         requires: &[AmdShaderTrinaryMinmax],
         floats: Halves,
     }
+    "cubeFaceIndexAMD": Pure(Math(CubeFaceIndex)) => [float(vec3)] {
+        requires: &[AmdGcnShader],
+    }
+    "cubeFaceCoordAMD": Pure(Math(CubeFaceCoord)) => [vec2(vec3)] {
+        requires: &[AmdGcnShader],
+    }
     "mix": Pure(Math(Mix)) => [genF(genF, genF, genF), genF(genF, genF, float)] {
         flags: flags!(FOLD, FUZZ),
         floats: DoublesAndHalves,

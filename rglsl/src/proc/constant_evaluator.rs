@@ -2160,6 +2160,8 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::Min3
             | crate::MathFunction::Max3
             | crate::MathFunction::Mid3
+            | crate::MathFunction::CubeFaceIndex
+            | crate::MathFunction::CubeFaceCoord
             | crate::MathFunction::Round
             | crate::MathFunction::Modf
             | crate::MathFunction::Frexp

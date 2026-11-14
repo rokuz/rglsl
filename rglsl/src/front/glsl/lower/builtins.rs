@@ -62,6 +62,8 @@ pub(super) const fn math_function(math: Math) -> MathFunction {
         Math::Min3 => Mf::Min3,
         Math::Max3 => Mf::Max3,
         Math::Mid3 => Mf::Mid3,
+        Math::CubeFaceIndex => Mf::CubeFaceIndex,
+        Math::CubeFaceCoord => Mf::CubeFaceCoord,
         Math::Mix => Mf::Mix,
         Math::Step => Mf::Step,
         Math::SmoothStep => Mf::SmoothStep,

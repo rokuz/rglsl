@@ -771,6 +771,8 @@ impl Analyzer<'_> {
                 | Math::Min3
                 | Math::Max3
                 | Math::Mid3
+                | Math::CubeFaceIndex
+                | Math::CubeFaceCoord
                 | Math::Mix
                 | Math::Step
                 | Math::SmoothStep
