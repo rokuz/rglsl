@@ -6038,6 +6038,29 @@ void main() {
 void main() {
     controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquire | gl_SemanticsVolatile);
 }
+### barrier scopes outside compute-like stages | frag 450 | 5:InvalidBuiltinCall, 6:InvalidBuiltinCall
+#extension GL_KHR_memory_scope_semantics : require
+void main() {
+    controlBarrier(gl_ScopeSubgroup, gl_ScopeSubgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeSubgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+    controlBarrier(gl_ScopeSubgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+}
+### workgroup barriers in tessellation control shaders | tesc 450 | ok
+#extension GL_KHR_memory_scope_semantics : require
+layout(vertices = 3) out;
+void main() {
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+}
+### split barriers are compute only | mesh 460 | 8:InvalidBuiltinCall, 9:InvalidBuiltinCall
+#extension GL_EXT_mesh_shader : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_split_barrier : require
+layout(local_size_x = 1) in;
+layout(max_vertices = 3, max_primitives = 1, triangles) out;
+void main() {
+    controlBarrierArrive(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsRelease);
+    controlBarrierWait(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquire);
+}
 ### split barrier needs its extension | comp | 3:ExtensionRequired
 void main() {
     controlBarrierArrive();
