@@ -16,6 +16,7 @@ use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
 use crate::constant::{Constant, Linear, Value, fold_binary, fold_linear, fold_unary};
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
 use crate::types::CooperativeUse;
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
@@ -825,7 +826,7 @@ impl Analyzer<'_> {
                             .qualifiers
                             .flags
                             .contains(QualifierFlags::SPECIALIZATION)
-                            || variable.qualifiers.has_layout("constant_id")
+                            || variable.qualifiers.has_layout(LayoutId::ConstantId)
                     }));
         if specialization {
             self.specialization_uses += 1;

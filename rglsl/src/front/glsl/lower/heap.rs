@@ -1,13 +1,13 @@
 use alloc::{string::String, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, SingleTypeQualifier, Spanned, TypeQualifier};
-use rglsl_sema::SymbolId;
 use rglsl_sema::layout::{block_layout, member_row_major};
 use rglsl_sema::scope::{Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize as GlslArraySize, BlockId, BlockStorage, Member, OpaqueKind, Packing, StructId,
     Type as GlslType, TypeKind,
 };
+use rglsl_sema::{LayoutId, SymbolId};
 use rglsl_types::extension::Extension;
 
 use super::globals::{image_access, image_format, storage_access};
@@ -36,7 +36,7 @@ fn heap_offset_expression(qualifier: &Spanned<TypeQualifier>) -> Option<&AstExpr
             _ => None,
         })
         .flat_map(|layout| layout.ids.iter())
-        .filter(|id| id.node.name.node == "heap_offset")
+        .filter(|id| LayoutId::from_name(&id.node.name.node) == Some(LayoutId::HeapOffset))
         .filter_map(|id| id.node.value.as_ref())
         .next_back()
 }
@@ -46,17 +46,12 @@ fn explicit_packing(qualifiers: &Qualifiers) -> Option<Packing> {
         .layout
         .iter()
         .rev()
-        .find_map(|entry| match entry.name.as_str() {
-            "std140" => Some(Packing::Std140),
-            "std430" => Some(Packing::Std430),
-            "scalar" => Some(Packing::Scalar),
-            _ => None,
-        })
+        .find_map(|entry| entry.id.and_then(LayoutId::explicit_packing))
 }
 
-fn layout_u32(qualifiers: &Qualifiers, name: &str, at: Span) -> Result<Option<u32>> {
+fn layout_u32(qualifiers: &Qualifiers, id: LayoutId, at: Span) -> Result<Option<u32>> {
     match qualifiers
-        .layout_entry(name)
+        .layout_entry(id)
         .and_then(|entry| entry.value.constant())
     {
         Some(value) => u32::try_from(value).map(Some).map_err(|_| internal(at)),
@@ -107,9 +102,9 @@ impl<'a> Lowerer<'a> {
         self.analysis
             .extensions
             .contains(Extension::ExtDescriptorHeap)
-            && !qualifiers.has_layout("set")
-            && !qualifiers.has_layout("binding")
-            && (qualifiers.has_layout("descriptor_heap")
+            && !qualifiers.has_layout(LayoutId::Set)
+            && !qualifiers.has_layout(LayoutId::Binding)
+            && (qualifiers.has_layout(LayoutId::DescriptorHeap)
                 || matches!(
                     qualifiers.storage,
                     Storage::ResourceHeap | Storage::SamplerHeap
@@ -228,10 +223,8 @@ impl<'a> Lowerer<'a> {
         match opaque.kind {
             OpaqueKind::Image => {
                 let format = qualifiers
-                    .layout
-                    .iter()
-                    .rev()
-                    .find_map(|entry| image_format(&entry.name))
+                    .image_format()
+                    .and_then(image_format)
                     .unwrap_or_else(|| super::globals::unknown_format(opaque.sampled));
                 Ok(TypeInner::Image {
                     dim: image_dimension(opaque),
@@ -331,7 +324,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Handle<Type>> {
         let mut laid = Vec::with_capacity(members.len());
         for member in members {
-            layout_u32(&member.qualifiers, "offset", at)?;
+            layout_u32(&member.qualifiers, LayoutId::Offset, at)?;
             let member_row_major = member_row_major(&member.qualifiers, row_major);
             let ty = self.heap_data_type(&member.ty, at)?;
             laid.push(self.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)?);
@@ -395,7 +388,7 @@ impl<'a> Lowerer<'a> {
         let element = GlslType::new(ty.kind);
         let inner = self.heap_image(&element, qualifiers, at)?;
         let base = self.insert_type(inner);
-        let stride = layout_u32(qualifiers, "descriptor_stride", at)?.unwrap_or(0);
+        let stride = layout_u32(qualifiers, LayoutId::DescriptorStride, at)?.unwrap_or(0);
         let dimensions = ty.dimensions().to_vec();
         let view = self.descriptor_arrays(base, &dimensions, stride, at)?;
         let offset = self.heap_offset(qualifier, at)?;
@@ -413,7 +406,7 @@ impl<'a> Lowerer<'a> {
     ) -> Result<()> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
         let dimensions = variable.ty.dimensions().to_vec();
-        let stride = layout_u32(&variable.qualifiers, "descriptor_stride", at)?.unwrap_or(0);
+        let stride = layout_u32(&variable.qualifiers, LayoutId::DescriptorStride, at)?.unwrap_or(0);
         let base = self.buffer_descriptor(id, at)?;
         let view = self.descriptor_arrays(base, &dimensions, stride, at)?;
         let offset = self.heap_offset(qualifier, at)?;
@@ -436,7 +429,7 @@ impl<'a> Lowerer<'a> {
         } else {
             DescriptorHeap::Resource
         };
-        let row_major = block.qualifiers.has_layout("row_major");
+        let row_major = block.qualifiers.has_layout(LayoutId::RowMajor);
         let packing = explicit_packing(&block.qualifiers);
         let descriptors = block
             .members
@@ -545,12 +538,12 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         for (index, member) in members.iter().enumerate() {
             let qualifiers = &member.qualifiers;
             let member_row_major = member_row_major(qualifiers, row_major);
-            let explicit = layout_u32(qualifiers, "offset", at)?;
+            let explicit = layout_u32(qualifiers, LayoutId::Offset, at)?;
             let offset = match offsets {
                 Some(ref offsets) => Some(*offsets.get(index).ok_or_else(|| internal(at))?),
                 None => explicit,
             };
-            let size = layout_u32(qualifiers, "descriptor_size", at)?;
+            let size = layout_u32(qualifiers, LayoutId::DescriptorSize, at)?;
             let (ty, matrix_layout) = if self.with(|this| this.contains_descriptor(&member.ty))? {
                 let element = GlslType::new(member.ty.kind);
                 let leaf = {

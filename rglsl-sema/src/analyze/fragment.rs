@@ -6,6 +6,7 @@ use rglsl_types::extension::Extension;
 
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{PerVertex, Qualifiers, Storage};
 use rglsl_types::ShaderStage;
 
@@ -20,14 +21,14 @@ pub enum Interlock {
 }
 
 impl Interlock {
-    fn from_layout(name: &str) -> Option<Self> {
-        Some(match name {
-            "pixel_interlock_ordered" => Self::PixelOrdered,
-            "pixel_interlock_unordered" => Self::PixelUnordered,
-            "sample_interlock_ordered" => Self::SampleOrdered,
-            "sample_interlock_unordered" => Self::SampleUnordered,
-            "shading_rate_interlock_ordered" => Self::ShadingRateOrdered,
-            "shading_rate_interlock_unordered" => Self::ShadingRateUnordered,
+    const fn from_layout(id: LayoutId) -> Option<Self> {
+        Some(match id {
+            LayoutId::PixelInterlockOrdered => Self::PixelOrdered,
+            LayoutId::PixelInterlockUnordered => Self::PixelUnordered,
+            LayoutId::SampleInterlockOrdered => Self::SampleOrdered,
+            LayoutId::SampleInterlockUnordered => Self::SampleUnordered,
+            LayoutId::ShadingRateInterlockOrdered => Self::ShadingRateOrdered,
+            LayoutId::ShadingRateInterlockUnordered => Self::ShadingRateUnordered,
             _ => return None,
         })
     }
@@ -75,29 +76,33 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 
 impl Analyzer<'_> {
     pub(crate) fn fragment_layouts(&mut self, qualifiers: &Qualifiers) {
-        let relevant = qualifiers.layout.iter().any(|entry| {
-            Interlock::from_layout(&entry.name).is_some()
-                || matches!(
-                    entry.name.as_str(),
-                    "post_depth_coverage"
-                        | "early_fragment_tests"
-                        | "early_and_late_fragment_tests_amd"
-                        | "non_coherent_color_attachment_readext"
-                        | "non_coherent_depth_attachment_readext"
-                        | "non_coherent_stencil_attachment_readext"
-                )
-        });
+        let relevant = qualifiers
+            .layout
+            .iter()
+            .filter_map(|entry| entry.id)
+            .any(|id| {
+                Interlock::from_layout(id).is_some()
+                    || matches!(
+                        id,
+                        LayoutId::PostDepthCoverage
+                            | LayoutId::EarlyFragmentTests
+                            | LayoutId::EarlyAndLateFragmentTestsAmd
+                            | LayoutId::NonCoherentColorAttachmentReadExt
+                            | LayoutId::NonCoherentDepthAttachmentReadExt
+                            | LayoutId::NonCoherentStencilAttachmentReadExt
+                    )
+            });
         if !relevant || !self.stage_is(ShaderStage::Fragment) {
             return;
         }
         let input = qualifiers.storage == Storage::In;
-        let entries: alloc::vec::Vec<(String, Span)> = qualifiers
+        let entries: alloc::vec::Vec<(LayoutId, Span)> = qualifiers
             .layout
             .iter()
-            .map(|entry| (entry.name.clone(), entry.span))
+            .filter_map(|entry| Some((entry.id?, entry.span)))
             .collect();
-        for (name, span) in entries {
-            if let Some(interlock) = Interlock::from_layout(&name) {
+        for (id, span) in entries {
+            if let Some(interlock) = Interlock::from_layout(id) {
                 self.require_extension(
                     span,
                     Extension::ArbFragmentShaderInterlock,
@@ -125,14 +130,14 @@ impl Analyzer<'_> {
                 }
                 continue;
             }
-            let (qualifier, slot) = match name.as_str() {
-                "post_depth_coverage" => {
+            let (qualifier, slot) = match id {
+                LayoutId::PostDepthCoverage => {
                     self.post_depth_coverage_extension(span);
                     ("post_depth_coverage", 0)
                 }
-                "early_fragment_tests" => ("early_fragment_tests", 1),
-                "early_and_late_fragment_tests_amd" => ("early_and_late_fragment_tests_amd", 5),
-                "non_coherent_color_attachment_readext" => {
+                LayoutId::EarlyFragmentTests => ("early_fragment_tests", 1),
+                LayoutId::EarlyAndLateFragmentTestsAmd => ("early_and_late_fragment_tests_amd", 5),
+                LayoutId::NonCoherentColorAttachmentReadExt => {
                     self.require_extension(
                         span,
                         Extension::ExtShaderTileImage,
@@ -140,7 +145,7 @@ impl Analyzer<'_> {
                     );
                     ("non_coherent_color_attachment_readEXT", 2)
                 }
-                "non_coherent_depth_attachment_readext" => {
+                LayoutId::NonCoherentDepthAttachmentReadExt => {
                     self.require_extension(
                         span,
                         Extension::ExtShaderTileImage,
@@ -148,7 +153,7 @@ impl Analyzer<'_> {
                     );
                     ("non_coherent_depth_attachment_readEXT", 3)
                 }
-                "non_coherent_stencil_attachment_readext" => {
+                LayoutId::NonCoherentStencilAttachmentReadExt => {
                     self.require_extension(
                         span,
                         Extension::ExtShaderTileImage,
@@ -273,11 +278,11 @@ impl Analyzer<'_> {
         if !self.scopes.is_global() {
             self.error(span, invalid("tileImageEXT", "not allowed in nested scope"));
         }
-        if qualifiers.has_layout("set") {
+        if qualifiers.has_layout(LayoutId::Set) {
             self.error(span, invalid("set", "cannot be used with tileImageEXT"));
         }
         let Some(location) = qualifiers
-            .layout_entry("location")
+            .layout_entry(LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {

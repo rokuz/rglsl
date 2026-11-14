@@ -1,187 +1,29 @@
 use alloc::string::String;
 
 use rglsl_ast::Span;
-
-use super::Analyzer;
-use super::declaration::IMAGE_FORMATS;
-use crate::diagnostic::DiagnosticKind;
-use crate::scope::{LayoutEntry, LayoutValue, Qualifiers};
 use rglsl_types::ShaderStageMask;
 
-const ALL: ShaderStageMask = ShaderStageMask::all();
+use super::Analyzer;
+use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
+use crate::scope::{LayoutEntry, LayoutValue, Qualifiers};
 
-const PRE_RASTERIZATION: ShaderStageMask = ShaderStageMask::VERTEX
-    .union(ShaderStageMask::TESS_CONTROL)
-    .union(ShaderStageMask::TESS_EVALUATION)
-    .union(ShaderStageMask::GEOMETRY);
-
-const COMPUTE_LIKE: ShaderStageMask = ShaderStageMask::COMPUTE_LIKE;
-
-const RAY_TRACING: ShaderStageMask = ShaderStageMask::RAY_TRACING;
-
-const FRAGMENT: ShaderStageMask = ShaderStageMask::FRAGMENT;
-
-const PACKINGS_AND_MATRICES: [&str; 7] = [
-    "column_major",
-    "row_major",
-    "packed",
-    "shared",
-    "std140",
-    "std430",
-    "scalar",
-];
-
-const OTHER_FORMATS: [&str; 6] = [
-    "size1x8", "size1x16", "size1x32", "size2x32", "size4x32", "none",
-];
-
-const ANY_STAGE_FLAGS: [&str; 10] = [
-    "descriptor_heap",
-    "push_constant",
-    "buffer_reference",
-    "buffer_type",
-    "bindless_sampler",
-    "bindless_image",
-    "bound_sampler",
-    "bound_image",
-    "primitive_culling",
-    "quad_derivatives",
-];
-
-const FRAGMENT_FLAGS: [&str; 26] = [
-    "origin_upper_left",
-    "pixel_center_integer",
-    "early_fragment_tests",
-    "early_and_late_fragment_tests_amd",
-    "post_depth_coverage",
-    "non_coherent_color_attachment_readext",
-    "non_coherent_depth_attachment_readext",
-    "non_coherent_stencil_attachment_readext",
-    "depth_any",
-    "depth_greater",
-    "depth_less",
-    "depth_unchanged",
-    "stencil_ref_unchanged_front_amd",
-    "stencil_ref_greater_front_amd",
-    "stencil_ref_less_front_amd",
-    "stencil_ref_unchanged_back_amd",
-    "stencil_ref_greater_back_amd",
-    "stencil_ref_less_back_amd",
-    "pixel_interlock_ordered",
-    "pixel_interlock_unordered",
-    "sample_interlock_ordered",
-    "sample_interlock_unordered",
-    "shading_rate_interlock_ordered",
-    "shading_rate_interlock_unordered",
-    "override_coverage",
-    "full_quads",
-];
-
-const ANY_STAGE_VALUES: [&str; 18] = [
-    "offset",
-    "align",
-    "location",
-    "set",
-    "binding",
-    "constant_id",
-    "component",
-    "xfb_buffer",
-    "xfb_offset",
-    "xfb_stride",
-    "input_attachment_index",
-    "num_views",
-    "buffer_reference_align",
-    "bank",
-    "member_offset",
-    "descriptor_stride",
-    "descriptor_size",
-    "heap_offset",
-];
-
-fn flag_stages(name: &str) -> Option<ShaderStageMask> {
-    if PACKINGS_AND_MATRICES.contains(&name)
-        || IMAGE_FORMATS.contains(&name)
-        || OTHER_FORMATS.contains(&name)
-        || ANY_STAGE_FLAGS.contains(&name)
-    {
-        return Some(ALL);
-    }
-    if FRAGMENT_FLAGS.contains(&name) || name.starts_with("blend_support") {
-        return Some(FRAGMENT);
-    }
-    Some(match name {
-        "triangles" => ShaderStageMask::GEOMETRY
-            .union(ShaderStageMask::TESS_EVALUATION)
-            .union(ShaderStageMask::MESH),
-        "points" | "lines" => ShaderStageMask::GEOMETRY.union(ShaderStageMask::MESH),
-        "line_strip"
-        | "lines_adjacency"
-        | "triangles_adjacency"
-        | "triangle_strip"
-        | "passthrough" => ShaderStageMask::GEOMETRY,
-        "quads"
-        | "isolines"
-        | "equal_spacing"
-        | "fractional_even_spacing"
-        | "fractional_odd_spacing"
-        | "cw"
-        | "ccw"
-        | "point_mode" => ShaderStageMask::TESS_EVALUATION,
-        "non_coherent_attachment_readqcom" => FRAGMENT,
-        "tile_attachmentqcom" => ShaderStageMask::FRAGMENT.union(ShaderStageMask::COMPUTE),
-        "viewport_relative" => PRE_RASTERIZATION,
-        "shaderrecordnv"
-        | "shaderrecordext"
-        | "hitobjectshaderrecordnv"
-        | "hitobjectshaderrecordext" => RAY_TRACING,
-        "derivative_group_quadsnv"
-        | "derivative_group_linearnv"
-        | "derivative_group_quadskhr"
-        | "derivative_group_linearkhr" => COMPUTE_LIKE,
-        _ => return None,
-    })
-}
-
-fn value_stages(name: &str) -> Option<ShaderStageMask> {
-    if ANY_STAGE_VALUES.contains(&name) {
-        return Some(ALL);
-    }
-    Some(match name {
-        "secondary_view_offset" => PRE_RASTERIZATION,
-        "vertices" => ShaderStageMask::TESS_CONTROL,
-        "invocations" | "stream" => ShaderStageMask::GEOMETRY,
-        "max_vertices" => ShaderStageMask::GEOMETRY.union(ShaderStageMask::MESH),
-        "max_primitives" => ShaderStageMask::MESH,
-        "index" => FRAGMENT,
-        "local_size_x" | "local_size_y" | "local_size_z" | "local_size_x_id"
-        | "local_size_y_id" | "local_size_z_id" | "shading_rate_xqcom" | "shading_rate_yqcom"
-        | "shading_rate_zqcom" => COMPUTE_LIKE,
-        _ => return None,
+fn flag_stages_of(id: Option<LayoutId>, name: &str) -> Option<ShaderStageMask> {
+    id.and_then(|id| id.info().kind.flag_stages()).or_else(|| {
+        name.starts_with("blend_support")
+            .then_some(ShaderStageMask::FRAGMENT)
     })
 }
 
 pub fn layout_stages(name: &str) -> Option<ShaderStageMask> {
-    flag_stages(name)
-        .or_else(|| value_stages(name))
+    let id = LayoutId::from_name(name);
+    flag_stages_of(id, name)
+        .or_else(|| id.and_then(|id| id.info().kind.value_stages()))
         .filter(|stages| !stages.is_all())
-}
-
-fn literal_name(name: &str) -> &str {
-    if name.starts_with("local_size_") {
-        "local_size"
-    } else if name.starts_with("shading_rate_") {
-        "shading_rate_*QCOM"
-    } else {
-        name
-    }
 }
 
 fn is_local_size_axis(name: &str) -> bool {
     name.len() == "local_size_x".len() && name.starts_with("local_size_")
-}
-
-fn takes_any_value(name: &str) -> bool {
-    matches!(name, "heap_offset" | "descriptor_stride")
 }
 
 impl Analyzer<'_> {
@@ -195,7 +37,7 @@ impl Analyzer<'_> {
         let name = entry.name.as_str();
         match entry.value {
             LayoutValue::Flag => {
-                let stages = flag_stages(name);
+                let stages = flag_stages_of(entry.id, name);
                 self.stage_check(entry.span, |stage| {
                     (!stages.is_some_and(|stages| stages.has(stage)))
                         .then(|| DiagnosticKind::UnrecognizedLayout(String::from(name)))
@@ -203,12 +45,12 @@ impl Analyzer<'_> {
             }
             LayoutValue::Constant(value) if value < 0 => {}
             LayoutValue::Constant(_) | LayoutValue::Invalid => {
-                let stages = value_stages(name);
+                let stages = entry.id.and_then(|id| id.info().kind.value_stages());
                 let zero_local_size = is_local_size_axis(name) && entry.value.constant() == Some(0);
                 self.stage_check(entry.span, |stage| {
                     if stages.is_some_and(|stages| stages.has(stage)) {
                         None
-                    } else if zero_local_size && COMPUTE_LIKE.has(stage) {
+                    } else if zero_local_size && ShaderStageMask::COMPUTE_LIKE.has(stage) {
                         Some(DiagnosticKind::LayoutValueBelowOne(String::from(name)))
                     } else {
                         Some(DiagnosticKind::UnknownLayoutWithValue(String::from(name)))
@@ -218,17 +60,17 @@ impl Analyzer<'_> {
         }
     }
 
-    pub(crate) fn literal_layout_value(&mut self, name: &str, span: Span) {
-        if takes_any_value(name) {
+    pub(crate) fn literal_layout_value(&mut self, id: Option<LayoutId>, span: Span) {
+        let Some(id) = id.filter(|id| !id.info().takes_any_value) else {
             return;
-        }
-        let Some(stages) = value_stages(name) else {
+        };
+        let Some(stages) = id.info().kind.value_stages() else {
             return;
         };
         self.stage_check(span, |stage| {
             stages
                 .has(stage)
-                .then(|| DiagnosticKind::LayoutValueNotLiteral(String::from(literal_name(name))))
+                .then(|| DiagnosticKind::LayoutValueNotLiteral(String::from(id.literal_name())))
         });
     }
 }

@@ -3,6 +3,7 @@ use rglsl_types::extension::Extension;
 
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{LayoutEntry, Qualifiers, Storage};
 use rglsl_types::{ShaderStage, ShaderStageMask};
 
@@ -23,52 +24,55 @@ enum Kind {
 pub struct StageLayout {
     pub(crate) selections: u32,
     pub(crate) returned_from_main: bool,
-    input_primitive: Option<&'static str>,
-    output_primitive: Option<&'static str>,
+    input_primitive: Option<LayoutId>,
+    output_primitive: Option<LayoutId>,
     vertices: Option<i64>,
     primitives: Option<i64>,
     invocations: Option<i64>,
-    spacing: Option<&'static str>,
-    order: Option<&'static str>,
+    spacing: Option<LayoutId>,
+    order: Option<LayoutId>,
 }
 
-const GEOMETRY: &[(&str, Kind)] = &[
-    ("points", Kind::AnyPrimitive),
-    ("lines", Kind::InputPrimitive),
-    ("lines_adjacency", Kind::InputPrimitive),
-    ("triangles", Kind::InputPrimitive),
-    ("triangles_adjacency", Kind::InputPrimitive),
-    ("line_strip", Kind::OutputPrimitive),
-    ("triangle_strip", Kind::OutputPrimitive),
-    ("invocations", Kind::Invocations),
-    ("max_vertices", Kind::Vertices),
+const GEOMETRY: &[(LayoutId, Kind)] = &[
+    (LayoutId::Points, Kind::AnyPrimitive),
+    (LayoutId::Lines, Kind::InputPrimitive),
+    (LayoutId::LinesAdjacency, Kind::InputPrimitive),
+    (LayoutId::Triangles, Kind::InputPrimitive),
+    (LayoutId::TrianglesAdjacency, Kind::InputPrimitive),
+    (LayoutId::LineStrip, Kind::OutputPrimitive),
+    (LayoutId::TriangleStrip, Kind::OutputPrimitive),
+    (LayoutId::Invocations, Kind::Invocations),
+    (LayoutId::MaxVertices, Kind::Vertices),
 ];
 
-const TESS_EVALUATION: &[(&str, Kind)] = &[
-    ("triangles", Kind::InputPrimitive),
-    ("quads", Kind::InputPrimitive),
-    ("isolines", Kind::InputPrimitive),
-    ("equal_spacing", Kind::Spacing),
-    ("fractional_even_spacing", Kind::Spacing),
-    ("fractional_odd_spacing", Kind::Spacing),
-    ("cw", Kind::Order),
-    ("ccw", Kind::Order),
-    ("point_mode", Kind::PointMode),
+const TESS_EVALUATION: &[(LayoutId, Kind)] = &[
+    (LayoutId::Triangles, Kind::InputPrimitive),
+    (LayoutId::Quads, Kind::InputPrimitive),
+    (LayoutId::Isolines, Kind::InputPrimitive),
+    (LayoutId::EqualSpacing, Kind::Spacing),
+    (LayoutId::FractionalEvenSpacing, Kind::Spacing),
+    (LayoutId::FractionalOddSpacing, Kind::Spacing),
+    (LayoutId::Cw, Kind::Order),
+    (LayoutId::Ccw, Kind::Order),
+    (LayoutId::PointMode, Kind::PointMode),
 ];
 
-const TESS_CONTROL: &[(&str, Kind)] = &[("vertices", Kind::Vertices)];
+const TESS_CONTROL: &[(LayoutId, Kind)] = &[(LayoutId::Vertices, Kind::Vertices)];
 
-const MESH: &[(&str, Kind)] = &[
-    ("points", Kind::OutputPrimitive),
-    ("lines", Kind::OutputPrimitive),
-    ("triangles", Kind::OutputPrimitive),
-    ("max_vertices", Kind::Vertices),
-    ("max_primitives", Kind::Primitives),
+const MESH: &[(LayoutId, Kind)] = &[
+    (LayoutId::Points, Kind::OutputPrimitive),
+    (LayoutId::Lines, Kind::OutputPrimitive),
+    (LayoutId::Triangles, Kind::OutputPrimitive),
+    (LayoutId::MaxVertices, Kind::Vertices),
+    (LayoutId::MaxPrimitives, Kind::Primitives),
 ];
 
 impl StageLayout {
     pub(crate) const fn output_primitive(&self) -> Option<&'static str> {
-        self.output_primitive
+        match self.output_primitive {
+            Some(id) => Some(id.name()),
+            None => None,
+        }
     }
 
     pub(crate) const fn mesh_vertices(&self) -> Option<i64> {
@@ -80,7 +84,7 @@ impl StageLayout {
     }
 }
 
-const fn table(stage: ShaderStage) -> &'static [(&'static str, Kind)] {
+const fn table(stage: ShaderStage) -> &'static [(LayoutId, Kind)] {
     match stage {
         ShaderStage::Geometry => GEOMETRY,
         ShaderStage::TessEvaluation => TESS_EVALUATION,
@@ -93,12 +97,13 @@ const fn table(stage: ShaderStage) -> &'static [(&'static str, Kind)] {
 fn shader_layouts(
     stage: ShaderStage,
     qualifiers: &Qualifiers,
-) -> impl Iterator<Item = (&'static str, Kind, &LayoutEntry)> {
+) -> impl Iterator<Item = (LayoutId, Kind, &LayoutEntry)> {
     qualifiers.layout.iter().filter_map(move |entry| {
+        let id = entry.id?;
         table(stage)
             .iter()
-            .find(|&&(name, _)| entry.name == name)
-            .map(|&(name, kind)| (name, kind, entry))
+            .find(|&&(candidate, _)| candidate == id)
+            .map(|&(id, kind)| (id, kind, entry))
     })
 }
 
@@ -116,7 +121,7 @@ impl Analyzer<'_> {
         let span = qualifiers
             .layout
             .iter()
-            .find(|entry| entry.name == "passthrough")
+            .find(|entry| entry.id == Some(LayoutId::Passthrough))
             .map(|entry| entry.span);
         if let Some(span) = span.filter(|_| self.stage_is(ShaderStage::Geometry)) {
             self.require_extension(
@@ -133,23 +138,23 @@ impl Analyzer<'_> {
                 .layout
                 .iter()
                 .filter_map(|entry| {
-                    let (extension, what, fragment): (&'static [Extension], _, _) =
-                        match entry.name.as_str() {
-                            "viewport_relative" => {
-                                (&[Extension::NvViewportArray2], "viewport_relative", false)
-                            }
-                            "secondary_view_offset" => (
-                                &[Extension::NvStereoViewRendering],
-                                "secondary_view_offset",
-                                false,
-                            ),
-                            "override_coverage" => (
-                                &[Extension::NvSampleMaskOverrideCoverage],
-                                "override_coverage",
-                                true,
-                            ),
-                            _ => return None,
-                        };
+                    let (extension, what, fragment): (&'static [Extension], _, _) = match entry.id?
+                    {
+                        LayoutId::ViewportRelative => {
+                            (&[Extension::NvViewportArray2], "viewport_relative", false)
+                        }
+                        LayoutId::SecondaryViewOffset => (
+                            &[Extension::NvStereoViewRendering],
+                            "secondary_view_offset",
+                            false,
+                        ),
+                        LayoutId::OverrideCoverage => (
+                            &[Extension::NvSampleMaskOverrideCoverage],
+                            "override_coverage",
+                            true,
+                        ),
+                        _ => return None,
+                    };
                     Some((entry.span, extension, what, fragment))
                 })
                 .collect();
@@ -176,27 +181,28 @@ impl Analyzer<'_> {
             .iter()
             .filter(|entry| !shader.contains(&entry.span))
             .find(|entry| {
-                ![
-                    "constant_id",
-                    "input_attachment_index",
-                    "buffer_reference_align",
-                ]
-                .iter()
-                .any(|name| entry.name == *name)
+                !matches!(
+                    entry.id,
+                    Some(
+                        LayoutId::ConstantId
+                            | LayoutId::InputAttachmentIndex
+                            | LayoutId::BufferReferenceAlign
+                    )
+                )
             })
             .map(|entry| entry.span)
     }
 
     pub(crate) fn no_shader_layouts(&mut self, qualifiers: &Qualifiers) {
-        let found: alloc::vec::Vec<(&'static str, Span)> = self.stage_map(|stage| {
+        let found: alloc::vec::Vec<(LayoutId, Span)> = self.stage_map(|stage| {
             shader_layouts(stage, qualifiers)
-                .map(|(name, _, entry)| (name, entry.span))
+                .map(|(id, _, entry)| (id, entry.span))
                 .collect()
         });
-        for (name, span) in found {
+        for (id, span) in found {
             self.error(
                 span,
-                invalid(name, "can only apply to a standalone qualifier"),
+                invalid(id.name(), "can only apply to a standalone qualifier"),
             );
         }
     }
@@ -206,13 +212,14 @@ impl Analyzer<'_> {
             return;
         }
         let stage = self.stage();
-        let found: alloc::vec::Vec<(&'static str, Kind, Span, Option<i64>)> =
+        let found: alloc::vec::Vec<(LayoutId, Kind, Span, Option<i64>)> =
             shader_layouts(stage, qualifiers)
-                .map(|(name, kind, entry)| (name, kind, entry.span, entry.value.constant()))
+                .map(|(id, kind, entry)| (id, kind, entry.span, entry.value.constant()))
                 .collect();
         let input = qualifiers.storage == Storage::In;
         let output = qualifiers.storage == Storage::Out;
-        for (name, kind, span, value) in found {
+        for (id, kind, span, value) in found {
+            let name = id.name();
             match kind {
                 Kind::Vertices => {
                     if value == Some(0) && stage == ShaderStage::TessControl {
@@ -273,7 +280,7 @@ impl Analyzer<'_> {
                     }
                 }
                 Kind::InputPrimitive | Kind::OutputPrimitive | Kind::AnyPrimitive => {
-                    self.primitive_layout(span, name, kind, input, output);
+                    self.primitive_layout(span, id, kind, input, output);
                 }
                 Kind::Spacing | Kind::Order => {
                     if !input {
@@ -292,10 +299,10 @@ impl Analyzer<'_> {
                         )
                     };
                     match *slot {
-                        Some(previous) if previous != name => {
+                        Some(previous) if previous != id => {
                             self.error(span, invalid(name, message));
                         }
-                        _ => *slot = Some(name),
+                        _ => *slot = Some(id),
                     }
                 }
                 Kind::PointMode => {
@@ -336,22 +343,23 @@ impl Analyzer<'_> {
     fn primitive_layout(
         &mut self,
         span: Span,
-        name: &'static str,
+        id: LayoutId,
         kind: Kind,
         input: bool,
         output: bool,
     ) {
+        let name = id.name();
         if input {
             if kind == Kind::OutputPrimitive {
                 self.error(span, invalid(name, "cannot apply to input"));
                 return;
             }
             match self.stage_layout.input_primitive {
-                Some(previous) if previous != name => self.error(
+                Some(previous) if previous != id => self.error(
                     span,
                     invalid(name, "cannot change previously set input primitive"),
                 ),
-                _ => self.stage_layout.input_primitive = Some(name),
+                _ => self.stage_layout.input_primitive = Some(id),
             }
         } else if output {
             if kind == Kind::InputPrimitive {
@@ -359,11 +367,11 @@ impl Analyzer<'_> {
                 return;
             }
             match self.stage_layout.output_primitive {
-                Some(previous) if previous != name => self.error(
+                Some(previous) if previous != id => self.error(
                     span,
                     invalid(name, "cannot change previously set output primitive"),
                 ),
-                _ => self.stage_layout.output_primitive = Some(name),
+                _ => self.stage_layout.output_primitive = Some(id),
             }
         } else {
             self.error(span, invalid(name, "cannot apply to this storage"));

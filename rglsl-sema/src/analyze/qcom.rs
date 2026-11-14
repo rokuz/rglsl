@@ -7,6 +7,7 @@ use rglsl_types::extension::Extension;
 use super::cooperative_call::CooperativeCall;
 use super::{Analyzer, Callee, Operand};
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::Qualifiers;
 use crate::types::{ArraySize, CooperativeUse, Scalar, Type, TypeKind};
 
@@ -53,20 +54,23 @@ fn scalar_array(ty: &Type, allowed: &[Scalar]) -> Option<(Scalar, ArraySize)> {
 impl Analyzer<'_> {
     pub(crate) fn qcom_layout(&mut self, span: Span, qualifiers: &Qualifiers) {
         for entry in &qualifiers.layout {
-            let name = entry.name.as_str();
-            match name {
-                "tile_attachmentqcom" | "non_coherent_attachment_readqcom" => {
+            match entry.id {
+                Some(LayoutId::TileAttachmentQcom | LayoutId::NonCoherentAttachmentReadQcom) => {
                     self.require_extension(span, Extension::QcomTileShading, "tile shading QCOM");
                 }
-                "shading_rate_xqcom" | "shading_rate_yqcom" | "shading_rate_zqcom" => {
+                Some(
+                    id @ (LayoutId::ShadingRateXQcom
+                    | LayoutId::ShadingRateYQcom
+                    | LayoutId::ShadingRateZQcom),
+                ) => {
                     self.require_extension(span, Extension::QcomTileShading, "tile shading QCOM");
                     let Some(value) = entry.value.constant() else {
                         continue;
                     };
-                    let reason = if name != "shading_rate_zqcom" && value == 0 {
+                    let not_z = id != LayoutId::ShadingRateZQcom;
+                    let reason = if not_z && value == 0 {
                         Some("must be at least 1")
-                    } else if name != "shading_rate_zqcom" && (value < 0 || value.count_ones() != 1)
-                    {
+                    } else if not_z && (value < 0 || value.count_ones() != 1) {
                         Some("must be a power of 2")
                     } else if value <= 0 {
                         Some("must be a positive value")

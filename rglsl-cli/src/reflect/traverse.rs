@@ -9,7 +9,7 @@ use rglsl::{AddressSpace, Module, TypeInner};
 use rglsl_ast::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration};
 use rglsl_sema::analyze::is_shader_record;
 use rglsl_sema::scope::{Origin, Storage, SymbolKind};
-use rglsl_sema::{Analysis, SymbolId};
+use rglsl_sema::{Analysis, LayoutId, SymbolId};
 use rglsl_types::stack::{Call, Stack, Stalled, run};
 
 use super::database::Object;
@@ -193,7 +193,7 @@ impl UnitCx<'_, '_, '_> {
             return;
         };
         let defaults = self.defaults.get(&id).copied().unwrap_or_default();
-        let push_constant = block.qualifiers.has_layout("push_constant");
+        let push_constant = block.qualifiers.has_layout(LayoutId::PushConstant);
         let shader_record = is_shader_record(&block.qualifiers);
         ty.packing = match explicit_packing(&block.qualifiers) {
             Some(packing) => packing,
@@ -213,7 +213,7 @@ impl UnitCx<'_, '_, '_> {
                 .or(defaults.row_major)
                 .unwrap_or(false),
         );
-        ty.align = layout_value(&block.qualifiers, "align");
+        ty.align = layout_value(&block.qualifiers, LayoutId::Align);
     }
 
     pub(super) fn symbol_type(&self, symbol: SymbolId) -> Option<RType> {
@@ -261,8 +261,8 @@ impl UnitCx<'_, '_, '_> {
         block: Option<&rglsl_sema::types::BlockType>,
         qualifiers: &rglsl_sema::scope::Qualifiers,
     ) -> Option<i64> {
-        let explicit = layout_value(qualifiers, "binding")
-            .or_else(|| block.and_then(|block| layout_value(&block.qualifiers, "binding")));
+        let explicit = layout_value(qualifiers, LayoutId::Binding)
+            .or_else(|| block.and_then(|block| layout_value(&block.qualifiers, LayoutId::Binding)));
         if !self.program.settings.spirv {
             return explicit;
         }

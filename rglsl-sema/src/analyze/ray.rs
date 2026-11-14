@@ -9,6 +9,7 @@ use super::{Analyzer, Operand};
 use crate::builtins::kind::{HitObject, HitObjectFlavor, Ray};
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{Qualifiers, Storage};
 use crate::types::{BlockStorage, OpaqueKind, Scalar, Type, TypeKind};
 use rglsl_types::ShaderStageMask;
@@ -126,7 +127,8 @@ pub fn is_shader_record(qualifiers: &Qualifiers) -> bool {
     qualifiers
         .layout
         .iter()
-        .any(|entry| entry.name == "shaderrecordnv" || entry.name == "shaderrecordext")
+        .filter_map(|entry| entry.id)
+        .any(LayoutId::is_shader_record)
 }
 
 pub(crate) const fn location_set(storage: Storage) -> Option<usize> {
@@ -204,13 +206,13 @@ impl Analyzer<'_> {
                 invalid("shaderRecordNV", "can only be used with a buffer"),
             );
         }
-        if qualifiers.has_layout("binding") {
+        if qualifiers.has_layout(LayoutId::Binding) {
             self.error(
                 span,
                 invalid("binding", "cannot be used with shaderRecordNV"),
             );
         }
-        if qualifiers.has_layout("set") {
+        if qualifiers.has_layout(LayoutId::Set) {
             self.error(span, invalid("set", "cannot be used with shaderRecordNV"));
         }
     }
@@ -229,7 +231,7 @@ impl Analyzer<'_> {
             return;
         };
         let Some(location) = qualifiers
-            .layout_entry("location")
+            .layout_entry(LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
         else {
@@ -458,11 +460,7 @@ impl Analyzer<'_> {
         qualifiers: &Qualifiers,
         standalone: bool,
     ) {
-        if !qualifiers
-            .layout
-            .iter()
-            .any(|entry| entry.name == "primitive_culling")
-        {
+        if !qualifiers.has_layout(LayoutId::PrimitiveCulling) {
             return;
         }
         if !self.require_extensions(
@@ -518,7 +516,7 @@ impl Analyzer<'_> {
         let Some(id) = self.redeclared_opacity_micromap() else {
             return false;
         };
-        let entry = qualifiers.layout_entry("constant_id").cloned();
+        let entry = qualifiers.layout_entry(LayoutId::ConstantId).cloned();
         let valid = entry.is_some()
             && qualifiers.storage == Storage::None
             && !qualifiers.flags.contains(QualifierFlags::CONSTANT)
@@ -547,7 +545,7 @@ impl Analyzer<'_> {
         value: Option<&Constant>,
     ) -> Option<crate::scope::SymbolId> {
         let id = self.redeclared_opacity_micromap()?;
-        if qualifiers.has_layout("constant_id") {
+        if qualifiers.has_layout(LayoutId::ConstantId) {
             self.error(
                 span,
                 DiagnosticKind::InvalidQualifier {

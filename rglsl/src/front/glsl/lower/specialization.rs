@@ -7,14 +7,6 @@ use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{Arena, Expression, Handle, Literal, Override, Scalar, Span, Statement, TypeInner};
 
-const LOCAL_SIZE_IDS: [&str; 3] = ["local_size_x_id", "local_size_y_id", "local_size_z_id"];
-
-pub(super) fn local_size_index(name: &str) -> Option<usize> {
-    LOCAL_SIZE_IDS
-        .iter()
-        .position(|candidate| *candidate == name)
-}
-
 pub(super) fn is_direct(expression: &AstExpression) -> bool {
     let mut expression = expression;
     loop {

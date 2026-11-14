@@ -4,9 +4,9 @@ use rglsl_sema::scope::QualifierFlags;
 use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::Expression as AstExpression;
-use rglsl_sema::SymbolId;
 use rglsl_sema::builtins::kind::Mesh;
 use rglsl_sema::scope::{Qualifiers, Storage};
+use rglsl_sema::{LayoutId, SymbolId};
 
 use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, semantic};
@@ -15,11 +15,11 @@ use crate::{
     MeshOutputLayout, MeshOutputTopology, MeshShaderInfo, ShaderStage, Span, Statement, TypeInner,
 };
 
-pub(super) const fn mesh_topology(name: &str) -> Option<MeshOutputTopology> {
-    Some(match name.as_bytes() {
-        b"points" => MeshOutputTopology::Points,
-        b"lines" => MeshOutputTopology::Lines,
-        b"triangles" => MeshOutputTopology::Triangles,
+pub(super) const fn mesh_topology(id: LayoutId) -> Option<MeshOutputTopology> {
+    Some(match id {
+        LayoutId::Points => MeshOutputTopology::Points,
+        LayoutId::Lines => MeshOutputTopology::Lines,
+        LayoutId::Triangles => MeshOutputTopology::Triangles,
         _ => return None,
     })
 }

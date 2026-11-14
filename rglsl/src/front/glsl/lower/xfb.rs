@@ -1,6 +1,7 @@
 use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 
 use rglsl_ast::ast::{SingleTypeQualifier, Spanned, TypeQualifier};
+use rglsl_sema::LayoutId;
 use rglsl_sema::scope::Qualifiers;
 
 use super::{Lowerer, Result, internal, semantic};
@@ -182,21 +183,25 @@ pub(super) fn size(types: &UniqueArena<Type>, ty: Handle<Type>) -> Option<(u32, 
 pub(super) fn ast_layout_value<'q>(
     lowerer: &Lowerer<'_>,
     qualifier: impl IntoIterator<Item = &'q Spanned<TypeQualifier>>,
-    name: &str,
+    target: LayoutId,
 ) -> Option<u32> {
-    ast_layout_signed(lowerer, qualifier, name).and_then(|value| u32::try_from(value).ok())
+    ast_layout_signed(lowerer, qualifier, target).and_then(|value| u32::try_from(value).ok())
 }
 
 pub(super) fn ast_layout_signed<'q>(
     lowerer: &Lowerer<'_>,
     qualifier: impl IntoIterator<Item = &'q Spanned<TypeQualifier>>,
-    name: &str,
+    target: LayoutId,
 ) -> Option<i64> {
     let mut found = None;
     for qualifier in qualifier {
         for single in &qualifier.node.qualifiers {
             if let SingleTypeQualifier::Layout(ref layout) = single.node {
-                for id in layout.ids.iter().filter(|id| id.node.name.node == name) {
+                for id in layout
+                    .ids
+                    .iter()
+                    .filter(|id| LayoutId::from_name(&id.node.name.node) == Some(target))
+                {
                     found = id
                         .node
                         .value
@@ -211,9 +216,9 @@ pub(super) fn ast_layout_signed<'q>(
     found
 }
 
-pub(super) fn layout_value(qualifiers: &Qualifiers, name: &str) -> Option<u32> {
+pub(super) fn layout_value(qualifiers: &Qualifiers, id: LayoutId) -> Option<u32> {
     qualifiers
-        .layout_entry(name)
+        .layout_entry(id)
         .and_then(|entry| entry.value.constant())
         .and_then(|value| u32::try_from(value).ok())
 }
@@ -222,7 +227,8 @@ pub(super) fn has_xfb(qualifiers: &Qualifiers) -> bool {
     qualifiers
         .layout
         .iter()
-        .any(|entry| entry.name.starts_with("xfb_"))
+        .filter_map(|entry| entry.id)
+        .any(LayoutId::is_xfb)
 }
 
 impl Lowerer<'_> {

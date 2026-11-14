@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use rglsl_sema::LayoutId;
 use rglsl_sema::scope::{Qualifiers, Storage};
 use rglsl_sema::types::{
     ArraySize, BlockId, BlockStorage, Member, Opaque, OpaqueKind, SampledType, Scalar, StructId,
@@ -53,9 +54,9 @@ pub fn explicit_row_major(qualifiers: &Qualifiers) -> Option<bool> {
         .layout
         .iter()
         .rev()
-        .find_map(|entry| match entry.name.as_str() {
-            "row_major" => Some(true),
-            "column_major" => Some(false),
+        .find_map(|entry| match entry.id? {
+            LayoutId::RowMajor => Some(true),
+            LayoutId::ColumnMajor => Some(false),
             _ => None,
         })
 }
@@ -65,18 +66,18 @@ pub fn explicit_packing(qualifiers: &Qualifiers) -> Option<Pack> {
         .layout
         .iter()
         .rev()
-        .find_map(|entry| match entry.name.as_str() {
-            "std140" => Some(Pack::Std140),
-            "std430" => Some(Pack::Std430),
-            "scalar" => Some(Pack::Scalar),
-            "shared" | "packed" => Some(Pack::Shared),
+        .find_map(|entry| match entry.id? {
+            LayoutId::Std140 => Some(Pack::Std140),
+            LayoutId::Std430 => Some(Pack::Std430),
+            LayoutId::Scalar => Some(Pack::Scalar),
+            LayoutId::Shared | LayoutId::Packed => Some(Pack::Shared),
             _ => None,
         })
 }
 
-pub fn layout_value(qualifiers: &Qualifiers, name: &str) -> Option<i64> {
+pub fn layout_value(qualifiers: &Qualifiers, id: LayoutId) -> Option<i64> {
     qualifiers
-        .layout_entry(name)
+        .layout_entry(id)
         .and_then(|entry| entry.value.constant())
 }
 
@@ -387,7 +388,7 @@ impl<'a> Layouts<'a> {
         let mut ty = self.member_rtype(aggregate, index, parent.storage)?;
         ty.packing = packing;
         ty.row_major = explicit_row_major(&member.qualifiers).or(row_major);
-        ty.align = layout_value(&member.qualifiers, "align").or(parent.align);
+        ty.align = layout_value(&member.qualifiers, LayoutId::Align).or(parent.align);
         if let (Aggregate::Block(_), Kind::Aggregate(_)) = (aggregate, parent.kind) {
             ty.offset = self.fixed_offset(parent, index);
         }
@@ -458,10 +459,10 @@ impl<'a> Layouts<'a> {
             };
             let layout = self.alignment(&ty, block.packing, row_major);
             let mut alignment = layout.alignment;
-            if let Some(explicit) = layout_value(&member.qualifiers, "offset") {
+            if let Some(explicit) = layout_value(&member.qualifiers, LayoutId::Offset) {
                 offset = explicit;
             }
-            if let Some(align) = layout_value(&member.qualifiers, "align").or(block.align) {
+            if let Some(align) = layout_value(&member.qualifiers, LayoutId::Align).or(block.align) {
                 alignment = alignment.max(align);
             }
             offset = round_up(offset, alignment);

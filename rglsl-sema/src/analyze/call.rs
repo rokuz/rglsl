@@ -18,6 +18,7 @@ use crate::builtins::kind::{
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
+use crate::layout_id::LayoutId;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
 use crate::types::{ArraySize, NumericFeatures, Opaque, OpaqueKind, Scalar, Type, TypeKind};
 use rglsl_types::{ShaderStage, ShaderStageMask};
@@ -1246,7 +1247,7 @@ impl Analyzer<'_> {
         &self,
         operand: &Operand,
         parameter: &Parameter,
-    ) -> (Option<String>, Option<String>) {
+    ) -> (Option<LayoutId>, Option<LayoutId>) {
         if !operand
             .ty
             .as_opaque()
@@ -1254,20 +1255,12 @@ impl Analyzer<'_> {
         {
             return (None, None);
         }
-        let format = |qualifiers: &crate::scope::Qualifiers| {
-            qualifiers
-                .layout
-                .iter()
-                .rev()
-                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
-                .map(|entry| entry.name.clone())
-        };
         let argument = operand
             .root
             .and_then(|id| self.symbol(id))
             .and_then(|symbol| symbol.variable())
-            .and_then(|variable| format(&variable.qualifiers));
-        (argument, format(&parameter.qualifiers))
+            .and_then(|variable| variable.qualifiers.image_format());
+        (argument, parameter.qualifiers.image_format())
     }
 
     fn image_formats_match(&self, operand: &Operand, parameter: &Parameter) -> bool {
@@ -1278,20 +1271,7 @@ impl Analyzer<'_> {
         {
             return true;
         }
-        let format = |qualifiers: &crate::scope::Qualifiers| {
-            qualifiers
-                .layout
-                .iter()
-                .rev()
-                .find(|entry| super::declaration::IMAGE_FORMATS.contains(&entry.name.as_str()))
-                .map(|entry| entry.name.clone())
-        };
-        let argument = operand
-            .root
-            .and_then(|id| self.symbol(id))
-            .and_then(|symbol| symbol.variable())
-            .and_then(|variable| format(&variable.qualifiers));
-        let formal = format(&parameter.qualifiers);
+        let (argument, formal) = self.image_formats(operand, parameter);
         argument == formal
             || (parameter
                 .qualifiers
@@ -1412,9 +1392,14 @@ impl Analyzer<'_> {
                 .and_then(|id| self.symbol(id))
                 .and_then(|symbol| symbol.variable())
                 .is_some_and(|variable| {
-                    ["r32i", "r32ui", "r64i", "r64ui"]
-                        .iter()
-                        .any(|format| variable.qualifiers.has_layout(format))
+                    [
+                        LayoutId::R32i,
+                        LayoutId::R32ui,
+                        LayoutId::R64i,
+                        LayoutId::R64ui,
+                    ]
+                    .into_iter()
+                    .any(|format| variable.qualifiers.has_layout(format))
                 });
             let atomic = image == ImageAccess::Atomic;
             if atomic && integer_image && !has_atomic_format {
@@ -1424,8 +1409,8 @@ impl Analyzer<'_> {
                 .and_then(|operand| operand.ty.as_opaque())
                 .map(|opaque| opaque.sampled)
                 .and_then(|sampled| match sampled {
-                    crate::types::SampledType::Int64 => Some("r64i"),
-                    crate::types::SampledType::Uint64 => Some("r64ui"),
+                    crate::types::SampledType::Int64 => Some(LayoutId::R64i),
+                    crate::types::SampledType::Uint64 => Some(LayoutId::R64ui),
                     _ => None,
                 });
             if let Some(format) = wide.filter(|_| atomic) {
@@ -1438,7 +1423,7 @@ impl Analyzer<'_> {
                     return invalid(
                         self,
                         span,
-                        if format == "r64i" {
+                        if format == LayoutId::R64i {
                             "only supported on image with format r64i"
                         } else {
                             "only supported on image with format r64ui"

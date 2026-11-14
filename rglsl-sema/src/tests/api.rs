@@ -217,7 +217,7 @@ void main() {
     assert_eq!(
         block
             .qualifiers
-            .layout_entry("binding")
+            .layout_entry(crate::LayoutId::Binding)
             .and_then(|entry| entry.value.constant()),
         Some(0)
     );
@@ -425,7 +425,7 @@ void main() {
     assert_eq!(
         normal
             .qualifiers
-            .layout_entry("location")
+            .layout_entry(crate::LayoutId::Location)
             .and_then(|entry| entry.value.constant()),
         Some(2)
     );
@@ -437,7 +437,7 @@ void main() {
     assert_eq!(
         scene
             .qualifiers
-            .layout_entry("set")
+            .layout_entry(crate::LayoutId::Set)
             .and_then(|entry| entry.value.constant()),
         Some(1)
     );

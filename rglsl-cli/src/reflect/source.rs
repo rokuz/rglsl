@@ -5,7 +5,7 @@ use rglsl_ast::ast::{
     DeclarationKind, ExpressionKind, ExternalDeclaration, SingleTypeQualifier, StorageQualifier,
 };
 use rglsl_sema::scope::{Storage, SymbolKind};
-use rglsl_sema::{Analysis, SymbolId};
+use rglsl_sema::{Analysis, LayoutId, SymbolId};
 
 use super::types::{self, Pack};
 
@@ -34,14 +34,15 @@ pub(super) fn compute_layout(units: &[&Analyzed]) -> ([u32; 3], [i64; 3]) {
                     continue;
                 };
                 for id in &layout.ids {
-                    let (tile, axis) = match id.node.name.node.as_str() {
-                        "local_size_x" => (false, 0),
-                        "local_size_y" => (false, 1),
-                        "local_size_z" => (false, 2),
-                        "shading_rate_xqcom" => (true, 0),
-                        "shading_rate_yqcom" => (true, 1),
-                        "shading_rate_zqcom" => (true, 2),
-                        _ => continue,
+                    let Some(lid) = LayoutId::from_name(&id.node.name.node) else {
+                        continue;
+                    };
+                    let (tile, axis) = if let Some(axis) = lid.local_size_axis() {
+                        (false, axis)
+                    } else if let Some(axis) = lid.tile_shading_rate_axis() {
+                        (true, axis)
+                    } else {
+                        continue;
                     };
                     let value = id
                         .node
@@ -250,14 +251,19 @@ pub(super) fn block_defaults(
         match declaration.kind {
             DeclarationKind::Qualifier(ref qualifier) => {
                 let mut storage = None;
-                let mut names = Vec::new();
+                let mut ids = Vec::new();
                 for single in &qualifier.node.qualifiers {
                     match single.node {
                         SingleTypeQualifier::Storage(
                             kind @ (StorageQualifier::Uniform | StorageQualifier::Buffer),
                         ) => storage = Some(kind),
                         SingleTypeQualifier::Layout(ref layout) => {
-                            names.extend(layout.ids.iter().map(|id| id.node.name.node.as_str()));
+                            ids.extend(
+                                layout
+                                    .ids
+                                    .iter()
+                                    .filter_map(|id| LayoutId::from_name(&id.node.name.node)),
+                            );
                         }
                         _ => {}
                     }
@@ -267,14 +273,16 @@ pub(super) fn block_defaults(
                     Some(StorageQualifier::Buffer) => &mut buffer,
                     _ => continue,
                 };
-                for name in names {
-                    match name {
-                        "std140" => defaults.packing = Some(Pack::Std140),
-                        "std430" => defaults.packing = Some(Pack::Std430),
-                        "scalar" => defaults.packing = Some(Pack::Scalar),
-                        "shared" | "packed" => defaults.packing = Some(Pack::Shared),
-                        "row_major" => defaults.row_major = Some(true),
-                        "column_major" => defaults.row_major = Some(false),
+                for id in ids {
+                    match id {
+                        LayoutId::Std140 => defaults.packing = Some(Pack::Std140),
+                        LayoutId::Std430 => defaults.packing = Some(Pack::Std430),
+                        LayoutId::Scalar => defaults.packing = Some(Pack::Scalar),
+                        LayoutId::Shared | LayoutId::Packed => {
+                            defaults.packing = Some(Pack::Shared);
+                        }
+                        LayoutId::RowMajor => defaults.row_major = Some(true),
+                        LayoutId::ColumnMajor => defaults.row_major = Some(false),
                         _ => {}
                     }
                 }
