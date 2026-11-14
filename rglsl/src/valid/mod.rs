@@ -548,6 +548,7 @@ impl Validator {
     ) -> Result<ModuleInfo, WithSpan<ValidationError>> {
         self.overrides_resolved = false;
         self.validate_impl(module)
+            .map_err(|error| error.map_spans(|span| module.resolve_span(span)))
     }
 
     /// Check the given module to be valid, requiring overrides to be resolved.
@@ -563,6 +564,7 @@ impl Validator {
     ) -> Result<ModuleInfo, WithSpan<ValidationError>> {
         self.overrides_resolved = true;
         self.validate_impl(module)
+            .map_err(|error| error.map_spans(|span| module.resolve_span(span)))
     }
 
     fn validate_impl(

@@ -123,7 +123,7 @@ const fn arithmetic_binary(operator: BinaryOperator) -> bool {
 
 impl<'a> Precise<'a> {
     fn any_precise(&self) -> bool {
-        self.analysis.symbols.iter().any(|symbol| {
+        self.analysis.symbols.modified_or_added().any(|symbol| {
             symbol
                 .variable()
                 .is_some_and(|variable| variable.qualifiers.flags.contains(QualifierFlags::PRECISE))
@@ -132,13 +132,13 @@ impl<'a> Precise<'a> {
                 .return_qualifiers
                 .flags
                 .contains(QualifierFlags::PRECISE)
-        }) || self.analysis.types.blocks().iter().any(|block| {
+        }) || self.analysis.types.blocks().any(|block| {
             block.qualifiers.flags.contains(QualifierFlags::PRECISE)
                 || block
                     .members
                     .iter()
                     .any(|member| member.qualifiers.flags.contains(QualifierFlags::PRECISE))
-        }) || self.analysis.types.structs().iter().any(|structure| {
+        }) || self.analysis.types.structs().any(|structure| {
             structure
                 .members
                 .iter()

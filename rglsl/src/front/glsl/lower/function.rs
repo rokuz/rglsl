@@ -309,7 +309,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             .unwrap_or_default()
     }
 
-    pub(super) fn at(&self, span: rglsl_ast::Span) -> Span {
+    pub(super) const fn at(&self, span: rglsl_ast::Span) -> Span {
         self.lw.at(span)
     }
 

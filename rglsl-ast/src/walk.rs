@@ -333,6 +333,10 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn expression(self, expression: &'a Expression) {
+        if expression.kind.is_leaf() {
+            self.walker.found.borrow_mut().push(expression);
+            return;
+        }
         let mut pending = Vec::from([expression]);
         while let Some(expression) = pending.pop() {
             self.walker.found.borrow_mut().push(expression);
@@ -342,7 +346,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             {
                 self.call(self.clone().specifier(specifier)).await;
             }
-            pending.extend(expression.kind.children().into_iter().rev());
+            let mark = pending.len();
+            expression.kind.for_each_child(|child| pending.push(child));
+            if let Some(added) = pending.get_mut(mark..) {
+                added.reverse();
+            }
         }
     }
 }

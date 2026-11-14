@@ -293,7 +293,7 @@ impl Analyzer<'_> {
                 }
                 _ => {}
             }
-            pending.extend(expression.kind.children());
+            expression.kind.for_each_child(|child| pending.push(child));
         }
         self.index_limitations.push(limitation);
     }

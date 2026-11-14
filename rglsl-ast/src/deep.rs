@@ -17,8 +17,10 @@ pub(crate) trait Nested: Sized {
 
     fn kind(node: &Self::Node) -> &Self;
     fn rebuild(node: &Self::Node, kind: Self) -> Self::Node;
-    fn children(&self) -> Vec<&Self::Node>;
-    fn children_mut(&mut self) -> Vec<&mut Self::Node>;
+    fn has_children(&self) -> bool;
+    fn child_count(&self) -> usize;
+    fn for_each_child<'a>(&'a self, f: impl FnMut(&'a Self::Node));
+    fn for_each_child_mut<'a>(&'a mut self, f: impl FnMut(&'a mut Self::Node));
     fn shell(&self) -> Self;
     fn same_shell(&self, other: &Self) -> bool;
 }
@@ -29,31 +31,38 @@ enum CloneTask<'a, K: Nested> {
 }
 
 fn fill<K: Nested>(kind: &mut K, built: &mut Vec<K::Node>) {
-    let mut slots = kind.children_mut();
-    let start = built.len().saturating_sub(slots.len());
-    for (slot, child) in slots.iter_mut().zip(built.drain(start..)) {
-        **slot = child;
-    }
+    let count = kind.child_count();
+    let start = built.len().saturating_sub(count);
+    let mut iter = built.drain(start..);
+    kind.for_each_child_mut(|slot| {
+        if let Some(child) = iter.next() {
+            *slot = child;
+        }
+    });
 }
 
 pub(crate) fn deep_clone<K: Nested>(root: &K) -> K {
     let mut shell = root.shell();
+    if !root.has_children() {
+        return shell;
+    }
     let mut built: Vec<K::Node> = Vec::new();
-    let mut tasks: Vec<CloneTask<'_, K>> = root
-        .children()
-        .into_iter()
-        .rev()
-        .map(CloneTask::Visit)
-        .collect();
+    let mut tasks: Vec<CloneTask<'_, K>> = Vec::with_capacity(root.child_count());
+    root.for_each_child(|child| tasks.push(CloneTask::Visit(child)));
+    tasks.reverse();
     while let Some(task) = tasks.pop() {
         match task {
             CloneTask::Visit(node) => {
-                let children = K::kind(node).children();
-                if children.is_empty() {
-                    built.push(K::rebuild(node, K::kind(node).shell()));
+                let kind = K::kind(node);
+                if !kind.has_children() {
+                    built.push(K::rebuild(node, kind.shell()));
                 } else {
                     tasks.push(CloneTask::Build(node));
-                    tasks.extend(children.into_iter().rev().map(CloneTask::Visit));
+                    let mark = tasks.len();
+                    kind.for_each_child(|child| tasks.push(CloneTask::Visit(child)));
+                    if let Some(added) = tasks.get_mut(mark..) {
+                        added.reverse();
+                    }
                 }
             }
             CloneTask::Build(node) => {
@@ -68,20 +77,30 @@ pub(crate) fn deep_clone<K: Nested>(root: &K) -> K {
 }
 
 pub(crate) fn deep_eq<K: Nested>(left: &K, right: &K) -> bool {
+    if !left.same_shell(right) {
+        return false;
+    }
+    if !left.has_children() && !right.has_children() {
+        return true;
+    }
     let mut pairs = Vec::from([(left, right)]);
+    let mut left_children: Vec<&K::Node> = Vec::new();
+    let mut right_children: Vec<&K::Node> = Vec::new();
     while let Some((left, right)) = pairs.pop() {
         if !left.same_shell(right) {
             return false;
         }
-        let left_children = left.children();
-        let right_children = right.children();
+        left_children.clear();
+        right_children.clear();
+        left.for_each_child(|child| left_children.push(child));
+        right.for_each_child(|child| right_children.push(child));
         if left_children.len() != right_children.len() {
             return false;
         }
         pairs.extend(
             left_children
-                .into_iter()
-                .zip(right_children)
+                .iter()
+                .zip(&right_children)
                 .map(|(left, right)| (K::kind(left), K::kind(right))),
         );
     }
@@ -242,19 +261,32 @@ impl ExpressionKind {
         {
             take_type(ty, into);
         }
-        for child in self.children_mut() {
-            take_expression(child, into);
-        }
+        self.for_each_child_mut(|child| take_expression(child, into));
     }
 }
 
 impl StatementKind {
-    pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        for child in self.children_mut() {
-            if !child.kind.children().is_empty() {
-                into.push(Owned::Statement(mem::replace(child, empty_statement())));
+    pub(crate) const fn has_children(&self) -> bool {
+        match self {
+            Self::Compound(compound) => !compound.statements.is_empty(),
+            Self::Switch { statements, .. } => !statements.is_empty(),
+            Self::Selection { .. }
+            | Self::While { .. }
+            | Self::DoWhile { .. }
+            | Self::For(_)
+            | Self::Attributed { .. } => true,
+            Self::Declaration(_) | Self::Expression(_) | Self::CaseLabel(_) | Self::Jump(_) => {
+                false
             }
         }
+    }
+
+    pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
+        self.for_each_child_mut(|child| {
+            if child.kind.has_children() {
+                into.push(Owned::Statement(mem::replace(child, empty_statement())));
+            }
+        });
     }
 }
 
@@ -277,6 +309,9 @@ pub(crate) fn drop_owned(mut pending: Vec<Owned>) {
 
 impl Drop for StatementKind {
     fn drop(&mut self) {
+        if !self.has_children() {
+            return;
+        }
         let mut pending = Vec::new();
         self.take_owned(&mut pending);
         drop_owned(pending);
@@ -296,6 +331,13 @@ impl Drop for TypeSpecifier {
 
 impl Drop for Initializer {
     fn drop(&mut self) {
+        let leaf = match self {
+            Self::Expression(expression) => expression.kind.is_leaf(),
+            Self::List(items) => items.is_empty(),
+        };
+        if leaf {
+            return;
+        }
         let mut pending = Vec::new();
         self.take_owned(&mut pending);
         drop_owned(pending);
@@ -317,50 +359,83 @@ impl Nested for StatementKind {
         Statement::new(node.id, node.span, kind)
     }
 
-    fn children(&self) -> Vec<&Statement> {
+    fn has_children(&self) -> bool {
+        Self::has_children(self)
+    }
+
+    fn child_count(&self) -> usize {
         match self {
-            Self::Compound(compound) => compound.statements.iter().collect(),
-            Self::Switch { statements, .. } => statements.iter().collect(),
-            Self::Selection {
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                let mut children = Vec::from([&**then_branch]);
-                children.extend(else_branch.as_deref());
-                children
-            }
-            Self::While { body, .. } | Self::DoWhile { body, .. } => Vec::from([&**body]),
-            Self::For(statement) => Vec::from([&statement.init, &statement.body]),
-            Self::Attributed { statement, .. } => Vec::from([&**statement]),
-            Self::Declaration(_) | Self::Expression(_) | Self::CaseLabel(_) | Self::Jump(_) => {
-                Vec::new()
-            }
+            Self::Compound(compound) => compound.statements.len(),
+            Self::Switch { statements, .. } => statements.len(),
+            Self::Selection { else_branch, .. } => 1 + usize::from(else_branch.is_some()),
+            Self::While { .. } | Self::DoWhile { .. } | Self::Attributed { .. } => 1,
+            Self::For(_) => 2,
+            Self::Declaration(_) | Self::Expression(_) | Self::CaseLabel(_) | Self::Jump(_) => 0,
         }
     }
 
-    fn children_mut(&mut self) -> Vec<&mut Statement> {
+    fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Statement)) {
         match self {
-            Self::Compound(compound) => compound.statements.iter_mut().collect(),
-            Self::Switch { statements, .. } => statements.iter_mut().collect(),
+            Self::Compound(compound) => {
+                for statement in &compound.statements {
+                    f(statement);
+                }
+            }
+            Self::Switch { statements, .. } => {
+                for statement in statements {
+                    f(statement);
+                }
+            }
             Self::Selection {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                let mut children = Vec::from([&mut **then_branch]);
-                children.extend(else_branch.as_deref_mut());
-                children
+                f(then_branch);
+                if let Some(else_branch) = else_branch {
+                    f(else_branch);
+                }
             }
-            Self::While { body, .. } | Self::DoWhile { body, .. } => Vec::from([&mut **body]),
+            Self::While { body, .. } | Self::DoWhile { body, .. } => f(body),
+            Self::For(statement) => {
+                f(&statement.init);
+                f(&statement.body);
+            }
+            Self::Attributed { statement, .. } => f(statement),
+            Self::Declaration(_) | Self::Expression(_) | Self::CaseLabel(_) | Self::Jump(_) => {}
+        }
+    }
+
+    fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut Statement)) {
+        match self {
+            Self::Compound(compound) => {
+                for statement in &mut compound.statements {
+                    f(statement);
+                }
+            }
+            Self::Switch { statements, .. } => {
+                for statement in statements {
+                    f(statement);
+                }
+            }
+            Self::Selection {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                f(then_branch);
+                if let Some(else_branch) = else_branch {
+                    f(else_branch);
+                }
+            }
+            Self::While { body, .. } | Self::DoWhile { body, .. } => f(body),
             Self::For(statement) => {
                 let ForStatement { init, body, .. } = &mut **statement;
-                Vec::from([init, body])
+                f(init);
+                f(body);
             }
-            Self::Attributed { statement, .. } => Vec::from([&mut **statement]),
-            Self::Declaration(_) | Self::Expression(_) | Self::CaseLabel(_) | Self::Jump(_) => {
-                Vec::new()
-            }
+            Self::Attributed { statement, .. } => f(statement),
+            Self::Declaration(_) | Self::Expression(_) | Self::CaseLabel(_) | Self::Jump(_) => {}
         }
     }
 
@@ -507,17 +582,30 @@ impl Nested for Initializer {
         Spanned::new(node.span, kind)
     }
 
-    fn children(&self) -> Vec<&Spanned<Self>> {
+    fn has_children(&self) -> bool {
+        matches!(self, Self::List(items) if !items.is_empty())
+    }
+
+    fn child_count(&self) -> usize {
         match self {
-            Self::Expression(_) => Vec::new(),
-            Self::List(items) => items.iter().collect(),
+            Self::Expression(_) => 0,
+            Self::List(items) => items.len(),
         }
     }
 
-    fn children_mut(&mut self) -> Vec<&mut Spanned<Self>> {
-        match self {
-            Self::Expression(_) => Vec::new(),
-            Self::List(items) => items.iter_mut().collect(),
+    fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Spanned<Self>)) {
+        if let Self::List(items) = self {
+            for item in items {
+                f(item);
+            }
+        }
+    }
+
+    fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut Spanned<Self>)) {
+        if let Self::List(items) = self {
+            for item in items {
+                f(item);
+            }
         }
     }
 
@@ -586,21 +674,45 @@ impl Nested for TypeSpecifier {
         Spanned::new(node.span, kind)
     }
 
-    fn children(&self) -> Vec<&Spanned<Self>> {
-        let mut children = Vec::new();
+    fn has_children(&self) -> bool {
+        self.child_count() != 0
+    }
+
+    fn child_count(&self) -> usize {
+        let non_array = match &self.non_array {
+            TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
+            | TypeSpecifierNonArray::InlineBlock(declarations) => declarations.len(),
+            TypeSpecifierNonArray::Spirv(spirv) => spirv
+                .parameters
+                .iter()
+                .filter(|parameter| matches!(parameter, SpirvTypeParameter::Type(_)))
+                .count(),
+            TypeSpecifierNonArray::Void
+            | TypeSpecifierNonArray::Basic(_)
+            | TypeSpecifierNonArray::Opaque(_)
+            | TypeSpecifierNonArray::Parameterized(_)
+            | TypeSpecifierNonArray::TypeName(_) => 0,
+        };
+        let element = usize::from(
+            self.parameters
+                .as_ref()
+                .is_some_and(|parameters| parameters.node.element.is_some()),
+        );
+        non_array + element
+    }
+
+    fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Spanned<Self>)) {
         match &self.non_array {
             TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
             | TypeSpecifierNonArray::InlineBlock(declarations) => {
-                children.extend(
-                    declarations
-                        .iter()
-                        .map(|member| &member.node.ty.node.specifier),
-                );
+                for member in declarations {
+                    f(&member.node.ty.node.specifier);
+                }
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 for parameter in &spirv.parameters {
                     if let SpirvTypeParameter::Type(ty) = parameter {
-                        children.push(&**ty);
+                        f(ty);
                     }
                 }
             }
@@ -615,26 +727,22 @@ impl Nested for TypeSpecifier {
             .as_ref()
             .and_then(|parameters| parameters.node.element.as_deref())
         {
-            children.push(element);
+            f(element);
         }
-        children
     }
 
-    fn children_mut(&mut self) -> Vec<&mut Spanned<Self>> {
-        let mut children = Vec::new();
+    fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut Spanned<Self>)) {
         match &mut self.non_array {
             TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
             | TypeSpecifierNonArray::InlineBlock(declarations) => {
-                children.extend(
-                    declarations
-                        .iter_mut()
-                        .map(|member| &mut member.node.ty.node.specifier),
-                );
+                for member in declarations {
+                    f(&mut member.node.ty.node.specifier);
+                }
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 for parameter in &mut spirv.parameters {
                     if let SpirvTypeParameter::Type(ty) = parameter {
-                        children.push(&mut **ty);
+                        f(ty);
                     }
                 }
             }
@@ -649,9 +757,8 @@ impl Nested for TypeSpecifier {
             .as_mut()
             .and_then(|parameters| parameters.node.element.as_deref_mut())
         {
-            children.push(element);
+            f(element);
         }
-        children
     }
 
     fn shell(&self) -> Self {

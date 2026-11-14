@@ -4218,4 +4218,26 @@ pub struct Module {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub debug_info: Option<Box<DebugInfo>>,
+    #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
+    #[cfg_attr(feature = "arbitrary", arbitrary(default))]
+    pub span_map: rglsl_pp::SpanMap,
+}
+
+impl Module {
+    pub(crate) fn resolve_span(&self, span: crate::Span) -> crate::Span {
+        if self.span_map.is_empty() {
+            return span;
+        }
+        let Some(range) = span.to_range() else {
+            return span;
+        };
+        match (
+            self.span_map.locate_root(range.start),
+            self.span_map.locate_root(range.end),
+        ) {
+            (Some(start), Some(end)) => crate::Span::new(start, end.max(start)),
+            (Some(start), None) => crate::Span::new(start, start),
+            _ => crate::Span::UNDEFINED,
+        }
+    }
 }

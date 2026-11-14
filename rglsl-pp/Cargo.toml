@@ -16,6 +16,7 @@ name = "rglsl_pp"
 std = []
 
 [dependencies]
+arrayvec.workspace = true
 rglsl-types.workspace = true
 
 [[example]]
