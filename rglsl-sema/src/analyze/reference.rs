@@ -46,34 +46,8 @@ pub(crate) fn matrix_of(qualifiers: &Qualifiers) -> Option<bool> {
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn require_extension(&mut self, span: Span, name: &'static str, what: &str) -> bool {
-        match self.extensions.request(&[name]) {
-            rglsl_ast::extensions::Request::Enabled => true,
-            rglsl_ast::extensions::Request::Warned(extension) => {
-                self.warnings.push(Diagnostic {
-                    span,
-                    kind: DiagnosticKind::ExtensionWarned {
-                        extension,
-                        feature: String::from(what),
-                    },
-                });
-                true
-            }
-            rglsl_ast::extensions::Request::Missing => {
-                self.error(
-                    span,
-                    DiagnosticKind::ExtensionRequired {
-                        feature: String::from(what),
-                        extensions: String::from(name),
-                    },
-                );
-                false
-            }
-        }
-    }
-
     pub(crate) fn require_scope_extension(&mut self, span: Span, what: &str) {
-        self.require_extension(span, "GL_KHR_memory_scope_semantics", what);
+        self.require_extension(span, Extension::KhrMemoryScopeSemantics, what);
     }
 
     pub(crate) fn buffer_reference_layout(&mut self, qualifiers: &Qualifiers) -> bool {
@@ -84,13 +58,13 @@ impl Analyzer<'_> {
                 self.storage_buffer_class = true;
                 self.require_extension(
                     entry.span,
-                    Extension::ExtBufferReference.name(),
+                    Extension::ExtBufferReference,
                     "buffer_reference",
                 );
             } else if entry.name == "buffer_reference_align" {
                 self.require_extension(
                     entry.span,
-                    Extension::ExtBufferReference.name(),
+                    Extension::ExtBufferReference,
                     "buffer_reference_align",
                 );
                 if let Some(value) = entry.value.constant()

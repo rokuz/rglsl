@@ -457,7 +457,7 @@ impl Preprocessor<'_> {
                         self.report(
                             DiagnosticKind::ExtensionRequired {
                                 feature: "filename-based #line",
-                                extension: "GL_GOOGLE_cpp_style_line_directive",
+                                extension: Extension::GoogleCppStyleLineDirective,
                             },
                             directive_at,
                         );

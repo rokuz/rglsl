@@ -1,5 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
+use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
 use rglsl_sema::SymbolId;
@@ -55,8 +56,6 @@ impl StageLayout {
         }
     }
 }
-
-const PASSTHROUGH_EXTENSION: &str = "GL_NV_geometry_shader_passthrough";
 
 const fn input_primitive(name: &str) -> Option<GeometryInputPrimitive> {
     Some(match name.as_bytes() {
@@ -265,7 +264,10 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn passthrough_defaults(&mut self) {
-        if !self.analysis.extensions.contains(PASSTHROUGH_EXTENSION)
+        if !self
+            .analysis
+            .extensions
+            .contains(Extension::NvGeometryShaderPassthrough)
             || !self.stage_is(ShaderStage::Geometry)
         {
             return;
@@ -554,7 +556,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let shading_rate = self.with(|this| {
             this.analysis
                 .extensions
-                .contains("GL_EXT_fragment_shading_rate")
+                .contains(Extension::ExtFragmentShadingRate)
         })?;
         for (index, member) in block.members.iter().enumerate() {
             let index = u32::try_from(index).map_err(|_| internal(at))?;

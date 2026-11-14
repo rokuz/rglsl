@@ -3,6 +3,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+use rglsl_types::extension::Extension;
 use rglsl_types::stack::run;
 
 use rglsl_ast::ast::{
@@ -211,7 +212,6 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     }
 }
 
-pub(crate) const SHADER_64BIT_INDEXING: &str = "GL_EXT_shader_64bit_indexing";
 use rglsl_ast::extensions::Feature;
 
 const SWIZZLE_SETS: [&str; 3] = ["xyzw", "rgba", "stpq"];
@@ -1029,7 +1029,7 @@ impl Analyzer<'_> {
                 .map(|symbol| symbol.name.as_str());
             let allowed = base_operand.storage == Storage::Buffer
                 || matches!(name, Some("gl_SampleMask" | "gl_SampleMaskIn"))
-                || self.extension_enabled("GL_EXT_nonuniform_qualifier");
+                || self.extension_enabled(Extension::ExtNonuniformQualifier);
             if !allowed {
                 self.error(span, DiagnosticKind::VariableIndexIntoUnsizedArray);
             }
@@ -1265,7 +1265,7 @@ impl Analyzer<'_> {
     pub(crate) fn valid_index(&self, ty: &Type) -> bool {
         ty.is_scalar_integer()
             && (ty.scalar_type().is_some_and(|scalar| scalar.bits() != 64)
-                || self.extensions.is_on(SHADER_64BIT_INDEXING))
+                || self.extensions.is_on(Extension::ExtShader64bitIndexing))
     }
 
     pub(crate) fn require_lvalue(&mut self, span: Span, operand: &Operand) -> bool {

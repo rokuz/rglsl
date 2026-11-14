@@ -1,5 +1,7 @@
 use alloc::vec::Vec;
 
+use rglsl_types::extension::Extension;
+
 use crate::ast::{
     BasicType, Declaration, DeclarationKind, Dimension, ExpressionKind, ExtensionBehavior,
     ExternalDeclaration, FunctionIdentifier, NumericKind, ScalarType, SingleTypeQualifier,
@@ -49,11 +51,11 @@ fn directives_follow_glslang_behaviour_rules() {
     assert_eq!(issues.len(), 1);
     let issues = state.apply("all", ExtensionBehavior::Enable);
     assert!(issues.iter().all(ExtensionIssue::is_error));
-    assert!(!state.is_on("GL_EXT_shader_16bit_storage"));
+    assert!(!state.is_on(Extension::ExtShader16bitStorage));
     assert!(state.apply("all", ExtensionBehavior::Warn).is_empty());
-    assert!(state.is_on("GL_EXT_shader_16bit_storage"));
+    assert!(state.is_on(Extension::ExtShader16bitStorage));
     assert!(state.apply("all", ExtensionBehavior::Disable).is_empty());
-    assert!(!state.is_on("GL_EXT_shader_16bit_storage"));
+    assert!(!state.is_on(Extension::ExtShader16bitStorage));
 }
 
 #[test]
@@ -63,32 +65,32 @@ fn implied_extensions_follow_the_chain() {
         "GL_EXT_shader_subgroup_extended_types_float16",
         ExtensionBehavior::Enable,
     );
-    assert!(state.is_on("GL_EXT_shader_explicit_arithmetic_types_float16"));
+    assert!(state.is_on(Extension::ExtShaderExplicitArithmeticTypesFloat16));
     assert!(state.explicit_arithmetic());
     state.apply("GL_KHR_shader_subgroup_ballot", ExtensionBehavior::Require);
-    assert!(state.is_on("GL_KHR_shader_subgroup_basic"));
+    assert!(state.is_on(Extension::KhrShaderSubgroupBasic));
     state.apply(
         "GL_EXT_shader_subgroup_extended_types_float16",
         ExtensionBehavior::Disable,
     );
-    assert!(!state.is_on("GL_EXT_shader_explicit_arithmetic_types_float16"));
+    assert!(!state.is_on(Extension::ExtShaderExplicitArithmeticTypesFloat16));
 }
 
 #[test]
 fn requests_distinguish_enabled_and_warned_extensions() {
     let mut state = ExtensionState::new();
     let extensions = Feature::Int64Literal.extensions();
-    assert_eq!(state.request_any(extensions), Request::Missing);
+    assert_eq!(state.request(extensions), Request::Missing);
     state.apply(
         "GL_EXT_shader_explicit_arithmetic_types_int64",
         ExtensionBehavior::Warn,
     );
     assert_eq!(
-        state.request_any(extensions),
-        Request::Warned("GL_EXT_shader_explicit_arithmetic_types_int64")
+        state.request(extensions),
+        Request::Warned(Extension::ExtShaderExplicitArithmeticTypesInt64)
     );
     state.apply("GL_ARB_gpu_shader_int64", ExtensionBehavior::Enable);
-    assert_eq!(state.request_any(extensions), Request::Enabled);
+    assert_eq!(state.request(extensions), Request::Enabled);
 }
 
 #[test]
@@ -164,8 +166,8 @@ fn extension_types_without_their_extension_are_rejected() -> TestResult {
     };
     assert_eq!(word, "float16_t");
     assert!(
-        extensions.contains("GL_EXT_shader_explicit_arithmetic_types_float16"),
-        "{extensions}"
+        extensions.contains(&Extension::ExtShaderExplicitArithmeticTypesFloat16),
+        "{extensions:?}"
     );
     let error = rejected(
         parse("#version 450\nvoid main() { i64vec2 v = i64vec2(1); }\n"),
@@ -309,7 +311,7 @@ fn nonuniform_needs_its_extension() -> TestResult {
             error.kind,
             ParseErrorKind::ExtensionRequired {
                 word: "nonuniformEXT".into(),
-                extensions: "GL_EXT_nonuniform_qualifier".into(),
+                extensions: &[Extension::ExtNonuniformQualifier],
             },
             "{source}"
         );

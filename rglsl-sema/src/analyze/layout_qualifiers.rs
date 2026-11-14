@@ -1,17 +1,16 @@
 use rglsl_ast::Span;
+use rglsl_types::extension::Extension;
 
 use super::Analyzer;
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{LayoutValue, Qualifiers, Storage};
 use rglsl_types::ShaderStage;
 
-const PUSH_CONSTANT_BANK: &str = "GL_NV_push_constant_bank";
-
 const BANK_END: i64 = 0xF;
 
-const BINDLESS_TEXTURE: &[&str] = &["GL_ARB_bindless_texture"];
+const BINDLESS_TEXTURE: &[Extension] = &[Extension::ArbBindlessTexture];
 
-const MULTIVIEW: &[&str] = &["GL_OVR_multiview", "GL_OVR_multiview2"];
+const MULTIVIEW: &[Extension] = &[Extension::OvrMultiview, Extension::OvrMultiview2];
 
 const BLEND_EQUATIONS: [&str; 16] = [
     "blend_support_multiply",
@@ -37,7 +36,7 @@ type StageFilter = fn(ShaderStage) -> bool;
 struct LayoutExtension {
     feature: &'static str,
     stages: Option<StageFilter>,
-    extensions: &'static [&'static str],
+    extensions: &'static [Extension],
 }
 
 const fn compute_like(stage: ShaderStage) -> bool {
@@ -60,58 +59,61 @@ const fn fragment(stage: ShaderStage) -> bool {
 }
 
 fn layout_extension(name: &str) -> Option<LayoutExtension> {
-    let (feature, stages, extensions): (_, Option<StageFilter>, &'static [&'static str]) =
-        match name {
-            "scalar" => ("scalar block layout", None, &["GL_EXT_scalar_block_layout"]),
-            "bindless_sampler" => ("bindless_sampler", None, BINDLESS_TEXTURE),
-            "bindless_image" => ("bindless_image", None, BINDLESS_TEXTURE),
-            "bound_sampler" => ("bound_sampler", None, BINDLESS_TEXTURE),
-            "bound_image" => ("bound_image", None, BINDLESS_TEXTURE),
-            "num_views" => ("num_views", None, MULTIVIEW),
-            "derivative_group_quadsnv" | "derivative_group_linearnv" => (
-                "compute shader derivatives",
-                Some(compute_like),
-                &["GL_NV_compute_shader_derivatives"],
-            ),
-            "derivative_group_quadskhr" | "derivative_group_linearkhr" => (
-                "compute shader derivatives",
-                Some(compute_like),
-                &["GL_KHR_compute_shader_derivatives"],
-            ),
-            "shaderrecordnv" => (
-                "shader record NV",
-                Some(ShaderStage::ray_tracing),
-                &["GL_NV_ray_tracing"],
-            ),
-            "shaderrecordext" => (
-                "shader record EXT",
-                Some(ShaderStage::ray_tracing),
-                &["GL_EXT_ray_tracing"],
-            ),
-            "hitobjectshaderrecordnv" => (
-                "hitobject shader record NV",
-                Some(ShaderStage::ray_tracing),
-                &["GL_NV_shader_invocation_reorder"],
-            ),
-            "hitobjectshaderrecordext" => (
-                "hitobject shader record EXT",
-                Some(ShaderStage::ray_tracing),
-                &["GL_EXT_shader_invocation_reorder"],
-            ),
-            "max_vertices" => ("max_vertices", Some(mesh), &super::mesh::MESH_ANY),
-            "max_primitives" => ("max_primitives", Some(mesh), &super::mesh::MESH_ANY),
-            _ if name.starts_with("local_size_") => (
-                "gl_WorkGroupSize",
-                Some(mesh_or_task),
-                &super::mesh::MESH_ANY,
-            ),
-            _ if BLEND_EQUATIONS.contains(&name) => (
-                "blend equation",
-                Some(fragment),
-                &["GL_KHR_blend_equation_advanced"],
-            ),
-            _ => return None,
-        };
+    let (feature, stages, extensions): (_, Option<StageFilter>, &'static [Extension]) = match name {
+        "scalar" => (
+            "scalar block layout",
+            None,
+            &[Extension::ExtScalarBlockLayout],
+        ),
+        "bindless_sampler" => ("bindless_sampler", None, BINDLESS_TEXTURE),
+        "bindless_image" => ("bindless_image", None, BINDLESS_TEXTURE),
+        "bound_sampler" => ("bound_sampler", None, BINDLESS_TEXTURE),
+        "bound_image" => ("bound_image", None, BINDLESS_TEXTURE),
+        "num_views" => ("num_views", None, MULTIVIEW),
+        "derivative_group_quadsnv" | "derivative_group_linearnv" => (
+            "compute shader derivatives",
+            Some(compute_like),
+            &[Extension::NvComputeShaderDerivatives],
+        ),
+        "derivative_group_quadskhr" | "derivative_group_linearkhr" => (
+            "compute shader derivatives",
+            Some(compute_like),
+            &[Extension::KhrComputeShaderDerivatives],
+        ),
+        "shaderrecordnv" => (
+            "shader record NV",
+            Some(ShaderStage::ray_tracing),
+            &[Extension::NvRayTracing],
+        ),
+        "shaderrecordext" => (
+            "shader record EXT",
+            Some(ShaderStage::ray_tracing),
+            &[Extension::ExtRayTracing],
+        ),
+        "hitobjectshaderrecordnv" => (
+            "hitobject shader record NV",
+            Some(ShaderStage::ray_tracing),
+            &[Extension::NvShaderInvocationReorder],
+        ),
+        "hitobjectshaderrecordext" => (
+            "hitobject shader record EXT",
+            Some(ShaderStage::ray_tracing),
+            &[Extension::ExtShaderInvocationReorder],
+        ),
+        "max_vertices" => ("max_vertices", Some(mesh), &super::mesh::MESH_ANY),
+        "max_primitives" => ("max_primitives", Some(mesh), &super::mesh::MESH_ANY),
+        _ if name.starts_with("local_size_") => (
+            "gl_WorkGroupSize",
+            Some(mesh_or_task),
+            &super::mesh::MESH_ANY,
+        ),
+        _ if BLEND_EQUATIONS.contains(&name) => (
+            "blend equation",
+            Some(fragment),
+            &[Extension::KhrBlendEquationAdvanced],
+        ),
+        _ => return None,
+    };
     Some(LayoutExtension {
         feature,
         stages,
@@ -192,7 +194,7 @@ impl Analyzer<'_> {
                 "member_offset" => ("member_offset", true, ""),
                 _ => continue,
             };
-            self.require_extension(entry.span, PUSH_CONSTANT_BANK, qualifier);
+            self.require_extension(entry.span, Extension::NvPushConstantBank, qualifier);
             if entry.value == LayoutValue::Invalid {
                 self.error(
                     entry.span,

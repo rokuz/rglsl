@@ -1,6 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use rglsl_sema::scope::QualifierFlags;
+use rglsl_types::extension::Extension;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::SymbolId;
@@ -13,9 +14,6 @@ use crate::{
     MeshOutputLayout, MeshOutputTopology, MeshShaderExtension, MeshShaderInfo, ShaderStage, Span,
     Statement, TypeInner,
 };
-
-pub(super) const MESH_EXT: &str = "GL_EXT_mesh_shader";
-pub(super) const MESH_NV: &str = "GL_NV_mesh_shader";
 
 pub(super) const MESH_BLOCKS: [&str; 4] = [
     "gl_MeshPerVertexNV",
@@ -58,8 +56,8 @@ pub(super) fn mesh_builtin(name: &str) -> Option<BuiltIn> {
 }
 
 impl Lowerer<'_> {
-    pub(super) fn mesh_extension(&self) -> MeshShaderExtension {
-        if self.analysis.extensions.contains(MESH_EXT) {
+    pub(super) const fn mesh_extension(&self) -> MeshShaderExtension {
+        if self.analysis.extensions.contains(Extension::ExtMeshShader) {
             MeshShaderExtension::Ext
         } else {
             MeshShaderExtension::Nv
@@ -174,7 +172,7 @@ impl Lowerer<'_> {
                         }
                 });
                 used.then(|| MeshShaderInfo {
-                    extension: if self.analysis.extensions.contains(MESH_NV) {
+                    extension: if self.analysis.extensions.contains(Extension::NvMeshShader) {
                         MeshShaderExtension::Nv
                     } else {
                         MeshShaderExtension::Ext

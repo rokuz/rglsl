@@ -4,6 +4,7 @@ use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::SymbolId;
 use rglsl_sema::scope::Storage;
 use rglsl_sema::types::{BlockId, BlockStorage, Scalar as GlslScalar, Type as GlslType};
+use rglsl_types::extension::Extension;
 
 use super::expression::Chain;
 use super::function::FunctionLowerer;
@@ -14,9 +15,6 @@ use crate::{
     RayQueryIntersectionValue, RayQueryValue, RayTracingData, RayTracingFeatures, ShaderStage,
     Span, Statement,
 };
-
-const RAY_TRACING_NV: &str = "GL_NV_ray_tracing";
-const RAY_TRACING_EXT: &str = "GL_EXT_ray_tracing";
 
 fn intersection_value(name: &str) -> Option<RayQueryIntersectionValue> {
     use RayQueryIntersectionValue as Iv;
@@ -232,17 +230,14 @@ impl Lowerer<'_> {
         let extensions = &self.analysis.extensions;
         let mut features = RayTracingFeatures::empty();
         if self.library || self.stage_map(ShaderStage::ray_tracing) {
-            if extensions.contains(RAY_TRACING_NV) {
+            if extensions.contains(Extension::NvRayTracing) {
                 features |= RayTracingFeatures::NV;
             }
-            if ![
-                RAY_TRACING_EXT,
-                "GL_NV_shader_invocation_reorder",
-                "GL_EXT_shader_invocation_reorder",
-            ]
-            .into_iter()
-            .any(|extension| extensions.contains(extension))
-            {
+            if !extensions.contains_any(&[
+                Extension::ExtRayTracing,
+                Extension::NvShaderInvocationReorder,
+                Extension::ExtShaderInvocationReorder,
+            ]) {
                 features |= RayTracingFeatures::PAYLOAD_LOCATIONS;
             }
             if self.library
@@ -250,10 +245,10 @@ impl Lowerer<'_> {
                     matches!(stage, ShaderStage::RayGeneration | ShaderStage::Callable)
                 })
             {
-                if extensions.contains("GL_EXT_ray_cull_mask") {
+                if extensions.contains(Extension::ExtRayCullMask) {
                     features |= RayTracingFeatures::CULL_MASK;
                 }
-                if extensions.contains("GL_EXT_ray_tracing_position_fetch") {
+                if extensions.contains(Extension::ExtRayTracingPositionFetch) {
                     features |= RayTracingFeatures::POSITION_FETCH;
                 }
             }
@@ -828,7 +823,7 @@ impl Lowerer<'_> {
         if !self
             .analysis
             .extensions
-            .contains("GL_EXT_opacity_micromap_ray_query_mode")
+            .contains(Extension::ExtOpacityMicromapRayQueryMode)
         {
             return Ok(None);
         }

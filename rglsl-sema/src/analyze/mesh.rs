@@ -7,6 +7,7 @@ use rglsl_ast::ast::{
     AssignmentOperator, Expression, ExpressionKind, Identifier, NodeId, StorageQualifier,
 };
 use rglsl_ast::{Span, TranslationUnit};
+use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Callee};
 use crate::diagnostic::DiagnosticKind;
@@ -14,9 +15,7 @@ use crate::scope::{Direction, Origin, Qualifiers, Storage, SymbolKind};
 use crate::types::{ArraySize, BlockStorage, Type, TypeKind};
 use rglsl_types::ShaderStage;
 
-pub const MESH_EXT: &str = "GL_EXT_mesh_shader";
-pub const MESH_NV: &str = "GL_NV_mesh_shader";
-pub(crate) const MESH_ANY: [&str; 2] = [MESH_NV, MESH_EXT];
+pub(crate) const MESH_ANY: [Extension; 2] = [Extension::NvMeshShader, Extension::ExtMeshShader];
 
 pub const MESH_BLOCK_NAMES: [(&str, &str); 4] = [
     ("gl_MeshPerVertexNV", "gl_MeshVerticesNV"),
@@ -38,7 +37,7 @@ pub fn primitive_vertices(primitive: &str) -> Option<u32> {
     }
 }
 
-fn variable_extension(name: &str) -> Option<&'static [&'static str]> {
+fn variable_extension(name: &str) -> Option<&'static [Extension]> {
     Some(match name {
         "gl_MeshVerticesNV"
         | "gl_MeshPrimitivesNV"
@@ -51,13 +50,13 @@ fn variable_extension(name: &str) -> Option<&'static [&'static str]> {
         | "gl_MaxMeshOutputPrimitivesNV"
         | "gl_MaxMeshWorkGroupSizeNV"
         | "gl_MaxTaskWorkGroupSizeNV"
-        | "gl_MaxMeshViewCountNV" => &[MESH_NV],
+        | "gl_MaxMeshViewCountNV" => &[Extension::NvMeshShader],
         "gl_MeshVerticesEXT"
         | "gl_MeshPrimitivesEXT"
         | "gl_PrimitivePointIndicesEXT"
         | "gl_PrimitiveLineIndicesEXT"
         | "gl_PrimitiveTriangleIndicesEXT"
-        | "gl_NumWorkGroups" => &[MESH_EXT],
+        | "gl_NumWorkGroups" => &[Extension::ExtMeshShader],
         "gl_WorkGroupSize"
         | "gl_WorkGroupID"
         | "gl_LocalInvocationID"
@@ -67,10 +66,10 @@ fn variable_extension(name: &str) -> Option<&'static [&'static str]> {
     })
 }
 
-pub fn function_extension(name: &str) -> Option<&'static str> {
+pub fn function_extension(name: &str) -> Option<Extension> {
     match name {
-        "SetMeshOutputsEXT" | "EmitMeshTasksEXT" => Some(MESH_EXT),
-        "writePackedPrimitiveIndices4x8NV" => Some(MESH_NV),
+        "SetMeshOutputsEXT" | "EmitMeshTasksEXT" => Some(Extension::ExtMeshShader),
+        "writePackedPrimitiveIndices4x8NV" => Some(Extension::NvMeshShader),
         _ => None,
     }
 }
@@ -95,9 +94,9 @@ impl Analyzer<'_> {
         }
         if stage == ShaderStage::Fragment {
             let extension = if storage == StorageQualifier::PerPrimitiveEXT {
-                MESH_EXT
+                Extension::ExtMeshShader
             } else {
-                MESH_NV
+                Extension::NvMeshShader
             };
             self.require_extension(span, extension, keyword);
         }
@@ -150,7 +149,7 @@ impl Analyzer<'_> {
             _ => false,
         };
         if builtin {
-            self.require_extension(span, "GL_EXT_fragment_shading_rate", field);
+            self.require_extension(span, Extension::ExtFragmentShadingRate, field);
         }
     }
 
@@ -161,7 +160,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn mesh_ext(&self) -> bool {
-        self.extensions.is_on(MESH_EXT)
+        self.extensions.is_on(Extension::ExtMeshShader)
     }
 
     fn mesh_array_size(&self, qualifiers: &Qualifiers, name: &str) -> Option<u32> {

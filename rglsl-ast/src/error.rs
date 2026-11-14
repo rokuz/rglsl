@@ -1,5 +1,8 @@
 use alloc::string::String;
 
+use rglsl_types::extension::Extension;
+
+use crate::extensions::joined_names;
 use crate::span::{LineColumn, Span, line_column};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -48,8 +51,11 @@ pub enum ParseErrorKind {
     SourceTooLarge,
     #[error("the source has too many syntax nodes")]
     TooManyNodes,
-    #[error("`{word}` requires one of the extensions: {extensions}")]
-    ExtensionRequired { word: String, extensions: String },
+    #[error("`{word}` requires one of the extensions: {}", joined_names(.extensions))]
+    ExtensionRequired {
+        word: String,
+        extensions: &'static [Extension],
+    },
     #[error("internal parser error")]
     Internal,
 }

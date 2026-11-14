@@ -3,14 +3,13 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::Expression;
+use rglsl_types::extension::Extension;
 
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::{TENSOR_OPERAND_NONTEMPORAL, TENSOR_OPERAND_OUT_OF_BOUNDS_VALUE};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::Qualifiers;
 use crate::types::{ArraySize, Scalar, Type};
-
-const EXTENSION: &str = "GL_ARM_tensors";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TensorArmCall {
@@ -150,7 +149,7 @@ impl Analyzer<'_> {
         if !self.converts_to_uint(dimension) {
             return self.no_tensor_overload(span, name);
         }
-        if !self.require_extension(span, EXTENSION, name) {
+        if !self.require_extension(span, Extension::ArmTensors, name) {
             return None;
         }
         let formal = formal_qualifiers(true, true);
@@ -195,7 +194,7 @@ impl Analyzer<'_> {
         if flags.is_some_and(|flags| !self.converts_to_uint(flags)) {
             return self.no_tensor_overload(span, name);
         }
-        if !self.require_extension(span, EXTENSION, name) {
+        if !self.require_extension(span, Extension::ArmTensors, name) {
             return None;
         }
         let formal = formal_qualifiers(read, !read);

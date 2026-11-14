@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{Expression, ExpressionKind};
+use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
@@ -143,8 +144,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         call: TensorCall,
         arguments: &'b [Expression],
     ) -> Operand {
-        let enabled = self
-            .with(|analyzer| analyzer.require_extension(span, "GL_NV_cooperative_matrix2", name));
+        let enabled = self.with(|analyzer| {
+            analyzer.require_extension(span, Extension::NvCooperativeMatrix2, name)
+        });
         if !enabled {
             self.call(self.clone().operands(arguments)).await;
             return Operand::error();
@@ -538,11 +540,11 @@ impl Analyzer<'_> {
                 .and_then(|operand| operand.ty.scalar_type())
                 .is_some_and(|scalar| scalar.is_integer() && scalar.bits() == 64);
         let extension = if ext {
-            "GL_EXT_cooperative_matrix_maintenance1"
+            Extension::ExtCooperativeMatrixMaintenance1
         } else if wide_element {
-            "GL_EXT_shader_64bit_indexing"
+            Extension::ExtShader64bitIndexing
         } else {
-            "GL_NV_cooperative_matrix2"
+            Extension::NvCooperativeMatrix2
         };
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
@@ -571,7 +573,7 @@ impl Analyzer<'_> {
                 let element_valid = operands.get(2).is_some_and(|operand| {
                     operand.ty.is_scalar() && self.converts(&operand.ty, &element_target)
                 });
-                let ambiguous = self.extension_enabled("GL_EXT_shader_64bit_indexing")
+                let ambiguous = self.extension_enabled(Extension::ExtShader64bitIndexing)
                     && operands.get(2).is_some_and(|operand| {
                         !matches!(
                             operand.ty.scalar_type(),
@@ -630,7 +632,11 @@ impl Analyzer<'_> {
                         self.check_decode(span, *decoder, target.scalar, dimensions, index == 1);
                 }
                 if decoders.len() == 2
-                    && !self.require_extension(span, "GL_NV_cooperative_matrix_decode_vector", name)
+                    && !self.require_extension(
+                        span,
+                        Extension::NvCooperativeMatrixDecodeVector,
+                        name,
+                    )
                 {
                     valid = false;
                 }
@@ -677,7 +683,7 @@ impl Analyzer<'_> {
                 if source.usage != CooperativeUse::Accumulator {
                     fail(self, "Cooperative matrix source Use must be Accumulator");
                 }
-                if self.extension_enabled("GL_EXT_cooperative_matrix_maintenance1") {
+                if self.extension_enabled(Extension::ExtCooperativeMatrixMaintenance1) {
                     if result.usage == CooperativeUse::Accumulator {
                         fail(
                             self,

@@ -1,6 +1,10 @@
 use alloc::string::String;
 
+use alloc::vec::Vec;
+
 use rglsl_ast::Span;
+use rglsl_ast::extensions::joined_names;
+use rglsl_types::extension::Extension;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -199,6 +203,11 @@ pub enum DiagnosticKind {
         qualifier: &'static str,
         reason: &'static str,
     },
+    #[error("invalid use of qualifier `{qualifier}`: cannot be used with {extension} enabled")]
+    QualifierWithExtension {
+        qualifier: &'static str,
+        extension: Extension,
+    },
     #[error("invalid use of qualifier `{qualifier}`: {reason}; {limit} is {value}")]
     ResourceLimit {
         qualifier: &'static str,
@@ -270,15 +279,18 @@ pub enum DiagnosticKind {
     MeshOutputRead(String),
     #[error("extension `{extension}` is not allowed in {stage} shaders")]
     ExtensionStage {
-        extension: String,
+        extension: Extension,
         stage: &'static str,
     },
     #[error("extension `{0}` cannot be used together with `{1}`")]
-    ConflictingExtensions(String, &'static str),
+    ConflictingExtensions(Extension, Extension),
     #[error("extension `{0}` is not allowed when generating SPIR-V")]
-    ExtensionWithoutSpirv(String),
+    ExtensionWithoutSpirv(Extension),
     #[error("extension `{name}` is not supported: {reason}")]
-    ExtensionNotInVulkan { name: String, reason: &'static str },
+    ExtensionNotInVulkan {
+        name: Extension,
+        reason: &'static str,
+    },
     #[error("{subject} is not supported: {reason}")]
     NotSupportedInVulkan {
         subject: String,
@@ -291,17 +303,20 @@ pub enum DiagnosticKind {
     )]
     NarrowTransformFeedback(u32),
     #[error("extension `{0}` needs a newer SPIR-V version")]
-    ExtensionSpirvVersion(String),
+    ExtensionSpirvVersion(Extension),
     #[error("{feature} requires SPIR-V {version}")]
     SpirvVersionRequired {
         feature: &'static str,
         version: &'static str,
     },
-    #[error("{feature} requires one of the extensions {extensions}")]
-    ExtensionRequired { feature: String, extensions: String },
+    #[error("{feature} requires one of the extensions {}", joined_names(.extensions))]
+    ExtensionRequired {
+        feature: String,
+        extensions: Vec<Extension>,
+    },
     #[error("extension `{extension}` is being used for {feature}")]
     ExtensionWarned {
-        extension: &'static str,
+        extension: Extension,
         feature: String,
     },
     #[error("`{feature}` is not supported in {stage} shaders")]

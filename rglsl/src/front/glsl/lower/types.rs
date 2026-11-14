@@ -206,10 +206,7 @@ impl Lowerer<'_> {
             (_, 1) => Feature::Int8Arithmetic,
             _ => return true,
         };
-        feature
-            .extensions()
-            .iter()
-            .any(|extension| self.analysis.extensions.contains(extension.name()))
+        self.analysis.extensions.contains_any(feature.extensions())
     }
 
     pub(super) fn insert_type(&mut self, inner: TypeInner) -> Handle<Type> {

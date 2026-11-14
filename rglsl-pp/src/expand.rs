@@ -357,7 +357,7 @@ impl Preprocessor<'_> {
                     self.report(
                         DiagnosticKind::ExtensionRequired {
                             feature: "filename-based __FILE__",
-                            extension: "GL_GOOGLE_cpp_style_line_directive",
+                            extension: Extension::GoogleCppStyleLineDirective,
                         },
                         token.at,
                     );

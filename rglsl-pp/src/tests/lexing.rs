@@ -1,6 +1,8 @@
 use alloc::format;
 use alloc::string::String;
 
+use rglsl_types::extension::Extension;
+
 use super::{code, errors, expect_code, first_error, lex, run};
 use crate::DiagnosticKind;
 
@@ -77,22 +79,12 @@ fn strings_keep_their_escapes() {
 #[test]
 fn string_literals_need_an_extension_outside_conditionals() {
     let (kind, line) = first_error("#version 450\nint a;\nprint(\"text\");\n");
-    assert!(matches!(
-        kind,
-        DiagnosticKind::ExtensionRequired {
-            feature: "string literal",
-            ..
-        }
-    ));
+    assert_eq!(kind, DiagnosticKind::StringLiteralWithoutExtension);
     assert_eq!(line, 3);
     let (kind, line) = first_error("#version 450\n#define S(x) #x\n\nS(word);\n");
-    assert!(matches!(kind, DiagnosticKind::ExtensionRequired { .. }));
+    assert_eq!(kind, DiagnosticKind::StringLiteralWithoutExtension);
     assert_eq!(line, 4);
-    for extension in [
-        "GL_EXT_debug_printf",
-        "GL_EXT_abort",
-        "GL_EXT_spirv_intrinsics",
-    ] {
+    for extension in Extension::STRING_LITERALS.iter() {
         for behavior in ["enable", "require", "warn"] {
             let source =
                 format!("#version 450\n#extension {extension} : {behavior}\nprint(\"x\");\n");
@@ -101,7 +93,7 @@ fn string_literals_need_an_extension_outside_conditionals() {
     }
     let disabled = "#version 450\n#extension GL_EXT_debug_printf : enable\n#extension GL_EXT_debug_printf : disable\nprint(\"x\");\n";
     let (kind, line) = first_error(disabled);
-    assert!(matches!(kind, DiagnosticKind::ExtensionRequired { .. }));
+    assert_eq!(kind, DiagnosticKind::StringLiteralWithoutExtension);
     assert_eq!(line, 4);
     expect_code(
         "#version 450\n#ifndef GUARD\n#define S(x) #x\nprint(\"x\", S(y));\n#endif\n",

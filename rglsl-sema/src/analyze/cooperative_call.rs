@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{Expression, ExpressionKind};
+use rglsl_types::extension::Extension;
 
 use super::qcom::QcomConversion;
 use super::{Analyzer, Callee, Operand};
@@ -143,9 +144,9 @@ impl Analyzer<'_> {
         }
         let nv = name.ends_with("NV");
         let extension = if nv {
-            "GL_NV_cooperative_matrix"
+            Extension::NvCooperativeMatrix
         } else {
-            "GL_KHR_cooperative_matrix"
+            Extension::KhrCooperativeMatrix
         };
         let result = match name {
             "coopMatLoad" | "coopMatLoadNV" | "coopMatStore" | "coopMatStoreNV" => {
@@ -168,7 +169,7 @@ impl Analyzer<'_> {
                 && operands.get(1).and_then(|operand| operand.ty.base_scalar())
                     == Some(Scalar::Uint64)));
         let required = if wide_index {
-            "GL_EXT_shader_64bit_indexing"
+            Extension::ExtShader64bitIndexing
         } else {
             extension
         };
@@ -261,7 +262,7 @@ impl Analyzer<'_> {
         }
         let element_scalar = element.ty.scalar_type();
         if !nv
-            && self.extension_enabled(super::expression::SHADER_64BIT_INDEXING)
+            && self.extension_enabled(Extension::ExtShader64bitIndexing)
             && !matches!(
                 element_scalar,
                 Some(Scalar::Uint | Scalar::Uint64 | Scalar::Int64)
@@ -697,7 +698,7 @@ impl Analyzer<'_> {
             (false, true) => true,
             (true, true) => {
                 let narrow_better = offset_types.iter().any(|(_, ty)| *ty == narrow);
-                if !narrow_better && self.extension_enabled("GL_EXT_shader_64bit_indexing") {
+                if !narrow_better && self.extension_enabled(Extension::ExtShader64bitIndexing) {
                     self.error(span, DiagnosticKind::AmbiguousCall(String::from(name)));
                     return Operand::error();
                 }
@@ -724,9 +725,9 @@ impl Analyzer<'_> {
             self.record_conversion(argument, &operand.ty, &target);
         }
         let required = if wide {
-            "GL_EXT_shader_64bit_indexing"
+            Extension::ExtShader64bitIndexing
         } else {
-            "GL_NV_cooperative_vector"
+            Extension::NvCooperativeVector
         };
         if !self.require_extension(span, required, name) {
             return Operand::error();

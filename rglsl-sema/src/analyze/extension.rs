@@ -2,7 +2,7 @@ use alloc::string::String;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::ExtensionBehavior;
-use rglsl_ast::extensions::{ExtensionIssue, Feature, Request, joined_names};
+use rglsl_ast::extensions::{ExtensionIssue, Feature, Request};
 use rglsl_types::extension::{Extension, Vulkan};
 
 use super::Analyzer;
@@ -75,20 +75,19 @@ impl Analyzer<'_> {
 
     fn check_extension(&mut self, span: Span, extension: Extension, behavior: ExtensionBehavior) {
         let info = extension.info();
-        let name = extension.name();
         if !info.only_stages.is_empty() {
             self.stage_check(span, |stage| {
                 (!info.allowed_in(stage)).then(|| DiagnosticKind::ExtensionStage {
-                    extension: String::from(name),
+                    extension,
                     stage: stage.name(),
                 })
             });
         }
         for &other in info.conflicts {
-            if self.extensions.is_extension_on(other) {
+            if self.extensions.is_on(other) {
                 self.error(
                     span,
-                    DiagnosticKind::ConflictingExtensions(String::from(name), other.name()),
+                    DiagnosticKind::ConflictingExtensions(extension, other),
                 );
             }
         }
@@ -100,10 +99,7 @@ impl Analyzer<'_> {
             && let (Some(needed), Some(target)) = (info.minimum_spirv, self.options.spirv_version)
             && target < needed
         {
-            self.error(
-                span,
-                DiagnosticKind::ExtensionSpirvVersion(String::from(name)),
-            );
+            self.error(span, DiagnosticKind::ExtensionSpirvVersion(extension));
         }
         match info.vulkan {
             Vulkan::Supported => {}
@@ -112,17 +108,14 @@ impl Analyzer<'_> {
                     self.error(
                         span,
                         DiagnosticKind::ExtensionNotInVulkan {
-                            name: String::from(name),
+                            name: extension,
                             reason,
                         },
                     );
                 }
             }
             Vulkan::WithoutSpirv => {
-                self.error(
-                    span,
-                    DiagnosticKind::ExtensionWithoutSpirv(String::from(name)),
-                );
+                self.error(span, DiagnosticKind::ExtensionWithoutSpirv(extension));
             }
         }
     }
@@ -130,12 +123,8 @@ impl Analyzer<'_> {
     pub(crate) fn numeric_features(&self) -> NumericFeatures {
         NumericFeatures {
             explicit_arithmetic: self.extensions.explicit_arithmetic(),
-            half_float: self
-                .extensions
-                .is_extension_on(Extension::AmdGpuShaderHalfFloat),
-            int16: self
-                .extensions
-                .is_extension_on(Extension::AmdGpuShaderInt16),
+            half_float: self.extensions.is_on(Extension::AmdGpuShaderHalfFloat),
+            int16: self.extensions.is_on(Extension::AmdGpuShaderInt16),
         }
     }
 
@@ -147,9 +136,30 @@ impl Analyzer<'_> {
         from.converts_with(to, self.numeric_features())
     }
 
+    pub(crate) fn extension_enabled(&self, extension: Extension) -> bool {
+        self.extensions.is_on(extension)
+    }
+
     pub(crate) fn require_feature(&mut self, span: Span, feature: Feature, what: &str) -> bool {
-        let extensions = feature.extensions();
-        match self.extensions.request_any(extensions) {
+        self.require_extensions(span, feature.extensions(), what)
+    }
+
+    pub(crate) fn require_extension(
+        &mut self,
+        span: Span,
+        extension: Extension,
+        what: &str,
+    ) -> bool {
+        self.require_extensions(span, &[extension], what)
+    }
+
+    pub(crate) fn require_extensions(
+        &mut self,
+        span: Span,
+        extensions: &[Extension],
+        what: &str,
+    ) -> bool {
+        match self.extensions.request(extensions) {
             Request::Enabled => true,
             Request::Warned(extension) => {
                 self.warnings.push(Diagnostic {
@@ -166,7 +176,7 @@ impl Analyzer<'_> {
                     span,
                     DiagnosticKind::ExtensionRequired {
                         feature: String::from(what),
-                        extensions: joined_names(extensions),
+                        extensions: extensions.to_vec(),
                     },
                 );
                 false
@@ -189,9 +199,7 @@ impl Analyzer<'_> {
     pub(crate) fn small_arithmetic_allowed(&self, types: &[&Type]) -> bool {
         SmallKind::ALL.iter().all(|kind| {
             !types.iter().any(|ty| self.contains_small(ty, *kind))
-                || self
-                    .extensions
-                    .any_extension_on(kind.feature().extensions())
+                || self.extensions.any_on(kind.feature().extensions())
         })
     }
 

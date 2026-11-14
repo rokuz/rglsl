@@ -1145,7 +1145,7 @@ void main() {}
 layout(constant_id = 1) const int c = 2;
 layout(input_attachment_index = c, binding = 0) uniform subpassInput color;
 void main() {}
-### subpass input with tile images | frag | 3:InvalidQualifier
+### subpass input with tile images | frag | 3:QualifierWithExtension
 #extension GL_EXT_shader_tile_image : require
 layout(input_attachment_index = 0, binding = 0) uniform subpassInput color;
 void main() {}

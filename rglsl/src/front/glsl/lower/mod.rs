@@ -42,6 +42,7 @@ use rglsl_ast::ast::{ExternalDeclaration, FunctionDefinition, Initializer, Node,
 use rglsl_sema::scope::{Symbol, SymbolKind, Variable};
 use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
+use rglsl_types::extension::Extension;
 use rglsl_types::probe::StageProbe;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
@@ -1136,12 +1137,16 @@ impl<'a> Lowerer<'a> {
             options,
             module: Module {
                 vulkan_memory_model: analysis.vulkan_memory_model,
-                descriptor_heap: analysis.extensions.contains(heap::HEAP_EXTENSION),
+                descriptor_heap: analysis.extensions.contains(Extension::ExtDescriptorHeap),
                 shader_64bit_indexing: analysis.shader_64bit_indexing,
                 variable_pointers: analysis.variable_pointers,
                 replicated_composites: analysis.replicated_composites,
                 legacy_buffer_blocks: !analysis.storage_buffer_class,
-                source_extensions: analysis.requested_extensions.clone(),
+                source_extensions: analysis
+                    .requested_extensions
+                    .iter()
+                    .map(|extension| String::from(extension.name()))
+                    .collect(),
                 ..Module::default()
             },
             layouter: Layouter::default(),

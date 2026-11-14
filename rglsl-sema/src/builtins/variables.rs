@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::InterpolationQualifier;
+use rglsl_types::extension::Extension;
 
 use super::{
     ANY_HIT, CALLABLE, CLOSEST_HIT, COMPUTE, FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS,
@@ -418,35 +419,35 @@ const SHADING_RATE_CONSTANTS: [(&str, i32); 4] = [
     ("gl_ShadingRateFlag4HorizontalPixelsEXT", 8),
 ];
 
-pub fn variable_extension(name: &str) -> Option<&'static str> {
+pub fn variable_extension(name: &str) -> Option<Extension> {
     Some(match name {
         "gl_BaseVertexARB" | "gl_BaseInstanceARB" | "gl_DrawIDARB" => {
-            "GL_ARB_shader_draw_parameters"
+            Extension::ArbShaderDrawParameters
         }
-        "gl_DeviceIndex" => "GL_EXT_device_group",
+        "gl_DeviceIndex" => Extension::ExtDeviceGroup,
         "gl_PrimitiveShadingRateEXT"
         | "gl_ShadingRateEXT"
         | "gl_ShadingRateFlag2VerticalPixelsEXT"
         | "gl_ShadingRateFlag4VerticalPixelsEXT"
         | "gl_ShadingRateFlag2HorizontalPixelsEXT"
-        | "gl_ShadingRateFlag4HorizontalPixelsEXT" => "GL_EXT_fragment_shading_rate",
-        "gl_FragSizeEXT" | "gl_FragInvocationCountEXT" => "GL_EXT_fragment_invocation_density",
-        "gl_FragmentSizeNV" | "gl_InvocationsPerPixelNV" => "GL_NV_shading_rate_image",
-        "gl_FragFullyCoveredNV" => "GL_NV_conservative_raster_underestimation",
-        "gl_FragStencilRefARB" => "GL_ARB_shader_stencil_export",
-        "gl_BaryCoordNV" | "gl_BaryCoordNoPerspNV" => "GL_NV_fragment_shader_barycentric",
-        "gl_BaryCoordEXT" | "gl_BaryCoordNoPerspEXT" => "GL_EXT_fragment_shader_barycentric",
+        | "gl_ShadingRateFlag4HorizontalPixelsEXT" => Extension::ExtFragmentShadingRate,
+        "gl_FragSizeEXT" | "gl_FragInvocationCountEXT" => Extension::ExtFragmentInvocationDensity,
+        "gl_FragmentSizeNV" | "gl_InvocationsPerPixelNV" => Extension::NvShadingRateImage,
+        "gl_FragFullyCoveredNV" => Extension::NvConservativeRasterUnderestimation,
+        "gl_FragStencilRefARB" => Extension::ArbShaderStencilExport,
+        "gl_BaryCoordNV" | "gl_BaryCoordNoPerspNV" => Extension::NvFragmentShaderBarycentric,
+        "gl_BaryCoordEXT" | "gl_BaryCoordNoPerspEXT" => Extension::ExtFragmentShaderBarycentric,
         _ => return None,
     })
 }
 
-pub fn view_extension(name: &str) -> Option<&'static str> {
+pub fn view_extension(name: &str) -> Option<Extension> {
     Some(match name {
-        "gl_ViewIndex" => "GL_EXT_multiview",
-        "gl_ViewportMask" => "GL_NV_viewport_array2",
-        "gl_SecondaryPositionNV" | "gl_SecondaryViewportMaskNV" => "GL_NV_stereo_view_rendering",
+        "gl_ViewIndex" => Extension::ExtMultiview,
+        "gl_ViewportMask" => Extension::NvViewportArray2,
+        "gl_SecondaryPositionNV" | "gl_SecondaryViewportMaskNV" => Extension::NvStereoViewRendering,
         "gl_PositionPerViewNV" | "gl_ViewportMaskPerViewNV" => {
-            "GL_NVX_multiview_per_view_attributes"
+            Extension::NvxMultiviewPerViewAttributes
         }
         _ => return None,
     })

@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
+use rglsl_types::extension::Extension;
 
 use super::frames::Cx;
 use super::{Analyzer, Operand};
@@ -73,7 +74,7 @@ impl Analyzer<'_> {
         if operand.ty.is_error() {
             return None;
         }
-        let booleans = self.extension_enabled("GL_NV_cooperative_matrix2");
+        let booleans = self.extension_enabled(Extension::NvCooperativeMatrix2);
         let integer = matches!(operand.ty.scalar_type(), Some(Scalar::Int | Scalar::Uint))
             && operand.ty.is_scalar();
         if !operand.constant || !(integer || (booleans && operand.ty.is_bool())) {
@@ -300,14 +301,16 @@ impl Analyzer<'_> {
                 }
                 let extension = match scalar {
                     Scalar::BFloat16 => {
-                        Some(("GL_ARM_tensors_bfloat16", "tensor with bfloat16_t type"))
+                        Some((Extension::ArmTensorsBfloat16, "tensor with bfloat16_t type"))
                     }
-                    Scalar::FloatE5M2 => {
-                        Some(("GL_ARM_tensors_float_e5m2", "tensor with floate5m2_t type"))
-                    }
-                    Scalar::FloatE4M3 => {
-                        Some(("GL_ARM_tensors_float_e4m3", "tensor with floate4m3_t type"))
-                    }
+                    Scalar::FloatE5M2 => Some((
+                        Extension::ArmTensorsFloatE5m2,
+                        "tensor with floate5m2_t type",
+                    )),
+                    Scalar::FloatE4M3 => Some((
+                        Extension::ArmTensorsFloatE4m3,
+                        "tensor with floate4m3_t type",
+                    )),
                     _ => None,
                 };
                 if let Some((extension, feature)) = extension
@@ -391,7 +394,7 @@ impl Analyzer<'_> {
             );
             Operand::error()
         };
-        let composites = self.extension_enabled(super::call::SPEC_CONSTANT_COMPOSITES);
+        let composites = self.extension_enabled(Extension::ExtSpecConstantComposites);
         let constant = operands
             .iter()
             .all(|operand| operand.constant && (composites || !operand.specialization));
@@ -404,8 +407,9 @@ impl Analyzer<'_> {
                     && source.rows == matrix.rows
                     && source.columns == matrix.columns
                     && (source.usage == CooperativeUse::Nv) == (matrix.usage == CooperativeUse::Nv);
-                let maintenance = self.extension_enabled("GL_EXT_cooperative_matrix_maintenance1");
-                let matrix2 = self.extension_enabled("GL_NV_cooperative_matrix2");
+                let maintenance =
+                    self.extension_enabled(Extension::ExtCooperativeMatrixMaintenance1);
+                let matrix2 = self.extension_enabled(Extension::NvCooperativeMatrix2);
                 let accumulator = CooperativeUse::Accumulator;
                 let operand_use = matches!(matrix.usage, CooperativeUse::A | CooperativeUse::B);
                 let source_operand = matches!(source.usage, CooperativeUse::A | CooperativeUse::B);

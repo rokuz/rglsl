@@ -3,6 +3,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+use rglsl_types::extension::Extension;
 use rglsl_types::stack::run;
 
 use rglsl_ast::Span;
@@ -542,13 +543,17 @@ impl Analyzer<'_> {
                 StorageQualifier::NonTemporal => {
                     self.require_extension(
                         single.span,
-                        "GL_EXT_nontemporal_keyword",
+                        Extension::ExtNontemporalKeyword,
                         storage.keyword(),
                     );
                     result.flags.insert(QualifierFlags::NONTEMPORAL);
                 }
                 StorageQualifier::ShaderCallCoherent => {
-                    self.require_extension(single.span, "GL_EXT_ray_tracing", "shadercallcoherent");
+                    self.require_extension(
+                        single.span,
+                        Extension::ExtRayTracing,
+                        "shadercallcoherent",
+                    );
                     result.flags.insert(QualifierFlags::SHADER_CALL_COHERENT);
                 }
                 StorageQualifier::PerPrimitiveNV | StorageQualifier::PerPrimitiveEXT => {
@@ -574,7 +579,7 @@ impl Analyzer<'_> {
                 StorageQualifier::TileImageEXT => {
                     self.require_extension(
                         single.span,
-                        "GL_EXT_shader_tile_image",
+                        Extension::ExtShaderTileImage,
                         storage.keyword(),
                     );
                     result.storage = Storage::TileImage;
@@ -696,7 +701,7 @@ impl Analyzer<'_> {
         if !self.options.require_bindings
             || qualifiers.has_layout("binding")
             || !matches!(qualifiers.storage, Storage::Uniform | Storage::Buffer)
-            || self.extension_enabled(super::heap::DESCRIPTOR_HEAP)
+            || self.extension_enabled(Extension::ExtDescriptorHeap)
         {
             return;
         }
@@ -1093,7 +1098,7 @@ impl Analyzer<'_> {
             Some("an array size is required")
         } else if in_block.is_some()
             && ty.contains_opaque(&self.types)
-            && !(in_heap && self.extension_enabled(super::heap::STRUCTURED_DESCRIPTOR_HEAP))
+            && !(in_heap && self.extension_enabled(Extension::ExtStructuredDescriptorHeap))
         {
             Some("a block member cannot have an opaque type")
         } else if in_block.is_some() && ty.contains_cooperative_matrix(&self.types) {
@@ -1324,7 +1329,7 @@ impl Analyzer<'_> {
                 .layout
                 .iter()
                 .any(|entry| IMAGE_FORMATS.contains(&entry.name.as_str()))
-            && !self.extension_enabled("GL_EXT_shader_image_load_formatted")
+            && !self.extension_enabled(Extension::ExtShaderImageLoadFormatted)
         {
             self.error(
                 span,
@@ -1433,7 +1438,7 @@ impl Analyzer<'_> {
     }
 
     fn reserved_check(&mut self, name: &Identifier) {
-        if name.node.starts_with("gl_") && !self.extension_enabled("GL_EXT_spirv_intrinsics") {
+        if name.node.starts_with("gl_") && !self.extension_enabled(Extension::ExtSpirvIntrinsics) {
             self.error(
                 name.span,
                 DiagnosticKind::ReservedIdentifier(name.node.clone()),
@@ -1468,17 +1473,18 @@ impl Analyzer<'_> {
             }
             return;
         }
-        if self.extension_enabled("GL_EXT_shader_tile_image") {
+        if self.extension_enabled(Extension::ExtShaderTileImage) {
             self.error(
                 span,
-                invalid(
-                    "subpass",
-                    "cannot be used with GL_EXT_shader_tile_image enabled",
-                ),
+                DiagnosticKind::QualifierWithExtension {
+                    qualifier: "subpass",
+                    extension: Extension::ExtShaderTileImage,
+                },
             );
         }
         if !has_index
-            && (ty.is_array() || !self.extension_enabled("GL_EXT_optional_input_attachment_index"))
+            && (ty.is_array()
+                || !self.extension_enabled(Extension::ExtOptionalInputAttachmentIndex))
         {
             self.error(
                 span,
@@ -1958,7 +1964,11 @@ impl Analyzer<'_> {
         if !is_null_initializer(&initializer.node) {
             return self.initializer(span, initializer, expected);
         }
-        self.require_extension(initializer.span, NULL_INITIALIZER, "empty { } initializer");
+        self.require_extension(
+            initializer.span,
+            Extension::ExtNullInitializer,
+            "empty { } initializer",
+        );
         if expected.is_error() {
             return Operand::error();
         }
@@ -2109,7 +2119,7 @@ impl Analyzer<'_> {
             return Operand::error();
         }
         let specialization = self.specialization_uses != uses;
-        if specialization && !self.extension_enabled(super::call::SPEC_CONSTANT_COMPOSITES) {
+        if specialization && !self.extension_enabled(Extension::ExtSpecConstantComposites) {
             constant = false;
         }
         let mut operand = Operand::temporary(result);
@@ -2902,9 +2912,9 @@ impl Analyzer<'_> {
             self.require_extensions(
                 close,
                 &[
-                    "GL_EXT_subgroup_uniform_control_flow",
-                    "GL_EXT_maximal_reconvergence",
-                    "GL_EXT_function_control_attributes",
+                    Extension::ExtSubgroupUniformControlFlow,
+                    Extension::ExtMaximalReconvergence,
+                    Extension::ExtFunctionControlAttributes,
                 ],
                 "attribute",
             );
@@ -2917,19 +2927,23 @@ impl Analyzer<'_> {
                     "subgroup_uniform_control_flow" => {
                         self.require_extension(
                             close,
-                            "GL_EXT_subgroup_uniform_control_flow",
+                            Extension::ExtSubgroupUniformControlFlow,
                             "attribute",
                         );
                         self.subgroup_uniform_control_flow = true;
                     }
                     "maximally_reconverges" => {
-                        self.require_extension(close, "GL_EXT_maximal_reconvergence", "attribute");
+                        self.require_extension(
+                            close,
+                            Extension::ExtMaximalReconvergence,
+                            "attribute",
+                        );
                         self.maximally_reconverges = true;
                     }
                     "inline" => {
                         self.require_extension(
                             close,
-                            "GL_EXT_function_control_attributes",
+                            Extension::ExtFunctionControlAttributes,
                             "attribute",
                         );
                         control = control.merge(FunctionControl::Inline);
@@ -2937,7 +2951,7 @@ impl Analyzer<'_> {
                     "noinline" => {
                         self.require_extension(
                             close,
-                            "GL_EXT_function_control_attributes",
+                            Extension::ExtFunctionControlAttributes,
                             "attribute",
                         );
                         control = control.merge(FunctionControl::DontInline);
@@ -3041,8 +3055,6 @@ const fn precision_key(specifier: &TypeSpecifier) -> Option<PrecisionKey> {
         _ => None,
     }
 }
-
-const NULL_INITIALIZER: &str = "GL_EXT_null_initializer";
 
 pub const fn is_null_initializer(initializer: &Initializer) -> bool {
     matches!(*initializer, Initializer::List(ref items) if items.is_empty())
