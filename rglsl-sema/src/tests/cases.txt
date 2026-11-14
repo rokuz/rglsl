@@ -3192,6 +3192,18 @@ void main() { const ivec2 o[4] = ivec2[4](ivec2(0), ivec2(1), ivec2(2), ivec2(3)
 ### gather offsets not const | frag | 3:InvalidBuiltinCall
 layout(binding=0) uniform sampler2D s;
 void main() { ivec2 o[4]; vec4 r = textureGatherOffsets(s, vec2(0.0), o); }
+### lod gather offsets not const | frag | 10:InvalidBuiltinCall, 11:InvalidBuiltinCall
+#extension GL_AMD_texture_gather_bias_lod : require
+#extension GL_ARB_sparse_texture2 : require
+layout(binding=0) uniform sampler2D s;
+void main() {
+  const ivec2 c[4] = ivec2[4](ivec2(0), ivec2(1), ivec2(2), ivec2(3));
+  ivec2 o[4] = c;
+  vec4 r = textureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, c, 1);
+  int k = sparseTextureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, c, r);
+  r += textureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, o);
+  k += sparseTextureGatherLodOffsetsAMD(s, vec2(0.0), 0.0, o, r, 2);
+}
 ### gather offset non const | frag | ok
 layout(binding=0) uniform sampler2D s;
 void main() { ivec2 o; vec4 r = textureGatherOffset(s, vec2(0.0), o); }

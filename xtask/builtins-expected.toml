@@ -10,11 +10,6 @@ verdicts = ["capabilities-differ"]
 reason = "intentional: without implicit derivatives the clamp becomes the explicit level max(lodClamp, 0); glslang emits Lod with MinLod, a combination SPV_NV_shader_image_footprint does not allow"
 
 [[divergence]]
-name = "*GatherLodOffsetsAMD"
-verdicts = ["rglsl-backend-failed"]
-reason = "bug: gather offsets that are not constant are not lowered"
-
-[[divergence]]
 name = "frexp"
 signature = "16"
 verdicts = ["extensions-differ"]
