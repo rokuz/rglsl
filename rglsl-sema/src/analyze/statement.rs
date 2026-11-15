@@ -202,6 +202,7 @@ impl Analyzer<'_> {
             }
             JumpStatement::Return(value) => self.return_statement(span, value.as_ref()),
             JumpStatement::Demote => self.demote(span),
+            JumpStatement::TerminateInvocation => self.terminate_invocation(span),
             JumpStatement::TerminateRay => self.ray_jump(span, "terminateRayEXT"),
             JumpStatement::IgnoreIntersection => self.ray_jump(span, "ignoreIntersectionEXT"),
         }

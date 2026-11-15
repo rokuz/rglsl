@@ -317,6 +317,20 @@ impl Analyzer<'_> {
         });
         self.require_extension(span, Extension::ExtDemoteToHelperInvocation, "demote");
     }
+
+    pub(crate) fn terminate_invocation(&mut self, span: Span) {
+        self.stage_check(span, |stage| {
+            (stage != ShaderStage::Fragment).then(|| DiagnosticKind::NotSupportedInStage {
+                feature: String::from("terminateInvocation"),
+                stage: stage.name(),
+            })
+        });
+        self.require_extension(
+            span,
+            Extension::ExtTerminateInvocation,
+            "terminateInvocation",
+        );
+    }
 }
 
 impl Analyzer<'_> {

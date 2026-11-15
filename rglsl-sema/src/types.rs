@@ -1312,6 +1312,7 @@ impl StructType {
 pub enum BlockStorage {
     Uniform,
     Buffer,
+    Shared,
     In,
     Out,
     ResourceHeap,

@@ -1637,6 +1637,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             TokenKind::Word("break", _) => self.parse_jump(JumpStatement::Break),
             TokenKind::Word("discard", _) => self.parse_jump(JumpStatement::Discard),
             TokenKind::Word("demote", _) => self.parse_jump(JumpStatement::Demote),
+            TokenKind::Word("terminateInvocation", _) => {
+                self.parse_jump(JumpStatement::TerminateInvocation)
+            }
             TokenKind::Word("terminateRayEXT", _) => self.parse_jump(JumpStatement::TerminateRay),
             TokenKind::Word("ignoreIntersectionEXT", _) => {
                 self.parse_jump(JumpStatement::IgnoreIntersection)

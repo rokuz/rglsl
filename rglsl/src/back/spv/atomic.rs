@@ -104,6 +104,7 @@ pub(super) fn collect_texel_images(block: &crate::Block, images: &mut HandleSet<
             | Statement::Continue
             | Statement::Return { .. }
             | Statement::Kill
+            | Statement::TerminateInvocation
             | Statement::Demote
             | Statement::BeginInvocationInterlock
             | Statement::EndInvocationInterlock

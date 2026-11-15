@@ -244,6 +244,34 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     if push_constants.len() > 1 && push_constants.iter().all(Option::is_none) {
         builder.errors.push(LinkError::PushConstants);
     }
+    let shared_block_count = builder
+        .module
+        .global_variables
+        .iter()
+        .filter(|&(_, global)| {
+            global.space == AddressSpace::WorkGroup
+                && global.block == Some(rglsl::BlockDeclaration::Shared)
+        })
+        .count();
+    let has_shared_plain = builder
+        .module
+        .global_variables
+        .iter()
+        .any(|(_, global)| global.space == AddressSpace::WorkGroup && global.block.is_none());
+    if shared_block_count > 0 && has_shared_plain {
+        builder.errors.push(LinkError::SharedBlockMixing);
+    }
+    if shared_block_count > 1
+        && builder.module.global_variables.iter().any(|(_, global)| {
+            global.space == AddressSpace::WorkGroup
+                && global.block == Some(rglsl::BlockDeclaration::Shared)
+                && global
+                    .memory_decorations
+                    .contains(rglsl::MemoryDecorations::RESTRICT)
+        })
+    {
+        builder.errors.push(LinkError::SharedBlockRestrictAliased);
+    }
     let Builder {
         mut module,
         globals,

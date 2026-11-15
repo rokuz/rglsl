@@ -152,6 +152,7 @@ pub fn global_needs_wrapper(
         | crate::AddressSpace::Storage { .. }
         | crate::AddressSpace::ShaderRecord
         | crate::AddressSpace::Immediate => {}
+        crate::AddressSpace::WorkGroup if var.block == Some(crate::BlockDeclaration::Shared) => {}
         crate::AddressSpace::Function
         | crate::AddressSpace::Private
         | crate::AddressSpace::WorkGroup
@@ -234,7 +235,7 @@ pub enum BindingDecorations {
     BuiltIn(spirv::BuiltIn, ArrayVec<spirv::Decoration, 2>),
     Location {
         location: u32,
-        others: ArrayVec<spirv::Decoration, 7>,
+        others: ArrayVec<spirv::Decoration, 9>,
         /// If this is `Some`, use Decoration::Index with blend_src as an operand
         blend_src: Option<Word>,
         /// If this is `Some`, use Decoration::Component with it as an operand

@@ -1349,6 +1349,7 @@ impl FunctionInfo {
             | S::Continue
             | S::Return { .. }
             | S::Kill
+            | S::TerminateInvocation
             | S::Demote
             | S::BeginInvocationInterlock
             | S::EndInvocationInterlock
@@ -1425,7 +1426,7 @@ impl FunctionInfo {
             S::Break | S::Continue | S::EmitVertex { .. } | S::EndPrimitive { .. } => {
                 FunctionUniformity::new()
             }
-            S::Kill => FunctionUniformity {
+            S::Kill | S::TerminateInvocation => FunctionUniformity {
                 result: Uniformity::new(),
                 exit: if disruptor.is_some() {
                     ExitFlags::MAY_KILL

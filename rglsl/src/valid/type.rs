@@ -494,6 +494,7 @@ impl super::Validator {
                 if !base_info.flags.contains(TypeFlags::SIZED) {
                     match space {
                         As::Storage { .. } => {}
+                        As::Uniform if matches!(gctx.types[base].inner, Ti::Struct { .. }) => {}
                         As::Function
                         | As::Private
                         | As::WorkGroup
@@ -777,17 +778,12 @@ impl super::Validator {
                         ti.immediates_compatibility = base_info.immediates_compatibility.clone();
                     }
 
-                    // The last field may be an unsized array.
                     if !base_info.flags.contains(TypeFlags::SIZED) {
                         let is_array =
                             matches!(gctx.types[member.ty].inner, crate::TypeInner::Array { .. });
                         if !is_array || i + 1 != members.len() {
                             let name = member.name.clone().unwrap_or_default();
                             return Err(TypeError::InvalidDynamicArray(name, member.ty));
-                        }
-                        if ti.uniform_layout.is_ok() {
-                            ti.uniform_layout =
-                                Err((handle, Disalignment::UnsizedMember { index: i as u32 }));
                         }
                     }
                 }

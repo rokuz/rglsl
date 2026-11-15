@@ -907,6 +907,7 @@ pub enum JumpStatement {
     Return(Option<Expression>),
     Discard,
     Demote,
+    TerminateInvocation,
     TerminateRay,
     IgnoreIntersection,
 }

@@ -205,6 +205,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 | JumpStatement::Return(None)
                 | JumpStatement::Discard
                 | JumpStatement::Demote
+                | JumpStatement::TerminateInvocation
                 | JumpStatement::TerminateRay
                 | JumpStatement::IgnoreIntersection,
             ) => {}

@@ -36,6 +36,12 @@ pub enum LinkError {
     GeometryInputSize(String),
     #[error("Only one push_constant block is allowed per stage")]
     PushConstants,
+    #[error("cannot mix use of shared variables inside and outside blocks")]
+    SharedBlockMixing,
+    #[error(
+        "`restrict` on aliased shared memory blocks is not supported: SPIR-V forbids decorating a Workgroup variable with both Aliased and Restrict"
+    )]
+    SharedBlockRestrictAliased,
     #[error("specialization constant {0} is declared differently in two modules")]
     SpecializationConstant(u32),
     #[error("structure `{0}` is defined differently in two modules")]

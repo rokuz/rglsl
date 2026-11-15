@@ -219,7 +219,13 @@ layout_ids! {
     DescriptorHeap "descriptor_heap": Flag(ALL) => {}
     DescriptorSize "descriptor_size": Value(ALL) => {}
     DescriptorStride "descriptor_stride": Value(ALL) => { takes_any_value: true }
-    EarlyAndLateFragmentTestsAmd "early_and_late_fragment_tests_amd": Flag(FRAGMENT) => {}
+    EarlyAndLateFragmentTestsAmd "early_and_late_fragment_tests_amd": Flag(FRAGMENT) => {
+        extension: Some(LayoutExtension {
+            feature: "early_and_late_fragment_tests_amd",
+            stages: FRAGMENT,
+            extensions: &[Extension::AmdShaderEarlyAndLateFragmentTests],
+        }),
+    }
     EarlyFragmentTests "early_fragment_tests": Flag(FRAGMENT) => {}
     EqualSpacing "equal_spacing": Flag(TESS_EVALUATION) => {}
     FractionalEvenSpacing "fractional_even_spacing": Flag(TESS_EVALUATION) => {}
@@ -303,7 +309,13 @@ layout_ids! {
     OriginUpperLeft "origin_upper_left": Flag(FRAGMENT) => {}
     OverrideCoverage "override_coverage": Flag(FRAGMENT) => {}
     Packed "packed": Flag(ALL) => {}
-    Passthrough "passthrough": Flag(GEOMETRY) => {}
+    Passthrough "passthrough": Flag(GEOMETRY) => {
+        extension: Some(LayoutExtension {
+            feature: "geometry shader passthrough",
+            stages: GEOMETRY,
+            extensions: &[Extension::NvGeometryShaderPassthrough],
+        }),
+    }
     PixelCenterInteger "pixel_center_integer": Flag(FRAGMENT) => {}
     PixelInterlockOrdered "pixel_interlock_ordered": Flag(FRAGMENT) => {}
     PixelInterlockUnordered "pixel_interlock_unordered": Flag(FRAGMENT) => {}

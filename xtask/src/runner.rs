@@ -627,6 +627,9 @@ pub fn validate(
     }
     if enables_extension(&case.path, "GL_EXT_scalar_block_layout") {
         command.arg("--scalar-block-layout");
+        if enables_extension(&case.path, "GL_EXT_shared_memory_block") {
+            command.arg("--workgroup-scalar-block-layout");
+        }
     }
     if corpus::runtests_options(&case.name).hlsl_offsets {
         command.arg("--relax-block-layout");

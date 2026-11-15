@@ -52,7 +52,14 @@ const fn needs_return(last: Option<&crate::Statement>) -> bool {
     use crate::Statement as S;
     match last {
         Some(&(S::Block(_) | S::If { .. } | S::Switch { .. })) => false,
-        Some(&(S::Break | S::Continue | S::Return { .. } | S::Kill | S::Abort { .. })) => false,
+        Some(
+            &(S::Break
+            | S::Continue
+            | S::Return { .. }
+            | S::Kill
+            | S::TerminateInvocation
+            | S::Abort { .. }),
+        ) => false,
         Some(&S::MeshFunction(ref function)) if function.is_terminator() => false,
         Some(&S::RayPipelineFunction(ref function)) if function.is_terminator() => false,
         Some(

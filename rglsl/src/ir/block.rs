@@ -234,6 +234,7 @@ impl Statement {
             | Self::Continue
             | Self::Return { .. }
             | Self::Kill
+            | Self::TerminateInvocation
             | Self::Demote
             | Self::BeginInvocationInterlock
             | Self::EndInvocationInterlock

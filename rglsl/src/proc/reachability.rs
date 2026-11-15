@@ -273,7 +273,10 @@ fn enter(statement: &Statement) -> Entry<'_> {
         }),
         Statement::Break => Entry::Jump(Jump::Break),
         Statement::Continue => Entry::Jump(Jump::Continue),
-        Statement::Return { .. } | Statement::Kill | Statement::Abort { .. } => Entry::Terminator,
+        Statement::Return { .. }
+        | Statement::Kill
+        | Statement::TerminateInvocation
+        | Statement::Abort { .. } => Entry::Terminator,
         Statement::MeshFunction(ref function) if function.is_terminator() => Entry::Terminator,
         Statement::RayPipelineFunction(ref function) if function.is_terminator() => {
             Entry::Terminator

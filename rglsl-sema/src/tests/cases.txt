@@ -6764,3 +6764,111 @@ const bool b = mix(false, true, true);
 int a[mix(1, 3, true)];
 float c[int(mix(1.0, 3.0, true))];
 void main() {}
+### early and late fragment tests need the AMD extension | frag 450 | 2:ExtensionRequired
+layout(early_and_late_fragment_tests_amd) in;
+void main() {}
+### early and late fragment tests with the AMD extension | frag 450 | ok
+#extension GL_AMD_shader_early_and_late_fragment_tests : require
+layout(early_and_late_fragment_tests_amd) in;
+void main() {}
+### terminateInvocation needs the extension | frag 450 | 3:ExtensionRequired
+void main() {
+    terminateInvocation;
+}
+### terminateInvocation is fragment-only | comp 450 | 4:NotSupportedInStage
+#extension GL_EXT_terminate_invocation : enable
+void main() {
+    terminateInvocation;
+}
+### terminateInvocation in fragment shader | frag 450 | ok
+#extension GL_EXT_terminate_invocation : require
+void helper() { terminateInvocation; }
+void main() {
+    if (gl_FragCoord.x < 1.0) terminateInvocation;
+    helper();
+}
+### terminateInvocation in non-void function still needs a return like glslang | frag 450 | 3:FunctionWithoutReturn
+#extension GL_EXT_terminate_invocation : require
+int helper() { terminateInvocation; }
+void main() {}
+### shared block needs the extension | comp 450 | 3:ExtensionRequired
+layout(local_size_x = 1) in;
+shared B { int a; };
+void main() { a = 1; }
+### shared default layout needs the extension | comp 450 | 3:ExtensionRequired
+layout(local_size_x = 1) in;
+layout(std140) shared;
+void main() {}
+### bare shared default qualifier needs no extension | comp 450 | ok
+layout(local_size_x = 1) in;
+shared;
+void main() {}
+### shared blocks in compute, mesh and task | comp 450 | ok
+#extension GL_EXT_shared_memory_block : require
+layout(local_size_x = 4) in;
+layout(std140) shared;
+coherent volatile restrict shared B1 { int a; readonly int b; } b1;
+shared B2 { float f[]; } b2;
+void main() { b1.a = b1.b; b2.f[2] = 1.0; }
+### shared blocks are rejected in fragment shaders | frag 450 | 3:InvalidQualifier
+#extension GL_EXT_shared_memory_block : enable
+shared B { int a; };
+void main() {}
+### shared blocks reject set, binding, push_constant, readonly, writeonly and arrays | comp 450 | 4:InvalidQualifier, 5:InvalidQualifier, 6:InvalidQualifier, 7:InvalidQualifier, 8:InvalidQualifier, 9:InvalidBlock
+#extension GL_EXT_shared_memory_block : require
+layout(local_size_x = 1) in;
+layout(set = 0) shared S1 { int a; } s1;
+layout(binding = 0) shared S2 { int a; } s2;
+layout(push_constant) shared S3 { int a; } s3;
+readonly shared S4 { int a; } s4;
+writeonly shared S5 { int a; } s5;
+shared S6 { int a; } s6[2];
+void main() {}
+### unsized uniform buffer array needs the extension for variable indexing | comp 450 | 5:VariableIndexIntoUnsizedArray
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform U { float a; float b[]; } u;
+void main() {
+    float x = u.b[gl_LocalInvocationIndex];
+}
+### unsized uniform buffer array with the extension on the last member | comp 450 | ok
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform U1 { float a; float b[]; } u;
+layout(set = 0, binding = 1) uniform U2 { float c[]; };
+layout(set = 0, binding = 2) uniform U3 { float d[]; } ua[2];
+void main() {
+    float x = u.b[gl_LocalInvocationIndex] + c[gl_LocalInvocationIndex] + ua[0].d[gl_LocalInvocationIndex];
+}
+### unsized uniform buffer array still rejects length and non-last or push constant variable indexing | comp 450 | 8:VariableIndexIntoUnsizedArray, 9:VariableIndexIntoUnsizedArray, 10:InvalidLength
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform U { float early[]; float tail; } u;
+layout(push_constant) uniform P { float pc[]; } p;
+layout(set = 0, binding = 1) uniform V { float ok[]; } v;
+void main() {
+    float x = u.early[gl_LocalInvocationIndex];
+    float y = p.pc[gl_LocalInvocationIndex];
+    int n = v.ok.length();
+}
+### tile image 1D arrays and location overlap | frag 450 | 4:OverlappingLocation
+#extension GL_EXT_shader_tile_image : require
+layout(location = 0) tileImageEXT highp attachmentEXT colorAtt[2];
+layout(location = 1) tileImageEXT highp uattachmentEXT overlapAtt;
+void main() {
+    vec4 c = colorAttachmentReadEXT(colorAtt[1]);
+}
+### member-level passthrough on geometry input block array | geom 450 | ok
+#extension GL_NV_geometry_shader_passthrough : require
+layout(triangles) in;
+in Block {
+    layout(location = 0, passthrough) vec4 a;
+    layout(location = 1) vec4 b;
+} blk[];
+void main() {}
+### passthrough requires geometry extension and input storage | geom 450 | 4:ExtensionRequired, 5:ExtensionRequired, 5:InvalidQualifier, 6:ExtensionRequired, 6:InvalidQualifier
+layout(triangles) in;
+layout(points, max_vertices = 1) out;
+in B1 { layout(location = 0, passthrough) vec4 a; } in_blk[];
+out B2 { layout(location = 0, passthrough) vec4 b; } out_blk;
+layout(location = 1, passthrough) out vec4 out_var;
+void main() {}

@@ -712,6 +712,45 @@ impl Validator {
                     .with_span_handle(var_handle, &module.global_variables)
                 })?;
         }
+        if self.mode == ValidationMode::Executable {
+            let shared_block_count = module
+                .global_variables
+                .iter()
+                .filter(|&(_, var)| {
+                    var.space == crate::AddressSpace::WorkGroup
+                        && var.block == Some(crate::BlockDeclaration::Shared)
+                })
+                .count();
+            if shared_block_count > 0
+                && let Some((var_handle, var)) = module.global_variables.iter().find(|&(_, var)| {
+                    var.space == crate::AddressSpace::WorkGroup && var.block.is_none()
+                })
+            {
+                return Err(ValidationError::GlobalVariable {
+                    handle: var_handle,
+                    name: var.name.clone().unwrap_or_default(),
+                    source: GlobalVariableError::MixedWorkGroupLayout,
+                }
+                .with_span_handle(var_handle, &module.global_variables));
+            }
+            if shared_block_count > 1
+                && !module.entry_points.is_empty()
+                && let Some((var_handle, var)) = module.global_variables.iter().find(|&(_, var)| {
+                    var.space == crate::AddressSpace::WorkGroup
+                        && var.block == Some(crate::BlockDeclaration::Shared)
+                        && var
+                            .memory_decorations
+                            .contains(crate::MemoryDecorations::RESTRICT)
+                })
+            {
+                return Err(ValidationError::GlobalVariable {
+                    handle: var_handle,
+                    name: var.name.clone().unwrap_or_default(),
+                    source: GlobalVariableError::RestrictOnAliasedWorkGroupBlock,
+                }
+                .with_span_handle(var_handle, &module.global_variables));
+            }
+        }
 
         for (handle, fun) in module.functions.iter() {
             if fun.linkage.is_import() {

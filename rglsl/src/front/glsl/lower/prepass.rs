@@ -178,6 +178,9 @@ impl<'a> Lowerer<'a> {
                     if let (true, Some(symbol)) = (variable_index, symbol) {
                         self.variably_indexed.insert(symbol);
                     }
+                    if variable_index && let Some(member) = self.block_member_of(base) {
+                        self.variably_indexed_members.insert(member);
+                    }
                     let value = analysis
                         .expression(index.id)
                         .and_then(|info| info.value.as_ref())

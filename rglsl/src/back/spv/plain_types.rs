@@ -35,12 +35,17 @@ pub(super) const fn has_explicit_layout(class: StorageClass) -> bool {
 }
 
 impl Writer {
+    pub(super) const fn has_explicit_layout(&self, class: StorageClass) -> bool {
+        has_explicit_layout(class)
+            || (matches!(class, StorageClass::Workgroup) && self.workgroup_explicit_layout)
+    }
+
     pub(super) fn record_composite_type(&mut self, id: Word, composite: CompositeType) {
         self.composite_types.insert(id, composite);
     }
 
     pub(super) fn pointee_type_id(&mut self, base: Word, class: StorageClass) -> Word {
-        if has_explicit_layout(class) {
+        if self.has_explicit_layout(class) {
             base
         } else {
             self.plain_type_id(base)
@@ -155,7 +160,16 @@ impl Writer {
     }
 
     pub(super) fn needs_layout_conversion(&mut self, type_id: Word, class: StorageClass) -> bool {
-        !has_explicit_layout(class) && self.plain_type_id(type_id) != type_id
+        let explicit = self.has_explicit_layout(class);
+        self.needs_layout_conversion_explicit(type_id, explicit)
+    }
+
+    pub(super) fn needs_layout_conversion_explicit(
+        &mut self,
+        type_id: Word,
+        explicit: bool,
+    ) -> bool {
+        !explicit && self.plain_type_id(type_id) != type_id
     }
 
     pub(super) fn convert_layout(

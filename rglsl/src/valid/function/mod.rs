@@ -1078,7 +1078,11 @@ impl super::Validator {
                 }
             }
             S::Return { value } => self.validate_return(value, span, context)?,
-            S::Kill | S::Demote | S::BeginInvocationInterlock | S::EndInvocationInterlock => {
+            S::Kill
+            | S::TerminateInvocation
+            | S::Demote
+            | S::BeginInvocationInterlock
+            | S::EndInvocationInterlock => {
                 stages &= super::ShaderStages::FRAGMENT;
             }
             S::SplitBarrier { .. } | S::ScopedBarrier { .. } => {}
@@ -1358,6 +1362,7 @@ impl super::Validator {
             | S::Continue
             | S::Return { .. }
             | S::Kill
+            | S::TerminateInvocation
             | S::Demote
             | S::BeginInvocationInterlock
             | S::EndInvocationInterlock

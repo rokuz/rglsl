@@ -184,6 +184,11 @@ impl Analyzer<'_> {
         self.standalone_stage_layout(&qualifiers);
         self.fragment_layouts(&qualifiers);
         self.task_payload_type_only(qualifier.span, &qualifiers);
+        self.passthrough_storage_check(qualifier.span, &qualifiers, true);
+        if qualifiers.storage == Storage::Shared {
+            self.shared_default_qualifier(qualifier.span, &qualifiers);
+            return;
+        }
         if qualifiers.storage == Storage::Out {
             self.resize_mesh_arrays(qualifier.span);
         }
@@ -299,6 +304,96 @@ impl Analyzer<'_> {
             {
                 *slot = Value::Uint(value);
             }
+        }
+    }
+
+    fn passthrough_storage_check(
+        &mut self,
+        span: Span,
+        qualifiers: &Qualifiers,
+        allowed_scope: bool,
+    ) {
+        if qualifiers.has_layout(LayoutId::Passthrough)
+            && (!allowed_scope || qualifiers.storage != Storage::In)
+        {
+            self.error(
+                span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: "passthrough",
+                    reason: "can only be used on inputs",
+                },
+            );
+        }
+    }
+
+    fn shared_stage_check(&mut self, span: Span) -> bool {
+        self.stage_check(span, |stage| {
+            (!matches!(
+                stage,
+                ShaderStage::Compute | ShaderStage::Mesh | ShaderStage::Task
+            ))
+            .then_some(DiagnosticKind::InvalidQualifier {
+                qualifier: "shared",
+                reason: "not supported in this stage",
+            })
+        })
+    }
+
+    fn shared_layout_checks(&mut self, span: Span, qualifiers: &Qualifiers) {
+        if self
+            .options
+            .spirv_version
+            .is_some_and(|version| version < (1, 4))
+        {
+            self.error(
+                span,
+                DiagnosticKind::SpirvVersionRequired {
+                    feature: "shared block",
+                    version: "1.4",
+                },
+            );
+        }
+        self.require_extension(span, Extension::ExtSharedMemoryBlock, "shared block");
+        for layout in [LayoutId::Set, LayoutId::Binding, LayoutId::PushConstant] {
+            if qualifiers.has_layout(layout) {
+                self.error(
+                    span,
+                    DiagnosticKind::InvalidQualifier {
+                        qualifier: layout.name(),
+                        reason: "cannot be used with shared",
+                    },
+                );
+            }
+        }
+    }
+
+    fn shared_default_qualifier(&mut self, span: Span, qualifiers: &Qualifiers) {
+        if self.shared_stage_check(span) {
+            return;
+        }
+        if !qualifiers.layout.is_empty() {
+            self.shared_layout_checks(span, qualifiers);
+        }
+    }
+
+    fn shared_block_checks(&mut self, span: Span, qualifiers: &Qualifiers) {
+        self.shared_stage_check(span);
+        self.shared_layout_checks(span, qualifiers);
+        if qualifiers
+            .flags
+            .intersects(QualifierFlags::READONLY | QualifierFlags::WRITEONLY)
+        {
+            self.error(
+                span,
+                DiagnosticKind::InvalidQualifier {
+                    qualifier: if qualifiers.flags.contains(QualifierFlags::READONLY) {
+                        "readonly"
+                    } else {
+                        "writeonly"
+                    },
+                    reason: "readonly/writeonly on shared blocks is not supported: Vulkan does not allow NonWritable or NonReadable on Workgroup variables",
+                },
+            );
         }
     }
 
@@ -1085,6 +1180,7 @@ impl Analyzer<'_> {
         } else if in_block.is_some() {
             self.input_attachment_check(qualifiers, &ty, name.span);
         }
+        self.passthrough_storage_check(name.span, qualifiers, in_block.is_some());
         members.push(Member {
             name: name.node.clone(),
             ty,
@@ -1156,7 +1252,7 @@ impl Analyzer<'_> {
             }
         }
         self.no_shader_layouts(&qualifiers);
-        self.passthrough_extension(&qualifiers);
+        self.passthrough_storage_check(list.ty.span, &qualifiers, true);
         self.view_layout_extensions(&qualifiers);
         for declarator in &list.declarators {
             self.init_declarator(declarator, &qualifiers, &base);
@@ -2213,7 +2309,7 @@ impl Analyzer<'_> {
             self.non_uniform_storage_check(Some(&structure.qualifier), &qualifiers);
         }
         self.no_shader_layouts(&qualifiers);
-        self.passthrough_extension(&qualifiers);
+        self.passthrough_storage_check(structure.qualifier.span, &qualifiers, true);
         self.mesh_block_storage(structure.name.span, &qualifiers);
         self.view_layout_extensions(&qualifiers);
         let storage = match qualifiers.storage {
@@ -2223,6 +2319,10 @@ impl Analyzer<'_> {
             }
             Storage::Uniform => BlockStorage::Uniform,
             Storage::Buffer => BlockStorage::Buffer,
+            Storage::Shared => {
+                self.shared_block_checks(structure.name.span, &qualifiers);
+                BlockStorage::Shared
+            }
             Storage::In => BlockStorage::In,
             Storage::Out => BlockStorage::Out,
             Storage::ResourceHeap | Storage::SamplerHeap => {
@@ -2327,6 +2427,25 @@ impl Analyzer<'_> {
         let dimensions = instance
             .map(|instance| self.array_sizes(instance.node.array.as_ref()))
             .unwrap_or_default();
+        if storage == BlockStorage::Shared {
+            if !dimensions.is_empty() {
+                let array_span = instance.map_or(structure.name.span, |instance| instance.span);
+                self.error(
+                    array_span,
+                    DiagnosticKind::InvalidBlock {
+                        name: structure.name.node.clone(),
+                        reason: "shared block arrays are not supported: Vulkan requires Workgroup variables with explicit layout to have a Block-decorated struct type",
+                    },
+                );
+            }
+            if qualifiers.needs_vulkan_memory_model()
+                || members
+                    .iter()
+                    .any(|member| member.qualifiers.needs_vulkan_memory_model())
+            {
+                self.vulkan_memory_model = true;
+            }
+        }
         if structure.name.node.starts_with("gl_") {
             let declarators = structure
                 .members

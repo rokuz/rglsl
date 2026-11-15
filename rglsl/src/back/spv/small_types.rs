@@ -115,7 +115,9 @@ pub(super) struct Usage {
 struct Module {
     types: FastHashMap<Word, TypeInfo>,
     value_types: FastHashMap<Word, Word>,
+    blocks: FastHashSet<Word>,
     buffer_blocks: FastHashSet<Word>,
+    workgroup_block_vars: FastHashSet<Word>,
     contained: FastHashMap<(Word, bool, Word), bool>,
 }
 
@@ -178,15 +180,21 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
     let mut module = Module {
         types: FastHashMap::default(),
         value_types: FastHashMap::default(),
+        blocks: FastHashSet::default(),
         buffer_blocks: FastHashSet::default(),
+        workgroup_block_vars: FastHashSet::default(),
         contained: FastHashMap::default(),
     };
     for instruction in instructions(annotations) {
         if instruction.op == op(Op::Decorate)
-            && instruction.operands.get(1) == Some(&(spirv::Decoration::BufferBlock as Word))
             && let Some(&target) = instruction.operands.first()
         {
-            module.buffer_blocks.insert(target);
+            if instruction.operands.get(1) == Some(&(spirv::Decoration::Block as Word)) {
+                module.blocks.insert(target);
+            } else if instruction.operands.get(1) == Some(&(spirv::Decoration::BufferBlock as Word))
+            {
+                module.buffer_blocks.insert(target);
+            }
         }
     }
     let mut capabilities: FastIndexSet<Capability> = FastIndexSet::default();
@@ -244,7 +252,14 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         if let (Some(ty), Some(id)) = (first, second) {
             module.value_types.insert(id, ty);
             if instruction.op == op(Op::Variable) {
-                variables.push((ty, operands.get(2).copied()));
+                let storage = operands.get(2).copied();
+                variables.push((ty, storage));
+                if storage == Some(class(StorageClass::Workgroup))
+                    && let Some(&TypeInfo::Pointer(_, pointee)) = module.info(ty)
+                    && module.blocks.contains(&pointee)
+                {
+                    module.workgroup_block_vars.insert(id);
+                }
             }
             let constant = [
                 Op::SpecConstantOp,
@@ -296,58 +311,68 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         let float16 = module.contains(pointee, true, 16);
         let int16 = module.contains(pointee, false, 16);
         if float16 || int16 {
-            let storage_capability = if storage == class(StorageClass::Input)
-                || storage == class(StorageClass::Output)
-            {
-                Some(Capability::StorageInputOutput16)
-            } else if storage == class(StorageClass::Uniform) {
-                if module.buffer_blocks.contains(&pointee) {
+            if storage == class(StorageClass::Workgroup) && module.blocks.contains(&pointee) {
+                add_feature(&feature::WORKGROUP_MEMORY_EXPLICIT_LAYOUT);
+                add(Capability::WorkgroupMemoryExplicitLayout16BitAccessKHR);
+            } else {
+                let storage_capability = if storage == class(StorageClass::Input)
+                    || storage == class(StorageClass::Output)
+                {
+                    Some(Capability::StorageInputOutput16)
+                } else if storage == class(StorageClass::Uniform) {
+                    if module.buffer_blocks.contains(&pointee) {
+                        Some(Capability::StorageBuffer16BitAccess)
+                    } else {
+                        Some(Capability::UniformAndStorageBuffer16BitAccess)
+                    }
+                } else if storage == class(StorageClass::PushConstant) {
+                    Some(Capability::StoragePushConstant16)
+                } else if storage == class(StorageClass::StorageBuffer)
+                    || storage == class(StorageClass::PhysicalStorageBuffer)
+                {
                     Some(Capability::StorageBuffer16BitAccess)
                 } else {
-                    Some(Capability::UniformAndStorageBuffer16BitAccess)
-                }
-            } else if storage == class(StorageClass::PushConstant) {
-                Some(Capability::StoragePushConstant16)
-            } else if storage == class(StorageClass::StorageBuffer)
-                || storage == class(StorageClass::PhysicalStorageBuffer)
-            {
-                Some(Capability::StorageBuffer16BitAccess)
-            } else {
-                None
-            };
-            match storage_capability {
-                Some(capability) => {
-                    add_feature(&feature::STORAGE_16BIT);
-                    add(capability);
-                }
-                None => {
-                    if float16 {
-                        add(Capability::Float16);
+                    None
+                };
+                match storage_capability {
+                    Some(capability) => {
+                        add_feature(&feature::STORAGE_16BIT);
+                        add(capability);
                     }
-                    if int16 {
-                        add(Capability::Int16);
+                    None => {
+                        if float16 {
+                            add(Capability::Float16);
+                        }
+                        if int16 {
+                            add(Capability::Int16);
+                        }
                     }
                 }
             }
         }
         if module.contains(pointee, false, 8) {
-            let storage_capability = if storage == class(StorageClass::PushConstant) {
-                Some(Capability::StoragePushConstant8)
-            } else if storage == class(StorageClass::Uniform) {
-                Some(Capability::UniformAndStorageBuffer8BitAccess)
-            } else if storage == class(StorageClass::StorageBuffer)
-                || storage == class(StorageClass::PhysicalStorageBuffer)
-            {
-                Some(Capability::StorageBuffer8BitAccess)
+            if storage == class(StorageClass::Workgroup) && module.blocks.contains(&pointee) {
+                add_feature(&feature::WORKGROUP_MEMORY_EXPLICIT_LAYOUT);
+                add(Capability::WorkgroupMemoryExplicitLayout8BitAccessKHR);
             } else {
-                None
-            };
-            match storage_capability {
-                Some(capability) => {
-                    add_feature(&feature::STORAGE_8BIT);
-                    add(capability);
+                let storage_capability = if storage == class(StorageClass::PushConstant) {
+                    Some(Capability::StoragePushConstant8)
+                } else if storage == class(StorageClass::Uniform) {
+                    Some(Capability::UniformAndStorageBuffer8BitAccess)
+                } else if storage == class(StorageClass::StorageBuffer)
+                    || storage == class(StorageClass::PhysicalStorageBuffer)
+                {
+                    Some(Capability::StorageBuffer8BitAccess)
+                } else {
+                    None
+                };
+                match storage_capability {
+                    Some(capability) => {
+                        add_feature(&feature::STORAGE_8BIT);
+                        add(capability);
+                    }
+                    None => add(Capability::Int8),
                 }
-                None => add(Capability::Int8),
             }
         }
     }
@@ -356,6 +381,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         Capability::StoragePushConstant16,
         Capability::StorageBuffer16BitAccess,
         Capability::UniformAndStorageBuffer16BitAccess,
+        Capability::WorkgroupMemoryExplicitLayout16BitAccessKHR,
     ]
     .iter()
     .any(|capability| capabilities.contains(capability));
@@ -363,12 +389,22 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         Capability::StoragePushConstant8,
         Capability::UniformAndStorageBuffer8BitAccess,
         Capability::StorageBuffer8BitAccess,
+        Capability::WorkgroupMemoryExplicitLayout8BitAccessKHR,
     ]
     .iter()
     .any(|capability| capabilities.contains(capability));
     let mut found = Vec::new();
     for instruction in instructions(functions) {
         let code = instruction.op;
+        if (code == op(Op::AccessChain)
+            || code == op(Op::InBoundsAccessChain)
+            || code == op(Op::CopyObject))
+            && let (Some(&id), Some(&base)) =
+                (instruction.operands.get(1), instruction.operands.get(2))
+            && module.workgroup_block_vars.contains(&base)
+        {
+            module.workgroup_block_vars.insert(id);
+        }
         if code == op(Op::Variable)
             || code == op(Op::Function)
             || code == op(Op::FunctionParameter)
@@ -428,6 +464,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         Capability::StoragePushConstant8,
         Capability::UniformAndStorageBuffer8BitAccess,
         Capability::StorageBuffer8BitAccess,
+        Capability::WorkgroupMemoryExplicitLayout8BitAccessKHR,
     ];
     if declared(true, 16) && !covered(&capabilities, &[Capability::Float16]) && !storage16 {
         capabilities.insert(Capability::Float16);
@@ -481,16 +518,19 @@ fn post_process(
             instruction.operands.first()
         };
         let storage = pointer.and_then(|pointer| module.storage_class(*pointer));
-        let buffer = storage.is_some_and(|storage| {
-            [
-                StorageClass::PhysicalStorageBuffer,
-                StorageClass::Uniform,
-                StorageClass::StorageBuffer,
-                StorageClass::PushConstant,
-            ]
-            .iter()
-            .any(|candidate| class(*candidate) == storage)
-        });
+        let workgroup_block =
+            pointer.is_some_and(|pointer| module.workgroup_block_vars.contains(pointer));
+        let buffer = workgroup_block
+            || storage.is_some_and(|storage| {
+                [
+                    StorageClass::PhysicalStorageBuffer,
+                    StorageClass::Uniform,
+                    StorageClass::StorageBuffer,
+                    StorageClass::PushConstant,
+                ]
+                .iter()
+                .any(|candidate| class(*candidate) == storage)
+            });
         let interface = storage.is_some_and(|storage| {
             storage == class(StorageClass::Input) || storage == class(StorageClass::Output)
         });

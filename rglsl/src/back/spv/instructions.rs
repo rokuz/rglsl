@@ -1025,6 +1025,10 @@ impl super::Instruction {
         Self::new(Op::Kill)
     }
 
+    pub(super) const fn terminate_invocation() -> Self {
+        Self::new(Op::TerminateInvocation)
+    }
+
     pub(super) const fn demote_to_helper_invocation() -> Self {
         Self::new(Op::DemoteToHelperInvocation)
     }

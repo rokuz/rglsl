@@ -93,8 +93,16 @@ impl Builder {
             a: &existing.implicit,
             b: candidate.implicit,
         };
+        let uniform_block = current.space == rglsl::AddressSpace::Uniform;
         let (current_ty, ty) = self.align_locations(existing, candidate, &current, ty);
-        match unify(&mut self.module, current_ty, ty, &implicit, &mut Vec::new()) {
+        match unify(
+            &mut self.module,
+            current_ty,
+            ty,
+            &implicit,
+            uniform_block,
+            &mut Vec::new(),
+        ) {
             Ok(unified) => {
                 self.module.global_variables.get_mut(existing.handle).ty = unified;
                 if existing.binding.is_automatic() && !candidate.binding.is_automatic() {
@@ -498,6 +506,7 @@ fn without_location(binding: &Binding) -> Binding {
             invariant,
             patch,
             per_view,
+            passthrough,
         } => Binding::Location {
             location: 0,
             interpolation,
@@ -508,6 +517,7 @@ fn without_location(binding: &Binding) -> Binding {
             invariant,
             patch,
             per_view,
+            passthrough,
         },
         Binding::BuiltIn(builtin) => Binding::BuiltIn(builtin),
     }

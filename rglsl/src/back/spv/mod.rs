@@ -868,6 +868,9 @@ pub struct Writer {
     /// types used in other storage classes, such as stage outputs or workgroup
     /// memory.
     laid_out_types: crate::arena::HandleSet<crate::Type>,
+    workgroup_explicit_layout: bool,
+    mixed_workgroup_layout: bool,
+    aliased_workgroup_blocks: bool,
     composite_types: crate::FastHashMap<Word, plain_types::CompositeType>,
     plain_types: crate::FastHashMap<Word, Word>,
     laid_out_of_plain: crate::FastHashMap<Word, Word>,

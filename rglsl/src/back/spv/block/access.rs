@@ -486,7 +486,28 @@ impl BlockContext<'_> {
         let result_type_id = {
             let resolution = &self.fun_info[expr_handle].ty;
             match type_adjustment {
-                AccessTypeAdjustment::None => self.writer.get_expression_type_id(resolution)?,
+                AccessTypeAdjustment::None => {
+                    if self.writer.mixed_workgroup_layout
+                        && let crate::TypeInner::Pointer {
+                            base,
+                            space: crate::AddressSpace::WorkGroup,
+                        } = *resolution.inner_with(&self.ir_module.types)
+                    {
+                        let base_id = self.writer.get_handle_type_id(base)?;
+                        let base = if self.workgroup_pointer_is_block(expr_handle) {
+                            base_id
+                        } else {
+                            self.writer.plain_type_id(base_id)
+                        };
+                        self.writer
+                            .get_localtype_id(super::super::LocalType::Pointer {
+                                base,
+                                class: spirv::StorageClass::Workgroup,
+                            })
+                    } else {
+                        self.writer.get_expression_type_id(resolution)?
+                    }
+                }
                 AccessTypeAdjustment::IntroducePointer(class) => {
                     self.writer.get_resolution_pointer_id(resolution, class)?
                 }
@@ -680,8 +701,11 @@ impl BlockContext<'_> {
             }
         );
         let plain_load = !heap
-            && class
-                .is_some_and(|class| self.writer.needs_layout_conversion(result_type_id, class));
+            && class.is_some_and(|class| {
+                let explicit = self.pointer_explicit_layout(pointer, class);
+                self.writer
+                    .needs_layout_conversion_explicit(result_type_id, explicit)
+            });
         let load_type_id = if plain_load {
             self.writer.plain_type_id(result_type_id)
         } else {
@@ -729,6 +753,37 @@ impl BlockContext<'_> {
                 .convert_layout(block, result_type_id, load_id, false)
         } else {
             Ok(load_id)
+        }
+    }
+
+    pub(super) fn workgroup_pointer_is_block(
+        &self,
+        mut pointer: Handle<crate::Expression>,
+    ) -> bool {
+        loop {
+            let expr = &self.ir_function.expressions[pointer];
+            if let crate::Expression::Access { base, .. }
+            | crate::Expression::AccessIndex { base, .. } = *expr
+            {
+                pointer = base;
+            } else if let crate::Expression::GlobalVariable(handle) = *expr {
+                return self.ir_module.global_variables[handle].block
+                    == Some(crate::BlockDeclaration::Shared);
+            } else {
+                return false;
+            }
+        }
+    }
+
+    pub(super) fn pointer_explicit_layout(
+        &self,
+        pointer: Handle<crate::Expression>,
+        class: spirv::StorageClass,
+    ) -> bool {
+        if class == spirv::StorageClass::Workgroup && self.writer.mixed_workgroup_layout {
+            self.workgroup_pointer_is_block(pointer)
+        } else {
+            self.writer.has_explicit_layout(class)
         }
     }
 

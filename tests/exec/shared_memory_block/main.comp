@@ -1,0 +1,20 @@
+#version 450
+#extension GL_EXT_shared_memory_block : require
+layout(local_size_x = 4) in;
+shared B1 {
+    uint words[4];
+} b1;
+shared B2 {
+    float floats[4];
+} b2;
+layout(std430, set = 0, binding = 0) buffer Out {
+    uint result[4];
+};
+
+void main()
+{
+    uint i = gl_LocalInvocationID.x;
+    b2.floats[(i + 1u) & 3u] = float(i + 1u);
+    barrier();
+    result[i] = b1.words[i];
+}

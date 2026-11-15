@@ -24,6 +24,7 @@ impl Lowerer<'_> {
         &self,
         declared: &GlslType,
         ty: Handle<Type>,
+        uniform_block: bool,
         path: &mut Vec<PathStep>,
         found: &mut Vec<Vec<PathStep>>,
     ) {
@@ -35,13 +36,22 @@ impl Lowerer<'_> {
             let mut ty = ty;
             let mut sized = true;
             for size in declared.dimensions() {
-                let (TypeInner::Array { base, .. } | TypeInner::BindingArray { base, .. }) =
-                    self.module.types[ty].inner
+                let (TypeInner::Array {
+                    base,
+                    size: ir_size,
+                    ..
+                }
+                | TypeInner::BindingArray {
+                    base,
+                    size: ir_size,
+                }) = self.module.types[ty].inner
                 else {
                     sized = false;
                     break;
                 };
-                if *size == GlslArraySize::Unsized {
+                if *size == GlslArraySize::Unsized
+                    && (!uniform_block || ir_size != crate::ArraySize::Dynamic)
+                {
                     found.push(path.clone());
                 }
                 path.push(PathStep::Element);
@@ -209,9 +219,12 @@ impl Lowerer<'_> {
             } else {
                 variable.ty.clone()
             };
+            let uniform_block =
+                self.module.global_variables[handle].space == crate::AddressSpace::Uniform;
             self.implicit_paths(
                 &declared,
                 self.module.global_variables[handle].ty,
+                uniform_block,
                 &mut Vec::new(),
                 &mut implicit_sizes,
             );

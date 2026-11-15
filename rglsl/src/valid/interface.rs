@@ -52,6 +52,12 @@ pub enum GlobalVariableError {
     InvalidTransformFeedback,
     #[error("An input attachment index is only valid for subpass inputs")]
     InvalidInputAttachmentIndex,
+    #[error("cannot mix use of shared variables inside and outside blocks")]
+    MixedWorkGroupLayout,
+    #[error(
+        "`restrict` on aliased shared memory blocks is not supported: SPIR-V forbids decorating a Workgroup variable with both Aliased and Restrict"
+    )]
+    RestrictOnAliasedWorkGroupBlock,
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -598,10 +604,17 @@ impl VaryingContext<'_> {
                 invariant,
                 patch,
                 per_view,
+                passthrough,
             } => {
                 if invariant && !self.output {
                     return Err(VaryingError::InvalidInputAttributeInStage(
                         "invariant",
+                        self.stage,
+                    ));
+                }
+                if passthrough && (self.stage != crate::ShaderStage::Geometry || self.output) {
+                    return Err(VaryingError::InvalidAttributeInStage(
+                        "passthrough",
                         self.stage,
                     ));
                 }
@@ -1000,6 +1013,7 @@ impl VaryingContext<'_> {
             invariant: false,
             patch: false,
             per_view: false,
+            passthrough: false,
         } = *io
         else {
             return Err(fail(VaryingError::InvalidBlockBinding));
@@ -1026,6 +1040,7 @@ impl VaryingContext<'_> {
                     invariant,
                     patch,
                     per_view,
+                    passthrough,
                 }) = member.binding
                 else {
                     return Err(fail(VaryingError::InvalidBlockBinding));
@@ -1048,6 +1063,7 @@ impl VaryingContext<'_> {
                     invariant,
                     patch,
                     per_view,
+                    passthrough,
                 };
                 self.validate_impl(member.ty, &binding).map_err(&fail)?;
                 let shape =
@@ -1157,6 +1173,35 @@ impl super::Validator {
         {
             return Err(GlobalVariableError::InvalidUsage(var.space));
         }
+        match var.block {
+            None => {}
+            Some(crate::BlockDeclaration::Shared) => {
+                if var.space != crate::AddressSpace::WorkGroup {
+                    return Err(GlobalVariableError::InvalidUsage(var.space));
+                }
+                if !matches!(gctx.types[var.ty].inner, crate::TypeInner::Struct { .. }) {
+                    return Err(GlobalVariableError::InvalidType(var.space));
+                }
+            }
+            Some(crate::BlockDeclaration::Uniform | crate::BlockDeclaration::Buffer) => {
+                if var.space != crate::AddressSpace::ShaderRecord {
+                    return Err(GlobalVariableError::InvalidUsage(var.space));
+                }
+            }
+            Some(crate::BlockDeclaration::RayTracing) => {
+                if !matches!(
+                    var.space,
+                    crate::AddressSpace::RayPayload
+                        | crate::AddressSpace::IncomingRayPayload
+                        | crate::AddressSpace::HitAttribute
+                        | crate::AddressSpace::CallableData
+                        | crate::AddressSpace::IncomingCallableData
+                        | crate::AddressSpace::HitObjectAttribute { .. }
+                ) {
+                    return Err(GlobalVariableError::InvalidUsage(var.space));
+                }
+            }
+        }
         let (required_type_flags, is_resource) = match var.space {
             crate::AddressSpace::Function | crate::AddressSpace::PhysicalStorage { .. } => {
                 return Err(GlobalVariableError::InvalidUsage(var.space));
@@ -1194,14 +1239,17 @@ impl super::Validator {
                         disalignment,
                     ));
                 }
-                (
+                let flags = if matches!(gctx.types[inner_ty].inner, crate::TypeInner::Struct { .. })
+                {
+                    TypeFlags::DATA | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
+                } else {
                     TypeFlags::DATA
                         | TypeFlags::COPY
                         | TypeFlags::SIZED
                         | TypeFlags::HOST_SHAREABLE
-                        | TypeFlags::CREATION_RESOLVED,
-                    true,
-                )
+                        | TypeFlags::CREATION_RESOLVED
+                };
+                (flags, true)
             }
             crate::AddressSpace::Handle => {
                 match gctx.types[inner_ty].inner {
@@ -1245,6 +1293,26 @@ impl super::Validator {
                 TypeFlags::CONSTRUCTIBLE | TypeFlags::CREATION_RESOLVED,
                 false,
             ),
+            crate::AddressSpace::WorkGroup
+                if var.block == Some(crate::BlockDeclaration::Shared) =>
+            {
+                if let Err((ty_handle, disalignment)) = type_info.storage_layout
+                    && self.flags.contains(super::ValidationFlags::STRUCT_LAYOUTS)
+                {
+                    return Err(GlobalVariableError::Alignment(
+                        var.space,
+                        ty_handle,
+                        disalignment,
+                    ));
+                }
+                (
+                    TypeFlags::DATA
+                        | TypeFlags::HOST_SHAREABLE
+                        | TypeFlags::SIZED
+                        | TypeFlags::CREATION_RESOLVED,
+                    false,
+                )
+            }
             crate::AddressSpace::WorkGroup => (TypeFlags::DATA | TypeFlags::SIZED, false),
             crate::AddressSpace::TaskPayload => (TypeFlags::DATA | TypeFlags::SIZED, false),
             crate::AddressSpace::Immediate => {
@@ -1288,7 +1356,7 @@ impl super::Validator {
         let located_tile_image = var.binding.is_none()
             && matches!(var.io, Some(crate::Binding::Location { .. }))
             && matches!(
-                gctx.types[var.ty].inner,
+                gctx.types[inner_ty].inner,
                 crate::TypeInner::Image {
                     dim: crate::ImageDimension::TileImageData,
                     ..
@@ -1316,7 +1384,7 @@ impl super::Validator {
         let tile_image = var.space == crate::AddressSpace::Handle
             && matches!(var.io, Some(crate::Binding::Location { .. }))
             && matches!(
-                gctx.types[var.ty].inner,
+                gctx.types[inner_ty].inner,
                 crate::TypeInner::Image {
                     dim: crate::ImageDimension::TileImageData,
                     ..
@@ -1341,9 +1409,15 @@ impl super::Validator {
             && var.io == Some(crate::Binding::BuiltIn(crate::BuiltIn::RayTCurrentMax));
         let volatile_input = var.space == crate::AddressSpace::Input
             && var.memory_decorations == crate::MemoryDecorations::VOLATILE;
+        let workgroup_block_memory = var.space == crate::AddressSpace::WorkGroup
+            && var.block == Some(crate::BlockDeclaration::Shared)
+            && !var.memory_decorations.intersects(
+                crate::MemoryDecorations::NON_WRITABLE | crate::MemoryDecorations::NON_READABLE,
+            );
         if !var.memory_decorations.is_empty()
             && !ray_tmax
             && !volatile_input
+            && !workgroup_block_memory
             && !matches!(
                 var.space,
                 crate::AddressSpace::Storage { .. }
@@ -1358,10 +1432,11 @@ impl super::Validator {
             match var.space {
                 crate::AddressSpace::Private | crate::AddressSpace::Function => {}
                 crate::AddressSpace::WorkGroup
-                    if matches!(
-                        gctx.global_expressions[init],
-                        crate::Expression::ZeroValue(_)
-                    ) => {}
+                    if var.block.is_none()
+                        && matches!(
+                            gctx.global_expressions[init],
+                            crate::Expression::ZeroValue(_)
+                        ) => {}
                 crate::AddressSpace::WorkGroup
                 | crate::AddressSpace::Uniform
                 | crate::AddressSpace::Storage { .. }
@@ -1555,6 +1630,15 @@ impl super::Validator {
         }
 
         if !info.available_stages.has(ep.stage) {
+            return Err(EntryPointError::ForbiddenStageOperations.with_span());
+        }
+        if !matches!(
+            ep.stage,
+            crate::ShaderStage::Compute | crate::ShaderStage::Mesh | crate::ShaderStage::Task
+        ) && module.global_variables.iter().any(|(_, var)| {
+            var.space == crate::AddressSpace::WorkGroup
+                && var.block == Some(crate::BlockDeclaration::Shared)
+        }) {
             return Err(EntryPointError::ForbiddenStageOperations.with_span());
         }
 

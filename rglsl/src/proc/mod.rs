@@ -709,7 +709,9 @@ impl super::ImageClass {
 }
 
 pub fn is_tile_image(module: &crate::Module, global: &crate::GlobalVariable) -> bool {
-    let ty = if let crate::TypeInner::Array { base, .. } = module.types[global.ty].inner {
+    let ty = if let crate::TypeInner::Array { base, .. }
+    | crate::TypeInner::BindingArray { base, .. } = module.types[global.ty].inner
+    {
         base
     } else {
         global.ty

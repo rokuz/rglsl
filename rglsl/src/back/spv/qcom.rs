@@ -93,13 +93,16 @@ impl BlockContext<'_> {
     }
 
     pub(super) fn handle_class(&self, base: Handle<Expression>) -> StorageClass {
-        if let Expression::GlobalVariable(handle) = self.ir_function.expressions[base]
-            && self.ir_module.global_variables[handle].tile_attachment
-        {
-            StorageClass::TileAttachmentQCOM
-        } else {
-            StorageClass::UniformConstant
+        if let Expression::GlobalVariable(handle) = self.ir_function.expressions[base] {
+            let global = &self.ir_module.global_variables[handle];
+            if global.tile_attachment {
+                return StorageClass::TileAttachmentQCOM;
+            }
+            if crate::proc::is_tile_image(self.ir_module, global) {
+                return StorageClass::TileImageEXT;
+            }
         }
+        StorageClass::UniformConstant
     }
 
     fn handle_pointer(&self, expression: Handle<Expression>) -> Option<Word> {

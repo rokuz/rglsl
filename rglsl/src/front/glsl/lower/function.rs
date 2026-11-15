@@ -167,6 +167,7 @@ pub(super) fn ends_in_jump(block: &Block) -> bool {
             | Statement::Continue
             | Statement::Return { .. }
             | Statement::Kill
+            | Statement::TerminateInvocation
             | Statement::Abort { .. }),
         ) => true,
         Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
@@ -186,6 +187,7 @@ fn ensure_returns(block: &mut Block) {
                 | Statement::Continue
                 | Statement::Return { .. }
                 | Statement::Kill
+                | Statement::TerminateInvocation
                 | Statement::Abort { .. }),
             ) => true,
             Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),

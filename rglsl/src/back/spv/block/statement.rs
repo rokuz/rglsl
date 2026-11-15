@@ -232,6 +232,12 @@ impl BlockContext<'_> {
                 self.function.consume(block, Instruction::kill());
                 return Ok(Nested::Done(None));
             }
+            Statement::TerminateInvocation => {
+                self.writer.require(&feature::TERMINATE_INVOCATION)?;
+                self.function
+                    .consume(block, Instruction::terminate_invocation());
+                return Ok(Nested::Done(None));
+            }
             Statement::Demote => {
                 self.writer.require(&feature::DEMOTE_TO_HELPER_INVOCATION)?;
                 block.body.push(Instruction::demote_to_helper_invocation());
@@ -508,7 +514,11 @@ impl BlockContext<'_> {
         let mut value_id = self.cached.get(value)?;
         if let Some(class) = self.pointer_class(pointer) {
             let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;
-            if self.writer.needs_layout_conversion(value_type_id, class) {
+            let explicit = self.pointer_explicit_layout(pointer, class);
+            if self
+                .writer
+                .needs_layout_conversion_explicit(value_type_id, explicit)
+            {
                 value_id = self
                     .writer
                     .convert_layout(block, value_type_id, value_id, true)?;
