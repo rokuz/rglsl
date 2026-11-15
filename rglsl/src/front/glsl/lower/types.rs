@@ -19,6 +19,7 @@ use super::globals::member_memory;
 use crate::front::glsl::{Error, ErrorKind};
 use crate::{MatrixLayout, MemoryDecorations, Override};
 use rglsl_ast::extensions::Feature;
+use rglsl_types::extension::Extension;
 
 use super::{Lowerer, Packing, Result, internal, unsupported};
 use crate::{
@@ -863,9 +864,21 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let mut placer = MemberPlacer::new(&block.qualifiers, packing)
             .with_hlsl_offsets(self.with(|this| this.options.hlsl_offsets)?);
         let last = block.members.len().saturating_sub(1);
+        let is_plain_ubo = block.storage == BlockStorage::Uniform
+            && block.qualifiers.storage == rglsl_sema::scope::Storage::Uniform
+            && !block
+                .qualifiers
+                .has_layout(rglsl_sema::LayoutId::PushConstant)
+            && !rglsl_sema::analyze::is_shader_record(&block.qualifiers);
         for (position, member) in block.members.iter().enumerate() {
             let index = u32::try_from(position).map_err(|_| internal(span))?;
-            let runtime = block.storage == BlockStorage::Buffer && position == last;
+            let uniform_runtime = is_plain_ubo
+                && analysis
+                    .extensions
+                    .contains(Extension::ExtUniformBufferUnsizedArray)
+                && self.with(|this| this.variably_indexed_members.contains(&(id, index)))?;
+            let runtime =
+                position == last && (block.storage == BlockStorage::Buffer || uniform_runtime);
             let mut member_ty = member.ty.clone();
             if !runtime && member_ty.outer_size() == Some(GlslArraySize::Unsized) {
                 let size =

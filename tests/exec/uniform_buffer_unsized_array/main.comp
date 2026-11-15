@@ -1,0 +1,17 @@
+#version 450
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 4) in;
+layout(std140, set = 0, binding = 0) uniform U {
+    uvec4 base;
+    uvec4 items[];
+} u;
+layout(std430, set = 0, binding = 1) buffer Out {
+    uint result[];
+};
+
+void main()
+{
+    uint i = gl_LocalInvocationID.x;
+    uvec4 v = u.items[i];
+    result[i] = u.base.x + v.x + v.y + v.z + v.w;
+}

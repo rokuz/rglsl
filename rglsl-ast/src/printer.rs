@@ -817,6 +817,7 @@ impl<'b> Cx<'b> {
             JumpStatement::Break => self.write("break;"),
             JumpStatement::Discard => self.write("discard;"),
             JumpStatement::Demote => self.write("demote;"),
+            JumpStatement::TerminateInvocation => self.write("terminateInvocation;"),
             JumpStatement::TerminateRay => self.write("terminateRayEXT;"),
             JumpStatement::IgnoreIntersection => self.write("ignoreIntersectionEXT;"),
             JumpStatement::Return(None) => self.write("return;"),

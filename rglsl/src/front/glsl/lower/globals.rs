@@ -18,11 +18,12 @@ use rglsl_sema::{LayoutId, SymbolId};
 use super::types::image_dimension;
 use super::xfb;
 use super::{GlobalRef, Initialization, Lowerer, Packing, Result, internal, semantic, unsupported};
+use crate::front::glsl::{Error, ErrorKind};
 use crate::proc::Alignment;
 use crate::{
-    AddressSpace, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle, ImageClass,
-    Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, Span, StorageAccess,
-    StorageFormat, TypeInner,
+    AddressSpace, ArraySize, Binding, BuiltIn, ConservativeDepth, GlobalVariable, Handle,
+    ImageClass, Interpolation, MemoryDecorations, ResourceBinding, Sampling, ShaderBallot, Span,
+    StorageAccess, StorageFormat, TypeInner,
 };
 
 fn layout_ids(qualifier: Option<&Spanned<TypeQualifier>>) -> Vec<LayoutId> {
@@ -72,7 +73,8 @@ fn storage_of(qualifier: Option<&Spanned<TypeQualifier>>) -> Option<StorageQuali
                 storage @ (StorageQualifier::In
                 | StorageQualifier::Out
                 | StorageQualifier::Uniform
-                | StorageQualifier::Buffer),
+                | StorageQualifier::Buffer
+                | StorageQualifier::Shared),
             ) => Some(storage),
             _ => None,
         })
@@ -512,11 +514,15 @@ impl<'a> Lowerer<'a> {
         let at = self.at(qualifier.span);
         let ids = layout_ids(Some(qualifier));
         match storage_of(Some(qualifier)) {
-            Some(storage @ (StorageQualifier::Uniform | StorageQualifier::Buffer)) => {
-                let defaults = if storage == StorageQualifier::Buffer {
-                    &mut self.buffer_defaults
-                } else {
-                    &mut self.uniform_defaults
+            Some(
+                storage @ (StorageQualifier::Uniform
+                | StorageQualifier::Buffer
+                | StorageQualifier::Shared),
+            ) => {
+                let defaults = match storage {
+                    StorageQualifier::Buffer => &mut self.buffer_defaults,
+                    StorageQualifier::Shared => &mut self.shared_defaults,
+                    _ => &mut self.uniform_defaults,
                 };
                 for id in ids {
                     if let Some(packing) = id.packing() {
@@ -725,16 +731,36 @@ impl<'a> Lowerer<'a> {
 
     fn tile_image_variable(&mut self, symbol: SymbolId, name: String, at: Span) -> Result<()> {
         let variable = self.variable(symbol).ok_or_else(|| internal(at))?;
-        if variable.ty.is_array() {
-            return Err(unsupported("arrays of tile images", at));
-        }
         let location = variable
             .qualifiers
             .layout_entry(LayoutId::Location)
             .and_then(|entry| entry.value.constant())
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| internal(at))?;
-        let ty = self.ir_type(&variable.ty, at)?;
+        let mut ty = self.ir_type(&GlslType::new(variable.ty.kind), at)?;
+        match *variable.ty.dimensions() {
+            [] => {}
+            [size @ (GlslArraySize::Sized(_) | GlslArraySize::Specialized(_))] => {
+                let size = self.array_size(size, at)?;
+                ty = self.insert_type(TypeInner::BindingArray { base: ty, size });
+            }
+            [GlslArraySize::Unsized] => {
+                let size = self.unsized_binding_array(symbol, at)?;
+                if size == ArraySize::Dynamic {
+                    return Err(semantic(
+                        "runtime-sized arrays of tile images are not supported: Vulkan only allows runtime arrays in Uniform, StorageBuffer, and UniformConstant storage classes",
+                        at,
+                    ));
+                }
+                ty = self.insert_type(TypeInner::BindingArray { base: ty, size });
+            }
+            _ => {
+                return Err(semantic(
+                    "arrays of arrays of tile images are not supported: Vulkan only supports a single array level for tile attachments",
+                    at,
+                ));
+            }
+        }
         let handle = self.module.global_variables.append(
             GlobalVariable {
                 name: Some(name),
@@ -750,6 +776,7 @@ impl<'a> Lowerer<'a> {
                     blend_src: None,
                     per_primitive: false,
                     per_view: false,
+                    passthrough: false,
                     component: None,
                     invariant: false,
                     patch: false,
@@ -1016,6 +1043,7 @@ impl<'a> Lowerer<'a> {
                     invariant: qualifiers.flags.contains(QualifierFlags::INVARIANT),
                     patch: qualifiers.flags.contains(QualifierFlags::PATCH),
                     per_view: qualifiers.flags.contains(QualifierFlags::PER_VIEW),
+                    passthrough: false,
                 }),
                 xfb: None,
                 input_attachment_index: None,
@@ -1274,6 +1302,9 @@ impl<'a> Lowerer<'a> {
         let buffer = match block.storage {
             BlockStorage::Uniform => false,
             BlockStorage::Buffer => true,
+            BlockStorage::Shared => {
+                return self.shared_block(symbol, id, instance_name, at);
+            }
             BlockStorage::In | BlockStorage::Out => {
                 let name = instance.map(|instance| instance.node.name.node.clone());
                 return self.interface_block(symbol, id, name, at);
@@ -1408,6 +1439,68 @@ impl<'a> Lowerer<'a> {
         if let Some(set) = unbound {
             self.unbound.push((handle, set));
         }
+        self.globals.insert(symbol, GlobalRef::Variable(handle));
+        Ok(())
+    }
+
+    fn shared_block(
+        &mut self,
+        symbol: SymbolId,
+        id: BlockId,
+        instance_name: String,
+        at: Span,
+    ) -> Result<()> {
+        let analysis = self.analysis;
+        let block = analysis.types.block(id).ok_or_else(|| internal(at))?;
+        let qualifiers = &block.qualifiers;
+        if block
+            .members
+            .iter()
+            .any(|member| member.qualifiers.has_layout(LayoutId::MemberOffset))
+        {
+            return Err(unsupported(
+                "the `member_offset` layout qualifier on a block member",
+                at,
+            ));
+        }
+        let defaults = self.shared_defaults;
+        let mut packing = None;
+        let mut row_major = None;
+        for entry in &qualifiers.layout {
+            let Some(layout_id) = entry.id else {
+                continue;
+            };
+            if let Some(found) = layout_id.packing() {
+                packing = Some(found);
+            } else if layout_id == LayoutId::RowMajor {
+                row_major = Some(true);
+            } else if layout_id == LayoutId::ColumnMajor {
+                row_major = Some(false);
+            }
+        }
+        let packing = packing.or(defaults.packing).unwrap_or(Packing::Std430);
+        let row_major = row_major.or(defaults.row_major).unwrap_or(false);
+        let ty = self.block_struct(id, packing, row_major, at)?;
+        let handle = self.module.global_variables.append(
+            GlobalVariable {
+                name: Some(instance_name),
+                space: AddressSpace::WorkGroup,
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: memory(qualifiers),
+                io: None,
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                spirv_decorations: Vec::new(),
+                relaxed_precision: false,
+                immediate_bank: None,
+                block: Some(crate::BlockDeclaration::Shared),
+            },
+            at,
+        );
         self.globals.insert(symbol, GlobalRef::Variable(handle));
         Ok(())
     }
@@ -1575,6 +1668,9 @@ impl<'a> Lowerer<'a> {
                             || self.invariant_all),
                     patch,
                     per_view: qualifiers.flags.contains(QualifierFlags::PER_VIEW),
+                    passthrough: input
+                        && self.stage_is(crate::ShaderStage::Geometry)
+                        && qualifiers.has_layout(LayoutId::Passthrough),
                 }),
                 offset,
                 matrix_layout: None,
@@ -1706,6 +1802,7 @@ impl<'a> Lowerer<'a> {
                 invariant: false,
                 patch: false,
                 per_view: false,
+                passthrough: false,
             })
         };
         let structure = self.module.types.insert(
@@ -2197,6 +2294,43 @@ impl<'a> Lowerer<'a> {
                 "post_depth_coverage requires early_fragment_tests",
                 Span::UNDEFINED,
             ));
+        }
+        if !self.object && !self.options.export_functions {
+            let shared_block_count = self
+                .module
+                .global_variables
+                .iter()
+                .filter(|&(_, global)| {
+                    global.space == AddressSpace::WorkGroup
+                        && global.block == Some(crate::BlockDeclaration::Shared)
+                })
+                .count();
+            let has_shared_plain = self.module.global_variables.iter().any(|(_, global)| {
+                global.space == AddressSpace::WorkGroup && global.block.is_none()
+            });
+            if shared_block_count > 0 && has_shared_plain {
+                self.errors.push(Error {
+                    kind: ErrorKind::Link(String::from(
+                        "cannot mix use of shared variables inside and outside blocks",
+                    )),
+                    meta: Span::UNDEFINED,
+                });
+            }
+            if shared_block_count > 1 {
+                for (handle, global) in self.module.global_variables.iter() {
+                    if global.space == AddressSpace::WorkGroup
+                        && global.block == Some(crate::BlockDeclaration::Shared)
+                        && global
+                            .memory_decorations
+                            .contains(MemoryDecorations::RESTRICT)
+                    {
+                        self.errors.push(semantic(
+                            "`restrict` on aliased shared memory blocks is not supported: SPIR-V forbids decorating a Workgroup variable with both Aliased and Restrict",
+                            self.module.global_variables.get_span(handle),
+                        ));
+                    }
+                }
+            }
         }
         self.check_shared_layouts();
         self.finish_xfb();

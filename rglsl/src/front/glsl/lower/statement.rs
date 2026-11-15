@@ -69,6 +69,7 @@ impl FunctionLowerer<'_, '_> {
             JumpStatement::Break => IrStatement::Break,
             JumpStatement::Continue => IrStatement::Continue,
             JumpStatement::Discard => IrStatement::Kill,
+            JumpStatement::TerminateInvocation => IrStatement::TerminateInvocation,
             JumpStatement::Demote => IrStatement::Demote,
             JumpStatement::TerminateRay => {
                 IrStatement::RayPipelineFunction(crate::RayPipelineFunction::TerminateRay {
@@ -824,6 +825,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                             &(IrStatement::Return { .. }
                             | IrStatement::Continue
                             | IrStatement::Kill
+                            | IrStatement::TerminateInvocation
                             | IrStatement::Abort { .. }),
                         ) => false,
                         Some(&IrStatement::RayPipelineFunction(ref function))

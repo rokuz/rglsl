@@ -12179,3 +12179,457 @@ void main() {
     }
     Ok(())
 }
+
+fn compile_spirv_checked(
+    stage: ShaderStage,
+    source: &str,
+    lang_version: (u8, u8),
+    val_args: &[&str],
+) -> crate::TestResult<dr::Module> {
+    let mut front_options = glsl::Options::from(stage);
+    front_options.spirv_version = Some(lang_version);
+    let module = glsl::Frontend::default()
+        .parse(&front_options, source)
+        .map_err(|errors| format!("shader rejected: {errors:?}"))?;
+    let info = Validator::new(ValidationFlags::all()).validate(&module)?;
+    let spv_options = spv::Options {
+        lang_version,
+        flags: spv::WriterFlags::DEBUG
+            | spv::WriterFlags::LABEL_VARYINGS
+            | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE,
+        ..spv::Options::default()
+    };
+    let words = spv::write_vec(&module, &info, &spv_options, None)?;
+    crate::stage_io::spirv_val_in(&words, val_args)?;
+    Ok(dr::load_words(words)?)
+}
+
+#[test]
+fn terminate_invocation_emits_extension_before_spirv_1_6_and_core_in_1_6() -> crate::TestResult {
+    let source = "#version 450
+#extension GL_EXT_terminate_invocation : require
+layout(location = 0) out vec4 o;
+void main() {
+    if (gl_FragCoord.x < 1.0) {
+        terminateInvocation;
+        o = vec4(99.0);
+    }
+    o = vec4(1.0);
+}
+";
+    let spv_1_0 = compile_spirv_checked(
+        ShaderStage::Fragment,
+        source,
+        (1, 0),
+        &["--target-env", "vulkan1.0"],
+    )?;
+    assert_eq!(instructions(&spv_1_0, Op::TerminateInvocation).len(), 1);
+    assert!(instructions(&spv_1_0, Op::Kill).is_empty());
+    assert_eq!(extensions_of(&spv_1_0), ["SPV_KHR_terminate_invocation"]);
+    assert_eq!(capabilities_of(&spv_1_0), [spirv::Capability::Shader]);
+
+    let spv_1_6 = compile_spirv_checked(
+        ShaderStage::Fragment,
+        source,
+        (1, 6),
+        &["--target-env", "vulkan1.3"],
+    )?;
+    assert_eq!(instructions(&spv_1_6, Op::TerminateInvocation).len(), 1);
+    assert!(extensions_of(&spv_1_6).is_empty());
+    Ok(())
+}
+
+#[test]
+fn workgroup_memory_explicit_layout_blocks_and_packings() -> crate::TestResult {
+    let single = compile_spirv_checked(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : enable
+layout(local_size_x = 8) in;
+restrict shared first { int a; } b1;
+void main() { b1.a = 2; }
+",
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    assert!(
+        capabilities_of(&single).contains(&spirv::Capability::WorkgroupMemoryExplicitLayoutKHR)
+    );
+    assert!(
+        extensions_of(&single).contains(&String::from("SPV_KHR_workgroup_memory_explicit_layout"))
+    );
+    assert!(decorated(&single, Decoration::Aliased).is_empty());
+    assert_eq!(decorated(&single, Decoration::Restrict), ["b1"]);
+
+    let multi = compile_spirv_checked(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : enable
+layout(local_size_x = 8) in;
+shared first { int a; } b1;
+shared second { int b; } b2;
+void main() { b1.a = 2; b2.b = 3; }
+",
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    let mut aliased = decorated(&multi, Decoration::Aliased);
+    aliased.sort();
+    assert_eq!(aliased, ["b1", "b2"]);
+
+    let restrict_multi_err = glsl::Frontend::default()
+        .parse(
+            &{
+                let mut opts = glsl::Options::from(ShaderStage::Compute);
+                opts.spirv_version = Some((1, 4));
+                opts
+            },
+            "#version 450
+#extension GL_EXT_shared_memory_block : enable
+layout(local_size_x = 8) in;
+shared first { int a; } b1;
+restrict shared second { int b; } b2;
+void main() { b1.a = 2; b2.b = 3; }
+",
+        )
+        .err()
+        .ok_or("expected restrict + aliased error")?;
+    assert!(
+        restrict_multi_err
+            .errors
+            .iter()
+            .any(|e| e.to_string().contains("not supported")),
+        "{restrict_multi_err:?}"
+    );
+
+    let non_block = compile_spirv_checked(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : enable
+layout(local_size_x = 8) in;
+shared int a;
+shared int b;
+void main() { a = 2; b = 3; }
+",
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    assert!(
+        !capabilities_of(&non_block).contains(&spirv::Capability::WorkgroupMemoryExplicitLayoutKHR)
+    );
+    assert!(extensions_of(&non_block).is_empty());
+
+    let layout_body = "
+struct T { float t[3]; };
+struct S {
+    float f;
+    vec2 v2;
+    vec3 v3;
+    vec4 v4;
+    T t;
+    float f_array[6];
+    vec2 v2_array[6];
+    vec3 v3_array[6];
+    vec4 v4_array[6];
+    T t_array[6];
+};
+shared Block {
+    S s;
+    S s_array[6];
+};
+void main() {}
+";
+    let array_strides = |module: &dr::Module| -> Vec<u32> {
+        let mut strides: Vec<u32> = module
+            .annotations
+            .iter()
+            .filter_map(|inst| match (inst.class.opcode, inst.operands.as_slice()) {
+                (
+                    Op::Decorate,
+                    [
+                        _,
+                        Operand::Decoration(Decoration::ArrayStride),
+                        Operand::LiteralBit32(s),
+                    ],
+                ) => Some(*s),
+                _ => None,
+            })
+            .collect();
+        strides.sort_unstable();
+        strides
+    };
+    let std140 = compile_spirv_checked(
+        ShaderStage::Compute,
+        &format!(
+            "#version 450\n#extension GL_EXT_shared_memory_block : enable\nlayout(local_size_x = 8) in;\nlayout(std140) shared;\n{layout_body}"
+        ),
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    let std430 = compile_spirv_checked(
+        ShaderStage::Compute,
+        &format!(
+            "#version 450\n#extension GL_EXT_shared_memory_block : enable\nlayout(local_size_x = 8) in;\n{layout_body}"
+        ),
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    let scalar = compile_spirv_checked(
+        ShaderStage::Compute,
+        &format!(
+            "#version 450\n#extension GL_EXT_scalar_block_layout : enable\n#extension GL_EXT_shared_memory_block : enable\nlayout(local_size_x = 8) in;\nlayout(scalar) shared;\n{layout_body}"
+        ),
+        (1, 4),
+        &[
+            "--target-env",
+            "vulkan1.2",
+            "--scalar-block-layout",
+            "--workgroup-scalar-block-layout",
+        ],
+    )?;
+    assert!(array_strides(&std140).contains(&768));
+    assert!(!array_strides(&std140).contains(&4));
+    assert!(array_strides(&std430).contains(&416));
+    assert!(!array_strides(&std430).contains(&364));
+    assert!(array_strides(&scalar).contains(&364));
+
+    let access_16 = compile_spirv_checked(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : enable
+#extension GL_EXT_shader_16bit_storage : enable
+layout(local_size_x = 2) in;
+shared first { int16_t a; float16_t f; };
+layout(set = 0, binding = 0) buffer Out { int16_t oa; float16_t of_; };
+void main() { oa = a; of_ = f; }
+",
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    let caps_16 = capabilities_of(&access_16);
+    assert!(caps_16.contains(&spirv::Capability::WorkgroupMemoryExplicitLayout16BitAccessKHR));
+    assert!(!caps_16.contains(&spirv::Capability::Int16));
+    assert!(!caps_16.contains(&spirv::Capability::Float16));
+
+    let access_8 = compile_spirv_checked(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : enable
+#extension GL_EXT_shader_8bit_storage : enable
+layout(local_size_x = 2) in;
+shared first { int8_t a; };
+layout(set = 0, binding = 0) buffer Out { int8_t oa; };
+void main() { oa = a; }
+",
+        (1, 4),
+        &["--target-env", "vulkan1.2"],
+    )?;
+    let caps_8 = capabilities_of(&access_8);
+    assert!(caps_8.contains(&spirv::Capability::WorkgroupMemoryExplicitLayout8BitAccessKHR));
+    assert!(!caps_8.contains(&spirv::Capability::Int8));
+
+    let mut export_options = glsl::Options::from(ShaderStage::Compute);
+    export_options.export_functions = true;
+    export_options.spirv_version = Some((1, 4));
+    let no_link_module = glsl::Frontend::default()
+        .compile(
+            &export_options,
+            "#version 450
+#extension GL_EXT_shared_memory_block : enable
+layout(local_size_x = 8) in;
+shared first { int a; } b1;
+shared second { int b; } b2;
+void notMain() { b1.a = 2; b2.b = 3; }
+",
+        )
+        .map_err(|e| format!("{e:?}"))?
+        .unit
+        .module;
+    let mut obj_validator = Validator::new(ValidationFlags::all());
+    obj_validator.mode(rglsl::valid::ValidationMode::Object);
+    let no_link_info = obj_validator.validate(&no_link_module)?;
+    let no_link_words = spv::write_vec(
+        &no_link_module,
+        &no_link_info,
+        &spv::Options {
+            lang_version: (1, 4),
+            flags: spv::WriterFlags::DEBUG,
+            ..spv::Options::default()
+        },
+        None,
+    )?;
+    crate::stage_io::spirv_val_in(&no_link_words, &["--target-env", "spv1.4"])?;
+    let no_link_dr = dr::load_words(no_link_words)?;
+    assert!(decorated(&no_link_dr, Decoration::Aliased).is_empty());
+
+    let mut mix_options = glsl::Options::from(ShaderStage::Compute);
+    mix_options.spirv_version = Some((1, 4));
+    let mix_err = glsl::Frontend::default()
+        .parse(
+            &mix_options,
+            "#version 450
+#extension GL_EXT_shared_memory_block : enable
+layout(local_size_x = 8) in;
+shared first { int a; };
+shared int b;
+void main() { a = 2; b = 3; }
+",
+        )
+        .err()
+        .ok_or("expected mix error")?;
+    assert!(
+        mix_err
+            .errors
+            .iter()
+            .any(|e| e.to_string().contains("cannot mix use of shared variables")),
+        "{mix_err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uniform_buffer_unsized_array_distinguishes_constant_and_dynamic_indexing() -> crate::TestResult {
+    let constant_indexed = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform U { vec4 a; vec4 b[]; } u;
+layout(set = 0, binding = 1) buffer Out { vec4 o; };
+void main() { o = u.a + u.b[2]; }
+",
+    )?;
+    assert!(instructions(&constant_indexed, Op::TypeRuntimeArray).is_empty());
+    assert_eq!(instructions(&constant_indexed, Op::TypeArray).len(), 1);
+
+    let dynamic_indexed = compile_valid(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) uniform U1 { vec4 a; float b[]; } u;
+layout(set = 0, binding = 1) uniform U2 { vec2 c[]; };
+layout(set = 0, binding = 2) uniform U3 { vec4 d[]; } ua[2];
+layout(set = 0, binding = 3) buffer Out { vec4 o; };
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    o = u.a + vec4(u.b[i], c[i], 0.0) + ua[1].d[i];
+}
+",
+    )?;
+    assert_eq!(
+        instructions(&dynamic_indexed, Op::TypeRuntimeArray).len(),
+        3
+    );
+    Ok(())
+}
+
+#[test]
+fn tile_image_1d_arrays_and_rejections() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_EXT_shader_tile_image : require
+layout(location = 0) tileImageEXT highp attachmentEXT colorAtt[2];
+layout(location = 2) tileImageEXT highp uattachmentEXT uintAtt[];
+layout(location = 0) out vec4 o;
+void main() {
+    o = colorAttachmentReadEXT(colorAtt[1]) + vec4(colorAttachmentReadEXT(uintAtt[0]));
+}
+",
+    )?;
+    assert!(capabilities_of(&module).contains(&spirv::Capability::TileImageColorReadAccessEXT));
+    assert_eq!(instructions(&module, Op::ColorAttachmentReadEXT).len(), 2);
+    assert_eq!(
+        variable_decorations(&module, "colorAtt")?,
+        [(Decoration::Location, vec![0])]
+    );
+    assert_eq!(
+        variable_decorations(&module, "uintAtt")?,
+        [(Decoration::Location, vec![2])]
+    );
+
+    let runtime_err = parse(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_EXT_shader_tile_image : require
+#extension GL_EXT_nonuniform_qualifier : require
+layout(location = 0) tileImageEXT highp attachmentEXT att[];
+layout(location = 0) flat in int idx;
+layout(location = 0) out vec4 o;
+void main() { o = colorAttachmentReadEXT(att[nonuniformEXT(idx)]); }
+",
+    )
+    .err()
+    .ok_or("expected runtime tile image array error")?;
+    assert!(runtime_err.contains("not supported"), "{runtime_err}");
+
+    let multi_dim_err = parse(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_EXT_shader_tile_image : require
+layout(location = 0) tileImageEXT highp attachmentEXT att[2][2];
+void main() {}
+",
+    )
+    .err()
+    .ok_or("expected 2D tile image array error")?;
+    assert!(
+        multi_dim_err.contains("only be used with attachmentEXT")
+            || multi_dim_err.contains("not supported"),
+        "{multi_dim_err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn geometry_passthrough_member_decorations() -> crate::TestResult {
+    let module = compile_valid(
+        ShaderStage::Geometry,
+        "#version 450
+#extension GL_NV_geometry_shader_passthrough : require
+layout(triangles) in;
+in Block {
+    layout(location = 0, passthrough) vec4 a;
+    layout(location = 1) vec4 b;
+} blk[];
+void main() {}
+",
+    )?;
+    assert!(capabilities_of(&module).contains(&spirv::Capability::GeometryShaderPassthroughNV));
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_NV_geometry_shader_passthrough"]
+    );
+    let passthrough_members: Vec<u32> = member_decorations(&module, "Block")?
+        .into_iter()
+        .filter(|&(_, decoration, _)| decoration == Decoration::PassthroughNV)
+        .map(|(member, _, _)| member)
+        .collect();
+    assert_eq!(passthrough_members, [0]);
+    Ok(())
+}
+
+#[test]
+fn early_and_late_fragment_tests_amd_requires_extension() -> crate::TestResult {
+    assert!(
+        parse(
+            ShaderStage::Fragment,
+            "#version 450\nlayout(early_and_late_fragment_tests_amd) in;\nvoid main() {}\n"
+        )
+        .is_err()
+    );
+    let module = compile_valid(
+        ShaderStage::Fragment,
+        "#version 450
+#extension GL_AMD_shader_early_and_late_fragment_tests : require
+layout(early_and_late_fragment_tests_amd) in;
+void main() {}
+",
+    )?;
+    assert_eq!(
+        extensions_of(&module),
+        ["SPV_AMD_shader_early_and_late_fragment_tests"]
+    );
+    Ok(())
+}

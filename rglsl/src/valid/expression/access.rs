@@ -261,10 +261,16 @@ impl super::super::Validator {
         use crate::TypeInner as Ti;
 
         let other = resolver.resolve(expr)?;
-        let Ti::Pointer { base, .. } = *other else {
+        let Ti::Pointer { base, space } = *other else {
             log::debug!("Array length of {other:?}");
             return Err(ExpressionError::InvalidArrayType(expr));
         };
+        if !matches!(
+            space,
+            crate::AddressSpace::Storage { .. } | crate::AddressSpace::PhysicalStorage { .. }
+        ) {
+            return Err(ExpressionError::InvalidArrayType(expr));
+        }
         let base_ty = &resolver.types[base];
         if let Ti::Array {
             size: crate::ArraySize::Dynamic,

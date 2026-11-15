@@ -399,7 +399,14 @@ fn prepare(
         let limit = 3 + random.next_int(5);
         truncate_loops(&mut unit, prefix, limit, &mut builder);
         remove_statements(&mut unit, &mut builder, &|statement| {
-            matches!(statement.kind, StatementKind::Jump(JumpStatement::Discard))
+            matches!(
+                statement.kind,
+                StatementKind::Jump(
+                    JumpStatement::Discard
+                        | JumpStatement::Demote
+                        | JumpStatement::TerminateInvocation
+                )
+            )
         });
     }
     let unit = TranslationUnit::new(unit.external_declarations, builder.next_id());
@@ -945,7 +952,9 @@ fn remove_jumps(
             }
             StatementKind::Jump(JumpStatement::Break) => removal.breaks && !in_loop && !in_switch,
             StatementKind::Jump(JumpStatement::Continue) => removal.continues && !in_loop,
-            StatementKind::Jump(JumpStatement::Discard) => removal.discards,
+            StatementKind::Jump(
+                JumpStatement::Discard | JumpStatement::Demote | JumpStatement::TerminateInvocation,
+            ) => removal.discards,
             StatementKind::Jump(JumpStatement::Return(_)) => removal.returns,
             _ => false,
         };

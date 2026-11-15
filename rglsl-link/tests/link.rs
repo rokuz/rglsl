@@ -1332,3 +1332,209 @@ void capture(float value) { f = value; }
     assert!(wide.supports(ShaderStage::Vertex));
     Ok(())
 }
+
+fn object_1_4(stage: ShaderStage, source: &str) -> TestResult<ObjectModule> {
+    let options = Options {
+        spirv_version: Some((1, 4)),
+        ..Options::from(stage)
+    };
+    Frontend::default()
+        .compile(&options, source)
+        .map_err(|errors| format!("{source}\n{errors:?}").into())
+}
+
+#[test]
+fn shared_memory_blocks_merge_and_alias_across_units() -> TestResult {
+    let unit_a = object_1_4(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : require
+layout(local_size_x = 4) in;
+shared A { int x; } a;
+int helper();
+layout(set = 0, binding = 0) buffer Out { int o; };
+void main() { a.x = 1; o = helper(); }
+",
+    )?;
+    let unit_b = object_1_4(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : require
+shared B { int y; } b;
+int helper() { b.y = 2; return b.y; }
+",
+    )?;
+    let roundtrip_a = decode(&encode(&unit_a)?)?;
+    let roundtrip_b = decode(&encode(&unit_b)?)?;
+    let aliased_program = linked(&[roundtrip_a, roundtrip_b])?;
+    let shared_blocks = aliased_program
+        .module
+        .global_variables
+        .iter()
+        .filter(|&(_, g)| {
+            g.space == AddressSpace::WorkGroup && g.block == Some(rglsl::BlockDeclaration::Shared)
+        })
+        .count();
+    assert_eq!(shared_blocks, 2);
+    let aliased_words = spv::write_vec(
+        &aliased_program.module,
+        &aliased_program.info,
+        &spv::Options {
+            lang_version: (1, 4),
+            ..spv::Options::default()
+        },
+        None,
+    )?;
+    assert!(!aliased_words.is_empty());
+
+    let same_b = object_1_4(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : require
+shared A { int x; } a;
+int helper() { return a.x + 1; }
+",
+    )?;
+    let merged_program = linked(&[unit_a.clone(), same_b])?;
+    let merged_blocks = merged_program
+        .module
+        .global_variables
+        .iter()
+        .filter(|&(_, g)| {
+            g.space == AddressSpace::WorkGroup && g.block == Some(rglsl::BlockDeclaration::Shared)
+        })
+        .count();
+    assert_eq!(merged_blocks, 1);
+
+    let plain_b = object_1_4(
+        ShaderStage::Compute,
+        "#version 450
+shared int plain_var;
+int helper() { plain_var = 5; return plain_var; }
+",
+    )?;
+    let mix_errs = errors(&[unit_a, plain_b])?;
+    assert!(
+        mix_errs
+            .iter()
+            .any(|e| matches!(e, LinkError::SharedBlockMixing)),
+        "{mix_errs:?}"
+    );
+
+    let restrict_a = object_1_4(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_shared_memory_block : require
+layout(local_size_x = 4) in;
+restrict shared A { int x; } a;
+int helper();
+void main() { a.x = helper(); }
+",
+    )?;
+    let restrict_errs = errors(&[restrict_a, unit_b])?;
+    assert!(
+        restrict_errs
+            .iter()
+            .any(|e| matches!(e, LinkError::SharedBlockRestrictAliased)),
+        "{restrict_errs:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn uniform_buffer_unsized_array_unifies_across_units() -> TestResult {
+    let main_const = object(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) uniform U { vec4 a; vec4 b[]; } u;
+layout(set = 0, binding = 1) buffer Out { vec4 o; };
+vec4 dynamic_read(uint idx);
+void main() { o = u.a + u.b[2] + dynamic_read(gl_LocalInvocationIndex); }
+",
+    )?;
+    let helper_dyn = object(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(set = 0, binding = 0) uniform U { vec4 a; vec4 b[]; } u;
+vec4 dynamic_read(uint idx) { return u.b[idx]; }
+",
+    )?;
+    let program = linked(&[main_const, helper_dyn.clone()])?;
+    let has_dynamic_array = program.module.types.iter().any(|(_, ty)| {
+        matches!(
+            ty.inner,
+            TypeInner::Array {
+                size: ArraySize::Dynamic,
+                ..
+            }
+        )
+    });
+    assert!(has_dynamic_array);
+    assert!(!spirv(&program)?.is_empty());
+
+    let main_sized = object(
+        ShaderStage::Compute,
+        "#version 450
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) uniform U { vec4 a; vec4 b[3]; } u;
+layout(set = 0, binding = 1) buffer Out { vec4 o; };
+vec4 dynamic_read(uint idx);
+void main() { o = u.b[0] + dynamic_read(0u); }
+",
+    )?;
+    let mismatch_errs = errors(&[main_sized, helper_dyn])?;
+    assert!(!mismatch_errs.is_empty());
+    Ok(())
+}
+
+#[test]
+fn libraries_narrow_stages_for_terminate_invocation_and_shared_blocks() -> TestResult {
+    let term_lib = library(
+        "#version 450
+#extension GL_EXT_terminate_invocation : require
+void maybe_stop(float x) {
+    if (x < 0.0) {
+        terminateInvocation;
+    }
+}
+",
+    )?;
+    assert!(term_lib.supports(ShaderStage::Fragment));
+    assert!(!term_lib.supports(ShaderStage::Vertex));
+    assert!(!term_lib.supports(ShaderStage::Compute));
+    let frag_main = object(
+        ShaderStage::Fragment,
+        "#version 450
+layout(location = 0) in float v;
+layout(location = 0) out vec4 color;
+void maybe_stop(float x);
+void main() { maybe_stop(v); color = vec4(1.0); }
+",
+    )?;
+    let frag_linked = linked(&[frag_main, term_lib])?;
+    assert!(!spirv(&frag_linked)?.is_empty());
+
+    let shared_lib = Frontend::default()
+        .compile(
+            &Options {
+                library: true,
+                spirv_version: Some((1, 4)),
+                ..Options::from(ShaderStage::Compute)
+            },
+            "#version 450
+#extension GL_EXT_shared_memory_block : require
+shared SharedBlk { int v; } sb;
+int read_shared() { return sb.v; }
+",
+        )
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert!(shared_lib.supports(ShaderStage::Compute));
+    assert!(shared_lib.supports(ShaderStage::Mesh));
+    assert!(shared_lib.supports(ShaderStage::Task));
+    assert!(!shared_lib.supports(ShaderStage::Fragment));
+    assert!(!shared_lib.supports(ShaderStage::Vertex));
+    Ok(())
+}

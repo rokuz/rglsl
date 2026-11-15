@@ -703,6 +703,9 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
         }
         needs.extend(requirements::extension_needs(extension).iter().copied());
     }
+    if reflection.uses(spirv::Op::TerminateInvocation) {
+        needs.extend(requirements::TERMINATE_INVOCATION);
+    }
     Ok(needs)
 }
 

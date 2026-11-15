@@ -1313,6 +1313,13 @@ pub enum Binding {
             serde(skip_serializing_if = "core::ops::Not::not")
         )]
         per_view: bool,
+
+        #[cfg_attr(feature = "deserialize", serde(default))]
+        #[cfg_attr(
+            feature = "serialize",
+            serde(skip_serializing_if = "core::ops::Not::not")
+        )]
+        passthrough: bool,
     },
 }
 
@@ -1389,6 +1396,7 @@ pub struct GlobalVariable {
 pub enum BlockDeclaration {
     Uniform,
     Buffer,
+    Shared,
     RayTracing,
 }
 
@@ -2893,6 +2901,8 @@ pub enum Statement {
     ///
     /// [`Loop`]: Statement::Loop
     Kill,
+
+    TerminateInvocation,
 
     Demote,
 

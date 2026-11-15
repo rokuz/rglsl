@@ -188,6 +188,7 @@ impl BlockContext<'_> {
             | Statement::Break
             | Statement::Continue
             | Statement::Kill
+            | Statement::TerminateInvocation
             | Statement::Demote
             | Statement::BeginInvocationInterlock
             | Statement::EndInvocationInterlock

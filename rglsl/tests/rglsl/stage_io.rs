@@ -234,6 +234,7 @@ fn location(location: u32) -> Binding {
         invariant: false,
         patch: false,
         per_view: false,
+        passthrough: false,
     }
 }
 
@@ -250,6 +251,7 @@ fn located(location: u32, interpolation: Option<rglsl::Interpolation>) -> Bindin
         invariant: false,
         patch: false,
         per_view: false,
+        passthrough: false,
     }
 }
 
@@ -448,6 +450,7 @@ fn vertex_module() -> Module {
         invariant,
         patch: false,
         per_view: false,
+        passthrough: false,
     };
     b.variable("v_uv", AddressSpace::Output, vec2, shared(0, false));
     b.variable("v_fade", AddressSpace::Output, float, shared(2, true));
@@ -634,6 +637,7 @@ fn invalid_interfaces_are_rejected() -> TestResult {
                 invariant: false,
                 patch: false,
                 per_view: false,
+                passthrough: false,
             },
         );
     }))?;
@@ -711,6 +715,7 @@ fn block_module() -> Module {
         invariant: false,
         patch: false,
         per_view: false,
+        passthrough: false,
     };
     let located_block = b.block_type(
         "Blk",
@@ -990,6 +995,7 @@ fn patch(location: u32) -> Binding {
         invariant: false,
         patch: true,
         per_view: false,
+        passthrough: false,
     }
 }
 

@@ -224,6 +224,7 @@ impl Lowerer<'_> {
             invariant: false,
             patch: false,
             per_view: false,
+            passthrough: false,
         });
         let handle = self.module.global_variables.append(
             GlobalVariable {

@@ -629,6 +629,7 @@ impl Analyzer<'_> {
                 let storage = match block_storage {
                     Some(BlockStorage::Uniform) => Storage::Uniform,
                     Some(BlockStorage::Buffer) => Storage::Buffer,
+                    Some(BlockStorage::Shared) => Storage::Shared,
                     Some(BlockStorage::In) => Storage::In,
                     Some(BlockStorage::Out) => Storage::Out,
                     Some(BlockStorage::ResourceHeap) => Storage::ResourceHeap,
@@ -1009,7 +1010,10 @@ impl Analyzer<'_> {
                 .root
                 .and_then(|id| self.symbol(id))
                 .map(|symbol| symbol.name.as_str());
+            let uniform_unsized = self.extension_enabled(Extension::ExtUniformBufferUnsizedArray)
+                && self.is_last_uniform_block_member(base);
             let allowed = base_operand.storage == Storage::Buffer
+                || uniform_unsized
                 || matches!(name, Some("gl_SampleMask" | "gl_SampleMaskIn"))
                 || self.extension_enabled(Extension::ExtNonuniformQualifier);
             if !allowed {
@@ -1053,6 +1057,63 @@ impl Analyzer<'_> {
             through_reference: base_operand.through_reference,
             image_format: base_operand.image_format,
         }
+    }
+
+    fn is_last_uniform_block_member(&self, base: &Expression) -> bool {
+        let mut current = base;
+        while let ExpressionKind::Parenthesized(inner) = &current.kind {
+            current = inner;
+        }
+        let Some((block_id, index)) = (match &current.kind {
+            ExpressionKind::Variable(_) => {
+                let Some(&id) = self.references.get(&current.id) else {
+                    return false;
+                };
+                let Some(SymbolKind::BlockMember { instance, index }) =
+                    self.symbol(id).map(|symbol| &symbol.kind).cloned()
+                else {
+                    return false;
+                };
+                let Some(TypeKind::Block(block_id)) = self
+                    .symbol(instance)
+                    .and_then(|symbol| symbol.variable())
+                    .map(|variable| variable.ty.kind)
+                else {
+                    return false;
+                };
+                usize::try_from(index).ok().map(|index| (block_id, index))
+            }
+            ExpressionKind::FieldSelection {
+                base: block_expr,
+                field,
+            } => {
+                let Some(block_ty) = self.expressions.get(&block_expr.id).map(|info| &info.ty)
+                else {
+                    return false;
+                };
+                if block_ty.is_array() {
+                    return false;
+                }
+                let TypeKind::Block(block_id) = block_ty.kind else {
+                    return false;
+                };
+                self.types
+                    .block(block_id)
+                    .and_then(|block| block.member(&field.node))
+                    .map(|(index, _)| (block_id, index))
+            }
+            _ => None,
+        }) else {
+            return false;
+        };
+        let Some(block) = self.types.block(block_id) else {
+            return false;
+        };
+        block.storage == BlockStorage::Uniform
+            && block.qualifiers.storage == Storage::Uniform
+            && !block.qualifiers.has_layout(LayoutId::PushConstant)
+            && !super::ray::is_shader_record(&block.qualifiers)
+            && index + 1 == block.members.len()
     }
 
     fn swizzle(&mut self, base: &Operand, field: &Identifier) -> Option<Operand> {

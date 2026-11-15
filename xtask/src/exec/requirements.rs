@@ -360,6 +360,17 @@ pub fn capability(capability: Capability) -> Requirement {
             E("VK_EXT_conservative_rasterization"),
             F("ConservativeRasterizationPropertiesEXT.fullyCoveredFragmentShaderInputVariable"),
         ],
+        C::WorkgroupMemoryExplicitLayoutKHR => {
+            needs![E("VK_KHR_workgroup_memory_explicit_layout")]
+        }
+        C::WorkgroupMemoryExplicitLayout8BitAccessKHR => needs![
+            E("VK_KHR_workgroup_memory_explicit_layout"),
+            F("Storage8BitFeatures.storageBuffer8BitAccess"),
+        ],
+        C::WorkgroupMemoryExplicitLayout16BitAccessKHR => needs![
+            E("VK_KHR_workgroup_memory_explicit_layout"),
+            F("Storage16BitFeatures.storageBuffer16BitAccess"),
+        ],
         _ => Requirement::Unsupported("a capability the harness does not enable"),
     }
 }
@@ -578,6 +589,7 @@ pub fn extension(name: &str) -> bool {
             | "SPV_AMD_shader_early_and_late_fragment_tests"
             | "SPV_NV_sample_mask_override_coverage"
             | "SPV_EXT_fragment_fully_covered"
+            | "SPV_KHR_workgroup_memory_explicit_layout"
     )
 }
 
@@ -611,8 +623,11 @@ pub const EARLY_AND_LATE_FRAGMENT_TESTS: [Need; 1] = [F(
     "ShaderEarlyAndLateFragmentTestsFeaturesAMD.shaderEarlyAndLateFragmentTests",
 )];
 
+pub const TERMINATE_INVOCATION: [Need; 1] = [E("VK_KHR_shader_terminate_invocation")];
+
 pub fn extension_needs(name: &str) -> &'static [Need] {
     match name {
+        "SPV_KHR_terminate_invocation" => &TERMINATE_INVOCATION,
         "SPV_KHR_maximal_reconvergence" => &MAXIMAL_RECONVERGENCE,
         "SPV_KHR_subgroup_uniform_control_flow" => &SUBGROUP_UNIFORM_CONTROL_FLOW,
         "SPV_AMD_shader_early_and_late_fragment_tests" => &EARLY_AND_LATE_FRAGMENT_TESTS,
@@ -688,6 +703,7 @@ pub fn probes() -> Vec<Need> {
     needs.extend(MAXIMAL_RECONVERGENCE);
     needs.extend(SUBGROUP_UNIFORM_CONTROL_FLOW);
     needs.extend(EARLY_AND_LATE_FRAGMENT_TESTS);
+    needs.extend(TERMINATE_INVOCATION);
     needs.extend([
         E("VK_AMD_gpu_shader_half_float"),
         E("VK_AMD_gpu_shader_int16"),
@@ -810,6 +826,17 @@ mod tests {
             extension_needs("SPV_KHR_maximal_reconvergence"),
             &MAXIMAL_RECONVERGENCE
         );
+        assert_eq!(
+            extension_needs("SPV_KHR_terminate_invocation"),
+            &TERMINATE_INVOCATION
+        );
+        assert!(extension("SPV_KHR_workgroup_memory_explicit_layout"));
+        assert_eq!(
+            capability(Capability::WorkgroupMemoryExplicitLayoutKHR),
+            Requirement::Needs(&[Need::Extension("VK_KHR_workgroup_memory_explicit_layout")])
+        );
+        assert!(probes().contains(&E("VK_KHR_workgroup_memory_explicit_layout")));
+        assert!(probes().contains(&E("VK_KHR_shader_terminate_invocation")));
     }
 
     #[test]

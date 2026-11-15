@@ -117,21 +117,6 @@ const fn invalid(qualifier: &'static str, reason: &'static str) -> DiagnosticKin
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn passthrough_extension(&mut self, qualifiers: &Qualifiers) {
-        let span = qualifiers
-            .layout
-            .iter()
-            .find(|entry| entry.id == Some(LayoutId::Passthrough))
-            .map(|entry| entry.span);
-        if let Some(span) = span.filter(|_| self.stage_is(ShaderStage::Geometry)) {
-            self.require_extension(
-                span,
-                Extension::NvGeometryShaderPassthrough,
-                "geometry shader passthrough",
-            );
-        }
-    }
-
     pub(crate) fn view_layout_extensions(&mut self, qualifiers: &Qualifiers) {
         let required: alloc::vec::Vec<(Span, &'static [Extension], &'static str, bool)> =
             qualifiers

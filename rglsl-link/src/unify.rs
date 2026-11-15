@@ -25,19 +25,24 @@ pub(crate) fn common_paths(a: &[Vec<PathStep>], b: &[Vec<PathStep>]) -> Vec<Vec<
     a.iter().filter(|path| b.contains(path)).cloned().collect()
 }
 
-const fn rank(size: ArraySize) -> Option<u32> {
+const fn rank(size: ArraySize, uniform_block: bool) -> Option<u32> {
     match size {
-        ArraySize::Dynamic => Some(0),
+        ArraySize::Dynamic => Some(if uniform_block { u32::MAX } else { 0 }),
         ArraySize::Constant(length) => Some(length.get()),
         ArraySize::Pending(_) => None,
     }
 }
 
-fn merge_size(a: ArraySize, b: ArraySize, implicit: (bool, bool)) -> Result<ArraySize, Mismatch> {
+fn merge_size(
+    a: ArraySize,
+    b: ArraySize,
+    implicit: (bool, bool),
+    uniform_block: bool,
+) -> Result<ArraySize, Mismatch> {
     if a == b {
         return Ok(a);
     }
-    let (Some(rank_a), Some(rank_b)) = (rank(a), rank(b)) else {
+    let (Some(rank_a), Some(rank_b)) = (rank(a, uniform_block), rank(b, uniform_block)) else {
         return Err(Mismatch::Types);
     };
     match implicit {
@@ -54,10 +59,11 @@ pub(crate) fn unify(
     a: Handle<Type>,
     b: Handle<Type>,
     implicit: &Implicit,
+    uniform_block: bool,
     path: &mut Vec<PathStep>,
 ) -> Result<Handle<Type>, Mismatch> {
     let start = path.len();
-    let result = unify_types(module, a, b, implicit, path);
+    let result = unify_types(module, a, b, implicit, uniform_block, path);
     path.truncate(start);
     result
 }
@@ -93,6 +99,7 @@ fn unify_types(
     a: Handle<Type>,
     b: Handle<Type>,
     implicit: &Implicit,
+    uniform_block: bool,
     path: &mut Vec<PathStep>,
 ) -> Result<Handle<Type>, Mismatch> {
     let mut frames = Vec::new();
@@ -100,7 +107,7 @@ fn unify_types(
     let mut finished = None;
     loop {
         if let Some((a, b)) = next.take() {
-            match enter(module, a, b, implicit, path, &mut frames)? {
+            match enter(module, a, b, implicit, uniform_block, path, &mut frames)? {
                 Entered::Done(ty) => finished = Some(ty),
                 Entered::Child(a, b) => {
                     next = Some((a, b));
@@ -186,6 +193,7 @@ fn enter(
     a: Handle<Type>,
     b: Handle<Type>,
     implicit: &Implicit,
+    uniform_block: bool,
     path: &mut Vec<PathStep>,
     frames: &mut Vec<Unifying>,
 ) -> Result<Entered, Mismatch> {
@@ -210,7 +218,7 @@ fn enter(
                 stride: stride_b,
             },
         ) => {
-            let size = merge_size(size_a, size_b, implicit.at(path))?;
+            let size = merge_size(size_a, size_b, implicit.at(path), uniform_block)?;
             path.push(PathStep::Element);
             frames.push(Unifying::Array {
                 name: type_a.name,
@@ -230,7 +238,7 @@ fn enter(
                 size: size_b,
             },
         ) => {
-            let size = merge_size(size_a, size_b, implicit.at(path))?;
+            let size = merge_size(size_a, size_b, implicit.at(path), uniform_block)?;
             path.push(PathStep::Element);
             frames.push(Unifying::BindingArray {
                 name: type_a.name,

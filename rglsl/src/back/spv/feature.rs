@@ -326,6 +326,11 @@ features! {
         capabilities: &[C::DemoteToHelperInvocation],
         extensions: &["SPV_EXT_demote_to_helper_invocation"],
     }
+    TERMINATE_INVOCATION {
+        what: "terminateInvocation",
+        extensions: &["SPV_KHR_terminate_invocation"],
+        core_since: Some((1, 6)),
+    }
     POST_DEPTH_COVERAGE {
         what: "post_depth_coverage",
         capabilities: &[C::SampleMaskPostDepthCoverage],
@@ -692,5 +697,11 @@ features! {
         what: "tensors",
         capabilities: &[C::TensorsARM],
         extensions: &["SPV_ARM_tensors"],
+    }
+    WORKGROUP_MEMORY_EXPLICIT_LAYOUT {
+        what: "shared memory block",
+        capabilities: &[C::WorkgroupMemoryExplicitLayoutKHR],
+        extensions: &["SPV_KHR_workgroup_memory_explicit_layout"],
+        min_version: Some((1, 4)),
     }
 }

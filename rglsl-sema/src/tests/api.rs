@@ -1079,3 +1079,30 @@ fn narrow_transform_feedback_names_the_narrowest_width() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn shared_blocks_require_spirv_1_4() -> TestResult {
+    let source = "#version 450
+#extension GL_EXT_shared_memory_block : require
+layout(local_size_x = 1) in;
+layout(std140) shared;
+shared B { int a; };
+void main() { a = 1; }
+";
+    let unit = rglsl_ast::parse(source)?;
+    let mut old_spirv = Options::new(ShaderStage::Compute);
+    old_spirv.spirv_version = Some((1, 3));
+    let rejected = analyze(&unit, &old_spirv);
+    let kinds: Vec<_> = rejected
+        .diagnostics
+        .iter()
+        .map(|d| super::kind_name(&d.kind))
+        .collect();
+    assert_eq!(kinds, ["SpirvVersionRequired", "SpirvVersionRequired"]);
+
+    let mut spirv_1_4 = Options::new(ShaderStage::Compute);
+    spirv_1_4.spirv_version = Some((1, 4));
+    let ok = analyze(&unit, &spirv_1_4);
+    assert!(ok.is_ok(), "{:?}", ok.diagnostics);
+    Ok(())
+}
