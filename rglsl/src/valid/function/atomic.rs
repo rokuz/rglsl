@@ -306,7 +306,7 @@ impl super::super::Validator {
     pub(super) fn validate_atomic_result(
         &mut self,
         result: Handle<crate::Expression>,
-        scalar: crate::Scalar,
+        expected: &crate::TypeInner,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         let crate::Expression::AtomicResult {
@@ -323,7 +323,7 @@ impl super::super::Validator {
                 .with_span_handle(result, context.expressions)
                 .into_other());
         }
-        if context.types[ty].inner != crate::TypeInner::Scalar(scalar) {
+        if context.types[ty].inner != *expected {
             return Err(AtomicError::ResultTypeMismatch(result)
                 .with_span_handle(result, context.expressions)
                 .into_other());
@@ -629,16 +629,32 @@ impl super::super::Validator {
             )
             .with_span_handle(image, context.expressions));
         }
-        let supported = match format {
-            Sf::R64Uint | Sf::R64Sint | Sf::R32Sint | Sf::R32Uint => {
-                !matches!(fun, crate::AtomicFunction::Subtract)
-            }
-            Sf::R32Float => matches!(
-                fun,
-                crate::AtomicFunction::Exchange { compare: None }
-                    | crate::AtomicFunction::Add
-                    | crate::AtomicFunction::Min
-                    | crate::AtomicFunction::Max
+        let float_rmw = matches!(
+            fun,
+            crate::AtomicFunction::Exchange { compare: None }
+                | crate::AtomicFunction::Add
+                | crate::AtomicFunction::Min
+                | crate::AtomicFunction::Max
+        );
+        let (supported, value_ty) = match format {
+            Sf::R64Uint | Sf::R64Sint | Sf::R32Sint | Sf::R32Uint => (
+                !matches!(fun, crate::AtomicFunction::Subtract),
+                Ti::Scalar(format.into()),
+            ),
+            Sf::R32Float => (float_rmw, Ti::Scalar(format.into())),
+            Sf::Rg16Float => (
+                float_rmw,
+                Ti::Vector {
+                    size: crate::VectorSize::Bi,
+                    scalar: crate::Scalar::F16,
+                },
+            ),
+            Sf::Rgba16Float => (
+                float_rmw,
+                Ti::Vector {
+                    size: crate::VectorSize::Quad,
+                    scalar: crate::Scalar::F16,
+                },
             ),
             Sf::R8Unorm
             | Sf::R8Snorm
@@ -653,7 +669,6 @@ impl super::super::Validator {
             | Sf::Rg8Sint
             | Sf::Rg16Uint
             | Sf::Rg16Sint
-            | Sf::Rg16Float
             | Sf::Rgba8Unorm
             | Sf::Rgba8Snorm
             | Sf::Rgba8Uint
@@ -667,7 +682,6 @@ impl super::super::Validator {
             | Sf::Rg32Float
             | Sf::Rgba16Uint
             | Sf::Rgba16Sint
-            | Sf::Rgba16Float
             | Sf::Rgba32Uint
             | Sf::Rgba32Sint
             | Sf::Rgba32Float
@@ -688,7 +702,6 @@ impl super::super::Validator {
             return Err(FunctionError::InvalidImageAtomicFunction(fun)
                 .with_span_handle(image, context.expressions));
         }
-        let value_ty = Ti::Scalar(format.into());
         if *context.resolve_type_inner(value, &self.valid_expression_set)? != value_ty {
             return Err(FunctionError::InvalidImageAtomicValue(value)
                 .with_span_handle(value, context.expressions));
@@ -702,7 +715,7 @@ impl super::super::Validator {
                 .with_span_handle(compare, context.expressions));
         }
         if let Some(result) = result {
-            self.validate_atomic_result(result, format.into(), context)?;
+            self.validate_atomic_result(result, &value_ty, context)?;
         }
         Ok(())
     }
@@ -714,7 +727,7 @@ impl super::super::Validator {
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         let scalar = self.validate_atomic_location(location, context)?;
-        self.validate_atomic_result(result, scalar, context)
+        self.validate_atomic_result(result, &crate::TypeInner::Scalar(scalar), context)
     }
 
     pub(super) fn validate_atomic_store(

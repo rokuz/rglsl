@@ -737,6 +737,28 @@ impl Analyzer<'_> {
         }
     }
 
+    fn image_format_of(&self, id: SymbolId) -> Option<LayoutId> {
+        match self.symbol(id).map(|symbol| &symbol.kind)? {
+            SymbolKind::Variable(variable) => variable.qualifiers.image_format(),
+            SymbolKind::BlockMember { instance, index } => {
+                let variable = self.symbol(*instance)?.variable()?;
+                let TypeKind::Block(block) = variable.ty.kind else {
+                    return None;
+                };
+                self.types
+                    .block(block)?
+                    .members
+                    .get(usize::try_from(*index).ok()?)?
+                    .qualifiers
+                    .image_format()
+            }
+            SymbolKind::Struct(_)
+            | SymbolKind::Reference(_)
+            | SymbolKind::BufferType(_)
+            | SymbolKind::BlockName => None,
+        }
+    }
+
     pub(crate) fn readable(&mut self, span: Span, operand: &Operand) -> bool {
         if operand.writeonly {
             self.error(span, DiagnosticKind::WriteOnlyRead);
@@ -846,6 +868,7 @@ impl Analyzer<'_> {
         {
             self.vulkan_memory_model = true;
         }
+        let image_format = self.image_format_of(id);
         Operand {
             ty,
             constant,
@@ -857,6 +880,7 @@ impl Analyzer<'_> {
             writeonly,
             non_uniform,
             through_reference: false,
+            image_format,
         }
     }
 
@@ -1027,6 +1051,7 @@ impl Analyzer<'_> {
             writeonly: base_operand.writeonly,
             non_uniform: base_operand.non_uniform || index_operand.non_uniform,
             through_reference: base_operand.through_reference,
+            image_format: base_operand.image_format,
         }
     }
 
@@ -1102,6 +1127,7 @@ impl Analyzer<'_> {
             writeonly: base.writeonly,
             non_uniform: base.non_uniform,
             through_reference: base.through_reference,
+            image_format: None,
         })
     }
 
@@ -1194,6 +1220,7 @@ impl Analyzer<'_> {
             }
             None => (base_operand.place, base_operand.storage),
         };
+        let image_format = member.qualifiers.image_format();
         Operand {
             ty: member.ty.clone(),
             constant: base_operand.constant,
@@ -1206,6 +1233,7 @@ impl Analyzer<'_> {
                 || member.qualifiers.flags.contains(QualifierFlags::WRITEONLY),
             non_uniform: base_operand.non_uniform,
             through_reference: base_operand.through_reference,
+            image_format,
         }
     }
 

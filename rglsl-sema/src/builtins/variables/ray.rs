@@ -161,12 +161,12 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
         requires_one_of: EXT,
     }
     "gl_ObjectRayOriginNV": Input(ObjectRayOrigin) => vec3 {
-        stages: TRAVERSAL,
+        stages: HIT,
         requires_one_of: NV,
         shared: Some("gl_ObjectRayOriginEXT"),
     }
     "gl_ObjectRayDirectionNV": Input(ObjectRayDirection) => vec3 {
-        stages: TRAVERSAL,
+        stages: HIT,
         requires_one_of: NV,
         shared: Some("gl_ObjectRayDirectionEXT"),
     }

@@ -65,6 +65,7 @@ impl Analyzer<'_> {
         } else {
             Place::Writable
         };
+        let image_format = member.qualifiers.image_format();
         Operand {
             ty: member.ty,
             constant: false,
@@ -76,6 +77,7 @@ impl Analyzer<'_> {
             writeonly: member.qualifiers.flags.contains(QualifierFlags::WRITEONLY),
             through_reference: true,
             non_uniform: base.non_uniform,
+            image_format,
         }
     }
 

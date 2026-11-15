@@ -84,7 +84,7 @@ impl<T> UniqueArena<T> {
         &mut self.span_info
     }
 
-    pub(crate) fn drain_all(&mut self) -> UniqueArenaDrain<'_, T> {
+    pub fn drain_all(&mut self) -> UniqueArenaDrain<'_, T> {
         let handles = Range::full_range_from_size(self.set.len());
         UniqueArenaDrain {
             inner_elts: self.set.drain(..),
@@ -94,6 +94,7 @@ impl<T> UniqueArena<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct UniqueArenaDrain<'a, T> {
     inner_elts: indexmap::set::Drain<'a, T>,
     inner_spans: alloc::vec::Drain<'a, Span>,

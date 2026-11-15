@@ -9814,6 +9814,189 @@ fn half_vector_atomics_match_glslang() -> crate::TestResult {
 }
 
 #[test]
+fn half_vector_image_atomics_match_glslang() -> crate::TestResult {
+    let source = "#version 450
+        #extension GL_NV_shader_atomic_fp16_vector : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        layout(local_size_x = 1) in;
+        layout(binding = 0, rg16f) uniform image2D i2;
+        layout(binding = 1, rgba16f) uniform image2D i4;
+        void main() {
+            f16vec2 a = imageAtomicAdd(i2, ivec2(0), f16vec2(1.0));
+            f16vec2 b = imageAtomicMin(i2, ivec2(1), a);
+            f16vec2 c = imageAtomicMax(i2, ivec2(2), b);
+            f16vec2 d = imageAtomicExchange(i2, ivec2(3), c);
+            f16vec4 e = imageAtomicAdd(i4, ivec2(0), f16vec4(d, d));
+            f16vec4 f = imageAtomicMin(i4, ivec2(1), e);
+            f16vec4 g = imageAtomicMax(i4, ivec2(2), f);
+            imageAtomicExchange(i4, ivec2(3), g);
+        }";
+    let words = valid_words(ShaderStage::Compute, source, (1, 3), "vulkan1.1")?;
+    assert_eq!(opcode_count(&words, Op::ImageTexelPointer), 8);
+    assert_eq!(opcode_count(&words, Op::AtomicFAddEXT), 2);
+    assert_eq!(opcode_count(&words, Op::AtomicFMinEXT), 2);
+    assert_eq!(opcode_count(&words, Op::AtomicFMaxEXT), 2);
+    assert_eq!(opcode_count(&words, Op::AtomicExchange), 2);
+    for capability in [
+        spirv::Capability::Float16,
+        spirv::Capability::StorageImageExtendedFormats,
+        spirv::Capability::AtomicFloat16VectorNV,
+    ] {
+        assert!(declares_capability(&words, capability), "{capability:?}");
+    }
+    for capability in [
+        spirv::Capability::AtomicFloat16AddEXT,
+        spirv::Capability::AtomicFloat16MinMaxEXT,
+    ] {
+        assert!(!declares_capability(&words, capability), "{capability:?}");
+    }
+    let module = compile_valid(ShaderStage::Compute, source)?;
+    assert_eq!(extensions_of(&module), ["SPV_NV_shader_atomic_fp16_vector"]);
+
+    let heap_words = valid_words(
+        ShaderStage::Compute,
+        "#version 460
+        #extension GL_EXT_descriptor_heap : enable
+        #extension GL_EXT_structured_descriptor_heap : enable
+        #extension GL_NV_shader_atomic_fp16_vector : enable
+        #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+        layout(local_size_x = 1) in;
+        layout(descriptor_heap) uniform resourceheap H {
+            layout(rg16f) image2D i2;
+        } h;
+        void main() {
+            imageAtomicAdd(h.i2, ivec2(0), f16vec2(1.0));
+        }",
+        (1, 4),
+        "vulkan1.2",
+    )?;
+    assert!(declares_capability(
+        &heap_words,
+        spirv::Capability::AtomicFloat16VectorNV
+    ));
+
+    for (bad, expected) in [
+        (
+            "#version 450
+            #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+            layout(binding = 0, rg16f) uniform image2D i2;
+            void main() { imageAtomicExchange(i2, ivec2(0), f16vec2(1.0)); }",
+            "GL_NV_shader_atomic_fp16_vector",
+        ),
+        (
+            "#version 450
+            #extension GL_NV_shader_atomic_fp16_vector : enable
+            #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+            layout(binding = 0, r32f) uniform image2D i2;
+            void main() { imageAtomicAdd(i2, ivec2(0), f16vec2(1.0)); }",
+            "rg16f",
+        ),
+        (
+            "#version 450
+            #extension GL_NV_shader_atomic_fp16_vector : enable
+            #extension GL_EXT_shader_explicit_arithmetic_types_float16 : enable
+            layout(binding = 0, rg16f) uniform image2D i4;
+            void main() { imageAtomicAdd(i4, ivec2(0), f16vec4(1.0)); }",
+            "rgba16f",
+        ),
+        (
+            "#version 450
+            #extension GL_EXT_shader_atomic_float : enable
+            layout(binding = 0, rgba8) uniform image2D img;
+            void main() { imageAtomicAdd(img, ivec2(0), 1.0); }",
+            "r32f",
+        ),
+    ] {
+        let error = parse(ShaderStage::Compute, bad)
+            .err()
+            .ok_or("invalid image atomic was accepted")?;
+        assert!(
+            error.contains(expected),
+            "expected `{expected}` in `{error}`"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn builtin_stage_and_barrier_scope_restrictions() -> crate::TestResult {
+    let tesc_device = "#version 450
+        #extension GL_KHR_memory_scope_semantics : enable
+        layout(vertices = 3) out;
+        void main() {
+            controlBarrier(gl_ScopeWorkgroup, gl_ScopeDevice, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+        }";
+    valid_words(ShaderStage::TessControl, tesc_device, (1, 0), "vulkan1.0")?;
+
+    let tesc_vmm = "#version 450
+        #extension GL_KHR_memory_scope_semantics : enable
+        #pragma use_vulkan_memory_model
+        layout(vertices = 3) out;
+        void main() {
+            controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+        }";
+    valid_words(ShaderStage::TessControl, tesc_vmm, (1, 3), "vulkan1.1")?;
+
+    let tesc_workgroup = "#version 450
+        #extension GL_KHR_memory_scope_semantics : enable
+        layout(vertices = 3) out;
+        void main() {
+            controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsBuffer, gl_SemanticsAcquireRelease);
+        }";
+    let error = parse(ShaderStage::TessControl, tesc_workgroup)
+        .err()
+        .ok_or("tesc workgroup memory scope without VMM was accepted")?;
+    assert!(error.contains("gl_ScopeWorkgroup"), "{error}");
+
+    let tesc_redeclare_unreferenced = "#version 450
+        #extension GL_NV_viewport_array2 : require
+        #extension GL_NV_stereo_view_rendering : require
+        layout(vertices = 4) out;
+        layout(viewport_relative, secondary_view_offset = 1) out highp int gl_Layer;
+        void main() {}";
+    valid_words(
+        ShaderStage::TessControl,
+        tesc_redeclare_unreferenced,
+        (1, 0),
+        "vulkan1.0",
+    )?;
+
+    for var in ["gl_Layer", "gl_ViewportIndex"] {
+        let tesc_source = format!(
+            "#version 450
+            #extension GL_ARB_shader_viewport_layer_array : enable
+            layout(vertices = 3) out;
+            void main() {{ {var} = 0; }}"
+        );
+        assert!(
+            parse(ShaderStage::TessControl, &tesc_source).is_err(),
+            "{var} accepted in tesc"
+        );
+    }
+
+    for var in ["gl_ObjectRayOriginNV", "gl_ObjectRayDirectionNV"] {
+        let rmiss_source = format!(
+            "#version 460
+            #extension GL_NV_ray_tracing : enable
+            layout(location = 0) rayPayloadInNV vec3 p;
+            void main() {{ p = {var}; }}"
+        );
+        assert!(
+            parse(ShaderStage::Miss, &rmiss_source).is_err(),
+            "{var} accepted in rmiss"
+        );
+        let rchit_source = format!(
+            "#version 460
+            #extension GL_NV_ray_tracing : enable
+            layout(location = 0) rayPayloadInNV vec3 p;
+            void main() {{ p = {var}; }}"
+        );
+        valid_words(ShaderStage::ClosestHit, &rchit_source, (1, 4), "vulkan1.2")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn sixty_four_bit_images() -> crate::TestResult {
     let words = valid_words(
         ShaderStage::Compute,

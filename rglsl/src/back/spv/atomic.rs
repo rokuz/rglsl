@@ -21,6 +21,60 @@ const fn spirv_scope(scope: MemoryScope) -> spirv::Scope {
     }
 }
 
+pub(super) fn texel_numeric_type(format: crate::StorageFormat) -> NumericType {
+    match format {
+        crate::StorageFormat::Rg16Float => NumericType::Vector {
+            size: crate::VectorSize::Bi,
+            scalar: crate::Scalar::F16,
+        },
+        crate::StorageFormat::Rgba16Float => NumericType::Vector {
+            size: crate::VectorSize::Quad,
+            scalar: crate::Scalar::F16,
+        },
+        crate::StorageFormat::R8Unorm
+        | crate::StorageFormat::R8Snorm
+        | crate::StorageFormat::R8Uint
+        | crate::StorageFormat::R8Sint
+        | crate::StorageFormat::R16Uint
+        | crate::StorageFormat::R16Sint
+        | crate::StorageFormat::R16Float
+        | crate::StorageFormat::Rg8Unorm
+        | crate::StorageFormat::Rg8Snorm
+        | crate::StorageFormat::Rg8Uint
+        | crate::StorageFormat::Rg8Sint
+        | crate::StorageFormat::Rg16Uint
+        | crate::StorageFormat::Rg16Sint
+        | crate::StorageFormat::Rgba8Unorm
+        | crate::StorageFormat::Rgba8Snorm
+        | crate::StorageFormat::Rgba8Uint
+        | crate::StorageFormat::Rgba8Sint
+        | crate::StorageFormat::Bgra8Unorm
+        | crate::StorageFormat::Rgb10a2Uint
+        | crate::StorageFormat::Rgb10a2Unorm
+        | crate::StorageFormat::Rg11b10Ufloat
+        | crate::StorageFormat::R32Uint
+        | crate::StorageFormat::R32Sint
+        | crate::StorageFormat::R32Float
+        | crate::StorageFormat::Rg32Uint
+        | crate::StorageFormat::Rg32Sint
+        | crate::StorageFormat::Rg32Float
+        | crate::StorageFormat::Rgba16Uint
+        | crate::StorageFormat::Rgba16Sint
+        | crate::StorageFormat::Rgba32Uint
+        | crate::StorageFormat::Rgba32Sint
+        | crate::StorageFormat::Rgba32Float
+        | crate::StorageFormat::R64Uint
+        | crate::StorageFormat::R64Sint
+        | crate::StorageFormat::R16Unorm
+        | crate::StorageFormat::R16Snorm
+        | crate::StorageFormat::Rg16Unorm
+        | crate::StorageFormat::Rg16Snorm
+        | crate::StorageFormat::Rgba16Unorm
+        | crate::StorageFormat::Rgba16Snorm
+        | crate::StorageFormat::Unknown(_) => NumericType::Scalar(format.into()),
+    }
+}
+
 pub(super) struct OrderIds {
     pub scope: Word,
     pub semantics: Word,
@@ -280,7 +334,7 @@ impl BlockContext<'_> {
         &mut self,
         texel: &Texel,
         block: &mut Block,
-    ) -> Result<(Word, crate::Scalar), Error> {
+    ) -> Result<(Word, NumericType), Error> {
         let crate::TypeInner::Image {
             class: crate::ImageClass::Storage { format, .. },
             ..
@@ -290,14 +344,22 @@ impl BlockContext<'_> {
         else {
             return Err(Error::Validation("Invalid image class"));
         };
-        let scalar: crate::Scalar = format.into();
+        let numeric = texel_numeric_type(format);
+        let (scalar, half_vector) = match numeric {
+            NumericType::Scalar(scalar) => (scalar, false),
+            NumericType::Vector { scalar, .. } => (scalar, scalar == crate::Scalar::F16),
+            NumericType::Matrix { scalar, .. } => (scalar, false),
+        };
+        if half_vector {
+            self.writer.require(&feature::ATOMIC_FLOAT16_VECTOR)?;
+        }
         self.atomic_scalar(scalar);
         if let Some(pointer_id) = self.write_heap_texel_pointer(texel, block)? {
-            return Ok((pointer_id, scalar));
+            return Ok((pointer_id, numeric));
         }
         let image_id = self.image_pointer(texel.image, block)?;
-        let scalar_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
-        let pointer_type_id = self.get_pointer_type_id(scalar_type_id, spirv::StorageClass::Image);
+        let pointee_type_id = self.get_numeric_type_id(numeric);
+        let pointer_type_id = self.get_pointer_type_id(pointee_type_id, spirv::StorageClass::Image);
         let coordinates =
             self.write_image_coordinates(texel.coordinate, texel.array_index, block)?;
         let sample_id = match texel.sample {
@@ -318,7 +380,7 @@ impl BlockContext<'_> {
         {
             self.writer.decorate_non_uniform(pointer_id)?;
         }
-        Ok((pointer_id, scalar))
+        Ok((pointer_id, numeric))
     }
 
     fn write_location_pointer(
@@ -393,7 +455,15 @@ impl BlockContext<'_> {
                 )?;
                 Ok((pointer_id, scalar))
             }
-            AtomicLocation::Texel(ref texel) => self.write_texel_pointer(texel, block),
+            AtomicLocation::Texel(ref texel) => {
+                let (pointer_id, numeric) = self.write_texel_pointer(texel, block)?;
+                match numeric {
+                    NumericType::Scalar(scalar) => Ok((pointer_id, scalar)),
+                    NumericType::Vector { .. } | NumericType::Matrix { .. } => {
+                        Err(Error::Validation("Invalid atomic texel type"))
+                    }
+                }
+            }
         }
     }
 
@@ -446,9 +516,14 @@ impl BlockContext<'_> {
         order: MemoryOrder,
         block: &mut Block,
     ) -> Result<(), Error> {
-        let (pointer_id, scalar) = self.write_texel_pointer(texel, block)?;
+        let (pointer_id, numeric) = self.write_texel_pointer(texel, block)?;
         let ids = self.writer.write_memory_order(order);
-        let type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
+        let type_id = self.get_numeric_type_id(numeric);
+        let (scalar, vector) = match numeric {
+            NumericType::Scalar(scalar) => (scalar, false),
+            NumericType::Vector { scalar, .. } => (scalar, true),
+            NumericType::Matrix { scalar, .. } => (scalar, false),
+        };
         let signed = scalar.kind == crate::ScalarKind::Sint;
         let op = match fun {
             crate::AtomicFunction::Add
@@ -456,7 +531,7 @@ impl BlockContext<'_> {
             | crate::AtomicFunction::Max
                 if scalar.kind == crate::ScalarKind::Float =>
             {
-                self.writer.float_atomic(fun, scalar, false)?
+                self.writer.float_atomic(fun, scalar, vector)?
             }
             crate::AtomicFunction::Add => spirv::Op::AtomicIAdd,
             crate::AtomicFunction::Subtract => spirv::Op::AtomicISub,

@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl::compact::Remap;
-use rglsl::object::{BindingAssignment, ObjectModule, PathStep, SymbolKind};
+use rglsl::object::{BindingAssignment, GlobalSymbol, ObjectModule, PathStep, SymbolKind};
 use rglsl::{
-    AddressSpace, Expression, Function, GlobalVariable, Handle, Module, Override, Span, Type,
-    TypeInner,
+    AddressSpace, Arena, Expression, Function, GlobalVariable, Handle, Module, Override, Span,
+    Type, TypeInner, UniqueArena,
 };
 
 use crate::calls::Node;
@@ -60,8 +60,8 @@ struct OverridePlan {
 }
 
 #[derive(Debug)]
-pub(crate) struct Builder<'a> {
-    pub objects: &'a [ObjectModule],
+pub(crate) struct Builder {
+    pub objects: Vec<ObjectModule>,
     pub module: Module,
     pub remaps: Vec<Remap>,
     pub globals: Vec<MergedGlobal>,
@@ -69,15 +69,44 @@ pub(crate) struct Builder<'a> {
     overrides: BTreeMap<u32, Vec<(usize, Handle<Override>)>>,
     pub functions: BTreeMap<Node, Handle<Function>>,
     pub library_functions: Vec<Handle<Function>>,
+    pub library_io: Vec<Vec<Handle<GlobalVariable>>>,
     pub warnings: Vec<String>,
     pub errors: Vec<LinkError>,
     instances: BTreeMap<Handle<GlobalVariable>, String>,
-    symbols: Vec<BTreeMap<Handle<GlobalVariable>, usize>>,
+    symbols: Vec<BTreeMap<Handle<GlobalVariable>, GlobalSymbol>>,
     pub unused: Vec<BTreeSet<Handle<GlobalVariable>>>,
 }
 
-impl<'a> Builder<'a> {
-    pub fn new(objects: &'a [ObjectModule], unused: Vec<BTreeSet<Handle<GlobalVariable>>>) -> Self {
+impl Builder {
+    pub fn new(
+        mut objects: Vec<ObjectModule>,
+        unused: Vec<BTreeSet<Handle<GlobalVariable>>>,
+    ) -> Self {
+        let mut symbols = Vec::with_capacity(objects.len());
+        let mut library_io = Vec::with_capacity(objects.len());
+        for object in &mut objects {
+            let mut positions = BTreeMap::new();
+            for symbol in core::mem::take(&mut object.unit.globals) {
+                positions.entry(symbol.global).or_insert(symbol);
+            }
+            symbols.push(positions);
+            if object.unit.module.entry_points.is_empty() {
+                library_io.push(
+                    object
+                        .unit
+                        .module
+                        .global_variables
+                        .iter()
+                        .filter(|&(_, global)| {
+                            matches!(global.space, AddressSpace::Input | AddressSpace::Output)
+                        })
+                        .map(|(handle, _)| handle)
+                        .collect(),
+                );
+            } else {
+                library_io.push(Vec::new());
+            }
+        }
         Self {
             objects,
             module: Module::default(),
@@ -87,19 +116,11 @@ impl<'a> Builder<'a> {
             overrides: BTreeMap::new(),
             functions: BTreeMap::new(),
             library_functions: Vec::new(),
+            library_io,
             warnings: Vec::new(),
             errors: Vec::new(),
             instances: BTreeMap::new(),
-            symbols: objects
-                .iter()
-                .map(|object| {
-                    let mut positions = BTreeMap::new();
-                    for (position, symbol) in object.unit.globals.iter().enumerate() {
-                        positions.entry(symbol.global).or_insert(position);
-                    }
-                    positions
-                })
-                .collect(),
+            symbols,
             unused,
         }
     }
@@ -108,12 +129,6 @@ impl<'a> Builder<'a> {
         self.unused
             .get(object)
             .is_some_and(|unused| unused.contains(&global))
-    }
-
-    pub fn object(&self, index: usize) -> Result<&'a ObjectModule, LinkError> {
-        self.objects
-            .get(index)
-            .ok_or_else(|| internal("object index"))
     }
 
     pub fn remap(&self, index: usize) -> Result<&Remap, LinkError> {
@@ -135,43 +150,45 @@ impl<'a> Builder<'a> {
     }
 
     fn add_object(&mut self, index: usize) -> Result<Remap, LinkError> {
-        let object = self
-            .objects
-            .get(index)
-            .ok_or_else(|| internal("object index"))?;
-        let source = &object.unit.module;
+        let (mut types, mut overrides, mut constants, mut global_expressions, mut global_variables) = {
+            let source = &mut self
+                .objects
+                .get_mut(index)
+                .ok_or_else(|| internal("object index"))?
+                .unit
+                .module;
+            (
+                core::mem::take(&mut source.types),
+                source.overrides.take(),
+                source.constants.take(),
+                source.global_expressions.take(),
+                source.global_variables.take(),
+            )
+        };
         let mut remap = Remap::new();
-        let plan = self.plan_overrides(index, source, &mut remap);
-        self.add_types(source, &mut remap)?;
-        self.add_overrides(index, source, &mut remap, &plan)?;
-        for (offset, (handle, _)) in source.constants.iter().enumerate() {
+        let plan = self.plan_overrides(index, &overrides, &mut remap);
+        self.add_types(&mut types, &mut remap)?;
+        self.add_overrides(index, &mut overrides, &mut remap, &plan)?;
+        for (offset, (handle, _)) in constants.iter().enumerate() {
             remap.map_constant(handle, self.module.constants.appended_handle(offset));
         }
-        for (handle, expression) in source.global_expressions.iter() {
-            let mut expression = expression.clone();
+        for (handle, mut expression, span) in global_expressions.drain() {
             remap
                 .adjust_global_expression(&mut expression)
                 .map_err(internal)?;
-            let new = self
-                .module
-                .global_expressions
-                .append(expression, source.global_expressions.get_span(handle));
+            let new = self.module.global_expressions.append(expression, span);
             remap.map_global_expression(handle, new);
         }
-        for (handle, constant) in source.constants.iter() {
-            let mut constant = constant.clone();
+        for (handle, mut constant, span) in constants.drain() {
             constant.ty = remap.ty(constant.ty).map_err(internal)?;
             constant.init = remap.global_expression(constant.init).map_err(internal)?;
-            let new = self
-                .module
-                .constants
-                .append(constant, source.constants.get_span(handle));
+            let new = self.module.constants.append(constant, span);
             if remap.constant(handle).map_err(internal)? != new {
                 return Err(internal("constant handle out of plan"));
             }
         }
         for &handle in &plan.fresh {
-            if let Some(init) = source.overrides.try_get(handle).map_err(internal)?.init {
+            if let Some(init) = overrides.try_get(handle).map_err(internal)?.init {
                 let init = remap.global_expression(init).map_err(internal)?;
                 let new = remap.r#override(handle).map_err(internal)?;
                 self.module
@@ -181,11 +198,11 @@ impl<'a> Builder<'a> {
                     .init = Some(init);
             }
         }
-        for (handle, global) in source.global_variables.iter() {
+        let mut decorated = Vec::new();
+        for (handle, mut global, span) in global_variables.drain() {
             if self.is_unused(index, handle) {
                 continue;
             }
-            let mut global = global.clone();
             global.ty = remap.ty(global.ty).map_err(internal)?;
             if let Some(ref mut init) = global.init {
                 *init = remap.global_expression(*init).map_err(internal)?;
@@ -193,16 +210,14 @@ impl<'a> Builder<'a> {
             if let Some(ref mut offset) = global.heap_offset {
                 *offset = remap.global_expression(*offset).map_err(internal)?;
             }
-            global.spirv_decorations = Vec::new();
-            let span = source.global_variables.get_span(handle);
+            let decorations = core::mem::take(&mut global.spirv_decorations);
+            if !decorations.is_empty() {
+                decorated.push((handle, decorations));
+            }
             let new = self.add_global(index, handle, global, span, &remap)?;
             remap.map_global(handle, new);
         }
-        for (handle, global) in source.global_variables.iter() {
-            if global.spirv_decorations.is_empty() || self.is_unused(index, handle) {
-                continue;
-            }
-            let mut decorations = global.spirv_decorations.clone();
+        for (handle, mut decorations) in decorated {
             for decoration in &mut decorations {
                 if let rglsl::SpirvDecorationOperands::Ids(ref mut ids) = decoration.operands {
                     for id in ids.iter_mut() {
@@ -230,9 +245,14 @@ impl<'a> Builder<'a> {
         Ok(remap)
     }
 
-    fn plan_overrides(&self, object: usize, source: &Module, remap: &mut Remap) -> OverridePlan {
+    fn plan_overrides(
+        &self,
+        object: usize,
+        overrides: &Arena<Override>,
+        remap: &mut Remap,
+    ) -> OverridePlan {
         let mut plan = OverridePlan::default();
-        for (handle, value) in source.overrides.iter() {
+        for (handle, value) in overrides.iter() {
             let earlier = value.id.and_then(|id| {
                 self.overrides
                     .get(&id)
@@ -259,30 +279,34 @@ impl<'a> Builder<'a> {
     fn add_overrides(
         &mut self,
         object: usize,
-        source: &Module,
+        overrides: &mut Arena<Override>,
         remap: &mut Remap,
         plan: &OverridePlan,
     ) -> Result<(), LinkError> {
         for &handle in &plan.fresh {
-            let value = source.overrides.try_get(handle).map_err(internal)?;
+            let span = overrides.get_span(handle);
+            let value = overrides.try_get_mut(handle).map_err(internal)?;
+            let id = value.id;
+            let ty = remap.ty(value.ty).map_err(internal)?;
+            let name = core::mem::take(&mut value.name);
             let new = self.module.overrides.append(
                 Override {
-                    name: value.name.clone(),
-                    id: value.id,
-                    ty: remap.ty(value.ty).map_err(internal)?,
+                    name,
+                    id,
+                    ty,
                     init: None,
                 },
-                source.overrides.get_span(handle),
+                span,
             );
             if remap.r#override(handle).map_err(internal)? != new {
                 return Err(internal("override handle out of plan"));
             }
-            if let Some(id) = value.id {
+            if let Some(id) = id {
                 self.overrides.entry(id).or_default().push((object, new));
             }
         }
         for &(handle, id) in &plan.shared {
-            let value = source.overrides.try_get(handle).map_err(internal)?;
+            let value = overrides.try_get(handle).map_err(internal)?;
             let ty = remap.ty(value.ty).map_err(internal)?;
             let same = self
                 .overrides
@@ -305,9 +329,12 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn add_types(&mut self, source: &Module, remap: &mut Remap) -> Result<(), LinkError> {
-        let forward: BTreeMap<Handle<Type>, (Handle<Type>, AddressSpace)> = source
-            .types
+    fn add_types(
+        &mut self,
+        types: &mut UniqueArena<Type>,
+        remap: &mut Remap,
+    ) -> Result<(), LinkError> {
+        let forward: BTreeMap<Handle<Type>, (Handle<Type>, AddressSpace)> = types
             .iter()
             .filter_map(|(handle, ty)| match ty.inner {
                 TypeInner::Pointer { base, space } if base.index() >= handle.index() => {
@@ -316,14 +343,26 @@ impl<'a> Builder<'a> {
                 _ => None,
             })
             .collect();
-        if !forward.is_empty() && self.unify_cycles(source, remap, &forward)? {
+        if forward.is_empty() {
+            for (handle, mut ty, span) in types.drain_all() {
+                remap.adjust_type(&mut ty).map_err(internal)?;
+                let new = self.module.types.insert(ty, span);
+                remap.map_type(handle, new);
+            }
             return Ok(());
         }
+        if self.unify_cycles(types, remap, &forward)? {
+            return Ok(());
+        }
+        let base_names: BTreeMap<Handle<Type>, Option<String>> = forward
+            .values()
+            .map(|&(base, _)| (base, types[base].name.clone()))
+            .collect();
         let mut pending = Vec::new();
-        for (handle, ty) in source.types.iter() {
-            let span = source.types.get_span(handle);
+        for (handle, mut ty, span) in types.drain_all() {
             if let Some(&(base, space)) = forward.get(&handle) {
-                let placeholder = self.placeholder_struct(&source.types[base].name);
+                let base_name = base_names.get(&base).cloned().flatten();
+                let placeholder = self.placeholder_struct(&base_name);
                 let pointer = self.module.types.insert(
                     Type {
                         name: ty.name.clone(),
@@ -335,10 +374,9 @@ impl<'a> Builder<'a> {
                     span,
                 );
                 remap.map_type(handle, pointer);
-                pending.push((pointer, ty.name.clone(), base, space));
+                pending.push((pointer, ty.name, base, space));
                 continue;
             }
-            let mut ty = ty.clone();
             remap.adjust_type(&mut ty).map_err(internal)?;
             let new = self.module.types.insert(ty, span);
             remap.map_type(handle, new);
@@ -361,25 +399,25 @@ impl<'a> Builder<'a> {
 
     fn unify_cycles(
         &mut self,
-        source: &Module,
+        types: &UniqueArena<Type>,
         remap: &mut Remap,
         forward: &BTreeMap<Handle<Type>, (Handle<Type>, AddressSpace)>,
     ) -> Result<bool, LinkError> {
         let mut candidates = Vec::with_capacity(forward.len());
         for (&pointer, &(base, space)) in forward {
-            let Some(candidate) = self.pointer_candidate(source, pointer, base, space) else {
+            let Some(candidate) = self.pointer_candidate(types, pointer, base, space) else {
                 return Ok(false);
             };
             remap.map_type(pointer, candidate);
             candidates.push((candidate, base));
         }
-        for (handle, ty) in source.types.iter() {
+        for (handle, ty) in types.iter() {
             if forward.contains_key(&handle) {
                 continue;
             }
             let mut ty = ty.clone();
             remap.adjust_type(&mut ty).map_err(internal)?;
-            let new = self.module.types.insert(ty, source.types.get_span(handle));
+            let new = self.module.types.insert(ty, types.get_span(handle));
             remap.map_type(handle, new);
         }
         for (candidate, base) in candidates {
@@ -395,13 +433,13 @@ impl<'a> Builder<'a> {
 
     fn pointer_candidate(
         &self,
-        source: &Module,
+        types: &UniqueArena<Type>,
         pointer: Handle<Type>,
         base: Handle<Type>,
         space: AddressSpace,
     ) -> Option<Handle<Type>> {
-        let name = &source.types[pointer].name;
-        let base = &source.types[base];
+        let name = &types[pointer].name;
+        let base = &types[base];
         let TypeInner::Struct { ref members, .. } = base.inner else {
             return None;
         };
@@ -456,11 +494,8 @@ impl<'a> Builder<'a> {
     ) -> Result<Handle<GlobalVariable>, LinkError> {
         let Some(symbol) = self
             .symbols
-            .get(object)
-            .and_then(|positions| positions.get(&handle))
-            .zip(self.objects.get(object))
-            .and_then(|(&position, object)| object.unit.globals.get(position))
-            .cloned()
+            .get_mut(object)
+            .and_then(|positions| positions.remove(&handle))
         else {
             return Ok(self.module.global_variables.append(global, span));
         };
@@ -468,11 +503,17 @@ impl<'a> Builder<'a> {
             Some(initializer) => Some(remap.global_expression(initializer).map_err(internal)?),
             None => global.init,
         };
-        let name = symbol.name.clone();
-        let kind = symbol.kind;
-        let implicit = symbol.implicit_sizes.clone();
-        let automatic_location = symbol.automatic_location;
-        let binding = symbol.binding;
+        let GlobalSymbol {
+            global: _,
+            name,
+            kind,
+            instance,
+            implicit_sizes: implicit,
+            automatic_location,
+            binding,
+            initializer: _,
+            on_use: _,
+        } = symbol;
         if kind == SymbolKind::Local {
             return Ok(self.module.global_variables.append(global, span));
         }
@@ -488,7 +529,7 @@ impl<'a> Builder<'a> {
                     implicit: &implicit,
                     automatic_location,
                     binding,
-                    instance: symbol.instance.clone(),
+                    instance,
                     initializer,
                 },
             );
@@ -505,7 +546,7 @@ impl<'a> Builder<'a> {
             binding,
             initializer,
         });
-        if let Some(instance) = symbol.instance {
+        if let Some(instance) = instance {
             self.instances.insert(new, instance);
         }
         Ok(new)

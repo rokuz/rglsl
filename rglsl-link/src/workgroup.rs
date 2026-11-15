@@ -1,4 +1,4 @@
-use rglsl::object::{CompiledUnit, Library, ObjectModule, ObjectTarget};
+use rglsl::object::{Library, ObjectModule, ObjectTarget};
 use rglsl::{Expression, Handle, Literal, Module, Override};
 
 use crate::error::LinkError;
@@ -70,11 +70,23 @@ fn clear_entry_slots(module: &mut Module) {
     }
 }
 
-fn specialized(object: &ObjectModule, ids: [Option<u32>; 3]) -> Option<ObjectModule> {
-    let unit = CompiledUnit::clone(object.unit.specialized.as_deref()?);
+fn specialized(
+    mut object: ObjectModule,
+    ids: [Option<u32>; 3],
+    errors: &mut Vec<LinkError>,
+) -> ObjectModule {
+    let Some(unit) = object.unit.specialized.take() else {
+        errors.push(LinkError::WorkGroupSize(
+            object
+                .name
+                .as_ref()
+                .map_or_else(|| String::from("a unit"), |name| format!("`{name}`")),
+        ));
+        return object;
+    };
     let target = match object.target {
         ObjectTarget::Stage(stage) => ObjectTarget::Stage(stage),
-        ObjectTarget::Library(ref library) => ObjectTarget::Library(Library {
+        ObjectTarget::Library(library) => ObjectTarget::Library(Library {
             stages: library.stages,
             variants: Vec::new(),
             rejections: Vec::new(),
@@ -82,9 +94,9 @@ fn specialized(object: &ObjectModule, ids: [Option<u32>; 3]) -> Option<ObjectMod
     };
     let mut twin = ObjectModule {
         format_version: object.format_version,
-        name: object.name.clone(),
+        name: object.name,
         target,
-        unit,
+        unit: *unit,
     };
     for (placeholder, id) in twin.unit.work_group_size_placeholders.into_iter().zip(ids) {
         let Some(placeholder) = placeholder else {
@@ -92,10 +104,8 @@ fn specialized(object: &ObjectModule, ids: [Option<u32>; 3]) -> Option<ObjectMod
         };
         match id {
             Some(id) => {
-                if let Ok(value) = twin.unit.module.overrides.try_get(placeholder) {
-                    let mut value = value.clone();
+                if let Ok(value) = twin.unit.module.overrides.try_get_mut(placeholder) {
                     value.id = Some(id);
-                    *twin.unit.module.overrides.get_mut(placeholder) = value;
                 }
             }
             None => {
@@ -106,7 +116,7 @@ fn specialized(object: &ObjectModule, ids: [Option<u32>; 3]) -> Option<ObjectMod
     }
     clear_entry_slots(&mut twin.unit.module);
     twin.unit.work_group_size_placeholders = [None; 3];
-    Some(twin)
+    twin
 }
 
 pub(crate) fn specialize(
@@ -125,15 +135,7 @@ pub(crate) fn specialize(
             if !needed {
                 return object;
             }
-            specialized(&object, ids).unwrap_or_else(|| {
-                errors.push(LinkError::WorkGroupSize(
-                    object
-                        .name
-                        .as_ref()
-                        .map_or_else(|| String::from("a unit"), |name| format!("`{name}`")),
-                ));
-                object
-            })
+            specialized(object, ids, errors)
         })
         .collect()
 }

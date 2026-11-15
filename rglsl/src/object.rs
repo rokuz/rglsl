@@ -102,24 +102,27 @@ impl CompiledUnit {
     }
 
     fn for_library_stage(&self, stage: ShaderStage) -> Self {
-        let mut unit = self.clone();
+        self.clone().into_library_stage(stage)
+    }
+
+    fn into_library_stage(mut self, stage: ShaderStage) -> Self {
         if stage != ShaderStage::Geometry {
-            unit.layout.streams.clear();
-            unit.layout.multi_stream = false;
+            self.layout.streams.clear();
+            self.layout.multi_stream = false;
         }
-        unit.module.ray_tracing = ray_tracing_for(stage, unit.module.ray_tracing);
-        if unit.deferred_bias && stage != ShaderStage::Fragment {
-            drop_bias(&mut unit.module);
+        self.module.ray_tracing = ray_tracing_for(stage, self.module.ray_tracing);
+        if self.deferred_bias && stage != ShaderStage::Fragment {
+            drop_bias(&mut self.module);
         }
-        unit.deferred_bias = false;
-        if let Some(ref mut specialized) = unit.specialized {
+        self.deferred_bias = false;
+        if let Some(ref mut specialized) = self.specialized {
             specialized.module.ray_tracing = ray_tracing_for(stage, specialized.module.ray_tracing);
             if specialized.deferred_bias && stage != ShaderStage::Fragment {
                 drop_bias(&mut specialized.module);
             }
             specialized.deferred_bias = false;
         }
-        unit
+        self
     }
 }
 
@@ -198,6 +201,68 @@ impl ObjectModule {
                 .iter()
                 .find(|rejection| rejection.stage == stage)
                 .cloned()
+                .unwrap_or_else(|| StageRejection {
+                    stage,
+                    file: None,
+                    line: None,
+                    message: String::from("the library is not compiled for this stage"),
+                })),
+        }
+    }
+
+    pub fn into_stage(self, stage: ShaderStage) -> Result<ObjectModule, StageRejection> {
+        let ObjectModule {
+            format_version,
+            name,
+            target,
+            unit,
+        } = self;
+        let library = match target {
+            ObjectTarget::Stage(own) if own == stage => {
+                return Ok(ObjectModule {
+                    format_version,
+                    name,
+                    target: ObjectTarget::Stage(own),
+                    unit,
+                });
+            }
+            ObjectTarget::Stage(own) => {
+                return Err(StageRejection {
+                    stage,
+                    file: None,
+                    line: None,
+                    message: alloc::format!("the module is a {} shader", own.name()),
+                });
+            }
+            ObjectTarget::Library(library) => library,
+        };
+        let Library {
+            stages,
+            variants,
+            rejections,
+        } = library;
+        let found = if stages.has(stage) {
+            Some((stages, unit))
+        } else {
+            variants
+                .into_iter()
+                .find(|variant| variant.stages.has(stage))
+                .map(|variant| (variant.stages, variant.unit))
+        };
+        match found {
+            Some((stages, unit)) => Ok(ObjectModule {
+                format_version,
+                name,
+                target: ObjectTarget::Library(Library {
+                    stages,
+                    variants: Vec::new(),
+                    rejections: Vec::new(),
+                }),
+                unit: unit.into_library_stage(stage),
+            }),
+            None => Err(rejections
+                .into_iter()
+                .find(|rejection| rejection.stage == stage)
                 .unwrap_or_else(|| StageRejection {
                     stage,
                     file: None,
