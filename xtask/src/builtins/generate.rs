@@ -264,7 +264,7 @@ impl<'a> Shader<'a> {
         format!("rglslOut.{name}")
     }
 
-    fn opaque(&mut self, ty: &Type, index: usize) -> String {
+    fn opaque(&mut self, ty: &Type, index: usize, image_format: Option<&'static str>) -> String {
         let name = format!("p{index}");
         let spelled = self.spell(ty);
         let Some(opaque) = ty.as_opaque() else {
@@ -281,13 +281,13 @@ impl<'a> Shader<'a> {
                 "layout(input_attachment_index = 0, set = 0, binding = {binding}) uniform {spelled} {name};"
             ),
             OpaqueKind::Image => {
-                let format = match opaque.sampled {
+                let format = image_format.unwrap_or(match opaque.sampled {
                     SampledType::Float => "r32f",
                     SampledType::Int => "r32i",
                     SampledType::Uint => "r32ui",
                     SampledType::Int64 => "r64i",
                     SampledType::Uint64 => "r64ui",
-                };
+                });
                 format!("layout(set = 0, binding = {binding}, {format}) uniform {spelled} {name};")
             }
             OpaqueKind::TileImage => {
@@ -400,7 +400,7 @@ fn memory_tail(name: &str, count: usize) -> Option<Vec<&'static str>> {
             return (count == 4).then(|| {
                 vec![
                     "gl_ScopeWorkgroup",
-                    "gl_ScopeWorkgroup",
+                    SCOPE,
                     storage,
                     "gl_SemanticsAcquireRelease",
                 ]
@@ -493,6 +493,17 @@ fn function_shader<'a>(
             .globals
             .push(String::from("layout(pixel_interlock_ordered) in;"));
     }
+    let image_format = if name.starts_with("imageAtomic") {
+        if function.return_type == Type::vector(Scalar::Float16, 2) {
+            Some("rg16f")
+        } else if function.return_type == Type::vector(Scalar::Float16, 4) {
+            Some("rgba16f")
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let memory_first = name.starts_with("atomic") && !name.starts_with("atomicCounter");
     let mut arguments = Vec::new();
     for (position, parameter) in function.parameters.iter().enumerate() {
@@ -505,7 +516,7 @@ fn function_shader<'a>(
             continue;
         }
         if ty.is_opaque() {
-            arguments.push(shader.opaque(ty, position));
+            arguments.push(shader.opaque(ty, position, image_format));
             continue;
         }
         if position == 0 && memory_first {

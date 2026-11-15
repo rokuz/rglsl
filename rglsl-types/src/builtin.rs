@@ -492,10 +492,8 @@ impl BuiltIn {
             Self::LayerPerViewNV => access(NONE, PRE_RASTERIZATION, array(I32, Any)),
             Self::RayInvocationId | Self::NumRayInvocations => input(RAY_TRACING, UVEC3),
             Self::InstanceCustomData | Self::GeometryIndex | Self::InstanceId => input(HIT, INDEX),
-            Self::WorldRayOrigin
-            | Self::WorldRayDirection
-            | Self::ObjectRayOrigin
-            | Self::ObjectRayDirection => input(TRAVERSAL, VEC3),
+            Self::WorldRayOrigin | Self::WorldRayDirection => input(TRAVERSAL, VEC3),
+            Self::ObjectRayOrigin | Self::ObjectRayDirection => input(HIT, VEC3),
             Self::RayTmin | Self::RayTCurrentMax | Self::CurrentRayTime => input(TRAVERSAL, F32),
             Self::IncomingRayFlags | Self::CullMask => input(TRAVERSAL, U32),
             Self::ObjectToWorld | Self::WorldToObject => input(HIT, MAT4X3),

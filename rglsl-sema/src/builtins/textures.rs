@@ -258,6 +258,16 @@ pub(crate) fn image_atomic(emitter: &mut Emitter<'_>) {
             | AtomicOperation::Exchange => {
                 common(emitter, data.clone(), with(base.clone(), single));
                 common(emitter, data.clone(), scoped(single));
+                if float {
+                    for size in [2, 4] {
+                        let vector = Type::vector(Scalar::Float16, size);
+                        common(
+                            emitter,
+                            vector.clone(),
+                            with(base.clone(), core::slice::from_ref(&vector)),
+                        );
+                    }
+                }
             }
             AtomicOperation::And | AtomicOperation::Or | AtomicOperation::Xor => {
                 if !float {

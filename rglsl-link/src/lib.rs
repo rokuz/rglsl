@@ -146,14 +146,15 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
                 if !object.is_library() {
                     return Some(object);
                 }
-                match object.for_stage(stage) {
+                let library = object
+                    .name
+                    .as_deref()
+                    .map_or_else(|| String::from("(unnamed)"), |name| format!("`{name}`"));
+                match object.into_stage(stage) {
                     Ok(specialized) => Some(specialized),
                     Err(rejection) => {
                         errors.push(LinkError::LibraryStage {
-                            library: object.name.as_ref().map_or_else(
-                                || String::from("(unnamed)"),
-                                |name| format!("`{name}`"),
-                            ),
+                            library,
                             stage,
                             file: rejection.file,
                             line: rejection.line,
@@ -177,8 +178,7 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
         return Err(errors.into());
     }
     let debug_info = merge_debug_info(&mut specialized);
-    let objects = specialized.as_slice();
-    let mains: Vec<usize> = objects
+    let mains: Vec<usize> = specialized
         .iter()
         .enumerate()
         .filter(|(_, object)| object.has_entry_point())
@@ -195,35 +195,45 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
             None
         }
     };
-    let table = SymbolTable::build(objects, &mut errors);
+    let table = SymbolTable::build(&specialized, &mut errors);
     let order = match main {
-        Some(main) => calls::order(objects, main, &table, options.keep_uncalled, &mut errors),
+        Some(main) => calls::order(
+            &specialized,
+            main,
+            &table,
+            options.keep_uncalled,
+            &mut errors,
+        ),
         None => Vec::new(),
     };
     let (Some(main), Some(stage), true) = (main, stage, errors.is_empty()) else {
         return Err(errors.into());
     };
-    let unused = merge::unused_on_use_globals(objects, &order, main);
-    let mut builder = Builder::new(objects, unused);
+    let multi_object = specialized.len() > 1;
+    let mut geometry_errors = Vec::new();
+    if stage == ShaderStage::Geometry
+        && let Some(primitive) = specialized
+            .iter()
+            .find_map(|object| object.unit.layout.input_primitive)
+    {
+        check_geometry_inputs(&specialized, primitive, &mut geometry_errors);
+    }
+    let unused = merge::unused_on_use_globals(&specialized, &order, main);
+    let mut builder = Builder::new(specialized, unused);
     builder.add_objects()?;
     builder.add_functions(&table, &order)?;
     let mut entry = builder.add_entry_point(&table, main)?;
     builder.merge_module_flags()?;
     let layout = layout::apply(
         stage,
-        objects,
+        &builder.objects,
         &mut builder.module,
         &mut entry,
         options.limits.max_transform_feedback_interleaved_components,
         &mut builder.errors,
     );
     geometry_interface(&builder, &layout, &mut entry)?;
-    if let Some(primitive) = layout
-        .input_primitive
-        .filter(|_| stage == ShaderStage::Geometry)
-    {
-        check_geometry_inputs(objects, primitive, &mut builder.errors);
-    }
+    builder.errors.extend(geometry_errors);
     let push_constants: Vec<_> = builder
         .module
         .global_variables
@@ -248,7 +258,7 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     }
     module.entry_points.push(entry);
     module.debug_info = debug_info;
-    if objects.len() > 1 {
+    if multi_object {
         if options.auto_map_locations {
             interface::assign_locations(&mut module, &globals, stage);
         }

@@ -977,7 +977,10 @@ impl<'a> Session<'a> {
             self.not_generated();
             return Ok(EXIT_COMPILE);
         }
-        let mut linked = match rglsl_link::link_objects_staged(&objects, &self.link_options()) {
+        let mut linked = match rglsl_link::link_program_staged(
+            rglsl_link::group_objects_by_stage(objects),
+            &self.link_options(),
+        ) {
             Ok(linked) => linked,
             Err(errors) => {
                 let lines: Vec<String> = errors

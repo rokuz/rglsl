@@ -281,7 +281,10 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
         auto_map_bindings: options.auto_map_bindings,
         ..rglsl_link::Options::default()
     };
-    let linked = match rglsl_link::link_objects(&objects, &link_options) {
+    let linked = match rglsl_link::link_program(
+        rglsl_link::group_objects_by_stage(objects),
+        &link_options,
+    ) {
         Ok(linked) => linked,
         Err(errors) => {
             for error in errors.iter() {
@@ -366,7 +369,7 @@ fn compile_through_object(
         auto_map_bindings: options.auto_map_bindings,
         ..rglsl_link::Options::default()
     };
-    let linked = match rglsl_link::link_objects(&[object], &link_options) {
+    let linked = match rglsl_link::link_program(vec![vec![object]], &link_options) {
         Ok(linked) => linked,
         Err(errors) => {
             for error in errors.iter() {

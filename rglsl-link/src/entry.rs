@@ -1,5 +1,5 @@
 use rglsl::object::{BindingAssignment, PathStep};
-use rglsl::{AddressSpace, Binding, EntryPoint, Expression, GlobalVariable, Handle, Type};
+use rglsl::{Binding, EntryPoint, Expression, Function, GlobalVariable, Handle, Type};
 
 use crate::calls::{Node, SymbolTable, callees};
 use crate::error::{LinkError, internal};
@@ -16,7 +16,7 @@ pub(crate) struct Candidate<'c> {
     pub initializer: Option<Handle<Expression>>,
 }
 
-impl Builder<'_> {
+impl Builder {
     pub(crate) fn merge_global(
         &mut self,
         position: usize,
@@ -162,20 +162,33 @@ impl Builder<'_> {
     pub fn add_functions(&mut self, table: &SymbolTable, order: &[Node]) -> Result<(), LinkError> {
         for &node in order {
             let (index, handle) = node;
-            let object = self.object(index)?;
-            let library = object.is_library();
-            let mut function = object
-                .unit
-                .module
-                .functions
-                .try_get(handle)
-                .map_err(internal)?
-                .clone();
+            let (library, span, mut function) = {
+                let object = self
+                    .objects
+                    .get_mut(index)
+                    .ok_or_else(|| internal("object index"))?;
+                let library = object.is_library();
+                let span = object.unit.module.functions.get_span(handle);
+                let slot = object
+                    .unit
+                    .module
+                    .functions
+                    .try_get_mut(handle)
+                    .map_err(internal)?;
+                let linkage = slot.linkage;
+                let function = core::mem::replace(
+                    slot,
+                    Function {
+                        linkage,
+                        ..Function::default()
+                    },
+                );
+                (library, span, function)
+            };
             self.map_callees(table, index, &function.body)?;
             self.remap(index)?
                 .adjust_function(&mut function)
                 .map_err(internal)?;
-            let span = object.unit.module.functions.get_span(handle);
             let new = self.module.functions.append(function, span);
             if library {
                 self.library_functions.push(new);
@@ -195,7 +208,7 @@ impl Builder<'_> {
         callees(body, &mut found);
         for callee in found {
             let target = table
-                .resolve(self.objects, (index, callee))
+                .resolve(&self.objects, (index, callee))
                 .map_err(LinkError::MissingDefinition)?;
             let new = *self
                 .functions
@@ -214,16 +227,18 @@ impl Builder<'_> {
         table: &SymbolTable,
         main: usize,
     ) -> Result<EntryPoint, LinkError> {
+        let interface = self.interface()?;
         let entry = self
-            .object(main)?
+            .objects
+            .get_mut(main)
+            .ok_or_else(|| internal("object index"))?
             .unit
             .module
             .entry_points
-            .first()
-            .ok_or(LinkError::MissingEntryPoint)?
-            .clone();
+            .drain(..)
+            .next()
+            .ok_or(LinkError::MissingEntryPoint)?;
         self.map_callees(table, main, &entry.function.body)?;
-        let interface = self.interface()?;
         let remap = self.remap(main)?;
         let global = |handle: Handle<GlobalVariable>| remap.global(handle).map_err(internal);
         let used = |&handle: &Handle<GlobalVariable>| !self.is_unused(main, handle);
@@ -338,24 +353,29 @@ impl Builder<'_> {
         })
     }
 
-    fn interface(&self) -> Result<Vec<Handle<GlobalVariable>>, LinkError> {
+    fn interface(&mut self) -> Result<Vec<Handle<GlobalVariable>>, LinkError> {
         let mut interface = Vec::new();
-        for (index, object) in self.objects.iter().enumerate() {
-            let remap = self.remap(index)?;
-            let declared: Vec<Handle<GlobalVariable>> =
-                match object.unit.module.entry_points.first() {
-                    Some(entry) => entry.interface.clone(),
-                    None => object
-                        .unit
-                        .module
-                        .global_variables
-                        .iter()
-                        .filter(|&(_, global)| {
-                            matches!(global.space, AddressSpace::Input | AddressSpace::Output)
-                        })
-                        .map(|(handle, _)| handle)
-                        .collect(),
-                };
+        for index in 0..self.objects.len() {
+            let declared = match self
+                .objects
+                .get_mut(index)
+                .ok_or_else(|| internal("object index"))?
+                .unit
+                .module
+                .entry_points
+                .first_mut()
+            {
+                Some(entry) => core::mem::take(&mut entry.interface),
+                None => self
+                    .library_io
+                    .get_mut(index)
+                    .map(core::mem::take)
+                    .unwrap_or_default(),
+            };
+            let remap = self
+                .remaps
+                .get(index)
+                .ok_or_else(|| internal("missing module remap"))?;
             for handle in declared {
                 if self.is_unused(index, handle) {
                     continue;
@@ -376,43 +396,57 @@ impl Builder<'_> {
                 .iter()
                 .all(|object| object.unit.module.legacy_buffer_blocks);
         for index in 0..self.objects.len() {
-            let rglsl::Module {
-                types: _,
-                special_types: ref incoming,
-                constants: _,
-                overrides: _,
-                global_variables: _,
-                global_expressions: _,
-                functions: _,
-                entry_points: _,
+            let (
+                incoming,
                 vulkan_memory_model,
                 descriptor_heap,
                 shader_64bit_indexing,
                 variable_pointers,
                 replicated_composites,
-                legacy_buffer_blocks: _,
                 ray_tracing,
-                ref spirv_requirements,
-                ref source_extensions,
-                debug_info: _,
-                span_map: _,
-            } = self.object(index)?.unit.module;
-            let remap = self.remap(index)?;
-            let mut special = self.module.special_types.clone();
-            if special.ray_vertex_return.is_none() {
-                special.ray_vertex_return = incoming
+                spirv_requirements,
+                source_extensions,
+            ) = {
+                let source = &mut self
+                    .objects
+                    .get_mut(index)
+                    .ok_or_else(|| internal("object index"))?
+                    .unit
+                    .module;
+                (
+                    core::mem::take(&mut source.special_types),
+                    source.vulkan_memory_model,
+                    source.descriptor_heap,
+                    source.shader_64bit_indexing,
+                    source.variable_pointers,
+                    source.replicated_composites,
+                    source.ray_tracing,
+                    core::mem::take(&mut source.spirv_requirements),
+                    core::mem::take(&mut source.source_extensions),
+                )
+            };
+            let remap = self
+                .remaps
+                .get(index)
+                .ok_or_else(|| internal("missing module remap"))?;
+            if self.module.special_types.ray_vertex_return.is_none() {
+                self.module.special_types.ray_vertex_return = incoming
                     .ray_vertex_return
                     .map(|ty| remap.ty(ty))
                     .transpose()
                     .map_err(internal)?;
             }
-            for (kind, &ty) in &incoming.predeclared_types {
-                if !special.predeclared_types.contains_key(kind) {
+            for (kind, ty) in incoming.predeclared_types {
+                if !self
+                    .module
+                    .special_types
+                    .predeclared_types
+                    .contains_key(&kind)
+                {
                     let ty = remap.ty(ty).map_err(internal)?;
-                    special.predeclared_types.insert(kind.clone(), ty);
+                    self.module.special_types.predeclared_types.insert(kind, ty);
                 }
             }
-            self.module.special_types = special;
             self.module.vulkan_memory_model |= vulkan_memory_model;
             self.module.descriptor_heap |= descriptor_heap;
             self.module.shader_64bit_indexing |= shader_64bit_indexing;
@@ -420,19 +454,17 @@ impl Builder<'_> {
             self.module.replicated_composites |= replicated_composites;
             self.module.ray_tracing |= ray_tracing;
             for extension in source_extensions {
-                if let Err(position) = self.module.source_extensions.binary_search(extension) {
-                    self.module
-                        .source_extensions
-                        .insert(position, extension.clone());
+                if let Err(position) = self.module.source_extensions.binary_search(&extension) {
+                    self.module.source_extensions.insert(position, extension);
                 }
             }
             let merged = &mut self.module.spirv_requirements;
-            for extension in &spirv_requirements.extensions {
-                if !merged.extensions.contains(extension) {
-                    merged.extensions.push(extension.clone());
+            for extension in spirv_requirements.extensions {
+                if !merged.extensions.contains(&extension) {
+                    merged.extensions.push(extension);
                 }
             }
-            for &capability in &spirv_requirements.capabilities {
+            for capability in spirv_requirements.capabilities {
                 if !merged.capabilities.contains(&capability) {
                     merged.capabilities.push(capability);
                 }

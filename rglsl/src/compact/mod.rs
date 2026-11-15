@@ -575,6 +575,10 @@ impl<'module> ModuleTracer<'module> {
                 self.types_used.insert(base);
             }
         }
+        let pending_dep = |size: crate::CooperativeSize| match size {
+            crate::CooperativeSize::Constant(_) => None,
+            crate::CooperativeSize::Pending(handle) => self.module.overrides[handle].init,
+        };
         let mut max_dep = Vec::with_capacity(self.module.types.len());
         let mut previous = None;
         for (_handle, ty) in self.module.types.iter() {
@@ -586,14 +590,29 @@ impl<'module> ModuleTracer<'module> {
                         crate::ArraySize::Constant(_) | crate::ArraySize::Dynamic => None,
                         crate::ArraySize::Pending(handle) => self.module.overrides[handle].init,
                     },
+                    crate::TypeInner::CooperativeMatrix {
+                        columns,
+                        rows,
+                        scope,
+                        ..
+                    } => [columns, rows, scope]
+                        .into_iter()
+                        .filter_map(pending_dep)
+                        .max(),
+                    crate::TypeInner::LongVector { size, .. } => pending_dep(size),
+                    crate::TypeInner::TensorLayout {
+                        dimensions,
+                        clamp_mode,
+                    } => [Some(dimensions), clamp_mode]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(pending_dep)
+                        .max(),
+                    crate::TypeInner::TensorView { dimensions, .. } => pending_dep(dimensions),
+                    crate::TypeInner::Tensor { rank, .. } => pending_dep(rank),
                     crate::TypeInner::Scalar(_)
                     | crate::TypeInner::Vector { .. }
                     | crate::TypeInner::Matrix { .. }
-                    | crate::TypeInner::CooperativeMatrix { .. }
-                    | crate::TypeInner::LongVector { .. }
-                    | crate::TypeInner::TensorLayout { .. }
-                    | crate::TypeInner::TensorView { .. }
-                    | crate::TypeInner::Tensor { .. }
                     | crate::TypeInner::Atomic(_)
                     | crate::TypeInner::Pointer { .. }
                     | crate::TypeInner::ValuePointer { .. }
@@ -1024,6 +1043,87 @@ fn array_length_override_mutual() -> crate::TestResult {
 
     let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
 
+    assert!(validator.validate(&module).is_ok());
+    compact(&mut module, KeepUnused::Yes)?;
+    assert!(validator.validate(&module).is_ok());
+    Ok(())
+}
+
+#[test]
+fn cooperative_size_override() -> crate::TestResult {
+    use crate::Expression as Ex;
+    use crate::Scalar as Sc;
+    use crate::TypeInner as Ti;
+
+    let nowhere = crate::Span::default();
+    let mut module = crate::Module::default();
+    let ty_u32 = module.types.insert(
+        crate::Type {
+            name: None,
+            inner: Ti::Scalar(Sc::U32),
+        },
+        nowhere,
+    );
+    let ty_i32 = module.types.insert(
+        crate::Type {
+            name: None,
+            inner: Ti::Scalar(Sc::I32),
+        },
+        nowhere,
+    );
+    let first_override = module.overrides.append(
+        crate::Override {
+            name: None,
+            id: Some(41),
+            ty: ty_i32,
+            init: None,
+        },
+        nowhere,
+    );
+    let first_override_expr = module
+        .global_expressions
+        .append(Ex::Override(first_override), nowhere);
+    let zero = module
+        .global_expressions
+        .append(Ex::ZeroValue(ty_i32), nowhere);
+    let sum = module.global_expressions.append(
+        Ex::Binary {
+            op: crate::BinaryOperator::Add,
+            left: first_override_expr,
+            right: zero,
+        },
+        nowhere,
+    );
+    let init = module.global_expressions.append(
+        Ex::As {
+            expr: sum,
+            kind: crate::ScalarKind::Uint,
+            convert: None,
+        },
+        nowhere,
+    );
+    let second_override = module.overrides.append(
+        crate::Override {
+            name: None,
+            id: Some(42),
+            ty: ty_u32,
+            init: Some(init),
+        },
+        nowhere,
+    );
+    let _ty_long_vector = module.types.insert(
+        crate::Type {
+            name: Some("cooperative_vector".to_string()),
+            inner: Ti::LongVector {
+                size: crate::CooperativeSize::Pending(second_override),
+                scalar: Sc::F16,
+                class: crate::LongVectorClass::CooperativeNv,
+            },
+        },
+        nowhere,
+    );
+
+    let mut validator = super::valid::Validator::new(super::valid::ValidationFlags::all());
     assert!(validator.validate(&module).is_ok());
     compact(&mut module, KeepUnused::Yes)?;
     assert!(validator.validate(&module).is_ok());

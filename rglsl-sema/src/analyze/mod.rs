@@ -329,6 +329,7 @@ pub(crate) struct Operand {
     pub writeonly: bool,
     pub non_uniform: bool,
     pub through_reference: bool,
+    pub image_format: Option<crate::layout_id::LayoutId>,
 }
 
 impl Operand {
@@ -348,6 +349,7 @@ impl Operand {
             writeonly: false,
             non_uniform: false,
             through_reference: false,
+            image_format: None,
         }
     }
 

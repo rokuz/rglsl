@@ -1404,11 +1404,19 @@ impl BlockContext<'_> {
         let crate::ImageClass::Storage { format, .. } = class else {
             return Err(Error::Validation("Invalid image class"));
         };
-        let scalar = format.into();
-        let scalar_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
-        let pointer_type_id = self.get_pointer_type_id(scalar_type_id, spirv::StorageClass::Image);
+        let numeric = super::atomic::texel_numeric_type(format);
+        let (scalar, vector) = match numeric {
+            NumericType::Scalar(scalar) => (scalar, false),
+            NumericType::Vector { scalar, .. } => (scalar, true),
+            NumericType::Matrix { scalar, .. } => (scalar, false),
+        };
+        if vector && scalar == crate::Scalar::F16 {
+            self.writer.require(&feature::ATOMIC_FLOAT16_VECTOR)?;
+        }
+        let pointee_type_id = self.get_numeric_type_id(numeric);
+        let pointer_type_id = self.get_pointer_type_id(pointee_type_id, spirv::StorageClass::Image);
         let signed = scalar.kind == crate::ScalarKind::Sint;
-        if scalar.width == 8 {
+        if scalar.width == 8 && scalar.kind != crate::ScalarKind::Float {
             self.writer
                 .require_any("64 bit image atomics", &[spirv::Capability::Int64Atomics])?;
         }
@@ -1424,6 +1432,13 @@ impl BlockContext<'_> {
         ));
 
         let op = match fun {
+            crate::AtomicFunction::Add
+            | crate::AtomicFunction::Min
+            | crate::AtomicFunction::Max
+                if scalar.kind == crate::ScalarKind::Float =>
+            {
+                self.writer.float_atomic(fun, scalar, vector)?
+            }
             crate::AtomicFunction::Add => spirv::Op::AtomicIAdd,
             crate::AtomicFunction::Subtract => spirv::Op::AtomicISub,
             crate::AtomicFunction::And => spirv::Op::AtomicAnd,
@@ -1433,7 +1448,8 @@ impl BlockContext<'_> {
             crate::AtomicFunction::Min => spirv::Op::AtomicUMin,
             crate::AtomicFunction::Max if signed => spirv::Op::AtomicSMax,
             crate::AtomicFunction::Max => spirv::Op::AtomicUMax,
-            crate::AtomicFunction::Exchange { .. } => {
+            crate::AtomicFunction::Exchange { compare: None } => spirv::Op::AtomicExchange,
+            crate::AtomicFunction::Exchange { compare: Some(_) } => {
                 return Err(Error::Validation("Exchange atomics are not supported yet"));
             }
         };

@@ -12,8 +12,8 @@ use rglsl_types::extension::Extension;
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::kind::{
-    AmdShaderBallot, Barrier, BuiltinKind, Collective, Gather, GatherOffsets, Pure, Relation,
-    Sample, Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
+    AmdShaderBallot, AtomicOperation, Barrier, BuiltinKind, Collective, Gather, GatherOffsets,
+    Pure, Relation, Sample, Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
 };
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
 use crate::constant::{Constant, Value, fold_builtin};
@@ -840,7 +840,7 @@ impl Analyzer<'_> {
                 self.error(argument.span, DiagnosticKind::TensorArgumentNotAVariable);
                 failed = true;
             }
-            if !is_builtin && !self.image_formats_match(operand, parameter) {
+            if !is_builtin && !Self::image_formats_match(operand, parameter) {
                 self.error(
                     first_argument,
                     DiagnosticKind::InvalidQualifier {
@@ -849,7 +849,7 @@ impl Analyzer<'_> {
                     },
                 );
                 failed = true;
-            } else if !is_builtin && self.image_format_dropped(operand, parameter) {
+            } else if !is_builtin && Self::image_format_dropped(operand, parameter) {
                 self.error(
                     first_argument,
                     DiagnosticKind::InvalidQualifier {
@@ -1238,13 +1238,12 @@ impl Analyzer<'_> {
         }
     }
 
-    fn image_format_dropped(&self, operand: &Operand, parameter: &Parameter) -> bool {
-        let (argument, formal) = self.image_formats(operand, parameter);
+    fn image_format_dropped(operand: &Operand, parameter: &Parameter) -> bool {
+        let (argument, formal) = Self::image_formats(operand, parameter);
         argument.is_some() && formal.is_none()
     }
 
     fn image_formats(
-        &self,
         operand: &Operand,
         parameter: &Parameter,
     ) -> (Option<LayoutId>, Option<LayoutId>) {
@@ -1255,15 +1254,10 @@ impl Analyzer<'_> {
         {
             return (None, None);
         }
-        let argument = operand
-            .root
-            .and_then(|id| self.symbol(id))
-            .and_then(|symbol| symbol.variable())
-            .and_then(|variable| variable.qualifiers.image_format());
-        (argument, parameter.qualifiers.image_format())
+        (operand.image_format, parameter.qualifiers.image_format())
     }
 
-    fn image_formats_match(&self, operand: &Operand, parameter: &Parameter) -> bool {
+    fn image_formats_match(operand: &Operand, parameter: &Parameter) -> bool {
         if !operand
             .ty
             .as_opaque()
@@ -1271,7 +1265,7 @@ impl Analyzer<'_> {
         {
             return true;
         }
-        let (argument, formal) = self.image_formats(operand, parameter);
+        let (argument, formal) = Self::image_formats(operand, parameter);
         argument == formal
             || (parameter
                 .qualifiers
@@ -1384,51 +1378,64 @@ impl Analyzer<'_> {
                             .contains(QualifierFlags::WRITEONLY),
                     )
                 });
-            let integer_image = first
-                .and_then(|operand| operand.ty.as_opaque())
-                .is_some_and(|opaque| opaque.sampled != crate::types::SampledType::Float);
-            let has_atomic_format = first
-                .and_then(|operand| operand.root)
-                .and_then(|id| self.symbol(id))
-                .and_then(|symbol| symbol.variable())
-                .is_some_and(|variable| {
-                    [
-                        LayoutId::R32i,
-                        LayoutId::R32ui,
-                        LayoutId::R64i,
-                        LayoutId::R64ui,
-                    ]
-                    .into_iter()
-                    .any(|format| variable.qualifiers.has_layout(format))
-                });
             let atomic = image == ImageAccess::Atomic;
-            if atomic && integer_image && !has_atomic_format {
-                return invalid(self, span, "the image format must be r32i or r32ui");
-            }
-            let wide = first
-                .and_then(|operand| operand.ty.as_opaque())
-                .map(|opaque| opaque.sampled)
-                .and_then(|sampled| match sampled {
-                    crate::types::SampledType::Int64 => Some(LayoutId::R64i),
-                    crate::types::SampledType::Uint64 => Some(LayoutId::R64ui),
-                    _ => None,
-                });
-            if let Some(format) = wide.filter(|_| atomic) {
-                let matches = first
-                    .and_then(|operand| operand.root)
-                    .and_then(|id| self.symbol(id))
-                    .and_then(|symbol| symbol.variable())
-                    .is_some_and(|variable| variable.qualifiers.has_layout(format));
-                if !matches {
-                    return invalid(
-                        self,
-                        span,
-                        if format == LayoutId::R64i {
-                            "only supported on image with format r64i"
+            if atomic
+                && let Some((first_operand, opaque)) =
+                    first.and_then(|operand| Some((operand, operand.ty.as_opaque()?)))
+            {
+                let value_index = if opaque.multisample { 3 } else { 2 };
+                let value_ty = (!matches!(
+                    kind,
+                    BuiltinKind::Texture(Texture::ImageAtomic(AtomicOperation::Load))
+                ))
+                .then(|| operands.get(value_index).map(|operand| &operand.ty))
+                .flatten();
+                match opaque.sampled {
+                    crate::types::SampledType::Float => {
+                        let expected = if value_ty
+                            .is_some_and(|ty| *ty == Type::vector(Scalar::Float16, 2))
+                        {
+                            Some((LayoutId::Rg16f, "the image format must be rg16f"))
+                        } else if value_ty.is_some_and(|ty| *ty == Type::vector(Scalar::Float16, 4))
+                        {
+                            Some((LayoutId::Rgba16f, "the image format must be rgba16f"))
                         } else {
-                            "only supported on image with format r64ui"
-                        },
-                    );
+                            None
+                        };
+                        if let Some((expected, reason)) = expected
+                            && first_operand.image_format != Some(expected)
+                        {
+                            return invalid(self, span, reason);
+                        }
+                    }
+                    crate::types::SampledType::Int
+                    | crate::types::SampledType::Uint
+                    | crate::types::SampledType::Int64
+                    | crate::types::SampledType::Uint64 => {
+                        let has_atomic_format = first_operand.image_format.is_some_and(|format| {
+                            matches!(
+                                format,
+                                LayoutId::R32i | LayoutId::R32ui | LayoutId::R64i | LayoutId::R64ui
+                            )
+                        });
+                        if !has_atomic_format {
+                            return invalid(self, span, "the image format must be r32i or r32ui");
+                        }
+                        if opaque.sampled == crate::types::SampledType::Int64
+                            && first_operand.image_format != Some(LayoutId::R64i)
+                        {
+                            return invalid(self, span, "only supported on image with format r64i");
+                        }
+                        if opaque.sampled == crate::types::SampledType::Uint64
+                            && first_operand.image_format != Some(LayoutId::R64ui)
+                        {
+                            return invalid(
+                                self,
+                                span,
+                                "only supported on image with format r64ui",
+                            );
+                        }
+                    }
                 }
             }
             if let Some((readonly, writeonly)) = qualifiers {
