@@ -125,6 +125,22 @@ impl Case {
 
 const TARGET_SHADER: &str = "spv.targetVulkan.vert";
 
+fn enhanced(shader: &'static str) -> Case {
+    Case::new(
+        shader,
+        &[
+            "--enhanced-msgs",
+            "-V",
+            "--target-env",
+            "vulkan1.2",
+            "--amb",
+            "--aml",
+            shader,
+        ],
+        &[shader],
+    )
+}
+
 fn removed(name: &'static str, options: &[&'static str], why: &'static str) -> Case {
     let mut args = vec!["-V"];
     args.extend_from_slice(options);
@@ -978,6 +994,32 @@ fn cases() -> Vec<Case> {
                 "spv.debuginfo.glsl.frag",
             ],
             &["spv.debuginfo.glsl.frag"],
+        ),
+        enhanced("enhanced.0.frag"),
+        enhanced("enhanced.1.frag"),
+        enhanced("enhanced.2.frag"),
+        Case::new(
+            "enhanced-link",
+            &[
+                "--enhanced-msgs",
+                "-V",
+                "--target-env",
+                "vulkan1.2",
+                "--amb",
+                "--aml",
+                "enhanced.4.vert",
+                "enhanced.4.frag",
+            ],
+            &["enhanced.4.vert", "enhanced.4.frag"],
+        )
+        .exits(
+            0,
+            "glslang matches the output and input block VS_OUT by name and rejects their different locations; rglsl matches stage interfaces by location",
+        ),
+        Case::new(
+            "enhanced-compile-errors",
+            &["--enhanced-msgs", "-V", "samplerlessTextureFunctions.frag"],
+            &["samplerlessTextureFunctions.frag"],
         ),
         Case::new("link-option", &["--link", TARGET_SHADER], &[TARGET_SHADER]),
         removed("O", &["-O"], "rglsl does not optimize yet"),

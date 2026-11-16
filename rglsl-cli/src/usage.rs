@@ -74,6 +74,8 @@ Options:
   --discard-is-terminate            map GLSL discard to OpTerminateInvocation
                                     (SPIR-V 1.6 and later; discard is OpKill
                                     before)
+  --enhanced-msgs                   print more readable error messages: only
+                                    the first error of each compilation
   --error-column                    display the column of the error along the
                                     line
   --hlsl-offsets                    allow block offsets to follow HLSL rules

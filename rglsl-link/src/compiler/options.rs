@@ -107,6 +107,7 @@ pub struct CompileOptions {
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
     pub no_storage_format: bool,
+    pub enhanced_messages: bool,
 }
 
 impl CompileOptions {
@@ -143,6 +144,7 @@ impl CompileOptions {
             nan_clamp: false,
             discard_is_terminate: false,
             no_storage_format: false,
+            enhanced_messages: false,
         }
     }
 

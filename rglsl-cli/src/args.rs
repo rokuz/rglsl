@@ -52,6 +52,7 @@ pub struct Options {
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
     pub no_storage_format: bool,
+    pub enhanced_messages: bool,
     pub shifts: Vec<Shift>,
     pub resource_sets: Vec<ResourceSet>,
     pub quiet: bool,
@@ -396,7 +397,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         }
         "no-storage-format" | "nsf" => options.no_storage_format = true,
         "discard-is-terminate" => options.discard_is_terminate = true,
-        "enhanced-msgs" => return Err(Exit::unsupported(&argument, "enhanced messages")),
+        "enhanced-msgs" => options.enhanced_messages = true,
         "dump-builtin-symbols" => {
             return Err(Exit::unsupported(
                 &argument,

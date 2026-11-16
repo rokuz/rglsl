@@ -234,6 +234,7 @@ impl<'a> Session<'a> {
         compile.nan_clamp = options.nan_clamp;
         compile.discard_is_terminate = options.discard_is_terminate;
         compile.no_storage_format = options.no_storage_format;
+        compile.enhanced_messages = options.enhanced_messages;
         compile
     }
 

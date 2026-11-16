@@ -371,3 +371,19 @@ fn depfiles_escape_like_make() {
         "frag.spv: a\\ b.frag $$x.h\n"
     );
 }
+
+#[test]
+fn enhanced_messages_keep_the_first_error() {
+    let source = "#version 450\nvoid main() {\n    float x = missing;\n    float y = absent;\n}\n";
+    let mut options = CompileOptions::new("two.comp", ShaderStage::Compute);
+    let Err(all) = compile(source, &options) else {
+        panic!("the shader compiled");
+    };
+    assert!(all.errors() >= 2, "{all}");
+    options.enhanced_messages = true;
+    let Err(first) = compile(source, &options) else {
+        panic!("the shader compiled");
+    };
+    assert_eq!(first.errors(), 1);
+    assert_eq!(first.list.first(), all.list.first());
+}

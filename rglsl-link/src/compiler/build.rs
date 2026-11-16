@@ -112,7 +112,10 @@ impl Compiler {
                 stamp(&mut object, options);
                 Ok((object, info))
             }
-            Err(error) => Err(object_diagnostics(&error, source, options)),
+            Err(error) => Err(enhanced(
+                object_diagnostics(&error, source, options),
+                options,
+            )),
         };
         (result, files_read)
     }
@@ -291,6 +294,7 @@ impl Compiler {
                         });
                     }
                 }
+                report.diagnostics = enhanced(report.diagnostics, compile_options);
                 report.compiled = report.diagnostics.is_empty();
                 let compiled = report.compiled;
                 build.units.push(report);
@@ -537,6 +541,13 @@ fn stage_output(
             )
         }),
     }
+}
+
+fn enhanced(mut diagnostics: Diagnostics, options: &CompileOptions) -> Diagnostics {
+    if options.enhanced_messages {
+        diagnostics.list.truncate(1);
+    }
+    diagnostics
 }
 
 fn stamp(object: &mut ObjectModule, options: &CompileOptions) {

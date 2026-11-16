@@ -564,6 +564,15 @@ pub unsafe extern "C" fn rglsl_program_options_set_suppress_warnings(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_enhanced_messages(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.enhanced_messages = enabled)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_set_invert_y(
     options: *mut CompileOptions,
     enabled: bool,
