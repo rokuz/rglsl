@@ -17,7 +17,7 @@ Adding a GLSL extension: `EXTENSIONS.md`.
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format; the compiler API (`src/compiler`: `CompileOptions`, `ProgramOptions`, `Compiler::{compile_unit, preprocess, build}`, glslang-style diagnostics, depfiles) and glslang's reflection (`src/reflect`) |
 | `rglsl-dis/` | text forms of SPIR-V: glslang's `-H` disassembly (`src/glslang`), SPIRV-Tools' `spirv-dis` form (`src/standard`, `--spirv-dis`) and hexadecimal text (`-x`, `--vn`) |
 | `tests/link/` | link tests: modules, `expect`, optional single-file `reference.*` for exec |
-| `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics) |
+| `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics, code generation options); an optional `options` file holds command-line options for glslang and rglsl |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0) |
 | `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) and the GLSL extension registry (`src/extension.rs`: one row per extension) |
