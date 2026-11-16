@@ -95,6 +95,8 @@ fn specialized(
     let mut twin = ObjectModule {
         format_version: object.format_version,
         name: object.name,
+        entry_point: object.entry_point,
+        processes: object.processes,
         target,
         unit: *unit,
     };

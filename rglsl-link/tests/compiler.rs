@@ -209,7 +209,9 @@ fn a_shared_compiler_compiles_like_the_free_functions_on_several_threads() -> Te
 #[test]
 fn a_preamble_comes_before_the_source() -> TestResult {
     let mut options = program_options();
-    options.preamble = Some(String::from("#define VALUE 0.5\n"));
+    options
+        .macros
+        .push(rglsl_link::Macro::Text(String::from("#define VALUE 0.5")));
     let program = compile_and_link(
         &[(
             "#version 450
@@ -222,4 +224,150 @@ void main() { color = vec4(VALUE); }
     )?;
     assert_eq!(program.stages.len(), 1);
     Ok(())
+}
+
+const VERTEX: &str = "#version 450
+layout(location = 0) in vec3 position;
+layout(location = 0) out vec2 coordinate;
+void main() {
+    coordinate = position.xy;
+    gl_Position = vec4(position, 1.0);
+}
+";
+
+const SAMPLED: &str = "#version 450
+layout(location = 0) in vec2 coordinate;
+layout(location = 0) out vec4 color;
+layout(binding = 1) uniform sampler2D image;
+void main() {
+    color = texture(image, coordinate);
+}
+";
+
+fn glsl(text: &str, options: CompileOptions) -> rglsl_link::Input<'_> {
+    rglsl_link::Input {
+        source: rglsl_link::Source::Glsl(text),
+        options,
+    }
+}
+
+#[test]
+fn builds_programs_like_the_command_line() -> TestResult {
+    let compiler = Compiler::new();
+    let mut fragment =
+        CompileOptions::new("shader.frag", ShaderStage::Fragment).target_vulkan(1, 2);
+    fragment.entry_point = Some(String::from("shade"));
+    if let Some(base) = fragment
+        .binding_shifts
+        .base
+        .get_mut(rglsl_link::ResourceClass::CombinedSampler.index())
+    {
+        *base = 4;
+    }
+    let vertex = CompileOptions::new("shader.vert", ShaderStage::Vertex).target_vulkan(1, 2);
+    let processes = fragment.processes();
+    assert!(processes.contains(&String::from("entry-point shade")));
+    assert!(processes.contains(&String::from("shift-combined-sampler-binding 4")));
+    assert!(processes.contains(&String::from("target-env vulkan1.2")));
+    let options = ProgramOptions {
+        spirv_version: (1, 5),
+        reflection: Some(rglsl_link::reflect::Options::default()),
+        ..ProgramOptions::default()
+    };
+    let build = compiler.build(
+        &[glsl(VERTEX, vertex), glsl(SAMPLED, fragment)],
+        &options,
+        &mut |_| None,
+    );
+    assert!(
+        !build.compile_failed() && !build.link_failed(),
+        "{}",
+        build.link
+    );
+    assert_eq!(build.units.len(), 2);
+    assert_eq!(build.stages.len(), 2);
+    let fragment = build.stages.get(1).ok_or("no fragment stage")?;
+    assert_eq!(fragment.stage, ShaderStage::Fragment);
+    assert_eq!(fragment.entry_point, "shade");
+    assert!(fragment.result.is_ok());
+    let reflection = build.reflection.ok_or("no reflection")?;
+    assert!(reflection.contains("image:"), "{reflection}");
+    assert!(reflection.contains("binding 5"), "{reflection}");
+    Ok(())
+}
+
+#[test]
+fn single_programs_report_link_errors_per_stage() {
+    let build = Compiler::new().build(
+        &[glsl(
+            "#version 450\nvoid helper();\nvoid main() { helper(); }\n",
+            CompileOptions::new("missing.comp", ShaderStage::Compute),
+        )],
+        &ProgramOptions::default(),
+        &mut |_| None,
+    );
+    assert!(!build.compile_failed());
+    assert!(build.link_failed());
+    assert!(
+        build
+            .link
+            .to_string()
+            .starts_with("ERROR: Linking compute stage: "),
+        "{}",
+        build.link
+    );
+}
+
+#[test]
+fn diagnostics_format_as_glslang() {
+    let source = "#version 450\nvoid main() {\n    float x = missing;\n}\n";
+    let Err(diagnostics) = compile(
+        source,
+        &CompileOptions::new("bad.comp", ShaderStage::Compute),
+    ) else {
+        panic!("the shader compiled");
+    };
+    let plain = diagnostics.format(rglsl_link::DiagnosticFormat::default());
+    assert!(plain.starts_with("ERROR: bad.comp:3: "), "{plain}");
+    let unnamed = diagnostics.info_log(rglsl_link::DiagnosticFormat {
+        unnamed_source: true,
+        ..rglsl_link::DiagnosticFormat::default()
+    });
+    assert!(unnamed.starts_with("ERROR: 0:3: "), "{unnamed}");
+    assert!(unnamed.ends_with("ERROR: 1 compilation errors.  No code generated.\n\n"));
+}
+
+#[test]
+fn preprocesses_with_the_preamble_and_lists_includes() {
+    let options = CompileOptions::new("main.vert", ShaderStage::Vertex)
+        .define("SIZE", "3")
+        .include("common.h", "float common_value;\n");
+    let preprocessed = Compiler::new().preprocess(
+        "#version 450\n#extension GL_GOOGLE_include_directive : require\n#include \"common.h\"\nfloat values[SIZE];\n",
+        &options,
+        &mut |_| None,
+    );
+    assert!(
+        preprocessed.diagnostics.is_empty(),
+        "{}",
+        preprocessed.diagnostics
+    );
+    assert!(
+        preprocessed.text.contains("float values[3];"),
+        "{}",
+        preprocessed.text
+    );
+    assert!(preprocessed.text.contains("float common_value;"));
+    assert_eq!(preprocessed.files_read, ["./common.h"]);
+}
+
+#[test]
+fn depfiles_escape_like_make() {
+    assert_eq!(
+        rglsl_link::depfile(
+            &[String::from("frag.spv")],
+            &[String::from("a b.frag"), String::from("$x.h")]
+        ),
+        "frag.spv: a\\ b.frag $$x.h\n"
+    );
 }

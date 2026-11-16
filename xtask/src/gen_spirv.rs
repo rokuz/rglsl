@@ -79,9 +79,9 @@ pub fn run(root: &Path, glslang_dir: Option<&Path>, check: bool) -> Result<i32> 
             rustfmt(root, &backend::generate(&grammars, &symbols)?)?,
         ),
         (
-            root.join("rglsl-cli")
+            root.join("rglsl-dis")
                 .join("src")
-                .join("disassemble")
+                .join("glslang")
                 .join("glslang_tables.rs"),
             disassembler::generate(&disassembler::Sources {
                 doc: &doc,

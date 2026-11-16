@@ -11,6 +11,7 @@ mod interface;
 mod layout;
 mod merge;
 mod program;
+pub mod reflect;
 mod unify;
 mod workgroup;
 
@@ -22,13 +23,16 @@ use rglsl::{
 };
 
 pub use build::{
-    CompileError, CompiledObject, InvalidModule, compile_object, compile_program, finish_program,
+    CompileError, CompiledObject, InvalidModule, check_program, compile_object, compile_program,
+    finish_program,
 };
 pub use cache::BuiltinCache;
 pub use compiler::{
-    CompileOptions, Compiler, Diagnostic, Diagnostics, Program, ProgramOptions, Severity,
-    StageBinary, compile, compile_and_link, compile_with_includer, link_spirv, read_object,
-    write_object,
+    Build, CompileOptions, Compiled, Compiler, DebugInfo, Diagnostic, DiagnosticFormat,
+    Diagnostics, Input, Macro, Origin, Preprocessed, Program, ProgramOptions, Resolve, STAGE_ORDER,
+    Severity, Source, StageBinary, StageOutput, UnitReport, compile, compile_and_link,
+    compile_with_includer, depfile, glslang_stage_name, link_spirv, read_object,
+    spirv_version_of_vulkan, write_object,
 };
 pub use error::{LinkError, LinkErrors, SourcePosition};
 pub use file::{FileError, decode, encode};
@@ -38,7 +42,9 @@ pub use program::{
 };
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
+pub use rglsl::proc::{BindingShifts, ResourceClass};
 pub use rglsl_pp::{IncludeKind, IncludeRequest, ResolvedInclude};
+pub use rglsl_sema::{Configuration, ResourceLimits};
 
 use calls::SymbolTable;
 use merge::{Builder, MergedGlobal};
@@ -67,6 +73,7 @@ pub struct Linked {
     pub module: Module,
     pub info: ModuleInfo,
     pub warnings: Vec<String>,
+    pub processes: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -75,6 +82,8 @@ pub(crate) struct Merged {
     pub module: Module,
     pub globals: Vec<MergedGlobal>,
     pub warnings: Vec<String>,
+    pub processes: Vec<String>,
+    pub entry_point: Option<String>,
 }
 
 pub fn link(objects: &[ObjectModule], options: &Options) -> Result<Linked, LinkErrors> {
@@ -229,6 +238,10 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     {
         check_geometry_inputs(&specialized, primitive, &mut geometry_errors);
     }
+    let (processes, entry_point) = specialized
+        .get(main)
+        .map(|object| (object.processes.clone(), object.entry_point.clone()))
+        .unwrap_or_default();
     let unused = merge::unused_on_use_globals(&specialized, &order, main);
     let mut builder = Builder::new(specialized, unused);
     builder.add_objects()?;
@@ -297,6 +310,8 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
         module,
         globals,
         warnings,
+        processes,
+        entry_point,
     })
 }
 
@@ -461,14 +476,28 @@ pub(crate) fn finish(merged: Merged) -> Result<Linked, LinkErrors> {
         mut module,
         globals: _,
         warnings,
+        processes,
+        entry_point,
     } = merged;
     let info = finish_module(&mut module, None)?;
+    rename_entry_point(&mut module, entry_point.as_deref());
     Ok(Linked {
         stage,
         module,
         info,
         warnings,
+        processes,
     })
+}
+
+pub fn rename_entry_point(module: &mut Module, name: Option<&str>) {
+    let Some(name) = name else {
+        return;
+    };
+    for entry in &mut module.entry_points {
+        name.clone_into(&mut entry.name);
+        entry.function.name = Some(name.to_owned());
+    }
 }
 
 pub(crate) fn finish_module(

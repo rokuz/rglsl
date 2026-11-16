@@ -1,4 +1,4 @@
-FORMAT_VERSION 33
+FORMAT_VERSION 34
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -112,7 +112,7 @@ NamedExpressions ef68b8e46f50368c
 NonMaxU32 199642326e90593c
 NonUniform 7e7e6f71d7d2ee0f
 NonUniformExpressions 651f697f46ed4fd6
-ObjectModule 5dee667ec83db863
+ObjectModule 24c9b7be853a68b6
 ObjectTarget f561cfc18b160d9c
 Override 05b77bb9c5845bca
 ParameterQualifier 68637599b8e15cdc

@@ -11,7 +11,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 33;
+pub const FORMAT_VERSION: u32 = 34;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -19,6 +19,8 @@ pub const FORMAT_VERSION: u32 = 33;
 pub struct ObjectModule {
     pub format_version: u32,
     pub name: Option<String>,
+    pub entry_point: Option<String>,
+    pub processes: Vec<String>,
     pub target: ObjectTarget,
     pub unit: CompiledUnit,
 }
@@ -131,6 +133,8 @@ impl ObjectModule {
         Self {
             format_version: FORMAT_VERSION,
             name: None,
+            entry_point: None,
+            processes: Vec::new(),
             target,
             unit,
         }
@@ -189,6 +193,8 @@ impl ObjectModule {
             Some((stages, unit)) => Ok(ObjectModule {
                 format_version: self.format_version,
                 name: self.name.clone(),
+                entry_point: self.entry_point.clone(),
+                processes: self.processes.clone(),
                 target: ObjectTarget::Library(Library {
                     stages,
                     variants: Vec::new(),
@@ -214,6 +220,8 @@ impl ObjectModule {
         let ObjectModule {
             format_version,
             name,
+            entry_point,
+            processes,
             target,
             unit,
         } = self;
@@ -222,6 +230,8 @@ impl ObjectModule {
                 return Ok(ObjectModule {
                     format_version,
                     name,
+                    entry_point,
+                    processes,
                     target: ObjectTarget::Stage(own),
                     unit,
                 });
@@ -253,6 +263,8 @@ impl ObjectModule {
             Some((stages, unit)) => Ok(ObjectModule {
                 format_version,
                 name,
+                entry_point,
+                processes,
                 target: ObjectTarget::Library(Library {
                     stages,
                     variants: Vec::new(),

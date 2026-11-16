@@ -6,7 +6,15 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Result, anyhow};
-use rglsl_cli::disassemble::{disassemble, disassemble_bytes};
+use rglsl_dis::{Disassembly, Form};
+
+fn disassemble_bytes(words: &[u32]) -> Disassembly {
+    rglsl_dis::disassemble(words, Form::Glslang)
+}
+
+fn disassemble(words: &[u32]) -> String {
+    disassemble_bytes(words).to_text()
+}
 
 use super::{Case, Environment, Run, spirv_words};
 use crate::corpus::{self, Corpus};

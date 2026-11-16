@@ -8,10 +8,10 @@ use std::ptr;
 
 use rglsl_c::{
     Blob, CompileOptions, Compiler, Diagnostics, IncludeResult, Object, Program, ProgramOptions,
-    RGLSL_ABI_VERSION, RGLSL_RESULT_COMPILE_FAILED, RGLSL_RESULT_INVALID_ARGUMENT,
-    RGLSL_RESULT_INVALID_OBJECT, RGLSL_RESULT_LINK_FAILED, RGLSL_RESULT_OK, RGLSL_SEVERITY_ERROR,
-    RGLSL_SEVERITY_WARNING, RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX,
-    ResultCode, Stage,
+    RGLSL_ABI_VERSION, RGLSL_DEBUG_INFO_LINES, RGLSL_RESULT_COMPILE_FAILED,
+    RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_OBJECT, RGLSL_RESULT_LINK_FAILED,
+    RGLSL_RESULT_OK, RGLSL_SEVERITY_ERROR, RGLSL_SEVERITY_WARNING, RGLSL_STAGE_COMPUTE,
+    RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX, ResultCode, Stage,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -375,7 +375,12 @@ fn handles_are_reusable() -> TestResult {
         unsafe {
             rglsl_c::rglsl_program_options_set_auto_map_locations(program_options.pointer, true)
         },
-        unsafe { rglsl_c::rglsl_program_options_set_debug_info(program_options.pointer, true) },
+        unsafe {
+            rglsl_c::rglsl_program_options_set_debug_info(
+                program_options.pointer,
+                RGLSL_DEBUG_INFO_LINES,
+            )
+        },
         unsafe { rglsl_c::rglsl_program_options_set_spirv_version(program_options.pointer, 1, 3) },
     ];
     assert_eq!(calls, [RGLSL_RESULT_OK; 4]);
@@ -572,20 +577,26 @@ fn invalid_arguments_are_rejected() -> TestResult {
         unsafe {
             rglsl_c::rglsl_compile_options_add_define(ptr::null_mut(), c"A".as_ptr(), c"1".as_ptr())
         },
-        unsafe { rglsl_c::rglsl_compile_options_set_debug_info(ptr::null_mut(), true) },
+        unsafe {
+            rglsl_c::rglsl_compile_options_set_debug_info(ptr::null_mut(), RGLSL_DEBUG_INFO_LINES)
+        },
         unsafe { rglsl_c::rglsl_compile_options_set_auto_map_bindings(ptr::null_mut(), true) },
         unsafe { rglsl_c::rglsl_compile_options_set_auto_map_locations(ptr::null_mut(), true) },
         unsafe {
             rglsl_c::rglsl_compile_options_set_includer(ptr::null_mut(), None, ptr::null_mut())
         },
         unsafe { rglsl_c::rglsl_program_options_set_spirv_version(ptr::null_mut(), 1, 0) },
-        unsafe { rglsl_c::rglsl_program_options_set_debug_info(ptr::null_mut(), true) },
+        unsafe {
+            rglsl_c::rglsl_program_options_set_debug_info(ptr::null_mut(), RGLSL_DEBUG_INFO_LINES)
+        },
         unsafe { rglsl_c::rglsl_include_result_set(ptr::null_mut(), ptr::null(), c"".as_ptr()) },
     ];
     assert_eq!(codes, [RGLSL_RESULT_INVALID_ARGUMENT; 15]);
     let codes = [
         unsafe { rglsl_c::rglsl_compile_options_set_spirv_version(options.pointer, 1, 6) },
-        unsafe { rglsl_c::rglsl_compile_options_set_debug_info(options.pointer, true) },
+        unsafe {
+            rglsl_c::rglsl_compile_options_set_debug_info(options.pointer, RGLSL_DEBUG_INFO_LINES)
+        },
         unsafe { rglsl_c::rglsl_compile_options_set_auto_map_bindings(options.pointer, true) },
         unsafe { rglsl_c::rglsl_compile_options_set_auto_map_locations(options.pointer, true) },
     ];

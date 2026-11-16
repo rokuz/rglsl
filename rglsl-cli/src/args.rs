@@ -1,5 +1,4 @@
-use rglsl::ShaderStage;
-use rglsl::proc::ResourceClass;
+use rglsl_link::{DebugInfo, Macro, ResourceClass, ShaderStage};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_USAGE: i32 = 1;
@@ -7,45 +6,9 @@ pub const EXIT_COMPILE: i32 = 2;
 pub const EXIT_LINK: i32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Debug {
-    Lines,
-    NonSemantic,
-    NonSemanticSource,
-    Strip,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionDump {
     Full,
     Bare,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Macro {
-    Define(String),
-    Undefine(String),
-    Text(String),
-}
-
-impl Macro {
-    pub fn preamble(macros: &[Self]) -> String {
-        let mut text = String::new();
-        for edit in macros {
-            match *edit {
-                Self::Define(ref definition) => {
-                    text.push_str("#define ");
-                    text.push_str(&definition.replacen('=', " ", 1));
-                }
-                Self::Undefine(ref name) => {
-                    text.push_str("#undef ");
-                    text.push_str(name);
-                }
-                Self::Text(ref line) => text.push_str(line),
-            }
-            text.push('\n');
-        }
-        text
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +43,7 @@ pub struct Options {
     pub include_dirs: Vec<String>,
     pub vulkan: Option<(u8, u8)>,
     pub spirv_version: Option<(u8, u8)>,
-    pub debug: Option<Debug>,
+    pub debug: DebugInfo,
     pub auto_map_bindings: bool,
     pub auto_map_locations: bool,
     pub keep_uncalled: bool,
@@ -98,7 +61,7 @@ pub struct Options {
     pub dump_config: bool,
     pub config_file: Option<String>,
     pub reflect: bool,
-    pub reflect_options: crate::reflect::Options,
+    pub reflect_options: rglsl_link::reflect::Options,
     pub files: Vec<String>,
     pub command_line: String,
 }
@@ -529,16 +492,16 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
         },
         'g' => {
             options.debug = match rest.chars().next() {
-                Some('0') => Some(Debug::Strip),
+                Some('0') => DebugInfo::Stripped,
                 Some('N') => {
                     return Err(Exit::unsupported(
                         &argument,
                         "debug information with the source file name only",
                     ));
                 }
-                Some('V') if rest.chars().nth(1) == Some('S') => Some(Debug::NonSemanticSource),
-                Some('V') => Some(Debug::NonSemantic),
-                _ => Some(Debug::Lines),
+                Some('V') if rest.chars().nth(1) == Some('S') => DebugInfo::NonSemanticWithSource,
+                Some('V') => DebugInfo::NonSemantic,
+                _ => DebugInfo::Lines,
             };
         }
         'h' => return Err(Exit::Usage),

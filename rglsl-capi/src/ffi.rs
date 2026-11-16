@@ -3,8 +3,8 @@ use std::ptr;
 use std::slice;
 
 use crate::api::{
-    self, Blob, CompileOptions, Compiler, Diagnostics, IncludeResult, Location, Object, Program,
-    ProgramOptions, ResultCode, Severity, Stage,
+    self, Blob, CompileOptions, Compiler, DebugInfo, Diagnostics, Disassembly, IncludeResult,
+    Limits, Location, Object, Program, ProgramOptions, Resource, ResultCode, Severity, Stage,
 };
 
 pub type IncludeCallback = Option<
@@ -68,6 +68,29 @@ unsafe fn handles<'a, T>(pointers: *const *const T, count: usize) -> Option<Vec<
         pointers
             .iter()
             .map(|&pointer| unsafe { pointer.as_ref() })
+            .collect(),
+    )
+}
+
+unsafe fn word_slice<'a>(words: *const u32, count: usize) -> Option<&'a [u32]> {
+    if words.is_null() {
+        return (count == 0).then_some(&[]);
+    }
+    Some(unsafe { slice::from_raw_parts(words, count) })
+}
+
+unsafe fn strings<'a>(
+    pointers: *const *const c_char,
+    count: usize,
+) -> Option<Vec<Option<&'a CStr>>> {
+    if pointers.is_null() {
+        return (count == 0).then(Vec::new);
+    }
+    let pointers = unsafe { slice::from_raw_parts(pointers, count) };
+    Some(
+        pointers
+            .iter()
+            .map(|&pointer| unsafe { c_str(pointer) })
             .collect(),
     )
 }
@@ -170,10 +193,10 @@ pub unsafe extern "C" fn rglsl_compile_options_set_auto_map_locations(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_set_debug_info(
     options: *mut CompileOptions,
-    enabled: bool,
+    level: DebugInfo,
 ) -> ResultCode {
     let options = unsafe { options.as_mut() };
-    api::compile_options_set_flags(options, |options| options.debug_info = enabled)
+    api::compile_options_set_debug_info(options, level)
 }
 
 #[unsafe(no_mangle)]
@@ -330,10 +353,10 @@ pub unsafe extern "C" fn rglsl_program_options_set_auto_map_locations(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_program_options_set_debug_info(
     options: *mut ProgramOptions,
-    enabled: bool,
+    level: DebugInfo,
 ) -> ResultCode {
     let options = unsafe { options.as_mut() };
-    api::program_options_set_flags(options, |options| options.debug_info = enabled)
+    api::program_options_set_debug_info(options, level)
 }
 
 #[unsafe(no_mangle)]
@@ -448,4 +471,445 @@ pub unsafe extern "C" fn rglsl_diagnostics_location(
         column: unsafe { column.as_mut() },
     };
     api::diagnostics_location(diagnostics, index, location)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_file_system_includes(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.file_system_includes = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_keep_uncalled(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.keep_uncalled = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_hlsl_offsets(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.hlsl_offsets = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_export_functions(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.export_functions = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_suppress_warnings(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.suppress_warnings = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_link(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.link = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_generate_spirv(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.generate_spirv = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_keep_uncalled(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.keep_uncalled = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_export_functions(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.export_functions = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_suppress_warnings(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.suppress_warnings = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_add_undefine(
+    options: *mut CompileOptions,
+    name: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let name = unsafe { c_str(name) };
+    api::compile_options_add_undefine(options, name)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_add_preamble_text(
+    options: *mut CompileOptions,
+    text: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let text = unsafe { c_str(text) };
+    api::compile_options_add_preamble_text(options, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_add_resource_set_binding(
+    options: *mut CompileOptions,
+    value: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let value = unsafe { c_str(value) };
+    api::compile_options_add_resource_set_binding(options, value)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_entry_point(
+    options: *mut CompileOptions,
+    name: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let name = unsafe { c_str(name) };
+    api::compile_options_set_entry_point(options, name)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_vulkan_version(
+    options: *mut CompileOptions,
+    major: u32,
+    minor: u32,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_vulkan_version(options, major, minor)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_binding_shift(
+    options: *mut CompileOptions,
+    resource: Resource,
+    base: u32,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_binding_shift(options, resource, None, base)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_binding_shift_for_set(
+    options: *mut CompileOptions,
+    resource: Resource,
+    set: u32,
+    base: u32,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_binding_shift(options, resource, Some(set), base)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_limits(
+    options: *mut CompileOptions,
+    limits: *const Limits,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let limits = unsafe { limits.as_ref() };
+    api::compile_options_set_limits(options, limits)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_binding_shift(
+    options: *mut ProgramOptions,
+    stage: Stage,
+    resource: Resource,
+    base: u32,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_binding_shift(options, stage, resource, None, base)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_binding_shift_for_set(
+    options: *mut ProgramOptions,
+    stage: Stage,
+    resource: Resource,
+    set: u32,
+    base: u32,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_binding_shift(options, stage, resource, Some(set), base)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_command_line(
+    options: *mut ProgramOptions,
+    command_line: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let command_line = unsafe { c_str(command_line) };
+    api::program_options_set_text(options, command_line, "command line", |options, value| {
+        options.command_line = value;
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_working_directory(
+    options: *mut ProgramOptions,
+    directory: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let directory = unsafe { c_str(directory) };
+    api::program_options_set_text(options, directory, "directory", |options, value| {
+        options.working_directory = value;
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_limits(
+    options: *mut ProgramOptions,
+    limits: *const Limits,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let limits = unsafe { limits.as_ref() };
+    api::program_options_set_limits(options, limits)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_reflection(
+    options: *mut ProgramOptions,
+    enabled: bool,
+    flags: u32,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_reflection(options, enabled, flags)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_create(limits: *mut *mut Limits) -> ResultCode {
+    api::limits_create(unsafe { limits.as_mut() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_decode(
+    data: *const u8,
+    size: usize,
+    limits: *mut *mut Limits,
+) -> ResultCode {
+    let data = unsafe { bytes(data, size) };
+    let limits = unsafe { limits.as_mut() };
+    api::limits_decode(data, limits)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_destroy(limits: *mut Limits) {
+    api::destroy(unsafe { take(limits) });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_set(
+    limits: *mut Limits,
+    name: *const c_char,
+    value: i32,
+) -> ResultCode {
+    let limits = unsafe { limits.as_mut() };
+    let name = unsafe { c_str(name) };
+    api::limits_set(limits, name, value)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_get(
+    limits: *const Limits,
+    name: *const c_char,
+    value: *mut i32,
+) -> ResultCode {
+    let limits = unsafe { limits.as_ref() };
+    let name = unsafe { c_str(name) };
+    let value = unsafe { value.as_mut() };
+    api::limits_get(limits, name, value)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_message_count(limits: *const Limits) -> usize {
+    api::limits_message_count(unsafe { limits.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_message(
+    limits: *const Limits,
+    index: usize,
+) -> *const c_char {
+    api::limits_message(unsafe { limits.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_limits_configuration(
+    limits: *const Limits,
+    text: *mut *mut Blob,
+) -> ResultCode {
+    let limits = unsafe { limits.as_ref() };
+    let text = unsafe { text.as_mut() };
+    api::limits_configuration(limits, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_object_file_count(object: *const Object) -> usize {
+    api::object_file_count(unsafe { object.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_object_file(object: *const Object, index: usize) -> *const c_char {
+    api::object_file(unsafe { object.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compiler_preprocess(
+    compiler: *const Compiler,
+    source: *const c_char,
+    options: *const CompileOptions,
+    text: *mut *mut Blob,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let compiler = unsafe { compiler.as_ref() };
+    let source = unsafe { c_str(source) };
+    let options = unsafe { options.as_ref() };
+    let text = unsafe { text.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    api::compiler_preprocess(compiler, source, options, text, diagnostics)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compiler_build(
+    compiler: *const Compiler,
+    sources: *const *const c_char,
+    options: *const *const CompileOptions,
+    count: usize,
+    program_options: *const ProgramOptions,
+    program: *mut *mut Program,
+    diagnostics: *mut *mut Diagnostics,
+) -> ResultCode {
+    let compiler = unsafe { compiler.as_ref() };
+    let sources = unsafe { strings(sources, count) };
+    let options = unsafe { handles(options, count) };
+    let program_options = unsafe { program_options.as_ref() };
+    let program = unsafe { program.as_mut() };
+    let diagnostics = unsafe { diagnostics.as_mut() };
+    api::compiler_build(
+        compiler,
+        sources,
+        options,
+        program_options,
+        program,
+        diagnostics,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_reflection(program: *const Program) -> *const c_char {
+    api::program_reflection(unsafe { program.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_file_count(program: *const Program) -> usize {
+    api::program_file_count(unsafe { program.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_file(
+    program: *const Program,
+    index: usize,
+) -> *const c_char {
+    api::program_file(unsafe { program.as_ref() }, index)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_blob_text(blob: *const Blob) -> *const c_char {
+    api::blob_text(unsafe { blob.as_ref() })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_disassemble(
+    words: *const u32,
+    word_count: usize,
+    form: Disassembly,
+    text: *mut *mut Blob,
+) -> ResultCode {
+    let words = unsafe { word_slice(words, word_count) };
+    let text = unsafe { text.as_mut() };
+    api::disassemble(words, form, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_hex_text(
+    words: *const u32,
+    word_count: usize,
+    variable_name: *const c_char,
+    text: *mut *mut Blob,
+) -> ResultCode {
+    let words = unsafe { word_slice(words, word_count) };
+    let variable_name = unsafe { c_str(variable_name) };
+    let text = unsafe { text.as_mut() };
+    api::hex_text(words, variable_name, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_depfile(
+    targets: *const *const c_char,
+    target_count: usize,
+    dependencies: *const *const c_char,
+    dependency_count: usize,
+    text: *mut *mut Blob,
+) -> ResultCode {
+    let targets = unsafe { strings(targets, target_count) };
+    let dependencies = unsafe { strings(dependencies, dependency_count) };
+    let text = unsafe { text.as_mut() };
+    api::depfile(targets, dependencies, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_diagnostics_format(
+    diagnostics: *const Diagnostics,
+    flags: u32,
+    text: *mut *mut Blob,
+) -> ResultCode {
+    let diagnostics = unsafe { diagnostics.as_ref() };
+    let text = unsafe { text.as_mut() };
+    api::diagnostics_format(diagnostics, flags, false, text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_diagnostics_info_log(
+    diagnostics: *const Diagnostics,
+    flags: u32,
+    text: *mut *mut Blob,
+) -> ResultCode {
+    let diagnostics = unsafe { diagnostics.as_ref() };
+    let text = unsafe { text.as_mut() };
+    api::diagnostics_format(diagnostics, flags, true, text)
 }

@@ -5,7 +5,31 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define RGLSL_ABI_VERSION 1
+#define RGLSL_FORMAT_ERROR_COLUMN 1
+
+#define RGLSL_FORMAT_ABSOLUTE_PATH (1 << 1)
+
+#define RGLSL_FORMAT_UNNAMED_SOURCE (1 << 2)
+
+#define RGLSL_REFLECT_STRICT_ARRAY_SUFFIX 1
+
+#define RGLSL_REFLECT_BASIC_ARRAY_SUFFIX (1 << 1)
+
+#define RGLSL_REFLECT_INTERMEDIATE_IO (1 << 2)
+
+#define RGLSL_REFLECT_SEPARATE_BUFFERS (1 << 3)
+
+#define RGLSL_REFLECT_ALL_BLOCK_VARIABLES (1 << 4)
+
+#define RGLSL_REFLECT_UNWRAP_IO_BLOCKS (1 << 5)
+
+#define RGLSL_REFLECT_ALL_IO_VARIABLES (1 << 6)
+
+#define RGLSL_REFLECT_SHARED_STD140_UBO (1 << 7)
+
+#define RGLSL_REFLECT_SHARED_STD140_SSBO (1 << 8)
+
+#define RGLSL_ABI_VERSION 2
 
 typedef struct rglsl_blob rglsl_blob;
 
@@ -17,6 +41,8 @@ typedef struct rglsl_diagnostics rglsl_diagnostics;
 
 typedef struct rglsl_include_result rglsl_include_result;
 
+typedef struct rglsl_limits rglsl_limits;
+
 typedef struct rglsl_object rglsl_object;
 
 typedef struct rglsl_program rglsl_program;
@@ -27,6 +53,8 @@ typedef uint32_t rglsl_result;
 
 typedef uint32_t rglsl_stage;
 
+typedef uint32_t rglsl_debug_info;
+
 typedef void (*rglsl_include_callback)(void *user_data,
                                        const char *requested,
                                        bool system,
@@ -34,6 +62,10 @@ typedef void (*rglsl_include_callback)(void *user_data,
                                        rglsl_include_result *result);
 
 typedef uint32_t rglsl_severity;
+
+typedef uint32_t rglsl_resource;
+
+typedef uint32_t rglsl_disassembly;
 
 #define RGLSL_RESULT_OK 0
 
@@ -46,6 +78,8 @@ typedef uint32_t rglsl_severity;
 #define RGLSL_RESULT_INVALID_OBJECT 4
 
 #define RGLSL_RESULT_INTERNAL_ERROR 5
+
+#define RGLSL_RESULT_INVALID_SPIRV 6
 
 #define RGLSL_STAGE_VERTEX 0
 
@@ -78,6 +112,32 @@ typedef uint32_t rglsl_severity;
 #define RGLSL_SEVERITY_ERROR 0
 
 #define RGLSL_SEVERITY_WARNING 1
+
+#define RGLSL_DEBUG_INFO_NAMES 0
+
+#define RGLSL_DEBUG_INFO_STRIPPED 1
+
+#define RGLSL_DEBUG_INFO_LINES 2
+
+#define RGLSL_DEBUG_INFO_NON_SEMANTIC 3
+
+#define RGLSL_DEBUG_INFO_NON_SEMANTIC_SOURCE 4
+
+#define RGLSL_RESOURCE_SAMPLER 0
+
+#define RGLSL_RESOURCE_TEXTURE 1
+
+#define RGLSL_RESOURCE_IMAGE 2
+
+#define RGLSL_RESOURCE_UNIFORM_BUFFER 3
+
+#define RGLSL_RESOURCE_STORAGE_BUFFER 4
+
+#define RGLSL_RESOURCE_COMBINED_SAMPLER 5
+
+#define RGLSL_RESOURCE_ACCELERATION_STRUCTURE 6
+
+#define RGLSL_DISASSEMBLY_GLSLANG 0
 
 #ifdef __cplusplus
 extern "C" {
@@ -113,7 +173,8 @@ rglsl_result rglsl_compile_options_set_auto_map_bindings(rglsl_compile_options *
 rglsl_result rglsl_compile_options_set_auto_map_locations(rglsl_compile_options *options,
                                                           bool enabled);
 
-rglsl_result rglsl_compile_options_set_debug_info(rglsl_compile_options *options, bool enabled);
+rglsl_result rglsl_compile_options_set_debug_info(rglsl_compile_options *options,
+                                                  rglsl_debug_info level);
 
 rglsl_result rglsl_compile_options_set_spirv_version(rglsl_compile_options *options,
                                                      uint32_t major,
@@ -169,7 +230,8 @@ rglsl_result rglsl_program_options_set_auto_map_bindings(rglsl_program_options *
 rglsl_result rglsl_program_options_set_auto_map_locations(rglsl_program_options *options,
                                                           bool enabled);
 
-rglsl_result rglsl_program_options_set_debug_info(rglsl_program_options *options, bool enabled);
+rglsl_result rglsl_program_options_set_debug_info(rglsl_program_options *options,
+                                                  rglsl_debug_info level);
 
 rglsl_result rglsl_program_options_set_spirv_version(rglsl_program_options *options,
                                                      uint32_t major,
@@ -210,6 +272,148 @@ rglsl_result rglsl_diagnostics_location(const rglsl_diagnostics *diagnostics,
                                         const char **file,
                                         uint32_t *line,
                                         uint32_t *column);
+
+rglsl_result rglsl_compile_options_set_file_system_includes(rglsl_compile_options *options,
+                                                            bool enabled);
+
+rglsl_result rglsl_compile_options_set_keep_uncalled(rglsl_compile_options *options, bool enabled);
+
+rglsl_result rglsl_compile_options_set_hlsl_offsets(rglsl_compile_options *options, bool enabled);
+
+rglsl_result rglsl_compile_options_set_export_functions(rglsl_compile_options *options,
+                                                        bool enabled);
+
+rglsl_result rglsl_compile_options_set_suppress_warnings(rglsl_compile_options *options,
+                                                         bool enabled);
+
+rglsl_result rglsl_program_options_set_link(rglsl_program_options *options, bool enabled);
+
+rglsl_result rglsl_program_options_set_generate_spirv(rglsl_program_options *options, bool enabled);
+
+rglsl_result rglsl_program_options_set_keep_uncalled(rglsl_program_options *options, bool enabled);
+
+rglsl_result rglsl_program_options_set_export_functions(rglsl_program_options *options,
+                                                        bool enabled);
+
+rglsl_result rglsl_program_options_set_suppress_warnings(rglsl_program_options *options,
+                                                         bool enabled);
+
+rglsl_result rglsl_compile_options_add_undefine(rglsl_compile_options *options, const char *name);
+
+rglsl_result rglsl_compile_options_add_preamble_text(rglsl_compile_options *options,
+                                                     const char *text);
+
+rglsl_result rglsl_compile_options_add_resource_set_binding(rglsl_compile_options *options,
+                                                            const char *value);
+
+rglsl_result rglsl_compile_options_set_entry_point(rglsl_compile_options *options,
+                                                   const char *name);
+
+rglsl_result rglsl_compile_options_set_vulkan_version(rglsl_compile_options *options,
+                                                      uint32_t major,
+                                                      uint32_t minor);
+
+rglsl_result rglsl_compile_options_set_binding_shift(rglsl_compile_options *options,
+                                                     rglsl_resource resource,
+                                                     uint32_t base);
+
+rglsl_result rglsl_compile_options_set_binding_shift_for_set(rglsl_compile_options *options,
+                                                             rglsl_resource resource,
+                                                             uint32_t set,
+                                                             uint32_t base);
+
+rglsl_result rglsl_compile_options_set_limits(rglsl_compile_options *options,
+                                              const rglsl_limits *limits);
+
+rglsl_result rglsl_program_options_set_binding_shift(rglsl_program_options *options,
+                                                     rglsl_stage stage,
+                                                     rglsl_resource resource,
+                                                     uint32_t base);
+
+rglsl_result rglsl_program_options_set_binding_shift_for_set(rglsl_program_options *options,
+                                                             rglsl_stage stage,
+                                                             rglsl_resource resource,
+                                                             uint32_t set,
+                                                             uint32_t base);
+
+rglsl_result rglsl_program_options_set_command_line(rglsl_program_options *options,
+                                                    const char *command_line);
+
+rglsl_result rglsl_program_options_set_working_directory(rglsl_program_options *options,
+                                                         const char *directory);
+
+rglsl_result rglsl_program_options_set_limits(rglsl_program_options *options,
+                                              const rglsl_limits *limits);
+
+rglsl_result rglsl_program_options_set_reflection(rglsl_program_options *options,
+                                                  bool enabled,
+                                                  uint32_t flags);
+
+rglsl_result rglsl_limits_create(rglsl_limits **limits);
+
+rglsl_result rglsl_limits_decode(const uint8_t *data, size_t size, rglsl_limits **limits);
+
+void rglsl_limits_destroy(rglsl_limits *limits);
+
+rglsl_result rglsl_limits_set(rglsl_limits *limits, const char *name, int32_t value);
+
+rglsl_result rglsl_limits_get(const rglsl_limits *limits, const char *name, int32_t *value);
+
+size_t rglsl_limits_message_count(const rglsl_limits *limits);
+
+const char *rglsl_limits_message(const rglsl_limits *limits, size_t index);
+
+rglsl_result rglsl_limits_configuration(const rglsl_limits *limits, rglsl_blob **text);
+
+size_t rglsl_object_file_count(const rglsl_object *object);
+
+const char *rglsl_object_file(const rglsl_object *object, size_t index);
+
+rglsl_result rglsl_compiler_preprocess(const rglsl_compiler *compiler,
+                                       const char *source,
+                                       const rglsl_compile_options *options,
+                                       rglsl_blob **text,
+                                       rglsl_diagnostics **diagnostics);
+
+rglsl_result rglsl_compiler_build(const rglsl_compiler *compiler,
+                                  const char *const *sources,
+                                  const rglsl_compile_options *const *options,
+                                  size_t count,
+                                  const rglsl_program_options *program_options,
+                                  rglsl_program **program,
+                                  rglsl_diagnostics **diagnostics);
+
+const char *rglsl_program_reflection(const rglsl_program *program);
+
+size_t rglsl_program_file_count(const rglsl_program *program);
+
+const char *rglsl_program_file(const rglsl_program *program, size_t index);
+
+const char *rglsl_blob_text(const rglsl_blob *blob);
+
+rglsl_result rglsl_disassemble(const uint32_t *words,
+                               size_t word_count,
+                               rglsl_disassembly form,
+                               rglsl_blob **text);
+
+rglsl_result rglsl_hex_text(const uint32_t *words,
+                            size_t word_count,
+                            const char *variable_name,
+                            rglsl_blob **text);
+
+rglsl_result rglsl_depfile(const char *const *targets,
+                           size_t target_count,
+                           const char *const *dependencies,
+                           size_t dependency_count,
+                           rglsl_blob **text);
+
+rglsl_result rglsl_diagnostics_format(const rglsl_diagnostics *diagnostics,
+                                      uint32_t flags,
+                                      rglsl_blob **text);
+
+rglsl_result rglsl_diagnostics_info_log(const rglsl_diagnostics *diagnostics,
+                                        uint32_t flags,
+                                        rglsl_blob **text);
 
 #ifdef __cplusplus
 }  // extern "C"

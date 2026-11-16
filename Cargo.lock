@@ -393,6 +393,7 @@ dependencies = [
 name = "rglsl-capi"
 version = "0.1.0"
 dependencies = [
+ "rglsl-dis",
  "rglsl-link",
 ]
 
@@ -400,15 +401,15 @@ dependencies = [
 name = "rglsl-cli"
 version = "0.1.0"
 dependencies = [
- "rglsl",
- "rglsl-ast",
+ "rglsl-dis",
  "rglsl-link",
- "rglsl-pp",
- "rglsl-sema",
- "rglsl-types",
  "rspirv",
  "spirv",
 ]
+
+[[package]]
+name = "rglsl-dis"
+version = "0.1.0"
 
 [[package]]
 name = "rglsl-fuzz"
@@ -437,8 +438,10 @@ name = "rglsl-link"
 version = "0.1.0"
 dependencies = [
  "rglsl",
+ "rglsl-ast",
  "rglsl-pp",
  "rglsl-sema",
+ "rglsl-types",
  "ron",
  "serde",
  "thiserror",
@@ -502,7 +505,7 @@ dependencies = [
  "cbindgen",
  "rglsl",
  "rglsl-ast",
- "rglsl-cli",
+ "rglsl-dis",
  "rglsl-fuzz",
  "rglsl-link",
  "rglsl-pp",

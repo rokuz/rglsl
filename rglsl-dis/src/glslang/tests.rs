@@ -1,5 +1,9 @@
+use super::disassemble as disassemble_bytes;
 use super::tables::{self, Kind};
-use super::{disassemble, disassemble_bytes};
+
+fn disassemble(words: &[u32]) -> String {
+    disassemble_bytes(words).to_text()
+}
 
 const FRAGMENT: [u32; 82] = [
     0x07230203, 0x00010000, 0x0008000b, 0x0000000c, 0x00000000, 0x00020011, 0x00000001, 0x0006000b,

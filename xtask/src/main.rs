@@ -65,7 +65,7 @@ commands:
   gen-spirv           generate the SPIR-V tables from the pinned sources in target/oracles:
                       rglsl/src/back/spv/grammar.rs (enumerants the `spirv` crate lacks, from
                       SPIRV-Headers' grammar, else glslang's headers) and
-                      rglsl-cli/src/disassemble/glslang_tables.rs (the -H tables of glslang's
+                      rglsl-dis/src/glslang/glslang_tables.rs (the -H tables of glslang's
                       SPIRV/doc.cpp and disassemble.cpp)
       --glslang-dir DIR   glslang checkout to read (default: target/oracles/src/glslang;
                           its HEAD must be the pinned commit)

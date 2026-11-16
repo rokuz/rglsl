@@ -1,7 +1,6 @@
 mod args;
 mod compile;
 mod output;
-mod reflect;
 mod usage;
 
 use args::{EXIT_USAGE, Exit};
