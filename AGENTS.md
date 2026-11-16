@@ -4,6 +4,7 @@
 > Out of scope: GLSL ES, other `#version`s, OpenGL semantics.
 
 If `AGENTS.local.md` exists, read it too: it has the maintainers' local workflow.
+Adding a GLSL extension: `EXTENSIONS.md`.
 
 ## Layout
 
