@@ -5,9 +5,10 @@
 //! - texture/sampler pairs
 //! - expression reference counts
 
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, vec};
 use core::ops;
 use rglsl_types::rglo::Rglo;
+use rglsl_types::stack::recurse;
 
 use super::{
     ExpressionError, FunctionError, ImmediateSlots, ModuleInfo, ShaderStages, ValidationFlags,
@@ -78,44 +79,6 @@ bitflags::bitflags! {
         ///
         /// [`Statement::Kill`]: crate::Statement::Kill
         const MAY_KILL = 0x2;
-    }
-}
-
-enum Flow<'a> {
-    Block {
-        statements: &'a [crate::Statement],
-        next: usize,
-        disruptor: Option<UniformityDisruptor>,
-        combined: FunctionUniformity,
-    },
-    If {
-        reject: &'a crate::Block,
-        branch_disruptor: Option<UniformityDisruptor>,
-        accept: Option<FunctionUniformity>,
-    },
-    Switch {
-        cases: &'a [crate::SwitchCase],
-        next: usize,
-        branch_disruptor: Option<UniformityDisruptor>,
-        case_disruptor: Option<UniformityDisruptor>,
-        uniformity: FunctionUniformity,
-    },
-    Loop {
-        continuing: &'a crate::Block,
-        break_if: Option<Handle<crate::Expression>>,
-        disruptor: Option<UniformityDisruptor>,
-        body: Option<FunctionUniformity>,
-    },
-}
-
-impl<'a> Flow<'a> {
-    fn block(statements: &'a crate::Block, disruptor: Option<UniformityDisruptor>) -> Self {
-        Self::Block {
-            statements,
-            next: 0,
-            disruptor,
-            combined: FunctionUniformity::new(),
-        }
     }
 }
 
@@ -1028,135 +991,28 @@ impl FunctionInfo {
         disruptor: Option<UniformityDisruptor>,
         expression_arena: &Arena<crate::Expression>,
     ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
-        let mut frames = Vec::from([Flow::block(statements, disruptor)]);
-        let mut returned: Option<FunctionUniformity> = None;
-        while let Some(frame) = frames.pop() {
-            let finished = returned.take();
-            match frame {
-                Flow::Block {
-                    statements,
-                    next,
-                    mut disruptor,
-                    mut combined,
-                } => {
-                    if let Some(uniformity) = finished {
-                        disruptor = disruptor.or(uniformity.exit_disruptor());
-                        combined = combined | uniformity;
-                    }
-                    let Some(statement) = statements.get(next) else {
-                        returned = Some(combined);
-                        continue;
-                    };
-                    frames.push(Flow::Block {
-                        statements,
-                        next: next + 1,
-                        disruptor,
-                        combined,
-                    });
-                    returned = self.process_statement(
-                        statement,
-                        other_functions,
-                        disruptor,
-                        expression_arena,
-                        &mut frames,
-                    )?;
-                }
-                Flow::If {
-                    reject,
-                    branch_disruptor,
-                    accept,
-                } => {
-                    let uniformity =
-                        finished.ok_or_else(|| WithSpan::new(FunctionError::Unfinished))?;
-                    match accept {
-                        None => {
-                            frames.push(Flow::If {
-                                reject,
-                                branch_disruptor,
-                                accept: Some(uniformity),
-                            });
-                            frames.push(Flow::block(reject, branch_disruptor));
-                        }
-                        Some(accept) => returned = Some(accept | uniformity),
-                    }
-                }
-                Flow::Switch {
-                    cases,
-                    next,
-                    branch_disruptor,
-                    mut case_disruptor,
-                    mut uniformity,
-                } => {
-                    if let Some(case_uniformity) = finished {
-                        let fall_through = next
-                            .checked_sub(1)
-                            .and_then(|index| cases.get(index))
-                            .is_some_and(|case| case.fall_through);
-                        case_disruptor = if fall_through {
-                            case_disruptor.or(case_uniformity.exit_disruptor())
-                        } else {
-                            branch_disruptor
-                        };
-                        uniformity = uniformity | case_uniformity;
-                    }
-                    let Some(case) = cases.get(next) else {
-                        returned = Some(uniformity);
-                        continue;
-                    };
-                    frames.push(Flow::Switch {
-                        cases,
-                        next: next + 1,
-                        branch_disruptor,
-                        case_disruptor,
-                        uniformity,
-                    });
-                    frames.push(Flow::block(&case.body, case_disruptor));
-                }
-                Flow::Loop {
-                    continuing,
-                    break_if,
-                    disruptor,
-                    body,
-                } => {
-                    let uniformity =
-                        finished.ok_or_else(|| WithSpan::new(FunctionError::Unfinished))?;
-                    match body {
-                        None => {
-                            let continuing_disruptor = disruptor.or(uniformity.exit_disruptor());
-                            frames.push(Flow::Loop {
-                                continuing,
-                                break_if,
-                                disruptor,
-                                body: Some(uniformity),
-                            });
-                            frames.push(Flow::block(continuing, continuing_disruptor));
-                        }
-                        Some(body) => {
-                            if let Some(expr) = break_if {
-                                self.add_operand_ref(expr, GlobalUse::READ);
-                            }
-                            returned = Some(body | uniformity);
-                        }
-                    }
-                }
-            }
+        let mut disruptor = disruptor;
+        let mut combined = FunctionUniformity::new();
+        for statement in statements {
+            let uniformity =
+                self.process_statement(statement, other_functions, disruptor, expression_arena)?;
+            disruptor = disruptor.or(uniformity.exit_disruptor());
+            combined = combined | uniformity;
         }
-        returned.ok_or_else(|| WithSpan::new(FunctionError::Unfinished))
+        Ok(combined)
     }
 
-    fn process_statement<'a>(
+    fn process_statement(
         &mut self,
-        statement: &'a crate::Statement,
+        statement: &crate::Statement,
         other_functions: &[FunctionInfo],
         disruptor: Option<UniformityDisruptor>,
         expression_arena: &Arena<crate::Expression>,
-        frames: &mut Vec<Flow<'a>>,
-    ) -> Result<Option<FunctionUniformity>, WithSpan<FunctionError>> {
+    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
         use crate::Statement as S;
         let uniformity = match *statement {
             S::Block(ref b) => {
-                frames.push(Flow::block(b, disruptor));
-                return Ok(None);
+                recurse(|| self.process_block(b, other_functions, disruptor, expression_arena))?
             }
             S::If {
                 condition,
@@ -1167,13 +1023,21 @@ impl FunctionInfo {
                 let condition_nur = self.add_ref(condition);
                 let branch_disruptor =
                     disruptor.or(condition_nur.map(UniformityDisruptor::Expression));
-                frames.push(Flow::If {
-                    reject,
-                    branch_disruptor,
-                    accept: None,
-                });
-                frames.push(Flow::block(accept, branch_disruptor));
-                return Ok(None);
+                recurse(|| {
+                    let accept = self.process_block(
+                        accept,
+                        other_functions,
+                        branch_disruptor,
+                        expression_arena,
+                    )?;
+                    let reject = self.process_block(
+                        reject,
+                        other_functions,
+                        branch_disruptor,
+                        expression_arena,
+                    )?;
+                    Ok(accept | reject)
+                })?
             }
             S::Switch {
                 selector,
@@ -1183,30 +1047,46 @@ impl FunctionInfo {
                 let selector_nur = self.add_ref(selector);
                 let branch_disruptor =
                     disruptor.or(selector_nur.map(UniformityDisruptor::Expression));
-                frames.push(Flow::Switch {
-                    cases,
-                    next: 0,
-                    branch_disruptor,
-                    case_disruptor: branch_disruptor,
-                    uniformity: FunctionUniformity::new(),
-                });
-                return Ok(None);
+                recurse(|| {
+                    let mut case_disruptor = branch_disruptor;
+                    let mut uniformity = FunctionUniformity::new();
+                    for case in cases {
+                        let case_uniformity = self.process_block(
+                            &case.body,
+                            other_functions,
+                            case_disruptor,
+                            expression_arena,
+                        )?;
+                        case_disruptor = if case.fall_through {
+                            case_disruptor.or(case_uniformity.exit_disruptor())
+                        } else {
+                            branch_disruptor
+                        };
+                        uniformity = uniformity | case_uniformity;
+                    }
+                    Ok(uniformity)
+                })?
             }
             S::Loop {
                 ref body,
                 ref continuing,
                 break_if,
                 control: _,
-            } => {
-                frames.push(Flow::Loop {
+            } => recurse(|| {
+                let body_uniformity =
+                    self.process_block(body, other_functions, disruptor, expression_arena)?;
+                let continuing_disruptor = disruptor.or(body_uniformity.exit_disruptor());
+                let continuing_uniformity = self.process_block(
                     continuing,
-                    break_if,
-                    disruptor,
-                    body: None,
-                });
-                frames.push(Flow::block(body, disruptor));
-                return Ok(None);
-            }
+                    other_functions,
+                    continuing_disruptor,
+                    expression_arena,
+                )?;
+                if let Some(expr) = break_if {
+                    self.add_operand_ref(expr, GlobalUse::READ);
+                }
+                Ok(body_uniformity | continuing_uniformity)
+            })?,
             S::Emit(ref range) => {
                 let mut requirements = UniformityRequirements::empty();
                 for expr in range.clone() {
@@ -1594,7 +1474,7 @@ impl FunctionInfo {
                 }
             }
         };
-        Ok(Some(uniformity))
+        Ok(uniformity)
     }
 }
 

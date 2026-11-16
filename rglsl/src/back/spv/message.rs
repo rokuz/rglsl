@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 
+use rglsl_types::stack::recurse;
 use spirv::{Decoration, Op, Word};
 
 use super::plain_types::CompositeShape;
@@ -29,56 +30,16 @@ impl Writer {
     }
 
     fn laid_out_copy(&mut self, module: &crate::Module, ty: Handle<Type>) -> Result<Word, Error> {
-        let mut tasks = Vec::from([(ty, None)]);
-        let mut results = Vec::new();
-        while let Some((ty, normal)) = tasks.pop() {
-            let Some(normal) = normal else {
-                if let Some(&id) = self.laid_out_copies.get(&ty) {
-                    results.push(id);
-                    continue;
-                }
-                let normal = self.get_handle_type_id(ty)?;
-                if self.laid_out_types.contains(ty) {
-                    results.push(normal);
-                    continue;
-                }
-                match module.types[ty].inner {
-                    TypeInner::Array { base, .. } => {
-                        tasks.push((ty, Some(normal)));
-                        tasks.push((base, None));
-                    }
-                    TypeInner::Struct { ref members, .. } => {
-                        tasks.push((ty, Some(normal)));
-                        tasks.extend(members.iter().rev().map(|member| (member.ty, None)));
-                    }
-                    _ => {
-                        self.laid_out_copies.insert(ty, normal);
-                        results.push(normal);
-                    }
-                }
-                continue;
-            };
-            let id = self.write_laid_out_copy(module, ty, normal, &mut results)?;
-            self.laid_out_copies.insert(ty, id);
-            results.push(id);
+        if let Some(&id) = self.laid_out_copies.get(&ty) {
+            return Ok(id);
         }
-        results
-            .pop()
-            .ok_or(Error::Internal("a laid out copy did not finish"))
-    }
-
-    fn write_laid_out_copy(
-        &mut self,
-        module: &crate::Module,
-        ty: Handle<Type>,
-        normal: Word,
-        results: &mut Vec<Word>,
-    ) -> Result<Word, Error> {
-        Ok(match module.types[ty].inner {
-            TypeInner::Array { stride, .. } => {
-                let element = results
-                    .pop()
-                    .ok_or(Error::Internal("a laid out copy lost its element"))?;
+        let normal = self.get_handle_type_id(ty)?;
+        if self.laid_out_types.contains(ty) {
+            return Ok(normal);
+        }
+        let id = match module.types[ty].inner {
+            TypeInner::Array { base, stride, .. } => {
+                let element = recurse(|| self.laid_out_copy(module, base))?;
                 let Some(&CompositeShape::Array {
                     length: Some(length),
                     ..
@@ -96,11 +57,10 @@ impl Writer {
                 id
             }
             TypeInner::Struct { ref members, .. } => {
-                let start = results
-                    .len()
-                    .checked_sub(members.len())
-                    .ok_or(Error::Internal("a laid out copy lost its members"))?;
-                let member_ids = results.split_off(start);
+                let member_ids = members
+                    .iter()
+                    .map(|member| recurse(|| self.laid_out_copy(module, member.ty)))
+                    .collect::<Result<Vec<Word>, Error>>()?;
                 let id = self.id_gen.next();
                 for (index, member) in members.iter().enumerate() {
                     self.decorate_struct_member(id, index, member, &module.types, true)?;
@@ -115,7 +75,9 @@ impl Writer {
                 id
             }
             _ => normal,
-        })
+        };
+        self.laid_out_copies.insert(ty, id);
+        Ok(id)
     }
 }
 

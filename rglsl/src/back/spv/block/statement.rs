@@ -7,7 +7,7 @@ use super::super::{
     feature,
 };
 use super::AccessTypeAdjustment;
-use super::control::{LoopContext, Nested};
+use super::control::LoopContext;
 use crate::{Statement, arena::Handle};
 
 const fn atomic_integer_op(kind: crate::ScalarKind, op: spirv::Op) -> Result<spirv::Op, Error> {
@@ -135,16 +135,16 @@ impl Writer {
 }
 
 impl BlockContext<'_> {
-    pub(super) fn write_statement<'a>(
+    pub(super) fn write_statement(
         &mut self,
         block: Block,
-        statement: &'a Statement,
+        statement: &Statement,
         loop_context: LoopContext,
-    ) -> Result<Nested<'a>, Error> {
+    ) -> Result<Option<Block>, Error> {
         let mut block = block;
         match *statement {
             Statement::Block(ref block_statements) => {
-                return Ok(self.write_scope(block, block_statements, loop_context, statement));
+                return self.write_scope(block, block_statements, loop_context);
             }
             Statement::If {
                 condition,
@@ -152,21 +152,14 @@ impl BlockContext<'_> {
                 ref reject,
                 control,
             } => {
-                return self.write_if(
-                    block,
-                    condition,
-                    [accept, reject],
-                    control,
-                    loop_context,
-                    statement,
-                );
+                return self.write_if(block, condition, [accept, reject], control, loop_context);
             }
             Statement::Switch {
                 selector,
                 ref cases,
                 control,
             } => {
-                return self.write_switch(block, selector, cases, control, loop_context, statement);
+                return self.write_switch(block, selector, cases, control, loop_context);
             }
             Statement::Loop {
                 ref body,
@@ -174,7 +167,7 @@ impl BlockContext<'_> {
                 break_if,
                 control,
             } => {
-                return Ok(self.write_loop(
+                return self.write_loop(
                     block,
                     (
                         body,
@@ -184,8 +177,7 @@ impl BlockContext<'_> {
                     ),
                     break_if,
                     control,
-                    statement,
-                ));
+                );
             }
             Statement::Emit(ref range) => {
                 for handle in range.clone() {
@@ -201,7 +193,7 @@ impl BlockContext<'_> {
                     return Err(Error::Validation("break outside of a loop or switch"));
                 };
                 self.function.consume(block, Instruction::branch(break_id));
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::Continue => {
                 let Some(continuing_id) = loop_context.continuing_id else {
@@ -209,25 +201,25 @@ impl BlockContext<'_> {
                 };
                 self.function
                     .consume(block, Instruction::branch(continuing_id));
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::Return { value: Some(value) } => {
                 self.write_return_value(block, value)?;
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::Return { value: None } => {
                 self.function.consume(block, Instruction::return_void());
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::Kill => {
                 self.function.consume(block, Instruction::kill());
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::TerminateInvocation => {
                 self.writer.require(&feature::TERMINATE_INVOCATION)?;
                 self.function
                     .consume(block, Instruction::terminate_invocation());
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::Demote => {
                 self.writer.require(&feature::DEMOTE_TO_HELPER_INVOCATION)?;
@@ -276,7 +268,7 @@ impl BlockContext<'_> {
             Statement::MeshFunction(ref function) => {
                 match self.write_mesh_function(block, function)? {
                     Some(next) => block = next,
-                    None => return Ok(Nested::Done(None)),
+                    None => return Ok(None),
                 }
             }
             Statement::Abort {
@@ -285,7 +277,7 @@ impl BlockContext<'_> {
                 ref arguments,
             } => {
                 self.write_abort(block, message, ty, arguments)?;
-                return Ok(Nested::Done(None));
+                return Ok(None);
             }
             Statement::ControlBarrier(flags) => {
                 self.writer.write_control_barrier(flags, &mut block.body);
@@ -426,11 +418,11 @@ impl BlockContext<'_> {
                     self.write_ray_tracing_pipeline_function(fun, &mut block)?
                 {
                     self.function.consume(block, terminator);
-                    return Ok(Nested::Done(None));
+                    return Ok(None);
                 }
             }
         }
-        Ok(Nested::Done(Some(block)))
+        Ok(Some(block))
     }
 
     fn write_return_value(

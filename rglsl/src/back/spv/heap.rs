@@ -4,9 +4,10 @@ use spirv::{Op, Word};
 
 use super::{
     Block, BlockContext, Error, Instruction, LocalType, LookupType, NumericType, Writer,
-    WriterFlags, feature, frames::on_heap,
+    WriterFlags, feature,
 };
 use crate::{DescriptorHeap, Module, StorageAccess, TypeInner, arena::Handle};
+use rglsl_types::stack::recurse;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Value {
@@ -63,74 +64,12 @@ fn innermost(module: &Module, ty: Handle<crate::Type>) -> Handle<crate::Type> {
     crate::proc::array_element(&module.types, ty)
 }
 
-enum LayoutChildren<'a> {
-    Array(Handle<crate::Type>),
-    Struct(&'a [crate::StructMember]),
-}
-
-enum LayoutTask<'a> {
-    Visit(Handle<crate::Type>, Option<crate::MatrixLayout>),
-    Array { stride: u32, count: u32 },
-    Struct(&'a [crate::StructMember]),
-}
-
 fn scalar_layout(
     module: &Module,
     ty: Handle<crate::Type>,
     matrix: Option<crate::MatrixLayout>,
 ) -> (u32, u32) {
-    let mut tasks = Vec::from([LayoutTask::Visit(ty, matrix)]);
-    let mut results: Vec<(u32, u32)> = Vec::new();
-    while let Some(task) = tasks.pop() {
-        match task {
-            LayoutTask::Visit(ty, matrix) => match scalar_layout_step(module, ty, matrix) {
-                Ok(leaf) => results.push(leaf),
-                Err((task, LayoutChildren::Array(base))) => {
-                    tasks.push(task);
-                    tasks.push(LayoutTask::Visit(base, matrix));
-                }
-                Err((task, LayoutChildren::Struct(members))) => {
-                    tasks.push(task);
-                    tasks.extend(
-                        members
-                            .iter()
-                            .rev()
-                            .map(|member| LayoutTask::Visit(member.ty, member.matrix_layout)),
-                    );
-                }
-            },
-            LayoutTask::Array { stride, count } => {
-                let (element, alignment) = results.pop().unwrap_or((0, 1));
-                results.push((
-                    stride
-                        .saturating_mul(count.saturating_sub(1))
-                        .saturating_add(element),
-                    alignment,
-                ));
-            }
-            LayoutTask::Struct(members) => {
-                let start = results.len().saturating_sub(members.len());
-                let mut size = 0;
-                let mut alignment = 0;
-                for (member, (member_size, member_alignment)) in
-                    members.iter().zip(results.drain(start..))
-                {
-                    size = size.max(member.offset.saturating_add(member_size));
-                    alignment = alignment.max(member_alignment);
-                }
-                results.push((size, alignment.max(1)));
-            }
-        }
-    }
-    results.pop().unwrap_or((0, 1))
-}
-
-fn scalar_layout_step(
-    module: &Module,
-    ty: Handle<crate::Type>,
-    matrix: Option<crate::MatrixLayout>,
-) -> Result<(u32, u32), (LayoutTask<'_>, LayoutChildren<'_>)> {
-    Ok(match module.types[ty].inner {
+    match module.types[ty].inner {
         TypeInner::Scalar(scalar) | TypeInner::Atomic(scalar) => {
             (u32::from(scalar.width), u32::from(scalar.width))
         }
@@ -157,16 +96,27 @@ fn scalar_layout_step(
                 crate::ArraySize::Constant(count) => count.get(),
                 crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic => 1,
             };
-            return Err((
-                LayoutTask::Array { stride, count },
-                LayoutChildren::Array(base),
-            ));
+            let (element, alignment) = recurse(|| scalar_layout(module, base, matrix));
+            (
+                stride
+                    .saturating_mul(count.saturating_sub(1))
+                    .saturating_add(element),
+                alignment,
+            )
         }
         TypeInner::Struct { ref members, .. } => {
-            return Err((LayoutTask::Struct(members), LayoutChildren::Struct(members)));
+            let mut size = 0;
+            let mut alignment = 0;
+            for member in members {
+                let (member_size, member_alignment) =
+                    recurse(|| scalar_layout(module, member.ty, member.matrix_layout));
+                size = size.max(member.offset.saturating_add(member_size));
+                alignment = alignment.max(member_alignment);
+            }
+            (size, alignment.max(1))
         }
         _ => (0, 1),
-    })
+    }
 }
 
 const fn round_up(value: u32, alignment: u32) -> u32 {
@@ -452,7 +402,7 @@ impl Writer {
         if !self.contains_descriptor(module, ty) {
             return Ok(());
         }
-        let stride = on_heap!(self, |cx| cx.array_stride(module, ty, None))?;
+        let stride = self.heap_stride(module, ty, None)?;
         let stride = self.value_id(stride);
         self.annotations.push(Instruction::decorate_id(
             id,
@@ -471,7 +421,7 @@ impl Writer {
         if !self.contains_descriptor(module, ty) {
             return Ok(());
         }
-        let offsets = on_heap!(self, |cx| cx.struct_offsets(module, ty))?;
+        let offsets = self.heap_offsets(module, ty)?;
         let offsets: Vec<Value> = offsets
             .into_iter()
             .map(|offset| Value::Id(self.value_id(offset)))
@@ -554,7 +504,7 @@ impl Writer {
         let TypeInner::Struct { ref members, .. } = module.types[ty].inner else {
             return Err(Error::Validation("a deferred heap root is not a struct"));
         };
-        let mut offsets = on_heap!(self, |cx| cx.struct_offsets(module, ty))?;
+        let mut offsets = self.heap_offsets(module, ty)?;
         for offset in offsets.iter_mut() {
             *offset = match *offset {
                 Value::Known(0) => root,
@@ -1024,164 +974,148 @@ fn unused_heap_types(
         .collect()
 }
 
-type HeapCx<'b> = super::frames::Cx<'b, Writer>;
-
-impl<'b> HeapCx<'b> {
-    async fn value_size(
-        self,
-        module: &'b Module,
+impl Writer {
+    fn heap_size(
+        &mut self,
+        module: &Module,
         ty: Handle<crate::Type>,
         size: Option<u32>,
     ) -> Result<Value, Error> {
-        if let Some(value) = self.with(|writer| writer.heap.sizes.get(&(ty, size)).copied())? {
+        if let Some(&value) = self.heap.sizes.get(&(ty, size)) {
             return Ok(value);
         }
         let value = if is_descriptor(module, ty) {
             match size {
                 Some(size) => Value::Known(size),
-                None => self.try_with(|writer| {
-                    let type_id = writer.get_handle_type_id(ty)?;
-                    Ok(writer.constant_size_of(type_id))
-                })?,
+                None => {
+                    let type_id = self.get_handle_type_id(ty)?;
+                    self.constant_size_of(type_id)
+                }
             }
-        } else if self.with(|writer| writer.contains_descriptor(module, ty))? {
-            self.call(self.clone().struct_size(module, ty)).await?
+        } else if self.contains_descriptor(module, ty) {
+            recurse(|| self.heap_struct_size(module, ty))?
         } else {
             let (size, alignment) = scalar_layout(module, ty, None);
             Value::Known(round_up(size, alignment))
         };
-        self.with(|writer| writer.heap.sizes.insert((ty, size), value))?;
+        self.heap.sizes.insert((ty, size), value);
         Ok(value)
     }
 
-    async fn value_align(
-        self,
-        module: &'b Module,
+    fn heap_align(
+        &mut self,
+        module: &Module,
         ty: Handle<crate::Type>,
         size: Option<u32>,
     ) -> Result<Value, Error> {
-        if let Some(value) = self.with(|writer| writer.heap.aligns.get(&(ty, size)).copied())? {
+        if let Some(&value) = self.heap.aligns.get(&(ty, size)) {
             return Ok(value);
         }
         let value = if is_descriptor(module, ty) {
-            self.call(self.clone().value_size(module, ty, size)).await?
-        } else if self.with(|writer| writer.contains_descriptor(module, ty))? {
-            self.call(self.clone().struct_align(module, ty)).await?
+            self.heap_size(module, ty, size)?
+        } else if self.contains_descriptor(module, ty) {
+            recurse(|| self.heap_struct_align(module, ty))?
         } else {
             Value::Known(scalar_layout(module, ty, None).1)
         };
-        self.with(|writer| writer.heap.aligns.insert((ty, size), value))?;
+        self.heap.aligns.insert((ty, size), value);
         Ok(value)
     }
 
-    fn times(&self, value: Value, count: crate::ArraySize) -> Result<Value, Error> {
-        self.try_with(|writer| {
-            Ok(match count {
-                crate::ArraySize::Constant(count) => {
-                    writer.heap_op(Op::IMul, value, Value::Known(count.get()))
-                }
-                crate::ArraySize::Pending(handle) => {
-                    let count = writer.written_override_id(handle)?;
-                    writer.heap_op(Op::IMul, value, Value::Id(count))
-                }
-                crate::ArraySize::Dynamic => value,
-            })
+    fn heap_times(&mut self, value: Value, count: crate::ArraySize) -> Result<Value, Error> {
+        Ok(match count {
+            crate::ArraySize::Constant(count) => {
+                self.heap_op(Op::IMul, value, Value::Known(count.get()))
+            }
+            crate::ArraySize::Pending(handle) => {
+                let count = self.written_override_id(handle)?;
+                self.heap_op(Op::IMul, value, Value::Id(count))
+            }
+            crate::ArraySize::Dynamic => value,
         })
     }
 
-    async fn array_stride(
-        self,
-        module: &'b Module,
+    fn heap_stride(
+        &mut self,
+        module: &Module,
         ty: Handle<crate::Type>,
         size: Option<u32>,
     ) -> Result<Value, Error> {
-        if let Some(value) = self.with(|writer| writer.heap.strides.get(&ty).copied())? {
+        if let Some(&value) = self.heap.strides.get(&ty) {
             return Ok(value);
         }
         let TypeInner::Array { base, stride, .. } = module.types[ty].inner else {
             return Ok(Value::Known(0));
         };
-        let value = if !self.with(|writer| writer.contains_descriptor(module, ty))? {
+        let value = if !self.contains_descriptor(module, ty) {
             Value::Known(stride)
         } else if let TypeInner::Array {
             size: inner_size, ..
         } = module.types[base].inner
         {
-            let inner = self
-                .call(self.clone().array_stride(module, base, size))
-                .await?;
-            self.times(inner, inner_size)?
+            let inner = recurse(|| self.heap_stride(module, base, size))?;
+            self.heap_times(inner, inner_size)?
         } else if stride != 0 {
             Value::Known(stride)
         } else {
-            self.call(self.clone().value_size(module, base, size))
-                .await?
+            recurse(|| self.heap_size(module, base, size))?
         };
-        self.with(|writer| writer.heap.strides.insert(ty, value))?;
+        self.heap.strides.insert(ty, value);
         Ok(value)
     }
 
-    async fn member_size(
-        self,
-        module: &'b Module,
-        member: &'b crate::StructMember,
+    fn heap_member_size(
+        &mut self,
+        module: &Module,
+        member: &crate::StructMember,
     ) -> Result<Value, Error> {
         let size = member.heap.and_then(|heap| heap.size);
         Ok(match module.types[member.ty].inner {
             TypeInner::Array {
                 size: array_size, ..
             } => {
-                if !self.with(|writer| writer.contains_descriptor(module, member.ty))? {
+                if !self.contains_descriptor(module, member.ty) {
                     return Ok(Value::Known(
                         scalar_layout(module, member.ty, member.matrix_layout).0,
                     ));
                 }
-                let stride = self
-                    .call(self.clone().array_stride(module, member.ty, size))
-                    .await?;
-                self.times(stride, array_size)?
+                let stride = recurse(|| self.heap_stride(module, member.ty, size))?;
+                self.heap_times(stride, array_size)?
             }
             TypeInner::Matrix { .. } => {
                 let (size, alignment) = scalar_layout(module, member.ty, member.matrix_layout);
                 Value::Known(round_up(size, alignment))
             }
-            _ => {
-                self.call(self.clone().value_size(module, member.ty, size))
-                    .await?
-            }
+            _ => recurse(|| self.heap_size(module, member.ty, size))?,
         })
     }
 
-    async fn member_align(
-        self,
-        module: &'b Module,
-        member: &'b crate::StructMember,
+    fn heap_member_align(
+        &mut self,
+        module: &Module,
+        member: &crate::StructMember,
     ) -> Result<Value, Error> {
         let size = member.heap.and_then(|heap| heap.size);
         Ok(match module.types[member.ty].inner {
             TypeInner::Array { .. } => {
-                if !self.with(|writer| writer.contains_descriptor(module, member.ty))? {
+                if !self.contains_descriptor(module, member.ty) {
                     Value::Known(scalar_layout(module, member.ty, member.matrix_layout).1)
                 } else {
                     let element = innermost(module, member.ty);
-                    self.call(self.clone().value_align(module, element, size))
-                        .await?
+                    recurse(|| self.heap_align(module, element, size))?
                 }
             }
-            _ => {
-                self.call(self.clone().value_align(module, member.ty, size))
-                    .await?
-            }
+            _ => recurse(|| self.heap_align(module, member.ty, size))?,
         })
     }
 
-    async fn struct_offsets(
-        self,
-        module: &'b Module,
+    fn heap_offsets(
+        &mut self,
+        module: &Module,
         ty: Handle<crate::Type>,
     ) -> Result<Vec<Value>, Error> {
-        if let Some(offsets) = self.with(|writer| writer.heap.offsets.get(&ty).cloned())? {
-            return Ok(offsets);
+        if let Some(offsets) = self.heap.offsets.get(&ty) {
+            return Ok(offsets.clone());
         }
         let TypeInner::Struct { ref members, .. } = module.types[ty].inner else {
             return Ok(Vec::new());
@@ -1193,23 +1127,21 @@ impl<'b> HeapCx<'b> {
             if let Some(explicit) = member.heap.and_then(|heap| heap.offset) {
                 current = Value::Known(explicit);
             } else if let Some(previous) = previous {
-                let size = self
-                    .call(self.clone().member_size(module, previous))
-                    .await?;
-                let unaligned = self.with(|writer| writer.heap_op(Op::IAdd, current, size))?;
-                let alignment = self.call(self.clone().member_align(module, member)).await?;
-                current = self.with(|writer| writer.align_to(unaligned, alignment))?;
+                let size = self.heap_member_size(module, previous)?;
+                let unaligned = self.heap_op(Op::IAdd, current, size);
+                let alignment = self.heap_member_align(module, member)?;
+                current = self.align_to(unaligned, alignment);
             }
             offsets.push(current);
             previous = Some(member);
         }
-        self.with(|writer| writer.heap.offsets.insert(ty, offsets.clone()))?;
+        self.heap.offsets.insert(ty, offsets.clone());
         Ok(offsets)
     }
 
-    async fn struct_align(
-        self,
-        module: &'b Module,
+    fn heap_struct_align(
+        &mut self,
+        module: &Module,
         ty: Handle<crate::Type>,
     ) -> Result<Value, Error> {
         let TypeInner::Struct { ref members, .. } = module.types[ty].inner else {
@@ -1217,20 +1149,18 @@ impl<'b> HeapCx<'b> {
         };
         let mut alignment = None;
         for member in members {
-            let member_alignment = self.call(self.clone().member_align(module, member)).await?;
+            let member_alignment = self.heap_member_align(module, member)?;
             alignment = Some(match alignment {
                 None => member_alignment,
-                Some(current) => {
-                    self.with(|writer| writer.select_max(current, member_alignment))?
-                }
+                Some(current) => self.select_max(current, member_alignment),
             });
         }
         Ok(alignment.unwrap_or(Value::Known(1)))
     }
 
-    async fn struct_size(
-        self,
-        module: &'b Module,
+    fn heap_struct_size(
+        &mut self,
+        module: &Module,
         ty: Handle<crate::Type>,
     ) -> Result<Value, Error> {
         let TypeInner::Struct { ref members, .. } = module.types[ty].inner else {
@@ -1239,11 +1169,11 @@ impl<'b> HeapCx<'b> {
         let Some(last) = members.last() else {
             return Ok(Value::Known(0));
         };
-        let offsets = self.call(self.clone().struct_offsets(module, ty)).await?;
+        let offsets = self.heap_offsets(module, ty)?;
         let last_offset = offsets.last().copied().unwrap_or(Value::Known(0));
-        let size = self.call(self.clone().member_size(module, last)).await?;
-        let raw = self.with(|writer| writer.heap_op(Op::IAdd, last_offset, size))?;
-        let alignment = self.call(self.clone().struct_align(module, ty)).await?;
-        self.with(|writer| writer.align_to(raw, alignment))
+        let size = self.heap_member_size(module, last)?;
+        let raw = self.heap_op(Op::IAdd, last_offset, size);
+        let alignment = self.heap_struct_align(module, ty)?;
+        Ok(self.align_to(raw, alignment))
     }
 }

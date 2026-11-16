@@ -10,7 +10,6 @@ mod builtin;
 mod cooperative;
 mod debug;
 mod feature;
-mod frames;
 mod grammar;
 mod heap;
 mod helpers;

@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 
+use rglsl_types::stack::recurse;
 use spirv::Word;
 
 use super::super::{Block, BlockContext, Error, Instruction, debug, instructions};
@@ -23,52 +24,6 @@ enum BlockExitDisposition {
     Discarded,
 }
 
-pub(super) enum Resume<'a> {
-    Scope {
-        merge_id: Word,
-        statement: &'a Statement,
-    },
-    Merge {
-        merge_id: Word,
-        statement: &'a Statement,
-    },
-}
-
-enum FrameState<'a> {
-    Writing(Block),
-    Waiting(Resume<'a>),
-}
-
-pub(super) struct BlockFrame<'a> {
-    ir: &'a crate::Block,
-    next: usize,
-    state: FrameState<'a>,
-    exit: BlockExit,
-    loop_context: LoopContext,
-}
-
-pub(super) enum Work<'a> {
-    Block {
-        label_id: Word,
-        ir: &'a crate::Block,
-        exit: BlockExit,
-        loop_context: LoopContext,
-    },
-    Frame(BlockFrame<'a>),
-    Branch {
-        label_id: Word,
-        target: Word,
-    },
-}
-
-pub(super) enum Nested<'a> {
-    Done(Option<Block>),
-    Children {
-        resume: Resume<'a>,
-        children: Vec<Work<'a>>,
-    },
-}
-
 #[derive(Clone, Copy, Default)]
 pub(super) struct LoopContext {
     pub(super) continuing_id: Option<Word>,
@@ -87,71 +42,26 @@ impl BlockContext<'_> {
     fn write_block(
         &mut self,
         label_id: Word,
-        rglsl_block: &crate::Block,
+        ir: &crate::Block,
         exit: BlockExit,
         loop_context: LoopContext,
-    ) -> Result<(), Error> {
-        let mut work = Vec::from([Work::Block {
-            label_id,
-            ir: rglsl_block,
-            exit,
-            loop_context,
-        }]);
-        let mut finished = BlockExitDisposition::Used;
-        while let Some(item) = work.pop() {
-            match item {
-                Work::Block {
-                    label_id,
-                    ir,
-                    exit,
-                    loop_context,
-                } => work.push(Work::Frame(BlockFrame {
-                    ir,
-                    next: 0,
-                    state: FrameState::Writing(Block::new(label_id)),
-                    exit,
-                    loop_context,
-                })),
-                Work::Branch { label_id, target } => self
-                    .function
-                    .consume(Block::new(label_id), Instruction::branch(target)),
-                Work::Frame(frame) => {
-                    if let Some(disposition) = self.write_frame(frame, finished, &mut work)? {
-                        finished = disposition;
-                    }
+    ) -> Result<BlockExitDisposition, Error> {
+        let mut block = Block::new(label_id);
+        let nested = !core::ptr::eq(ir, &self.ir_function.body);
+        for (statement, span) in ir.span_iter() {
+            self.mark_statement_span(&mut block, statement, *span, nested);
+            match self.write_statement(block, statement, loop_context)? {
+                Some(next) if !self.reachability.completes(statement) => {
+                    self.function
+                        .consume(next, Instruction::new(spirv::Op::Unreachable));
+                    return Ok(BlockExitDisposition::Discarded);
                 }
+                Some(following) => block = following,
+                None => return Ok(BlockExitDisposition::Discarded),
             }
         }
-        Ok(())
-    }
-
-    fn resume_frame(
-        &mut self,
-        state: FrameState<'_>,
-        finished: BlockExitDisposition,
-    ) -> Option<Block> {
-        let (merge_id, statement) = match state {
-            FrameState::Writing(block) => return Some(block),
-            FrameState::Waiting(Resume::Scope {
-                merge_id,
-                statement,
-            }) => match finished {
-                BlockExitDisposition::Used => (merge_id, statement),
-                BlockExitDisposition::Discarded => return None,
-            },
-            FrameState::Waiting(Resume::Merge {
-                merge_id,
-                statement,
-            }) => (merge_id, statement),
-        };
-        let next = Block::new(merge_id);
-        if self.reachability.completes(statement) {
-            Some(next)
-        } else {
-            self.function
-                .consume(next, Instruction::new(spirv::Op::Unreachable));
-            None
-        }
+        self.finish_block(block, exit, loop_context, nested)?;
+        Ok(BlockExitDisposition::Used)
     }
 
     fn mark_statement_span(
@@ -185,51 +95,6 @@ impl BlockContext<'_> {
             }
             _ => self.writer.debug_mark(block, span),
         }
-    }
-
-    fn write_frame<'a>(
-        &mut self,
-        frame: BlockFrame<'a>,
-        finished: BlockExitDisposition,
-        work: &mut Vec<Work<'a>>,
-    ) -> Result<Option<BlockExitDisposition>, Error> {
-        let BlockFrame {
-            ir,
-            mut next,
-            state,
-            exit,
-            loop_context,
-        } = frame;
-        let Some(mut block) = self.resume_frame(state, finished) else {
-            return Ok(Some(BlockExitDisposition::Discarded));
-        };
-        let nested = !core::ptr::eq(ir, &self.ir_function.body);
-        while let Some((statement, span)) = ir.span_at(next) {
-            next += 1;
-            self.mark_statement_span(&mut block, statement, *span, nested);
-            match self.write_statement(block, statement, loop_context)? {
-                Nested::Done(Some(next)) if !self.reachability.completes(statement) => {
-                    self.function
-                        .consume(next, Instruction::new(spirv::Op::Unreachable));
-                    return Ok(Some(BlockExitDisposition::Discarded));
-                }
-                Nested::Done(Some(following)) => block = following,
-                Nested::Done(None) => return Ok(Some(BlockExitDisposition::Discarded)),
-                Nested::Children { resume, children } => {
-                    work.push(Work::Frame(BlockFrame {
-                        ir,
-                        next,
-                        state: FrameState::Waiting(resume),
-                        exit,
-                        loop_context,
-                    }));
-                    work.extend(children.into_iter().rev());
-                    return Ok(None);
-                }
-            }
-        }
-        self.finish_block(block, exit, loop_context, nested)?;
-        Ok(Some(BlockExitDisposition::Used))
     }
 
     fn finish_block(
@@ -271,44 +136,42 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    pub(super) fn write_scope<'a>(
+    pub(super) fn write_scope(
         &mut self,
         block: Block,
-        block_statements: &'a crate::Block,
+        block_statements: &crate::Block,
         loop_context: LoopContext,
-        statement: &'a Statement,
-    ) -> Nested<'a> {
+    ) -> Result<Option<Block>, Error> {
         let scope_id = self.gen_id();
         self.function.consume(block, Instruction::branch(scope_id));
 
         let merge_id = self.gen_id();
-        Nested::Children {
-            resume: Resume::Scope {
-                merge_id,
-                statement,
-            },
-            children: Vec::from([Work::Block {
-                label_id: scope_id,
-                ir: block_statements,
-                exit: BlockExit::Branch { target: merge_id },
+        let disposition = recurse(|| {
+            self.write_block(
+                scope_id,
+                block_statements,
+                BlockExit::Branch { target: merge_id },
                 loop_context,
-            }]),
-        }
+            )
+        })?;
+        Ok(match disposition {
+            BlockExitDisposition::Used => Some(Block::new(merge_id)),
+            BlockExitDisposition::Discarded => None,
+        })
     }
 
-    pub(super) fn write_if<'a>(
+    pub(super) fn write_if(
         &mut self,
         block: Block,
         condition: Handle<crate::Expression>,
-        [accept, reject]: [&'a crate::Block; 2],
+        [accept, reject]: [&crate::Block; 2],
         control: crate::SelectionControl,
         loop_context: LoopContext,
-        statement: &'a Statement,
-    ) -> Result<Nested<'a>, Error> {
+    ) -> Result<Option<Block>, Error> {
         let mut block = block;
         let empty = accept.is_empty() && reject.is_empty();
         if empty && control.is_none() {
-            return Ok(Nested::Done(Some(block)));
+            return Ok(Some(block));
         }
         let condition_id = self.cached.get(condition)?;
 
@@ -338,35 +201,29 @@ impl BlockContext<'_> {
             ),
         );
 
-        let children = [(accept_id, accept), (reject_id, reject)]
-            .into_iter()
-            .filter_map(|(label_id, ir)| {
-                label_id.map(|label_id| Work::Block {
-                    label_id,
-                    ir,
-                    exit: BlockExit::Branch { target: merge_id },
-                    loop_context,
-                })
-            })
-            .collect();
-        Ok(Nested::Children {
-            resume: Resume::Merge {
-                merge_id,
-                statement,
-            },
-            children,
+        recurse(|| {
+            for (label_id, ir) in [(accept_id, accept), (reject_id, reject)] {
+                if let Some(label_id) = label_id {
+                    let _ = self.write_block(
+                        label_id,
+                        ir,
+                        BlockExit::Branch { target: merge_id },
+                        loop_context,
+                    )?;
+                }
+            }
+            Ok(Some(Block::new(merge_id)))
         })
     }
 
-    pub(super) fn write_switch<'a>(
+    pub(super) fn write_switch(
         &mut self,
         block: Block,
         selector: Handle<crate::Expression>,
-        cases: &'a [crate::SwitchCase],
+        cases: &[crate::SwitchCase],
         control: crate::SelectionControl,
         loop_context: LoopContext,
-        statement: &'a Statement,
-    ) -> Result<Nested<'a>, Error> {
+    ) -> Result<Option<Block>, Error> {
         let mut block = block;
         let selector_id = self.cached.get(selector)?;
 
@@ -420,45 +277,38 @@ impl BlockContext<'_> {
             ..loop_context
         };
 
-        let mut children = Vec::with_capacity(cases.len());
-        for (i, (case, label_id)) in cases
-            .iter()
-            .zip(case_ids.iter())
-            .enumerate()
-            .filter(|&(_, (case, _))| !(case.fall_through && case.body.is_empty()))
-        {
-            let case_finish_id = if case.fall_through {
-                case_ids[i + 1]
-            } else {
-                merge_id
-            };
-            children.push(Work::Block {
-                label_id: *label_id,
-                ir: &case.body,
-                exit: BlockExit::Branch {
-                    target: case_finish_id,
-                },
-                loop_context: inner_context,
-            });
-        }
-
-        Ok(Nested::Children {
-            resume: Resume::Merge {
-                merge_id,
-                statement,
-            },
-            children,
+        recurse(|| {
+            for (i, (case, label_id)) in cases
+                .iter()
+                .zip(case_ids.iter())
+                .enumerate()
+                .filter(|&(_, (case, _))| !(case.fall_through && case.body.is_empty()))
+            {
+                let case_finish_id = if case.fall_through {
+                    case_ids[i + 1]
+                } else {
+                    merge_id
+                };
+                let _ = self.write_block(
+                    *label_id,
+                    &case.body,
+                    BlockExit::Branch {
+                        target: case_finish_id,
+                    },
+                    inner_context,
+                )?;
+            }
+            Ok(Some(Block::new(merge_id)))
         })
     }
 
-    pub(super) fn write_loop<'a>(
+    pub(super) fn write_loop(
         &mut self,
         block: Block,
-        (body, continuing): (&'a crate::Block, Option<&'a crate::Block>),
+        (body, continuing): (&crate::Block, Option<&crate::Block>),
         break_if: Option<Handle<crate::Expression>>,
         control: crate::LoopControl,
-        statement: &'a Statement,
-    ) -> Nested<'a> {
+    ) -> Result<Option<Block>, Error> {
         let mut block = block;
         let preamble_id = self.gen_id();
         self.function
@@ -475,58 +325,54 @@ impl BlockContext<'_> {
 
         self.function.consume(block, Instruction::branch(body_id));
 
-        let body = Work::Block {
-            label_id: body_id,
-            ir: body,
-            exit: BlockExit::Branch {
-                target: continuing_id,
-            },
-            loop_context: LoopContext {
-                continuing_id: Some(continuing_id),
-                break_id: Some(merge_id),
-            },
-        };
-
-        let continuing = match continuing {
-            None => Work::Branch {
-                label_id: continuing_id,
-                target: preamble_id,
-            },
-            Some(continuing) => Work::Block {
-                label_id: continuing_id,
-                ir: continuing,
-                exit: match break_if {
-                    Some(condition) => BlockExit::BreakIf {
-                        condition,
-                        preamble_id,
-                    },
-                    None => BlockExit::Branch {
-                        target: preamble_id,
-                    },
+        recurse(|| {
+            let _ = self.write_block(
+                body_id,
+                body,
+                BlockExit::Branch {
+                    target: continuing_id,
                 },
-                loop_context: LoopContext {
-                    continuing_id: None,
+                LoopContext {
+                    continuing_id: Some(continuing_id),
                     break_id: Some(merge_id),
                 },
-            },
-        };
-
-        Nested::Children {
-            resume: Resume::Merge {
-                merge_id,
-                statement,
-            },
-            children: Vec::from([body, continuing]),
-        }
+            )?;
+            match continuing {
+                None => self
+                    .function
+                    .consume(Block::new(continuing_id), Instruction::branch(preamble_id)),
+                Some(continuing) => {
+                    let _ = self.write_block(
+                        continuing_id,
+                        continuing,
+                        match break_if {
+                            Some(condition) => BlockExit::BreakIf {
+                                condition,
+                                preamble_id,
+                            },
+                            None => BlockExit::Branch {
+                                target: preamble_id,
+                            },
+                        },
+                        LoopContext {
+                            continuing_id: None,
+                            break_id: Some(merge_id),
+                        },
+                    )?;
+                }
+            }
+            Ok(Some(Block::new(merge_id)))
+        })
     }
 
     pub(in super::super) fn write_function_body(&mut self, entry_id: Word) -> Result<(), Error> {
         let function = self.ir_function;
-        self.write_block(
+        let _ = self.write_block(
             entry_id,
             &function.body,
             BlockExit::Return,
             LoopContext::default(),
-        )
+        )?;
+        Ok(())
     }
 }
