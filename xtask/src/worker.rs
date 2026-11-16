@@ -47,6 +47,7 @@ pub struct OneOptions<'a> {
     pub include_dirs: &'a [String],
     pub preamble: Option<String>,
     pub debug: Option<&'a str>,
+    pub options: &'a [String],
 }
 
 fn debug_options(debug: Option<&str>) -> Option<spv::DebugInfo<'static>> {
@@ -78,6 +79,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         include_dirs,
         ref preamble,
         debug,
+        options: extra,
     } = *one;
     let source = match std::fs::read(input) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -102,7 +104,20 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         None => (1, 0),
     };
 
+    let has = |name: &str| extra.iter().any(|option| option == name);
+    if let Some(unknown) = extra.iter().find(|option| {
+        !matches!(
+            option.as_str(),
+            "--invert-y" | "--nan-clamp" | "--discard-is-terminate"
+        )
+    }) {
+        diagnostic("options", None, &format!("unknown option `{unknown}`"));
+        return EXIT_REJECTED;
+    }
     let options = glsl::Options {
+        invert_y: has("--invert-y"),
+        nan_clamp: has("--nan-clamp"),
+        discard_is_terminate: has("--discard-is-terminate"),
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
         spirv_version: Some(lang_version),

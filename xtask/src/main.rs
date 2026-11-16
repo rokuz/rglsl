@@ -386,6 +386,10 @@ fn run(args: Vec<String>) -> Result<i32> {
                 preamble.push_str(&line);
                 preamble.push('\n');
             }
+            let mut options = Vec::new();
+            while let Some(option) = args.value("--option")? {
+                options.push(option);
+            }
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
@@ -400,6 +404,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     include_dirs: &include_dirs,
                     preamble: (!preamble.is_empty()).then_some(preamble),
                     debug: debug.as_deref(),
+                    options: &options,
                 },
                 Path::new(&out),
             ))

@@ -17,10 +17,10 @@ impl ir::MathFunction {
             Mf::Abs | Mf::Sign => regular!(1, SCALAR|VECN of NUMERIC).into(),
 
             // Component-wise binary numeric operations
-            Mf::Min | Mf::Max => regular!(2, SCALAR|VECN of NUMERIC).into(),
+            Mf::Min | Mf::Max | Mf::NMin | Mf::NMax => regular!(2, SCALAR|VECN of NUMERIC).into(),
 
             // Component-wise ternary numeric operations
-            Mf::Clamp | Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
+            Mf::Clamp | Mf::NClamp | Mf::Min3 | Mf::Max3 | Mf::Mid3 => {
                 regular!(3, SCALAR|VECN of NUMERIC).into()
             }
 

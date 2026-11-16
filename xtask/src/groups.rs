@@ -207,6 +207,7 @@ pub fn load_own(root: &Path) -> Result<Vec<Case>> {
 
 pub const EXEC_SCRIPT: &str = "test.amber";
 pub const BEYOND_GLSLANG: &str = "beyond-glslang";
+pub const EXEC_OPTIONS: &str = "options";
 
 pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
     let dir = root.join("tests").join("exec");
@@ -266,6 +267,9 @@ pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
             }
             Err(_) => None,
         };
+        let options = fs::read_to_string(test.join(EXEC_OPTIONS))
+            .map(|text| text.split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default();
         cases.push(Case {
             name: format!("exec/{test_name}"),
             path: test.join(first),
@@ -279,6 +283,7 @@ pub fn load_exec(root: &Path) -> Result<Vec<Case>> {
                 files,
                 script: EXEC_SCRIPT.to_string(),
                 beyond_glslang,
+                options,
             },
         });
     }

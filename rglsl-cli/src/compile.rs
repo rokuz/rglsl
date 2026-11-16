@@ -230,6 +230,10 @@ impl<'a> Session<'a> {
         compile.suppress_warnings = options.suppress_warnings;
         compile.debug_info = options.debug;
         compile.limits = self.limits;
+        compile.invert_y = options.invert_y;
+        compile.nan_clamp = options.nan_clamp;
+        compile.discard_is_terminate = options.discard_is_terminate;
+        compile.no_storage_format = options.no_storage_format;
         compile
     }
 

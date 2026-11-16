@@ -467,3 +467,32 @@ fn text_forms_of_spirv() -> TestResult {
     assert_eq!(text(blob)?, "out.spv: a\\ b.frag inc.h\n");
     Ok(())
 }
+
+#[test]
+fn code_generation_options() -> TestResult {
+    let compiler = compiler()?;
+    let vertex = options(c"shader.vert", RGLSL_STAGE_VERTEX)?;
+    let codes = unsafe {
+        [
+            rglsl_c::rglsl_compile_options_set_invert_y(vertex.pointer, true),
+            rglsl_c::rglsl_compile_options_set_nan_clamp(vertex.pointer, true),
+            rglsl_c::rglsl_compile_options_set_discard_is_terminate(vertex.pointer, true),
+            rglsl_c::rglsl_compile_options_set_no_storage_format(vertex.pointer, true),
+        ]
+    };
+    assert_eq!(codes, [RGLSL_RESULT_OK; 4]);
+    let source = c"#version 450
+layout(location = 0) in vec3 position;
+void main() {
+    gl_Position = vec4(min(position, vec3(1.0)), 1.0);
+}
+";
+    let program_options = program_options()?;
+    let (code, program, _) = build(&compiler, &[source], &[&vertex], &program_options);
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let program = Owned::new(program, rglsl_c::rglsl_program_destroy)?;
+    let text = disassembly(&spirv(&program, 0)?)?;
+    assert!(text.contains("FNegate"), "{text}");
+    assert!(text.contains("(NMin)"), "{text}");
+    Ok(())
+}

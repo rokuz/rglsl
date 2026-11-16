@@ -564,6 +564,42 @@ pub unsafe extern "C" fn rglsl_program_options_set_suppress_warnings(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_invert_y(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.invert_y = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_nan_clamp(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.nan_clamp = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_discard_is_terminate(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.discard_is_terminate = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_compile_options_set_no_storage_format(
+    options: *mut CompileOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::compile_options_set_flags(options, |options| options.no_storage_format = enabled)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_add_undefine(
     options: *mut CompileOptions,
     name: *const c_char,

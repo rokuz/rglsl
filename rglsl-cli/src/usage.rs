@@ -70,13 +70,23 @@ Options:
                                     'location'
   --client vulkan100                see -V
   --depfile <file>                  writes depfile for build systems
+  --discard-is-terminate            map GLSL discard to OpTerminateInvocation
+                                    (SPIR-V 1.6 and later; discard is OpKill
+                                    before)
   --error-column                    display the column of the error along the
                                     line
   --hlsl-offsets                    allow block offsets to follow HLSL rules
+  --invert-y | --iy                 invert position.Y output in the vertex,
+                                    geometry and tessellation evaluation stages
   --keep-uncalled | --ku            don't eliminate uncalled functions
+  --nan-clamp                       favor non-NaN operand in min, max, and clamp
   --no-link                         only compile shader; do not link (each
                                     file is written on its own, its functions
                                     exported)
+  --no-storage-format | --nsf       use Unknown image format; GLSL storage
+                                    images without a format qualifier already
+                                    have it, so only the module's process list
+                                    changes
   --quiet                           do not print the names of the compiled files
   --reflect-all-block-variables     reflect all variables in blocks, whether
                                     inactive or active

@@ -1,0 +1,17 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, set = 0, binding = 0) buffer Inputs { uint nanBits; };
+layout(std430, set = 0, binding = 1) buffer Results { float results[]; };
+
+void main() {
+  float nan = uintBitsToFloat(nanBits);
+  results[0] = min(nan, 1.0);
+  results[1] = min(1.5, nan);
+  results[2] = max(nan, 2.0);
+  results[3] = max(2.5, nan);
+  results[4] = clamp(nan, 0.5, 3.0);
+  vec2 pair = min(vec2(nan, 4.0), vec2(5.0, nan));
+  results[5] = pair.x;
+  results[6] = pair.y;
+  results[7] = clamp(float(nanBits & 7u) + 6.0, 0.5, 3.0);
+}

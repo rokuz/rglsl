@@ -48,6 +48,10 @@ pub struct Options {
     pub auto_map_locations: bool,
     pub keep_uncalled: bool,
     pub hlsl_offsets: bool,
+    pub invert_y: bool,
+    pub nan_clamp: bool,
+    pub discard_is_terminate: bool,
+    pub no_storage_format: bool,
     pub shifts: Vec<Shift>,
     pub resource_sets: Vec<ResourceSet>,
     pub quiet: bool,
@@ -382,23 +386,16 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
                 "a binding space per resource type",
             ));
         }
-        "invert-y" | "iy" => return Err(Exit::unsupported(&argument, "inverting position.y")),
-        "nan-clamp" => return Err(Exit::unsupported(&argument, "NaN clamping")),
+        "invert-y" | "iy" => options.invert_y = true,
+        "nan-clamp" => options.nan_clamp = true,
         "auto-sampled-textures" => {
             return Err(Exit::unsupported(
                 &argument,
                 "converting textures to sampled textures",
             ));
         }
-        "no-storage-format" | "nsf" => {
-            return Err(Exit::unsupported(&argument, "the Unknown image format"));
-        }
-        "discard-is-terminate" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "discard as OpTerminateInvocation",
-            ));
-        }
+        "no-storage-format" | "nsf" => options.no_storage_format = true,
+        "discard-is-terminate" => options.discard_is_terminate = true,
         "enhanced-msgs" => return Err(Exit::unsupported(&argument, "enhanced messages")),
         "dump-builtin-symbols" => {
             return Err(Exit::unsupported(

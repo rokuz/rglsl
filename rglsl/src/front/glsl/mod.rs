@@ -71,6 +71,9 @@ pub struct Options {
     pub preamble: Option<String>,
     pub export_functions: bool,
     pub limits: ResourceLimits,
+    pub invert_y: bool,
+    pub nan_clamp: bool,
+    pub discard_is_terminate: bool,
     pub builtin_tables: Arc<dyn BuiltinTables + Send + Sync>,
 }
 
@@ -92,6 +95,9 @@ impl From<ShaderStage> for Options {
             preamble: None,
             export_functions: false,
             limits: ResourceLimits::default(),
+            invert_y: false,
+            nan_clamp: false,
+            discard_is_terminate: false,
             builtin_tables: Arc::new(FreshTables),
         }
     }

@@ -102,6 +102,10 @@ pub struct CompileOptions {
     pub suppress_warnings: bool,
     pub debug_info: DebugInfo,
     pub limits: ResourceLimits,
+    pub invert_y: bool,
+    pub nan_clamp: bool,
+    pub discard_is_terminate: bool,
+    pub no_storage_format: bool,
 }
 
 impl CompileOptions {
@@ -134,6 +138,10 @@ impl CompileOptions {
             suppress_warnings: false,
             debug_info: DebugInfo::Names,
             limits: ResourceLimits::default(),
+            invert_y: false,
+            nan_clamp: false,
+            discard_is_terminate: false,
+            no_storage_format: false,
         }
     }
 
@@ -198,6 +206,9 @@ impl CompileOptions {
                 }
             }
         }
+        if self.no_storage_format {
+            processes.push(String::from("no-storage-format"));
+        }
         if !self.resource_set_binding.is_empty() {
             processes.push(format!(
                 "resource-set-binding {}",
@@ -209,6 +220,12 @@ impl CompileOptions {
         }
         if self.auto_map_locations {
             processes.push(String::from("auto-map-locations"));
+        }
+        if self.invert_y {
+            processes.push(String::from("invert-y"));
+        }
+        if self.discard_is_terminate {
+            processes.push(String::from("discard-is-terminate"));
         }
         processes.push(String::from("client vulkan100"));
         let (major, minor) = self.spirv_version;
@@ -248,6 +265,9 @@ impl CompileOptions {
             binding_shifts: self.binding_shifts.clone(),
             export_functions: self.export_functions,
             limits: self.limits,
+            invert_y: self.invert_y,
+            nan_clamp: self.nan_clamp,
+            discard_is_terminate: self.discard_is_terminate,
             ..glsl::Options::from(self.stage.unwrap_or(ShaderStage::Compute))
         }
     }

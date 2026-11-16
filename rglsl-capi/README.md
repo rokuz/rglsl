@@ -60,6 +60,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_compile_options_set_entry_point`, `_set_vulkan_version`, `_set_spirv_version`, `_set_debug_info` | `-e`, `--target-env` (Vulkan 1.0 to 1.4, SPIR-V 1.0 to 1.6), `-g*` (`RGLSL_DEBUG_INFO_*`) |
 | `rglsl_compile_options_set_auto_map_bindings`, `_set_auto_map_locations`, `_set_binding_shift`, `_set_binding_shift_for_set`, `_add_resource_set_binding` | `--amb`, `--aml`, `--shift-*-binding` (`RGLSL_RESOURCE_*`), `--rsb` |
 | `rglsl_compile_options_set_keep_uncalled`, `_set_hlsl_offsets`, `_set_export_functions`, `_set_suppress_warnings`, `_set_limits` | `--ku`, `--hlsl-offsets`, `--no-link`, `-w`, `.conf` |
+| `rglsl_compile_options_set_invert_y`, `_set_nan_clamp`, `_set_discard_is_terminate`, `_set_no_storage_format` | `--invert-y`, `--nan-clamp`, `--discard-is-terminate`, `--nsf` |
 | `rglsl_compile_options_set_includer(options, callback, user_data)` | the include callback, `NULL` to remove it |
 | `rglsl_include_result_set(result, name, source)` | called by the callback to resolve the include |
 | `rglsl_compile(source, options, &object, &diagnostics)` | GLSL text to an object |

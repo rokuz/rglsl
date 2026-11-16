@@ -802,3 +802,47 @@ fn reflection_needs_linking_and_survives_errors() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn code_generation_options_change_the_spirv() -> TestResult {
+    let directory = work_dir("code_generation")?;
+    fs::write(
+        directory.join("shader.vert"),
+        "#version 450\nlayout(location = 0) in vec4 position;\nvoid main() { gl_Position = position; }\n",
+    )?;
+    fs::write(
+        directory.join("shader.frag"),
+        "#version 450\nlayout(location = 0) in vec2 value;\nlayout(location = 0) out vec4 color;\nvoid main() {\n    if (value.x < 0.0) discard;\n    color = vec4(min(value.x, value.y), max(value.x, 1.0), clamp(value.y, 0.0, 1.0), 1.0);\n}\n",
+    )?;
+    let plain = rglsl(&directory, &["-H", "shader.vert"])?;
+    assert!(!plain.stdout.contains("FNegate"), "{}", plain.stdout);
+    let inverted = rglsl(&directory, &["-H", "--invert-y", "shader.vert"])?;
+    assert_eq!(inverted.code, Some(0), "{}", inverted.stderr);
+    assert!(inverted.stdout.contains("FNegate"), "{}", inverted.stdout);
+    let clamped = rglsl(&directory, &["-H", "--nan-clamp", "shader.frag"])?;
+    assert_eq!(clamped.code, Some(0), "{}", clamped.stderr);
+    for operation in ["(NMin)", "(NMax)", "(NClamp)"] {
+        assert!(clamped.stdout.contains(operation), "{}", clamped.stdout);
+    }
+    let terminated = rglsl(
+        &directory,
+        &[
+            "-H",
+            "--target-env",
+            "vulkan1.3",
+            "--discard-is-terminate",
+            "--nsf",
+            "-g",
+            "shader.frag",
+        ],
+    )?;
+    assert_eq!(terminated.code, Some(0), "{}", terminated.stderr);
+    assert!(terminated.stdout.contains("TerminateInvocation"));
+    assert!(!terminated.stdout.contains(" Kill"));
+    for process in ["\"no-storage-format\"", "\"discard-is-terminate\""] {
+        assert!(terminated.stdout.contains(process), "{}", terminated.stdout);
+    }
+    let killed = rglsl(&directory, &["-H", "--discard-is-terminate", "shader.frag"])?;
+    assert!(killed.stdout.contains("Kill"), "{}", killed.stdout);
+    Ok(())
+}

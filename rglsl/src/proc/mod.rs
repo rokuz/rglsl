@@ -333,9 +333,9 @@ impl super::MathFunction {
         match *self {
             // comparison
             Self::Abs => 1,
-            Self::Min => 2,
-            Self::Max => 2,
-            Self::Clamp => 3,
+            Self::Min | Self::NMin => 2,
+            Self::Max | Self::NMax => 2,
+            Self::Clamp | Self::NClamp => 3,
             Self::Min3 | Self::Max3 | Self::Mid3 => 3,
             Self::CubeFaceIndex | Self::CubeFaceCoord => 1,
             Self::IntelCountLeadingZeros | Self::IntelCountTrailingZeros => 1,

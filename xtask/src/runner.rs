@@ -958,6 +958,7 @@ fn run_script(
         ref files,
         ref script,
         ref beyond_glslang,
+        ref options,
     } = case.kind
     else {
         bail!("`{}` is not an exec test", case.name);
@@ -982,6 +983,7 @@ fn run_script(
         command
             .current_dir(dir)
             .args(case.target.glslang_args())
+            .args(options)
             .arg("-o")
             .arg(&reference)
             .arg(file);
@@ -999,8 +1001,11 @@ fn run_script(
                 &format!("{}.{}", case.target.spirv.0, case.target.spirv.1),
             ])
             .arg("--out")
-            .arg(&module)
-            .arg(dir.join(file));
+            .arg(&module);
+        for option in options {
+            command.args(["--option", option]);
+        }
+        command.arg(dir.join(file));
         let output = process::run(command, timeout)?;
         let mut message = String::new();
         let result = ours_result(&output, &mut message);

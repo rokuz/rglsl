@@ -1,4 +1,4 @@
-FORMAT_VERSION 34
+FORMAT_VERSION 35
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -95,7 +95,7 @@ LocalVariable bf2dd0e7b87ae890
 LongVectorClass 442ff0404dc0956b
 LoopControl 0d2524a15d80d3ec
 LoopDependency 1d05f6839e140403
-MathFunction 202ba3f257458692
+MathFunction bf9a67c995f44f7f
 MatrixLayout 9b8e25be92995903
 MemoryDecorations 9996762bf6ee7edb
 MemoryOrder 5a799120efaa18ea

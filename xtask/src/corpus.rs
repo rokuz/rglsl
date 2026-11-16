@@ -176,6 +176,7 @@ pub enum Kind {
         files: Vec<String>,
         script: String,
         beyond_glslang: Option<String>,
+        options: Vec<String>,
     },
 }
 
