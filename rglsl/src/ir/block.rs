@@ -199,21 +199,25 @@ impl<'a> IntoIterator for &'a Block {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for Block {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut block = Self::new();
-        for item in u.arbitrary_iter::<(Statement, Span)>()? {
-            let (statement, span) = item?;
-            block.push(statement, span);
-        }
-        Ok(block)
+        recurse(|| {
+            let mut block = Self::new();
+            for item in u.arbitrary_iter::<(Statement, Span)>()? {
+                let (statement, span) = item?;
+                block.push(statement, span);
+            }
+            Ok(block)
+        })
     }
 
     fn arbitrary_take_rest(u: arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut block = Self::new();
-        for item in u.arbitrary_take_rest_iter::<(Statement, Span)>()? {
-            let (statement, span) = item?;
-            block.push(statement, span);
-        }
-        Ok(block)
+        recurse(|| {
+            let mut block = Self::new();
+            for item in u.arbitrary_take_rest_iter::<(Statement, Span)>()? {
+                let (statement, span) = item?;
+                block.push(statement, span);
+            }
+            Ok(block)
+        })
     }
 
     fn size_hint(depth: usize) -> (usize, Option<usize>) {

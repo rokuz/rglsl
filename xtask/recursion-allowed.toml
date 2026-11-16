@@ -11,14 +11,6 @@ functions = [
 reason = "AST clone, == and drop walk expressions, type specifiers, initializers and statements with work lists; the call graph closes only through the shells (copies whose expression and type slots are placeholders) and the owned parts moved out before a drop"
 bound = "at most 3 nested work lists (statement, initializer, expression and type specifier)"
 
-[ir-arbitrary]
-functions = [
-    "arbitrary::Arbitrary",
-    "core::ptr::drop_in_place<",
-]
-reason = "derive(Arbitrary) of IR statements, compiled only with the arbitrary feature for the libFuzzer target `ir`"
-bound = "the length of the fuzzer input"
-
 [compiled-unit]
 functions = [
     "rglsl::object::CompiledUnit",
