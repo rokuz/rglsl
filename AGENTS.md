@@ -52,19 +52,15 @@ Adding a GLSL extension: `EXTENSIONS.md`.
   left and otherwise continues it on a new stack segment of `SEGMENT` bytes on the heap; callers
   do not know where they run. So the stack used between two `recurse` calls on any path,
   including the leaf work below the last one, must stay well under `RED_ZONE` in a debug build:
-  a function with a large frame gets its own `recurse`. Write no `async` walk drivers; the
-  remaining `async` walks on `Stack::call` (sema, lowering, the SPIR-V backend's frames,
-  reflection, the fuzzer) are being moved to `recurse`, and inside them the async variants are
-  called through `Stack::call`, never a synchronous entry point that starts its own `run_from`.
-  Recursion without the wrapper is fine only over structure bounded by a small constant (vector
-  sizes, matrix columns). There are no artificial nesting limits; only glslang's preprocessor
-  limits (macro expansion depth 200, `#if` nesting 65) are kept for parity.
+  a function with a large frame gets its own `recurse`. Recursion without the wrapper is fine
+  only over structure bounded by a small constant (vector sizes, matrix columns). There are no
+  artificial nesting limits; only glslang's preprocessor limits (macro expansion depth 200, `#if`
+  nesting 65) are kept for parity.
   `rglsl-link/tests/nesting.rs` runs the whole pipeline at 10,000 levels on a 256 KiB debug
   stack in `cargo test`, and at 100,000 levels in release behind `--ignored` (CI runs it): add a
   case for every new kind of nesting, and replace a scan per level (quadratic at depth) with an
   index or a memo. `cargo xtask recursion` checks the call graph: every cycle goes through
-  `recurse` (or `Stack::call`) or is listed with its reason and bound in
-  `xtask/recursion-allowed.toml`.
+  `recurse` or is listed with its reason and bound in `xtask/recursion-allowed.toml`.
 - **No `unwrap` or `expect` anywhere, no other panics in non-test code.** `unwrap`, `expect`,
   `panic!`, `unreachable!`, `unimplemented!` and `todo!` are denied by clippy in every crate;
   return a `Result` instead, and never a silent default that hides a broken invariant.
@@ -123,11 +119,10 @@ cargo xtask builtins [--filter NAME] [--version N] [--stage EXT] [--all-overload
                                                    # builtins.tsv, builtins-coverage.tsv (one side only)
 cargo xtask capi-header [--check]                            # regenerate (or check) rglsl-capi/include/rglsl.h
 cargo xtask recursion [--no-build] [--verbose]               # call graph of the workspace from LLVM IR
-                                                   # (target/xtask/recursion): fails on a nested
-                                                   # run_from and on every cycle that does not go
-                                                   # through stack::recurse (or Stack::call) and is
-                                                   # not allowed in xtask/recursion-allowed.toml
-                                                   # (reason, bound)
+                                                   # (target/xtask/recursion): fails on every
+                                                   # cycle that does not go through stack::recurse
+                                                   # and is not allowed in
+                                                   # xtask/recursion-allowed.toml (reason, bound)
 cargo xtask gen-spirv [--check]                              # regenerate (or check) the SPIR-V tables from the
                                                    # pinned SPIRV-Headers and glslang in target/oracles:
                                                    # rglsl/src/back/spv/grammar.rs (enumerants the

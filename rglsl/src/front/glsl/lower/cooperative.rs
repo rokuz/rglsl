@@ -316,9 +316,7 @@ impl FunctionLowerer<'_, '_> {
         self.lw.module.types.insert(result, Span::UNDEFINED);
         Ok(())
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     pub(super) fn cooperative_call(
         &mut self,
         kind: CooperativeCall,

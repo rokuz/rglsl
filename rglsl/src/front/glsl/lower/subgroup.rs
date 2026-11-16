@@ -95,9 +95,7 @@ impl FunctionLowerer<'_, '_> {
             ty: self.lw.insert_type(inner),
         }
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     fn collective_operation(
         &mut self,
         collective: Collective,

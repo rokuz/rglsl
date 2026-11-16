@@ -359,18 +359,7 @@ impl FunctionLowerer<'_, '_> {
             }
         }
     }
-}
 
-fn declarators(
-    declaration: &Declaration,
-) -> &[rglsl_ast::ast::Node<rglsl_ast::ast::InitDeclarator>] {
-    match declaration.kind {
-        DeclarationKind::InitDeclaratorList(ref list) => &list.declarators,
-        _ => &[],
-    }
-}
-
-impl FunctionLowerer<'_, '_> {
     fn jump(&mut self, jump: &JumpStatement, at: crate::Span) -> Result<()> {
         let value = match *jump {
             JumpStatement::Return(Some(ref value)) => Some(self.rvalue(value)?),
@@ -998,6 +987,15 @@ impl FunctionLowerer<'_, '_> {
             at,
         );
         Ok(())
+    }
+}
+
+fn declarators(
+    declaration: &Declaration,
+) -> &[rglsl_ast::ast::Node<rglsl_ast::ast::InitDeclarator>] {
+    match declaration.kind {
+        DeclarationKind::InitDeclaratorList(ref list) => &list.declarators,
+        _ => &[],
     }
 }
 

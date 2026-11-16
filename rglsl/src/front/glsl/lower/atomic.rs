@@ -247,9 +247,7 @@ impl FunctionLowerer<'_, '_> {
         self.push(statement, at);
         Ok(())
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     pub(super) fn atomic(
         &mut self,
         operation: AtomicOperation,

@@ -16,8 +16,6 @@ use crate::{
 
 const ABORT_MESSAGE_TYPE: &str = "abortMessageLoadType";
 
-impl FunctionLowerer<'_, '_> {}
-
 impl FunctionLowerer<'_, '_> {
     fn string_value(&mut self, expression: &AstExpression, at: Span) -> Result<String> {
         match super::prepass::strip(expression).kind {

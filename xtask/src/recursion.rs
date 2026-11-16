@@ -8,12 +8,7 @@ use anyhow::{Context, Result, bail};
 use hashbrown::{HashMap, HashSet};
 
 const ALLOWLIST: &str = "xtask/recursion-allowed.toml";
-const SANCTIONED: [&str; 3] = [
-    "rglsl_types::stack::recurse",
-    "rglsl_types::stack::Stack::call",
-    "rglsl_types::stack::Stack::spawn",
-];
-const DRIVERS: [&str; 2] = ["rglsl_types::stack::run_from", "rglsl_types::stack::run"];
+const SANCTIONED: &str = "rglsl_types::stack::recurse";
 const SHOWN_MEMBERS: usize = 40;
 
 pub struct Options {
@@ -42,10 +37,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     let graph = Graph::parse(&files)?;
     let names: Vec<String> = graph.symbols.iter().map(|s| demangle(s)).collect();
     let workspace: Vec<bool> = names.iter().map(|n| mentions(n, &crates)).collect();
-    let sanctioned: Vec<bool> = names
-        .iter()
-        .map(|n| SANCTIONED.iter().any(|s| n.starts_with(s)))
-        .collect();
+    let sanctioned: Vec<bool> = names.iter().map(|n| n.starts_with(SANCTIONED)).collect();
     let all = cycles(&graph.edges, &vec![false; names.len()]);
     let residual = cycles(&graph.edges, &sanctioned);
     let workspace_cycle = |cycle: &&Vec<usize>| cycle.iter().any(|&n| workspace[n]);
@@ -58,29 +50,10 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         graph.edges.iter().map(Vec::len).sum::<usize>(),
         all_count,
         residual.len(),
-        SANCTIONED.join(" / "),
+        SANCTIONED,
     );
     let mut used = vec![0_usize; allowlist.entries.len()];
     let mut failures = 0;
-    for cycle in &all {
-        let Some(&driver) = cycle
-            .iter()
-            .filter(|&&n| DRIVERS.iter().any(|d| names[n] == *d))
-            .min()
-        else {
-            continue;
-        };
-        failures += 1;
-        println!(
-            "\nnested walk: {} is in a cycle of {} functions, so a walk can start another walk on the native stack",
-            names[driver],
-            cycle.len()
-        );
-        println!("  for example:");
-        for step in witness(&graph.edges, cycle, driver) {
-            println!("    -> {}", names[step]);
-        }
-    }
     for cycle in residual {
         let members: Vec<&str> = {
             let mut members: Vec<&str> = cycle
@@ -142,7 +115,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         println!("\n{failures} problem(s)");
         return Ok(1);
     }
-    println!("\nno recursion outside stack::recurse, Stack::call and the allowlist");
+    println!("\nno recursion outside stack::recurse and the allowlist");
     Ok(0)
 }
 

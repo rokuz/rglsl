@@ -33,4 +33,3 @@ rglsl-derive.workspace = true
 rustc-hash.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 stacker.workspace = true
-thiserror.workspace = true

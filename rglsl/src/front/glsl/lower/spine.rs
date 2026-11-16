@@ -229,9 +229,7 @@ impl FunctionLowerer<'_, '_> {
         self.push(Statement::Store { pointer, value }, at);
         Ok(())
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     fn flat_conditionals(
         &mut self,
         links: &[&AstExpression],

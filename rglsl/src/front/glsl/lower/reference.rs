@@ -243,9 +243,7 @@ impl FunctionLowerer<'_, '_> {
             _ => recurse(|| self.ir_type(ty, span)),
         }
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     fn physical_root(&self, pointer: Handle<Expression>) -> bool {
         let mut current = pointer;
         loop {
@@ -636,9 +634,7 @@ impl FunctionLowerer<'_, '_> {
             None => Ok(value),
         }
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     pub(super) fn reference_construct(
         &mut self,
         ty: &GlslType,

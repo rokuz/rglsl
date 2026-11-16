@@ -96,8 +96,8 @@ to do for rows with existing kinds. Lowering picks NV/EXT/KHR variants from
 5. If the object file format changed, bump `FORMAT_VERSION` in `rglsl/src/object.rs` and update the
    schema snapshot: `RGLSL_UPDATE_OBJECT_SCHEMA=1 cargo test -p rglsl --test rglsl object_schema`.
 
-New nesting (a construct that can contain itself) is walked without recursion through
-`rglsl_types::stack` and gets a case in `rglsl-link/tests/nesting.rs`.
+New nesting (a construct that can contain itself) is walked with loops and work lists or recurses
+only through `rglsl_types::stack::recurse`, and gets a case in `rglsl-link/tests/nesting.rs`.
 
 ## 5. SPIR-V (rglsl/src/back/spv)
 

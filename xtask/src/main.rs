@@ -65,8 +65,8 @@ commands:
                       target/xtask/recursion, build its call graph (direct calls and functions
                       whose address is taken, through vtables and function pointers) and fail
                       on every cycle that touches the workspace, does not go through
-                      rglsl_types::stack::recurse (or the older Stack::call) and is not
-                      allowed, with its reason and bound, in xtask/recursion-allowed.toml
+                      rglsl_types::stack::recurse and is not allowed, with its reason and
+                      bound, in xtask/recursion-allowed.toml
       --no-build          reuse the LLVM IR of the last build
       --verbose           also list the allowed cycles
   capi-header         generate rglsl-capi/include/rglsl.h with cbindgen

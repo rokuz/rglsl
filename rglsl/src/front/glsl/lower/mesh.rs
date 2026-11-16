@@ -156,8 +156,6 @@ impl Lowerer<'_> {
     }
 }
 
-impl FunctionLowerer<'_, '_> {}
-
 impl FunctionLowerer<'_, '_> {
     pub(super) fn mesh_statement(
         &mut self,

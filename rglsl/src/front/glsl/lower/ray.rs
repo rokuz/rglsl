@@ -356,9 +356,7 @@ impl FunctionLowerer<'_, '_> {
         let pointer = self.add(Expression::GlobalVariable(global), at)?;
         Ok(RayTracingData::Pointer(pointer))
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     pub(super) fn ray_operands(
         &mut self,
         arguments: &[AstExpression],
@@ -612,37 +610,7 @@ impl FunctionLowerer<'_, '_> {
         let address = recurse(|| self.rvalue(argument))?;
         self.add(Expression::AccelerationStructureFromAddress { address }, at)
     }
-}
 
-impl Lowerer<'_> {
-    pub(super) fn opacity_micromap(&mut self, at: Span) -> Result<Option<Handle<Expression>>> {
-        if !self
-            .analysis
-            .extensions
-            .contains(Extension::ExtOpacityMicromapRayQueryMode)
-        {
-            return Ok(None);
-        }
-        self.builtin_name("gl_EnableOpacityMicromapEXT");
-        let analysis = self.analysis;
-        let Some(symbol) = analysis
-            .builtins
-            .variables()
-            .find(|&(name, _)| name == "gl_EnableOpacityMicromapEXT")
-            .map(|(_, symbol)| symbol)
-        else {
-            return Ok(None);
-        };
-        let expression = match self.global_ref(symbol, at)? {
-            GlobalRef::Constant(handle) => Expression::Constant(handle),
-            GlobalRef::Override(handle) => Expression::Override(handle),
-            GlobalRef::Variable(_) => return Err(internal(at)),
-        };
-        Ok(Some(self.module.global_expressions.append(expression, at)))
-    }
-}
-
-impl FunctionLowerer<'_, '_> {
     pub(super) fn builtin_override(
         &mut self,
         symbol: SymbolId,
@@ -678,5 +646,33 @@ impl FunctionLowerer<'_, '_> {
         let found = GlobalRef::Override(handle);
         self.lw.globals.insert(symbol, found);
         Ok(Some(found))
+    }
+}
+
+impl Lowerer<'_> {
+    pub(super) fn opacity_micromap(&mut self, at: Span) -> Result<Option<Handle<Expression>>> {
+        if !self
+            .analysis
+            .extensions
+            .contains(Extension::ExtOpacityMicromapRayQueryMode)
+        {
+            return Ok(None);
+        }
+        self.builtin_name("gl_EnableOpacityMicromapEXT");
+        let analysis = self.analysis;
+        let Some(symbol) = analysis
+            .builtins
+            .variables()
+            .find(|&(name, _)| name == "gl_EnableOpacityMicromapEXT")
+            .map(|(_, symbol)| symbol)
+        else {
+            return Ok(None);
+        };
+        let expression = match self.global_ref(symbol, at)? {
+            GlobalRef::Constant(handle) => Expression::Constant(handle),
+            GlobalRef::Override(handle) => Expression::Override(handle),
+            GlobalRef::Variable(_) => return Err(internal(at)),
+        };
+        Ok(Some(self.module.global_expressions.append(expression, at)))
     }
 }
