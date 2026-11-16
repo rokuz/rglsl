@@ -924,10 +924,57 @@ pub(super) fn parse_unit(
     text: &str,
 ) -> (TranslationUnit, Option<rglsl_ast::ParseError>) {
     let (mut unit, failure) = rglsl_ast::parse_prefix(text);
-    if options.auto_sampled_textures {
-        rglsl_ast::auto_sampled_textures(&mut unit);
+    if !options.auto_sampled_textures {
+        return (unit, failure);
     }
-    (unit, failure)
+    match auto_sampled_textures(options, &mut unit, text) {
+        Ok(()) => (unit, failure),
+        Err(unsupported) => {
+            let error = rglsl_ast::ParseError::new(
+                rglsl_ast::ParseErrorKind::Unsupported {
+                    what: "auto-sampled textures",
+                    reason: unsupported.reason,
+                },
+                unsupported.span,
+                text,
+            );
+            (unit, failure.or(Some(error)))
+        }
+    }
+}
+
+fn auto_sampled_textures(
+    options: &Options,
+    unit: &mut TranslationUnit,
+    text: &str,
+) -> core::result::Result<(), rglsl_ast::sampled::Unsupported> {
+    rglsl_ast::sampled::upgrade_textures(unit)?;
+    let analysis = analyze_unit(options, unit, &sema_options(options, text));
+    let mut removed = BTreeSet::new();
+    for argument in rglsl_ast::sampled::call_arguments(unit) {
+        let Some(info) = analysis.expression(argument.id) else {
+            continue;
+        };
+        let rglsl_sema::types::TypeKind::Opaque(opaque) = info.ty.kind else {
+            continue;
+        };
+        if !matches!(opaque.kind, rglsl_sema::types::OpaqueKind::Sampler) {
+            continue;
+        }
+        let mut current = argument;
+        while let rglsl_ast::ast::ExpressionKind::Parenthesized(ref inner) = current.kind {
+            current = inner;
+        }
+        if !matches!(current.kind, rglsl_ast::ast::ExpressionKind::Variable(_)) {
+            return Err(rglsl_ast::sampled::Unsupported {
+                span: argument.span,
+                reason: "a sampler passed to a function must be a sampler variable, not an element of a sampler array or another expression, to be removed from the call",
+            });
+        }
+        removed.insert(argument.id);
+    }
+    rglsl_ast::sampled::remove_samplers(unit, &removed);
+    Ok(())
 }
 
 fn analyze_unit(options: &Options, unit: &TranslationUnit, sema: &rglsl_sema::Options) -> Analysis {

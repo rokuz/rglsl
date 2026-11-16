@@ -1,15 +1,22 @@
 use alloc::collections::BTreeSet;
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem;
 
 use crate::ast::{
     CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ExternalDeclaration,
     FullySpecifiedType, FunctionCall, FunctionIdentifier, FunctionPrototype, Initializer,
-    JumpStatement, Statement, StatementKind, TranslationUnit, TypeSpecifierNonArray,
+    JumpStatement, NodeId, Statement, StatementKind, TranslationUnit, TypeSpecifierNonArray,
 };
 use crate::chain::placeholder;
 use crate::opaque::{OpaqueKeyword, SampledFamily};
+use crate::span::Span;
+use crate::walk::visit_expressions;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unsupported {
+    pub span: Span,
+    pub reason: &'static str,
+}
 
 const fn is_pure_sampler(specifier: &TypeSpecifierNonArray) -> bool {
     matches!(
@@ -22,76 +29,43 @@ const fn pure_sampler(ty: &FullySpecifiedType) -> bool {
     is_pure_sampler(&ty.specifier.node.non_array)
 }
 
-fn upgrade(specifier: &mut TypeSpecifierNonArray) {
-    if let TypeSpecifierNonArray::Opaque(OpaqueKeyword::Sampled { ref mut family, .. }) = *specifier
+fn upgrade_type(ty: &mut FullySpecifiedType) {
+    if let TypeSpecifierNonArray::Opaque(OpaqueKeyword::Sampled { ref mut family, .. }) =
+        ty.specifier.node.non_array
         && *family == SampledFamily::Texture
     {
         *family = SampledFamily::Sampler;
     }
 }
 
-fn upgrade_type(ty: &mut FullySpecifiedType) {
-    upgrade(&mut ty.specifier.node.non_array);
-}
-
 const fn combines(specifier: &TypeSpecifierNonArray) -> bool {
     matches!(
         *specifier,
-        TypeSpecifierNonArray::Opaque(
-            OpaqueKeyword::Sampled {
-                family: SampledFamily::Sampler,
-                ..
-            } | OpaqueKeyword::Shadow(_)
-        )
+        TypeSpecifierNonArray::Opaque(OpaqueKeyword::Sampled {
+            family: SampledFamily::Sampler,
+            ..
+        })
     )
 }
 
-fn prototype(prototype: &mut FunctionPrototype, removed: &mut BTreeSet<String>) {
+const fn combines_shadow(specifier: &TypeSpecifierNonArray) -> bool {
+    matches!(
+        *specifier,
+        TypeSpecifierNonArray::Opaque(OpaqueKeyword::Shadow(_))
+    )
+}
+
+fn upgrade_prototype(prototype: &mut FunctionPrototype) {
     upgrade_type(&mut prototype.return_type.node);
-    prototype.parameters.retain(|parameter| {
-        if !pure_sampler(&parameter.kind.ty.node) {
-            return true;
-        }
-        if let Some(ref name) = parameter.kind.name {
-            removed.insert(name.node.clone());
-        }
-        false
-    });
     for parameter in &mut prototype.parameters {
         upgrade_type(&mut parameter.kind.ty.node);
     }
 }
 
-fn names_removed(expression: &Expression, removed: &BTreeSet<String>) -> bool {
-    let mut current = expression;
-    loop {
-        match current.kind {
-            ExpressionKind::Variable(ref name) => return removed.contains(name),
-            ExpressionKind::Subscript { ref base, .. } => current = base,
-            ExpressionKind::Parenthesized(ref inner) => current = inner,
-            _ => return false,
-        }
-    }
-}
-
-fn call(call: &mut FunctionCall, removed: &BTreeSet<String>) -> Option<Expression> {
-    if let FunctionIdentifier::Constructor(ref specifier) = call.function.node
-        && combines(&specifier.non_array)
-        && call.arguments.len() == 2
-    {
-        return call
-            .arguments
-            .first_mut()
-            .map(|first| mem::replace(first, placeholder()));
-    }
-    if matches!(
-        call.function.node,
-        FunctionIdentifier::Function(_) | FunctionIdentifier::Method { .. }
-    ) {
-        call.arguments
-            .retain(|argument| !names_removed(argument, removed));
-    }
-    None
+fn remove_sampler_parameters(prototype: &mut FunctionPrototype) {
+    prototype
+        .parameters
+        .retain(|parameter| !pure_sampler(&parameter.kind.ty.node));
 }
 
 enum Work<'a> {
@@ -100,13 +74,26 @@ enum Work<'a> {
     Initializer(&'a mut Initializer),
 }
 
-fn body(statements: &mut [Statement], removed: &BTreeSet<String>) {
+fn condition_work<'a>(condition: &'a mut Condition, work: &mut Vec<Work<'a>>) {
+    match *condition {
+        Condition::Expression(ref mut expression) => work.push(Work::Expression(expression)),
+        Condition::Declaration(ref mut declaration) => {
+            upgrade_type(&mut declaration.kind.ty.node);
+            work.push(Work::Initializer(&mut declaration.kind.initializer.node));
+        }
+    }
+}
+
+fn walk_body<E>(
+    statements: &mut [Statement],
+    on_call: &mut impl FnMut(&mut FunctionCall, Span) -> Result<Option<Expression>, E>,
+) -> Result<(), E> {
     let mut work: Vec<Work<'_>> = statements.iter_mut().rev().map(Work::Statement).collect();
     while let Some(item) = work.pop() {
         match item {
             Work::Expression(expression) => {
                 if let ExpressionKind::FunctionCall(ref mut function) = expression.kind
-                    && let Some(replacement) = call(function, removed)
+                    && let Some(replacement) = on_call(function, expression.span)?
                 {
                     *expression = replacement;
                     work.push(Work::Expression(expression));
@@ -199,19 +186,75 @@ fn body(statements: &mut [Statement], removed: &BTreeSet<String>) {
             },
         }
     }
+    Ok(())
 }
 
-fn condition_work<'a>(condition: &'a mut Condition, work: &mut Vec<Work<'a>>) {
-    match *condition {
-        Condition::Expression(ref mut expression) => work.push(Work::Expression(expression)),
-        Condition::Declaration(ref mut declaration) => {
-            work.push(Work::Initializer(&mut declaration.kind.initializer.node));
+fn walk_unit<E>(
+    unit: &mut TranslationUnit,
+    on_prototype: &mut impl FnMut(&mut FunctionPrototype),
+    on_global: &mut impl FnMut(&mut FullySpecifiedType),
+    on_call: &mut impl FnMut(&mut FunctionCall, Span) -> Result<Option<Expression>, E>,
+) -> Result<(), E> {
+    for declaration in &mut unit.external_declarations {
+        match *declaration {
+            ExternalDeclaration::Declaration(ref mut declaration) => match declaration.kind {
+                DeclarationKind::InitDeclaratorList(ref mut list) => {
+                    on_global(&mut list.ty.node);
+                }
+                DeclarationKind::FunctionPrototype(ref mut declared) => {
+                    on_prototype(&mut declared.node);
+                }
+                _ => {}
+            },
+            ExternalDeclaration::FunctionDefinition(ref mut definition) => {
+                on_prototype(&mut definition.kind.prototype.node);
+                walk_body(&mut definition.kind.body.node.statements, on_call)?;
+            }
+            ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
         }
     }
+    Ok(())
 }
 
-pub fn auto_sampled_textures(unit: &mut TranslationUnit) {
-    let mut removed = BTreeSet::new();
+pub fn upgrade_textures(unit: &mut TranslationUnit) -> Result<(), Unsupported> {
+    walk_unit(
+        unit,
+        &mut upgrade_prototype,
+        &mut upgrade_type,
+        &mut |call: &mut FunctionCall, span| {
+            let FunctionIdentifier::Constructor(ref specifier) = call.function.node else {
+                return Ok(None);
+            };
+            if combines_shadow(&specifier.non_array) {
+                return Err(Unsupported {
+                    span,
+                    reason: "a shadow sampler made from a texture and a sampler cannot keep its depth comparison when the texture becomes a sampled texture",
+                });
+            }
+            if !combines(&specifier.non_array) || call.arguments.len() != 2 {
+                return Ok(None);
+            }
+            Ok(call
+                .arguments
+                .first_mut()
+                .map(|first| mem::replace(first, placeholder())))
+        },
+    )
+}
+
+pub fn call_arguments(unit: &TranslationUnit) -> Vec<&Expression> {
+    let mut arguments = Vec::new();
+    visit_expressions(unit, |expression| {
+        if let ExpressionKind::FunctionCall(ref call) = expression.kind
+            && matches!(call.function.node, FunctionIdentifier::Function(_))
+        {
+            arguments.extend(call.arguments.iter());
+        }
+    });
+    arguments
+}
+
+pub fn remove_samplers(unit: &mut TranslationUnit, arguments: &BTreeSet<NodeId>) {
     unit.external_declarations.retain(|declaration| {
         let ExternalDeclaration::Declaration(ref declaration) = *declaration else {
             return true;
@@ -219,33 +262,18 @@ pub fn auto_sampled_textures(unit: &mut TranslationUnit) {
         let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind else {
             return true;
         };
-        if !pure_sampler(&list.ty.node) {
-            return true;
-        }
-        removed.extend(
-            list.declarators
-                .iter()
-                .map(|declarator| declarator.kind.name.node.clone()),
-        );
-        false
+        !pure_sampler(&list.ty.node)
     });
-    for declaration in &mut unit.external_declarations {
-        match *declaration {
-            ExternalDeclaration::Declaration(ref mut declaration) => match declaration.kind {
-                DeclarationKind::InitDeclaratorList(ref mut list) => {
-                    upgrade_type(&mut list.ty.node);
-                }
-                DeclarationKind::FunctionPrototype(ref mut declared) => {
-                    prototype(&mut declared.node, &mut BTreeSet::new());
-                }
-                _ => {}
-            },
-            ExternalDeclaration::FunctionDefinition(ref mut definition) => {
-                let mut scope = removed.clone();
-                prototype(&mut definition.kind.prototype.node, &mut scope);
-                body(&mut definition.kind.body.node.statements, &scope);
+    let _: Result<(), core::convert::Infallible> = walk_unit(
+        unit,
+        &mut remove_sampler_parameters,
+        &mut |_| {},
+        &mut |call: &mut FunctionCall, _| {
+            if matches!(call.function.node, FunctionIdentifier::Function(_)) {
+                call.arguments
+                    .retain(|argument| !arguments.contains(&argument.id));
             }
-            ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
-        }
-    }
+            Ok(None)
+        },
+    );
 }

@@ -417,24 +417,15 @@ fn validate_io_needs_an_output_for_every_input_read() {
     );
 }
 
-#[test]
-fn auto_sampled_textures_combine_textures_and_drop_samplers() -> TestResult {
-    let source = "#version 450
-layout(set = 0, binding = 0) uniform texture2D textures[2];
-layout(set = 0, binding = 1) uniform sampler samplers[2];
-layout(set = 0, binding = 2) uniform sampler single;
-layout(location = 0) in vec2 uv;
-layout(location = 0) out vec4 color;
-vec4 fetch(texture2D t, sampler s, vec2 p) { return texture(sampler2D(t, s), p); }
-void main() {
-    color = fetch(textures[0], samplers[1], uv) + texture(sampler2D(textures[1], single), uv);
-}
-";
+fn auto_sampled(source: &str) -> Result<rglsl_link::ObjectModule, rglsl_link::Diagnostics> {
     let mut options = CompileOptions::new("separate.frag", ShaderStage::Fragment);
     options.auto_sampled_textures = true;
-    let object = compile(source, &options)?;
+    compile(source, &options)
+}
+
+fn sampler_globals(object: &rglsl_link::ObjectModule) -> usize {
     let module = &object.unit.module;
-    let samplers = module
+    module
         .global_variables
         .iter()
         .filter(|&(_, global)| {
@@ -444,14 +435,91 @@ void main() {
             }
             matches!(module.types[ty].inner, rglsl::TypeInner::Sampler { .. })
         })
-        .count();
-    assert_eq!(samplers, 0);
-    let combined = module
-        .types
-        .iter()
-        .any(|(_, ty)| matches!(ty.inner, rglsl::TypeInner::SampledImage { .. }));
-    assert!(combined);
+        .count()
+}
+
+#[test]
+fn auto_sampled_textures_combine_arrays_through_user_functions() -> TestResult {
+    let object = auto_sampled(
+        "#version 450
+layout(set = 0, binding = 0) uniform texture2D textures[2];
+layout(set = 0, binding = 1) uniform sampler samplers[2];
+layout(set = 0, binding = 2) uniform sampler single;
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+vec4 inner(texture2D t, sampler s, vec2 p) { return texture(sampler2D(t, s), p); }
+vec4 outer(texture2D t, sampler s, vec2 p) {
+    return texture(sampler2D(t, s), p) + inner(t, (s), p);
+}
+void main() {
+    color = outer(textures[0], single, uv) + texture(sampler2D(textures[1], samplers[1]), uv);
+}
+",
+    )?;
+    assert_eq!(sampler_globals(&object), 0);
+    let module = &object.unit.module;
+    assert!(
+        module
+            .types
+            .iter()
+            .any(|(_, ty)| matches!(ty.inner, rglsl::TypeInner::SampledImage { .. }))
+    );
     let program = link_spirv(&[object], &ProgramOptions::default())?;
     assert_eq!(program.stages.len(), 1);
     Ok(())
+}
+
+#[test]
+fn auto_sampled_textures_follow_scopes() -> TestResult {
+    let object = auto_sampled(
+        "#version 450
+layout(set = 0, binding = 0) uniform texture2D image;
+layout(set = 0, binding = 1) uniform sampler s;
+layout(location = 0) out vec4 color;
+float scale(float s) { return s * 2.0; }
+vec4 fetch(texture2D image) { return texelFetch(image, ivec2(0), 0); }
+void main() {
+    float s = 0.25;
+    color = fetch(image) * scale(s) + vec4(scale((s)));
+}
+",
+    )?;
+    assert_eq!(sampler_globals(&object), 0);
+    let program = link_spirv(&[object], &ProgramOptions::default())?;
+    assert_eq!(program.stages.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn auto_sampled_textures_reject_what_cannot_be_rewritten() {
+    for (source, reason) in [
+        (
+            "#version 450
+layout(set = 0, binding = 0) uniform texture2D t;
+layout(set = 0, binding = 1) uniform sampler samplers[2];
+layout(location = 0) out vec4 color;
+vec4 f(texture2D t, sampler s) { return texture(sampler2D(t, s), vec2(0.5)); }
+void main() { color = f(t, samplers[1]); }
+",
+            "an element of a sampler array",
+        ),
+        (
+            "#version 450
+layout(set = 0, binding = 0) uniform texture2D t;
+layout(set = 0, binding = 1) uniform samplerShadow s;
+layout(location = 0) out vec4 color;
+void main() { color = vec4(texture(sampler2DShadow(t, s), vec3(0.5))); }
+",
+            "depth comparison",
+        ),
+    ] {
+        let Err(diagnostics) = auto_sampled(source) else {
+            panic!("the shader compiled");
+        };
+        let text = diagnostics.to_string();
+        assert!(
+            text.contains("auto-sampled textures is not supported: ") && text.contains(reason),
+            "{text}"
+        );
+    }
 }
