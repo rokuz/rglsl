@@ -856,6 +856,21 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn peek_unary_operator(&self) -> Option<UnaryOperator> {
+        match self.peek().kind {
+            TokenKind::Punctuator(symbol) => UnaryOperator::from_symbol(symbol),
+            _ => None,
+        }
+    }
+
+    fn at_binary_operator(&self) -> bool {
+        self.peek_binary_operator().is_some()
+    }
+
+    fn continues_right_chain(&self, assigning: bool) -> bool {
+        self.at("?") || self.peek_assignment_operator(assigning).is_some()
+    }
+
     fn peek_assignment_operator(&self, active: bool) -> Option<AssignmentOperator> {
         if !active {
             return None;
@@ -1374,7 +1389,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_init_declarator(self, name: Identifier) -> Result<Node<InitDeclarator>> {
         let start = name.span.start;
-        let array = self.clone().parse_array_specifier().await?;
+        let array = if self.at("[") {
+            self.clone().parse_array_specifier().await?
+        } else {
+            None
+        };
         let initializer = if self.eat("=") {
             Some(self.clone().parse_initializer().await?)
         } else {
@@ -1489,7 +1508,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         } else {
             None
         };
-        let array = self.clone().parse_array_specifier().await?;
+        let array = if self.at("[") {
+            self.clone().parse_array_specifier().await?
+        } else {
+            None
+        };
         let specifier = TypeSpecifier {
             non_array,
             parameters,
@@ -1927,13 +1950,20 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_expression_from(self, start: u32, primary: Parsed) -> Result<Parsed> {
-        let postfix = self.clone().parse_postfix_from(start, primary).await?;
-        let binary = self.clone().parse_binary_from(start, postfix).await?;
-        let assignment = self
-            .clone()
-            .parse_right_chain_from(start, binary, true)
-            .await?;
-        self.clone().parse_sequence_from(start, assignment).await
+        let mut expression = primary;
+        if self.at_postfix() {
+            expression = self.clone().parse_postfix_from(start, expression).await?;
+        }
+        if self.at_binary_operator() {
+            expression = self.clone().parse_binary_from(start, expression).await?;
+        }
+        if self.continues_right_chain(true) {
+            expression = self
+                .clone()
+                .parse_right_chain_from(start, expression, true)
+                .await?;
+        }
+        self.clone().parse_sequence_from(start, expression).await
     }
 
     async fn parse_sequence_from(self, start: u32, first: Parsed) -> Result<Parsed> {
@@ -1964,6 +1994,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_right_chain(self, assigning: bool) -> Result<Parsed> {
         let start = self.start();
         let first = self.clone().parse_binary().await?;
+        if !self.continues_right_chain(assigning) {
+            return Ok(first);
+        }
         self.clone()
             .parse_right_chain_from(start, first, assigning)
             .await
@@ -1975,9 +2008,6 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         mut operand: Parsed,
         assigning: bool,
     ) -> Result<Parsed> {
-        if !self.at("?") && self.peek_assignment_operator(assigning).is_none() {
-            return Ok(operand);
-        }
         let pending = self.pending_rights.frame();
         let innermost = loop {
             if self.eat("?") {
@@ -2018,13 +2048,13 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_binary(self) -> Result<Parsed> {
         let start = self.start();
         let first = self.clone().parse_unary().await?;
+        if !self.at_binary_operator() {
+            return Ok(first);
+        }
         self.clone().parse_binary_from(start, first).await
     }
 
     async fn parse_binary_from(self, start: u32, first: Parsed) -> Result<Parsed> {
-        if self.peek_binary_operator().is_none() {
-            return Ok(first);
-        }
         let operands = self.binary_operands.frame();
         let operators = self.binary_operators.frame();
         operands.push((start, first));
@@ -2051,23 +2081,27 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_unary(self) -> Result<Parsed> {
+        if self.peek_unary_operator().is_none() {
+            return self.clone().parse_unary_operand().await;
+        }
         self.clone().parse_unary_chain().await
+    }
+
+    async fn parse_unary_operand(self) -> Result<Parsed> {
+        if self.starts_cast() {
+            self.call(self.clone().parse_cast()).await
+        } else {
+            self.clone().parse_postfix().await
+        }
     }
 
     async fn parse_unary_chain(self) -> Result<Parsed> {
         let operators = self.unary_operators.frame();
-        while let TokenKind::Punctuator(symbol) = self.peek().kind {
-            let Some(operator) = UnaryOperator::from_symbol(symbol) else {
-                break;
-            };
+        while let Some(operator) = self.peek_unary_operator() {
             operators.push((self.start(), operator));
             self.advance();
         }
-        let mut result = if self.starts_cast() {
-            self.call(self.clone().parse_cast()).await?
-        } else {
-            self.clone().parse_postfix().await?
-        };
+        let mut result = self.clone().parse_unary_operand().await?;
         while let Some((start, operator)) = operators.pop() {
             let kind = ExpressionKind::Unary {
                 operator,
@@ -2114,6 +2148,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_postfix(self) -> Result<Parsed> {
         let start = self.start();
         let primary = self.clone().parse_primary().await?;
+        if !self.at_postfix() {
+            return Ok(primary);
+        }
         self.clone().parse_postfix_from(start, primary).await
     }
 
