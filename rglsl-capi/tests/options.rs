@@ -491,10 +491,9 @@ fn code_generation_options() -> TestResult {
             rglsl_c::rglsl_compile_options_set_invert_y(vertex.pointer, true),
             rglsl_c::rglsl_compile_options_set_nan_clamp(vertex.pointer, true),
             rglsl_c::rglsl_compile_options_set_discard_is_terminate(vertex.pointer, true),
-            rglsl_c::rglsl_compile_options_set_no_storage_format(vertex.pointer, true),
         ]
     };
-    assert_eq!(codes, [RGLSL_RESULT_OK; 4]);
+    assert_eq!(codes, [RGLSL_RESULT_OK; 3]);
     let source = c"#version 450
 layout(location = 0) in vec3 position;
 void main() {

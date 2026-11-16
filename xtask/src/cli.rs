@@ -974,11 +974,6 @@ fn cases() -> Vec<Case> {
             &["spv.dead-after-discard.frag"],
         ),
         Case::new(
-            "no-storage-format",
-            &["-V", "--nsf", "-o", "out.spv", "spv.image.frag"],
-            &["spv.image.frag"],
-        ),
-        Case::new(
             "codegen-options-processes",
             &[
                 "-V",
@@ -988,7 +983,6 @@ fn cases() -> Vec<Case> {
                 "--invert-y",
                 "--nan-clamp",
                 "--discard-is-terminate",
-                "--no-storage-format",
                 "-o",
                 "out.spv",
                 "spv.debuginfo.glsl.frag",
@@ -1116,6 +1110,16 @@ fn cases() -> Vec<Case> {
             "relaxed-errors",
             &["--relaxed-errors"],
             "rglsl does not relax errors",
+        ),
+        removed(
+            "no-storage-format",
+            &["--no-storage-format"],
+            "GLSL storage images without a format already have the Unknown format",
+        ),
+        removed(
+            "nsf",
+            &["--nsf"],
+            "GLSL storage images without a format already have the Unknown format",
         ),
         removed(
             "spirv-val",

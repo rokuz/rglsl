@@ -233,7 +233,6 @@ impl<'a> Session<'a> {
         compile.invert_y = options.invert_y;
         compile.nan_clamp = options.nan_clamp;
         compile.discard_is_terminate = options.discard_is_terminate;
-        compile.no_storage_format = options.no_storage_format;
         compile.enhanced_messages = options.enhanced_messages;
         compile.auto_sampled_textures = options.auto_sampled_textures;
         compile

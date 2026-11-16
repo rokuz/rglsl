@@ -106,7 +106,6 @@ pub struct CompileOptions {
     pub invert_y: bool,
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
-    pub no_storage_format: bool,
     pub enhanced_messages: bool,
     pub auto_sampled_textures: bool,
 }
@@ -144,7 +143,6 @@ impl CompileOptions {
             invert_y: false,
             nan_clamp: false,
             discard_is_terminate: false,
-            no_storage_format: false,
             enhanced_messages: false,
             auto_sampled_textures: false,
         }
@@ -210,9 +208,6 @@ impl CompileOptions {
                     processes.push(format!("{} {base} {set}", shift_name(class)));
                 }
             }
-        }
-        if self.no_storage_format {
-            processes.push(String::from("no-storage-format"));
         }
         if !self.resource_set_binding.is_empty() {
             processes.push(format!(

@@ -51,7 +51,6 @@ pub struct Options {
     pub invert_y: bool,
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
-    pub no_storage_format: bool,
     pub enhanced_messages: bool,
     pub validate_io: bool,
     pub auto_sampled_textures: bool,
@@ -392,7 +391,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         "invert-y" | "iy" => options.invert_y = true,
         "nan-clamp" => options.nan_clamp = true,
         "auto-sampled-textures" => options.auto_sampled_textures = true,
-        "no-storage-format" | "nsf" => options.no_storage_format = true,
         "discard-is-terminate" => options.discard_is_terminate = true,
         "enhanced-msgs" => options.enhanced_messages = true,
         "dump-builtin-symbols" => {

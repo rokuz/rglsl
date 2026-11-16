@@ -88,10 +88,6 @@ Options:
   --no-link                         only compile shader; do not link (each
                                     file is written on its own, its functions
                                     exported)
-  --no-storage-format | --nsf       use Unknown image format; GLSL storage
-                                    images without a format qualifier already
-                                    have it, so only the module's process list
-                                    changes
   --quiet                           do not print the names of the compiled files
   --reflect-all-block-variables     reflect all variables in blocks, whether
                                     inactive or active

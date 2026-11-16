@@ -840,7 +840,6 @@ fn code_generation_options_change_the_spirv() -> TestResult {
             "--target-env",
             "vulkan1.3",
             "--discard-is-terminate",
-            "--nsf",
             "-g",
             "shader.frag",
         ],
@@ -848,9 +847,11 @@ fn code_generation_options_change_the_spirv() -> TestResult {
     assert_eq!(terminated.code, Some(0), "{}", terminated.stderr);
     assert!(terminated.stdout.contains("TerminateInvocation"));
     assert!(!terminated.stdout.contains(" Kill"));
-    for process in ["\"no-storage-format\"", "\"discard-is-terminate\""] {
-        assert!(terminated.stdout.contains(process), "{}", terminated.stdout);
-    }
+    assert!(
+        terminated.stdout.contains("\"discard-is-terminate\""),
+        "{}",
+        terminated.stdout
+    );
     let killed = rglsl(&directory, &["-H", "--discard-is-terminate", "shader.frag"])?;
     assert!(killed.stdout.contains("Kill"), "{}", killed.stdout);
     Ok(())
