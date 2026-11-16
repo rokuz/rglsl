@@ -7,6 +7,7 @@
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::ops;
+use rglsl_types::rglo::Rglo;
 
 use super::{
     ExpressionError, FunctionError, ImmediateSlots, ModuleInfo, ShaderStages, ValidationFlags,
@@ -239,7 +240,7 @@ impl ExpressionInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Rglo)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -287,7 +288,7 @@ impl GlobalOrArgument {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Rglo)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]

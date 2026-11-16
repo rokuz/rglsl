@@ -1,4 +1,5 @@
 use alloc::{string::String, vec::Vec};
+use rglsl_types::rglo::Rglo;
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
@@ -9,7 +10,7 @@ use serde::Serialize;
 
 use crate::Span;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -24,7 +25,7 @@ pub struct DebugInfo {
     pub anchors: Vec<DebugAnchor>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -35,7 +36,7 @@ pub struct DebugAnchor {
     pub at: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -45,7 +46,7 @@ pub struct DebugSource {
     pub text: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -58,7 +59,7 @@ pub struct DebugUnit {
     pub entry: Option<u32>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -70,7 +71,7 @@ pub struct DebugFunction {
     pub end: Option<DebugPosition>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -81,7 +82,7 @@ pub struct DebugLine {
     pub line: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -92,7 +93,7 @@ pub struct DebugScope {
     pub at: DebugPosition,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -103,7 +104,7 @@ pub struct DebugPosition {
     pub column: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -115,7 +116,7 @@ pub struct DebugStruct {
     pub members: Vec<DebugMember>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -311,7 +312,7 @@ pub fn shift_span(span: Span, offset: u32) -> Span {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]

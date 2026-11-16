@@ -1,4 +1,5 @@
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+use crate::rglo::Rglo;
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -11,7 +12,7 @@ pub enum Flavor {
 
 macro_rules! flavors {
     ($($name:ident: $($variant:ident)|+;)*) => {$(
-        #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+        #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
         #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
         #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
         #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]

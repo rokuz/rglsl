@@ -4,6 +4,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::Cell;
 
+use rglsl_types::rglo::{self, Rglo};
+
 use crate::diagnostic::Location;
 use crate::include::FileId;
 
@@ -98,9 +100,27 @@ impl SpanMap {
     }
 }
 
-#[cfg(any(feature = "serialize", feature = "deserialize"))]
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+impl rglo::Encode for SpanMap {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.text(rglo::to_string(&SpanParts::from(self.clone())));
+    }
+}
+
+impl rglo::Decode for SpanMap {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        rglo::wrap::<SpanParts, Self>(input, Self::from, false)
+    }
+}
+
+#[derive(Rglo)]
+#[cfg_attr(
+    any(feature = "serialize", feature = "deserialize"),
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[cfg_attr(
+    any(feature = "serialize", feature = "deserialize"),
+    serde(deny_unknown_fields)
+)]
 struct SpanParts {
     root: u32,
     length: u32,
@@ -108,7 +128,6 @@ struct SpanParts {
     segments: Vec<[u32; 5]>,
 }
 
-#[cfg(feature = "serialize")]
 impl From<SpanMap> for SpanParts {
     fn from(map: SpanMap) -> Self {
         let Some(table) = map.shared else {
@@ -144,7 +163,6 @@ impl From<SpanMap> for SpanParts {
     }
 }
 
-#[cfg(feature = "deserialize")]
 impl From<SpanParts> for SpanMap {
     fn from(parts: SpanParts) -> Self {
         if parts.segments.is_empty() {

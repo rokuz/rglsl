@@ -18,6 +18,8 @@
 
 use core::num::NonZeroU32;
 
+use rglsl_types::rglo;
+
 /// An unsigned 32-bit value known not to be [`u32::MAX`].
 ///
 /// A `NonMaxU32` value can represent any value in the range `0 .. u32::MAX -
@@ -90,6 +92,26 @@ impl core::fmt::Debug for NonMaxU32 {
 impl core::fmt::Display for NonMaxU32 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.get().fmt(f)
+    }
+}
+
+impl rglo::Encode for NonMaxU32 {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.unsigned(u64::from(self.get()));
+    }
+}
+
+impl rglo::Decode for NonMaxU32 {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        Self::read(input).map(rglo::Decoded::Value)
+    }
+}
+
+impl NonMaxU32 {
+    pub(crate) fn read(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
+        let start = input.clone();
+        let value = input.unsigned("u32")?;
+        Self::new(value).ok_or_else(|| start.expected("an integer below 4294967295"))
     }
 }
 

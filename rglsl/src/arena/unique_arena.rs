@@ -3,6 +3,8 @@
 use alloc::vec::Vec;
 use core::{fmt, hash, ops};
 
+use rglsl_types::rglo;
+
 use super::{
     Range,
     handle::{BadHandle, Handle},
@@ -216,6 +218,26 @@ impl<T> ops::Index<Handle<T>> for UniqueArena<T> {
     type Output = T;
     fn index(&self, handle: Handle<T>) -> &T {
         &self.set[handle.index()]
+    }
+}
+
+impl<T: rglo::Encode> rglo::Encode for UniqueArena<T> {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.sequence("[", "]", &self.set);
+    }
+}
+
+impl<T: rglo::Decode + Eq + hash::Hash> rglo::Decode for UniqueArena<T> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        rglo::sequence(input, |items: Vec<T>, input| {
+            let count = items.len();
+            let set: FastIndexSet<T> = items.into_iter().collect();
+            if set.len() != count {
+                return Err(input.error("a unique arena has duplicate elements"));
+            }
+            let span_info = core::iter::repeat_n(Span::default(), set.len()).collect();
+            Ok(Self { set, span_info })
+        })
     }
 }
 

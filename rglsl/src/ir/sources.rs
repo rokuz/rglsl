@@ -1,4 +1,5 @@
 use alloc::{string::String, vec::Vec};
+use rglsl_types::rglo::Rglo;
 
 #[cfg(feature = "deserialize")]
 use serde::Deserialize;
@@ -9,7 +10,8 @@ pub use rglsl_pp::SpanLocation;
 
 use crate::Span;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Rglo)]
+#[rglo(transparent)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(
@@ -20,7 +22,7 @@ pub struct SpanSources {
     units: Vec<SpanUnit>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]

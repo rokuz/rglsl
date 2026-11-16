@@ -7,8 +7,9 @@ use serde::Serialize;
 
 use crate::ShaderStageMask;
 use crate::flavor::{BarycentricFlavor, FragmentDensityFlavor};
+use crate::rglo::Rglo;
 
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -21,7 +22,7 @@ pub enum SubgroupMask {
     Lt,
 }
 
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -36,7 +37,7 @@ pub enum AmdBarycentric {
     PullModel,
 }
 
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -47,7 +48,7 @@ pub enum ShaderBallot {
     Mask(SubgroupMask),
 }
 
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -65,7 +66,7 @@ pub enum ShaderCore {
 }
 
 /// Built-in inputs and outputs.
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]

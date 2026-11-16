@@ -1227,11 +1227,20 @@ fn nesting_100_000_levels_deep_on_a_small_stack() -> TestResult {
 }
 
 fn hostile_object_files_are_rejected_on_a_small_stack() -> TestResult {
-    let options = Options::from(ShaderStage::Fragment);
-    let object = Frontend::default()
-        .compile(&options, &shader("", "if (t) { b = 2; }"))
-        .map_err(|errors| format!("{errors:?}"))?;
-    let text = encode(&object)?;
+    let source = shader("", "if (t) { b = 2; }");
+    let plain = Options::from(ShaderStage::Fragment);
+    let debug = Options {
+        debug_info: true,
+        source_name: Some(String::from("hostile.frag")),
+        ..Options::from(ShaderStage::Fragment)
+    };
+    let mut texts = Vec::new();
+    for options in [plain, debug] {
+        let object = Frontend::default()
+            .compile(&options, &source)
+            .map_err(|errors| format!("{errors:?}"))?;
+        texts.push(encode(&object)?);
+    }
     let version = format!("(format_version:{},", rglsl::object::FORMAT_VERSION);
     let nested = |open: &str, close: &str| {
         format!("{}{},", open.repeat(DEEP_DEPTH), close.repeat(DEEP_DEPTH))
@@ -1253,6 +1262,11 @@ fn hostile_object_files_are_rejected_on_a_small_stack() -> TestResult {
             format!("unknown:{}", nested("{", "}")),
         ),
         (
+            "duplicate field",
+            version.as_str(),
+            format!("format_version:{}", nested("(", ")")),
+        ),
+        (
             "unknown field of a module",
             "modules:[(",
             format!("unknown:{}", nested("(", ")")),
@@ -1262,31 +1276,53 @@ fn hostile_object_files_are_rejected_on_a_small_stack() -> TestResult {
         ("sequence of functions", "functions:[", nested("[", "]")),
         ("sequence of expressions", "expressions:[", nested("[", "]")),
         ("block", "body:[", nested("[", "]")),
+        ("block length", "body:[Block(", nested("(", ")")),
+        ("statement entry", "body:[Block(", nested("Statement(", ")")),
         ("map", "named_expressions:{", nested("{", "}")),
         ("tuple", "work_group_size_placeholders:(", nested("(", ")")),
+        (
+            "tuple element",
+            "work_group_size_placeholders:(",
+            nested("Some(", ")"),
+        ),
         ("option", "Some(", nested("Some(", ")")),
+        ("flags", "memory_decorations:(", nested("(", ")")),
+        ("wrong type", "early_fragment_tests:", nested("[", "]")),
+        (
+            "unknown variant",
+            "target:",
+            format!("Unknown{}", nested("(", ")")),
+        ),
         ("enum variant payload", "Statement(", nested("(", ")")),
         ("struct variant payload", "Scalar(", nested("(", ")")),
+        ("debug information", "debug_info:Some(", nested("(", ")")),
+        ("span map", "map:(", nested("(", ")")),
+        ("span segments", "segments:[", nested("(", ")")),
+        ("span tables", "spans:[", nested("[", "]")),
+        ("span pairs", "spans:[(spans:[", nested("(", ")")),
     ];
     for (name, anchor, payload) in positions {
-        let at = text
-            .find(anchor)
-            .ok_or_else(|| format!("no {anchor} in the object file"))?
-            + anchor.len();
-        let hostile = format!(
-            "{}{payload}{}",
-            text.get(..at).unwrap_or_default(),
-            text.get(at..).unwrap_or_default()
-        );
-        let decoded = on_small_stack(move || {
-            decode(&hostile)
-                .map(drop)
-                .map_err(|error| error.to_string())
-        })?;
-        assert!(
-            decoded.is_err(),
-            "a hostile object file with a nested {name}"
-        );
+        let (text, at) = texts
+            .iter()
+            .find_map(|text| Some((text, text.find(anchor)? + anchor.len())))
+            .ok_or_else(|| format!("no {anchor} in the object files"))?;
+        let before = text.get(..at).unwrap_or_default();
+        let after = text.get(at..).unwrap_or_default();
+        let truncated = payload.get(..payload.len() / 2).unwrap_or_default();
+        for hostile in [
+            format!("{before}{payload}{after}"),
+            format!("{before}{truncated}"),
+        ] {
+            let decoded = on_small_stack(move || {
+                decode(&hostile)
+                    .map(drop)
+                    .map_err(|error| error.to_string())
+            })?;
+            assert!(
+                decoded.is_err(),
+                "a hostile object file with a nested {name}"
+            );
+        }
     }
     for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
         let hostile = format!("{}{}", open.repeat(DEEP_DEPTH), close.repeat(DEEP_DEPTH));

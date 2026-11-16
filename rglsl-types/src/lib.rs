@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![no_std]
 extern crate alloc;
+extern crate self as rglsl_types;
 #[cfg(feature = "std")]
 extern crate std;
 
@@ -8,15 +9,17 @@ pub mod builtin;
 pub mod extension;
 pub mod flavor;
 pub mod probe;
+pub mod rglo;
 pub mod small_float;
 pub mod small_vec;
 pub mod spv;
 pub mod stack;
 
+use crate::rglo::Rglo;
 pub use flavor::Flavor;
 
 /// Stage of the programmable pipeline.
-#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -176,7 +179,8 @@ impl ShaderStage {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+    #[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd, Rglo)]
+    #[rglo(flags)]
     #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
     #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
     #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -269,7 +273,7 @@ pub type FastIndexMap<K, V> =
     indexmap::IndexMap<K, V, core::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// Pipeline binding information for global resources.
-#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Rglo)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]

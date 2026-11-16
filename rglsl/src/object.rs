@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, string::String, vec::Vec};
+use rglsl_types::rglo::Rglo;
 
 #[cfg(feature = "deserialize")]
 use serde::Deserialize;
@@ -13,7 +14,7 @@ use crate::{
 
 pub const FORMAT_VERSION: u32 = 36;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -26,7 +27,7 @@ pub struct ObjectModule {
     pub unit: Box<CompiledUnit>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -35,7 +36,7 @@ pub enum ObjectTarget {
     Library(Library),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -45,7 +46,7 @@ pub struct Library {
     pub rejections: Vec<StageRejection>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -54,7 +55,7 @@ pub struct LibraryVariant {
     pub unit: Box<CompiledUnit>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -68,19 +69,22 @@ pub struct CompiledUnit {
     pub work_group_size_constant: bool,
     pub work_group_size_placeholders: [Option<Handle<Override>>; 3],
     #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
+    #[rglo(skip)]
     pub specialized: Option<Box<CompiledUnit>>,
     #[cfg_attr(
         feature = "serialize",
         serde(skip_serializing_if = "core::ops::Not::not")
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = core::ops::Not::not)]
     pub deferred_bias: bool,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = Vec::is_empty)]
     pub dead_calls: Vec<DeadCall>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -345,7 +349,7 @@ pub const fn ray_tracing_for(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -356,7 +360,7 @@ pub struct StageRejection {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -367,7 +371,7 @@ pub enum ParameterQualifier {
     Inout,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -379,10 +383,11 @@ pub struct FunctionSymbol {
     pub qualifiers: Vec<ParameterQualifier>,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = Option::is_none)]
     pub invalid: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -393,7 +398,7 @@ pub enum SymbolKind {
     Local,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -402,7 +407,7 @@ pub enum PathStep {
     Member(u32),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -419,13 +424,15 @@ pub struct GlobalSymbol {
         serde(skip_serializing_if = "core::ops::Not::not")
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = core::ops::Not::not)]
     pub on_use: bool,
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = Option::is_none)]
     pub initializer: Option<Handle<crate::Expression>>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
@@ -443,7 +450,7 @@ impl BindingAssignment {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]

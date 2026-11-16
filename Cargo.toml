@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "rglsl",
     "rglsl-types",
+    "rglsl-derive",
     "rglsl-test",
     "rglsl-ast",
     "rglsl-sema",
@@ -57,6 +58,7 @@ authors = ["rglsl developers", "gfx-rs developers"]
 [workspace.dependencies]
 rglsl = { version = "0.1.0", path = "./rglsl" }
 rglsl-ast = { version = "0.1.0", path = "./rglsl-ast" }
+rglsl-derive = { version = "0.1.0", path = "./rglsl-derive" }
 rglsl-dis = { version = "0.1.0", path = "./rglsl-dis" }
 rglsl-fuzz = { version = "0.1.0", path = "./rglsl-fuzz" }
 rglsl-sema = { version = "0.1.0", path = "./rglsl-sema" }
@@ -83,6 +85,8 @@ indexmap = { version = "2.11.4", default-features = false }
 libfuzzer-sys = ">0.4.0,<=0.4.7"
 libm = { version = "0.2.6", default-features = false }
 log = "0.4.29"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
 num-traits = { version = "0.2.16", default-features = false }
 rspirv = "0.13"
 ron = "0.12"
@@ -90,6 +94,7 @@ rustc-hash = { version = "1.1", default-features = false }
 serde_json = "1.0.143"
 serde = { version = "1.0.225", default-features = false }
 spirv = "0.4"
+syn = "2.0.104"
 toml = "1.0.0"
 thiserror = { version = "2.0.12", default-features = false }
 
