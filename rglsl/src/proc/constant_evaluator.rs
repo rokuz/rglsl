@@ -812,6 +812,12 @@ impl ExpressionKindTracker {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            inner: HandleVec::with_capacity(capacity),
+        }
+    }
+
     /// Forces the the expression to not be const
     pub fn force_non_const(&mut self, value: Handle<Expression>) {
         self.inner[value] = ExpressionKind::Runtime;

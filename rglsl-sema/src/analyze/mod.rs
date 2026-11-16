@@ -521,6 +521,15 @@ impl<'a> Analyzer<'a> {
     }
 
     fn unit(&mut self, unit: &TranslationUnit) {
+        let estimated = usize::try_from(unit.next_id()).unwrap_or(0);
+        if estimated > 16 {
+            self.expressions.reserve(estimated * 3 / 4);
+            self.references.reserve(estimated / 4);
+            self.declarations.reserve(estimated / 8);
+            self.calls.reserve(estimated / 8);
+            self.symbols.reserve(estimated / 8);
+            self.scopes.reserve(estimated / 8);
+        }
         self.patch_vertices_limit();
         for declaration in &unit.external_declarations {
             match declaration {

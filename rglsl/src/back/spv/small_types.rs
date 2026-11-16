@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use spirv::{Capability, Op, StorageClass, Word};
 
@@ -7,6 +7,7 @@ use crate::{FastHashMap, FastHashSet, FastIndexSet};
 
 #[derive(Clone, Debug)]
 enum TypeInfo {
+    None,
     Int(Word),
     Float(Word),
     EncodedFloat(Word),
@@ -113,8 +114,8 @@ pub(super) struct Usage {
 }
 
 struct Module {
-    types: FastHashMap<Word, TypeInfo>,
-    value_types: FastHashMap<Word, Word>,
+    types: Vec<TypeInfo>,
+    value_types: Vec<Word>,
     blocks: FastHashSet<Word>,
     buffer_blocks: FastHashSet<Word>,
     workgroup_block_vars: FastHashSet<Word>,
@@ -123,7 +124,33 @@ struct Module {
 
 impl Module {
     fn info(&self, id: Word) -> Option<&TypeInfo> {
-        self.types.get(&id)
+        match self.types.get(id as usize) {
+            Some(&TypeInfo::None) | None => None,
+            Some(info) => Some(info),
+        }
+    }
+
+    fn set_type(&mut self, id: Word, info: TypeInfo) {
+        let index = id as usize;
+        if index >= self.types.len() {
+            self.types.resize(index + 1, TypeInfo::None);
+        }
+        self.types[index] = info;
+    }
+
+    fn set_value_type(&mut self, id: Word, ty: Word) {
+        let index = id as usize;
+        if index >= self.value_types.len() {
+            self.value_types.resize(index + 1, 0);
+        }
+        self.value_types[index] = ty;
+    }
+
+    fn value_type(&self, id: Word) -> Option<Word> {
+        self.value_types
+            .get(id as usize)
+            .copied()
+            .filter(|&ty| ty != 0)
     }
 
     fn contains(&mut self, id: Word, float: bool, width: Word) -> bool {
@@ -131,7 +158,7 @@ impl Module {
         crate::proc::contains(
             (id, float, width),
             &mut self.contained,
-            |(id, float, width), children| match types.get(&id) {
+            |(id, float, width), children| match types.get(id as usize) {
                 Some(&TypeInfo::Int(found)) => !float && found == width,
                 Some(&TypeInfo::Float(found)) => float && found == width,
                 Some(&TypeInfo::Struct(ref members)) => {
@@ -142,7 +169,12 @@ impl Module {
                     children.push((element, float, width));
                     false
                 }
-                Some(&(TypeInfo::Pointer(..) | TypeInfo::EncodedFloat(_) | TypeInfo::Other))
+                Some(
+                    &(TypeInfo::None
+                    | TypeInfo::Pointer(..)
+                    | TypeInfo::EncodedFloat(_)
+                    | TypeInfo::Other),
+                )
                 | None => false,
             },
         )
@@ -152,6 +184,7 @@ impl Module {
         for _ in 0..=self.types.len() {
             match *self.info(id)? {
                 TypeInfo::Element(element) | TypeInfo::Pointer(_, element) => id = element,
+                TypeInfo::None => return None,
                 ref other @ (TypeInfo::Int(_)
                 | TypeInfo::Float(_)
                 | TypeInfo::EncodedFloat(_)
@@ -163,8 +196,8 @@ impl Module {
     }
 
     fn storage_class(&self, pointer: Word) -> Option<Word> {
-        let ty = self.value_types.get(&pointer)?;
-        if let TypeInfo::Pointer(class, _) = *self.info(*ty)? {
+        let ty = self.value_type(pointer)?;
+        if let TypeInfo::Pointer(class, _) = *self.info(ty)? {
             Some(class)
         } else {
             None
@@ -176,10 +209,27 @@ const fn class(storage: StorageClass) -> Word {
     storage as Word
 }
 
-pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Word]) -> Usage {
+pub(super) fn has_tracked_scalars(declarations: &[Word]) -> bool {
+    for instruction in instructions(declarations) {
+        if (instruction.op == op(Op::TypeInt) || instruction.op == op(Op::TypeFloat))
+            && matches!(instruction.operands.get(1), Some(&(8 | 16 | 64)))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub(super) fn usage(
+    bound: Word,
+    declarations: &[Word],
+    functions: &[Word],
+    annotations: &[Word],
+) -> Usage {
+    let len = bound as usize;
     let mut module = Module {
-        types: FastHashMap::default(),
-        value_types: FastHashMap::default(),
+        types: vec![TypeInfo::None; len],
+        value_types: vec![0; len],
         blocks: FastHashSet::default(),
         buffer_blocks: FastHashSet::default(),
         workgroup_block_vars: FastHashSet::default(),
@@ -246,11 +296,11 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             {
                 variables.push((id, Some(storage)));
             }
-            module.types.insert(id, info);
+            module.set_type(id, info);
             continue;
         }
         if let (Some(ty), Some(id)) = (first, second) {
-            module.value_types.insert(id, ty);
+            module.set_value_type(id, ty);
             if instruction.op == op(Op::Variable) {
                 let storage = operands.get(2).copied();
                 variables.push((ty, storage));
@@ -283,7 +333,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
             && let (Some(&ty), Some(&id)) =
                 (instruction.operands.first(), instruction.operands.get(1))
         {
-            module.value_types.insert(id, ty);
+            module.set_value_type(id, ty);
             if instruction.op == op(Op::Variable) {
                 variables.push((ty, instruction.operands.get(2).copied()));
             }
@@ -394,6 +444,7 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
     .iter()
     .any(|capability| capabilities.contains(capability));
     let mut found = Vec::new();
+    let mut instr_types = Vec::new();
     for instruction in instructions(functions) {
         let code = instruction.op;
         if (code == op(Op::AccessChain)
@@ -412,24 +463,24 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         {
             continue;
         }
-        let mut types = Vec::new();
+        instr_types.clear();
         let ids = if has_result_type(code) {
             if let Some(&ty) = instruction.operands.first() {
-                types.push(ty);
+                instr_types.push(ty);
             }
             instruction.operands.get(2..).unwrap_or(&[])
         } else {
             instruction.operands
         };
-        for (index, id) in ids.iter().enumerate() {
+        for (index, &id) in ids.iter().enumerate() {
             if is_literal(code, index) {
                 continue;
             }
-            if let Some(ty) = module.value_types.get(id) {
-                types.push(*ty);
+            if let Some(ty) = module.value_type(id) {
+                instr_types.push(ty);
             }
         }
-        for ty in types {
+        for &ty in &instr_types {
             post_process(
                 &mut module,
                 &instruction,
@@ -444,10 +495,11 @@ pub(super) fn usage(declarations: &[Word], functions: &[Word], annotations: &[Wo
         capabilities.insert(capability);
     }
     let declared = |float: bool, width: Word| {
-        module.types.values().any(|info| match *info {
+        module.types.iter().any(|info| match *info {
             TypeInfo::Int(found) => !float && found == width,
             TypeInfo::Float(found) => float && found == width,
-            TypeInfo::EncodedFloat(_)
+            TypeInfo::None
+            | TypeInfo::EncodedFloat(_)
             | TypeInfo::Struct(_)
             | TypeInfo::Element(_)
             | TypeInfo::Pointer(..)

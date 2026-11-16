@@ -6,8 +6,8 @@ use rglsl_types::stack::run;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
-    Attribute, CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ForStatement,
-    JumpStatement, Statement, StatementKind,
+    Attribute, CaseLabel, CompoundStatement, Condition, DeclarationKind, Expression,
+    ExpressionKind, ForStatement, JumpStatement, Statement, StatementKind,
 };
 
 use super::frames::Cx;
@@ -19,10 +19,10 @@ use crate::types::Type;
 use rglsl_types::ShaderStage;
 
 impl Analyzer<'_> {
-    pub(crate) fn statement(&mut self, statement: &Statement) {
+    pub(crate) fn statements(&mut self, statements: &[Statement]) {
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).statement(statement))
+            run(|stack| Cx::new(&analyzer, stack).statements(statements))
         };
         if finished.is_none() {
             self.stalled(());
@@ -281,20 +281,28 @@ fn generates_code(statement: &Statement) -> bool {
 }
 
 impl<'b> Cx<'b, Analyzer<'_>> {
+    pub(crate) async fn statements(self, statements: &'b [Statement]) {
+        for statement in statements {
+            self.clone().statement(statement).await;
+        }
+    }
+
+    async fn compound(self, compound: &'b CompoundStatement) {
+        self.with(|analyzer| {
+            analyzer.nesting += 1;
+            analyzer.scopes.push();
+        });
+        self.clone().statements(&compound.statements).await;
+        self.with(|analyzer| {
+            analyzer.scopes.pop();
+            analyzer.nesting -= 1;
+        });
+    }
+
     pub(crate) async fn statement(self, statement: &'b Statement) {
         match &statement.kind {
             StatementKind::Compound(compound) => {
-                self.with(|analyzer| {
-                    analyzer.nesting += 1;
-                    analyzer.scopes.push();
-                });
-                for statement in &compound.statements {
-                    self.call(self.clone().statement(statement)).await;
-                }
-                self.with(|analyzer| {
-                    analyzer.scopes.pop();
-                    analyzer.nesting -= 1;
-                });
+                self.call(self.clone().compound(compound)).await;
             }
             StatementKind::Declaration(declaration) => {
                 self.with(|analyzer| analyzer.declaration(declaration));
@@ -406,9 +414,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     async fn unscoped(self, statement: &'b Statement) {
         match &statement.kind {
             StatementKind::Compound(compound) => {
-                for statement in &compound.statements {
-                    self.call(self.clone().statement(statement)).await;
-                }
+                self.clone().statements(&compound.statements).await;
             }
             _ => self.call(self.clone().statement(statement)).await,
         }

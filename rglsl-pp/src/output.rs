@@ -2,10 +2,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::include::FileId;
-use crate::source_map::Segment;
+use crate::source_map::{Segment, clamp_line};
 use crate::token::{At, Kind, Token};
 
 const MAX_INDENT: u32 = 256;
+const INDENT_SPACES: &str = "                                                                                                                                                                                                                                                                ";
 
 #[derive(Debug)]
 pub(crate) struct Output {
@@ -39,10 +40,20 @@ fn starts_with_digit(token: &Token) -> bool {
 }
 
 impl Output {
-    pub(crate) const fn new(root: FileId, limit: usize, listing: bool) -> Self {
+    pub(crate) fn with_capacity(
+        root: FileId,
+        limit: usize,
+        listing: bool,
+        source_len: usize,
+    ) -> Self {
+        let text_cap = source_len
+            .saturating_add(source_len / 16)
+            .min(16 * 1024 * 1024)
+            .min(limit);
+        let seg_cap = (source_len / 3).min(512 * 1024);
         Self {
-            text: String::new(),
-            segments: Vec::new(),
+            text: String::with_capacity(text_cap),
+            segments: Vec::with_capacity(seg_cap),
             anchor: (root, 1),
             line_start: true,
             last_kind: None,
@@ -99,7 +110,7 @@ impl Output {
             offset: at.offset,
             exact: at.exact,
             cur_file: at.cur_file,
-            line: at.line,
+            line: clamp_line(at.line),
             column: at.column,
             source: at.source,
         };
@@ -129,9 +140,9 @@ impl Output {
             } else {
                 token.at.column
             };
-            for _ in 0..column.min(MAX_INDENT) {
-                self.text.push(' ');
-            }
+            let count = column.min(MAX_INDENT) as usize;
+            self.text
+                .push_str(INDENT_SPACES.get(..count).unwrap_or(INDENT_SPACES));
         } else if let Some(last) = self.last_kind {
             let space = if token.kind.is_op("(") {
                 last != Kind::Identifier || self.last_keyword

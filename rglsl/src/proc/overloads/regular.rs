@@ -187,8 +187,12 @@ fn make_rule(
 ) -> Option<Rule> {
     let inner = size.to_inner(scalar);
     let arg = TypeResolution::Value(inner);
+    let mut arguments = arrayvec::ArrayVec::new();
+    for _ in 0..arity {
+        arguments.push(arg.clone());
+    }
     Some(Rule {
-        arguments: core::iter::repeat_n(arg, arity).collect(),
+        arguments,
         conclusion: conclusion_rule.conclude(size, scalar)?,
     })
 }

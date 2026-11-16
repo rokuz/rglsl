@@ -13,6 +13,7 @@ license.workspace = true
 name = "rglsl_sema"
 
 [dependencies]
+arrayvec.workspace = true
 rglsl-ast.workspace = true
 rglsl-types.workspace = true
 bitflags.workspace = true

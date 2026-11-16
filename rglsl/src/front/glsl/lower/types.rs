@@ -133,6 +133,53 @@ impl Lowerer<'_> {
         ))
     }
 
+    fn try_fast_ir_type(
+        &mut self,
+        ty: &GlslType,
+        depth: bool,
+        comparison: bool,
+        span: Span,
+    ) -> Option<Result<Handle<Type>>> {
+        if ty.is_array() {
+            return None;
+        }
+        let inner = match ty.kind {
+            TypeKind::Scalar(s) => TypeInner::Scalar(scalar(s)),
+            TypeKind::Vector { scalar: s, size } => {
+                let Some(size) = vector_size(size) else {
+                    return Some(Err(internal(span)));
+                };
+                TypeInner::Vector {
+                    size,
+                    scalar: scalar(s),
+                }
+            }
+            TypeKind::Matrix {
+                scalar: s,
+                columns,
+                rows,
+            } => {
+                let (Some(columns), Some(rows)) = (vector_size(columns), vector_size(rows)) else {
+                    return Some(Err(internal(span)));
+                };
+                TypeInner::Matrix {
+                    columns,
+                    rows,
+                    scalar: scalar(s),
+                }
+            }
+            TypeKind::Opaque(opaque) => match Self::opaque_inner(opaque, depth, comparison, span) {
+                Ok(inner) => inner,
+                Err(error) => return Some(Err(error)),
+            },
+            TypeKind::Struct(id) => {
+                return self.structs.get(&id).copied().map(Ok);
+            }
+            _ => return None,
+        };
+        Some(Ok(self.insert_type(inner)))
+    }
+
     pub(super) fn ir_type_with(
         &mut self,
         ty: &GlslType,
@@ -140,6 +187,9 @@ impl Lowerer<'_> {
         comparison: bool,
         span: Span,
     ) -> Result<Handle<Type>> {
+        if let Some(result) = self.try_fast_ir_type(ty, depth, comparison, span) {
+            return result;
+        }
         super::function::lowerer_on_heap!(self, |cx| cx.ir_type_with(
             ty.clone(),
             depth,
@@ -149,6 +199,9 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn ir_type(&mut self, ty: &GlslType, span: Span) -> Result<Handle<Type>> {
+        if let Some(result) = self.try_fast_ir_type(ty, false, false, span) {
+            return result;
+        }
         super::function::lowerer_on_heap!(self, |cx| cx.ir_type(ty.clone(), span))
     }
 

@@ -6,41 +6,113 @@ use crate::common::{DiagnosticDebug, ForDebugWithTypes};
 use crate::ir;
 use crate::proc::overloads::Rule;
 use crate::proc::overloads::one_bits_iter::OneBitsIter;
+use crate::proc::overloads::rule::Conclusion;
 use crate::proc::{GlobalCtx, TypeResolution};
 
-use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::fmt;
 
-/// A simple list of overloads.
-///
-/// Note that this type is not quite as general as it looks, in that
-/// the implementation of `most_preferred` doesn't work for arbitrary
-/// lists of overloads. See the documentation for [`List::rules`] for
-/// details.
-#[derive(Clone)]
-pub(in crate::proc::overloads) struct List {
-    /// A bitmask of which elements of `rules` are included in the set.
-    members: u64,
-
-    /// A list of type rules that are members of the set.
-    ///
-    /// These must be listed in order such that every rule in the list
-    /// is always more preferred than all subsequent rules in the
-    /// list. If there is no such arrangement of rules, then you
-    /// cannot use `List` to represent the overload set.
-    rules: Rc<Vec<Rule>>,
+#[derive(Clone, Copy)]
+pub(in crate::proc::overloads) enum MathType {
+    Scalar(ir::Scalar),
+    Vector {
+        size: ir::VectorSize,
+        scalar: ir::Scalar,
+    },
+    Matrix {
+        columns: ir::VectorSize,
+        rows: ir::VectorSize,
+        scalar: ir::Scalar,
+    },
 }
 
-impl List {
-    pub(in crate::proc::overloads) fn from_rules(rules: Vec<Rule>) -> List {
-        List {
-            members: len_to_full_mask(rules.len()),
-            rules: Rc::new(rules),
+impl MathType {
+    pub(in crate::proc::overloads) const fn to_inner(self) -> ir::TypeInner {
+        match self {
+            Self::Scalar(scalar) => ir::TypeInner::Scalar(scalar),
+            Self::Vector { size, scalar } => ir::TypeInner::Vector { size, scalar },
+            Self::Matrix {
+                columns,
+                rows,
+                scalar,
+            } => ir::TypeInner::Matrix {
+                columns,
+                rows,
+                scalar,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::proc::overloads) struct StaticRule {
+    pub arity: u8,
+    pub arguments: [MathType; 4],
+    pub conclusion: MathType,
+}
+
+impl StaticRule {
+    pub(in crate::proc::overloads) const EMPTY: Self = Self {
+        arity: 0,
+        arguments: [MathType::Scalar(ir::Scalar::BOOL); 4],
+        conclusion: MathType::Scalar(ir::Scalar::BOOL),
+    };
+
+    pub(in crate::proc::overloads) const fn new<const N: usize>(
+        args: [MathType; N],
+        conclusion: MathType,
+    ) -> Self {
+        let mut arguments = [MathType::Scalar(ir::Scalar::BOOL); 4];
+        let mut i = 0;
+        while i < N {
+            arguments[i] = args[i];
+            i += 1;
+        }
+        Self {
+            arity: N as u8,
+            arguments,
+            conclusion,
         }
     }
 
-    fn members(&self) -> impl Iterator<Item = (u64, &Rule)> {
+    const fn argument(&self, index: usize) -> Option<MathType> {
+        if index < self.arity as usize {
+            Some(self.arguments[index])
+        } else {
+            None
+        }
+    }
+
+    fn to_rule(self) -> Rule {
+        let mut arguments = arrayvec::ArrayVec::new();
+        let mut i = 0;
+        let len = self.arity as usize;
+        while i < len {
+            arguments.push(TypeResolution::Value(self.arguments[i].to_inner()));
+            i += 1;
+        }
+        Rule {
+            arguments,
+            conclusion: Conclusion::Value(self.conclusion.to_inner()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::proc::overloads) struct List {
+    members: u64,
+    rules: &'static [StaticRule],
+}
+
+impl List {
+    pub(in crate::proc::overloads) const fn from_static(rules: &'static [StaticRule]) -> List {
+        List {
+            members: len_to_full_mask(rules.len()),
+            rules,
+        }
+    }
+
+    fn members(&self) -> impl Iterator<Item = (u64, &StaticRule)> {
         OneBitsIter::new(self.members).map(|mask| {
             let index = mask.trailing_zeros() as usize;
             (mask, &self.rules[index])
@@ -49,7 +121,7 @@ impl List {
 
     fn filter<F>(&self, mut pred: F) -> List
     where
-        F: FnMut(&Rule) -> bool,
+        F: FnMut(&StaticRule) -> bool,
     {
         let mut filtered_members = 0;
         for (mask, rule) in self.members() {
@@ -60,7 +132,7 @@ impl List {
 
         List {
             members: filtered_members,
-            rules: self.rules.clone(),
+            rules: self.rules,
         }
     }
 }
@@ -72,9 +144,7 @@ impl crate::proc::overloads::OverloadSet for List {
 
     fn min_arguments(&self) -> Option<usize> {
         self.members().fold(None, |best, (_, rule)| {
-            // This is different from `max_arguments` because
-            // `<Option as PartialOrd>` doesn't work the way we'd like.
-            let len = rule.arguments.len();
+            let len = rule.arity as usize;
             Some(match best {
                 Some(best) => core::cmp::max(best, len),
                 None => len,
@@ -84,7 +154,7 @@ impl crate::proc::overloads::OverloadSet for List {
 
     fn max_arguments(&self) -> Option<usize> {
         self.members().fold(None, |n, (_, rule)| {
-            core::cmp::max(n, Some(rule.arguments.len()))
+            core::cmp::max(n, Some(rule.arity as usize))
         })
     }
 
@@ -92,11 +162,12 @@ impl crate::proc::overloads::OverloadSet for List {
         log::debug!("arg {i} of type {:?}", arg_ty.for_debug(types));
         self.filter(|rule| {
             if log::log_enabled!(log::Level::Debug) {
-                log::debug!("    considering rule {:?}", rule.for_debug(types));
-                match rule.arguments.get(i) {
+                let full_rule = rule.to_rule();
+                log::debug!("    considering rule {:?}", full_rule.for_debug(types));
+                match rule.argument(i) {
                     Some(rule_ty) => {
-                        let rule_ty = rule_ty.inner_with(types);
-                        if arg_ty.non_struct_equivalent(rule_ty, types) {
+                        let inner = rule_ty.to_inner();
+                        if arg_ty.non_struct_equivalent(&inner, types) {
                             log::debug!("    types are equivalent");
                         } else {
                             log::debug!("    no conversion possible");
@@ -107,27 +178,28 @@ impl crate::proc::overloads::OverloadSet for List {
                     }
                 }
             }
-            rule.arguments.get(i).is_some_and(|rule_ty| {
-                let rule_ty = rule_ty.inner_with(types);
-                arg_ty.non_struct_equivalent(rule_ty, types)
+            rule.argument(i).is_some_and(|rule_ty| {
+                let inner = rule_ty.to_inner();
+                arg_ty.non_struct_equivalent(&inner, types)
             })
         })
     }
 
     fn most_preferred(&self) -> Option<Rule> {
-        // As documented for `Self::rules`, whatever rule is first is
-        // the most preferred.
         let (_, rule) = self.members().next()?;
-        Some(rule.clone())
+        Some(rule.to_rule())
     }
 
     fn overload_list(&self, _gctx: &GlobalCtx<'_>) -> Vec<Rule> {
-        self.members().map(|(_, rule)| rule.clone()).collect()
+        self.members().map(|(_, rule)| rule.to_rule()).collect()
     }
 
     fn allowed_args(&self, i: usize, _gctx: &GlobalCtx<'_>) -> Vec<TypeResolution> {
         self.members()
-            .map(|(_, rule)| rule.arguments[i].clone())
+            .filter_map(|(_, rule)| {
+                rule.argument(i)
+                    .map(|ty| TypeResolution::Value(ty.to_inner()))
+            })
             .collect()
     }
 
@@ -148,9 +220,10 @@ impl ForDebugWithTypes for &List {}
 impl fmt::Debug for DiagnosticDebug<(&List, &crate::UniqueArena<ir::Type>)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (list, types) = self.0;
+        let rules: Vec<Rule> = list.members().map(|(_, rule)| rule.to_rule()).collect();
 
         f.debug_list()
-            .entries(list.members().map(|(_mask, rule)| rule.for_debug(types)))
+            .entries(rules.iter().map(|rule| rule.for_debug(types)))
             .finish()
     }
 }

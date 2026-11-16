@@ -14,7 +14,7 @@ pub(crate) struct Segment {
     pub(crate) offset: u32,
     pub(crate) exact: u32,
     pub(crate) cur_file: FileId,
-    pub(crate) line: i64,
+    pub(crate) line: u32,
     pub(crate) column: u32,
     pub(crate) source: u32,
 }
@@ -35,7 +35,7 @@ pub enum PresumedSource<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceMap {
     pub(crate) root: FileId,
-    pub(crate) segments: Arc<[Segment]>,
+    pub(crate) segments: Arc<Vec<Segment>>,
     pub(crate) sources: Vec<SourceInfo>,
     pub(crate) files: BTreeMap<FileId, String>,
     pub(crate) texts: BTreeMap<FileId, String>,
@@ -44,7 +44,7 @@ pub struct SourceMap {
 #[derive(Clone, Default)]
 pub struct SpanMap {
     root: FileId,
-    segments: Option<Arc<[Segment]>>,
+    segments: Option<Arc<Vec<Segment>>>,
 }
 
 impl core::fmt::Debug for SpanMap {
@@ -56,7 +56,7 @@ impl core::fmt::Debug for SpanMap {
 impl SpanMap {
     pub fn locate_root(&self, offset: usize) -> Option<u32> {
         let segments = self.segments.as_deref()?;
-        let location = located(self.root, segment_in(segments, offset), offset);
+        let location = located(self.root, segment_in(segments.as_slice(), offset), offset);
         (location.file == self.root).then_some(location.offset)
     }
 
@@ -190,9 +190,8 @@ impl SourceMap {
     }
 
     pub fn line(&self, offset: usize) -> (FileId, u32) {
-        self.segment(offset).map_or((self.root, 1), |segment| {
-            (segment.cur_file, clamp_line(segment.line))
-        })
+        self.segment(offset)
+            .map_or((self.root, 1), |segment| (segment.cur_file, segment.line))
     }
 
     pub fn presumed(&self, offset: usize) -> (PresumedSource<'_>, u32) {
@@ -206,7 +205,7 @@ impl SourceMap {
                 Some(name) => PresumedSource::Name(name),
                 None => PresumedSource::Number(info.number),
             });
-        (source, clamp_line(segment.line))
+        (source, segment.line)
     }
 
     pub fn file_name(&self, file: FileId) -> Option<&str> {
@@ -244,7 +243,7 @@ impl SourceMap {
         self.segments.iter().map(|segment| LineEntry {
             offset: segment.start,
             source: segment.source,
-            line: clamp_line(segment.line),
+            line: segment.line,
             column: segment.column,
         })
     }
@@ -260,7 +259,7 @@ impl SourceMap {
             |segment| LineEntry {
                 offset: segment.start,
                 source: segment.source,
-                line: clamp_line(segment.line),
+                line: segment.line,
                 column: segment.column,
             },
         )

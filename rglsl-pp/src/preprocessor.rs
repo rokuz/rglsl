@@ -111,17 +111,46 @@ fn same_definition(left: Option<&Macro>, right: Option<&Macro>) -> bool {
 #[derive(Debug, Default)]
 pub(crate) struct MacroTable {
     map: BTreeMap<String, Macro>,
+    first_bytes: [u64; 4],
+    bloom: [u64; 4],
     stage_used: core::cell::Cell<bool>,
+}
+
+fn macro_bits(name: &str) -> (usize, u64, usize, u64) {
+    let bytes = name.as_bytes();
+    let first = bytes.first().copied().unwrap_or(0);
+    let last = bytes.last().copied().unwrap_or(0);
+    let hash = first
+        .wrapping_mul(37)
+        .wrapping_add(last.wrapping_mul(13))
+        .wrapping_add(bytes.len() as u8);
+    (
+        usize::from(first >> 6),
+        1_u64 << (first & 63),
+        usize::from(hash >> 6),
+        1_u64 << (hash & 63),
+    )
 }
 
 impl MacroTable {
     fn watch(&self, name: &str) {
-        if ShaderStage::ALL
-            .iter()
-            .any(|&stage| crate::options::macro_name(stage) == name)
+        if !self.stage_used.get()
+            && name.len() >= 16
+            && name.starts_with("GL_")
+            && ShaderStage::ALL
+                .iter()
+                .any(|&stage| crate::options::macro_name(stage) == name)
         {
             self.stage_used.set(true);
         }
+    }
+
+    fn may_contain(&self, name: &str) -> bool {
+        let (fi, fb, hi, hb) = macro_bits(name);
+        self.first_bytes
+            .get(fi)
+            .is_some_and(|&word| (word & fb) != 0)
+            && self.bloom.get(hi).is_some_and(|&word| (word & hb) != 0)
     }
 
     pub(crate) fn get(&self, name: &str) -> Option<&Macro> {
@@ -132,17 +161,30 @@ impl MacroTable {
         if watched {
             self.watch(name);
         }
+        if !self.may_contain(name) {
+            return None;
+        }
         self.map.get(name)
     }
 
     pub(crate) fn get_mut(&mut self, name: &str) -> Option<&mut Macro> {
         self.watch(name);
+        if !self.may_contain(name) {
+            return None;
+        }
         self.map.get_mut(name)
     }
 
     pub(crate) fn insert(&mut self, name: String, definition: Macro, watched: bool) {
         if watched {
             self.watch(&name);
+        }
+        let (fi, fb, hi, hb) = macro_bits(&name);
+        if let Some(slot) = self.first_bytes.get_mut(fi) {
+            *slot |= fb;
+        }
+        if let Some(slot) = self.bloom.get_mut(hi) {
+            *slot |= hb;
         }
         self.map.insert(name, definition);
     }
@@ -330,7 +372,12 @@ pub fn preprocess(
         sources,
         files,
         texts: BTreeMap::new(),
-        output: Output::new(file, options.limits.max_output_bytes, options.listing),
+        output: Output::with_capacity(
+            file,
+            options.limits.max_output_bytes,
+            options.listing,
+            source.len(),
+        ),
         tokens_scanned: 0,
         aborted: false,
         last_at: root_at,
@@ -368,7 +415,7 @@ impl Preprocessor<'_> {
             text: self.output.text,
             source_map: SourceMap {
                 root: self.root,
-                segments: alloc::sync::Arc::from(self.output.segments),
+                segments: alloc::sync::Arc::new(self.output.segments),
                 sources: self.sources,
                 files: self.files,
                 texts: self.texts,

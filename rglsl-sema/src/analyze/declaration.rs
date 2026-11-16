@@ -927,6 +927,11 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
+        if ty.qualifier.is_none() {
+            let mut qualifiers = Qualifiers::default();
+            self.default_precision_of(ty, &mut qualifiers);
+            return qualifiers;
+        }
         let finished = {
             let analyzer = RefCell::new(&mut *self);
             run(|stack| Cx::new(&analyzer, stack).optional_qualifiers(ty))
@@ -945,6 +950,9 @@ impl Analyzer<'_> {
         &mut self,
         specifier: Option<&Spanned<ArraySpecifier>>,
     ) -> Vec<ArraySize> {
+        if specifier.is_none() {
+            return Vec::new();
+        }
         let finished = {
             let analyzer = RefCell::new(&mut *self);
             run(|stack| Cx::new(&analyzer, stack).array_sizes(specifier))
@@ -998,7 +1006,32 @@ impl Analyzer<'_> {
         self.bare_type_specifier(&specifier.node, specifier.span)
     }
 
+    pub(crate) const fn is_simple_type_specifier(specifier: &TypeSpecifier) -> bool {
+        specifier.parameters.is_none()
+            && specifier.array.is_none()
+            && !matches!(
+                specifier.non_array,
+                TypeSpecifierNonArray::Parameterized(_)
+                    | TypeSpecifierNonArray::Struct(_)
+                    | TypeSpecifierNonArray::Spirv(_)
+            )
+    }
+
+    pub(crate) fn try_simple_type_specifier(
+        &mut self,
+        specifier: &TypeSpecifier,
+        span: Span,
+    ) -> Option<Type> {
+        if !Self::is_simple_type_specifier(specifier) {
+            return None;
+        }
+        Some(self.base_type(specifier, span))
+    }
+
     pub(crate) fn bare_type_specifier(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
+        if let Some(ty) = self.try_simple_type_specifier(specifier, span) {
+            return ty;
+        }
         let finished = {
             let analyzer = RefCell::new(&mut *self);
             run(|stack| Cx::new(&analyzer, stack).bare_type_specifier(specifier, span))
@@ -2166,6 +2199,11 @@ impl Analyzer<'_> {
         initializer: &Spanned<Initializer>,
         expected: &Type,
     ) -> Operand {
+        if let Initializer::Expression(expression) = &initializer.node
+            && let Some(operand) = self.try_flat_expression(expression)
+        {
+            return operand;
+        }
         let finished = {
             let analyzer = RefCell::new(&mut *self);
             run(|stack| Cx::new(&analyzer, stack).initializer(span, initializer, expected.clone()))
@@ -3207,9 +3245,7 @@ impl Analyzer<'_> {
         });
         let outer_loops = core::mem::take(&mut self.loop_depth);
         let outer_switches = core::mem::take(&mut self.switches);
-        for statement in &definition.kind.body.node.statements {
-            self.statement(statement);
-        }
+        self.statements(&definition.kind.body.node.statements);
         let context = core::mem::replace(&mut self.function, outer_function);
         self.loop_depth = outer_loops;
         self.switches = outer_switches;
@@ -3337,6 +3373,10 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         specifier: &'b TypeSpecifier,
         span: Span,
     ) -> Type {
+        if let Some(ty) = self.with(|analyzer| analyzer.try_simple_type_specifier(specifier, span))
+        {
+            return ty;
+        }
         let base = match &specifier.non_array {
             TypeSpecifierNonArray::Parameterized(kind) => {
                 self.call(self.clone().parameterized_type(
@@ -3360,6 +3400,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 self.with(|analyzer| analyzer.base_type(specifier, span))
             }
         };
+        if specifier.array.is_none() {
+            return base;
+        }
         let dimensions = self
             .call(self.clone().array_sizes(specifier.array.as_ref()))
             .await;

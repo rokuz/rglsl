@@ -338,6 +338,9 @@ impl Preprocessor<'_> {
     }
 
     fn builtin_macro(&mut self, token: &Token) -> Option<Expand> {
+        if token.text.as_bytes().first() != Some(&b'_') {
+            return None;
+        }
         match &*token.text {
             "__LINE__" => {
                 let line = if token.value == 0 {
@@ -384,13 +387,16 @@ impl Preprocessor<'_> {
         token: &mut Token,
         expand_undef: bool,
     ) -> Result<FoundMacro, Expand> {
-        let name = token.text.clone();
-        let definition = match self.macros.get_mut(&name) {
+        let found = match self.macros.get_mut(&token.text) {
             Some(definition) if definition.busy => {
                 token.fully_expanded = true;
                 return Err(Expand::NotStarted);
             }
-            Some(definition) if !definition.undef => definition,
+            Some(definition) if !definition.undef => (
+                definition.params.clone(),
+                definition.body.clone(),
+                definition.function_like,
+            ),
             _ => {
                 if !expand_undef {
                     return Err(Expand::NotStarted);
@@ -399,11 +405,9 @@ impl Preprocessor<'_> {
                 return Err(Expand::Undef);
             }
         };
-        let params = definition.params.clone();
-        let body = definition.body.clone();
-        let function_like = definition.function_like;
+        let (params, body, function_like) = found;
         Ok(FoundMacro {
-            name,
+            name: token.text.clone(),
             params,
             body,
             function_like,

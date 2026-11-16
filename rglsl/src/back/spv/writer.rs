@@ -27,10 +27,39 @@ pub(super) struct FunctionInterface<'a> {
 }
 
 impl Function {
-    pub(super) fn to_words(&self, sink: &mut impl Extend<Word>) -> Result<(), Error> {
+    pub(super) fn to_words(&self, sink: &mut Vec<Word>) -> Result<(), Error> {
         let Some(ref signature) = self.signature else {
             return Err(Error::Validation("function is written without a signature"));
         };
+        let total_words: usize = signature.wc as usize
+            + 1
+            + self
+                .parameters
+                .iter()
+                .map(|arg| arg.instruction.wc as usize)
+                .sum::<usize>()
+            + self
+                .variables
+                .values()
+                .map(|var| var.instruction.wc as usize)
+                .sum::<usize>()
+            + self
+                .spilled_composites
+                .values()
+                .map(|var| var.instruction.wc as usize)
+                .sum::<usize>()
+            + self
+                .blocks
+                .iter()
+                .map(|block| {
+                    2 + block
+                        .body
+                        .iter()
+                        .map(|inst| inst.wc as usize)
+                        .sum::<usize>()
+                })
+                .sum::<usize>();
+        sink.reserve(total_words);
         signature.to_words(sink);
         for argument in self.parameters.iter() {
             argument.instruction.to_words(sink);
@@ -4111,12 +4140,14 @@ impl Writer {
         if self
             .flags
             .contains(WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE)
+            && super::small_types::has_tracked_scalars(&self.logical_layout.declarations)
         {
             let mut annotations = Vec::new();
             for annotation in self.annotations.iter() {
                 annotation.to_words(&mut annotations);
             }
             let usage = super::small_types::usage(
+                self.id_gen.0 + 1,
                 &self.logical_layout.declarations,
                 &self.logical_layout.function_definitions,
                 &annotations,

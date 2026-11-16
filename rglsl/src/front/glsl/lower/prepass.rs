@@ -109,120 +109,114 @@ impl<'a> Lowerer<'a> {
         let mut edges: Vec<(SymbolId, SymbolId)> = Vec::new();
         let mut plain: BTreeSet<SymbolId> = BTreeSet::new();
         let mut chains = BTreeMap::new();
-        let expressions = rglsl_ast::expressions(self.unit)
-            .map_err(|_| super::stalled(crate::Span::UNDEFINED))?;
-        for expression in expressions {
-            match expression.kind {
-                ExpressionKind::Variable(_) => {
-                    let Some(&symbol) = analysis.references.get(&expression.id) else {
-                        continue;
-                    };
-                    if self.is_per_vertex_member(symbol) {
-                        if let Some(symbol) = self.symbol(symbol) {
-                            self.per_vertex_used.insert(symbol.name.clone());
-                        }
-                        let start = expression.span.start;
-                        self.per_vertex_first_use = Some(
-                            self.per_vertex_first_use
-                                .map_or(start, |first| first.min(start)),
-                        );
+        let unit = self.unit;
+        rglsl_ast::visit_expressions(unit, |expression| match expression.kind {
+            ExpressionKind::Variable(_) => {
+                let Some(&symbol) = analysis.references.get(&expression.id) else {
+                    return;
+                };
+                if self.is_per_vertex_member(symbol) {
+                    if let Some(symbol) = self.symbol(symbol) {
+                        self.per_vertex_used.insert(symbol.name.clone());
                     }
+                    let start = expression.span.start;
+                    self.per_vertex_first_use = Some(
+                        self.per_vertex_first_use
+                            .map_or(start, |first| first.min(start)),
+                    );
                 }
-                ExpressionKind::FunctionCall(ref call) => {
-                    match analysis.calls.get(&expression.id) {
-                        Some(&Callee::Constructor(ref ty)) => {
-                            let Some(opaque) = ty.as_opaque() else {
-                                continue;
-                            };
-                            if opaque.kind != OpaqueKind::CombinedSampler {
-                                continue;
-                            }
-                            let texture =
-                                call.arguments.first().and_then(|a| self.variable_symbol(a));
-                            if !opaque.shadow {
-                                plain.extend(texture);
-                                continue;
-                            }
-                            if let Some(texture) = texture {
-                                self.depth.insert(texture);
-                            }
-                            if let Some(sampler) =
-                                call.arguments.get(1).and_then(|a| self.variable_symbol(a))
-                            {
-                                self.comparison.insert(sampler);
-                            }
-                        }
-                        Some(&Callee::Function(id)) => {
-                            let Some(parameters) = self.parameters.get(&id) else {
-                                continue;
-                            };
-                            for (argument, parameter) in call.arguments.iter().zip(parameters) {
-                                if let (Some(argument), &Some(parameter)) =
-                                    (self.variable_symbol(argument), parameter)
-                                {
-                                    edges.push((argument, parameter));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                ExpressionKind::Subscript {
-                    ref base,
-                    ref index,
-                } => {
-                    let symbol = self.variable_symbol(base);
-                    let variable_index = analysis
-                        .expression(index.id)
-                        .is_some_and(|info| !info.is_constant || info.is_specialization);
-                    if let (true, Some(symbol)) = (variable_index, symbol) {
-                        self.variably_indexed.insert(symbol);
-                    }
-                    if variable_index && let Some(member) = self.block_member_of(base) {
-                        self.variably_indexed_members.insert(member);
-                    }
-                    let value = analysis
-                        .expression(index.id)
-                        .and_then(|info| info.value.as_ref())
-                        .and_then(rglsl_sema::constant::Constant::scalar_i64)
-                        .and_then(|value| u32::try_from(value).ok())
-                        .and_then(|value| value.checked_add(1));
-                    let Some(size) = value else {
-                        continue;
+            }
+            ExpressionKind::FunctionCall(ref call) => match analysis.calls.get(&expression.id) {
+                Some(&Callee::Constructor(ref ty)) => {
+                    let Some(opaque) = ty.as_opaque() else {
+                        return;
                     };
-                    if let Some(member) = self.block_member_of(base) {
-                        let entry = self.member_sizes.entry(member).or_insert(0);
-                        *entry = (*entry).max(size);
+                    if opaque.kind != OpaqueKind::CombinedSampler {
+                        return;
                     }
-                    let (depth, inner) = subscript_chain(&mut chains, strip(base));
-                    if depth > 0
-                        && let Some((block, member)) = self.block_member_of(inner)
+                    let texture = call.arguments.first().and_then(|a| self.variable_symbol(a));
+                    if !opaque.shadow {
+                        plain.extend(texture);
+                        return;
+                    }
+                    if let Some(texture) = texture {
+                        self.depth.insert(texture);
+                    }
+                    if let Some(sampler) =
+                        call.arguments.get(1).and_then(|a| self.variable_symbol(a))
                     {
-                        let entry = self
-                            .member_dimension_sizes
-                            .entry((block, member, depth))
-                            .or_insert(0);
-                        *entry = (*entry).max(size);
+                        self.comparison.insert(sampler);
                     }
-                    let Some(symbol) = symbol else {
-                        continue;
+                }
+                Some(&Callee::Function(id)) => {
+                    let Some(parameters) = self.parameters.get(&id) else {
+                        return;
                     };
-                    let entry = self.implicit_sizes.entry(symbol).or_insert(0);
-                    *entry = (*entry).max(size);
-                    if !self.is_builtin_symbol(symbol) {
-                        continue;
-                    }
-                    let Some(name) = self.symbol(symbol).map(|symbol| symbol.name.clone()) else {
-                        continue;
-                    };
-                    if variables::implicitly_sized(&name) {
-                        let entry = self.builtin_sizes.entry(name).or_insert(0);
-                        *entry = (*entry).max(size);
+                    for (argument, parameter) in call.arguments.iter().zip(parameters) {
+                        if let (Some(argument), &Some(parameter)) =
+                            (self.variable_symbol(argument), parameter)
+                        {
+                            edges.push((argument, parameter));
+                        }
                     }
                 }
                 _ => {}
+            },
+            ExpressionKind::Subscript {
+                ref base,
+                ref index,
+            } => {
+                let symbol = self.variable_symbol(base);
+                let variable_index = analysis
+                    .expression(index.id)
+                    .is_some_and(|info| !info.is_constant || info.is_specialization);
+                if let (true, Some(symbol)) = (variable_index, symbol) {
+                    self.variably_indexed.insert(symbol);
+                }
+                if variable_index && let Some(member) = self.block_member_of(base) {
+                    self.variably_indexed_members.insert(member);
+                }
+                let value = analysis
+                    .expression(index.id)
+                    .and_then(|info| info.value.as_ref())
+                    .and_then(rglsl_sema::constant::Constant::scalar_i64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .and_then(|value| value.checked_add(1));
+                let Some(size) = value else {
+                    return;
+                };
+                if let Some(member) = self.block_member_of(base) {
+                    let entry = self.member_sizes.entry(member).or_insert(0);
+                    *entry = (*entry).max(size);
+                }
+                let (depth, inner) = subscript_chain(&mut chains, strip(base));
+                if depth > 0
+                    && let Some((block, member)) = self.block_member_of(inner)
+                {
+                    let entry = self
+                        .member_dimension_sizes
+                        .entry((block, member, depth))
+                        .or_insert(0);
+                    *entry = (*entry).max(size);
+                }
+                let Some(symbol) = symbol else {
+                    return;
+                };
+                let entry = self.implicit_sizes.entry(symbol).or_insert(0);
+                *entry = (*entry).max(size);
+                if !self.is_builtin_symbol(symbol) {
+                    return;
+                }
+                let Some(name) = self.symbol(symbol).map(|symbol| symbol.name.clone()) else {
+                    return;
+                };
+                if variables::implicitly_sized(&name) {
+                    let entry = self.builtin_sizes.entry(name).or_insert(0);
+                    *entry = (*entry).max(size);
+                }
             }
-        }
+            _ => {}
+        });
         loop {
             let mut changed = false;
             for &(argument, parameter) in &edges {
@@ -259,33 +253,38 @@ impl<'a> Lowerer<'a> {
         }
         spans.sort_unstable();
         let mut calls: BTreeMap<FunctionId, BTreeSet<FunctionId>> = BTreeMap::new();
-        let expressions = rglsl_ast::expressions(self.unit)
-            .map_err(|_| super::stalled(crate::Span::UNDEFINED))?;
-        for expression in expressions {
-            let Some(&Callee::Function(callee)) = analysis.calls.get(&expression.id) else {
-                continue;
-            };
-            if analysis
-                .function(callee)
-                .is_some_and(|function| function.spirv_instruction.is_some())
-            {
-                continue;
-            }
-            if Some(callee) == main {
-                return Err(semantic(
-                    "`main` cannot be called",
-                    self.at(expression.span),
-                ));
-            }
-            let caller = spans
-                .partition_point(|&(start, _, _)| start <= expression.span.start)
-                .checked_sub(1)
-                .and_then(|index| spans.get(index))
-                .filter(|&&(_, end, _)| expression.span.end <= end)
-                .map(|&(_, _, id)| id);
-            if let Some(caller) = caller.or(main) {
-                calls.entry(caller).or_default().insert(callee);
-            }
+        if analysis
+            .calls
+            .values()
+            .any(|callee| matches!(callee, Callee::Function(_)))
+        {
+            rglsl_ast::try_visit_expressions(self.unit, |expression| {
+                let Some(&Callee::Function(callee)) = analysis.calls.get(&expression.id) else {
+                    return Ok(());
+                };
+                if analysis
+                    .function(callee)
+                    .is_some_and(|function| function.spirv_instruction.is_some())
+                {
+                    return Ok(());
+                }
+                if Some(callee) == main {
+                    return Err(semantic(
+                        "`main` cannot be called",
+                        self.at(expression.span),
+                    ));
+                }
+                let caller = spans
+                    .partition_point(|&(start, _, _)| start <= expression.span.start)
+                    .checked_sub(1)
+                    .and_then(|index| spans.get(index))
+                    .filter(|&&(_, end, _)| expression.span.end <= end)
+                    .map(|&(_, _, id)| id);
+                if let Some(caller) = caller.or(main) {
+                    calls.entry(caller).or_default().insert(callee);
+                }
+                Ok(())
+            })?;
         }
         let mut state: BTreeMap<FunctionId, bool> = BTreeMap::new();
         let mut order = Vec::new();

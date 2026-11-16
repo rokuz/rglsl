@@ -72,12 +72,18 @@ struct LogicalLayout {
 }
 
 #[derive(Clone)]
+enum Operands {
+    Inline(arrayvec::ArrayVec<Word, 6>),
+    Heap(Vec<Word>),
+}
+
+#[derive(Clone)]
 struct Instruction {
     op: u32,
     wc: u32,
     type_id: Option<Word>,
     result_id: Option<Word>,
-    operands: Vec<Word>,
+    operands: Operands,
 }
 
 const BITS_PER_BYTE: crate::Bytes = 8;

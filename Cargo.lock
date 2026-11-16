@@ -373,6 +373,7 @@ dependencies = [
 name = "rglsl-ast"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "rglsl-types",
  "thiserror",
 ]
@@ -456,6 +457,7 @@ dependencies = [
 name = "rglsl-sema"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "bitflags",
  "half",
  "libm",

@@ -1,12 +1,15 @@
-use alloc::{vec, vec::Vec};
-use core::iter;
+use alloc::vec::Vec;
+use core::{
+    iter,
+    ops::{Deref, DerefMut},
+};
 
 use spirv::{MAGIC_NUMBER, Op, Word};
 
-use super::{Instruction, LogicalLayout, PhysicalLayout};
+use super::{Instruction, LogicalLayout, Operands, PhysicalLayout};
 
 #[cfg(test)]
-use alloc::format;
+use alloc::{format, vec};
 
 // https://github.com/KhronosGroup/SPIRV-Headers/pull/195
 const GENERATOR: Word = 28;
@@ -85,6 +88,46 @@ impl super::reclaimable::Reclaimable for LogicalLayout {
     }
 }
 
+impl Operands {
+    const fn new() -> Self {
+        Self::Inline(arrayvec::ArrayVec::new_const())
+    }
+
+    fn push(&mut self, operand: Word) {
+        match *self {
+            Self::Inline(ref mut inline) => {
+                if let Err(err) = inline.try_push(operand) {
+                    let mut heap = Vec::with_capacity(12);
+                    heap.extend_from_slice(inline);
+                    heap.push(err.element());
+                    *self = Self::Heap(heap);
+                }
+            }
+            Self::Heap(ref mut heap) => heap.push(operand),
+        }
+    }
+}
+
+impl Deref for Operands {
+    type Target = [Word];
+
+    fn deref(&self) -> &[Word] {
+        match *self {
+            Self::Inline(ref inline) => inline.as_slice(),
+            Self::Heap(ref heap) => heap.as_slice(),
+        }
+    }
+}
+
+impl DerefMut for Operands {
+    fn deref_mut(&mut self) -> &mut [Word] {
+        match *self {
+            Self::Inline(ref mut inline) => inline.as_mut_slice(),
+            Self::Heap(ref mut heap) => heap.as_mut_slice(),
+        }
+    }
+}
+
 impl Instruction {
     pub(super) const fn new(op: Op) -> Self {
         Self::raw(op as u32)
@@ -93,10 +136,10 @@ impl Instruction {
     pub(super) const fn raw(op: u32) -> Self {
         Instruction {
             op,
-            wc: 1, // Always start at 1 for the first word (OP + WC),
+            wc: 1,
             type_id: None,
             result_id: None,
-            operands: vec![],
+            operands: Operands::new(),
         }
     }
 
@@ -118,16 +161,21 @@ impl Instruction {
     }
 
     pub(super) fn add_operands(&mut self, operands: Vec<Word>) {
-        for operand in operands.into_iter() {
+        for operand in operands {
             self.add_operand(operand);
         }
     }
 
-    pub(super) fn to_words(&self, sink: &mut impl Extend<Word>) {
-        sink.extend(Some((self.wc << 16) | self.op));
-        sink.extend(self.type_id);
-        sink.extend(self.result_id);
-        sink.extend(self.operands.iter().copied());
+    pub(super) fn to_words(&self, sink: &mut Vec<Word>) {
+        sink.reserve(self.wc as usize);
+        sink.push((self.wc << 16) | self.op);
+        if let Some(id) = self.type_id {
+            sink.push(id);
+        }
+        if let Some(id) = self.result_id {
+            sink.push(id);
+        }
+        sink.extend_from_slice(&self.operands);
     }
 }
 
