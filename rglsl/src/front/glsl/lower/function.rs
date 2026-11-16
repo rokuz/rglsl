@@ -162,62 +162,7 @@ macro_rules! on_heap {
 pub(super) use on_heap;
 
 pub(super) fn ends_in_jump(block: &Block) -> bool {
-    match block.last() {
-        Some(
-            &(Statement::Break
-            | Statement::Continue
-            | Statement::Return { .. }
-            | Statement::Kill
-            | Statement::TerminateInvocation
-            | Statement::Abort { .. }),
-        ) => true,
-        Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
-        _ => false,
-    }
-}
-
-fn ensure_returns(block: &mut Block) {
-    let mut pending = alloc::vec![block];
-    while let Some(block) = pending.pop() {
-        let ends = match block.last() {
-            Some(
-                &(Statement::Block(_)
-                | Statement::If { .. }
-                | Statement::Switch { .. }
-                | Statement::Break
-                | Statement::Continue
-                | Statement::Return { .. }
-                | Statement::Kill
-                | Statement::TerminateInvocation
-                | Statement::Abort { .. }),
-            ) => true,
-            Some(&Statement::RayPipelineFunction(ref function)) => function.is_terminator(),
-            _ => false,
-        };
-        if !ends {
-            block.push(Statement::Return { value: None }, Span::UNDEFINED);
-            continue;
-        }
-        match block.last_mut() {
-            Some(&mut Statement::Block(ref mut inner)) => pending.push(inner),
-            Some(&mut Statement::If {
-                ref mut accept,
-                ref mut reject,
-                ..
-            }) => {
-                pending.push(reject);
-                pending.push(accept);
-            }
-            Some(&mut Statement::Switch { ref mut cases, .. }) => {
-                for case in cases.iter_mut().rev() {
-                    if !case.fall_through {
-                        pending.push(&mut case.body);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    block.last().is_some_and(Statement::ends_block)
 }
 
 impl<'l, 'a> FunctionLowerer<'l, 'a> {
@@ -561,7 +506,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         self.block.extend(emitted);
         let mut body = self.block;
         if result.is_none() {
-            ensure_returns(&mut body);
+            crate::proc::ensure_block_returns(&mut body);
         }
         Function {
             name: Some(name),

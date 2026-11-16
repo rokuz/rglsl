@@ -51,8 +51,8 @@ fn ensure_returns_at_end<'a>(
 const fn needs_return(last: Option<&crate::Statement>) -> bool {
     use crate::Statement as S;
     match last {
-        Some(&(S::Block(_) | S::If { .. } | S::Switch { .. } | S::Break | S::Continue)) => false,
-        Some(statement) => !statement.is_terminator(),
+        Some(&(S::Block(_) | S::If { .. } | S::Switch { .. })) => false,
+        Some(statement) => !statement.ends_block(),
         None => true,
     }
 }

@@ -900,21 +900,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let fall_through = if self.with(|this| this.strip_trailing_break(&mut block))? {
                     false
                 } else {
-                    match block.last() {
-                        Some(
-                            &(IrStatement::Return { .. }
-                            | IrStatement::Continue
-                            | IrStatement::Kill
-                            | IrStatement::TerminateInvocation
-                            | IrStatement::Abort { .. }),
-                        ) => false,
-                        Some(&IrStatement::RayPipelineFunction(ref function))
-                            if function.is_terminator() =>
-                        {
-                            false
-                        }
-                        _ => true,
-                    }
+                    !ends_in_jump(&block)
                 };
                 cases.push(SwitchCase {
                     value: label,

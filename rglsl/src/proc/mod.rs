@@ -1150,44 +1150,12 @@ impl crate::Statement {
             }
             Self::MeshFunction(ref function) => function.is_terminator(),
             Self::RayPipelineFunction(ref function) => function.is_terminator(),
-            Self::Emit(_)
-            | Self::Block(_)
-            | Self::If { .. }
-            | Self::Switch { .. }
-            | Self::Loop { .. }
-            | Self::Break
-            | Self::Continue
-            | Self::Store { .. }
-            | Self::ImageStore { .. }
-            | Self::TensorWrite { .. }
-            | Self::SpirvInstruction { .. }
-            | Self::Call { .. }
-            | Self::RayQuery { .. }
-            | Self::Atomic { .. }
-            | Self::ImageAtomic { .. }
-            | Self::AtomicLoad { .. }
-            | Self::AtomicStore { .. }
-            | Self::ScopedBarrier { .. }
-            | Self::SplitBarrier { .. }
-            | Self::Demote
-            | Self::BeginInvocationInterlock
-            | Self::EndInvocationInterlock
-            | Self::SubgroupBallot { .. }
-            | Self::SubgroupCollectiveOperation { .. }
-            | Self::SubgroupGather { .. }
-            | Self::SubgroupFunction { .. }
-            | Self::ControlBarrier(_)
-            | Self::MemoryBarrier(_)
-            | Self::CooperativeStore { .. }
-            | Self::HitObject { .. }
-            | Self::ReorderThread { .. }
-            | Self::DebugPrintf { .. }
-            | Self::Assume { .. }
-            | Self::CooperativeVector(_)
-            | Self::CooperativeMatrix { .. }
-            | Self::EmitVertex { .. }
-            | Self::EndPrimitive { .. } => false,
+            _ => false,
         }
+    }
+
+    pub const fn ends_block(&self) -> bool {
+        matches!(*self, Self::Break | Self::Continue) || self.is_terminator()
     }
 }
 
