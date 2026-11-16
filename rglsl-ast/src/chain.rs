@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use rglsl_types::small_vec::SmallVec;
+use rglsl_types::stack::InlineDepth;
 
 use crate::ast::{Expression, ExpressionKind, FunctionCall, FunctionIdentifier, NodeId};
 use crate::deep::{Nested, deep_clone, deep_eq, drop_owned};
@@ -354,13 +355,17 @@ impl ExpressionKind {
             _ => false,
         }
     }
-    pub(crate) fn exceeds_depth(&self, remaining: u8) -> bool {
+    pub(crate) fn exceeds_inline_depth(&self) -> bool {
+        self.exceeds(InlineDepth::MAX)
+    }
+
+    fn exceeds(&self, depth: InlineDepth) -> bool {
         if self.is_leaf() {
             return false;
         }
-        if remaining == 0 {
+        let Some(nested) = depth.nested() else {
             return true;
-        }
+        };
         if let Self::FunctionCall(call) = self
             && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
                 &call.function.node
@@ -370,7 +375,7 @@ impl ExpressionKind {
         }
         let mut deep = false;
         self.for_each_child(|child| {
-            if !deep && child.kind.exceeds_depth(remaining - 1) {
+            if !deep && child.kind.exceeds(nested) {
                 deep = true;
             }
         });
@@ -416,7 +421,7 @@ impl Nested for ExpressionKind {
 
 impl Drop for ExpressionKind {
     fn drop(&mut self) {
-        if !self.exceeds_depth(6) {
+        if !self.exceeds_inline_depth() {
             return;
         }
         let mut pending = Vec::new();

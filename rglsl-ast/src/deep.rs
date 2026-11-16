@@ -131,7 +131,7 @@ pub(crate) fn empty_statement() -> Statement {
 }
 
 fn take_expression(expression: &mut Expression, into: &mut Vec<Owned>) {
-    if expression.kind.exceeds_depth(6) {
+    if expression.kind.exceeds_inline_depth() {
         into.push(Owned::Expression(mem::replace(expression, placeholder())));
     }
 }
