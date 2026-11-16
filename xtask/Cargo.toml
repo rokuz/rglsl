@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 cbindgen = { version = "0.29.4", default-features = false }
+hashbrown.workspace = true
 rglsl = { workspace = true }
 rglsl-dis.workspace = true
 rglsl-fuzz.workspace = true

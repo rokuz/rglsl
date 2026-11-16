@@ -22,6 +22,7 @@ mod interface;
 mod object_path;
 mod oracles;
 mod process;
+mod recursion;
 mod renamed;
 mod report;
 mod runner;
@@ -60,6 +61,14 @@ commands:
       --no-remote-exec    do not run shaders on the remote Windows targets
   snapshots           assemble the SPIR-V snapshots in rglsl/tests/out/spv with spirv-as and
                       validate them with spirv-val for the Vulkan version of their SPIR-V
+  recursion           build the workspace's LLVM IR (opt-level 0, one codegen unit) into
+                      target/xtask/recursion, build its call graph (direct calls and functions
+                      whose address is taken, through vtables and function pointers) and fail
+                      on every cycle that touches the workspace, does not go through
+                      rglsl_types::stack::Stack::call and is not allowed, with its reason and
+                      bound, in xtask/recursion-allowed.toml
+      --no-build          reuse the LLVM IR of the last build
+      --verbose           also list the allowed cycles
   capi-header         generate rglsl-capi/include/rglsl.h with cbindgen
       --check             only check that the committed header is up to date
   gen-spirv           generate the SPIR-V tables from the pinned sources in target/oracles:
@@ -224,6 +233,14 @@ fn run(args: Vec<String>) -> Result<i32> {
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
             Ok(0)
+        }
+        "recursion" => {
+            let options = recursion::Options {
+                build: !args.flag("--no-build"),
+                verbose: args.flag("--verbose"),
+            };
+            args.finish()?;
+            recursion::run(&workspace_root()?, &options)
         }
         "snapshots" => {
             args.finish()?;

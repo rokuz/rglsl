@@ -1,0 +1,164 @@
+[inline-depth]
+functions = [
+    "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::exceeds",
+    "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::for_each_child",
+    "rglsl_sema::analyze::expression::<impl rglsl_sema::analyze::Analyzer>::is_flat",
+    "rglsl_sema::analyze::expression::<impl rglsl_sema::analyze::Analyzer>::flat_operand",
+    "rglsl::front::glsl::lower::expression::<impl rglsl::front::glsl::lower::function::FunctionLowerer>::is_flat",
+    "rglsl::front::glsl::lower::expression::<impl rglsl::front::glsl::lower::function::FunctionLowerer>::flat_typed",
+    "rglsl::front::glsl::lower::expression::<impl rglsl::front::glsl::lower::function::FunctionLowerer>::flat_value",
+]
+reason = "InlineDepth <= 7, pending decision: flat expressions are folded inline below the frame stack"
+bound = "InlineDepth::MAX = 6, at most 7 frames"
+
+[ast-shells]
+functions = [
+    "rglsl_ast::deep::",
+    "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::for_each_child",
+    "rglsl_ast::chain::<impl core::clone::Clone for rglsl_ast::ast::ExpressionKind>::clone",
+    "rglsl_ast::chain::<impl core::cmp::PartialEq for rglsl_ast::ast::ExpressionKind>::eq",
+    "rglsl_ast::chain::<impl core::ops::drop::Drop for rglsl_ast::ast::ExpressionKind>::drop",
+    "<rglsl_ast::ast::",
+    "core::ptr::drop_in_place<",
+]
+reason = "AST clone, == and drop walk expressions, type specifiers, initializers and statements with work lists; the call graph closes only through the shells (copies whose expression and type slots are placeholders) and the owned parts moved out before a drop"
+bound = "at most 3 nested work lists (statement, initializer, expression and type specifier)"
+
+[ir-block]
+functions = [
+    "<rglsl::ir::block::Block as ",
+    "rglsl::ir::block::",
+    "rglsl::ir::visit::<impl rglsl::ir::Statement>::",
+    "<rglsl::ir::visit::Parts<O,B,F> as rglsl::ir::visit::VisitorMut>::block",
+    "<rglsl::ir::Statement as core::clone::Clone>::clone",
+    "<rglsl::ir::SwitchCase as core::clone::Clone>::clone",
+    "core::ptr::drop_in_place<",
+]
+reason = "Block drop and clone move or pair the nested blocks into work lists before the statement is dropped or cloned"
+bound = "2"
+
+[ir-arbitrary]
+functions = [
+    "arbitrary::Arbitrary",
+    "core::ptr::drop_in_place<",
+]
+reason = "derive(Arbitrary) of IR statements, compiled only with the arbitrary feature for the libFuzzer target `ir`"
+bound = "the length of the fuzzer input"
+
+[compiled-unit]
+functions = [
+    "rglsl::object::CompiledUnit",
+    "core::ptr::drop_in_place<",
+]
+reason = "CompiledUnit::specialized is a unit without its own specialized unit"
+bound = "2"
+
+[sema-builtins]
+functions = [
+    "rglsl_sema::builtins::Builtins",
+    "rglsl_sema::types::TypeRegistry",
+    "core::ptr::drop_in_place<",
+]
+reason = "the type registry of the built-in tables has no built-in tables of its own"
+bound = "2"
+
+[sema-layout]
+functions = [
+    "rglsl_sema::layout::",
+    "core::ptr::drop_in_place<",
+]
+reason = "TypeLayout drop moves the nested layouts into a work list"
+bound = "1"
+
+[sema-small]
+functions = [
+    "rglsl_sema::constant::Value::",
+    "rglsl_sema::analyze::call::<impl rglsl_sema::analyze::Analyzer>::contains_unsized_array",
+    "rglsl_sema::analyze::precise::Precise::symbol_precise",
+    "rglsl_sema::types::Type::contains_scalar_where",
+    "rglsl_sema::analyze::mesh::<impl rglsl_sema::analyze::Analyzer>::is_mesh_output",
+]
+reason = "scalar kinds (integer, floating, truncated) and block member -> instance steps; struct facts are precomputed"
+bound = "3"
+
+[pp-output]
+functions = ["rglsl_pp::output::Output::sync"]
+reason = "the second call is for the same file"
+bound = "2"
+
+[constant-evaluator]
+functions = [
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::binary_op",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::binary_op_compose",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::binary_op_vector",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::multiply_matrix_matrix",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::multiply_matrix_vector",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::multiply_vector_matrix",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::dot_exprs",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::unary_op",
+    "rglsl::proc::constant_evaluator::ConstantEvaluator::resolve_type",
+    "rglsl::proc::constant_evaluator::component_wise_concrete_int",
+    "rglsl::proc::constant_evaluator::component_wise_float",
+    "rglsl::proc::constant_evaluator::component_wise_scalar",
+    "rglsl::proc::constant_evaluator::component_wise_signed",
+]
+reason = "component-wise evaluation follows the shape of a Compose: matrix -> column -> scalar; vector operands are flattened with flatten_compose, arrays go through work lists"
+bound = "3"
+
+[spirv-writer]
+functions = [
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::cooperative_size_id",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::get_constant_null",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::get_constant_scalar",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::get_index_constant",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::get_localtype_id",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::get_numeric_type_id",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::request_type_capabilities",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::write_constant_expr",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::write_constant_null",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::write_constant_scalar",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::write_cooperative_type_declaration_local",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::write_numeric_type_declaration_local",
+    "rglsl::back::spv::writer::<impl rglsl::back::spv::Writer>::write_type_declaration_local",
+    "rglsl::back::spv::specialization::<impl rglsl::back::spv::Writer>::write_global_expression",
+    "rglsl::back::spv::specialization::<impl rglsl::back::spv::Writer>::write_override",
+]
+reason = "composite type -> scalar, size -> scalar constant, null constants of physical and plain types, override initializers in arena order"
+bound = "4"
+
+[validator-interface]
+functions = ["rglsl::valid::interface::VaryingContext::validate_interface"]
+reason = "a per-vertex block has no array inside"
+bound = "2"
+
+[link-reflect-layouts]
+functions = ["rglsl_link::reflect::types::Layouts::"]
+reason = "struct layouts are a memoised work list, nested structs are laid out first"
+bound = "2"
+
+[fuzz-generators]
+functions = [
+    "rglsl_fuzz::fuzzer::Fuzzer::make_expression",
+    "rglsl_fuzz::opaque::OpaqueGenerator::",
+    "rglsl_fuzz::statements::StatementFuzzer::",
+    "rglsl_fuzz::structs::",
+    "rglsl_fuzz::structify::",
+    "rglsl_fuzz::reduce::finders::field_path",
+]
+reason = "the fuzzer generates nesting up to its parameters; it does not walk input"
+bound = "max_depth, MAX_BLOCK_NESTING_DEPTH = 5, max_struct_nesting_depth, depth > 8 caps, vector sizes"
+
+[xtask-exec]
+functions = [
+    "rglsl_xtask::exec::reflect::",
+    "rglsl_xtask::exec::glsl::",
+    "rglsl_xtask::exec::module::parse",
+    "core::ptr::drop_in_place<",
+]
+reason = "reflection data types of the exec harness are built with a depth cap; a module is byte-swapped once"
+bound = "32"
+
+[xtask-builtins]
+functions = ["rglsl_xtask::builtins::generate::Shader::constant"]
+reason = "constants of built-in prototype types"
+bound = "the types of the built-in tables"
