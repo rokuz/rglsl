@@ -253,6 +253,15 @@ pub fn analyze_with_tables(
     options: &Options,
     tables: &dyn BuiltinTables,
 ) -> Analysis {
+    analyze_unit(unit, options, tables, true)
+}
+
+pub(crate) fn analyze_unit(
+    unit: &TranslationUnit,
+    options: &Options,
+    tables: &dyn BuiltinTables,
+    flat_expressions: bool,
+) -> Analysis {
     let mut diagnostics = Vec::new();
     let version = version_of(unit, &mut diagnostics);
     let effective = match version {
@@ -262,6 +271,7 @@ pub fn analyze_with_tables(
     let builtins = tables.builtins(effective, options.stage, &options.limits);
     let mut analyzer = Analyzer::new(options, builtins, diagnostics);
     analyzer.version = version;
+    analyzer.flat_expressions = flat_expressions;
     analyzer.unit(unit);
     let mut analysis = analyzer.finish();
     set_no_contraction(unit, &mut analysis);
@@ -437,6 +447,7 @@ pub(crate) struct Analyzer<'a> {
     pub spirv_execution_modes: SpirvExecutionModes,
     pub inductive_loops: BTreeSet<SymbolId>,
     pub index_limitations: Vec<limitations::IndexLimitation>,
+    pub flat_expressions: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,6 +528,7 @@ impl<'a> Analyzer<'a> {
             spirv_execution_modes: SpirvExecutionModes::new(),
             inductive_loops: BTreeSet::new(),
             index_limitations: Vec::new(),
+            flat_expressions: true,
         }
     }
 

@@ -206,8 +206,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         expression: &'b Expression,
         call: &'b FunctionCall,
     ) -> Operand {
-        let end = expression.span.end;
-        let close = Span::new(end.saturating_sub(1), end);
+        let close = super::expression::closing_parenthesis(expression);
         match &call.function.node {
             FunctionIdentifier::Function(name) => {
                 self.clone()
@@ -345,13 +344,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         specifier: &'b TypeSpecifier,
         arguments: &'b [Expression],
     ) -> Operand {
-        let ty = match self.with(|analyzer| analyzer.try_simple_type_specifier(specifier, span)) {
-            Some(ty) => ty,
-            None => {
-                self.call(self.clone().bare_type_specifier(specifier, span))
-                    .await
-            }
-        };
+        let ty = self.clone().bare_type_specifier(specifier, span).await;
         let operands = self.clone().operands(arguments).await;
         self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, &operands))
     }
