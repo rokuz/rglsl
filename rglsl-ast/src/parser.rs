@@ -29,7 +29,9 @@ use crate::keywords::{WordClass, is_reserved_word, is_unavailable_word};
 use crate::lexer::{Token, TokenKind, tokenize};
 use crate::opaque::OpaqueKeyword;
 use crate::span::Span;
+use crate::work_stack::{Frame, WorkStack};
 use rglsl_types::extension::Extension;
+use rglsl_types::small_vec::SmallVec;
 use rglsl_types::stack::{Call, Stack, run};
 
 pub const NON_UNIFORM: &str = "nonuniformEXT";
@@ -73,47 +75,11 @@ struct ForHeader {
     increment: Option<Expression>,
 }
 
-struct BinaryScope<'p, 'a> {
-    parser: &'p Parser<'a>,
-    operands_base: usize,
-    operators_base: usize,
-}
-
-impl Drop for BinaryScope<'_, '_> {
-    fn drop(&mut self) {
-        if let Ok(mut operands) = self.parser.binary_operands.try_borrow_mut() {
-            operands.truncate(self.operands_base);
-        }
-        if let Ok(mut operators) = self.parser.binary_operators.try_borrow_mut() {
-            operators.truncate(self.operators_base);
-        }
-    }
-}
-
-struct RightScope<'p, 'a> {
-    parser: &'p Parser<'a>,
-    base: usize,
-}
-
-impl Drop for RightScope<'_, '_> {
-    fn drop(&mut self) {
-        if let Ok(mut stack) = self.parser.right_stack.try_borrow_mut() {
-            stack.truncate(self.base);
-        }
-    }
-}
-
-struct UnaryScope<'p, 'a> {
-    parser: &'p Parser<'a>,
-    base: usize,
-}
-
-impl Drop for UnaryScope<'_, '_> {
-    fn drop(&mut self) {
-        if let Ok(mut stack) = self.parser.unary_stack.try_borrow_mut() {
-            stack.truncate(self.base);
-        }
-    }
+enum QualifierStart<'a> {
+    Layout,
+    Subroutine,
+    Spirv(&'a str),
+    Single(SingleTypeQualifier),
 }
 
 enum AfterQualifier {
@@ -202,10 +168,10 @@ struct Parser<'a> {
     struct_scopes: RefCell<StructScopes<'a>>,
     extensions: RefCell<ExtensionState>,
     partial_function: RefCell<Option<PartialFunction>>,
-    binary_operands: RefCell<Vec<(u32, Parsed)>>,
-    binary_operators: RefCell<Vec<BinaryOperator>>,
-    right_stack: RefCell<Vec<PendingRight>>,
-    unary_stack: RefCell<Vec<(u32, UnaryOperator)>>,
+    binary_operands: WorkStack<(u32, Parsed)>,
+    binary_operators: WorkStack<BinaryOperator>,
+    pending_rights: WorkStack<PendingRight>,
+    unary_operators: WorkStack<(u32, UnaryOperator)>,
 }
 
 struct PartialFunction {
@@ -260,10 +226,10 @@ pub fn parse_prefix(source: &str) -> (TranslationUnit, Option<ParseError>) {
         ])),
         extensions: RefCell::new(ExtensionState::new()),
         partial_function: RefCell::new(None),
-        binary_operands: RefCell::new(Vec::with_capacity(16)),
-        binary_operators: RefCell::new(Vec::with_capacity(16)),
-        right_stack: RefCell::new(Vec::with_capacity(8)),
-        unary_stack: RefCell::new(Vec::with_capacity(8)),
+        binary_operands: WorkStack::with_capacity(16),
+        binary_operators: WorkStack::with_capacity(16),
+        pending_rights: WorkStack::with_capacity(8),
+        unary_operators: WorkStack::with_capacity(8),
     };
     let mut external_declarations = Vec::new();
     let mut failure = None;
@@ -835,24 +801,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn reduce_binary(&self, operands_base: usize, operators_base: usize) -> Result<()> {
-        let operator = {
-            let mut operators = self.binary_operators.borrow_mut();
-            if operators.len() <= operators_base {
-                None
-            } else {
-                operators.pop()
-            }
-        };
-        let (right, left) = {
-            let mut operands = self.binary_operands.borrow_mut();
-            if operands.len() < operands_base.saturating_add(2) {
-                (None, None)
-            } else {
-                (operands.pop(), operands.pop())
-            }
-        };
-        let (Some(operator), Some((_, right)), Some((start, left))) = (operator, right, left)
+    fn reduce_binary(
+        &self,
+        operands: &Frame<'_, (u32, Parsed)>,
+        operators: &Frame<'_, BinaryOperator>,
+    ) -> Result<()> {
+        let (Some(operator), Some((_, right)), Some((start, left))) =
+            (operators.pop(), operands.pop(), operands.pop())
         else {
             return Err(self.unexpected("an expression"));
         };
@@ -862,44 +817,40 @@ impl<'a> Parser<'a> {
             right: Box::new(right.expression),
         };
         let reduced = self.parsed(start, kind)?;
-        self.binary_operands.borrow_mut().push((start, reduced));
+        operands.push((start, reduced));
         Ok(())
     }
 
-    fn at_type_qualifier(&self) -> bool {
+    fn qualifier_start(&self) -> Option<QualifierStart<'a>> {
         let TokenKind::Word(word, _) = self.peek().kind else {
-            return false;
+            return None;
         };
-        if word == NON_UNIFORM && self.at_nth(1, "(") {
-            return false;
+        if word == "layout" {
+            Some(QualifierStart::Layout)
+        } else if word == "subroutine" {
+            Some(QualifierStart::Subroutine)
+        } else if word == NON_UNIFORM && self.at_nth(1, "(") {
+            None
+        } else if self.is_spirv_word(word, &SPIRV_QUALIFIERS) {
+            Some(QualifierStart::Spirv(word))
+        } else {
+            SingleTypeQualifier::from_keyword(word).map(QualifierStart::Single)
         }
-        word == "layout"
-            || word == "subroutine"
-            || self.is_spirv_word(word, &SPIRV_QUALIFIERS)
-            || SingleTypeQualifier::from_keyword(word).is_some()
     }
 
-    fn try_leaf_call_argument(&self) -> Option<Result<Expression>> {
-        if !matches!(self.peek_nth(1).kind, TokenKind::Punctuator("," | ")")) {
-            return None;
-        }
+    fn parse_leaf(&self) -> Option<Result<Parsed>> {
         let token = self.peek();
         match token.kind {
             TokenKind::Number { .. }
             | TokenKind::String(_)
-            | TokenKind::Word("true" | "false", _) => {
-                Some(self.parse_literal(token).map(|parsed| parsed.expression))
-            }
+            | TokenKind::Word("true" | "false", _) => Some(self.parse_literal(token)),
             TokenKind::Word(word, class)
-                if word != NON_UNIFORM
-                    && !class.is_reserved()
-                    && !self.starts_constructor(word, class) =>
+                if !self.at_nth(1, "(")
+                    && !self.starts_constructor(word, class)
+                    && !class.is_reserved() =>
             {
                 self.advance();
-                Some(
-                    self.parsed(token.span.start, ExpressionKind::Variable(word.to_owned()))
-                        .map(|parsed| parsed.expression),
-                )
+                Some(self.parsed(token.span.start, ExpressionKind::Variable(word.to_owned())))
             }
             _ => None,
         }
@@ -1049,12 +1000,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             self.expect(";")?;
             return self.declaration(start, DeclarationKind::SpirvExecutionMode(mode));
         }
-        let qualifier = if self.at_type_qualifier() {
-            self.clone().parse_type_qualifier().await?
-        } else {
-            None
-        };
-        let qualifier = match qualifier {
+        let qualifier = match self.clone().parse_type_qualifier().await? {
             Some(qualifier) => match self
                 .call(self.clone().parse_qualifier_declaration(start, qualifier))
                 .await?
@@ -1428,11 +1374,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_init_declarator(self, name: Identifier) -> Result<Node<InitDeclarator>> {
         let start = name.span.start;
-        let array = if self.at("[") {
-            self.clone().parse_array_specifier().await?
-        } else {
-            None
-        };
+        let array = self.clone().parse_array_specifier().await?;
         let initializer = if self.eat("=") {
             Some(self.clone().parse_initializer().await?)
         } else {
@@ -1468,26 +1410,27 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_type_qualifier(self) -> Result<Option<Spanned<TypeQualifier>>> {
         let start = self.start();
         let mut qualifiers = Vec::new();
-        while let TokenKind::Word(word, _) = self.peek().kind {
+        while let Some(next) = self.qualifier_start() {
             let single_start = self.start();
-            let single = if word == "layout" {
-                self.advance();
-                SingleTypeQualifier::Layout(self.call(self.clone().parse_layout_qualifier()).await?)
-            } else if word == "subroutine" {
-                self.advance();
-                SingleTypeQualifier::Subroutine(self.parse_type_name_list()?)
-            } else if word == NON_UNIFORM && self.at_nth(1, "(") {
-                break;
-            } else if self.is_spirv_word(word, &SPIRV_QUALIFIERS) {
-                self.parse_spirv_qualifier(word)?
-            } else if let Some(single) = SingleTypeQualifier::from_keyword(word) {
-                if single == SingleTypeQualifier::NonUniform {
-                    self.require_non_uniform(self.peek().span)?;
+            let single = match next {
+                QualifierStart::Layout => {
+                    self.advance();
+                    SingleTypeQualifier::Layout(
+                        self.call(self.clone().parse_layout_qualifier()).await?,
+                    )
                 }
-                self.advance();
-                single
-            } else {
-                break;
+                QualifierStart::Subroutine => {
+                    self.advance();
+                    SingleTypeQualifier::Subroutine(self.parse_type_name_list()?)
+                }
+                QualifierStart::Spirv(word) => self.parse_spirv_qualifier(word)?,
+                QualifierStart::Single(single) => {
+                    if single == SingleTypeQualifier::NonUniform {
+                        self.require_non_uniform(self.peek().span)?;
+                    }
+                    self.advance();
+                    single
+                }
             };
             qualifiers.push(self.spanned(single_start, single));
         }
@@ -1529,49 +1472,14 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let TokenKind::Word(word, _) = token.kind else {
             return Err(self.unexpected("a type"));
         };
-        if word != "struct" && !self.is_spirv_word(word, &[SPIRV_TYPE]) {
-            let non_array = self.parse_simple_type_specifier(token, word)?;
-            if !self.at("<") && !self.at("[") {
-                return Ok(self.spanned(
-                    token.span.start,
-                    TypeSpecifier {
-                        non_array,
-                        parameters: None,
-                        array: None,
-                    },
-                ));
-            }
-            return self.clone().finish_type_specifier(token, non_array).await;
-        }
-        let non_array = self
-            .call(self.clone().parse_type_specifier_non_array(token, word))
-            .await?;
-        self.clone().finish_type_specifier(token, non_array).await
-    }
-
-    async fn parse_type_specifier_non_array(
-        self,
-        token: Token<'a>,
-        word: &'a str,
-    ) -> Result<TypeSpecifierNonArray> {
-        if word == "struct" {
-            self.call(self.clone().parse_struct_specifier())
-                .await
-                .map(TypeSpecifierNonArray::Struct)
+        let non_array = if word == "struct" {
+            TypeSpecifierNonArray::Struct(self.call(self.clone().parse_struct_specifier()).await?)
         } else if self.is_spirv_word(word, &[SPIRV_TYPE]) {
-            self.call(self.clone().parse_spirv_type_specifier())
-                .await
-                .map(|spirv| TypeSpecifierNonArray::Spirv(Box::new(spirv)))
+            let spirv = self.call(self.clone().parse_spirv_type_specifier()).await?;
+            TypeSpecifierNonArray::Spirv(Box::new(spirv))
         } else {
-            self.parse_simple_type_specifier(token, word)
-        }
-    }
-
-    async fn finish_type_specifier(
-        self,
-        token: Token<'a>,
-        non_array: TypeSpecifierNonArray,
-    ) -> Result<Spanned<TypeSpecifier>> {
+            self.parse_simple_type_specifier(token, word)?
+        };
         let parameters = if self.at("<")
             && !matches!(
                 non_array,
@@ -1581,11 +1489,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         } else {
             None
         };
-        let array = if self.at("[") {
-            self.clone().parse_array_specifier().await?
-        } else {
-            None
-        };
+        let array = self.clone().parse_array_specifier().await?;
         let specifier = TypeSpecifier {
             non_array,
             parameters,
@@ -2019,6 +1923,20 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_expression(self) -> Result<Parsed> {
         let start = self.start();
         let first = self.clone().parse_assignment().await?;
+        self.clone().parse_sequence_from(start, first).await
+    }
+
+    async fn parse_expression_from(self, start: u32, primary: Parsed) -> Result<Parsed> {
+        let postfix = self.clone().parse_postfix_from(start, primary).await?;
+        let binary = self.clone().parse_binary_from(start, postfix).await?;
+        let assignment = self
+            .clone()
+            .parse_right_chain_from(start, binary, true)
+            .await?;
+        self.clone().parse_sequence_from(start, assignment).await
+    }
+
+    async fn parse_sequence_from(self, start: u32, first: Parsed) -> Result<Parsed> {
         if self.at(",") {
             self.call(self.clone().parse_sequence(start, first)).await
         } else {
@@ -2046,9 +1964,6 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_right_chain(self, assigning: bool) -> Result<Parsed> {
         let start = self.start();
         let first = self.clone().parse_binary().await?;
-        if !self.at("?") && self.peek_assignment_operator(assigning).is_none() {
-            return Ok(first);
-        }
         self.clone()
             .parse_right_chain_from(start, first, assigning)
             .await
@@ -2060,26 +1975,24 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         mut operand: Parsed,
         assigning: bool,
     ) -> Result<Parsed> {
-        let scope = RightScope {
-            parser: self.parser,
-            base: self.right_stack.borrow().len(),
-        };
+        if !self.at("?") && self.peek_assignment_operator(assigning).is_none() {
+            return Ok(operand);
+        }
+        let pending = self.pending_rights.frame();
         let innermost = loop {
             if self.eat("?") {
                 let then_expression = self.call(self.clone().parse_expression()).await?;
                 self.expect(":")?;
-                self.right_stack
-                    .borrow_mut()
-                    .push(PendingRight::Conditional {
-                        start,
-                        condition: operand,
-                        then_expression,
-                    });
+                pending.push(PendingRight::Conditional {
+                    start,
+                    condition: operand,
+                    then_expression,
+                });
                 start = self.start();
                 operand = self.clone().parse_binary().await?;
                 continue;
             }
-            let active = assigning || self.right_stack.borrow().len() > scope.base;
+            let active = assigning || !pending.is_empty();
             let Some(operator) = self.peek_assignment_operator(active) else {
                 break operand;
             };
@@ -2087,76 +2000,54 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 return Err(self.unexpected("the end of the expression"));
             }
             self.advance();
-            self.right_stack
-                .borrow_mut()
-                .push(PendingRight::Assignment {
-                    start,
-                    target: operand,
-                    operator,
-                });
+            pending.push(PendingRight::Assignment {
+                start,
+                target: operand,
+                operator,
+            });
             start = self.start();
             operand = self.clone().parse_binary().await?;
         };
         let mut result = innermost;
-        while self.right_stack.borrow().len() > scope.base {
-            let Some(right) = self.right_stack.borrow_mut().pop() else {
-                break;
-            };
+        while let Some(right) = pending.pop() {
             result = self.reduce_right(right, result)?;
         }
-        drop(scope);
         Ok(result)
     }
 
     async fn parse_binary(self) -> Result<Parsed> {
         let start = self.start();
         let first = self.clone().parse_unary().await?;
-        if self.peek_binary_operator().is_some() {
-            self.clone().parse_binary_operands(start, first).await
-        } else {
-            Ok(first)
-        }
+        self.clone().parse_binary_from(start, first).await
     }
 
-    async fn parse_binary_operands(self, start: u32, first: Parsed) -> Result<Parsed> {
-        let scope = BinaryScope {
-            parser: self.parser,
-            operands_base: self.binary_operands.borrow().len(),
-            operators_base: self.binary_operators.borrow().len(),
-        };
-        self.binary_operands.borrow_mut().push((start, first));
+    async fn parse_binary_from(self, start: u32, first: Parsed) -> Result<Parsed> {
+        if self.peek_binary_operator().is_none() {
+            return Ok(first);
+        }
+        let operands = self.binary_operands.frame();
+        let operators = self.binary_operators.frame();
+        operands.push((start, first));
         while let Some(operator) = self.peek_binary_operator() {
-            while self
-                .binary_operators
-                .borrow()
-                .get(scope.operators_base..)
-                .and_then(|slice| slice.last())
+            while operators
+                .last()
                 .is_some_and(|waiting| waiting.precedence() >= operator.precedence())
             {
-                self.reduce_binary(scope.operands_base, scope.operators_base)?;
+                self.reduce_binary(&operands, &operators)?;
             }
             self.advance();
-            self.binary_operators.borrow_mut().push(operator);
+            operators.push(operator);
             let operand_start = self.start();
             let operand = self.clone().parse_unary().await?;
-            self.binary_operands
-                .borrow_mut()
-                .push((operand_start, operand));
+            operands.push((operand_start, operand));
         }
-        while self.binary_operators.borrow().len() > scope.operators_base {
-            self.reduce_binary(scope.operands_base, scope.operators_base)?;
+        while !operators.is_empty() {
+            self.reduce_binary(&operands, &operators)?;
         }
-        let result = if self.binary_operands.borrow().len() == scope.operands_base.saturating_add(1)
-        {
-            self.binary_operands
-                .borrow_mut()
-                .pop()
-                .map(|(_, expression)| expression)
-        } else {
-            None
-        };
-        drop(scope);
-        result.ok_or_else(|| self.unexpected("an expression"))
+        match (operands.pop(), operands.is_empty()) {
+            (Some((_, expression)), true) => Ok(expression),
+            _ => Err(self.unexpected("an expression")),
+        }
     }
 
     async fn parse_unary(self) -> Result<Parsed> {
@@ -2164,26 +2055,12 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_unary_chain(self) -> Result<Parsed> {
-        let has_unary = matches!(
-            self.peek().kind,
-            TokenKind::Punctuator(symbol) if UnaryOperator::from_symbol(symbol).is_some()
-        );
-        if !has_unary {
-            return if self.starts_cast() {
-                self.call(self.clone().parse_cast()).await
-            } else {
-                self.clone().parse_postfix().await
-            };
-        }
-        let scope = UnaryScope {
-            parser: self.parser,
-            base: self.unary_stack.borrow().len(),
-        };
+        let operators = self.unary_operators.frame();
         while let TokenKind::Punctuator(symbol) = self.peek().kind {
             let Some(operator) = UnaryOperator::from_symbol(symbol) else {
                 break;
             };
-            self.unary_stack.borrow_mut().push((self.start(), operator));
+            operators.push((self.start(), operator));
             self.advance();
         }
         let mut result = if self.starts_cast() {
@@ -2191,17 +2068,13 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         } else {
             self.clone().parse_postfix().await?
         };
-        while self.unary_stack.borrow().len() > scope.base {
-            let Some((start, operator)) = self.unary_stack.borrow_mut().pop() else {
-                break;
-            };
+        while let Some((start, operator)) = operators.pop() {
             let kind = ExpressionKind::Unary {
                 operator,
                 operand: Box::new(result.expression),
             };
             result = self.parsed(start, kind)?;
         }
-        drop(scope);
         Ok(result)
     }
 
@@ -2240,7 +2113,11 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
 
     async fn parse_postfix(self) -> Result<Parsed> {
         let start = self.start();
-        let mut base = self.clone().parse_primary().await?;
+        let primary = self.clone().parse_primary().await?;
+        self.clone().parse_postfix_from(start, primary).await
+    }
+
+    async fn parse_postfix_from(self, start: u32, mut base: Parsed) -> Result<Parsed> {
         while self.at_postfix() {
             base = self.clone().parse_postfix_step(start, base).await?;
         }
@@ -2302,11 +2179,16 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
             self.advance();
         } else if !self.at(")") {
             loop {
-                let argument = match self.try_leaf_call_argument() {
-                    Some(result) => result?,
-                    None => self.call(self.clone().parse_assignment()).await?.expression,
+                let leaf = if matches!(self.peek_nth(1).kind, TokenKind::Punctuator("," | ")")) {
+                    self.parse_leaf()
+                } else {
+                    None
                 };
-                arguments.push(argument);
+                let argument = match leaf {
+                    Some(leaf) => leaf?,
+                    None => self.call(self.clone().parse_assignment()).await?,
+                };
+                arguments.push(argument.expression);
                 if !self.eat(",") {
                     break;
                 }
@@ -2321,12 +2203,12 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_primary(self) -> Result<Parsed> {
+        if let Some(leaf) = self.parse_leaf() {
+            return leaf;
+        }
         let token = self.peek();
         match token.kind {
-            TokenKind::Number { .. }
-            | TokenKind::String(_)
-            | TokenKind::Word("true" | "false", _) => self.parse_literal(token),
-            TokenKind::Punctuator("(") => self.clone().parse_parenthesized().await,
+            TokenKind::Punctuator("(") => self.call(self.clone().parse_parenthesized()).await,
             TokenKind::Word(NON_UNIFORM, _) if self.at_nth(1, "(") => {
                 self.clone().parse_non_uniform(token).await
             }
@@ -2365,56 +2247,21 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     }
 
     async fn parse_parenthesized(self) -> Result<Parsed> {
-        let first_start = self.start();
-        self.expect("(")?;
-        if !self.at("(") || self.starts_cast() {
-            let inner = self.call(self.clone().parse_expression()).await?;
-            self.expect(")")?;
-            let kind = ExpressionKind::Parenthesized(Box::new(inner.expression));
-            return self.parsed(first_start, kind);
+        let mut opened = SmallVec::<u32, 8>::new();
+        loop {
+            opened.push(self.start());
+            self.expect("(")?;
+            if !self.at("(") || self.starts_cast() {
+                break;
+            }
         }
-        self.call(self.clone().parse_parenthesized_chain(first_start))
-            .await
-    }
-
-    async fn parse_parenthesized_chain(self, first_start: u32) -> Result<Parsed> {
-        let mut open_starts = Vec::with_capacity(8);
-        open_starts.push(first_start);
-        while self.at("(") && !self.starts_cast() {
-            open_starts.push(self.start());
-            self.advance();
-        }
-        let mut current = self.call(self.clone().parse_expression()).await?;
-        while let Some(paren_start) = open_starts.pop() {
+        let mut current = self.clone().parse_expression().await?;
+        while let Some(start) = opened.pop() {
             self.expect(")")?;
-            current = self.parsed(
-                paren_start,
-                ExpressionKind::Parenthesized(Box::new(current.expression)),
-            )?;
-            if !open_starts.is_empty() {
-                while self.at_postfix() {
-                    current = self
-                        .clone()
-                        .parse_postfix_step(paren_start, current)
-                        .await?;
-                }
-                if self.peek_binary_operator().is_some() {
-                    current = self
-                        .clone()
-                        .parse_binary_operands(paren_start, current)
-                        .await?;
-                }
-                if self.at("?") || self.peek_assignment_operator(true).is_some() {
-                    current = self
-                        .clone()
-                        .parse_right_chain_from(paren_start, current, true)
-                        .await?;
-                }
-                if self.at(",") {
-                    current = self
-                        .call(self.clone().parse_sequence(paren_start, current))
-                        .await?;
-                }
+            let kind = ExpressionKind::Parenthesized(Box::new(current.expression));
+            current = self.parsed(start, kind)?;
+            if !opened.is_empty() {
+                current = self.clone().parse_expression_from(start, current).await?;
             }
         }
         Ok(current)

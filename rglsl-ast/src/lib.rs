@@ -38,6 +38,7 @@ mod printer;
 pub mod scalar;
 mod span;
 mod walk;
+mod work_stack;
 
 #[cfg(test)]
 mod tests;

@@ -90,6 +90,38 @@ fn parentheses_are_kept() {
 }
 
 #[test]
+fn an_expression_continued_after_nested_parentheses_parses_like_one_after_a_name() {
+    let rests = [
+        "",
+        " + b * c",
+        " * b + c",
+        ".x[1]++ - d",
+        "[b](c) && d || e",
+        " = b",
+        " += b = c",
+        " ? b : c ? d : e",
+        " < b ? c : d = e",
+        ", b",
+        " = b, c ? d : e",
+    ];
+    for rest in rests {
+        for depth in 1..4 {
+            let nested = format!("{}(a){rest}){}", "(".repeat(depth), ")".repeat(depth - 1));
+            let general = format!(
+                "{}(head{rest}){}",
+                "(".repeat(depth - 1),
+                ")".repeat(depth - 1)
+            );
+            assert_eq!(
+                shape_of(&nested),
+                shape_of(&general).replace("head", "(paren a)"),
+                "{nested}"
+            );
+        }
+    }
+}
+
+#[test]
 fn every_binary_operator_round_trips() {
     for operator in BinaryOperator::ALL {
         let text = format!("a {} b", operator.symbol());
