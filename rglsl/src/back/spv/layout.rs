@@ -118,8 +118,11 @@ impl Instruction {
     }
 
     pub(super) fn add_operands(&mut self, operands: Vec<Word>) {
-        for operand in operands {
-            self.add_operand(operand);
+        self.wc += operands.len() as u32;
+        if self.operands.is_empty() {
+            self.operands = Operands::from(operands);
+        } else {
+            self.operands.extend_from_slice(&operands);
         }
     }
 
