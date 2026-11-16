@@ -156,10 +156,12 @@ fn report(error: &rglsl_link::CompileError, source: &str) {
             }
         }
         rglsl_link::CompileError::Invalid(ref invalid) => {
-            let line =
-                invalid.error.spans().next().and_then(|(span, _)| {
-                    span.to_range().map(|_| span.location(source).line_number)
-                });
+            let line = invalid
+                .error
+                .spans()
+                .next()
+                .and_then(|&(span, _)| invalid.module.span_sources.locate(span))
+                .map(|location| location.line);
             diagnostic("validate", line, &full_message(invalid.error.as_inner()));
         }
         rglsl_link::CompileError::Object(ref errors) => {

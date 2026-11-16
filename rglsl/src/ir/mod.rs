@@ -221,6 +221,7 @@ An override expression can be evaluated at pipeline creation time.
 
 mod block;
 mod debug;
+mod sources;
 pub mod visit;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
@@ -248,6 +249,7 @@ pub use rglsl_types::flavor::{
     MeshFlavor, RayTracingFlavor,
 };
 pub use rglsl_types::{ResourceBinding, ShaderStage, ShaderStageMask};
+pub use sources::{SpanLocation, SpanSources};
 
 /// Explicitly allows early depth/stencil tests.
 ///
@@ -4228,26 +4230,11 @@ pub struct Module {
     #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "deserialize", serde(default))]
     pub debug_info: Option<Box<DebugInfo>>,
-    #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "SpanSources::is_empty")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
     #[cfg_attr(feature = "arbitrary", arbitrary(default))]
-    pub span_map: rglsl_pp::SpanMap,
-}
-
-impl Module {
-    pub(crate) fn resolve_span(&self, span: crate::Span) -> crate::Span {
-        if self.span_map.is_empty() {
-            return span;
-        }
-        let Some(range) = span.to_range() else {
-            return span;
-        };
-        match (
-            self.span_map.locate_root(range.start),
-            self.span_map.locate_root(range.end),
-        ) {
-            (Some(start), Some(end)) => crate::Span::new(start, end.max(start)),
-            (Some(start), None) => crate::Span::new(start, start),
-            _ => crate::Span::UNDEFINED,
-        }
-    }
+    pub span_sources: SpanSources,
 }

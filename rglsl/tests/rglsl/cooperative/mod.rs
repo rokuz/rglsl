@@ -338,7 +338,8 @@ fn ours(source: &str, target: Target, debug: Debug) -> Result<Vec<u32>, Vec<(u32
             let line = error
                 .spans()
                 .next()
-                .map_or(0, |(span, _)| line_of(source, *span));
+                .and_then(|&(span, _)| module.span_sources.locate(span))
+                .map_or(0, |location| location.line);
             vec![(line, format!("validation: {}", message(error.as_inner())))]
         })?;
     let options = spv::Options {

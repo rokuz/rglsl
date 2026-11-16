@@ -82,8 +82,14 @@ pub enum LinkError {
         line: Option<u32>,
         message: String,
     },
-    #[error("the linked module is not valid: {0}")]
-    Validation(String),
+    #[error(
+        "the linked module is not valid: {message}{at}",
+        at = position_suffix(.at.as_ref())
+    )]
+    Validation {
+        message: String,
+        at: Option<SourcePosition>,
+    },
     #[error("internal linker error: {0}")]
     Internal(String),
 }
@@ -129,6 +135,53 @@ impl std::error::Error for LinkErrors {}
 
 pub(crate) fn internal(error: impl fmt::Display) -> LinkError {
     LinkError::Internal(error.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePosition {
+    pub file: Option<String>,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl SourcePosition {
+    pub fn of(module: &rglsl::Module, span: rglsl::Span, root: Option<&str>) -> Option<Self> {
+        module.span_sources.locate(span).map(|location| Self {
+            file: location
+                .file
+                .or(root.filter(|_| !location.included))
+                .map(String::from),
+            line: location.line,
+            column: location.column,
+        })
+    }
+
+    pub fn of_error(
+        module: &rglsl::Module,
+        error: &rglsl::WithSpan<rglsl::valid::ValidationError>,
+        root: Option<&str>,
+    ) -> Option<Self> {
+        error
+            .spans()
+            .next()
+            .and_then(|&(span, _)| Self::of(module, span, root))
+    }
+}
+
+pub(crate) fn position_suffix(at: Option<&SourcePosition>) -> String {
+    match at {
+        Some(&SourcePosition {
+            file: Some(ref file),
+            line,
+            column,
+        }) => format!(" (`{file}`, line {line}, column {column})"),
+        Some(&SourcePosition {
+            file: None,
+            line,
+            column,
+        }) => format!(" (line {line}, column {column})"),
+        None => String::new(),
+    }
 }
 
 fn location_suffix(file: Option<&str>, line: Option<u32>) -> String {

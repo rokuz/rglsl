@@ -653,7 +653,8 @@ fn run_lowerer(
             }
         })
         .and_then(|mut object| {
-            object.object.unit.module.span_map = map.span_map();
+            object.object.unit.module.span_sources =
+                crate::SpanSources::new(preprocessed.span_map());
             if debug {
                 let mut info = debug_info(
                     options,

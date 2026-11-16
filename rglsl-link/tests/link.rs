@@ -180,7 +180,10 @@ fn corrupted_object_files_are_rejected_when_decoded() -> TestResult {
         assert!(text.contains(from), "{from}");
         let corrupted = text.replacen(from, to, 1);
         assert!(
-            matches!(decode(&corrupted), Err(rglsl_link::FileError::Invalid(_))),
+            matches!(
+                decode(&corrupted),
+                Err(rglsl_link::FileError::Invalid(_) | rglsl_link::FileError::Validation { .. })
+            ),
             "{to}"
         );
     }

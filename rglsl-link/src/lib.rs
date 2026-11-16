@@ -30,7 +30,7 @@ pub use compiler::{
     StageBinary, compile, compile_and_link, compile_with_includer, link_spirv, read_object,
     write_object,
 };
-pub use error::{LinkError, LinkErrors};
+pub use error::{LinkError, LinkErrors, SourcePosition};
 pub use file::{FileError, decode, encode};
 pub use program::{
     StagedErrors, group_by_stage, group_objects_by_stage, link_objects, link_objects_staged,
@@ -95,11 +95,22 @@ pub fn validate_object(object: &ObjectModule) -> Result<ModuleInfo, LinkErrors> 
     {
         validator
             .validate(&variant.unit.module)
-            .map_err(|error| LinkError::Validation(message(error.as_inner())))?;
+            .map_err(|error| invalid(&variant.unit.module, &error, object.name.as_deref()))?;
     }
     validator
         .validate(&object.unit.module)
-        .map_err(|error| LinkError::Validation(message(error.as_inner())).into())
+        .map_err(|error| invalid(&object.unit.module, &error, object.name.as_deref()).into())
+}
+
+pub(crate) fn invalid(
+    module: &Module,
+    error: &rglsl::WithSpan<rglsl::valid::ValidationError>,
+    root: Option<&str>,
+) -> LinkError {
+    LinkError::Validation {
+        message: message(error.as_inner()),
+        at: SourcePosition::of_error(module, error, root),
+    }
 }
 
 fn message(error: &dyn std::error::Error) -> String {
@@ -177,7 +188,7 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     if !errors.is_empty() {
         return Err(errors.into());
     }
-    let debug_info = merge_debug_info(&mut specialized);
+    let (debug_info, span_sources) = merge_sources(&mut specialized);
     let mains: Vec<usize> = specialized
         .iter()
         .enumerate()
@@ -286,6 +297,7 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     }
     module.entry_points.push(entry);
     module.debug_info = debug_info;
+    module.span_sources = span_sources;
     if multi_object {
         if options.auto_map_locations {
             interface::assign_locations(&mut module, &globals, stage);
@@ -303,25 +315,31 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     })
 }
 
-fn merge_debug_info(objects: &mut [ObjectModule]) -> Option<Box<rglsl::DebugInfo>> {
-    if objects
-        .iter()
-        .all(|object| object.unit.module.debug_info.is_none())
-    {
-        return None;
-    }
-    let mut merged = rglsl::DebugInfo::default();
+fn merge_sources(
+    objects: &mut [ObjectModule],
+) -> (Option<Box<rglsl::DebugInfo>>, rglsl::SpanSources) {
+    let mut debug_info: Option<rglsl::DebugInfo> = None;
+    let mut sources = rglsl::SpanSources::default();
     let mut base = 0_u32;
     for object in objects.iter_mut() {
-        let Some(info) = object.unit.module.debug_info.take() else {
-            continue;
-        };
-        rglsl::shift_module_spans(&mut object.unit.module, base);
-        let end = info.end();
-        merged.append(*info, base);
-        base = base.saturating_add(end).saturating_add(1);
+        let module = &mut object.unit.module;
+        let info = module.debug_info.take();
+        let length = module
+            .span_sources
+            .length()
+            .max(info.as_deref().map_or(0, rglsl::DebugInfo::end));
+        rglsl::shift_module_spans(module, base);
+        sources.append(
+            core::mem::take(&mut module.span_sources),
+            base,
+            object.name.as_deref(),
+        );
+        if let Some(info) = info {
+            debug_info.get_or_insert_default().append(*info, base);
+        }
+        base = base.saturating_add(length).saturating_add(1);
     }
-    Some(Box::new(merged))
+    (debug_info.map(Box::new), sources)
 }
 
 fn geometry_interface(
@@ -498,7 +516,7 @@ fn compact_and_validate(
             validator.mode(ValidationMode::Executable);
             validator
                 .validate(module)
-                .map_err(|error| LinkError::Validation(message(error.as_inner())))
+                .map_err(|error| invalid(module, &error, None))
         }
     }
 }

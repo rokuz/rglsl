@@ -22,6 +22,7 @@ serialize = [
     "half/serde",
     "hashbrown/serde",
     "rglsl-types/serialize",
+    "rglsl-pp/serialize",
 ]
 deserialize = [
     "dep:serde",
@@ -29,6 +30,7 @@ deserialize = [
     "half/serde",
     "hashbrown/serde",
     "rglsl-types/deserialize",
+    "rglsl-pp/deserialize",
 ]
 arbitrary = [
     "dep:arbitrary",
