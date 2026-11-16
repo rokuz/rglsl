@@ -3,7 +3,7 @@ use rglsl::back::spv;
 use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::valid::{ValidationFlags, Validator};
-use rglsl_link::{Options as LinkOptions, decode, encode, link};
+use rglsl_link::{CompileOptions, Compiler, Options as LinkOptions, decode, encode, link};
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -365,6 +365,41 @@ fn deep_specialization_compiles_on_a_small_stack(depth: usize) -> TestResult {
             &format!("int x{}; b = x.length();", "[S]".repeat(count)),
         )
     })?;
+    Ok(())
+}
+
+fn library_source(count: usize, extension: &str) -> String {
+    format!(
+        "#version 450\n{extension}int f(int b) {{ {} b = b + 1; {} return b; }}\n",
+        "if (b > 0) { ".repeat(count),
+        "}".repeat(count)
+    )
+}
+
+fn deep_library_variants_compile_on_a_small_stack(depth: usize) -> TestResult {
+    let source = library_source(depth, "");
+    let per_stage = on_small_stack(move || {
+        let options = Options {
+            library: true,
+            ..Options::from(ShaderStage::Fragment)
+        };
+        Frontend::default()
+            .compile_library_per_stage(&options, &source)
+            .map(|object| object.units().count())
+            .map_err(|errors| format!("{errors:?}"))
+    })??;
+    assert!(per_stage > 0, "library variants per stage at {depth}");
+    let source = library_source(depth, "void g() { barrier(); }\n");
+    let shared = on_small_stack(move || {
+        Compiler::new()
+            .compile(&source, &CompileOptions::library("deep.glsl"))
+            .map(|object| object.units().count())
+            .map_err(|diagnostics| format!("{diagnostics:?}"))
+    })??;
+    assert!(
+        shared > 0,
+        "library variants through the compiler at {depth}"
+    );
     Ok(())
 }
 
@@ -1198,6 +1233,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
         ),
         (deep_statements_compile_on_a_small_stack, depth),
         (deep_specialization_compiles_on_a_small_stack, depth),
+        (deep_library_variants_compile_on_a_small_stack, depth),
         (deep_types_compile_on_a_small_stack, depth),
         (deep_initializers_compile_on_a_small_stack, depth),
         (array_initializer_lists, depth),

@@ -226,7 +226,7 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
     }
     while let Some(handle) = module_tracer.functions_pending.pop() {
         let function = &module.functions[handle];
-        log::trace!("tracing function {function:?}");
+        log::trace!("tracing function {:?}", function.name);
         let mut function_tracer = module_tracer.as_function(function);
         function_tracer.trace();
         function_maps.insert(handle, FunctionMap::from(function_tracer));

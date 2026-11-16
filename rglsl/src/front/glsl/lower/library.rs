@@ -16,7 +16,7 @@ use super::{
 };
 use crate::front::glsl::{Error, ErrorKind, Options, ParseErrors};
 use crate::object::{LibraryVariant, ObjectModule, StageRejection};
-use crate::{ShaderStage, ShaderStageMask, Span};
+use crate::{Block, ShaderStage, ShaderStageMask, Span};
 
 fn stage_options(options: &Options, stage: ShaderStage) -> Options {
     Options {
@@ -32,14 +32,59 @@ fn stage_options(options: &Options, stage: ShaderStage) -> Options {
 }
 
 fn fingerprint(object: &ObjectModule) -> String {
-    format!(
-        "{:?}{:?}{:?}{:?}{:?}",
-        object.unit.module,
-        object.unit.functions,
-        object.unit.globals,
-        object.unit.layout,
-        object.unit.specialized
-    )
+    let mut text = String::new();
+    let mut unit = Some(&*object.unit);
+    while let Some(current) = unit {
+        text.push_str(&format!(
+            "{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+            current.glsl_version,
+            current.extensions,
+            current.module,
+            current.functions,
+            current.globals,
+            current.layout,
+            current.work_group_size_constant,
+            current.work_group_size_placeholders,
+            current.deferred_bias,
+            current.dead_calls,
+        ));
+        let bodies = current
+            .module
+            .functions
+            .iter()
+            .map(|(_, function)| &function.body)
+            .chain(
+                current
+                    .module
+                    .entry_points
+                    .iter()
+                    .map(|entry| &entry.function.body),
+            );
+        for body in bodies {
+            text.push_str(&body_fingerprint(body));
+        }
+        unit = current.specialized.as_deref();
+        text.push('|');
+    }
+    text
+}
+
+fn body_fingerprint(body: &Block) -> String {
+    let mut text = String::new();
+    let mut pending = Vec::from([body.span_iter()]);
+    while let Some(top) = pending.last_mut() {
+        let Some((statement, span)) = top.next() else {
+            pending.pop();
+            continue;
+        };
+        text.push_str(&format!("{statement:?}{span:?};"));
+        let start = pending.len();
+        statement.for_each_child_block(|child| pending.push(child.span_iter()));
+        if let Some(added) = pending.get_mut(start..) {
+            added.reverse();
+        }
+    }
+    text
 }
 
 fn rejection(stage: ShaderStage, errors: &ParseErrors, source: &str) -> StageRejection {
