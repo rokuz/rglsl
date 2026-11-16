@@ -26,6 +26,7 @@ fn exercise(source: String, round_trip: bool) -> super::TestResult {
             }
             let copy = parsed.clone();
             assert!(copy == parsed);
+            assert!(format!("{copy:?}").len() > source.len() / 2);
             assert!(!expressions(&copy).is_empty());
             drop(copy);
             drop(parsed);
@@ -68,6 +69,17 @@ fn deep_expressions_parse_print_clone_and_drop_on_a_small_stack() -> super::Test
         )?;
         exercise(
             format!("int a[{}1{}];", "a[".repeat(depth), "]".repeat(depth)),
+            true,
+        )?;
+        exercise(
+            in_function(&format!(
+                "a = {};",
+                nested("float[", "1", "](1.0).length()", depth)
+            )),
+            true,
+        )?;
+        exercise(
+            format!("int a[{}];", nested("int[", "1", "](1).length()", depth)),
             true,
         )?;
     }

@@ -359,6 +359,16 @@ fn deep_specialization_compiles_on_a_small_stack(depth: usize) -> TestResult {
             &format!("int x[T{}]; b = x.length();", count - 1),
         )
     })?;
+    compiles_at(depth, "array lengths in constructor types", |count| {
+        shader(
+            "",
+            &format!(
+                "b = {}1{};",
+                "float[".repeat(count),
+                "](1.0).length()".repeat(count)
+            ),
+        )
+    })?;
     compiles_at(depth, "specialization-sized dimensions", |count| {
         shader(
             "layout(constant_id = 0) const int S = 1;",
