@@ -67,48 +67,7 @@ impl<'a> ResolveContext<'a> {
                     }
                 }
             }
-            crate::BinaryOperator::Equal
-            | crate::BinaryOperator::NotEqual
-            | crate::BinaryOperator::Less
-            | crate::BinaryOperator::LessEqual
-            | crate::BinaryOperator::Greater
-            | crate::BinaryOperator::GreaterEqual => {
-                let scalar = crate::Scalar::BOOL;
-                let ty = past(left)?.inner_with(types);
-                let inner = match *ty {
-                    Ti::Scalar { .. } => Ti::Scalar(scalar),
-                    Ti::Vector { size, .. } => Ti::Vector { size, scalar },
-                    Ti::LongVector { size, class, .. } => Ti::LongVector {
-                        size,
-                        scalar,
-                        class,
-                    },
-                    Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
-                        return Err(ResolveError::IncompatibleOperands(format!(
-                            "{op:?}({ty:?}, _)"
-                        )));
-                    }
-                };
-                TypeResolution::Value(inner)
-            }
+
             crate::BinaryOperator::LogicalAnd | crate::BinaryOperator::LogicalOr => {
                 let bool = Ti::Scalar(crate::Scalar::BOOL);
                 let ty = past(left)?.inner_with(types);
@@ -126,6 +85,25 @@ impl<'a> ResolveContext<'a> {
             | crate::BinaryOperator::InclusiveOr
             | crate::BinaryOperator::ShiftLeft
             | crate::BinaryOperator::ShiftRight => past(left)?.clone(),
+            _ => {
+                let scalar = crate::Scalar::BOOL;
+                let ty = past(left)?.inner_with(types);
+                let inner = match *ty {
+                    Ti::Scalar { .. } => Ti::Scalar(scalar),
+                    Ti::Vector { size, .. } => Ti::Vector { size, scalar },
+                    Ti::LongVector { size, class, .. } => Ti::LongVector {
+                        size,
+                        scalar,
+                        class,
+                    },
+                    _ => {
+                        return Err(ResolveError::IncompatibleOperands(format!(
+                            "{op:?}({ty:?}, _)"
+                        )));
+                    }
+                };
+                TypeResolution::Value(inner)
+            }
         })
     }
 
@@ -153,25 +131,7 @@ impl<'a> ResolveContext<'a> {
                         size,
                         class,
                     }),
-                    Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
+                    _ => {
                         return Err(ResolveError::IncompatibleOperands(format!(
                             "{fun:?}({ty:?})"
                         )));
@@ -218,103 +178,7 @@ impl<'a> ResolveContext<'a> {
             }
             return Ok(match fun {
                 Mf::Dot | Mf::Length | Mf::Distance => TypeResolution::Value(Ti::Scalar(scalar)),
-                Mf::Abs
-                | Mf::Min
-                | Mf::Max
-                | Mf::Clamp
-                | Mf::Min3
-                | Mf::Max3
-                | Mf::Mid3
-                | Mf::CubeFaceIndex
-                | Mf::CubeFaceCoord
-                | Mf::IntelCountLeadingZeros
-                | Mf::IntelCountTrailingZeros
-                | Mf::AbsoluteDifference
-                | Mf::AddSaturate
-                | Mf::SubtractSaturate
-                | Mf::Average
-                | Mf::AverageRounded
-                | Mf::Multiply32x16
-                | Mf::Cos
-                | Mf::Cosh
-                | Mf::Sin
-                | Mf::Sinh
-                | Mf::Tan
-                | Mf::Tanh
-                | Mf::Acos
-                | Mf::Asin
-                | Mf::Atan
-                | Mf::Atan2
-                | Mf::Asinh
-                | Mf::Acosh
-                | Mf::Atanh
-                | Mf::Radians
-                | Mf::Degrees
-                | Mf::Ceil
-                | Mf::Floor
-                | Mf::Round
-                | Mf::RoundEven
-                | Mf::Fract
-                | Mf::Trunc
-                | Mf::Modf
-                | Mf::Frexp
-                | Mf::Ldexp
-                | Mf::Exp
-                | Mf::Exp2
-                | Mf::Log
-                | Mf::Log2
-                | Mf::Pow
-                | Mf::Dot4I8Packed
-                | Mf::Dot4U8Packed
-                | Mf::IntegerDot
-                | Mf::IntegerDotAccSat
-                | Mf::PackedIntegerDot4x8
-                | Mf::PackedIntegerDot4x8AccSat
-                | Mf::Outer
-                | Mf::Cross
-                | Mf::Normalize
-                | Mf::FaceForward
-                | Mf::Reflect
-                | Mf::Refract
-                | Mf::Sign
-                | Mf::Fma
-                | Mf::Mix
-                | Mf::Step
-                | Mf::SmoothStep
-                | Mf::Sqrt
-                | Mf::InverseSqrt
-                | Mf::Inverse
-                | Mf::Transpose
-                | Mf::Determinant
-                | Mf::CountTrailingZeros
-                | Mf::CountLeadingZeros
-                | Mf::CountOneBits
-                | Mf::ReverseBits
-                | Mf::ExtractBits
-                | Mf::InsertBits
-                | Mf::FirstTrailingBit
-                | Mf::FirstLeadingBit
-                | Mf::AddCarry
-                | Mf::SubBorrow
-                | Mf::MulExtended
-                | Mf::Pack4x8snorm
-                | Mf::Pack4x8unorm
-                | Mf::Pack2x16snorm
-                | Mf::Pack2x16unorm
-                | Mf::Pack2x16float
-                | Mf::Pack4xI8
-                | Mf::Pack4xU8
-                | Mf::Pack4xI8Clamp
-                | Mf::Pack4xU8Clamp
-                | Mf::PackDouble2x32
-                | Mf::Unpack4x8snorm
-                | Mf::Unpack4x8unorm
-                | Mf::Unpack2x16snorm
-                | Mf::Unpack2x16unorm
-                | Mf::Unpack2x16float
-                | Mf::Unpack4xI8
-                | Mf::Unpack4xU8
-                | Mf::UnpackDouble2x32 => past(arg)?.clone(),
+                _ => past(arg)?.clone(),
             });
         }
 
@@ -423,23 +287,7 @@ impl<'a> ResolveContext<'a> {
                 scope,
                 class,
             }),
-            Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 return Err(ResolveError::IncompatibleOperands(format!(
                     "{ty:?} as {kind:?}"
                 )));

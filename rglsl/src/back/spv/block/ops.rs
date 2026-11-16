@@ -15,23 +15,7 @@ const fn get_dimension(type_inner: &crate::TypeInner) -> Result<Dimension, Error
         }
         crate::TypeInner::Matrix { .. } => Ok(Dimension::Matrix),
         crate::TypeInner::CooperativeMatrix { .. } => Ok(Dimension::CooperativeMatrix),
-        crate::TypeInner::TensorLayout { .. }
-        | crate::TypeInner::TensorView { .. }
-        | crate::TypeInner::Tensor { .. }
-        | crate::TypeInner::Atomic(_)
-        | crate::TypeInner::Pointer { .. }
-        | crate::TypeInner::ValuePointer { .. }
-        | crate::TypeInner::Array { .. }
-        | crate::TypeInner::Struct { .. }
-        | crate::TypeInner::Image { .. }
-        | crate::TypeInner::Sampler { .. }
-        | crate::TypeInner::SampledImage { .. }
-        | crate::TypeInner::AccelerationStructure
-        | crate::TypeInner::RayQuery
-        | crate::TypeInner::HitObject { .. }
-        | crate::TypeInner::BindingArray { .. }
-        | crate::TypeInner::BufferDescriptor { .. }
-        | crate::TypeInner::Spirv { .. } => Err(Error::Validation(
+        _ => Err(Error::Validation(
             "binary operand is not a scalar, vector or matrix",
         )),
     }
@@ -183,38 +167,12 @@ const fn binary_scalar_op(
         },
         Bo::And => match kind {
             Some(Sk::Bool) => spirv::Op::LogicalAnd,
-            Some(
-                Sk::Sint
-                | Sk::Uint
-                | Sk::Float
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => spirv::Op::BitwiseAnd,
+            _ => spirv::Op::BitwiseAnd,
         },
         Bo::ExclusiveOr => spirv::Op::BitwiseXor,
         Bo::InclusiveOr => match kind {
             Some(Sk::Bool) => spirv::Op::LogicalOr,
-            Some(
-                Sk::Sint
-                | Sk::Uint
-                | Sk::Float
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => spirv::Op::BitwiseOr,
+            _ => spirv::Op::BitwiseOr,
         },
         Bo::LogicalAnd => spirv::Op::LogicalAnd,
         Bo::LogicalOr => spirv::Op::LogicalOr,
@@ -222,19 +180,7 @@ const fn binary_scalar_op(
         Bo::ShiftRight => match kind {
             Some(Sk::Sint) => spirv::Op::ShiftRightArithmetic,
             Some(Sk::Uint) => spirv::Op::ShiftRightLogical,
-            Some(
-                Sk::Float
-                | Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::Add | Bo::Subtract | Bo::Multiply => return invalid,
     })
@@ -287,19 +233,7 @@ impl BlockContext<'_> {
             crate::UnaryOperator::Negate => match expr_ty_inner.scalar_kind() {
                 Some(crate::ScalarKind::Float) => spirv::Op::FNegate,
                 Some(crate::ScalarKind::Sint) => spirv::Op::SNegate,
-                Some(
-                    crate::ScalarKind::Uint
-                    | crate::ScalarKind::Bool
-                    | crate::ScalarKind::BFloat
-                    | crate::ScalarKind::FloatE4M3
-                    | crate::ScalarKind::FloatE5M2
-                    | crate::ScalarKind::FloatE2M1
-                    | crate::ScalarKind::FloatE3M2
-                    | crate::ScalarKind::FloatE2M3
-                    | crate::ScalarKind::FloatUE8M0
-                    | crate::ScalarKind::FloatMXINT8,
-                )
-                | None => return Err(Error::Validation("Unexpected kind for negation")),
+                _ => return Err(Error::Validation("Unexpected kind for negation")),
             },
             crate::UnaryOperator::LogicalNot => spirv::Op::LogicalNot,
             crate::UnaryOperator::BitwiseNot => spirv::Op::Not,
@@ -330,17 +264,7 @@ impl BlockContext<'_> {
             | crate::TypeInner::LongVector { scalar, .. }
             | crate::TypeInner::CooperativeMatrix { scalar, .. } => Ok(Some(match scalar.kind {
                 crate::ScalarKind::Float => float_op,
-                crate::ScalarKind::Sint
-                | crate::ScalarKind::Uint
-                | crate::ScalarKind::Bool
-                | crate::ScalarKind::BFloat
-                | crate::ScalarKind::FloatE4M3
-                | crate::ScalarKind::FloatE5M2
-                | crate::ScalarKind::FloatE2M1
-                | crate::ScalarKind::FloatE3M2
-                | crate::ScalarKind::FloatE2M3
-                | crate::ScalarKind::FloatUE8M0
-                | crate::ScalarKind::FloatMXINT8 => int_op,
+                _ => int_op,
             })),
             crate::TypeInner::Matrix {
                 columns,
@@ -361,23 +285,7 @@ impl BlockContext<'_> {
                 )?;
                 Ok(None)
             }
-            crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => Err(Error::Validation(
+            _ => Err(Error::Validation(
                 "invalid operand type for a binary operator",
             )),
         }
@@ -446,8 +354,7 @@ impl BlockContext<'_> {
                     spirv::Op::IMul
                 }
             }
-            (Dimension::CooperativeMatrix, Dimension::Vector | Dimension::Matrix)
-            | (Dimension::Vector | Dimension::Matrix, Dimension::CooperativeMatrix) => {
+            _ => {
                 return Err(Error::FeatureNotImplemented(
                     "component-wise multiplication of cooperative matrices",
                 ));
@@ -511,23 +418,7 @@ impl BlockContext<'_> {
                 &operands,
                 block,
             )?,
-            crate::BinaryOperator::Divide
-            | crate::BinaryOperator::Modulo
-            | crate::BinaryOperator::Equal
-            | crate::BinaryOperator::NotEqual
-            | crate::BinaryOperator::Less
-            | crate::BinaryOperator::LessEqual
-            | crate::BinaryOperator::Greater
-            | crate::BinaryOperator::GreaterEqual
-            | crate::BinaryOperator::And
-            | crate::BinaryOperator::ExclusiveOr
-            | crate::BinaryOperator::InclusiveOr
-            | crate::BinaryOperator::LogicalAnd
-            | crate::BinaryOperator::LogicalOr
-            | crate::BinaryOperator::ShiftLeft
-            | crate::BinaryOperator::ShiftRight => {
-                Some((binary_scalar_op(op, left_scalar_kind)?, false))
-            }
+            _ => Some((binary_scalar_op(op, left_scalar_kind)?, false)),
         };
 
         if let Some((spirv_op, reverse_operands)) = emitted {
@@ -638,26 +529,7 @@ impl BlockContext<'_> {
                 ));
                 return Ok(());
             }
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => {
+            _ => {
                 return Err(Error::Validation(
                     "vector-scalar multiplication of a non-vector",
                 ));
@@ -666,17 +538,7 @@ impl BlockContext<'_> {
 
         let (op, operand_id) = match kind {
             crate::ScalarKind::Float => (spirv::Op::VectorTimesScalar, scalar_id),
-            crate::ScalarKind::Sint
-            | crate::ScalarKind::Uint
-            | crate::ScalarKind::Bool
-            | crate::ScalarKind::BFloat
-            | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatE2M1
-            | crate::ScalarKind::FloatE3M2
-            | crate::ScalarKind::FloatE2M3
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => {
+            _ => {
                 let operand_id = self.gen_id();
                 self.temp_list.clear();
                 self.temp_list.resize(size as usize, scalar_id);
@@ -821,26 +683,7 @@ impl BlockContext<'_> {
         let (src_scalar, src_size) = match *ty {
             crate::TypeInner::Scalar(scalar) => (scalar, None),
             crate::TypeInner::Vector { scalar, size } => (scalar, Some(size)),
-            ref other @ (crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. }) => {
+            ref other => {
                 log::error!("As source {other:?}");
                 return Err(Error::Validation("Unexpected Expression::As source"));
             }
@@ -866,15 +709,7 @@ impl BlockContext<'_> {
                 let op = match src_scalar.kind {
                     Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
                     Sk::Float => spirv::Op::FUnordNotEqual,
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => {
+                    _ => {
                         return Err(Error::Validation(
                             "conversion to bool from a non-numeric value",
                         ));

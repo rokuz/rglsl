@@ -1,4 +1,3 @@
-#![warn(clippy::wildcard_enum_match_arm)]
 /*!
 [`Module`](super::Module) processing functionality.
 */
@@ -85,46 +84,7 @@ impl From<super::StorageFormat> for super::Scalar {
         let width = match format {
             Sf::R64Uint | Sf::R64Sint => 8,
             Sf::Unknown(scalar) => scalar.width,
-            Sf::R8Unorm
-            | Sf::R8Snorm
-            | Sf::R8Uint
-            | Sf::R8Sint
-            | Sf::R16Uint
-            | Sf::R16Sint
-            | Sf::R16Float
-            | Sf::Rg8Unorm
-            | Sf::Rg8Snorm
-            | Sf::Rg8Uint
-            | Sf::Rg8Sint
-            | Sf::R32Uint
-            | Sf::R32Sint
-            | Sf::R32Float
-            | Sf::Rg16Uint
-            | Sf::Rg16Sint
-            | Sf::Rg16Float
-            | Sf::Rgba8Unorm
-            | Sf::Rgba8Snorm
-            | Sf::Rgba8Uint
-            | Sf::Rgba8Sint
-            | Sf::Bgra8Unorm
-            | Sf::Rgb10a2Uint
-            | Sf::Rgb10a2Unorm
-            | Sf::Rg11b10Ufloat
-            | Sf::Rg32Uint
-            | Sf::Rg32Sint
-            | Sf::Rg32Float
-            | Sf::Rgba16Uint
-            | Sf::Rgba16Sint
-            | Sf::Rgba16Float
-            | Sf::Rgba32Uint
-            | Sf::Rgba32Sint
-            | Sf::Rgba32Float
-            | Sf::R16Unorm
-            | Sf::R16Snorm
-            | Sf::Rg16Unorm
-            | Sf::Rg16Snorm
-            | Sf::Rgba16Unorm
-            | Sf::Rgba16Snorm => 4,
+            _ => 4,
         };
         super::Scalar { kind, width }
     }
@@ -322,20 +282,7 @@ impl TryFrom<crate::Literal> for u32 {
             crate::Literal::I16(value) => value.try_into().map_err(|_| ConstValueError::Negative),
             crate::Literal::U32(value) => Ok(value),
             crate::Literal::I32(value) => value.try_into().map_err(|_| ConstValueError::Negative),
-            crate::Literal::F64(_)
-            | crate::Literal::F32(_)
-            | crate::Literal::F16(_)
-            | crate::Literal::U64(_)
-            | crate::Literal::I64(_)
-            | crate::Literal::Bool(_)
-            | crate::Literal::BF16(_)
-            | crate::Literal::FE4M3(_)
-            | crate::Literal::FE5M2(_)
-            | crate::Literal::FE2M1(_)
-            | crate::Literal::FE3M2(_)
-            | crate::Literal::FE2M3(_)
-            | crate::Literal::FUE8M0(_)
-            | crate::Literal::FMXINT8(_) => Err(ConstValueError::InvalidType),
+            _ => Err(ConstValueError::InvalidType),
         }
     }
 }
@@ -346,25 +293,7 @@ impl TryFrom<crate::Literal> for bool {
     fn try_from(value: crate::Literal) -> Result<Self, Self::Error> {
         match value {
             crate::Literal::Bool(value) => Ok(value),
-            crate::Literal::F64(_)
-            | crate::Literal::F32(_)
-            | crate::Literal::F16(_)
-            | crate::Literal::U8(_)
-            | crate::Literal::I8(_)
-            | crate::Literal::U16(_)
-            | crate::Literal::I16(_)
-            | crate::Literal::U32(_)
-            | crate::Literal::I32(_)
-            | crate::Literal::U64(_)
-            | crate::Literal::I64(_)
-            | crate::Literal::BF16(_)
-            | crate::Literal::FE4M3(_)
-            | crate::Literal::FE5M2(_)
-            | crate::Literal::FE2M1(_)
-            | crate::Literal::FE3M2(_)
-            | crate::Literal::FE2M3(_)
-            | crate::Literal::FUE8M0(_)
-            | crate::Literal::FMXINT8(_) => Err(ConstValueError::InvalidType),
+            _ => Err(ConstValueError::InvalidType),
         }
     }
 }
@@ -630,10 +559,7 @@ impl crate::Function {
 
 impl crate::SampleLevel {
     pub const fn implicit_derivatives(&self) -> bool {
-        match *self {
-            Self::Auto | Self::Bias(_) => true,
-            Self::Zero | Self::Exact(_) | Self::Gradient { .. } => false,
-        }
+        matches!(*self, Self::Auto | Self::Bias(_))
     }
 }
 
@@ -803,67 +729,7 @@ impl GlobalCtx<'_> {
                         None
                     }
                 }
-                crate::Expression::Constant(_)
-                | crate::Expression::Override(_)
-                | crate::Expression::Compose { .. }
-                | crate::Expression::Access { .. }
-                | crate::Expression::AccessIndex { .. }
-                | crate::Expression::Splat { .. }
-                | crate::Expression::Swizzle { .. }
-                | crate::Expression::FunctionArgument(_)
-                | crate::Expression::GlobalVariable(_)
-                | crate::Expression::LocalVariable(_)
-                | crate::Expression::Load { .. }
-                | crate::Expression::ImageSample { .. }
-                | crate::Expression::ImageLoad { .. }
-                | crate::Expression::ImageQuery { .. }
-                | crate::Expression::Unary { .. }
-                | crate::Expression::Binary { .. }
-                | crate::Expression::Select { .. }
-                | crate::Expression::Derivative { .. }
-                | crate::Expression::Relational { .. }
-                | crate::Expression::Math { .. }
-                | crate::Expression::As { .. }
-                | crate::Expression::CallResult(_)
-                | crate::Expression::AtomicResult { .. }
-                | crate::Expression::ArrayLength(_)
-                | crate::Expression::WideArrayLength(_)
-                | crate::Expression::PhysicalPointer { .. }
-                | crate::Expression::PhysicalAddress { .. }
-                | crate::Expression::BufferPointer { .. }
-                | crate::Expression::HeapOffset { .. }
-                | crate::Expression::RayQueryProceedResult
-                | crate::Expression::RayQueryGet { .. }
-                | crate::Expression::ReportIntersectionResult
-                | crate::Expression::AccelerationStructureFromAddress { .. }
-                | crate::Expression::HitObjectGet { .. }
-                | crate::Expression::FetchMicroTriangleVertex { .. }
-                | crate::Expression::SubgroupBallotResult
-                | crate::Expression::SubgroupOperationResult { .. }
-                | crate::Expression::SpirvInstructionResult { .. }
-                | crate::Expression::CooperativeLoad { .. }
-                | crate::Expression::CooperativeMultiplyAdd { .. }
-                | crate::Expression::CooperativeMatrixLength { .. }
-                | crate::Expression::Replicate { .. }
-                | crate::Expression::Expect { .. }
-                | crate::Expression::ImageSparseResident { .. }
-                | crate::Expression::IsHelperInvocation
-                | crate::Expression::ReadClock { .. }
-                | crate::Expression::InterpolateAt { .. }
-                | crate::Expression::FragmentFetch { .. }
-                | crate::Expression::ImageFootprint { .. }
-                | crate::Expression::AttachmentRead { .. }
-                | crate::Expression::CooperativeVectorLoad { .. }
-                | crate::Expression::CooperativeVectorMatMul { .. }
-                | crate::Expression::Convert { .. }
-                | crate::Expression::CooperativeMatrixResult { .. }
-                | crate::Expression::TensorCreate { .. }
-                | crate::Expression::ImageProcessing { .. }
-                | crate::Expression::ArrayConversion { .. }
-                | crate::Expression::Bitcast { .. }
-                | crate::Expression::TensorSet { .. }
-                | crate::Expression::TensorRead { .. }
-                | crate::Expression::TensorQuerySize { .. } => None,
+                _ => None,
             }
         }
         let value = if let crate::Expression::Constant(c) = arena[handle] {
@@ -1087,26 +953,7 @@ impl crate::Module {
                     has_acceleration_structure = true;
                 }
                 crate::TypeInner::RayQuery => uses.queries = true,
-                crate::TypeInner::Scalar(_)
-                | crate::TypeInner::Vector { .. }
-                | crate::TypeInner::Matrix { .. }
-                | crate::TypeInner::CooperativeMatrix { .. }
-                | crate::TypeInner::LongVector { .. }
-                | crate::TypeInner::TensorLayout { .. }
-                | crate::TypeInner::TensorView { .. }
-                | crate::TypeInner::Tensor { .. }
-                | crate::TypeInner::Atomic(_)
-                | crate::TypeInner::Pointer { .. }
-                | crate::TypeInner::ValuePointer { .. }
-                | crate::TypeInner::Array { .. }
-                | crate::TypeInner::Struct { .. }
-                | crate::TypeInner::Image { .. }
-                | crate::TypeInner::Sampler { .. }
-                | crate::TypeInner::SampledImage { .. }
-                | crate::TypeInner::HitObject { .. }
-                | crate::TypeInner::BindingArray { .. }
-                | crate::TypeInner::BufferDescriptor { .. }
-                | crate::TypeInner::Spirv { .. } => {}
+                _ => {}
             }
         }
         let fetches_micro_triangles = |function: &crate::Function| {
@@ -1213,23 +1060,7 @@ pub fn is_per_vertex_variable(
                 crate::ShaderStage::TessControl | crate::ShaderStage::Mesh
             )
         }
-        crate::AddressSpace::Function
-        | crate::AddressSpace::Private
-        | crate::AddressSpace::WorkGroup
-        | crate::AddressSpace::Uniform
-        | crate::AddressSpace::Storage { .. }
-        | crate::AddressSpace::Handle
-        | crate::AddressSpace::Immediate
-        | crate::AddressSpace::TaskPayload
-        | crate::AddressSpace::RayPayload
-        | crate::AddressSpace::IncomingRayPayload
-        | crate::AddressSpace::HitAttribute
-        | crate::AddressSpace::CallableData
-        | crate::AddressSpace::IncomingCallableData
-        | crate::AddressSpace::ShaderRecord
-        | crate::AddressSpace::HitObjectAttribute { .. }
-        | crate::AddressSpace::PhysicalStorage { .. }
-        | crate::AddressSpace::DescriptorHeap(_) => false,
+        _ => false,
     };
     arrayed_direction
         && !matches!(var.io, Some(crate::Binding::BuiltIn(_)))
@@ -1262,28 +1093,7 @@ pub fn interface_block(
             elements: length.get(),
             arrayed: true,
         }),
-        crate::TypeInner::Scalar(_)
-        | crate::TypeInner::Vector { .. }
-        | crate::TypeInner::Matrix { .. }
-        | crate::TypeInner::CooperativeMatrix { .. }
-        | crate::TypeInner::LongVector { .. }
-        | crate::TypeInner::TensorLayout { .. }
-        | crate::TypeInner::TensorView { .. }
-        | crate::TypeInner::Tensor { .. }
-        | crate::TypeInner::Atomic(_)
-        | crate::TypeInner::Pointer { .. }
-        | crate::TypeInner::ValuePointer { .. }
-        | crate::TypeInner::Array { .. }
-        | crate::TypeInner::Struct { .. }
-        | crate::TypeInner::Image { .. }
-        | crate::TypeInner::Sampler { .. }
-        | crate::TypeInner::SampledImage { .. }
-        | crate::TypeInner::AccelerationStructure
-        | crate::TypeInner::RayQuery
-        | crate::TypeInner::HitObject { .. }
-        | crate::TypeInner::BindingArray { .. }
-        | crate::TypeInner::BufferDescriptor { .. }
-        | crate::TypeInner::Spirv { .. } => None,
+        _ => None,
     }
 }
 
@@ -1303,9 +1113,7 @@ impl crate::RayPipelineFunction {
                 crate::RayTracingFlavor::Khr => true,
                 crate::RayTracingFlavor::Nv => false,
             },
-            Self::TraceRay { .. }
-            | Self::ExecuteCallable { .. }
-            | Self::ReportIntersection { .. } => false,
+            _ => false,
         }
     }
 }
@@ -1345,101 +1153,7 @@ pub fn long_math_result_members(
                 class,
             },
         ]),
-        crate::MathFunction::Abs
-        | crate::MathFunction::Min
-        | crate::MathFunction::Max
-        | crate::MathFunction::Clamp
-        | crate::MathFunction::Min3
-        | crate::MathFunction::Max3
-        | crate::MathFunction::Mid3
-        | crate::MathFunction::CubeFaceIndex
-        | crate::MathFunction::CubeFaceCoord
-        | crate::MathFunction::IntelCountLeadingZeros
-        | crate::MathFunction::IntelCountTrailingZeros
-        | crate::MathFunction::AbsoluteDifference
-        | crate::MathFunction::AddSaturate
-        | crate::MathFunction::SubtractSaturate
-        | crate::MathFunction::Average
-        | crate::MathFunction::AverageRounded
-        | crate::MathFunction::Multiply32x16
-        | crate::MathFunction::Cos
-        | crate::MathFunction::Cosh
-        | crate::MathFunction::Sin
-        | crate::MathFunction::Sinh
-        | crate::MathFunction::Tan
-        | crate::MathFunction::Tanh
-        | crate::MathFunction::Acos
-        | crate::MathFunction::Asin
-        | crate::MathFunction::Atan
-        | crate::MathFunction::Atan2
-        | crate::MathFunction::Asinh
-        | crate::MathFunction::Acosh
-        | crate::MathFunction::Atanh
-        | crate::MathFunction::Radians
-        | crate::MathFunction::Degrees
-        | crate::MathFunction::Ceil
-        | crate::MathFunction::Floor
-        | crate::MathFunction::Round
-        | crate::MathFunction::RoundEven
-        | crate::MathFunction::Fract
-        | crate::MathFunction::Trunc
-        | crate::MathFunction::Ldexp
-        | crate::MathFunction::Exp
-        | crate::MathFunction::Exp2
-        | crate::MathFunction::Log
-        | crate::MathFunction::Log2
-        | crate::MathFunction::Pow
-        | crate::MathFunction::Dot
-        | crate::MathFunction::Dot4I8Packed
-        | crate::MathFunction::Dot4U8Packed
-        | crate::MathFunction::IntegerDot
-        | crate::MathFunction::IntegerDotAccSat
-        | crate::MathFunction::PackedIntegerDot4x8
-        | crate::MathFunction::PackedIntegerDot4x8AccSat
-        | crate::MathFunction::Outer
-        | crate::MathFunction::Cross
-        | crate::MathFunction::Distance
-        | crate::MathFunction::Length
-        | crate::MathFunction::Normalize
-        | crate::MathFunction::FaceForward
-        | crate::MathFunction::Reflect
-        | crate::MathFunction::Refract
-        | crate::MathFunction::Sign
-        | crate::MathFunction::Fma
-        | crate::MathFunction::Mix
-        | crate::MathFunction::Step
-        | crate::MathFunction::SmoothStep
-        | crate::MathFunction::Sqrt
-        | crate::MathFunction::InverseSqrt
-        | crate::MathFunction::Inverse
-        | crate::MathFunction::Transpose
-        | crate::MathFunction::Determinant
-        | crate::MathFunction::CountTrailingZeros
-        | crate::MathFunction::CountLeadingZeros
-        | crate::MathFunction::CountOneBits
-        | crate::MathFunction::ReverseBits
-        | crate::MathFunction::ExtractBits
-        | crate::MathFunction::InsertBits
-        | crate::MathFunction::FirstTrailingBit
-        | crate::MathFunction::FirstLeadingBit
-        | crate::MathFunction::Pack4x8snorm
-        | crate::MathFunction::Pack4x8unorm
-        | crate::MathFunction::Pack2x16snorm
-        | crate::MathFunction::Pack2x16unorm
-        | crate::MathFunction::Pack2x16float
-        | crate::MathFunction::Pack4xI8
-        | crate::MathFunction::Pack4xU8
-        | crate::MathFunction::Pack4xI8Clamp
-        | crate::MathFunction::Pack4xU8Clamp
-        | crate::MathFunction::PackDouble2x32
-        | crate::MathFunction::Unpack4x8snorm
-        | crate::MathFunction::Unpack4x8unorm
-        | crate::MathFunction::Unpack2x16snorm
-        | crate::MathFunction::Unpack2x16unorm
-        | crate::MathFunction::Unpack2x16float
-        | crate::MathFunction::Unpack4xI8
-        | crate::MathFunction::Unpack4xU8
-        | crate::MathFunction::UnpackDouble2x32 => None,
+        _ => None,
     }
 }
 

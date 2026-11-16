@@ -11,20 +11,13 @@ use super::TypeResolution;
 
 impl crate::ScalarKind {
     pub const fn is_encoded_float(self) -> bool {
-        match self {
-            crate::ScalarKind::BFloat
-            | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatE2M1
-            | crate::ScalarKind::FloatE3M2
-            | crate::ScalarKind::FloatE2M3
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => true,
+        !matches!(
+            self,
             crate::ScalarKind::Sint
-            | crate::ScalarKind::Uint
-            | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool => false,
-        }
+                | crate::ScalarKind::Uint
+                | crate::ScalarKind::Float
+                | crate::ScalarKind::Bool
+        )
     }
 
     pub const fn is_any_float(self) -> bool {
@@ -32,20 +25,11 @@ impl crate::ScalarKind {
     }
 
     pub const fn is_numeric(self) -> bool {
-        match self {
-            crate::ScalarKind::Sint
-            | crate::ScalarKind::Uint
-            | crate::ScalarKind::Float
-            | crate::ScalarKind::BFloat
-            | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatE2M1
-            | crate::ScalarKind::FloatE3M2
-            | crate::ScalarKind::FloatE2M3
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => true,
-            crate::ScalarKind::Bool => false,
-        }
+        !matches!(self, crate::ScalarKind::Bool)
+    }
+
+    pub const fn is_integer(self) -> bool {
+        matches!(self, crate::ScalarKind::Sint | crate::ScalarKind::Uint)
     }
 }
 
@@ -135,15 +119,7 @@ impl crate::Scalar {
         match self.kind {
             crate::ScalarKind::FloatE2M1 => 4,
             crate::ScalarKind::FloatE3M2 | crate::ScalarKind::FloatE2M3 => 6,
-            crate::ScalarKind::Sint
-            | crate::ScalarKind::Uint
-            | crate::ScalarKind::Float
-            | crate::ScalarKind::Bool
-            | crate::ScalarKind::BFloat
-            | crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => self.width as u32 * 8,
+            _ => self.width as u32 * 8,
         }
     }
 
@@ -236,23 +212,7 @@ impl crate::TypeInner {
             Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => Some(scalar),
             Ti::Matrix { scalar, .. } => Some(scalar),
             Ti::CooperativeMatrix { scalar, .. } | Ti::LongVector { scalar, .. } => Some(scalar),
-            Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => None,
+            _ => None,
         }
     }
 
@@ -288,24 +248,7 @@ impl crate::TypeInner {
                     return Some(scalar);
                 }
                 Ti::Array { base, .. } => inner = &types[base].inner,
-                Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => return None,
+                _ => return None,
             }
         }
     }
@@ -314,26 +257,7 @@ impl crate::TypeInner {
         match *self {
             Self::Pointer { space, .. } => Some(space),
             Self::ValuePointer { space, .. } => Some(space),
-            Self::Scalar(_)
-            | Self::Vector { .. }
-            | Self::Matrix { .. }
-            | Self::CooperativeMatrix { .. }
-            | Self::LongVector { .. }
-            | Self::TensorLayout { .. }
-            | Self::TensorView { .. }
-            | Self::Tensor { .. }
-            | Self::Atomic(_)
-            | Self::Array { .. }
-            | Self::Struct { .. }
-            | Self::Image { .. }
-            | Self::Sampler { .. }
-            | Self::SampledImage { .. }
-            | Self::AccelerationStructure
-            | Self::RayQuery
-            | Self::HitObject { .. }
-            | Self::BindingArray { .. }
-            | Self::BufferDescriptor { .. }
-            | Self::Spirv { .. } => None,
+            _ => None,
         }
     }
 
@@ -352,53 +276,14 @@ impl crate::TypeInner {
                 size,
                 scalar,
             })),
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => None,
+            _ => None,
         }
     }
 
     pub fn is_atomic_pointer(&self, types: &crate::UniqueArena<crate::Type>) -> bool {
         match *self {
             Self::Pointer { base, .. } => matches!(types[base].inner, Self::Atomic { .. }),
-            Self::Scalar(_)
-            | Self::Vector { .. }
-            | Self::Matrix { .. }
-            | Self::CooperativeMatrix { .. }
-            | Self::LongVector { .. }
-            | Self::TensorLayout { .. }
-            | Self::TensorView { .. }
-            | Self::Tensor { .. }
-            | Self::Atomic(_)
-            | Self::ValuePointer { .. }
-            | Self::Array { .. }
-            | Self::Struct { .. }
-            | Self::Image { .. }
-            | Self::Sampler { .. }
-            | Self::SampledImage { .. }
-            | Self::AccelerationStructure
-            | Self::RayQuery
-            | Self::HitObject { .. }
-            | Self::BindingArray { .. }
-            | Self::BufferDescriptor { .. }
-            | Self::Spirv { .. } => false,
+            _ => false,
         }
     }
 
@@ -493,48 +378,9 @@ impl crate::TypeInner {
                     scalar,
                     space,
                 }),
-                Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => None,
+                _ => None,
             },
-            Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => None,
+            _ => None,
         }
     }
 
@@ -591,26 +437,7 @@ impl crate::TypeInner {
                     Some(last) => inner = &types[last.ty].inner,
                     None => return false,
                 },
-                Ti::Scalar(_)
-                | Ti::Vector { .. }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => return false,
+                _ => return false,
             }
         }
     }
@@ -644,30 +471,7 @@ impl crate::TypeInner {
                 size: crate::ArraySize::Dynamic,
                 ..
             } => true,
-            Ti::Array {
-                size: crate::ArraySize::Constant(_) | crate::ArraySize::Pending(_),
-                ..
-            }
-            | Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => false,
+            _ => false,
         }
     }
 
@@ -733,16 +537,7 @@ impl crate::TypeInner {
             | Ti::Tensor { .. }
             | Ti::BindingArray { .. }
             | Ti::BufferDescriptor { .. } => false,
-            Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Spirv { .. } => true,
+            _ => true,
         }
     }
 
@@ -825,26 +620,7 @@ impl crate::TypeInner {
         match *self {
             crate::TypeInner::Scalar(scalar) => Some((None, scalar)),
             crate::TypeInner::Vector { size, scalar } => Some((Some(size), scalar)),
-            crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => None,
+            _ => None,
         }
     }
 }

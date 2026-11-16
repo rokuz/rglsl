@@ -261,24 +261,7 @@ impl super::super::Validator {
         use crate::AddressSpace as As;
         let spaces: &[As] = match space {
             As::RayPayload => &[As::RayPayload, As::IncomingRayPayload],
-            As::Function
-            | As::Private
-            | As::WorkGroup
-            | As::Uniform
-            | As::Storage { .. }
-            | As::Handle
-            | As::Immediate
-            | As::TaskPayload
-            | As::IncomingRayPayload
-            | As::HitAttribute
-            | As::CallableData
-            | As::IncomingCallableData
-            | As::ShaderRecord
-            | As::HitObjectAttribute { .. }
-            | As::Input
-            | As::Output
-            | As::PhysicalStorage { .. }
-            | As::DescriptorHeap(_) => &[space],
+            _ => &[space],
         };
         self.validate_ray_data(crate::RayTracingData::Pointer(pointer), spaces, context)
     }

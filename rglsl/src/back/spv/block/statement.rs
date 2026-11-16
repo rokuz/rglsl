@@ -13,16 +13,7 @@ use crate::{Statement, arena::Handle};
 const fn atomic_integer_op(kind: crate::ScalarKind, op: spirv::Op) -> Result<spirv::Op, Error> {
     match kind {
         crate::ScalarKind::Sint | crate::ScalarKind::Uint => Ok(op),
-        crate::ScalarKind::Float
-        | crate::ScalarKind::Bool
-        | crate::ScalarKind::BFloat
-        | crate::ScalarKind::FloatE4M3
-        | crate::ScalarKind::FloatE5M2
-        | crate::ScalarKind::FloatE2M1
-        | crate::ScalarKind::FloatE3M2
-        | crate::ScalarKind::FloatE2M3
-        | crate::ScalarKind::FloatUE8M0
-        | crate::ScalarKind::FloatMXINT8 => Err(Error::Validation(
+        _ => Err(Error::Validation(
             "atomic operation on an unsupported scalar type",
         )),
     }
@@ -464,26 +455,7 @@ impl BlockContext<'_> {
                     self.cached.get(value)?
                 }
             }
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => self.cached.get(value)?,
+            _ => self.cached.get(value)?,
         };
         let instruction = match self.function.entry_point_context {
             Some(ref context) => {
@@ -583,67 +555,7 @@ impl BlockContext<'_> {
                         self.cached.get(argument)?
                     }
                 }
-                crate::Expression::Literal(_)
-                | crate::Expression::Constant(_)
-                | crate::Expression::Override(_)
-                | crate::Expression::ZeroValue(_)
-                | crate::Expression::Compose { .. }
-                | crate::Expression::Splat { .. }
-                | crate::Expression::Swizzle { .. }
-                | crate::Expression::FunctionArgument(_)
-                | crate::Expression::GlobalVariable(_)
-                | crate::Expression::LocalVariable(_)
-                | crate::Expression::Load { .. }
-                | crate::Expression::ImageSample { .. }
-                | crate::Expression::ImageLoad { .. }
-                | crate::Expression::ImageQuery { .. }
-                | crate::Expression::Unary { .. }
-                | crate::Expression::Binary { .. }
-                | crate::Expression::Select { .. }
-                | crate::Expression::Derivative { .. }
-                | crate::Expression::Relational { .. }
-                | crate::Expression::Math { .. }
-                | crate::Expression::As { .. }
-                | crate::Expression::CallResult(_)
-                | crate::Expression::AtomicResult { .. }
-                | crate::Expression::ArrayLength(_)
-                | crate::Expression::WideArrayLength(_)
-                | crate::Expression::PhysicalPointer { .. }
-                | crate::Expression::PhysicalAddress { .. }
-                | crate::Expression::BufferPointer { .. }
-                | crate::Expression::HeapOffset { .. }
-                | crate::Expression::RayQueryProceedResult
-                | crate::Expression::RayQueryGet { .. }
-                | crate::Expression::ReportIntersectionResult
-                | crate::Expression::AccelerationStructureFromAddress { .. }
-                | crate::Expression::HitObjectGet { .. }
-                | crate::Expression::FetchMicroTriangleVertex { .. }
-                | crate::Expression::SubgroupBallotResult
-                | crate::Expression::SubgroupOperationResult { .. }
-                | crate::Expression::SpirvInstructionResult { .. }
-                | crate::Expression::CooperativeLoad { .. }
-                | crate::Expression::CooperativeMultiplyAdd { .. }
-                | crate::Expression::CooperativeMatrixLength { .. }
-                | crate::Expression::Replicate { .. }
-                | crate::Expression::Expect { .. }
-                | crate::Expression::ImageSparseResident { .. }
-                | crate::Expression::IsHelperInvocation
-                | crate::Expression::ReadClock { .. }
-                | crate::Expression::InterpolateAt { .. }
-                | crate::Expression::FragmentFetch { .. }
-                | crate::Expression::ImageFootprint { .. }
-                | crate::Expression::AttachmentRead { .. }
-                | crate::Expression::CooperativeVectorLoad { .. }
-                | crate::Expression::CooperativeVectorMatMul { .. }
-                | crate::Expression::Convert { .. }
-                | crate::Expression::CooperativeMatrixResult { .. }
-                | crate::Expression::TensorCreate { .. }
-                | crate::Expression::ImageProcessing { .. }
-                | crate::Expression::ArrayConversion { .. }
-                | crate::Expression::Bitcast { .. }
-                | crate::Expression::TensorSet { .. }
-                | crate::Expression::TensorRead { .. }
-                | crate::Expression::TensorQuerySize { .. } => self.cached.get(argument)?,
+                _ => self.cached.get(argument)?,
             };
             argument_ids.push(argument_id);
         }
@@ -731,26 +643,7 @@ impl BlockContext<'_> {
                 }
                 (scalar, true)
             }
-            crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => {
+            _ => {
                 return Err(Error::FeatureNotImplemented(
                     "Atomics with non-scalar values",
                 ));
@@ -796,15 +689,7 @@ impl BlockContext<'_> {
                 let spirv_op = match scalar.kind {
                     crate::ScalarKind::Sint | crate::ScalarKind::Uint => spirv::Op::AtomicIAdd,
                     crate::ScalarKind::Float => self.writer.float_atomic(fun, scalar, vector)?,
-                    crate::ScalarKind::Bool
-                    | crate::ScalarKind::BFloat
-                    | crate::ScalarKind::FloatE4M3
-                    | crate::ScalarKind::FloatE5M2
-                    | crate::ScalarKind::FloatE2M1
-                    | crate::ScalarKind::FloatE3M2
-                    | crate::ScalarKind::FloatE2M3
-                    | crate::ScalarKind::FloatUE8M0
-                    | crate::ScalarKind::FloatMXINT8 => {
+                    _ => {
                         return Err(Error::Validation(
                             "atomic operation on an unsupported scalar type",
                         ));
@@ -835,15 +720,7 @@ impl BlockContext<'_> {
                         ));
                         (spirv::Op::AtomicFAddEXT, neg_result_id)
                     }
-                    crate::ScalarKind::Bool
-                    | crate::ScalarKind::BFloat
-                    | crate::ScalarKind::FloatE4M3
-                    | crate::ScalarKind::FloatE5M2
-                    | crate::ScalarKind::FloatE2M1
-                    | crate::ScalarKind::FloatE3M2
-                    | crate::ScalarKind::FloatE2M3
-                    | crate::ScalarKind::FloatUE8M0
-                    | crate::ScalarKind::FloatMXINT8 => {
+                    _ => {
                         return Err(Error::Validation(
                             "atomic operation on an unsupported scalar type",
                         ));
@@ -891,15 +768,7 @@ impl BlockContext<'_> {
                     crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
                     crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
                     crate::ScalarKind::Float => self.writer.float_atomic(fun, scalar, vector)?,
-                    crate::ScalarKind::Bool
-                    | crate::ScalarKind::BFloat
-                    | crate::ScalarKind::FloatE4M3
-                    | crate::ScalarKind::FloatE5M2
-                    | crate::ScalarKind::FloatE2M1
-                    | crate::ScalarKind::FloatE3M2
-                    | crate::ScalarKind::FloatE2M3
-                    | crate::ScalarKind::FloatUE8M0
-                    | crate::ScalarKind::FloatMXINT8 => {
+                    _ => {
                         return Err(Error::Validation(
                             "atomic operation on an unsupported scalar type",
                         ));
@@ -920,15 +789,7 @@ impl BlockContext<'_> {
                     crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
                     crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
                     crate::ScalarKind::Float => self.writer.float_atomic(fun, scalar, vector)?,
-                    crate::ScalarKind::Bool
-                    | crate::ScalarKind::BFloat
-                    | crate::ScalarKind::FloatE4M3
-                    | crate::ScalarKind::FloatE5M2
-                    | crate::ScalarKind::FloatE2M1
-                    | crate::ScalarKind::FloatE3M2
-                    | crate::ScalarKind::FloatE2M3
-                    | crate::ScalarKind::FloatUE8M0
-                    | crate::ScalarKind::FloatMXINT8 => {
+                    _ => {
                         return Err(Error::Validation(
                             "atomic operation on an unsupported scalar type",
                         ));

@@ -50,22 +50,7 @@ impl<'a> ResolveContext<'a> {
                         scalar,
                         space,
                     },
-                    Ti::Scalar(_)
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
+                    _ => {
                         log::error!("Access sub-type {sub:?}");
                         return Err(ResolveError::InvalidSubAccess {
                             ty: base,
@@ -74,21 +59,7 @@ impl<'a> ResolveContext<'a> {
                     }
                 })
             }
-            Ti::Scalar(_)
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::ValuePointer { size: None, .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Access type {ty:?}");
                 return Err(ResolveError::InvalidAccess {
                     expr: base,
@@ -158,20 +129,7 @@ impl<'a> ResolveContext<'a> {
             } => TypeResolution::Value(
                 self.resolve_pointer_access_index(base, ty_base, space, index)?,
             ),
-            Ti::Scalar(_)
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::ValuePointer { size: None, .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Access index type {ty:?}");
                 return Err(ResolveError::InvalidAccess {
                     expr: base,
@@ -252,21 +210,7 @@ impl<'a> ResolveContext<'a> {
                     space,
                 }
             }
-            Ti::Scalar(_)
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Access index sub-type {sub:?}");
                 return Err(ResolveError::InvalidSubAccess {
                     ty: ty_base,
@@ -334,26 +278,7 @@ impl<'a> ResolveContext<'a> {
                 Some(size) => Ti::Vector { size, scalar },
                 None => Ti::Scalar(scalar),
             }),
-            Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Pointer {pointer:?} type {ty:?}");
                 return Err(ResolveError::InvalidPointer(pointer));
             }
@@ -394,26 +319,7 @@ impl<'a> ResolveContext<'a> {
                 Some(size) => Ti::Vector { size, scalar },
                 None => Ti::Scalar(scalar),
             }),
-            Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Interpolant type {ty:?}");
                 return Err(ResolveError::InvalidPointer(pointer));
             }

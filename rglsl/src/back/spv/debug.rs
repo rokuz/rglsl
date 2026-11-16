@@ -198,16 +198,7 @@ const fn kind_prefix(kind: crate::ScalarKind) -> &'static str {
     match kind {
         crate::ScalarKind::Sint => "i",
         crate::ScalarKind::Uint => "u",
-        crate::ScalarKind::Float
-        | crate::ScalarKind::Bool
-        | crate::ScalarKind::BFloat
-        | crate::ScalarKind::FloatE4M3
-        | crate::ScalarKind::FloatE5M2
-        | crate::ScalarKind::FloatE2M1
-        | crate::ScalarKind::FloatE3M2
-        | crate::ScalarKind::FloatE2M3
-        | crate::ScalarKind::FloatUE8M0
-        | crate::ScalarKind::FloatMXINT8 => "",
+        _ => "",
     }
 }
 

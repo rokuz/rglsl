@@ -104,22 +104,7 @@ impl super::super::Validator {
                 multi: false,
             } => false,
             Ic::Depth { multi: false } => true,
-            Ic::Sampled {
-                kind:
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8,
-                multi: false,
-            }
-            | Ic::Sampled { multi: true, .. }
-            | Ic::Depth { multi: true }
-            | Ic::Storage { .. } => return Err(ExpressionError::InvalidImageClass(class)),
+            _ => return Err(ExpressionError::InvalidImageClass(class)),
         };
         let compared_float = sampler.is_some()
             && matches!(
@@ -141,9 +126,7 @@ impl super::super::Validator {
             crate::ImageDimension::D1 => 1,
             crate::ImageDimension::D2 => 2,
             crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
-            crate::ImageDimension::Buffer
-            | crate::ImageDimension::Subpass
-            | crate::ImageDimension::TileImageData => {
+            _ => {
                 return Err(ExpressionError::InvalidImageCoordinateType(dim, coordinate));
             }
         };
@@ -172,63 +155,7 @@ impl super::super::Validator {
                     size,
                     scalar: Sc { kind: Sk::Sint, .. },
                 } => size as u32 == num_components,
-                Ti::Array {
-                    size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
-                    ..
-                }
-                | Ti::Scalar(Sc {
-                    kind:
-                        Sk::Uint
-                        | Sk::Float
-                        | Sk::Bool
-                        | Sk::BFloat
-                        | Sk::FloatE4M3
-                        | Sk::FloatE5M2
-                        | Sk::FloatE2M1
-                        | Sk::FloatE3M2
-                        | Sk::FloatE2M3
-                        | Sk::FloatUE8M0
-                        | Sk::FloatMXINT8,
-                    ..
-                })
-                | Ti::Vector {
-                    scalar:
-                        Sc {
-                            kind:
-                                Sk::Uint
-                                | Sk::Float
-                                | Sk::Bool
-                                | Sk::BFloat
-                                | Sk::FloatE4M3
-                                | Sk::FloatE5M2
-                                | Sk::FloatE2M1
-                                | Sk::FloatE3M2
-                                | Sk::FloatE2M3
-                                | Sk::FloatUE8M0
-                                | Sk::FloatMXINT8,
-                            ..
-                        },
-                    ..
-                }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => false,
+                _ => false,
             };
             if !offset_ok {
                 return Err(ExpressionError::InvalidSampleOffset(dim, const_expr));
@@ -247,11 +174,7 @@ impl super::super::Validator {
         if let Some(component) = gather {
             match dim {
                 crate::ImageDimension::D2 | crate::ImageDimension::Cube => {}
-                crate::ImageDimension::D1
-                | crate::ImageDimension::D3
-                | crate::ImageDimension::Buffer
-                | crate::ImageDimension::Subpass
-                | crate::ImageDimension::TileImageData => {
+                _ => {
                     return Err(ExpressionError::InvalidGatherDimension(dim));
                 }
             }
@@ -272,22 +195,17 @@ impl super::super::Validator {
                 crate::SampleLevel::Exact(_) | crate::SampleLevel::Bias(_)
                     if depth_ref.is_none() && gather_pattern == crate::ImageGatherPattern::Quad => {
                 }
-                crate::SampleLevel::Exact(_)
-                | crate::SampleLevel::Bias(_)
-                | crate::SampleLevel::Auto
-                | crate::SampleLevel::Gradient { .. } => {
+                _ => {
                     return Err(ExpressionError::InvalidGatherLevel);
                 }
             }
         }
 
         if let Some(min_lod) = min_lod {
-            let implicit_or_gradient = match level {
-                crate::SampleLevel::Auto
-                | crate::SampleLevel::Bias(_)
-                | crate::SampleLevel::Gradient { .. } => true,
-                crate::SampleLevel::Zero | crate::SampleLevel::Exact(_) => false,
-            };
+            let implicit_or_gradient = !matches!(
+                level,
+                crate::SampleLevel::Zero | crate::SampleLevel::Exact(_)
+            );
             if gather.is_some()
                 || !implicit_or_gradient
                 || !matches!(*resolver.resolve(min_lod)?, Ti::Scalar(Sc::F32))
@@ -354,9 +272,7 @@ impl super::super::Validator {
                 };
                 match class {
                     Ic::Sampled { multi: false, .. } | Ic::Depth { multi: false } => {}
-                    Ic::Sampled { multi: true, .. }
-                    | Ic::Depth { multi: true }
-                    | Ic::Storage { .. } => {
+                    _ => {
                         return Err(ExpressionError::InvalidImageClass(class));
                     }
                 }
@@ -523,9 +439,7 @@ impl super::super::Validator {
                     crate::ImageDimension::D1 => 1,
                     crate::ImageDimension::D2 => 2,
                     crate::ImageDimension::D3 | crate::ImageDimension::Cube => 3,
-                    crate::ImageDimension::Buffer
-                    | crate::ImageDimension::Subpass
-                    | crate::ImageDimension::TileImageData => 0,
+                    _ => 0,
                 };
                 let coordinate_good = match *resolver.resolve(coordinate)? {
                     Ti::Scalar(Sc::F32) => components == 1,
@@ -533,28 +447,7 @@ impl super::super::Validator {
                         size,
                         scalar: Sc::F32,
                     } => size as u32 == components,
-                    Ti::Scalar(_)
-                    | Ti::Vector { .. }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => false,
+                    _ => false,
                 };
                 if combined == paired
                     || !coordinate_good
@@ -652,9 +545,7 @@ impl super::super::Validator {
             crate::SampleLevel::Auto | crate::SampleLevel::Bias(_) => {
                 ShaderStages::FRAGMENT | ShaderStages::COMPUTE_LIKE
             }
-            crate::SampleLevel::Zero
-            | crate::SampleLevel::Exact(_)
-            | crate::SampleLevel::Gradient { .. } => ShaderStages::all(),
+            _ => ShaderStages::all(),
         })
     }
 
@@ -947,60 +838,7 @@ const fn float_coordinate_matches(inner: &crate::TypeInner, num_components: u32)
                 kind: Sk::Float, ..
             },
         } => size as u32 == num_components,
-        Ti::Scalar(Sc {
-            kind:
-                Sk::Sint
-                | Sk::Uint
-                | Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            ..
-        })
-        | Ti::Vector {
-            scalar:
-                Sc {
-                    kind:
-                        Sk::Sint
-                        | Sk::Uint
-                        | Sk::Bool
-                        | Sk::BFloat
-                        | Sk::FloatE4M3
-                        | Sk::FloatE5M2
-                        | Sk::FloatE2M1
-                        | Sk::FloatE3M2
-                        | Sk::FloatE2M3
-                        | Sk::FloatUE8M0
-                        | Sk::FloatMXINT8,
-                    ..
-                },
-            ..
-        }
-        | Ti::Matrix { .. }
-        | Ti::CooperativeMatrix { .. }
-        | Ti::LongVector { .. }
-        | Ti::TensorLayout { .. }
-        | Ti::TensorView { .. }
-        | Ti::Tensor { .. }
-        | Ti::Atomic(_)
-        | Ti::Pointer { .. }
-        | Ti::ValuePointer { .. }
-        | Ti::Array { .. }
-        | Ti::Struct { .. }
-        | Ti::Image { .. }
-        | Ti::Sampler { .. }
-        | Ti::SampledImage { .. }
-        | Ti::AccelerationStructure
-        | Ti::RayQuery
-        | Ti::HitObject { .. }
-        | Ti::BindingArray { .. }
-        | Ti::BufferDescriptor { .. }
-        | Ti::Spirv { .. } => false,
+        _ => false,
     }
 }
 

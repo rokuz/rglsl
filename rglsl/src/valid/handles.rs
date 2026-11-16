@@ -1,3 +1,4 @@
+#![warn(clippy::wildcard_enum_match_arm)]
 //! Implementation of `Validator::validate_module_handles`.
 
 use core::hash::Hash;

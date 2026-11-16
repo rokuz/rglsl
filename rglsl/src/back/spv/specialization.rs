@@ -768,24 +768,7 @@ impl Writer {
                         match literal {
                             Literal::I32(value) => u32::try_from(value).ok(),
                             Literal::U32(value) => Some(value),
-                            Literal::F64(_)
-                            | Literal::F32(_)
-                            | Literal::F16(_)
-                            | Literal::U8(_)
-                            | Literal::I8(_)
-                            | Literal::U16(_)
-                            | Literal::I16(_)
-                            | Literal::U64(_)
-                            | Literal::I64(_)
-                            | Literal::Bool(_)
-                            | Literal::BF16(_)
-                            | Literal::FE4M3(_)
-                            | Literal::FE5M2(_)
-                            | Literal::FE2M1(_)
-                            | Literal::FE3M2(_)
-                            | Literal::FE2M3(_)
-                            | Literal::FUE8M0(_)
-                            | Literal::FMXINT8(_) => None,
+                            _ => None,
                         }
                     } else {
                         None

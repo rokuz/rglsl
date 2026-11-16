@@ -217,26 +217,7 @@ pub(super) fn tensor_shape(
             };
             Some((scalar, TensorData::Array(length)))
         }
-        Ti::Vector { .. }
-        | Ti::Matrix { .. }
-        | Ti::CooperativeMatrix { .. }
-        | Ti::LongVector { .. }
-        | Ti::TensorLayout { .. }
-        | Ti::TensorView { .. }
-        | Ti::Tensor { .. }
-        | Ti::Atomic(_)
-        | Ti::Pointer { .. }
-        | Ti::ValuePointer { .. }
-        | Ti::Struct { .. }
-        | Ti::Image { .. }
-        | Ti::Sampler { .. }
-        | Ti::SampledImage { .. }
-        | Ti::AccelerationStructure
-        | Ti::RayQuery
-        | Ti::HitObject { .. }
-        | Ti::BindingArray { .. }
-        | Ti::BufferDescriptor { .. }
-        | Ti::Spirv { .. } => None,
+        _ => None,
     }
 }
 
@@ -313,25 +294,7 @@ impl super::Validator {
                 Ti::LongVector { size, class, .. } => Some((Some(size), Some(class), None)),
                 Ti::Vector { size, .. } => Some((None, None, Some(size))),
                 Ti::Scalar(_) => None,
-                Ti::CooperativeMatrix { .. }
-                | Ti::Matrix { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => Some((None, None, None)),
+                _ => Some((None, None, None)),
             })
         };
         let operands: arrayvec::ArrayVec<Handle<crate::Expression>, 4> = match *expression {
@@ -843,24 +806,7 @@ pub const fn check_literal_value(literal: crate::Literal) -> Result<(), LiteralE
     let is_nan = match literal {
         L::F64(v) => v.is_nan(),
         L::F32(v) => v.is_nan(),
-        L::F16(_)
-        | L::U8(_)
-        | L::I8(_)
-        | L::U16(_)
-        | L::I16(_)
-        | L::U32(_)
-        | L::I32(_)
-        | L::U64(_)
-        | L::I64(_)
-        | L::Bool(_)
-        | L::BF16(_)
-        | L::FE4M3(_)
-        | L::FE5M2(_)
-        | L::FE2M1(_)
-        | L::FE3M2(_)
-        | L::FE2M3(_)
-        | L::FUE8M0(_)
-        | L::FMXINT8(_) => false,
+        _ => false,
     };
     if is_nan {
         return Err(LiteralError::NaN);
@@ -869,24 +815,7 @@ pub const fn check_literal_value(literal: crate::Literal) -> Result<(), LiteralE
     let is_infinite = match literal {
         L::F64(v) => v.is_infinite(),
         L::F32(v) => v.is_infinite(),
-        L::F16(_)
-        | L::U8(_)
-        | L::I8(_)
-        | L::U16(_)
-        | L::I16(_)
-        | L::U32(_)
-        | L::I32(_)
-        | L::U64(_)
-        | L::I64(_)
-        | L::Bool(_)
-        | L::BF16(_)
-        | L::FE4M3(_)
-        | L::FE5M2(_)
-        | L::FE2M1(_)
-        | L::FE3M2(_)
-        | L::FE2M3(_)
-        | L::FUE8M0(_)
-        | L::FMXINT8(_) => false,
+        _ => false,
     };
     if is_infinite {
         return Err(LiteralError::Infinity);

@@ -211,16 +211,7 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::IncomingCallableData
         | As::HitObjectAttribute { .. }
         | As::PhysicalStorage { .. } => TypeFlags::ARGUMENT,
-        As::Uniform
-        | As::Storage { .. }
-        | As::Handle
-        | As::Immediate
-        | As::WorkGroup
-        | As::TaskPayload
-        | As::Input
-        | As::Output
-        | As::ShaderRecord
-        | As::DescriptorHeap(_) => TypeFlags::empty(),
+        _ => TypeFlags::empty(),
     }
 }
 
@@ -272,17 +263,12 @@ impl super::Validator {
         let good = match scalar.kind {
             crate::ScalarKind::Bool => scalar.width == crate::BOOL_WIDTH,
             crate::ScalarKind::BFloat => scalar.width == 2,
-            crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatE2M1
-            | crate::ScalarKind::FloatE3M2
-            | crate::ScalarKind::FloatE2M3
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => scalar.width == 1,
+
             crate::ScalarKind::Float => matches!(scalar.width, 2 | 4 | 8),
             crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                 matches!(scalar.width, 1 | 2 | 4 | 8)
             }
+            _ => scalar.width == 1,
         };
         if good {
             Ok(Ok(()))
@@ -495,24 +481,7 @@ impl super::Validator {
                     match space {
                         As::Storage { .. } => {}
                         As::Uniform if matches!(gctx.types[base].inner, Ti::Struct { .. }) => {}
-                        As::Function
-                        | As::Private
-                        | As::WorkGroup
-                        | As::Uniform
-                        | As::Handle
-                        | As::Immediate
-                        | As::TaskPayload
-                        | As::RayPayload
-                        | As::IncomingRayPayload
-                        | As::HitAttribute
-                        | As::CallableData
-                        | As::IncomingCallableData
-                        | As::ShaderRecord
-                        | As::HitObjectAttribute { .. }
-                        | As::Input
-                        | As::Output
-                        | As::PhysicalStorage { .. }
-                        | As::DescriptorHeap(_) => {
+                        _ => {
                             return Err(TypeError::InvalidPointerToUnsized { base, space });
                         }
                     }
@@ -997,27 +966,7 @@ impl super::Validator {
                 if base_info.flags.contains(TypeFlags::DATA) {
                     match gctx.types[base].inner {
                         crate::TypeInner::Struct { .. } => {}
-                        crate::TypeInner::Scalar(_)
-                        | crate::TypeInner::Vector { .. }
-                        | crate::TypeInner::Matrix { .. }
-                        | crate::TypeInner::CooperativeMatrix { .. }
-                        | crate::TypeInner::LongVector { .. }
-                        | crate::TypeInner::TensorLayout { .. }
-                        | crate::TypeInner::TensorView { .. }
-                        | crate::TypeInner::Tensor { .. }
-                        | crate::TypeInner::Atomic(_)
-                        | crate::TypeInner::Pointer { .. }
-                        | crate::TypeInner::ValuePointer { .. }
-                        | crate::TypeInner::Array { .. }
-                        | crate::TypeInner::Image { .. }
-                        | crate::TypeInner::Sampler { .. }
-                        | crate::TypeInner::SampledImage { .. }
-                        | crate::TypeInner::AccelerationStructure
-                        | crate::TypeInner::RayQuery
-                        | crate::TypeInner::HitObject { .. }
-                        | crate::TypeInner::BindingArray { .. }
-                        | crate::TypeInner::BufferDescriptor { .. }
-                        | crate::TypeInner::Spirv { .. } => {
+                        _ => {
                             return Err(TypeError::BindingArrayBaseTypeNotStruct(base));
                         }
                     };

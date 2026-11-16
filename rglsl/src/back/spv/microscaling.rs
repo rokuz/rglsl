@@ -15,13 +15,7 @@ const fn encoding(kind: ScalarKind) -> Option<(&'static Feature, Word)> {
             grammar::fp_encoding::Float8UnsignedE8M0EXT,
         ),
         ScalarKind::FloatMXINT8 => (&feature::MXINT8_TYPE, grammar::fp_encoding::MXInt8EXT),
-        ScalarKind::Sint
-        | ScalarKind::Uint
-        | ScalarKind::Float
-        | ScalarKind::Bool
-        | ScalarKind::BFloat
-        | ScalarKind::FloatE4M3
-        | ScalarKind::FloatE5M2 => return None,
+        _ => return None,
     })
 }
 

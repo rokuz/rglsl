@@ -230,26 +230,7 @@ impl BlockContext<'_> {
         let Some(array_index) = array_index else {
             return match *inner_ty {
                 Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
-                Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => Err(Error::Validation("coordinate type")),
+                _ => Err(Error::Validation("coordinate type")),
             };
         };
 
@@ -273,26 +254,7 @@ impl BlockContext<'_> {
                 }
                 (scalar, next_size)
             }
-            Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("wrong coordinate type {inner_ty:?}");
                 return Err(Error::Validation("coordinate type"));
             }
@@ -777,9 +739,7 @@ impl BlockContext<'_> {
                         mask |= spirv::ImageOperands::BIAS;
                         Some(self.cached.get(handle)?)
                     }
-                    crate::SampleLevel::Auto
-                    | crate::SampleLevel::Zero
-                    | crate::SampleLevel::Gradient { .. } => None,
+                    _ => None,
                 };
                 if level_id.is_some() {
                     self.writer.require(&feature::AMD_TEXTURE_GATHER_BIAS_LOD)?;
@@ -874,16 +834,7 @@ impl BlockContext<'_> {
                     match scalar.kind {
                         crate::ScalarKind::Uint => Some(spirv::Op::ConvertUToF),
                         crate::ScalarKind::Sint => Some(spirv::Op::ConvertSToF),
-                        crate::ScalarKind::Float
-                        | crate::ScalarKind::Bool
-                        | crate::ScalarKind::BFloat
-                        | crate::ScalarKind::FloatE4M3
-                        | crate::ScalarKind::FloatE5M2
-                        | crate::ScalarKind::FloatE2M1
-                        | crate::ScalarKind::FloatE3M2
-                        | crate::ScalarKind::FloatE2M3
-                        | crate::ScalarKind::FloatUE8M0
-                        | crate::ScalarKind::FloatMXINT8 => None,
+                        _ => None,
                     }
                 } else {
                     None

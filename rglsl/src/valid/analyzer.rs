@@ -273,65 +273,7 @@ impl GlobalOrArgument {
                         E::GlobalVariable(var) => {
                             break GlobalOrArgument::Global(var);
                         }
-                        E::Literal(_)
-                        | E::Constant(_)
-                        | E::Override(_)
-                        | E::ZeroValue(_)
-                        | E::Compose { .. }
-                        | E::Splat { .. }
-                        | E::Swizzle { .. }
-                        | E::FunctionArgument(_)
-                        | E::LocalVariable(_)
-                        | E::Load { .. }
-                        | E::ImageSample { .. }
-                        | E::ImageLoad { .. }
-                        | E::ImageQuery { .. }
-                        | E::Unary { .. }
-                        | E::Binary { .. }
-                        | E::Select { .. }
-                        | E::Derivative { .. }
-                        | E::Relational { .. }
-                        | E::Math { .. }
-                        | E::As { .. }
-                        | E::CallResult(_)
-                        | E::AtomicResult { .. }
-                        | E::ArrayLength(_)
-                        | E::WideArrayLength(_)
-                        | E::PhysicalPointer { .. }
-                        | E::PhysicalAddress { .. }
-                        | E::BufferPointer { .. }
-                        | E::RayQueryProceedResult
-                        | E::RayQueryGet { .. }
-                        | E::ReportIntersectionResult
-                        | E::AccelerationStructureFromAddress { .. }
-                        | E::HitObjectGet { .. }
-                        | E::FetchMicroTriangleVertex { .. }
-                        | E::SubgroupBallotResult
-                        | E::SubgroupOperationResult { .. }
-                        | E::SpirvInstructionResult { .. }
-                        | E::CooperativeLoad { .. }
-                        | E::CooperativeMultiplyAdd { .. }
-                        | E::CooperativeMatrixLength { .. }
-                        | E::Replicate { .. }
-                        | E::Expect { .. }
-                        | E::ImageSparseResident { .. }
-                        | E::IsHelperInvocation
-                        | E::ReadClock { .. }
-                        | E::InterpolateAt { .. }
-                        | E::FragmentFetch { .. }
-                        | E::ImageFootprint { .. }
-                        | E::AttachmentRead { .. }
-                        | E::CooperativeVectorLoad { .. }
-                        | E::CooperativeVectorMatMul { .. }
-                        | E::Convert { .. }
-                        | E::CooperativeMatrixResult { .. }
-                        | E::TensorCreate { .. }
-                        | E::ImageProcessing { .. }
-                        | E::ArrayConversion { .. }
-                        | E::Bitcast { .. }
-                        | E::TensorSet { .. }
-                        | E::TensorRead { .. }
-                        | E::TensorQuerySize { .. } => {
+                        _ => {
                             return Err(ExpressionError::ExpectedGlobalOrArgument);
                         }
                     }
@@ -760,23 +702,7 @@ impl FunctionInfo {
                         | crate::TypeInner::SampledImage { .. }
                         | crate::TypeInner::AccelerationStructure
                         | crate::TypeInner::Tensor { .. } => {}
-                        crate::TypeInner::Scalar(_)
-                        | crate::TypeInner::Vector { .. }
-                        | crate::TypeInner::Matrix { .. }
-                        | crate::TypeInner::CooperativeMatrix { .. }
-                        | crate::TypeInner::LongVector { .. }
-                        | crate::TypeInner::TensorLayout { .. }
-                        | crate::TypeInner::TensorView { .. }
-                        | crate::TypeInner::Atomic(_)
-                        | crate::TypeInner::Pointer { .. }
-                        | crate::TypeInner::ValuePointer { .. }
-                        | crate::TypeInner::Array { .. }
-                        | crate::TypeInner::Struct { .. }
-                        | crate::TypeInner::RayQuery
-                        | crate::TypeInner::HitObject { .. }
-                        | crate::TypeInner::BindingArray { .. }
-                        | crate::TypeInner::BufferDescriptor { .. }
-                        | crate::TypeInner::Spirv { .. } => {
+                        _ => {
                             if !matches!(
                                 expression_arena[base],
                                 E::GlobalVariable(global)
@@ -866,14 +792,6 @@ impl FunctionInfo {
                 let var = &resolve_context.global_vars[gh];
                 let uniform = match var.space {
                     // local data is non-uniform
-                    As::Function
-                    | As::Private
-                    | As::RayPayload
-                    | As::IncomingRayPayload
-                    | As::HitAttribute
-                    | As::CallableData
-                    | As::IncomingCallableData
-                    | As::HitObjectAttribute { .. } => false,
                     As::ShaderRecord => true,
                     // stage inputs and outputs differ between invocations
                     As::Input | As::Output => false,
@@ -885,6 +803,7 @@ impl FunctionInfo {
                     // storage data is only uniform when read-only
                     As::Storage { access } => !access.contains(crate::StorageAccess::STORE),
                     As::Handle | As::PhysicalStorage { .. } | As::DescriptorHeap(_) => false,
+                    _ => false,
                 };
                 Uniformity {
                     non_uniform_result: if uniform { None } else { Some(handle) },
@@ -1646,12 +1565,7 @@ impl FunctionInfo {
                     crate::HitObjectFunction::ExecuteShader { payload }
                     | crate::HitObjectFunction::ReorderExecute { payload, .. } => Some(payload),
                     crate::HitObjectFunction::GetAttributes { attributes } => Some(attributes),
-                    crate::HitObjectFunction::RecordHit { .. }
-                    | crate::HitObjectFunction::RecordMiss { .. }
-                    | crate::HitObjectFunction::RecordEmpty
-                    | crate::HitObjectFunction::RecordFromQuery { .. }
-                    | crate::HitObjectFunction::SetShaderBindingTableRecordIndex { .. }
-                    | crate::HitObjectFunction::ReorderThread { .. } => None,
+                    _ => None,
                 };
                 fun.for_each_operand(|operand| {
                     let usage = if Some(operand) == written {
@@ -1672,9 +1586,7 @@ impl FunctionInfo {
                 let data = match *fun {
                     crate::RayPipelineFunction::TraceRay { payload, .. } => payload.pointer(),
                     crate::RayPipelineFunction::ExecuteCallable { data, .. } => data.pointer(),
-                    crate::RayPipelineFunction::ReportIntersection { .. }
-                    | crate::RayPipelineFunction::IgnoreIntersection { .. }
-                    | crate::RayPipelineFunction::TerminateRay { .. } => None,
+                    _ => None,
                 };
                 fun.for_each_operand(|operand| {
                     let usage = if Some(operand) == data {
@@ -1700,11 +1612,7 @@ impl FunctionInfo {
                 let mut non_uniform_result = None;
                 let written = match *function {
                     crate::CooperativeMatrixFunction::StoreTensor { pointer, .. } => Some(pointer),
-                    crate::CooperativeMatrixFunction::Transpose { .. }
-                    | crate::CooperativeMatrixFunction::Reduce { .. }
-                    | crate::CooperativeMatrixFunction::PerElement { .. }
-                    | crate::CooperativeMatrixFunction::GetCoordinate { .. }
-                    | crate::CooperativeMatrixFunction::LoadTensor { .. } => None,
+                    _ => None,
                 };
                 function.for_each_operand(|operand| {
                     let reference = if Some(operand) == written {

@@ -14,46 +14,9 @@ impl super::super::Validator {
             return Err(ExpressionError::InvalidUnaryOperandType(op, expr));
         };
         let allowed = match op {
-            Uo::Negate => match scalar.kind {
-                Sk::Float | Sk::Sint => true,
-                Sk::Uint
-                | Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8 => false,
-            },
-            Uo::LogicalNot => match scalar.kind {
-                Sk::Bool => true,
-                Sk::Sint
-                | Sk::Uint
-                | Sk::Float
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8 => false,
-            },
-            Uo::BitwiseNot => match scalar.kind {
-                Sk::Sint | Sk::Uint => true,
-                Sk::Float
-                | Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8 => false,
-            },
+            Uo::Negate => matches!(scalar.kind, Sk::Float | Sk::Sint),
+            Uo::LogicalNot => scalar.kind == Sk::Bool,
+            Uo::BitwiseNot => scalar.kind.is_integer(),
         };
         if !allowed {
             return Err(ExpressionError::InvalidUnaryOperandType(op, expr));
@@ -76,86 +39,23 @@ impl super::super::Validator {
             Bo::Add | Bo::Subtract => match *left_inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                     Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => false,
+                    _ => false,
                 },
                 Ti::Matrix { .. } | Ti::CooperativeMatrix { .. } => left_inner == right_inner,
-                Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => false,
+                _ => false,
             },
             Bo::Divide | Bo::Modulo => match *left_inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                     Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => false,
+                    _ => false,
                 },
-                Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => false,
+                _ => false,
             },
             Bo::Multiply => {
-                let kind_allowed = match left_inner.scalar_kind() {
-                    Some(Sk::Uint | Sk::Sint | Sk::Float) => true,
-                    Some(
-                        Sk::Bool
-                        | Sk::BFloat
-                        | Sk::FloatE4M3
-                        | Sk::FloatE5M2
-                        | Sk::FloatE2M1
-                        | Sk::FloatE3M2
-                        | Sk::FloatE2M3
-                        | Sk::FloatUE8M0
-                        | Sk::FloatMXINT8,
-                    )
-                    | None => false,
-                };
+                let kind_allowed = matches!(
+                    left_inner.scalar_kind(),
+                    Some(Sk::Uint | Sk::Sint | Sk::Float)
+                );
                 let types_match = match (left_inner, right_inner) {
                     (
                         &Ti::Scalar(scalar1)
@@ -225,36 +125,9 @@ impl super::super::Validator {
             Bo::Less | Bo::LessEqual | Bo::Greater | Bo::GreaterEqual => match *left_inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                     Sk::Uint | Sk::Sint | Sk::Float => left_inner == right_inner,
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => false,
+                    _ => false,
                 },
-                ref other @ (Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. }) => {
+                ref other => {
                     log::debug!("Op {op:?} left type {other:?}");
                     false
                 }
@@ -265,60 +138,7 @@ impl super::super::Validator {
                     scalar: Sc { kind: Sk::Bool, .. },
                     ..
                 } => left_inner == right_inner,
-                ref other @ (Ti::Scalar(Sc {
-                    kind:
-                        Sk::Sint
-                        | Sk::Uint
-                        | Sk::Float
-                        | Sk::BFloat
-                        | Sk::FloatE4M3
-                        | Sk::FloatE5M2
-                        | Sk::FloatE2M1
-                        | Sk::FloatE3M2
-                        | Sk::FloatE2M3
-                        | Sk::FloatUE8M0
-                        | Sk::FloatMXINT8,
-                    ..
-                })
-                | Ti::Vector {
-                    scalar:
-                        Sc {
-                            kind:
-                                Sk::Sint
-                                | Sk::Uint
-                                | Sk::Float
-                                | Sk::BFloat
-                                | Sk::FloatE4M3
-                                | Sk::FloatE5M2
-                                | Sk::FloatE2M1
-                                | Sk::FloatE3M2
-                                | Sk::FloatE2M3
-                                | Sk::FloatUE8M0
-                                | Sk::FloatMXINT8,
-                            ..
-                        },
-                    ..
-                }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. }) => {
+                ref other => {
                     log::debug!("Op {op:?} left type {other:?}");
                     false
                 }
@@ -326,36 +146,9 @@ impl super::super::Validator {
             Bo::And | Bo::InclusiveOr => match *left_inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                     Sk::Bool | Sk::Sint | Sk::Uint => left_inner == right_inner,
-                    Sk::Float
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => false,
+                    _ => false,
                 },
-                ref other @ (Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. }) => {
+                ref other => {
                     log::debug!("Op {op:?} left type {other:?}");
                     false
                 }
@@ -363,37 +156,9 @@ impl super::super::Validator {
             Bo::ExclusiveOr => match *left_inner {
                 Ti::Scalar(scalar) | Ti::Vector { scalar, .. } => match scalar.kind {
                     Sk::Sint | Sk::Uint => left_inner == right_inner,
-                    Sk::Bool
-                    | Sk::Float
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => false,
+                    _ => false,
                 },
-                ref other @ (Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. }) => {
+                ref other => {
                     log::debug!("Op {op:?} left type {other:?}");
                     false
                 }
@@ -402,26 +167,7 @@ impl super::super::Validator {
                 let (base_size, base_scalar) = match *left_inner {
                     Ti::Scalar(scalar) => (Ok(None), scalar),
                     Ti::Vector { size, scalar } => (Ok(Some(size)), scalar),
-                    ref other @ (Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. }) => {
+                    ref other => {
                         log::debug!("Op {op:?} base type {other:?}");
                         (Err(()), Sc::BOOL)
                     }
@@ -432,76 +178,14 @@ impl super::super::Validator {
                         size,
                         scalar: Sc { kind: Sk::Uint, .. },
                     } => Ok(Some(size)),
-                    ref other @ (Ti::Scalar(Sc {
-                        kind:
-                            Sk::Sint
-                            | Sk::Float
-                            | Sk::Bool
-                            | Sk::BFloat
-                            | Sk::FloatE4M3
-                            | Sk::FloatE5M2
-                            | Sk::FloatE2M1
-                            | Sk::FloatE3M2
-                            | Sk::FloatE2M3
-                            | Sk::FloatUE8M0
-                            | Sk::FloatMXINT8,
-                        ..
-                    })
-                    | Ti::Vector {
-                        scalar:
-                            Sc {
-                                kind:
-                                    Sk::Sint
-                                    | Sk::Float
-                                    | Sk::Bool
-                                    | Sk::BFloat
-                                    | Sk::FloatE4M3
-                                    | Sk::FloatE5M2
-                                    | Sk::FloatE2M1
-                                    | Sk::FloatE3M2
-                                    | Sk::FloatE2M3
-                                    | Sk::FloatUE8M0
-                                    | Sk::FloatMXINT8,
-                                ..
-                            },
-                        ..
-                    }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. }) => {
+                    ref other => {
                         log::debug!("Op {op:?} shift type {other:?}");
                         Err(())
                     }
                 };
                 match base_scalar.kind {
                     Sk::Sint | Sk::Uint => base_size.is_ok() && base_size == shift_size,
-                    Sk::Float
-                    | Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8 => false,
+                    _ => false,
                 }
             }
         };
@@ -551,60 +235,7 @@ impl super::super::Validator {
                         width: _,
                     },
             } => matches!(*accept_inner, Ti::Vector { size: other_size, .. } if size == other_size),
-            Ti::Scalar(Sc {
-                kind:
-                    Sk::Sint
-                    | Sk::Uint
-                    | Sk::Float
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8,
-                ..
-            })
-            | Ti::Vector {
-                scalar:
-                    Sc {
-                        kind:
-                            Sk::Sint
-                            | Sk::Uint
-                            | Sk::Float
-                            | Sk::BFloat
-                            | Sk::FloatE4M3
-                            | Sk::FloatE5M2
-                            | Sk::FloatE2M1
-                            | Sk::FloatE3M2
-                            | Sk::FloatE2M3
-                            | Sk::FloatUE8M0
-                            | Sk::FloatMXINT8,
-                        ..
-                    },
-                ..
-            }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => false,
+            _ => false,
         };
         if accept_inner != reject_inner {
             return Err(ExpressionError::SelectValuesTypeMismatch {
@@ -682,27 +313,17 @@ impl super::super::Validator {
     ) -> Result<ShaderStages, ExpressionError> {
         use crate::TypeInner as Ti;
 
-        let mut base_scalar = match *resolver.resolve(expr)? {
-            Ti::Scalar(scalar) | Ti::Vector { scalar, .. } | Ti::Matrix { scalar, .. } => scalar,
-            Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => return Err(ExpressionError::InvalidCastArgument),
+        let (Ti::Scalar(mut base_scalar)
+        | Ti::Vector {
+            scalar: mut base_scalar,
+            ..
+        }
+        | Ti::Matrix {
+            scalar: mut base_scalar,
+            ..
+        }) = *resolver.resolve(expr)?
+        else {
+            return Err(ExpressionError::InvalidCastArgument);
         };
         base_scalar.kind = kind;
         if let Some(width) = convert {
@@ -855,29 +476,7 @@ impl super::super::Validator {
                     scalar,
                     ..
                 } => Some((size.get(), scalar)),
-                Ti::LongVector {
-                    size: crate::CooperativeSize::Pending(_),
-                    ..
-                }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => None,
+                _ => None,
             }
         };
         let (Some((source_count, source)), Some((target_count, target))) = (

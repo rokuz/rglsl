@@ -97,17 +97,7 @@ impl Writer {
                             "`gl_PointSize` in a tessellation shader",
                             &[spirv::Capability::TessellationPointSize],
                         )?,
-                    crate::ShaderStage::Vertex
-                    | crate::ShaderStage::Task
-                    | crate::ShaderStage::Mesh
-                    | crate::ShaderStage::Fragment
-                    | crate::ShaderStage::Compute
-                    | crate::ShaderStage::RayGeneration
-                    | crate::ShaderStage::Miss
-                    | crate::ShaderStage::AnyHit
-                    | crate::ShaderStage::ClosestHit
-                    | crate::ShaderStage::Intersection
-                    | crate::ShaderStage::Callable => {}
+                    _ => {}
                 }
                 BuiltIn::PointSize
             }
@@ -452,8 +442,6 @@ impl Writer {
             }
         };
 
-        use crate::ScalarKind as Sk;
-
         if class == spirv::StorageClass::Input && stage == crate::ShaderStage::Fragment {
             let mut element = ty;
             while let crate::TypeInner::Array { base, .. } = ir_module.types[element].inner {
@@ -461,40 +449,9 @@ impl Writer {
             }
             let is_flat = match ir_module.types[element].inner {
                 crate::TypeInner::Scalar(scalar) | crate::TypeInner::Vector { scalar, .. } => {
-                    match scalar.kind {
-                        Sk::Uint | Sk::Sint => true,
-                        Sk::Bool
-                        | Sk::Float
-                        | Sk::BFloat
-                        | Sk::FloatE4M3
-                        | Sk::FloatE5M2
-                        | Sk::FloatE2M1
-                        | Sk::FloatE3M2
-                        | Sk::FloatE2M3
-                        | Sk::FloatUE8M0
-                        | Sk::FloatMXINT8 => false,
-                    }
+                    scalar.kind.is_integer()
                 }
-                crate::TypeInner::Matrix { .. }
-                | crate::TypeInner::CooperativeMatrix { .. }
-                | crate::TypeInner::LongVector { .. }
-                | crate::TypeInner::TensorLayout { .. }
-                | crate::TypeInner::TensorView { .. }
-                | crate::TypeInner::Tensor { .. }
-                | crate::TypeInner::Atomic(_)
-                | crate::TypeInner::Pointer { .. }
-                | crate::TypeInner::ValuePointer { .. }
-                | crate::TypeInner::Array { .. }
-                | crate::TypeInner::Struct { .. }
-                | crate::TypeInner::Image { .. }
-                | crate::TypeInner::Sampler { .. }
-                | crate::TypeInner::SampledImage { .. }
-                | crate::TypeInner::AccelerationStructure
-                | crate::TypeInner::RayQuery
-                | crate::TypeInner::HitObject { .. }
-                | crate::TypeInner::BindingArray { .. }
-                | crate::TypeInner::BufferDescriptor { .. }
-                | crate::TypeInner::Spirv { .. } => false,
+                _ => false,
             };
 
             if is_flat {

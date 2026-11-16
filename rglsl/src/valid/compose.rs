@@ -31,28 +31,7 @@ pub fn validate_compose(
                         size: comp_size,
                         scalar: comp_scalar,
                     } if comp_scalar == scalar => comp_size as u32,
-                    Ti::Scalar(_)
-                    | Ti::Vector { .. }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
+                    _ => {
                         log::error!(
                             "Vector component[{index}] type {comp_inner:?}, building {scalar:?}"
                         );
@@ -144,27 +123,7 @@ pub fn validate_compose(
                 }
             }
         }
-        ref other @ (Ti::Scalar(_)
-        | Ti::CooperativeMatrix { .. }
-        | Ti::TensorLayout { .. }
-        | Ti::TensorView { .. }
-        | Ti::Tensor { .. }
-        | Ti::Atomic(_)
-        | Ti::Pointer { .. }
-        | Ti::ValuePointer { .. }
-        | Ti::Array {
-            size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
-            ..
-        }
-        | Ti::Image { .. }
-        | Ti::Sampler { .. }
-        | Ti::SampledImage { .. }
-        | Ti::AccelerationStructure
-        | Ti::RayQuery
-        | Ti::HitObject { .. }
-        | Ti::BindingArray { .. }
-        | Ti::BufferDescriptor { .. }
-        | Ti::Spirv { .. }) => {
+        ref other => {
             log::error!("Composing of {other:?}");
             return Err(ComposeError::Type(self_ty_handle));
         }

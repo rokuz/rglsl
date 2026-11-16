@@ -31,26 +31,7 @@ impl<'a> ResolveContext<'a> {
                         size: crate::VectorSize::Quad,
                     }))
                 }
-                Ti::Scalar(_)
-                | Ti::Vector { .. }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Sampler { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => {
+                _ => {
                     log::error!("Image type {ty:?}");
                     Err(ResolveError::InvalidImage(image))
                 }
@@ -95,26 +76,7 @@ impl<'a> ResolveContext<'a> {
                     },
                 }))
             }
-            Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Sampler { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Image type {ty:?}");
                 Err(ResolveError::InvalidImage(image))
             }
@@ -136,50 +98,28 @@ impl<'a> ResolveContext<'a> {
                         crate::ImageDimension::D1 | crate::ImageDimension::Buffer => {
                             Ti::Scalar(crate::Scalar::U32)
                         }
-                        crate::ImageDimension::D2
-                        | crate::ImageDimension::Cube
-                        | crate::ImageDimension::Subpass
-                        | crate::ImageDimension::TileImageData => Ti::Vector {
-                            size: crate::VectorSize::Bi,
-                            scalar: crate::Scalar::U32,
-                        },
+
                         crate::ImageDimension::D3 => Ti::Vector {
                             size: crate::VectorSize::Tri,
                             scalar: crate::Scalar::U32,
                         },
+                        _ => Ti::Vector {
+                            size: crate::VectorSize::Bi,
+                            scalar: crate::Scalar::U32,
+                        },
                     },
-                    Ti::Scalar(_)
-                    | Ti::Vector { .. }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
+                    _ => {
                         log::error!("Image type {ty:?}");
                         return Err(ResolveError::InvalidImage(image));
                     }
                 }
             }
-            crate::ImageQuery::NumLevels
-            | crate::ImageQuery::NumLayers
-            | crate::ImageQuery::NumSamples => Ti::Scalar(crate::Scalar::U32),
+
             crate::ImageQuery::Lod { .. } => Ti::Vector {
                 size: crate::VectorSize::Bi,
                 scalar: crate::Scalar::F32,
             },
+            _ => Ti::Scalar(crate::Scalar::U32),
         };
         Ok(TypeResolution::Value(inner))
     }
@@ -207,34 +147,7 @@ impl<'a> ResolveContext<'a> {
                         size: crate::VectorSize::Quad,
                         scalar: crate::Scalar { kind, width: 4 },
                     })),
-                    Ti::Image {
-                        class: crate::ImageClass::Depth { .. } | crate::ImageClass::Storage { .. },
-                        ..
-                    }
-                    | Ti::SampledImage {
-                        class: crate::ImageClass::Depth { .. } | crate::ImageClass::Storage { .. },
-                        ..
-                    }
-                    | Ti::Scalar(_)
-                    | Ti::Vector { .. }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
+                    _ => {
                         log::error!("Fragment fetch image type {ty:?}");
                         Err(ResolveError::InvalidImage(image))
                     }
@@ -260,31 +173,7 @@ impl<'a> ResolveContext<'a> {
                         size: crate::VectorSize::Quad,
                         scalar: crate::Scalar { kind, width: 4 },
                     })),
-                    Ti::Image {
-                        class: crate::ImageClass::Depth { .. } | crate::ImageClass::Storage { .. },
-                        ..
-                    }
-                    | Ti::Scalar(_)
-                    | Ti::Vector { .. }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array { .. }
-                    | Ti::Struct { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {
+                    _ => {
                         log::error!("Attachment type {ty:?}");
                         Err(ResolveError::InvalidImage(image))
                     }

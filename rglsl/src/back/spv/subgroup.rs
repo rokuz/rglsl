@@ -67,11 +67,7 @@ impl BlockContext<'_> {
                     Capability::GroupNonUniformClustered,
                 ],
             ),
-            CollectiveOperation::PartitionedReduce(_)
-            | CollectiveOperation::PartitionedInclusiveScan(_)
-            | CollectiveOperation::PartitionedExclusiveScan(_) => {
-                self.writer.require(&feature::SUBGROUP_PARTITIONED)
-            }
+            _ => self.writer.require(&feature::SUBGROUP_PARTITIONED),
         }
     }
 
@@ -176,7 +172,7 @@ impl BlockContext<'_> {
                 "subgroup vote",
                 &[Capability::GroupNonUniform, Capability::GroupNonUniformVote],
             )?,
-            sg::Add | sg::Mul | sg::Min | sg::Max | sg::And | sg::Or | sg::Xor => {
+            _ => {
                 self.require_collective(collective_op)?;
             }
         }
@@ -192,25 +188,7 @@ impl BlockContext<'_> {
             TypeInner::Vector { scalar: kind, .. } | TypeInner::LongVector { scalar: kind, .. } => {
                 (false, kind)
             }
-            TypeInner::Matrix { .. }
-            | TypeInner::CooperativeMatrix { .. }
-            | TypeInner::TensorLayout { .. }
-            | TypeInner::TensorView { .. }
-            | TypeInner::Atomic(_)
-            | TypeInner::Pointer { .. }
-            | TypeInner::ValuePointer { .. }
-            | TypeInner::Array { .. }
-            | TypeInner::Struct { .. }
-            | TypeInner::Image { .. }
-            | TypeInner::SampledImage { .. }
-            | TypeInner::Sampler { .. }
-            | TypeInner::AccelerationStructure
-            | TypeInner::RayQuery
-            | TypeInner::HitObject { .. }
-            | TypeInner::BindingArray { .. }
-            | TypeInner::BufferDescriptor { .. }
-            | TypeInner::Tensor { .. }
-            | TypeInner::Spirv { .. } => {
+            _ => {
                 return Err(Error::Validation(
                     "subgroup operation result is not a scalar or vector",
                 ));
@@ -249,7 +227,7 @@ impl BlockContext<'_> {
             (sk::Bool, sg::And) => Op::GroupNonUniformLogicalAnd,
             (sk::Bool, sg::Or) => Op::GroupNonUniformLogicalOr,
             (sk::Bool, sg::Xor) => Op::GroupNonUniformLogicalXor,
-            (_, sg::And | sg::Or | sg::Xor) => {
+            _ => {
                 return Err(Error::Validation(
                     "subgroup bitwise operand is not an integer or bool",
                 ));
@@ -419,26 +397,7 @@ impl BlockContext<'_> {
                 ));
             }
             TypeInner::Vector { size, scalar } => (size, scalar),
-            TypeInner::Matrix { .. }
-            | TypeInner::CooperativeMatrix { .. }
-            | TypeInner::LongVector { .. }
-            | TypeInner::TensorLayout { .. }
-            | TypeInner::TensorView { .. }
-            | TypeInner::Atomic(_)
-            | TypeInner::Pointer { .. }
-            | TypeInner::ValuePointer { .. }
-            | TypeInner::Array { .. }
-            | TypeInner::Struct { .. }
-            | TypeInner::Image { .. }
-            | TypeInner::SampledImage { .. }
-            | TypeInner::Sampler { .. }
-            | TypeInner::AccelerationStructure
-            | TypeInner::RayQuery
-            | TypeInner::HitObject { .. }
-            | TypeInner::BindingArray { .. }
-            | TypeInner::BufferDescriptor { .. }
-            | TypeInner::Tensor { .. }
-            | TypeInner::Spirv { .. } => {
+            _ => {
                 return Err(Error::Validation(
                     "subgroup invocation operand is not a scalar or vector",
                 ));

@@ -23,21 +23,7 @@ impl super::super::Validator {
             | Ti::Pointer { .. }
             | Ti::ValuePointer { size: Some(_), .. }
             | Ti::BindingArray { .. } => {}
-            ref other @ (Ti::ValuePointer { size: None, .. }
-            | Ti::Scalar(_)
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. }) => {
+            ref other => {
                 log::debug!("Indexing of {other:?}");
                 return Err(ExpressionError::InvalidBaseType(base));
             }
@@ -88,24 +74,7 @@ impl super::super::Validator {
                         return Err(ExpressionError::NegativeIndex(base));
                     }
                     L::I64(_) | L::U64(_) => {}
-                    L::F64(_)
-                    | L::F32(_)
-                    | L::F16(_)
-                    | L::U8(_)
-                    | L::I8(_)
-                    | L::U16(_)
-                    | L::I16(_)
-                    | L::U32(_)
-                    | L::I32(_)
-                    | L::Bool(_)
-                    | L::BF16(_)
-                    | L::FE4M3(_)
-                    | L::FE5M2(_)
-                    | L::FE2M1(_)
-                    | L::FE3M2(_)
-                    | L::FE2M3(_)
-                    | L::FUE8M0(_)
-                    | L::FMXINT8(_) => return Err(ExpressionError::InvalidIndexType(index)),
+                    _ => return Err(ExpressionError::InvalidIndexType(index)),
                 }
             }
         }
@@ -145,21 +114,7 @@ impl super::super::Validator {
             }
             | Ti::BindingArray { .. } => u32::MAX,
             Ti::Struct { ref members, .. } => members.len() as u32,
-            ref other @ (Ti::Pointer { .. }
-            | Ti::ValuePointer { size: None, .. }
-            | Ti::Scalar(_)
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. }) => {
+            ref other => {
                 log::debug!("Indexing of {other:?}");
                 return Err(ExpressionError::InvalidBaseType(base));
             }
@@ -226,27 +181,7 @@ impl super::super::Validator {
                     | Ti::Tensor { .. }
             ) => {}
             Ti::ValuePointer { .. } => {}
-            ref other @ (Ti::Pointer { .. }
-            | Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. }) => {
+            ref other => {
                 log::debug!("Loading {other:?}");
                 return Err(ExpressionError::InvalidPointerType(pointer));
             }

@@ -40,65 +40,7 @@ impl super::super::Validator {
             E::Access { base, .. } | E::AccessIndex { base, .. } => {
                 matches!(*context.get_expression(base), E::GlobalVariable(_))
             }
-            E::Literal(_)
-            | E::Constant(_)
-            | E::Override(_)
-            | E::ZeroValue(_)
-            | E::Compose { .. }
-            | E::Splat { .. }
-            | E::Swizzle { .. }
-            | E::LocalVariable(_)
-            | E::Load { .. }
-            | E::ImageSample { .. }
-            | E::ImageLoad { .. }
-            | E::ImageQuery { .. }
-            | E::Unary { .. }
-            | E::Binary { .. }
-            | E::Select { .. }
-            | E::Derivative { .. }
-            | E::Relational { .. }
-            | E::Math { .. }
-            | E::As { .. }
-            | E::CallResult(_)
-            | E::AtomicResult { .. }
-            | E::ArrayLength(_)
-            | E::WideArrayLength(_)
-            | E::PhysicalPointer { .. }
-            | E::PhysicalAddress { .. }
-            | E::BufferPointer { .. }
-            | E::HeapOffset { .. }
-            | E::RayQueryProceedResult
-            | E::RayQueryGet { .. }
-            | E::ReportIntersectionResult
-            | E::AccelerationStructureFromAddress { .. }
-            | E::HitObjectGet { .. }
-            | E::FetchMicroTriangleVertex { .. }
-            | E::SubgroupBallotResult
-            | E::SubgroupOperationResult { .. }
-            | E::SpirvInstructionResult { .. }
-            | E::CooperativeLoad { .. }
-            | E::CooperativeMultiplyAdd { .. }
-            | E::CooperativeMatrixLength { .. }
-            | E::Replicate { .. }
-            | E::Expect { .. }
-            | E::ImageSparseResident { .. }
-            | E::IsHelperInvocation
-            | E::ReadClock { .. }
-            | E::InterpolateAt { .. }
-            | E::FragmentFetch { .. }
-            | E::ImageFootprint { .. }
-            | E::AttachmentRead { .. }
-            | E::CooperativeVectorLoad { .. }
-            | E::CooperativeVectorMatMul { .. }
-            | E::Convert { .. }
-            | E::CooperativeMatrixResult { .. }
-            | E::TensorCreate { .. }
-            | E::ImageProcessing { .. }
-            | E::ArrayConversion { .. }
-            | E::Bitcast { .. }
-            | E::TensorSet { .. }
-            | E::TensorRead { .. }
-            | E::TensorQuerySize { .. } => context.heap_image(image).is_some(),
+            _ => context.heap_image(image).is_some(),
         };
         if !is_handle {
             return Err(
@@ -189,51 +131,12 @@ impl super::super::Validator {
                     match *context.resolve_type_inner(pointer, &self.valid_expression_set)? {
                         Ti::Pointer { base, .. } => match context.types[base].inner {
                             Ti::Atomic(scalar) | Ti::Scalar(scalar) => Some(scalar),
-                            Ti::Vector { .. }
-                            | Ti::Matrix { .. }
-                            | Ti::CooperativeMatrix { .. }
-                            | Ti::LongVector { .. }
-                            | Ti::TensorLayout { .. }
-                            | Ti::TensorView { .. }
-                            | Ti::Tensor { .. }
-                            | Ti::Pointer { .. }
-                            | Ti::ValuePointer { .. }
-                            | Ti::Array { .. }
-                            | Ti::Struct { .. }
-                            | Ti::Image { .. }
-                            | Ti::Sampler { .. }
-                            | Ti::SampledImage { .. }
-                            | Ti::AccelerationStructure
-                            | Ti::RayQuery
-                            | Ti::HitObject { .. }
-                            | Ti::BindingArray { .. }
-                            | Ti::BufferDescriptor { .. }
-                            | Ti::Spirv { .. } => None,
+                            _ => None,
                         },
                         Ti::ValuePointer {
                             size: None, scalar, ..
                         } => Some(scalar),
-                        Ti::ValuePointer { size: Some(_), .. }
-                        | Ti::Scalar(_)
-                        | Ti::Vector { .. }
-                        | Ti::Matrix { .. }
-                        | Ti::CooperativeMatrix { .. }
-                        | Ti::LongVector { .. }
-                        | Ti::TensorLayout { .. }
-                        | Ti::TensorView { .. }
-                        | Ti::Tensor { .. }
-                        | Ti::Atomic(_)
-                        | Ti::Array { .. }
-                        | Ti::Struct { .. }
-                        | Ti::Image { .. }
-                        | Ti::Sampler { .. }
-                        | Ti::SampledImage { .. }
-                        | Ti::AccelerationStructure
-                        | Ti::RayQuery
-                        | Ti::HitObject { .. }
-                        | Ti::BindingArray { .. }
-                        | Ti::BufferDescriptor { .. }
-                        | Ti::Spirv { .. } => None,
+                        _ => None,
                     };
                 match scalar {
                     Some(
@@ -257,44 +160,7 @@ impl super::super::Validator {
                     Sf::R32Sint | Sf::R32Uint | Sf::R32Float | Sf::R64Uint | Sf::R64Sint => {
                         Ok(format.into())
                     }
-                    Sf::R8Unorm
-                    | Sf::R8Snorm
-                    | Sf::R8Uint
-                    | Sf::R8Sint
-                    | Sf::R16Uint
-                    | Sf::R16Sint
-                    | Sf::R16Float
-                    | Sf::Rg8Unorm
-                    | Sf::Rg8Snorm
-                    | Sf::Rg8Uint
-                    | Sf::Rg8Sint
-                    | Sf::Rg16Uint
-                    | Sf::Rg16Sint
-                    | Sf::Rg16Float
-                    | Sf::Rgba8Unorm
-                    | Sf::Rgba8Snorm
-                    | Sf::Rgba8Uint
-                    | Sf::Rgba8Sint
-                    | Sf::Bgra8Unorm
-                    | Sf::Rgb10a2Uint
-                    | Sf::Rgb10a2Unorm
-                    | Sf::Rg11b10Ufloat
-                    | Sf::Rg32Uint
-                    | Sf::Rg32Sint
-                    | Sf::Rg32Float
-                    | Sf::Rgba16Uint
-                    | Sf::Rgba16Sint
-                    | Sf::Rgba16Float
-                    | Sf::Rgba32Uint
-                    | Sf::Rgba32Sint
-                    | Sf::Rgba32Float
-                    | Sf::R16Unorm
-                    | Sf::R16Snorm
-                    | Sf::Rg16Unorm
-                    | Sf::Rg16Snorm
-                    | Sf::Rgba16Unorm
-                    | Sf::Rgba16Snorm
-                    | Sf::Unknown(_) => Err(FunctionError::InvalidImageAtomic(
+                    _ => Err(FunctionError::InvalidImageAtomic(
                         ExpressionError::InvalidImageFormat(format),
                     )
                     .with_span_handle(texel.image, context.expressions)),
@@ -387,27 +253,7 @@ impl super::super::Validator {
                     size: size @ (crate::VectorSize::Bi | crate::VectorSize::Quad),
                     scalar: scalar @ crate::Scalar::F16,
                 } => (scalar, space, Some(size)),
-                ref other @ (Ti::Scalar(_)
-                | Ti::Vector { .. }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. }) => {
+                ref other => {
                     log::error!("Atomic pointer to type {other:?}");
                     return Err(AtomicError::InvalidPointer(pointer)
                         .with_span_handle(pointer, context.expressions)
@@ -432,27 +278,7 @@ impl super::super::Validator {
                 scalar: scalar @ crate::Scalar::F16,
                 space,
             } => (scalar, space, Some(size)),
-            ref other @ (Ti::ValuePointer { .. }
-            | Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. }) => {
+            ref other => {
                 log::error!("Atomic operation on type {other:?}");
                 return Err(AtomicError::InvalidPointer(pointer)
                     .with_span_handle(pointer, context.expressions)
@@ -656,42 +482,7 @@ impl super::super::Validator {
                     scalar: crate::Scalar::F16,
                 },
             ),
-            Sf::R8Unorm
-            | Sf::R8Snorm
-            | Sf::R8Uint
-            | Sf::R8Sint
-            | Sf::R16Uint
-            | Sf::R16Sint
-            | Sf::R16Float
-            | Sf::Rg8Unorm
-            | Sf::Rg8Snorm
-            | Sf::Rg8Uint
-            | Sf::Rg8Sint
-            | Sf::Rg16Uint
-            | Sf::Rg16Sint
-            | Sf::Rgba8Unorm
-            | Sf::Rgba8Snorm
-            | Sf::Rgba8Uint
-            | Sf::Rgba8Sint
-            | Sf::Bgra8Unorm
-            | Sf::Rgb10a2Uint
-            | Sf::Rgb10a2Unorm
-            | Sf::Rg11b10Ufloat
-            | Sf::Rg32Uint
-            | Sf::Rg32Sint
-            | Sf::Rg32Float
-            | Sf::Rgba16Uint
-            | Sf::Rgba16Sint
-            | Sf::Rgba32Uint
-            | Sf::Rgba32Sint
-            | Sf::Rgba32Float
-            | Sf::R16Unorm
-            | Sf::R16Snorm
-            | Sf::Rg16Unorm
-            | Sf::Rg16Snorm
-            | Sf::Rgba16Unorm
-            | Sf::Rgba16Snorm
-            | Sf::Unknown(_) => {
+            _ => {
                 return Err(FunctionError::InvalidImageAtomic(
                     ExpressionError::InvalidImageFormat(format),
                 )

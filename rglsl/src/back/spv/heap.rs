@@ -45,30 +45,14 @@ const fn heap_index(heap: DescriptorHeap) -> usize {
 }
 
 const fn is_descriptor_inner(inner: &TypeInner) -> bool {
-    match *inner {
+    matches!(
+        *inner,
         TypeInner::Image { .. }
-        | TypeInner::Sampler { .. }
-        | TypeInner::AccelerationStructure
-        | TypeInner::Tensor { .. }
-        | TypeInner::BufferDescriptor { .. } => true,
-        TypeInner::Scalar(_)
-        | TypeInner::Vector { .. }
-        | TypeInner::Matrix { .. }
-        | TypeInner::CooperativeMatrix { .. }
-        | TypeInner::LongVector { .. }
-        | TypeInner::TensorLayout { .. }
-        | TypeInner::TensorView { .. }
-        | TypeInner::Atomic(_)
-        | TypeInner::Pointer { .. }
-        | TypeInner::ValuePointer { .. }
-        | TypeInner::Array { .. }
-        | TypeInner::Struct { .. }
-        | TypeInner::SampledImage { .. }
-        | TypeInner::RayQuery
-        | TypeInner::HitObject { .. }
-        | TypeInner::BindingArray { .. }
-        | TypeInner::Spirv { .. } => false,
-    }
+            | TypeInner::Sampler { .. }
+            | TypeInner::AccelerationStructure
+            | TypeInner::Tensor { .. }
+            | TypeInner::BufferDescriptor { .. }
+    )
 }
 
 fn is_descriptor(module: &Module, ty: Handle<crate::Type>) -> bool {
@@ -181,21 +165,7 @@ fn scalar_layout_step(
         TypeInner::Struct { ref members, .. } => {
             return Err((LayoutTask::Struct(members), LayoutChildren::Struct(members)));
         }
-        TypeInner::CooperativeMatrix { .. }
-        | TypeInner::LongVector { .. }
-        | TypeInner::TensorLayout { .. }
-        | TypeInner::TensorView { .. }
-        | TypeInner::Tensor { .. }
-        | TypeInner::ValuePointer { .. }
-        | TypeInner::Image { .. }
-        | TypeInner::Sampler { .. }
-        | TypeInner::SampledImage { .. }
-        | TypeInner::AccelerationStructure
-        | TypeInner::RayQuery
-        | TypeInner::HitObject { .. }
-        | TypeInner::BindingArray { .. }
-        | TypeInner::BufferDescriptor { .. }
-        | TypeInner::Spirv { .. } => (0, 1),
+        _ => (0, 1),
     })
 }
 
@@ -310,16 +280,7 @@ impl Writer {
                 self.debug.buffer_type = true;
                 Instruction::type_buffer(id, class)
             }
-            LocalType::Numeric(_)
-            | LocalType::Cooperative(_)
-            | LocalType::Pointer { .. }
-            | LocalType::Image(_)
-            | LocalType::SampledImage { .. }
-            | LocalType::Sampler
-            | LocalType::BindingArray { .. }
-            | LocalType::AccelerationStructure
-            | LocalType::RayQuery
-            | LocalType::HitObject(_) => return,
+            _ => return,
         };
         instruction.to_words(&mut self.logical_layout.declarations);
     }
@@ -380,26 +341,7 @@ impl Writer {
                     children.extend(members.iter().map(|member| member.ty));
                     false
                 }
-                TypeInner::Scalar(_)
-                | TypeInner::Vector { .. }
-                | TypeInner::Matrix { .. }
-                | TypeInner::CooperativeMatrix { .. }
-                | TypeInner::LongVector { .. }
-                | TypeInner::TensorLayout { .. }
-                | TypeInner::TensorView { .. }
-                | TypeInner::Tensor { .. }
-                | TypeInner::Atomic(_)
-                | TypeInner::Pointer { .. }
-                | TypeInner::ValuePointer { .. }
-                | TypeInner::Image { .. }
-                | TypeInner::Sampler { .. }
-                | TypeInner::SampledImage { .. }
-                | TypeInner::AccelerationStructure
-                | TypeInner::RayQuery
-                | TypeInner::HitObject { .. }
-                | TypeInner::BindingArray { .. }
-                | TypeInner::BufferDescriptor { .. }
-                | TypeInner::Spirv { .. } => is_descriptor_inner(inner),
+                _ => is_descriptor_inner(inner),
             },
         )
     }
@@ -419,25 +361,7 @@ impl Writer {
                 TypeInner::BufferDescriptor { base, .. } => {
                     super::writer::mark_laid_out(&module.types, &mut self.laid_out_types, base);
                 }
-                TypeInner::Scalar(_)
-                | TypeInner::Vector { .. }
-                | TypeInner::Matrix { .. }
-                | TypeInner::CooperativeMatrix { .. }
-                | TypeInner::LongVector { .. }
-                | TypeInner::TensorLayout { .. }
-                | TypeInner::TensorView { .. }
-                | TypeInner::Tensor { .. }
-                | TypeInner::Atomic(_)
-                | TypeInner::Pointer { .. }
-                | TypeInner::ValuePointer { .. }
-                | TypeInner::Image { .. }
-                | TypeInner::Sampler { .. }
-                | TypeInner::SampledImage { .. }
-                | TypeInner::AccelerationStructure
-                | TypeInner::RayQuery
-                | TypeInner::HitObject { .. }
-                | TypeInner::BindingArray { .. }
-                | TypeInner::Spirv { .. } => {}
+                _ => {}
             }
         }
     }
@@ -455,7 +379,6 @@ impl Writer {
 
     fn heap_op(&mut self, op: Op, left: Value, right: Value) -> Value {
         if let (Value::Known(a), Value::Known(b)) = (left, right) {
-            #[expect(clippy::wildcard_enum_match_arm)]
             let folded = match op {
                 Op::IAdd => a.checked_add(b),
                 Op::ISub => a.checked_sub(b),
@@ -689,25 +612,7 @@ impl Writer {
                         self.decorate_buffer_access(module, base, block_id, access);
                     }
                 }
-                TypeInner::Scalar(_)
-                | TypeInner::Vector { .. }
-                | TypeInner::Matrix { .. }
-                | TypeInner::CooperativeMatrix { .. }
-                | TypeInner::LongVector { .. }
-                | TypeInner::TensorLayout { .. }
-                | TypeInner::TensorView { .. }
-                | TypeInner::Tensor { .. }
-                | TypeInner::Atomic(_)
-                | TypeInner::Pointer { .. }
-                | TypeInner::ValuePointer { .. }
-                | TypeInner::Image { .. }
-                | TypeInner::Sampler { .. }
-                | TypeInner::SampledImage { .. }
-                | TypeInner::AccelerationStructure
-                | TypeInner::RayQuery
-                | TypeInner::HitObject { .. }
-                | TypeInner::BindingArray { .. }
-                | TypeInner::Spirv { .. } => {}
+                _ => {}
             }
         }
         Ok(())
@@ -1029,23 +934,7 @@ fn type_children(inner: &TypeInner) -> Vec<Handle<crate::Type>> {
         | TypeInner::Pointer { base, .. }
         | TypeInner::BufferDescriptor { base, .. } => alloc::vec![base],
         TypeInner::Struct { ref members, .. } => members.iter().map(|member| member.ty).collect(),
-        TypeInner::Scalar(_)
-        | TypeInner::Vector { .. }
-        | TypeInner::Matrix { .. }
-        | TypeInner::CooperativeMatrix { .. }
-        | TypeInner::LongVector { .. }
-        | TypeInner::TensorLayout { .. }
-        | TypeInner::TensorView { .. }
-        | TypeInner::Tensor { .. }
-        | TypeInner::Atomic(_)
-        | TypeInner::ValuePointer { .. }
-        | TypeInner::Image { .. }
-        | TypeInner::Sampler { .. }
-        | TypeInner::SampledImage { .. }
-        | TypeInner::AccelerationStructure
-        | TypeInner::RayQuery
-        | TypeInner::HitObject { .. }
-        | TypeInner::Spirv { .. } => Vec::new(),
+        _ => Vec::new(),
     }
 }
 
@@ -1256,26 +1145,7 @@ impl<'b> HeapCx<'b> {
                 let (size, alignment) = scalar_layout(module, member.ty, member.matrix_layout);
                 Value::Known(round_up(size, alignment))
             }
-            TypeInner::Scalar(_)
-            | TypeInner::Vector { .. }
-            | TypeInner::CooperativeMatrix { .. }
-            | TypeInner::LongVector { .. }
-            | TypeInner::TensorLayout { .. }
-            | TypeInner::TensorView { .. }
-            | TypeInner::Tensor { .. }
-            | TypeInner::Atomic(_)
-            | TypeInner::Pointer { .. }
-            | TypeInner::ValuePointer { .. }
-            | TypeInner::Struct { .. }
-            | TypeInner::Image { .. }
-            | TypeInner::Sampler { .. }
-            | TypeInner::SampledImage { .. }
-            | TypeInner::AccelerationStructure
-            | TypeInner::RayQuery
-            | TypeInner::HitObject { .. }
-            | TypeInner::BindingArray { .. }
-            | TypeInner::BufferDescriptor { .. }
-            | TypeInner::Spirv { .. } => {
+            _ => {
                 self.call(self.clone().value_size(module, member.ty, size))
                     .await?
             }
@@ -1298,27 +1168,7 @@ impl<'b> HeapCx<'b> {
                         .await?
                 }
             }
-            TypeInner::Scalar(_)
-            | TypeInner::Vector { .. }
-            | TypeInner::Matrix { .. }
-            | TypeInner::CooperativeMatrix { .. }
-            | TypeInner::LongVector { .. }
-            | TypeInner::TensorLayout { .. }
-            | TypeInner::TensorView { .. }
-            | TypeInner::Tensor { .. }
-            | TypeInner::Atomic(_)
-            | TypeInner::Pointer { .. }
-            | TypeInner::ValuePointer { .. }
-            | TypeInner::Struct { .. }
-            | TypeInner::Image { .. }
-            | TypeInner::Sampler { .. }
-            | TypeInner::SampledImage { .. }
-            | TypeInner::AccelerationStructure
-            | TypeInner::RayQuery
-            | TypeInner::HitObject { .. }
-            | TypeInner::BindingArray { .. }
-            | TypeInner::BufferDescriptor { .. }
-            | TypeInner::Spirv { .. } => {
+            _ => {
                 self.call(self.clone().value_align(module, member.ty, size))
                     .await?
             }

@@ -61,38 +61,9 @@ const fn is_numeric(inner: &crate::TypeInner) -> bool {
     use crate::{ScalarKind as Sk, TypeInner as Ti};
     match *inner {
         Ti::Scalar(scalar) | Ti::Vector { scalar, .. } | Ti::LongVector { scalar, .. } => {
-            match scalar.kind {
-                Sk::Sint | Sk::Uint | Sk::Float => true,
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8 => false,
-            }
+            matches!(scalar.kind, Sk::Sint | Sk::Uint | Sk::Float)
         }
-        Ti::Matrix { .. }
-        | Ti::CooperativeMatrix { .. }
-        | Ti::TensorLayout { .. }
-        | Ti::TensorView { .. }
-        | Ti::Tensor { .. }
-        | Ti::Atomic(_)
-        | Ti::Pointer { .. }
-        | Ti::ValuePointer { .. }
-        | Ti::Array { .. }
-        | Ti::Struct { .. }
-        | Ti::Image { .. }
-        | Ti::Sampler { .. }
-        | Ti::SampledImage { .. }
-        | Ti::AccelerationStructure
-        | Ti::RayQuery
-        | Ti::HitObject { .. }
-        | Ti::BindingArray { .. }
-        | Ti::BufferDescriptor { .. }
-        | Ti::Spirv { .. } => false,
+        _ => false,
     }
 }
 
@@ -139,7 +110,6 @@ impl super::super::Validator {
     ) -> Result<(), WithSpan<FunctionError>> {
         use crate::CollectiveOperation as Co;
         match collective_op {
-            Co::Reduce | Co::InclusiveScan | Co::ExclusiveScan => Ok(()),
             Co::ClusteredReduce(size) if size.is_power_of_two() => Ok(()),
             Co::ClusteredReduce(_) => Err(SubgroupError::UnknownOperation.with_span().into_other()),
             Co::PartitionedReduce(ballot)
@@ -147,6 +117,7 @@ impl super::super::Validator {
             | Co::PartitionedExclusiveScan(ballot) => {
                 self.subgroup_operand(ballot, context, is_ballot)
             }
+            _ => Ok(()),
         }
     }
 
@@ -186,25 +157,7 @@ impl super::super::Validator {
         let (is_scalar, scalar) = match *argument_inner {
             Ti::Scalar(scalar) => (true, scalar),
             Ti::Vector { scalar, .. } | Ti::LongVector { scalar, .. } => (false, scalar),
-            Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("Subgroup operand type {argument_inner:?}");
                 return Err(SubgroupError::InvalidOperand(argument)
                     .with_span_handle(argument, context.expressions)
