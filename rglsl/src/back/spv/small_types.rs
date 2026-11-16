@@ -240,7 +240,7 @@ pub(super) fn usage(
     let mut capabilities: FastIndexSet<Capability> = FastIndexSet::default();
     let mut features: Vec<&'static Feature> = Vec::new();
     let mut add_feature = |feature: &'static Feature| {
-        if !features.iter().any(|&known| core::ptr::eq(known, feature)) {
+        if !features.contains(&feature) {
             features.push(feature);
         }
     };

@@ -208,6 +208,7 @@ impl Writer {
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             debug_printf: None,
             undeclarable_scalar: false,
+            min_version: None,
             debug_printf_strings: crate::FastHashMap::default(),
             raw_capabilities: crate::FastIndexSet::default(),
             raw_extensions: crate::FastIndexSet::default(),
@@ -358,6 +359,7 @@ impl Writer {
             ray_tracing_features: crate::RayTracingFeatures::empty(),
             debug_printf: None,
             undeclarable_scalar: false,
+            min_version: None,
             debug_printf_strings: take(&mut self.debug_printf_strings).reclaim(),
             raw_capabilities: take(&mut self.raw_capabilities).reclaim(),
             raw_extensions: take(&mut self.raw_extensions).reclaim(),
@@ -3939,6 +3941,7 @@ impl Writer {
         };
 
         self.write_logical_layout(ir_module, info, ep_index)?;
+        self.check_min_version()?;
         if self.undeclarable_scalar {
             return Err(Error::Validation(
                 "a scalar type without a SPIR-V declaration reached the backend",

@@ -17,15 +17,6 @@ const OPCODE_MASK: u32 = 0xffff;
 const MEMORY_ACCESS_POINTER_IDS: u32 =
     MEMORY_ACCESS_MAKE_POINTER_AVAILABLE | MEMORY_ACCESS_MAKE_POINTER_VISIBLE;
 
-const NV_EXT_INST_SETS: [&[u8]; 6] = [
-    b"SPV_NV_sample_mask_override_coverage",
-    b"SPV_NV_geometry_shader_passthrough",
-    b"SPV_NV_viewport_array2",
-    b"SPV_NVX_multiview_per_view_attributes",
-    b"SPV_NV_fragment_shader_barycentric",
-    b"SPV_NV_mesh_shader",
-];
-
 const BAD_ID: &str = "Bad <id>";
 const RUNS_OFF_THE_END: &str = "instruction runs off the end of the stream";
 
@@ -546,7 +537,7 @@ impl<'a> Stream<'a> {
             b"NonSemantic.DebugBreak" => ExtSet::DebugBreak,
             _ if name.starts_with(b"NonSemantic.Shader.DebugInfo.") => ExtSet::ShaderDebugInfo,
             _ if tables::AMD.iter().any(|&(set, _)| set == name) => ExtSet::Amd,
-            _ if NV_EXT_INST_SETS.contains(&name) => ExtSet::Nv,
+            _ if tables::NV_IMPORT_SETS.contains(&name) => ExtSet::Nv,
             _ => ExtSet::Glsl450,
         }
     }
