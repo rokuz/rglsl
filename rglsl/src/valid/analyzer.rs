@@ -279,64 +279,7 @@ impl GlobalOrArgument {
                     }
                 }
             }
-            E::Literal(_)
-            | E::Constant(_)
-            | E::Override(_)
-            | E::ZeroValue(_)
-            | E::Compose { .. }
-            | E::Splat { .. }
-            | E::Swizzle { .. }
-            | E::LocalVariable(_)
-            | E::ImageSample { .. }
-            | E::ImageLoad { .. }
-            | E::ImageQuery { .. }
-            | E::Unary { .. }
-            | E::Binary { .. }
-            | E::Select { .. }
-            | E::Derivative { .. }
-            | E::Relational { .. }
-            | E::Math { .. }
-            | E::As { .. }
-            | E::CallResult(_)
-            | E::AtomicResult { .. }
-            | E::ArrayLength(_)
-            | E::WideArrayLength(_)
-            | E::PhysicalPointer { .. }
-            | E::PhysicalAddress { .. }
-            | E::BufferPointer { .. }
-            | E::HeapOffset { .. }
-            | E::RayQueryProceedResult
-            | E::RayQueryGet { .. }
-            | E::ReportIntersectionResult
-            | E::AccelerationStructureFromAddress { .. }
-            | E::HitObjectGet { .. }
-            | E::FetchMicroTriangleVertex { .. }
-            | E::SubgroupBallotResult
-            | E::SubgroupOperationResult { .. }
-            | E::SpirvInstructionResult { .. }
-            | E::CooperativeLoad { .. }
-            | E::CooperativeMultiplyAdd { .. }
-            | E::CooperativeMatrixLength { .. }
-            | E::Replicate { .. }
-            | E::Expect { .. }
-            | E::ImageSparseResident { .. }
-            | E::IsHelperInvocation
-            | E::ReadClock { .. }
-            | E::InterpolateAt { .. }
-            | E::FragmentFetch { .. }
-            | E::ImageFootprint { .. }
-            | E::AttachmentRead { .. }
-            | E::CooperativeVectorLoad { .. }
-            | E::CooperativeVectorMatMul { .. }
-            | E::Convert { .. }
-            | E::CooperativeMatrixResult { .. }
-            | E::TensorCreate { .. }
-            | E::ImageProcessing { .. }
-            | E::ArrayConversion { .. }
-            | E::Bitcast { .. }
-            | E::TensorSet { .. }
-            | E::TensorRead { .. }
-            | E::TensorQuerySize { .. } => {
+            _ => {
                 return Err(ExpressionError::ExpectedGlobalOrArgument);
             }
         })
@@ -1115,7 +1058,7 @@ impl FunctionInfo {
                         disruptor,
                         combined,
                     });
-                    returned = self.process_statement_kind(
+                    returned = self.process_statement(
                         statement,
                         other_functions,
                         disruptor,
@@ -1206,7 +1149,7 @@ impl FunctionInfo {
         returned.ok_or_else(|| WithSpan::new(FunctionError::Unfinished))
     }
 
-    fn process_statement_kind<'a>(
+    fn process_statement<'a>(
         &mut self,
         statement: &'a crate::Statement,
         other_functions: &[FunctionInfo],
@@ -1215,8 +1158,11 @@ impl FunctionInfo {
         frames: &mut Vec<Flow<'a>>,
     ) -> Result<Option<FunctionUniformity>, WithSpan<FunctionError>> {
         use crate::Statement as S;
-        match *statement {
-            S::Block(ref b) => frames.push(Flow::block(b, disruptor)),
+        let uniformity = match *statement {
+            S::Block(ref b) => {
+                frames.push(Flow::block(b, disruptor));
+                return Ok(None);
+            }
             S::If {
                 condition,
                 ref accept,
@@ -1232,6 +1178,7 @@ impl FunctionInfo {
                     accept: None,
                 });
                 frames.push(Flow::block(accept, branch_disruptor));
+                return Ok(None);
             }
             S::Switch {
                 selector,
@@ -1248,6 +1195,7 @@ impl FunctionInfo {
                     case_disruptor: branch_disruptor,
                     uniformity: FunctionUniformity::new(),
                 });
+                return Ok(None);
             }
             S::Loop {
                 ref body,
@@ -1262,63 +1210,8 @@ impl FunctionInfo {
                     body: None,
                 });
                 frames.push(Flow::block(body, disruptor));
+                return Ok(None);
             }
-            S::Emit(_)
-            | S::Break
-            | S::Continue
-            | S::Return { .. }
-            | S::Kill
-            | S::TerminateInvocation
-            | S::Demote
-            | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock
-            | S::EmitVertex { .. }
-            | S::EndPrimitive { .. }
-            | S::ControlBarrier(_)
-            | S::MemoryBarrier(_)
-            | S::ScopedBarrier { .. }
-            | S::SplitBarrier { .. }
-            | S::Store { .. }
-            | S::ImageStore { .. }
-            | S::Atomic { .. }
-            | S::AtomicLoad { .. }
-            | S::AtomicStore { .. }
-            | S::ImageAtomic { .. }
-            | S::Call { .. }
-            | S::RayQuery { .. }
-            | S::RayPipelineFunction(_)
-            | S::HitObject { .. }
-            | S::ReorderThread { .. }
-            | S::MeshFunction(_)
-            | S::SubgroupBallot { .. }
-            | S::SubgroupGather { .. }
-            | S::SubgroupCollectiveOperation { .. }
-            | S::SubgroupFunction { .. }
-            | S::CooperativeStore { .. }
-            | S::DebugPrintf { .. }
-            | S::Assume { .. }
-            | S::CooperativeVector(_)
-            | S::CooperativeMatrix { .. }
-            | S::Abort { .. }
-            | S::TensorWrite { .. }
-            | S::SpirvInstruction { .. } => {
-                return self
-                    .process_statement(statement, other_functions, disruptor, expression_arena)
-                    .map(Some);
-            }
-        }
-        Ok(None)
-    }
-
-    fn process_statement(
-        &mut self,
-        statement: &crate::Statement,
-        other_functions: &[FunctionInfo],
-        disruptor: Option<UniformityDisruptor>,
-        expression_arena: &Arena<crate::Expression>,
-    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
-        use crate::Statement as S;
-        Ok(match *statement {
             S::Emit(ref range) => {
                 let mut requirements = UniformityRequirements::empty();
                 for expr in range.clone() {
@@ -1705,10 +1598,8 @@ impl FunctionInfo {
                     },
                 }
             }
-            S::Block(_) | S::If { .. } | S::Switch { .. } | S::Loop { .. } => {
-                FunctionUniformity::new()
-            }
-        })
+        };
+        Ok(Some(uniformity))
     }
 }
 

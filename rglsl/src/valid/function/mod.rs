@@ -868,185 +868,6 @@ impl super::Validator {
         Ok(())
     }
 
-    fn validate_statement(
-        &mut self,
-        statement: &crate::Statement,
-        span: crate::Span,
-        context: &BlockContext,
-    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
-        use crate::Statement as S;
-        let mut stages = super::ShaderStages::all();
-        match *statement {
-            S::Emit(ref range) => self.validate_emit(range, context)?,
-            S::Block(_) | S::If { .. } | S::Switch { .. } | S::Loop { .. } => {}
-            S::Break => {
-                if !context.abilities.contains(ControlFlowAbility::BREAK) {
-                    return Err(FunctionError::BreakOutsideOfLoopOrSwitch
-                        .with_span_static(span, "invalid break"));
-                }
-            }
-            S::Continue => {
-                if !context.abilities.contains(ControlFlowAbility::CONTINUE) {
-                    return Err(FunctionError::ContinueOutsideOfLoop
-                        .with_span_static(span, "invalid continue"));
-                }
-            }
-            S::Return { value } => self.validate_return(value, span, context)?,
-            S::Kill
-            | S::TerminateInvocation
-            | S::Demote
-            | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock => {
-                stages &= super::ShaderStages::FRAGMENT;
-            }
-            S::SplitBarrier { .. } | S::ScopedBarrier { .. } => {}
-            S::EmitVertex { .. } | S::EndPrimitive { .. } => {
-                stages &= super::ShaderStages::GEOMETRY;
-            }
-            S::CooperativeMatrix {
-                ref function,
-                result,
-            } => self.validate_cooperative_matrix_statement(function, result, context)?,
-            S::CooperativeVector(ref function) => {
-                self.validate_cooperative_vector_statement(function, context)?;
-            }
-            S::SpirvInstruction {
-                ref operands,
-                result,
-                ..
-            } => self.validate_spirv_instruction(operands, result, context)?,
-            S::Assume { condition } => self.validate_condition(condition, context)?,
-            S::MeshFunction(ref function) => {
-                stages &= self.validate_mesh_function(function, context)?;
-            }
-            S::DebugPrintf { ref arguments, .. } => {
-                for argument in arguments {
-                    if let crate::DebugPrintfArgument::Value(value) = *argument {
-                        context.resolve_type_inner(value, &self.valid_expression_set)?;
-                    }
-                }
-            }
-            S::Abort {
-                ref message,
-                ty,
-                ref arguments,
-            } => self.validate_abort(message, ty, arguments, span, context)?,
-            S::TensorWrite {
-                tensor,
-                coordinates,
-                value,
-                ..
-            } => self.validate_tensor_write(tensor, coordinates, value, context)?,
-            S::ControlBarrier(_) | S::MemoryBarrier(_) => {
-                stages &= super::ShaderStages::COMPUTE_LIKE;
-            }
-            S::Store { pointer, value } => self.validate_store(pointer, value, span, context)?,
-            S::ImageStore {
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                value,
-            } => self.validate_image_store(
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                value,
-                span,
-                context,
-            )?,
-            S::Call {
-                function,
-                ref arguments,
-                result,
-            } => match self.validate_call(function, arguments, result, context) {
-                Ok(callee_stages) => stages &= callee_stages,
-                Err(error) => {
-                    return Err(error.and_then(|error| {
-                        FunctionError::InvalidCall { function, error }
-                            .with_span_static(span, "invalid function call")
-                    }));
-                }
-            },
-            S::Atomic {
-                pointer,
-                ref fun,
-                value,
-                result,
-                order: _,
-            } => self.validate_atomic(pointer, *fun, value, result, span, context)?,
-            S::ImageAtomic {
-                image,
-                coordinate,
-                array_index,
-                fun,
-                value,
-                sample,
-                result,
-                order: _,
-            } => self.validate_image_atomic(
-                image,
-                coordinate,
-                array_index,
-                fun,
-                value,
-                sample,
-                result,
-                context,
-            )?,
-            S::AtomicLoad {
-                ref location,
-                order: _,
-                result,
-            } => self.validate_atomic_load(location, result, context)?,
-            S::AtomicStore {
-                ref location,
-                value,
-                order: _,
-            } => self.validate_atomic_store(location, value, context)?,
-            S::RayQuery { query, ref fun } => {
-                self.validate_ray_query(query, fun, span, context)?;
-            }
-            S::SubgroupBallot { result, predicate } => {
-                self.validate_subgroup_ballot(result, predicate, context)?;
-            }
-            S::SubgroupCollectiveOperation {
-                op,
-                collective_op,
-                argument,
-                result,
-            } => self.validate_subgroup_operation(op, collective_op, argument, result, context)?,
-            S::SubgroupGather {
-                ref mode,
-                argument,
-                result,
-            } => self.validate_subgroup_gather(mode, argument, result, context)?,
-            S::SubgroupFunction { ref fun, result } => {
-                self.validate_subgroup_function(fun, result, context)?;
-            }
-            S::CooperativeStore { target, ref data } => {
-                self.validate_cooperative_store(target, data, context)?;
-            }
-            S::HitObject { object, ref fun } => {
-                stages &= self.validate_hit_object(object, fun, span, context)?;
-            }
-            S::ReorderThread {
-                flavor: _,
-                hint,
-                bits,
-            } => {
-                stages &= self.validate_reorder_thread(hint, bits, context)?;
-            }
-            S::RayPipelineFunction(ref fun) => {
-                stages &= self.validate_ray_pipeline_function(fun, span, context)?;
-            }
-        }
-        Ok(stages)
-    }
-
     fn validate_block(
         &mut self,
         statements: &crate::Block,
@@ -1078,7 +899,7 @@ impl super::Validator {
                     );
                 }
                 Validation::Statement(statement, span, context) => {
-                    stages &= self.validate_statement_kind(statement, span, context, &mut tasks)?;
+                    stages &= self.validate_statement(statement, span, context, &mut tasks)?;
                 }
                 Validation::Scope(base) => self.forget_expressions(base),
                 Validation::BreakIf {
@@ -1102,7 +923,7 @@ impl super::Validator {
         }
     }
 
-    fn validate_statement_kind<'a>(
+    fn validate_statement<'a>(
         &mut self,
         statement: &'a crate::Statement,
         span: crate::Span,
@@ -1115,6 +936,7 @@ impl super::Validator {
             context,
             scoped,
         };
+        let mut stages = super::ShaderStages::all();
         match *statement {
             S::Block(ref inner) => tasks.push(block(inner, context, true)),
             S::If {
@@ -1171,49 +993,173 @@ impl super::Validator {
                     false,
                 ));
             }
-            S::Emit(_)
-            | S::Break
-            | S::Continue
-            | S::Return { .. }
-            | S::Kill
+            S::Emit(ref range) => self.validate_emit(range, &context)?,
+            S::Break => {
+                if !context.abilities.contains(ControlFlowAbility::BREAK) {
+                    return Err(FunctionError::BreakOutsideOfLoopOrSwitch
+                        .with_span_static(span, "invalid break"));
+                }
+            }
+            S::Continue => {
+                if !context.abilities.contains(ControlFlowAbility::CONTINUE) {
+                    return Err(FunctionError::ContinueOutsideOfLoop
+                        .with_span_static(span, "invalid continue"));
+                }
+            }
+            S::Return { value } => self.validate_return(value, span, &context)?,
+            S::Kill
             | S::TerminateInvocation
             | S::Demote
             | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock
-            | S::EmitVertex { .. }
-            | S::EndPrimitive { .. }
-            | S::ControlBarrier(_)
-            | S::MemoryBarrier(_)
-            | S::ScopedBarrier { .. }
-            | S::SplitBarrier { .. }
-            | S::Store { .. }
-            | S::ImageStore { .. }
-            | S::Atomic { .. }
-            | S::AtomicLoad { .. }
-            | S::AtomicStore { .. }
-            | S::ImageAtomic { .. }
-            | S::Call { .. }
-            | S::RayQuery { .. }
-            | S::RayPipelineFunction(_)
-            | S::HitObject { .. }
-            | S::ReorderThread { .. }
-            | S::MeshFunction(_)
-            | S::SubgroupBallot { .. }
-            | S::SubgroupGather { .. }
-            | S::SubgroupCollectiveOperation { .. }
-            | S::SubgroupFunction { .. }
-            | S::CooperativeStore { .. }
-            | S::DebugPrintf { .. }
-            | S::Assume { .. }
-            | S::CooperativeVector(_)
-            | S::CooperativeMatrix { .. }
-            | S::Abort { .. }
-            | S::TensorWrite { .. }
-            | S::SpirvInstruction { .. } => {
-                return self.validate_statement(statement, span, &context);
+            | S::EndInvocationInterlock => {
+                stages &= super::ShaderStages::FRAGMENT;
+            }
+            S::SplitBarrier { .. } | S::ScopedBarrier { .. } => {}
+            S::EmitVertex { .. } | S::EndPrimitive { .. } => {
+                stages &= super::ShaderStages::GEOMETRY;
+            }
+            S::CooperativeMatrix {
+                ref function,
+                result,
+            } => self.validate_cooperative_matrix_statement(function, result, &context)?,
+            S::CooperativeVector(ref function) => {
+                self.validate_cooperative_vector_statement(function, &context)?;
+            }
+            S::SpirvInstruction {
+                ref operands,
+                result,
+                ..
+            } => self.validate_spirv_instruction(operands, result, &context)?,
+            S::Assume { condition } => self.validate_condition(condition, &context)?,
+            S::MeshFunction(ref function) => {
+                stages &= self.validate_mesh_function(function, &context)?;
+            }
+            S::DebugPrintf { ref arguments, .. } => {
+                for argument in arguments {
+                    if let crate::DebugPrintfArgument::Value(value) = *argument {
+                        context.resolve_type_inner(value, &self.valid_expression_set)?;
+                    }
+                }
+            }
+            S::Abort {
+                ref message,
+                ty,
+                ref arguments,
+            } => self.validate_abort(message, ty, arguments, span, &context)?,
+            S::TensorWrite {
+                tensor,
+                coordinates,
+                value,
+                ..
+            } => self.validate_tensor_write(tensor, coordinates, value, &context)?,
+            S::ControlBarrier(_) | S::MemoryBarrier(_) => {
+                stages &= super::ShaderStages::COMPUTE_LIKE;
+            }
+            S::Store { pointer, value } => self.validate_store(pointer, value, span, &context)?,
+            S::ImageStore {
+                image,
+                coordinate,
+                array_index,
+                sample,
+                level,
+                value,
+            } => self.validate_image_store(
+                image,
+                coordinate,
+                array_index,
+                sample,
+                level,
+                value,
+                span,
+                &context,
+            )?,
+            S::Call {
+                function,
+                ref arguments,
+                result,
+            } => match self.validate_call(function, arguments, result, &context) {
+                Ok(callee_stages) => stages &= callee_stages,
+                Err(error) => {
+                    return Err(error.and_then(|error| {
+                        FunctionError::InvalidCall { function, error }
+                            .with_span_static(span, "invalid function call")
+                    }));
+                }
+            },
+            S::Atomic {
+                pointer,
+                ref fun,
+                value,
+                result,
+                order: _,
+            } => self.validate_atomic(pointer, *fun, value, result, span, &context)?,
+            S::ImageAtomic {
+                image,
+                coordinate,
+                array_index,
+                fun,
+                value,
+                sample,
+                result,
+                order: _,
+            } => self.validate_image_atomic(
+                image,
+                coordinate,
+                array_index,
+                fun,
+                value,
+                sample,
+                result,
+                &context,
+            )?,
+            S::AtomicLoad {
+                ref location,
+                order: _,
+                result,
+            } => self.validate_atomic_load(location, result, &context)?,
+            S::AtomicStore {
+                ref location,
+                value,
+                order: _,
+            } => self.validate_atomic_store(location, value, &context)?,
+            S::RayQuery { query, ref fun } => {
+                self.validate_ray_query(query, fun, span, &context)?;
+            }
+            S::SubgroupBallot { result, predicate } => {
+                self.validate_subgroup_ballot(result, predicate, &context)?;
+            }
+            S::SubgroupCollectiveOperation {
+                op,
+                collective_op,
+                argument,
+                result,
+            } => self.validate_subgroup_operation(op, collective_op, argument, result, &context)?,
+            S::SubgroupGather {
+                ref mode,
+                argument,
+                result,
+            } => self.validate_subgroup_gather(mode, argument, result, &context)?,
+            S::SubgroupFunction { ref fun, result } => {
+                self.validate_subgroup_function(fun, result, &context)?;
+            }
+            S::CooperativeStore { target, ref data } => {
+                self.validate_cooperative_store(target, data, &context)?;
+            }
+            S::HitObject { object, ref fun } => {
+                stages &= self.validate_hit_object(object, fun, span, &context)?;
+            }
+            S::ReorderThread {
+                flavor: _,
+                hint,
+                bits,
+            } => {
+                stages &= self.validate_reorder_thread(hint, bits, &context)?;
+            }
+            S::RayPipelineFunction(ref fun) => {
+                stages &= self.validate_ray_pipeline_function(fun, span, &context)?;
             }
         }
-        Ok(super::ShaderStages::all())
+        Ok(stages)
     }
 
     fn validate_local_var(
