@@ -31,6 +31,8 @@
                             invariant: false,
                         ))),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("texcoord"),
@@ -41,8 +43,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -77,6 +84,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                 ],
@@ -116,29 +126,32 @@
                     0: "xy",
                 },
                 body: [
-                    Emit((
+                    Block(5),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 2,
                         value: 5,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(6),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs",
@@ -157,6 +170,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -177,17 +193,20 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(4),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

@@ -23,8 +23,13 @@
                             sampling: Some(Center),
                             blend_src: Some(0),
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("output1"),
@@ -35,8 +40,13 @@
                             sampling: Some(Center),
                             blend_src: Some(1),
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -104,29 +114,32 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(5),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 11,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(10),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

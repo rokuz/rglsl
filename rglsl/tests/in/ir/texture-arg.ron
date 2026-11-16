@@ -55,6 +55,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("Sampler"),
@@ -66,6 +68,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -105,6 +109,7 @@
                     image: 0,
                     sampler: Some(1),
                     gather: None,
+                    gather_pattern: Quad,
                     coordinate: 4,
                     array_index: None,
                     offset: None,
@@ -117,13 +122,14 @@
                 1: "Passed_Sampler",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 4,
                     end: 6,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(5),
-                ),
+                )),
             ],
         ),
     ],
@@ -145,6 +151,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -155,21 +164,24 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [
                             0,
                             1,
                         ],
                         result: Some(2),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: Some(2),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

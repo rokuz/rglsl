@@ -44,12 +44,16 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("exchanged"),
                         ty: 4,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -64,12 +68,16 @@
                         ty: 2,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("exchanged"),
                         ty: 4,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -104,6 +112,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("atomic_u32"),
@@ -117,6 +127,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -205,79 +217,80 @@
                 33: "phony",
             },
             body: [
-                Store(
+                Block(12),
+                Statement(Store(
                     pointer: 0,
                     value: 1,
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 2,
                     fun: Exchange(
                         compare: Some(3),
                     ),
                     value: 4,
                     result: Some(5),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 6,
                     fun: Exchange(
                         compare: Some(7),
                     ),
                     value: 8,
                     result: Some(9),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 10,
                     fun: Add,
                     value: 11,
                     result: Some(12),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 13,
                     fun: Subtract,
                     value: 14,
                     result: Some(15),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 16,
                     fun: And,
                     value: 17,
                     result: Some(18),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 19,
                     fun: ExclusiveOr,
                     value: 20,
                     result: Some(21),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 22,
                     fun: InclusiveOr,
                     value: 23,
                     result: Some(24),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 25,
                     fun: Min,
                     value: 26,
                     result: Some(27),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 28,
                     fun: Max,
                     value: 29,
                     result: Some(30),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 31,
                     fun: Exchange(
                         compare: None,
                     ),
                     value: 32,
                     result: Some(33),
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -364,79 +377,80 @@
                 33: "phony",
             },
             body: [
-                Store(
+                Block(12),
+                Statement(Store(
                     pointer: 0,
                     value: 1,
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 2,
                     fun: Exchange(
                         compare: Some(3),
                     ),
                     value: 4,
                     result: Some(5),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 6,
                     fun: Exchange(
                         compare: Some(7),
                     ),
                     value: 8,
                     result: Some(9),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 10,
                     fun: Add,
                     value: 11,
                     result: Some(12),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 13,
                     fun: Subtract,
                     value: 14,
                     result: Some(15),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 16,
                     fun: And,
                     value: 17,
                     result: Some(18),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 19,
                     fun: ExclusiveOr,
                     value: 20,
                     result: Some(21),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 22,
                     fun: InclusiveOr,
                     value: 23,
                     result: Some(24),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 25,
                     fun: Min,
                     value: 26,
                     result: Some(27),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 28,
                     fun: Max,
                     value: 29,
                     result: Some(30),
-                ),
-                Atomic(
+                )),
+                Statement(Atomic(
                     pointer: 31,
                     fun: Exchange(
                         compare: None,
                     ),
                     value: 32,
                     result: Some(33),
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -455,23 +469,26 @@
                 expressions: [],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(3),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

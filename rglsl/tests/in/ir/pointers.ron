@@ -35,6 +35,8 @@
                         ty: 2,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -67,6 +69,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -98,21 +102,22 @@
                 1: "px",
             },
             body: [
-                Emit((
+                Block(4),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 1,
                     value: 3,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -167,21 +172,22 @@
                 5: "val",
             },
             body: [
-                Emit((
+                Block(4),
+                Statement(Emit((
                     start: 3,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 6,
                     end: 9,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 7,
                     value: 8,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -232,25 +238,26 @@
                 5: "val",
             },
             body: [
-                Emit((
+                Block(5),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 4,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 6,
                     end: 8,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 6,
                     value: 7,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -274,34 +281,37 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(4),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [
                             0,
                             1,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [
                             2,
                             3,
                         ],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

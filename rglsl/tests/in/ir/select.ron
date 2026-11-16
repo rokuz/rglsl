@@ -113,33 +113,36 @@
                     0: "phony",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 10,
                         end: 17,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 17,
                         value: 16,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

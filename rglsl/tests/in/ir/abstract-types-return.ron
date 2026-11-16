@@ -62,9 +62,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -80,9 +81,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -98,9 +100,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -116,9 +119,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -138,17 +142,18 @@
             ],
             named_expressions: {},
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -176,17 +181,18 @@
             ],
             named_expressions: {},
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 4,
                     end: 5,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(4),
-                ),
+                )),
             ],
         ),
         (
@@ -202,9 +208,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -224,17 +231,18 @@
             ],
             named_expressions: {},
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
     ],
@@ -262,53 +270,56 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(9),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(0),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [],
                         result: Some(1),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [],
                         result: Some(2),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 3,
                         arguments: [],
                         result: Some(3),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 4,
                         arguments: [],
                         result: Some(4),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 5,
                         arguments: [],
                         result: Some(5),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 6,
                         arguments: [],
                         result: Some(6),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 7,
                         arguments: [],
                         result: Some(7),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

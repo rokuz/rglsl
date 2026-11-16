@@ -73,12 +73,16 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("whole"),
                         ty: 0,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -93,12 +97,16 @@
                         ty: 6,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("whole"),
                         ty: 6,
                         binding: None,
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -113,12 +121,16 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("whole"),
                         ty: 1,
                         binding: None,
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -133,12 +145,16 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("exp"),
                         ty: 2,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -153,12 +169,16 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("exp"),
                         ty: 3,
                         binding: None,
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -733,289 +753,292 @@
                     135: "quantizeToF16_d",
                 },
                 body: [
-                    Emit((
+                    Block(70),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 8,
                         end: 9,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 20,
                         end: 21,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 25,
                         end: 26,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 31,
                         end: 32,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 34,
                         end: 35,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 39,
                         end: 40,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 42,
                         end: 43,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 49,
                         end: 50,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 52,
                         end: 53,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 55,
                         end: 56,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 58,
                         end: 59,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 63,
                         end: 64,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 66,
                         end: 67,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 69,
                         end: 70,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 72,
                         end: 73,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 75,
                         end: 77,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 78,
                         end: 79,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 80,
                         end: 82,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 83,
                         end: 85,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 87,
                         end: 89,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 93,
                         end: 97,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 99,
                         end: 103,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 104,
                         end: 105,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 106,
                         end: 108,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 109,
                         end: 111,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 115,
                         end: 119,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 120,
                         end: 121,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 123,
                         end: 125,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 128,
                         end: 130,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 134,
                         end: 136,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

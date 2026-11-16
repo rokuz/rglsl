@@ -221,6 +221,8 @@ An override expression can be evaluated at pipeline creation time.
 
 mod block;
 mod debug;
+#[cfg(any(feature = "serialize", feature = "deserialize"))]
+mod flat;
 mod sources;
 pub mod visit;
 
@@ -280,6 +282,7 @@ pub use sources::{SpanLocation, SpanSources};
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum EarlyDepthTest {
     /// Requires depth/stencil tests to be performed before fragment shading.
@@ -317,6 +320,7 @@ pub enum EarlyDepthTest {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ConservativeDepth {
     /// Shader may rewrite depth only with a value greater than calculated.
@@ -333,6 +337,7 @@ pub enum ConservativeDepth {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum AddressSpace {
     /// Function locals.
@@ -402,6 +407,7 @@ pub enum AddressSpace {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum DescriptorHeap {
     Resource,
@@ -416,6 +422,7 @@ pub type Bytes = u8;
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum VectorSize {
     /// 2D vector
@@ -445,6 +452,7 @@ impl From<VectorSize> for u32 {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CooperativeSize {
     Constant(core::num::NonZeroU32),
@@ -454,6 +462,7 @@ pub enum CooperativeSize {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CooperativeMatrixClass {
     Khr,
@@ -463,6 +472,7 @@ pub enum CooperativeMatrixClass {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum LongVectorClass {
     Plain,
@@ -474,6 +484,7 @@ pub enum LongVectorClass {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ScalarKind {
     /// Signed integer type.
@@ -499,6 +510,7 @@ pub enum ScalarKind {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CooperativeRole {
     A,
@@ -510,6 +522,7 @@ pub enum CooperativeRole {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Scalar {
     /// How the value's bits are to be interpreted.
@@ -524,6 +537,7 @@ pub struct Scalar {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ArraySize {
     /// The array size is constant.
@@ -538,6 +552,7 @@ pub enum ArraySize {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Interpolation {
     /// The value will be interpolated in a perspective-correct fashion.
@@ -563,6 +578,7 @@ pub enum Interpolation {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Sampling {
     /// Interpolate the value at the center of the pixel.
@@ -590,6 +606,7 @@ pub enum Sampling {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct StructMember {
     pub name: Option<String>,
@@ -628,6 +645,7 @@ pub struct StructMember {
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct HeapMember {
     pub offset: Option<u32>,
@@ -642,6 +660,7 @@ pub struct HeapMember {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MatrixLayout {
     /// The distance in bytes between consecutive columns of a column-major
@@ -655,6 +674,7 @@ pub struct MatrixLayout {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ImageDimension {
     /// 1D image
@@ -674,6 +694,7 @@ bitflags::bitflags! {
     /// Flags describing an image.
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct StorageAccess: u32 {
@@ -689,6 +710,7 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct PointerQualifiers: u16 {
@@ -709,6 +731,7 @@ bitflags::bitflags! {
     /// Memory decorations for global variables.
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct MemoryDecorations: u16 {
@@ -735,6 +758,7 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum StorageFormat {
     // 8-bit formats
@@ -800,6 +824,7 @@ pub enum StorageFormat {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ImageClass {
     /// Regular sampled image.
@@ -834,6 +859,7 @@ pub enum ImageClass {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Type {
     /// The name of the type, if any.
@@ -855,6 +881,7 @@ pub struct Type {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TypeInner {
     /// Number of integral or floating-point kind.
@@ -1092,6 +1119,7 @@ pub enum TypeInner {
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SpirvTypeOperand {
     Literal(u32),
@@ -1101,6 +1129,7 @@ pub enum SpirvTypeOperand {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpirvRequirements {
     pub extensions: Vec<String>,
@@ -1116,6 +1145,7 @@ impl SpirvRequirements {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpirvDecoration {
     pub decoration: u32,
@@ -1125,6 +1155,7 @@ pub struct SpirvDecoration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SpirvDecorationOperands {
     Literals(Vec<u32>),
@@ -1135,6 +1166,7 @@ pub enum SpirvDecorationOperands {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SpirvId {
     Constant(Handle<Expression>),
@@ -1144,6 +1176,7 @@ pub enum SpirvId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpirvExecutionMode {
     pub mode: u32,
@@ -1153,6 +1186,7 @@ pub struct SpirvExecutionMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SpirvExecutionModeOperands {
     Literals(Vec<u32>),
@@ -1162,6 +1196,7 @@ pub enum SpirvExecutionModeOperands {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpirvInstruction {
     pub set: Option<String>,
@@ -1171,6 +1206,7 @@ pub struct SpirvInstruction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SpirvOperand {
     Value(Handle<Expression>),
@@ -1181,6 +1217,7 @@ pub enum SpirvOperand {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Literal {
     /// May not be NaN or infinity.
@@ -1212,6 +1249,7 @@ pub enum Literal {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Override {
     pub name: Option<String>,
@@ -1230,6 +1268,7 @@ pub struct Override {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Constant {
     pub name: Option<String>,
@@ -1246,6 +1285,7 @@ pub struct Constant {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Binding {
     /// Built-in shader variable.
@@ -1329,6 +1369,7 @@ pub enum Binding {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct GlobalVariable {
     /// Name of the variable, if any.
@@ -1394,6 +1435,7 @@ pub struct GlobalVariable {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum BlockDeclaration {
     Uniform,
@@ -1405,6 +1447,7 @@ pub enum BlockDeclaration {
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct ImmediateBank {
     pub bank: Option<u32>,
@@ -1414,6 +1457,7 @@ pub struct ImmediateBank {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct XfbBinding {
     pub buffer: u32,
@@ -1425,6 +1469,7 @@ pub struct XfbBinding {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct LocalVariable {
     /// Name of the variable, if any.
@@ -1451,6 +1496,7 @@ pub struct LocalVariable {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum UnaryOperator {
     Negate,
@@ -1501,6 +1547,7 @@ pub enum UnaryOperator {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum BinaryOperator {
     Add,
@@ -1535,6 +1582,7 @@ pub enum BinaryOperator {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum AtomicFunction {
     Add,
@@ -1550,6 +1598,7 @@ pub enum AtomicFunction {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum InterpolationLocation {
     Centroid,
@@ -1561,6 +1610,7 @@ pub enum InterpolationLocation {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum AttachmentAspect {
     Color(Handle<Expression>),
@@ -1571,6 +1621,7 @@ pub enum AttachmentAspect {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum BarrierPhase {
     Arrive,
@@ -1580,6 +1631,7 @@ pub enum BarrierPhase {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum MemoryScope {
     CrossDevice,
@@ -1594,6 +1646,7 @@ pub enum MemoryScope {
 bitflags::bitflags! {
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct MemorySemantics: u32 {
@@ -1614,6 +1667,7 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MemoryOrder {
     pub scope: MemoryScope,
@@ -1624,6 +1678,7 @@ pub struct MemoryOrder {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Texel {
     pub image: Handle<Expression>,
@@ -1635,6 +1690,7 @@ pub struct Texel {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum AtomicLocation {
     Pointer(Handle<Expression>),
@@ -1644,6 +1700,7 @@ pub enum AtomicLocation {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ClockSource {
     Subgroup,
@@ -1655,6 +1712,7 @@ pub enum ClockSource {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum DerivativeControl {
     Coarse,
@@ -1666,6 +1724,7 @@ pub enum DerivativeControl {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum DerivativeAxis {
     X,
@@ -1677,6 +1736,7 @@ pub enum DerivativeAxis {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RelationalFunction {
     All,
@@ -1689,6 +1749,7 @@ pub enum RelationalFunction {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum MathFunction {
     // comparison
@@ -1809,6 +1870,7 @@ pub enum MathFunction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SampleLevel {
     Auto,
@@ -1828,6 +1890,7 @@ pub enum SampleLevel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ImageQuery {
     /// Get the size at the specified level.
@@ -1855,6 +1918,7 @@ pub enum ImageQuery {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SwizzleComponent {
     X = 0,
@@ -1872,6 +1936,7 @@ pub enum SwizzleComponent {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum GatherMode {
     /// All gather from the active lane with the smallest index
@@ -1899,6 +1964,7 @@ pub enum GatherMode {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Direction {
     X = 0,
@@ -1909,6 +1975,7 @@ pub enum Direction {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SubgroupOperation {
     All = 0,
@@ -1925,6 +1992,7 @@ pub enum SubgroupOperation {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CollectiveOperation {
     Reduce,
@@ -1939,6 +2007,7 @@ pub enum CollectiveOperation {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SubgroupFunction {
     Elect,
@@ -1992,6 +2061,7 @@ bitflags::bitflags! {
     /// Memory barrier flags.
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct Barrier: u32 {
@@ -2009,6 +2079,7 @@ bitflags::bitflags! {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ImageGatherPattern {
     #[default]
@@ -2022,6 +2093,7 @@ pub enum ImageGatherPattern {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum BlockMatchMetric {
     SumOfAbsoluteDifferences,
@@ -2031,6 +2103,7 @@ pub enum BlockMatchMetric {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum BlockMatchSearch {
     Block,
@@ -2041,6 +2114,7 @@ pub enum BlockMatchSearch {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ImageProcessingOperation {
     SampleWeighted,
@@ -2054,6 +2128,7 @@ pub enum ImageProcessingOperation {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ArrayConversion {
     Bitcast,
@@ -2065,6 +2140,7 @@ pub enum ArrayConversion {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TensorOperation {
     LayoutSetBlockSize,
@@ -2080,6 +2156,7 @@ pub enum TensorOperation {
 #[derive(Clone, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CooperativeMatrixFunction {
     Transpose {
@@ -2121,6 +2198,7 @@ pub enum CooperativeMatrixFunction {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CooperativeVectorBias {
     pub pointer: Handle<Expression>,
@@ -2131,6 +2209,7 @@ pub struct CooperativeVectorBias {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CooperativeVectorMatMul {
     pub input: Handle<Expression>,
@@ -2149,6 +2228,7 @@ pub struct CooperativeVectorMatMul {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum CooperativeVectorFunction {
     Store {
@@ -2184,6 +2264,7 @@ impl CooperativeVectorFunction {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct CooperativeData {
     pub pointer: Handle<Expression>,
@@ -2206,6 +2287,7 @@ pub struct CooperativeData {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Expression {
     /// Literal.
@@ -2685,6 +2767,7 @@ pub enum Expression {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SwitchValue {
     I32(i32),
@@ -2697,11 +2780,13 @@ pub enum SwitchValue {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SwitchCase {
     /// Value, upon which the case is considered true.
     pub value: SwitchValue,
     /// Body of the case.
+    #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
     pub body: Block,
     /// If true, the control flow continues to the next case in the list,
     /// or default.
@@ -2715,6 +2800,7 @@ pub struct SwitchCase {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RayQueryFunction {
     /// Initialize the `RayQuery` object.
@@ -2762,6 +2848,7 @@ pub enum RayQueryFunction {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Statement {
     /// Emit a range of expressions, visible to all statements that follow in this block.
@@ -2771,7 +2858,7 @@ pub enum Statement {
     /// [emit]: index.html#expression-evaluation-time
     Emit(Range<Expression>),
     /// A block containing more statements, to be executed sequentially.
-    Block(Block),
+    Block(#[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))] Block),
     /// Conditionally executes one of two blocks, based on the value of the condition.
     ///
     /// rglsl IR does not have "phi" instructions. If you need to use
@@ -2779,7 +2866,9 @@ pub enum Statement {
     /// store them in a [`LocalVariable`].
     If {
         condition: Handle<Expression>, //bool
+        #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
         accept: Block,
+        #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
         reject: Block,
         #[cfg_attr(feature = "deserialize", serde(default))]
         #[cfg_attr(
@@ -2856,7 +2945,9 @@ pub enum Statement {
     /// [`Return`]: Statement::Return
     /// [`break if`]: Self::Loop::break_if
     Loop {
+        #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
         body: Block,
+        #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
         continuing: Block,
         break_if: Option<Handle<Expression>>,
         #[cfg_attr(feature = "deserialize", serde(default))]
@@ -3203,6 +3294,7 @@ pub enum Statement {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum DebugPrintfArgument {
     Value(Handle<Expression>),
@@ -3213,6 +3305,7 @@ pub enum DebugPrintfArgument {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct FunctionArgument {
     /// Name of the argument, if any.
@@ -3240,6 +3333,7 @@ pub struct FunctionArgument {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct FunctionResult {
     /// Type of the result.
@@ -3258,6 +3352,7 @@ pub struct FunctionResult {
 bitflags::bitflags! {
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct NonUniform: u8 {
@@ -3270,6 +3365,7 @@ bitflags::bitflags! {
 bitflags::bitflags! {
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct Precision: u8 {
@@ -3282,6 +3378,7 @@ bitflags::bitflags! {
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Function {
     /// Name of the function, if any.
@@ -3348,6 +3445,7 @@ pub struct Function {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum FunctionControl {
     #[default]
@@ -3365,6 +3463,7 @@ impl FunctionControl {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum Linkage {
     #[default]
@@ -3425,6 +3524,7 @@ impl Linkage {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct EntryPoint {
     /// Name of this entry point, visible externally.
@@ -3518,6 +3618,7 @@ pub struct EntryPoint {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Reconvergence {
     pub subgroup_uniform_control_flow: bool,
@@ -3533,6 +3634,7 @@ impl Reconvergence {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct DerivativeGroup {
     pub shape: DerivativeGroupShape,
@@ -3542,6 +3644,7 @@ pub struct DerivativeGroup {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum DerivativeGroupShape {
     Quads,
@@ -3551,6 +3654,7 @@ pub enum DerivativeGroupShape {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum LoopDependency {
     Infinite,
@@ -3560,6 +3664,7 @@ pub enum LoopDependency {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SelectionControl {
     #[default]
@@ -3571,6 +3676,7 @@ pub enum SelectionControl {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct LoopControl {
     pub unroll: bool,
@@ -3587,6 +3693,7 @@ pub struct LoopControl {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct TileShading {
     pub rate: Option<[u32; 3]>,
@@ -3596,6 +3703,7 @@ pub struct TileShading {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshOutputLayout {
     pub topology: MeshOutputTopology,
@@ -3606,6 +3714,7 @@ pub struct MeshOutputLayout {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct MeshShaderInfo {
     pub flavor: MeshFlavor,
@@ -3617,6 +3726,7 @@ pub struct MeshShaderInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum MeshFunction {
     SetMeshOutputs {
@@ -3635,6 +3745,7 @@ pub enum MeshFunction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct GeometryInfo {
     pub input: GeometryInputPrimitive,
@@ -3650,6 +3761,7 @@ pub struct GeometryInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum GeometryInputPrimitive {
     Points,
@@ -3674,6 +3786,7 @@ impl GeometryInputPrimitive {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum GeometryOutputPrimitive {
     Points,
@@ -3684,6 +3797,7 @@ pub enum GeometryOutputPrimitive {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct TessellationInfo {
     pub output_vertices: Option<u32>,
@@ -3696,6 +3810,7 @@ pub struct TessellationInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TessellationPrimitive {
     Triangles,
@@ -3706,6 +3821,7 @@ pub enum TessellationPrimitive {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TessellationSpacing {
     Equal,
@@ -3716,6 +3832,7 @@ pub enum TessellationSpacing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum TessellationVertexOrder {
     Cw,
@@ -3725,6 +3842,7 @@ pub enum TessellationVertexOrder {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum InterlockScope {
     Pixel,
@@ -3735,6 +3853,7 @@ pub enum InterlockScope {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Interlock {
     pub scope: InterlockScope,
@@ -3744,6 +3863,7 @@ pub struct Interlock {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct FragmentModes {
     pub post_depth_coverage: bool,
@@ -3757,6 +3877,7 @@ pub struct FragmentModes {
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct QuadControl {
     pub quad_derivatives: bool,
@@ -3771,6 +3892,7 @@ pub struct QuadControl {
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum PredeclaredType {
     AtomicCompareExchangeWeakResult(Scalar),
@@ -3796,6 +3918,7 @@ pub enum PredeclaredType {
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct SpecialTypes {
     /// Type for `RayVertexReturn`.
@@ -3846,6 +3969,7 @@ bitflags::bitflags! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum MeshOutputTopology {
     /// Outputs individual vertices to be rendered as points.
@@ -3860,6 +3984,7 @@ pub enum MeshOutputTopology {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RayPipelineFunction {
     TraceRay {
@@ -3896,6 +4021,7 @@ pub enum RayPipelineFunction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RayTracingData {
     Pointer(Handle<Expression>),
@@ -3905,6 +4031,7 @@ pub enum RayTracingData {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RayQueryValue {
     RayFlags,
@@ -3921,6 +4048,7 @@ pub enum RayQueryValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum RayQueryIntersectionValue {
     Type,
@@ -3950,6 +4078,7 @@ pub enum RayQueryIntersectionValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum HitObjectValue {
     IsEmpty,
@@ -3985,6 +4114,7 @@ pub enum HitObjectValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum MicroTriangleVertexValue {
     Position,
@@ -3994,6 +4124,7 @@ pub enum MicroTriangleVertexValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct ReorderHint {
     pub hint: Handle<Expression>,
@@ -4003,6 +4134,7 @@ pub struct ReorderHint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct HitObjectTrace {
     pub acceleration_structure: Handle<Expression>,
@@ -4022,6 +4154,7 @@ pub struct HitObjectTrace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum HitObjectSbtRecord {
     OffsetStride {
@@ -4034,6 +4167,7 @@ pub enum HitObjectSbtRecord {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum HitObjectFunction {
     TraceRay(HitObjectTrace),
@@ -4092,6 +4226,7 @@ pub enum HitObjectFunction {
 bitflags::bitflags! {
     #[cfg_attr(feature = "serialize", derive(Serialize))]
     #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+    #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
     #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct RayTracingFeatures: u8 {
@@ -4144,6 +4279,7 @@ bitflags::bitflags! {
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub struct Module {
     /// Arena for the types defined in this module.

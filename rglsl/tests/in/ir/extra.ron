@@ -26,12 +26,16 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("double"),
                         ty: 1,
                         binding: None,
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -60,14 +64,21 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("primitive_index"),
                         ty: 0,
                         binding: Some(BuiltIn(PrimitiveIndex)),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -88,6 +99,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -116,6 +129,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -181,39 +197,40 @@
                     0: "in",
                 },
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 6,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 5,
-                        accept: [
-                            Emit((
-                                start: 6,
-                                end: 7,
-                            )),
-                            Return(
-                                value: Some(6),
-                            ),
-                        ],
-                        reject: [
-                            Emit((
-                                start: 8,
-                                end: 15,
-                            )),
-                            Return(
-                                value: Some(14),
-                            ),
-                        ],
-                    ),
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 6,
+                        end: 7,
+                    ))),
+                    Statement(Return(
+                        value: Some(6),
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 8,
+                        end: 15,
+                    ))),
+                    Statement(Return(
+                        value: Some(14),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

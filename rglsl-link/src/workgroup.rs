@@ -96,7 +96,7 @@ fn specialized(
         format_version: object.format_version,
         name: object.name,
         target,
-        unit: *unit,
+        unit,
     };
     for (placeholder, id) in twin.unit.work_group_size_placeholders.into_iter().zip(ids) {
         let Some(placeholder) = placeholder else {

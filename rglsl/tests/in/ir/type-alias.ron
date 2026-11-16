@@ -205,49 +205,52 @@
                     24: "i",
                 },
                 body: [
-                    Emit((
+                    Block(10),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 13,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 19,
                         end: 22,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 22,
                         end: 23,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

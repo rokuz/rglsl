@@ -7,11 +7,8 @@ use crate::{Span, Statement};
 
 /// A code block is a vector of statements, with maybe a vector of spans.
 #[derive(Debug, Default)]
-#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
-#[cfg_attr(feature = "serialize", serde(transparent))]
 pub struct Block {
     body: Vec<Statement>,
-    #[cfg_attr(feature = "serialize", serde(skip))]
     span_info: Vec<Span>,
 }
 
@@ -309,16 +306,6 @@ impl<'a> IntoIterator for &'a Block {
 
     fn into_iter(self) -> core::slice::Iter<'a, Statement> {
         self.iter()
-    }
-}
-
-#[cfg(feature = "deserialize")]
-impl<'de> serde::Deserialize<'de> for Block {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(Self::from_vec(Vec::deserialize(deserializer)?))
     }
 }
 

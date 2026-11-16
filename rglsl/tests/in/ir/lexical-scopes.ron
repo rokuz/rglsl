@@ -53,13 +53,14 @@
                 2: "a",
             },
             body: [
-                Block([
-                    Block([
-                        Return(
-                            value: None,
-                        ),
-                    ]),
-                ]),
+                Block(1),
+                Statement(Block),
+                Block(1),
+                Statement(Block),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
             ],
         ),
         (
@@ -82,19 +83,18 @@
                 1: "a",
             },
             body: [
-                If(
+                Block(1),
+                Statement(If(
                     condition: 0,
-                    accept: [
-                        Return(
-                            value: None,
-                        ),
-                    ],
-                    reject: [
-                        Return(
-                            value: None,
-                        ),
-                    ],
-                ),
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
             ],
         ),
         (
@@ -117,14 +117,15 @@
                 1: "a",
             },
             body: [
-                Loop(
-                    body: [],
-                    continuing: [],
+                Block(2),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Return(
+                )),
+                Block(0),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -173,40 +174,39 @@
                 6: "a",
             },
             body: [
-                Loop(
-                    body: [
-                        Emit((
-                            start: 3,
-                            end: 4,
-                        )),
-                        Emit((
-                            start: 5,
-                            end: 6,
-                        )),
-                        If(
-                            condition: 5,
-                            accept: [],
-                            reject: [
-                                Break,
-                            ],
-                        ),
-                        Block([]),
-                    ],
-                    continuing: [
-                        Emit((
-                            start: 8,
-                            end: 10,
-                        )),
-                        Store(
-                            pointer: 2,
-                            value: 9,
-                        ),
-                    ],
+                Block(2),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Return(
+                )),
+                Block(4),
+                Statement(Emit((
+                    start: 3,
+                    end: 4,
+                ))),
+                Statement(Emit((
+                    start: 5,
+                    end: 6,
+                ))),
+                Statement(If(
+                    condition: 5,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Break),
+                Statement(Block),
+                Block(0),
+                Block(2),
+                Statement(Emit((
+                    start: 8,
+                    end: 10,
+                ))),
+                Statement(Store(
+                    pointer: 2,
+                    value: 9,
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -235,27 +235,27 @@
                 3: "a",
             },
             body: [
-                Loop(
-                    body: [
-                        Emit((
-                            start: 2,
-                            end: 3,
-                        )),
-                        If(
-                            condition: 2,
-                            accept: [],
-                            reject: [
-                                Break,
-                            ],
-                        ),
-                        Block([]),
-                    ],
-                    continuing: [],
+                Block(2),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Return(
+                )),
+                Block(3),
+                Statement(Emit((
+                    start: 2,
+                    end: 3,
+                ))),
+                Statement(If(
+                    condition: 2,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Break),
+                Statement(Block),
+                Block(0),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -289,33 +289,34 @@
                 5: "test",
             },
             body: [
-                Switch(
+                Block(3),
+                Statement(Switch(
                     selector: 0,
                     cases: [
                         (
                             value: I32(0),
-                            body: [],
                             fall_through: false,
                         ),
                         (
                             value: I32(1),
-                            body: [],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Emit((
+                )),
+                Block(0),
+                Block(0),
+                Block(0),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -341,55 +342,58 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(7),
+                    Statement(Call(
                         function: 0,
                         arguments: [
                             0,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [
                             1,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [
                             2,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 3,
                         arguments: [
                             3,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 4,
                         arguments: [
                             4,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 5,
                         arguments: [
                             5,
                         ],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

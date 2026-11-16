@@ -23,8 +23,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -43,8 +48,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -71,6 +81,8 @@
                             invariant: false,
                         ))),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -131,17 +143,20 @@
                     1: "note",
                 },
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(3),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs_main",
@@ -171,6 +186,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -193,21 +211,24 @@
                     3: "position",
                 },
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(4),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

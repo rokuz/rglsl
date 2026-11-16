@@ -27,6 +27,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -55,17 +57,18 @@
                 3: "θ2",
             },
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(3),
-                ),
+                )),
             ],
         ),
     ],
@@ -86,18 +89,21 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(0),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

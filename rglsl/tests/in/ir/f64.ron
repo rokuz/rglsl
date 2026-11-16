@@ -28,6 +28,8 @@
             ty: 0,
             init: Some(0),
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -105,37 +107,38 @@
                 5: "y",
             },
             body: [
-                Emit((
+                Block(8),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 7,
                     end: 8,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 8,
                     value: 7,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 10,
                     end: 11,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 12,
                     end: 13,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 14,
                     end: 15,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(14),
-                ),
+                )),
             ],
         ),
     ],
@@ -157,20 +160,23 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [
                             0,
                         ],
                         result: Some(1),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

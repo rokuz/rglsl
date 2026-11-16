@@ -41,6 +41,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("texture_sampler"),
@@ -52,6 +54,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -74,6 +78,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -91,6 +98,7 @@
                         image: 4,
                         sampler: Some(5),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(2),
                         offset: None,
@@ -104,21 +112,24 @@
                     3: "depth",
                 },
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(6),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

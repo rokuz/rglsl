@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::cell::RefCell;
 
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::run;
+use rglsl_types::stack::run_from;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
@@ -20,9 +20,12 @@ use rglsl_types::ShaderStage;
 
 impl Analyzer<'_> {
     pub(crate) fn statements(&mut self, statements: &[Statement]) {
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).statements(statements))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).statements(statements)
+            })
         };
         if finished.is_none() {
             self.stalled(());

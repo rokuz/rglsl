@@ -242,6 +242,7 @@ impl ExpressionInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 enum GlobalOrArgument {
     Global(Handle<crate::GlobalVariable>),
     Argument(u32),
@@ -289,6 +290,7 @@ impl GlobalOrArgument {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 struct Sampling {
     image: GlobalOrArgument,
     sampler: GlobalOrArgument,

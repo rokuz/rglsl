@@ -49,29 +49,32 @@
                     3: "a",
                 },
                 body: [
-                    Emit((
+                    Block(5),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

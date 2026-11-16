@@ -24,6 +24,8 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -57,6 +59,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("out"),
@@ -70,6 +74,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("in_data_uniform"),
@@ -81,6 +87,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("in_data_storage_g0_b3"),
@@ -94,6 +102,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("in_data_storage_g0_b4"),
@@ -107,6 +117,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("in_data_storage_g1_b0"),
@@ -120,6 +132,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -214,65 +228,68 @@
                     1: "i",
                 },
                 body: [
-                    Emit((
+                    Block(14),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 8,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 3,
                         value: 7,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 14,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 9,
                         value: 13,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 15,
                         end: 16,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 17,
                         end: 20,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 15,
                         value: 19,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 21,
                         end: 22,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 23,
                         end: 26,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 21,
                         value: 25,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

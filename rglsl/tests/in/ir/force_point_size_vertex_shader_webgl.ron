@@ -114,37 +114,40 @@
                     12: "y",
                 },
                 body: [
-                    Emit((
+                    Block(7),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 13,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 16,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(15),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs_main",
@@ -163,6 +166,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -183,17 +189,20 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(4),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

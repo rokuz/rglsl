@@ -37,12 +37,16 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("exchanged"),
                         ty: 3,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 8,
@@ -75,6 +79,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -107,25 +113,28 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 0,
                         fun: Exchange(
                             compare: Some(2),
                         ),
                         value: 3,
                         result: Some(4),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

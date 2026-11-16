@@ -31,6 +31,8 @@
                             invariant: false,
                         ))),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("color"),
@@ -41,8 +43,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("texcoord"),
@@ -53,8 +60,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 32,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 48,
@@ -83,8 +95,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("normal"),
@@ -95,8 +112,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("texcoord"),
@@ -107,8 +129,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 32,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 48,
@@ -150,6 +177,8 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -187,13 +216,14 @@
                 1: "normal",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(3),
-                ),
+                )),
             ],
         ),
     ],
@@ -280,53 +310,56 @@
                     1: "v_existing_id",
                 },
                 body: [
-                    Emit((
+                    Block(10),
+                    Statement(Emit((
                         start: 3,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 8,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 3,
                         value: 7,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 8,
                         end: 11,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 0,
                         arguments: [
                             9,
                             10,
                         ],
                         result: Some(11),
-                    ),
-                    Store(
+                    )),
+                    Statement(Store(
                         pointer: 8,
                         value: 11,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 12,
                         end: 14,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 12,
                         value: 13,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(14),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

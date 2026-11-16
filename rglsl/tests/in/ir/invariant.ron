@@ -46,17 +46,20 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(1),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs",
@@ -84,13 +87,16 @@
                     0: "position",
                 },
                 body: [
-                    Return(
+                    Block(1),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

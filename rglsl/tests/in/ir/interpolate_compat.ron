@@ -55,6 +55,8 @@
                             invariant: false,
                         ))),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("_flat"),
@@ -65,8 +67,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("flat_either"),
@@ -77,8 +84,13 @@
                             sampling: Some(Either),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 20,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("_linear"),
@@ -89,8 +101,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 24,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("linear_centroid"),
@@ -101,8 +118,13 @@
                             sampling: Some(Centroid),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 32,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("linear_sample"),
@@ -113,8 +135,13 @@
                             sampling: Some(Sample),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 48,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("linear_center"),
@@ -125,8 +152,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 64,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("perspective"),
@@ -137,8 +169,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 80,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("perspective_centroid"),
@@ -149,8 +186,13 @@
                             sampling: Some(Centroid),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 96,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("perspective_sample"),
@@ -161,8 +203,13 @@
                             sampling: Some(Sample),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 100,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("perspective_center"),
@@ -173,8 +220,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 104,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 112,
@@ -326,125 +378,128 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(29),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 1,
                         value: 6,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 7,
                         value: 8,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 9,
                         value: 10,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 11,
                         value: 12,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 13,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 16,
                         end: 17,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 13,
                         value: 16,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 17,
                         end: 18,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 21,
                         end: 22,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 17,
                         value: 21,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 22,
                         end: 23,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 27,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 22,
                         value: 26,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 27,
                         end: 28,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 32,
                         end: 33,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 27,
                         value: 32,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 33,
                         end: 34,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 33,
                         value: 34,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 35,
                         end: 36,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 35,
                         value: 36,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 37,
                         end: 38,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 37,
                         value: 38,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 39,
                         end: 40,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(39),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "frag_main",
@@ -470,13 +525,16 @@
                     0: "val",
                 },
                 body: [
-                    Return(
+                    Block(1),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

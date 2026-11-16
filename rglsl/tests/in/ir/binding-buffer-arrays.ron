@@ -16,6 +16,8 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -30,6 +32,8 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -59,18 +63,24 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("nested"),
                         ty: 2,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("far"),
                         ty: 4,
                         binding: None,
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 12,
@@ -93,6 +103,8 @@
                         ty: 6,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -118,8 +130,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -145,6 +162,8 @@
             ty: 8,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("plain_storage"),
@@ -158,6 +177,8 @@
             ty: 7,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("uni"),
@@ -169,6 +190,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -197,6 +220,9 @@
                         sampling: None,
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [
@@ -630,261 +656,264 @@
                     4: "non_uniform_index",
                 },
                 body: [
-                    Emit((
+                    Block(63),
+                    Statement(Emit((
                         start: 2,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 13,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 12,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 13,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 19,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 18,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 19,
                         end: 20,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 21,
                         end: 25,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 24,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 25,
                         end: 26,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 27,
                         end: 31,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 30,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 31,
                         end: 32,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 33,
                         end: 38,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 37,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 38,
                         end: 39,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 40,
                         end: 45,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 44,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 45,
                         end: 46,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 47,
                         end: 52,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 51,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 52,
                         end: 53,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 54,
                         end: 59,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 58,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 59,
                         end: 60,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 61,
                         end: 65,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 64,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 65,
                         end: 66,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 67,
                         end: 71,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 70,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 71,
                         end: 72,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 73,
                         end: 77,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 76,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 77,
                         end: 78,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 79,
                         end: 83,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 82,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 83,
                         end: 84,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 85,
                         end: 87,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 87,
                         end: 91,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 90,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 91,
                         end: 92,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 93,
                         end: 95,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 95,
                         end: 99,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 98,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 99,
                         end: 100,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 101,
                         end: 103,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 103,
                         end: 107,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 106,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 107,
                         end: 108,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 109,
                         end: 111,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 111,
                         end: 115,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 114,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 115,
                         end: 116,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 117,
                         end: 118,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 118,
                         end: 121,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 120,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 121,
                         end: 122,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 123,
                         end: 126,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 125,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 126,
                         end: 127,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(126),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

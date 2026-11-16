@@ -59,248 +59,234 @@
             ],
             named_expressions: {},
             body: [
-                ControlBarrier(("STORAGE")),
-                ControlBarrier(("WORK_GROUP")),
-                ControlBarrier(("TEXTURE")),
-                Switch(
+                Block(11),
+                Statement(ControlBarrier(("STORAGE"))),
+                Statement(ControlBarrier(("WORK_GROUP"))),
+                Statement(ControlBarrier(("TEXTURE"))),
+                Statement(Switch(
                     selector: 1,
                     cases: [
                         (
                             value: Default,
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 2,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Emit((
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 2,
+                )),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Switch(
+                ))),
+                Statement(Switch(
                     selector: 3,
                     cases: [
                         (
                             value: I32(1),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 4,
-                                ),
-                                Break,
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(2),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 5,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(3),
-                            body: [],
                             fall_through: true,
                         ),
                         (
                             value: I32(4),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 6,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(5),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 7,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [],
                             fall_through: true,
                         ),
                         (
                             value: I32(6),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 8,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Switch(
+                )),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 4,
+                )),
+                Statement(Break),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 5,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 6,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 7,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 8,
+                )),
+                Statement(Switch(
                     selector: 9,
                     cases: [
                         (
                             value: U32(0),
-                            body: [],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Emit((
+                )),
+                Block(0),
+                Block(0),
+                Statement(Emit((
                     start: 10,
                     end: 11,
-                )),
-                Switch(
+                ))),
+                Statement(Switch(
                     selector: 10,
                     cases: [
                         (
                             value: I32(1),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 11,
-                                ),
-                                Break,
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(2),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 12,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(3),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 13,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(4),
-                            body: [],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 14,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Emit((
+                )),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 11,
+                )),
+                Statement(Break),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 12,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 13,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Store(
+                    pointer: 0,
+                    value: 14,
+                )),
+                Statement(Emit((
                     start: 15,
                     end: 16,
-                )),
-                Switch(
+                ))),
+                Statement(Switch(
                     selector: 15,
                     cases: [
                         (
                             value: I32(1),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 16,
-                                ),
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(2),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 17,
-                                ),
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(3),
-                            body: [],
                             fall_through: true,
                         ),
                         (
                             value: I32(4),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 18,
-                                ),
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(5),
-                            body: [],
                             fall_through: true,
                         ),
                         (
                             value: I32(6),
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 19,
-                                ),
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [
-                                Store(
-                                    pointer: 0,
-                                    value: 20,
-                                ),
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
+                )),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 16,
+                )),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 17,
+                )),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(0),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 18,
+                )),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(0),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 19,
+                )),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(2),
+                Statement(Store(
+                    pointer: 0,
+                    value: 20,
+                )),
+                Statement(Return(
+                    value: None,
+                )),
             ],
         ),
         (
@@ -321,18 +307,18 @@
                 0: "i",
             },
             body: [
-                Switch(
+                Block(1),
+                Statement(Switch(
                     selector: 0,
                     cases: [
                         (
                             value: Default,
-                            body: [
-                                Break,
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
+                )),
+                Block(1),
+                Statement(Break),
             ],
         ),
         (
@@ -345,26 +331,26 @@
             ],
             named_expressions: {},
             body: [
-                Switch(
+                Block(2),
+                Statement(Switch(
                     selector: 0,
                     cases: [
                         (
                             value: I32(0),
-                            body: [
-                                Break,
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Return(
+                )),
+                Block(1),
+                Statement(Break),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -378,44 +364,43 @@
             ],
             named_expressions: {},
             body: [
-                Switch(
+                Block(2),
+                Statement(Switch(
                     selector: 0,
                     cases: [
                         (
                             value: U32(0),
-                            body: [],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [],
                             fall_through: false,
                         ),
                     ],
-                ),
-                Switch(
+                )),
+                Block(0),
+                Block(0),
+                Statement(Switch(
                     selector: 1,
                     cases: [
                         (
                             value: U32(0),
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
             ],
         ),
         (
@@ -428,69 +413,64 @@
             ],
             named_expressions: {},
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Switch(
+                ))),
+                Statement(Switch(
                     selector: 0,
                     cases: [
                         (
                             value: I32(0),
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(1),
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(2),
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(3),
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: I32(4),
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                         (
                             value: Default,
-                            body: [
-                                Return(
-                                    value: None,
-                                ),
-                            ],
                             fall_through: false,
                         ),
                     ],
-                ),
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
+                Block(1),
+                Statement(Return(
+                    value: None,
+                )),
             ],
         ),
         (
@@ -511,32 +491,31 @@
                 0: "x",
             },
             body: [
-                Loop(
-                    body: [
-                        Switch(
-                            selector: 0,
-                            cases: [
-                                (
-                                    value: I32(1),
-                                    body: [
-                                        Continue,
-                                    ],
-                                    fall_through: false,
-                                ),
-                                (
-                                    value: Default,
-                                    body: [],
-                                    fall_through: false,
-                                ),
-                            ],
+                Block(2),
+                Statement(Loop(
+                    break_if: None,
+                )),
+                Block(1),
+                Statement(Switch(
+                    selector: 0,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
                         ),
                     ],
-                    continuing: [],
-                    break_if: None,
-                ),
-                Return(
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(0),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -571,125 +550,115 @@
                 2: "z",
             },
             body: [
-                Loop(
-                    body: [
-                        Switch(
-                            selector: 0,
-                            cases: [
-                                (
-                                    value: I32(1),
-                                    body: [
-                                        Continue,
-                                    ],
-                                    fall_through: false,
-                                ),
-                                (
-                                    value: I32(2),
-                                    body: [
-                                        Switch(
-                                            selector: 1,
-                                            cases: [
-                                                (
-                                                    value: I32(1),
-                                                    body: [
-                                                        Continue,
-                                                    ],
-                                                    fall_through: false,
-                                                ),
-                                                (
-                                                    value: Default,
-                                                    body: [
-                                                        Loop(
-                                                            body: [
-                                                                Switch(
-                                                                    selector: 2,
-                                                                    cases: [
-                                                                        (
-                                                                            value: I32(1),
-                                                                            body: [
-                                                                                Continue,
-                                                                            ],
-                                                                            fall_through: false,
-                                                                        ),
-                                                                        (
-                                                                            value: Default,
-                                                                            body: [],
-                                                                            fall_through: false,
-                                                                        ),
-                                                                    ],
-                                                                ),
-                                                            ],
-                                                            continuing: [],
-                                                            break_if: None,
-                                                        ),
-                                                    ],
-                                                    fall_through: false,
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                    fall_through: false,
-                                ),
-                                (
-                                    value: Default,
-                                    body: [],
-                                    fall_through: false,
-                                ),
-                            ],
+                Block(3),
+                Statement(Loop(
+                    break_if: None,
+                )),
+                Block(2),
+                Statement(Switch(
+                    selector: 0,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
                         ),
-                        Switch(
-                            selector: 1,
-                            cases: [
-                                (
-                                    value: Default,
-                                    body: [
-                                        Continue,
-                                    ],
-                                    fall_through: false,
-                                ),
-                            ],
+                        (
+                            value: I32(2),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
                         ),
                     ],
-                    continuing: [],
-                    break_if: None,
-                ),
-                Loop(
-                    body: [
-                        Switch(
-                            selector: 1,
-                            cases: [
-                                (
-                                    value: I32(1),
-                                    body: [],
-                                    fall_through: true,
-                                ),
-                                (
-                                    value: Default,
-                                    body: [
-                                        Switch(
-                                            selector: 2,
-                                            cases: [
-                                                (
-                                                    value: Default,
-                                                    body: [
-                                                        Continue,
-                                                    ],
-                                                    fall_through: false,
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                    fall_through: false,
-                                ),
-                            ],
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(1),
+                Statement(Switch(
+                    selector: 1,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
                         ),
                     ],
-                    continuing: [],
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(1),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Return(
+                )),
+                Block(1),
+                Statement(Switch(
+                    selector: 2,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
+                        ),
+                    ],
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(0),
+                Block(0),
+                Block(0),
+                Statement(Switch(
+                    selector: 1,
+                    cases: [
+                        (
+                            value: Default,
+                            fall_through: false,
+                        ),
+                    ],
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(0),
+                Statement(Loop(
+                    break_if: None,
+                )),
+                Block(1),
+                Statement(Switch(
+                    selector: 1,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: true,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
+                        ),
+                    ],
+                )),
+                Block(0),
+                Block(1),
+                Statement(Switch(
+                    selector: 2,
+                    cases: [
+                        (
+                            value: Default,
+                            fall_through: false,
+                        ),
+                    ],
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -741,100 +710,94 @@
                 3: "w",
             },
             body: [
-                Loop(
-                    body: [
-                        Switch(
-                            selector: 0,
-                            cases: [
-                                (
-                                    value: I32(1),
-                                    body: [
-                                        Store(
-                                            pointer: 5,
-                                            value: 6,
-                                        ),
-                                    ],
-                                    fall_through: false,
-                                ),
-                                (
-                                    value: Default,
-                                    body: [],
-                                    fall_through: false,
-                                ),
-                            ],
+                Block(3),
+                Statement(Loop(
+                    break_if: None,
+                )),
+                Block(1),
+                Statement(Switch(
+                    selector: 0,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
                         ),
                     ],
-                    continuing: [],
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 5,
+                    value: 6,
+                )),
+                Block(0),
+                Block(0),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Loop(
-                    body: [
-                        Switch(
-                            selector: 0,
-                            cases: [
-                                (
-                                    value: I32(1),
-                                    body: [],
-                                    fall_through: false,
-                                ),
-                                (
-                                    value: I32(2),
-                                    body: [
-                                        Switch(
-                                            selector: 1,
-                                            cases: [
-                                                (
-                                                    value: I32(1),
-                                                    body: [
-                                                        Continue,
-                                                    ],
-                                                    fall_through: false,
-                                                ),
-                                                (
-                                                    value: Default,
-                                                    body: [
-                                                        Switch(
-                                                            selector: 2,
-                                                            cases: [
-                                                                (
-                                                                    value: I32(1),
-                                                                    body: [
-                                                                        Store(
-                                                                            pointer: 5,
-                                                                            value: 7,
-                                                                        ),
-                                                                    ],
-                                                                    fall_through: false,
-                                                                ),
-                                                                (
-                                                                    value: Default,
-                                                                    body: [],
-                                                                    fall_through: false,
-                                                                ),
-                                                            ],
-                                                        ),
-                                                    ],
-                                                    fall_through: false,
-                                                ),
-                                            ],
-                                        ),
-                                    ],
-                                    fall_through: false,
-                                ),
-                                (
-                                    value: Default,
-                                    body: [],
-                                    fall_through: false,
-                                ),
-                            ],
+                )),
+                Block(1),
+                Statement(Switch(
+                    selector: 0,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: I32(2),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
                         ),
                     ],
-                    continuing: [],
-                    break_if: None,
-                ),
-                Return(
+                )),
+                Block(0),
+                Block(1),
+                Statement(Switch(
+                    selector: 1,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
+                        ),
+                    ],
+                )),
+                Block(1),
+                Statement(Continue),
+                Block(1),
+                Statement(Switch(
+                    selector: 2,
+                    cases: [
+                        (
+                            value: I32(1),
+                            fall_through: false,
+                        ),
+                        (
+                            value: Default,
+                            fall_through: false,
+                        ),
+                    ],
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 5,
+                    value: 7,
+                )),
+                Block(0),
+                Block(0),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -863,41 +826,42 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(9),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [
                             0,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 3,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 4,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 5,
                         arguments: [
                             1,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 6,
                         arguments: [
                             2,
@@ -905,8 +869,8 @@
                             4,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 7,
                         arguments: [
                             5,
@@ -915,14 +879,16 @@
                             8,
                         ],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

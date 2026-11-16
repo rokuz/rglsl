@@ -38,6 +38,7 @@ use core::cell::RefCell;
 use rglsl_types::extension::{Extension, ExtensionSet};
 
 use rglsl_types::probe::StageProbe;
+use rglsl_types::stack::Base;
 use rglsl_types::{FastHashMap, FastHashSet, ShaderStageMask};
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
@@ -450,6 +451,7 @@ pub(crate) struct Analyzer<'a> {
     pub inductive_loops: BTreeSet<SymbolId>,
     pub index_limitations: Vec<limitations::IndexLimitation>,
     pub flat_expressions: bool,
+    pub stack_base: Base,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -532,6 +534,7 @@ impl<'a> Analyzer<'a> {
             inductive_loops: BTreeSet::new(),
             index_limitations: Vec::new(),
             flat_expressions: true,
+            stack_base: Base::here(),
         }
     }
 

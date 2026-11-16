@@ -24,6 +24,8 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -49,6 +51,8 @@
             ty: 2,
             init: None,
             memory_decorations: ("COHERENT"),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("plain_buf"),
@@ -62,6 +66,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -103,33 +109,36 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 7,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 2,
                         value: 6,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

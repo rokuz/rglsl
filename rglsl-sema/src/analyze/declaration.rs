@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::run;
+use rglsl_types::stack::run_from;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
@@ -534,9 +534,12 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn qualifiers(&mut self, qualifier: &Spanned<TypeQualifier>) -> Qualifiers {
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).qualifiers(qualifier))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).qualifiers(qualifier)
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
     }
@@ -932,9 +935,12 @@ impl Analyzer<'_> {
             self.default_precision_of(ty, &mut qualifiers);
             return qualifiers;
         }
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).optional_qualifiers(ty))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).optional_qualifiers(ty)
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
     }
@@ -953,9 +959,12 @@ impl Analyzer<'_> {
         if specifier.is_none() {
             return Vec::new();
         }
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).array_sizes(specifier))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).array_sizes(specifier)
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Vec::new()))
     }
@@ -1032,9 +1041,12 @@ impl Analyzer<'_> {
         if let Some(ty) = self.simple_type_specifier(specifier, span) {
             return ty;
         }
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).bare_type_specifier(specifier, span))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).bare_type_specifier(specifier, span)
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Type::ERROR))
     }
@@ -1101,9 +1113,12 @@ impl Analyzer<'_> {
         declarations: &[Spanned<StructDeclaration>],
         in_block: Option<&Qualifiers>,
     ) -> Vec<Member> {
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).struct_members(declarations, in_block.cloned()))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).struct_members(declarations, in_block.cloned())
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Vec::new()))
     }
@@ -2202,9 +2217,12 @@ impl Analyzer<'_> {
         if let Initializer::Expression(expression) = &initializer.node {
             return self.expression(expression);
         }
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).initializer(span, initializer, expected.clone()))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).initializer(span, initializer, expected.clone())
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Operand::error()))
     }

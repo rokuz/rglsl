@@ -11,21 +11,23 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 33;
+pub const FORMAT_VERSION: u32 = 35;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct ObjectModule {
     pub format_version: u32,
     pub name: Option<String>,
     pub target: ObjectTarget,
-    pub unit: CompiledUnit,
+    pub unit: Box<CompiledUnit>,
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub enum ObjectTarget {
     Stage(ShaderStage),
     Library(Library),
@@ -34,6 +36,7 @@ pub enum ObjectTarget {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct Library {
     pub stages: ShaderStageMask,
     pub variants: Vec<LibraryVariant>,
@@ -43,23 +46,26 @@ pub struct Library {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct LibraryVariant {
     pub stages: ShaderStageMask,
-    pub unit: CompiledUnit,
+    pub unit: Box<CompiledUnit>,
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct CompiledUnit {
     pub glsl_version: u32,
     pub extensions: Vec<String>,
-    pub module: Module,
+    pub module: Box<Module>,
     pub functions: Vec<FunctionSymbol>,
     pub globals: Vec<GlobalSymbol>,
     pub layout: StageLayout,
     pub work_group_size_constant: bool,
     pub work_group_size_placeholders: [Option<Handle<Override>>; 3],
+    #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
     pub specialized: Option<Box<CompiledUnit>>,
     #[cfg_attr(
         feature = "serialize",
@@ -75,6 +81,7 @@ pub struct CompiledUnit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct DeadCall {
     pub caller: Option<Handle<Function>>,
     pub callee: Handle<Function>,
@@ -85,7 +92,7 @@ impl CompiledUnit {
         Self {
             glsl_version: 0,
             extensions: Vec::new(),
-            module,
+            module: Box::new(module),
             functions: Vec::new(),
             globals: Vec::new(),
             layout: StageLayout::default(),
@@ -127,12 +134,12 @@ impl CompiledUnit {
 }
 
 impl ObjectModule {
-    pub const fn new(target: ObjectTarget, unit: CompiledUnit) -> Self {
+    pub fn new(target: ObjectTarget, unit: CompiledUnit) -> Self {
         Self {
             format_version: FORMAT_VERSION,
             name: None,
             target,
-            unit,
+            unit: Box::new(unit),
         }
     }
 
@@ -194,7 +201,7 @@ impl ObjectModule {
                     variants: Vec::new(),
                     rejections: Vec::new(),
                 }),
-                unit: unit.for_library_stage(stage),
+                unit: Box::new(unit.for_library_stage(stage)),
             }),
             None => Err(library
                 .rejections
@@ -258,7 +265,7 @@ impl ObjectModule {
                     variants: Vec::new(),
                     rejections: Vec::new(),
                 }),
-                unit: unit.into_library_stage(stage),
+                unit: Box::new(unit.into_library_stage(stage)),
             }),
             None => Err(rejections
                 .into_iter()
@@ -288,10 +295,10 @@ impl ObjectModule {
     }
 
     pub fn units(&self) -> impl Iterator<Item = &CompiledUnit> {
-        core::iter::once(&self.unit).chain(
+        core::iter::once(&*self.unit).chain(
             self.library()
                 .into_iter()
-                .flat_map(|library| library.variants.iter().map(|variant| &variant.unit)),
+                .flat_map(|library| library.variants.iter().map(|variant| &*variant.unit)),
         )
     }
 }
@@ -329,6 +336,7 @@ pub const fn ray_tracing_for(
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct StageRejection {
     pub stage: ShaderStage,
     pub file: Option<String>,
@@ -339,6 +347,7 @@ pub struct StageRejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub enum ParameterQualifier {
     In,
     ConstIn,
@@ -349,6 +358,7 @@ pub enum ParameterQualifier {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct FunctionSymbol {
     pub function: Handle<Function>,
     pub name: String,
@@ -363,6 +373,7 @@ pub struct FunctionSymbol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub enum SymbolKind {
     Variable,
     Block,
@@ -373,6 +384,7 @@ pub enum SymbolKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub enum PathStep {
     Element,
     Member(u32),
@@ -381,6 +393,7 @@ pub enum PathStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct GlobalSymbol {
     pub global: Handle<GlobalVariable>,
     pub name: String,
@@ -403,6 +416,7 @@ pub struct GlobalSymbol {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub enum BindingAssignment {
     #[default]
     Explicit,
@@ -420,6 +434,7 @@ impl BindingAssignment {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 pub struct StageLayout {
     pub local_size: [Option<u32>; 3],
     pub local_size_ids: [Option<u32>; 3],

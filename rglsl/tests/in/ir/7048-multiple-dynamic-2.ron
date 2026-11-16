@@ -63,6 +63,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [
@@ -131,33 +134,36 @@
                     12: "val_1",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 7,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 11,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 13,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 13,
                         end: 15,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(14),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

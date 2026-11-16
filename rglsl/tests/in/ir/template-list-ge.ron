@@ -35,6 +35,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -114,61 +116,61 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(4),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Loop(
-                        body: [
-                            Emit((
-                                start: 6,
-                                end: 7,
-                            )),
-                            Emit((
-                                start: 8,
-                                end: 9,
-                            )),
-                            If(
-                                condition: 8,
-                                accept: [],
-                                reject: [
-                                    Break,
-                                ],
-                            ),
-                            Block([
-                                Emit((
-                                    start: 10,
-                                    end: 15,
-                                )),
-                                Store(
-                                    pointer: 11,
-                                    value: 14,
-                                ),
-                            ]),
-                        ],
-                        continuing: [
-                            Emit((
-                                start: 16,
-                                end: 18,
-                            )),
-                            Store(
-                                pointer: 5,
-                                value: 17,
-                            ),
-                        ],
+                    ))),
+                    Statement(Loop(
                         break_if: None,
-                    ),
-                    Return(
+                    )),
+                    Block(4),
+                    Statement(Emit((
+                        start: 6,
+                        end: 7,
+                    ))),
+                    Statement(Emit((
+                        start: 8,
+                        end: 9,
+                    ))),
+                    Statement(If(
+                        condition: 8,
+                    )),
+                    Block(0),
+                    Block(1),
+                    Statement(Break),
+                    Statement(Block),
+                    Block(2),
+                    Statement(Emit((
+                        start: 10,
+                        end: 15,
+                    ))),
+                    Statement(Store(
+                        pointer: 11,
+                        value: 14,
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 16,
+                        end: 18,
+                    ))),
+                    Statement(Store(
+                        pointer: 5,
+                        value: 17,
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

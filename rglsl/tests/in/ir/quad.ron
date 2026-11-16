@@ -40,8 +40,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("position"),
@@ -50,6 +55,8 @@
                             invariant: false,
                         ))),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -96,6 +103,8 @@
             ty: 4,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("u_sampler"),
@@ -107,6 +116,8 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -132,6 +143,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                     (
@@ -143,6 +157,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                 ],
@@ -183,21 +200,24 @@
                     1: "uv",
                 },
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 8,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(7),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "frag_main",
@@ -217,6 +237,9 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                     ),
                 ],
@@ -228,6 +251,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -239,6 +265,7 @@
                         image: 1,
                         sampler: Some(2),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 0,
                         array_index: None,
                         offset: None,
@@ -271,36 +298,38 @@
                     8: "premultiplied",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 6,
-                        accept: [
-                            Kill,
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(1),
+                    Statement(Kill),
+                    Block(0),
+                    Statement(Emit((
                         start: 7,
                         end: 9,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(8),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs_extra",
@@ -319,6 +348,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -339,17 +371,20 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(4),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

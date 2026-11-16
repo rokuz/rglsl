@@ -68,7 +68,7 @@ pub fn compile_program(
         Ok(info) => info,
         Err(error) => {
             return Err(CompileError::Invalid(Box::new(InvalidModule {
-                module: object.unit.module,
+                module: *object.unit.module,
                 error,
             })));
         }
@@ -80,7 +80,7 @@ pub fn finish_program(object: ObjectModule, info: ModuleInfo) -> Result<Linked, 
     let stage = object
         .stage()
         .ok_or_else(|| LinkError::Internal(String::from("a program without a stage")))?;
-    let mut module = object.unit.module;
+    let mut module = *object.unit.module;
     let info = finish_module(&mut module, Some(info))?;
     Ok(Linked {
         stage,

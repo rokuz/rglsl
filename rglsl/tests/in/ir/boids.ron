@@ -33,12 +33,16 @@
                         ty: 2,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vel"),
                         ty: 2,
                         binding: None,
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -53,42 +57,56 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("rule1Distance"),
                         ty: 1,
                         binding: None,
                         offset: 4,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("rule2Distance"),
                         ty: 1,
                         binding: None,
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("rule3Distance"),
                         ty: 1,
                         binding: None,
                         offset: 12,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("rule1Scale"),
                         ty: 1,
                         binding: None,
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("rule2Scale"),
                         ty: 1,
                         binding: None,
                         offset: 20,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("rule3Scale"),
                         ty: 1,
                         binding: None,
                         offset: 24,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 28,
@@ -111,6 +129,8 @@
                         ty: 5,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -157,6 +177,8 @@
             ty: 4,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("particlesSrc"),
@@ -170,6 +192,8 @@
             ty: 6,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("particlesDst"),
@@ -183,6 +207,8 @@
             ty: 6,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -843,401 +869,390 @@
                     1: "index",
                 },
                 body: [
-                    Emit((
+                    Block(45),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 3,
-                        accept: [
-                            Return(
-                                value: None,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(1),
+                    Statement(Return(
+                        value: None,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 5,
                         end: 9,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 9,
                         value: 8,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 15,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 15,
                         value: 14,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 18,
                         end: 19,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 22,
                         end: 23,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 27,
-                    )),
-                    Loop(
-                        body: [
-                            Emit((
-                                start: 36,
-                                end: 37,
-                            )),
-                            Emit((
-                                start: 38,
-                                end: 39,
-                            )),
-                            If(
-                                condition: 38,
-                                accept: [
-                                    Break,
-                                ],
-                                reject: [],
-                            ),
-                            Emit((
-                                start: 39,
-                                end: 41,
-                            )),
-                            If(
-                                condition: 40,
-                                accept: [
-                                    Continue,
-                                ],
-                                reject: [],
-                            ),
-                            Emit((
-                                start: 42,
-                                end: 47,
-                            )),
-                            Store(
-                                pointer: 32,
-                                value: 46,
-                            ),
-                            Emit((
-                                start: 48,
-                                end: 53,
-                            )),
-                            Store(
-                                pointer: 33,
-                                value: 52,
-                            ),
-                            Emit((
-                                start: 53,
-                                end: 56,
-                            )),
-                            Emit((
-                                start: 57,
-                                end: 60,
-                            )),
-                            If(
-                                condition: 59,
-                                accept: [
-                                    Emit((
-                                        start: 60,
-                                        end: 63,
-                                    )),
-                                    Store(
-                                        pointer: 19,
-                                        value: 62,
-                                    ),
-                                    Emit((
-                                        start: 63,
-                                        end: 64,
-                                    )),
-                                    Emit((
-                                        start: 65,
-                                        end: 66,
-                                    )),
-                                    Store(
-                                        pointer: 29,
-                                        value: 65,
-                                    ),
-                                ],
-                                reject: [],
-                            ),
-                            Emit((
-                                start: 66,
-                                end: 69,
-                            )),
-                            Emit((
-                                start: 70,
-                                end: 73,
-                            )),
-                            If(
-                                condition: 72,
-                                accept: [
-                                    Emit((
-                                        start: 73,
-                                        end: 78,
-                                    )),
-                                    Store(
-                                        pointer: 27,
-                                        value: 77,
-                                    ),
-                                ],
-                                reject: [],
-                            ),
-                            Emit((
-                                start: 78,
-                                end: 81,
-                            )),
-                            Emit((
-                                start: 82,
-                                end: 85,
-                            )),
-                            If(
-                                condition: 84,
-                                accept: [
-                                    Emit((
-                                        start: 85,
-                                        end: 88,
-                                    )),
-                                    Store(
-                                        pointer: 23,
-                                        value: 87,
-                                    ),
-                                    Emit((
-                                        start: 88,
-                                        end: 89,
-                                    )),
-                                    Emit((
-                                        start: 90,
-                                        end: 91,
-                                    )),
-                                    Store(
-                                        pointer: 31,
-                                        value: 90,
-                                    ),
-                                ],
-                                reject: [],
-                            ),
-                        ],
-                        continuing: [
-                            Emit((
-                                start: 91,
-                                end: 92,
-                            )),
-                            Emit((
-                                start: 93,
-                                end: 94,
-                            )),
-                            Store(
-                                pointer: 35,
-                                value: 93,
-                            ),
-                        ],
+                    ))),
+                    Statement(Loop(
                         break_if: None,
-                    ),
-                    Emit((
+                    )),
+                    Block(18),
+                    Statement(Emit((
+                        start: 36,
+                        end: 37,
+                    ))),
+                    Statement(Emit((
+                        start: 38,
+                        end: 39,
+                    ))),
+                    Statement(If(
+                        condition: 38,
+                    )),
+                    Block(1),
+                    Statement(Break),
+                    Block(0),
+                    Statement(Emit((
+                        start: 39,
+                        end: 41,
+                    ))),
+                    Statement(If(
+                        condition: 40,
+                    )),
+                    Block(1),
+                    Statement(Continue),
+                    Block(0),
+                    Statement(Emit((
+                        start: 42,
+                        end: 47,
+                    ))),
+                    Statement(Store(
+                        pointer: 32,
+                        value: 46,
+                    )),
+                    Statement(Emit((
+                        start: 48,
+                        end: 53,
+                    ))),
+                    Statement(Store(
+                        pointer: 33,
+                        value: 52,
+                    )),
+                    Statement(Emit((
+                        start: 53,
+                        end: 56,
+                    ))),
+                    Statement(Emit((
+                        start: 57,
+                        end: 60,
+                    ))),
+                    Statement(If(
+                        condition: 59,
+                    )),
+                    Block(5),
+                    Statement(Emit((
+                        start: 60,
+                        end: 63,
+                    ))),
+                    Statement(Store(
+                        pointer: 19,
+                        value: 62,
+                    )),
+                    Statement(Emit((
+                        start: 63,
+                        end: 64,
+                    ))),
+                    Statement(Emit((
+                        start: 65,
+                        end: 66,
+                    ))),
+                    Statement(Store(
+                        pointer: 29,
+                        value: 65,
+                    )),
+                    Block(0),
+                    Statement(Emit((
+                        start: 66,
+                        end: 69,
+                    ))),
+                    Statement(Emit((
+                        start: 70,
+                        end: 73,
+                    ))),
+                    Statement(If(
+                        condition: 72,
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 73,
+                        end: 78,
+                    ))),
+                    Statement(Store(
+                        pointer: 27,
+                        value: 77,
+                    )),
+                    Block(0),
+                    Statement(Emit((
+                        start: 78,
+                        end: 81,
+                    ))),
+                    Statement(Emit((
+                        start: 82,
+                        end: 85,
+                    ))),
+                    Statement(If(
+                        condition: 84,
+                    )),
+                    Block(5),
+                    Statement(Emit((
+                        start: 85,
+                        end: 88,
+                    ))),
+                    Statement(Store(
+                        pointer: 23,
+                        value: 87,
+                    )),
+                    Statement(Emit((
+                        start: 88,
+                        end: 89,
+                    ))),
+                    Statement(Emit((
+                        start: 90,
+                        end: 91,
+                    ))),
+                    Statement(Store(
+                        pointer: 31,
+                        value: 90,
+                    )),
+                    Block(0),
+                    Block(3),
+                    Statement(Emit((
+                        start: 91,
+                        end: 92,
+                    ))),
+                    Statement(Emit((
+                        start: 93,
+                        end: 94,
+                    ))),
+                    Statement(Store(
+                        pointer: 35,
+                        value: 93,
+                    )),
+                    Statement(Emit((
                         start: 94,
                         end: 95,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 96,
                         end: 97,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 96,
-                        accept: [
-                            Emit((
-                                start: 97,
-                                end: 104,
-                            )),
-                            Store(
-                                pointer: 19,
-                                value: 103,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 97,
+                        end: 104,
+                    ))),
+                    Statement(Store(
+                        pointer: 19,
+                        value: 103,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 104,
                         end: 105,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 106,
                         end: 107,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 106,
-                        accept: [
-                            Emit((
-                                start: 107,
-                                end: 112,
-                            )),
-                            Store(
-                                pointer: 23,
-                                value: 111,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 107,
+                        end: 112,
+                    ))),
+                    Statement(Store(
+                        pointer: 23,
+                        value: 111,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 112,
                         end: 114,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 115,
                         end: 120,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 121,
                         end: 126,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 127,
                         end: 131,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 15,
                         value: 130,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 131,
                         end: 135,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 137,
                         end: 139,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 15,
                         value: 138,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 139,
                         end: 141,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 142,
                         end: 146,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 9,
                         value: 145,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 146,
                         end: 148,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 149,
                         end: 150,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 149,
-                        accept: [
-                            Emit((
-                                start: 150,
-                                end: 151,
-                            )),
-                            Store(
-                                pointer: 150,
-                                value: 151,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 150,
+                        end: 151,
+                    ))),
+                    Statement(Store(
+                        pointer: 150,
+                        value: 151,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 152,
                         end: 154,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 155,
                         end: 156,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 155,
-                        accept: [
-                            Emit((
-                                start: 156,
-                                end: 157,
-                            )),
-                            Store(
-                                pointer: 156,
-                                value: 157,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 156,
+                        end: 157,
+                    ))),
+                    Statement(Store(
+                        pointer: 156,
+                        value: 157,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 158,
                         end: 160,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 161,
                         end: 162,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 161,
-                        accept: [
-                            Emit((
-                                start: 162,
-                                end: 163,
-                            )),
-                            Store(
-                                pointer: 162,
-                                value: 163,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 162,
+                        end: 163,
+                    ))),
+                    Statement(Store(
+                        pointer: 162,
+                        value: 163,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 164,
                         end: 166,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 167,
                         end: 168,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 167,
-                        accept: [
-                            Emit((
-                                start: 168,
-                                end: 169,
-                            )),
-                            Store(
-                                pointer: 168,
-                                value: 169,
-                            ),
-                        ],
-                        reject: [],
-                    ),
-                    Emit((
+                    )),
+                    Block(2),
+                    Statement(Emit((
+                        start: 168,
+                        end: 169,
+                    ))),
+                    Statement(Store(
+                        pointer: 168,
+                        value: 169,
+                    )),
+                    Block(0),
+                    Statement(Emit((
                         start: 171,
                         end: 175,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 173,
                         value: 174,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 176,
                         end: 180,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 178,
                         value: 179,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

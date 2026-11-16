@@ -361,73 +361,74 @@
                 28: "v_i32_zero",
             },
             body: [
-                Emit((
+                Block(17),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 6,
                     end: 7,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 11,
                     end: 12,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 15,
                     end: 16,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 19,
                     end: 20,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 21,
                     end: 22,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 23,
                     end: 24,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 28,
                     end: 29,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 29,
                     end: 38,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(37),
-                ),
+                )),
             ],
         ),
         (
@@ -523,49 +524,50 @@
                 15: "b",
             },
             body: [
-                Emit((
+                Block(11),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 4,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 7,
                     end: 9,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 10,
                     end: 12,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 12,
                     end: 13,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 14,
                     end: 16,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 16,
                     end: 19,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(18),
-                ),
+                )),
             ],
         ),
         (
@@ -634,53 +636,54 @@
             ],
             named_expressions: {},
             body: [
-                Emit((
+                Block(12),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 7,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 2,
                     value: 6,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 7,
                     end: 8,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 9,
                     end: 11,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 2,
                     value: 10,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 11,
                     end: 12,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 13,
                     end: 15,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 2,
                     value: 14,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 15,
                     end: 16,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(15),
-                ),
+                )),
             ],
         ),
         (
@@ -715,17 +718,18 @@
                 1: "y",
             },
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(2),
-                ),
+                )),
             ],
         ),
         (
@@ -741,9 +745,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -759,9 +764,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -777,9 +783,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -795,9 +802,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -978,215 +986,202 @@
                 52: "short_circuit_7",
             },
             body: [
-                Emit((
+                Block(24),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 3,
                     end: 5,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                If(
+                ))),
+                Statement(If(
                     condition: 5,
-                    accept: [
-                        Store(
-                            pointer: 7,
-                            value: 1,
-                        ),
-                    ],
-                    reject: [
-                        Store(
-                            pointer: 7,
-                            value: 6,
-                        ),
-                    ],
-                ),
-                Emit((
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 7,
+                    value: 1,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 7,
+                    value: 6,
+                )),
+                Statement(Emit((
                     start: 9,
                     end: 10,
-                )),
-                If(
+                ))),
+                Statement(If(
                     condition: 0,
-                    accept: [
-                        Store(
-                            pointer: 11,
-                            value: 1,
-                        ),
-                    ],
-                    reject: [
-                        Store(
-                            pointer: 11,
-                            value: 10,
-                        ),
-                    ],
-                ),
-                Emit((
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 11,
+                    value: 1,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 11,
+                    value: 10,
+                )),
+                Statement(Emit((
                     start: 13,
                     end: 14,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 14,
                     end: 15,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 15,
                     end: 18,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 18,
                     end: 19,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 19,
                     end: 22,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 22,
                     end: 23,
-                )),
-                If(
+                ))),
+                Statement(If(
                     condition: 22,
-                    accept: [
-                        Emit((
-                            start: 0,
-                            end: 0,
-                        )),
-                        Store(
-                            pointer: 24,
-                            value: 25,
-                        ),
-                    ],
-                    reject: [
-                        Store(
-                            pointer: 24,
-                            value: 23,
-                        ),
-                    ],
-                ),
-                Emit((
+                )),
+                Block(2),
+                Statement(Emit((
+                    start: 0,
+                    end: 0,
+                ))),
+                Statement(Store(
+                    pointer: 24,
+                    value: 25,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 24,
+                    value: 23,
+                )),
+                Statement(Emit((
                     start: 27,
                     end: 29,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 4,
                     arguments: [],
                     result: Some(29),
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 30,
                     end: 31,
-                )),
-                If(
+                ))),
+                Statement(If(
                     condition: 30,
-                    accept: [
-                        Call(
-                            function: 5,
-                            arguments: [],
-                            result: Some(33),
-                        ),
-                        Store(
-                            pointer: 32,
-                            value: 33,
-                        ),
-                    ],
-                    reject: [
-                        Store(
-                            pointer: 32,
-                            value: 31,
-                        ),
-                    ],
-                ),
-                Emit((
+                )),
+                Block(2),
+                Statement(Call(
+                    function: 5,
+                    arguments: [],
+                    result: Some(33),
+                )),
+                Statement(Store(
+                    pointer: 32,
+                    value: 33,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 32,
+                    value: 31,
+                )),
+                Statement(Emit((
                     start: 35,
                     end: 36,
-                )),
-                If(
+                ))),
+                Statement(If(
                     condition: 35,
-                    accept: [
-                        Call(
-                            function: 6,
-                            arguments: [],
-                            result: Some(38),
-                        ),
-                        Emit((
-                            start: 39,
-                            end: 40,
-                        )),
-                        If(
-                            condition: 39,
-                            accept: [
-                                Call(
-                                    function: 7,
-                                    arguments: [],
-                                    result: Some(42),
-                                ),
-                                Store(
-                                    pointer: 41,
-                                    value: 42,
-                                ),
-                            ],
-                            reject: [
-                                Store(
-                                    pointer: 41,
-                                    value: 40,
-                                ),
-                            ],
-                        ),
-                        Emit((
-                            start: 44,
-                            end: 45,
-                        )),
-                        Store(
-                            pointer: 37,
-                            value: 44,
-                        ),
-                    ],
-                    reject: [
-                        Store(
-                            pointer: 37,
-                            value: 36,
-                        ),
-                    ],
-                ),
-                Emit((
+                )),
+                Block(5),
+                Statement(Call(
+                    function: 6,
+                    arguments: [],
+                    result: Some(38),
+                )),
+                Statement(Emit((
+                    start: 39,
+                    end: 40,
+                ))),
+                Statement(If(
+                    condition: 39,
+                )),
+                Block(2),
+                Statement(Call(
+                    function: 7,
+                    arguments: [],
+                    result: Some(42),
+                )),
+                Statement(Store(
+                    pointer: 41,
+                    value: 42,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 41,
+                    value: 40,
+                )),
+                Statement(Emit((
+                    start: 44,
+                    end: 45,
+                ))),
+                Statement(Store(
+                    pointer: 37,
+                    value: 44,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 37,
+                    value: 36,
+                )),
+                Statement(Emit((
                     start: 46,
                     end: 47,
-                )),
-                If(
+                ))),
+                Statement(If(
                     condition: 47,
-                    accept: [
-                        Call(
-                            function: 5,
-                            arguments: [],
-                            result: Some(50),
-                        ),
-                        Store(
-                            pointer: 49,
-                            value: 50,
-                        ),
-                    ],
-                    reject: [
-                        Store(
-                            pointer: 49,
-                            value: 48,
-                        ),
-                    ],
-                ),
-                Emit((
+                )),
+                Block(2),
+                Statement(Call(
+                    function: 5,
+                    arguments: [],
+                    result: Some(50),
+                )),
+                Statement(Store(
+                    pointer: 49,
+                    value: 50,
+                )),
+                Block(1),
+                Statement(Store(
+                    pointer: 49,
+                    value: 48,
+                )),
+                Statement(Emit((
                     start: 52,
                     end: 53,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -2114,355 +2109,356 @@
                 203: "mul",
             },
             body: [
-                Emit((
+                Block(58),
+                Statement(Emit((
                     start: 6,
                     end: 7,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 7,
                     end: 9,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 9,
                     end: 11,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 11,
                     end: 12,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 12,
                     end: 13,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 13,
                     end: 14,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 14,
                     end: 17,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 17,
                     end: 20,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 20,
                     end: 23,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 23,
                     end: 24,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 24,
                     end: 25,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 25,
                     end: 26,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 26,
                     end: 29,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 29,
                     end: 32,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 32,
                     end: 35,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 35,
                     end: 36,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 36,
                     end: 37,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 37,
                     end: 38,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 38,
                     end: 41,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 41,
                     end: 44,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 44,
                     end: 47,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 47,
                     end: 48,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 48,
                     end: 49,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 49,
                     end: 50,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 50,
                     end: 53,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 53,
                     end: 56,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 56,
                     end: 59,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 59,
                     end: 60,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 60,
                     end: 61,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 61,
                     end: 62,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 62,
                     end: 65,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 65,
                     end: 68,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 68,
                     end: 71,
-                )),
-                Block([
-                    Emit((
-                        start: 71,
-                        end: 74,
-                    )),
-                    Emit((
-                        start: 74,
-                        end: 77,
-                    )),
-                    Emit((
-                        start: 77,
-                        end: 80,
-                    )),
-                    Emit((
-                        start: 80,
-                        end: 83,
-                    )),
-                    Emit((
-                        start: 83,
-                        end: 86,
-                    )),
-                    Emit((
-                        start: 86,
-                        end: 89,
-                    )),
-                    Emit((
-                        start: 89,
-                        end: 92,
-                    )),
-                    Emit((
-                        start: 92,
-                        end: 95,
-                    )),
-                    Emit((
-                        start: 95,
-                        end: 98,
-                    )),
-                    Emit((
-                        start: 98,
-                        end: 101,
-                    )),
-                    Emit((
-                        start: 101,
-                        end: 104,
-                    )),
-                    Emit((
-                        start: 104,
-                        end: 107,
-                    )),
-                    Emit((
-                        start: 107,
-                        end: 109,
-                    )),
-                    Emit((
-                        start: 109,
-                        end: 111,
-                    )),
-                    Emit((
-                        start: 111,
-                        end: 113,
-                    )),
-                    Emit((
-                        start: 113,
-                        end: 115,
-                    )),
-                    Emit((
-                        start: 115,
-                        end: 117,
-                    )),
-                    Emit((
-                        start: 117,
-                        end: 119,
-                    )),
-                    Emit((
-                        start: 119,
-                        end: 122,
-                    )),
-                    Emit((
-                        start: 122,
-                        end: 125,
-                    )),
-                    Emit((
-                        start: 125,
-                        end: 128,
-                    )),
-                    Emit((
-                        start: 128,
-                        end: 131,
-                    )),
-                    Emit((
-                        start: 131,
-                        end: 134,
-                    )),
-                    Emit((
-                        start: 134,
-                        end: 137,
-                    )),
-                    Emit((
-                        start: 137,
-                        end: 140,
-                    )),
-                    Emit((
-                        start: 140,
-                        end: 143,
-                    )),
-                    Emit((
-                        start: 143,
-                        end: 146,
-                    )),
-                    Emit((
-                        start: 146,
-                        end: 149,
-                    )),
-                    Emit((
-                        start: 149,
-                        end: 152,
-                    )),
-                    Emit((
-                        start: 152,
-                        end: 155,
-                    )),
-                ]),
-                Emit((
+                ))),
+                Statement(Block),
+                Block(30),
+                Statement(Emit((
+                    start: 71,
+                    end: 74,
+                ))),
+                Statement(Emit((
+                    start: 74,
+                    end: 77,
+                ))),
+                Statement(Emit((
+                    start: 77,
+                    end: 80,
+                ))),
+                Statement(Emit((
+                    start: 80,
+                    end: 83,
+                ))),
+                Statement(Emit((
+                    start: 83,
+                    end: 86,
+                ))),
+                Statement(Emit((
+                    start: 86,
+                    end: 89,
+                ))),
+                Statement(Emit((
+                    start: 89,
+                    end: 92,
+                ))),
+                Statement(Emit((
+                    start: 92,
+                    end: 95,
+                ))),
+                Statement(Emit((
+                    start: 95,
+                    end: 98,
+                ))),
+                Statement(Emit((
+                    start: 98,
+                    end: 101,
+                ))),
+                Statement(Emit((
+                    start: 101,
+                    end: 104,
+                ))),
+                Statement(Emit((
+                    start: 104,
+                    end: 107,
+                ))),
+                Statement(Emit((
+                    start: 107,
+                    end: 109,
+                ))),
+                Statement(Emit((
+                    start: 109,
+                    end: 111,
+                ))),
+                Statement(Emit((
+                    start: 111,
+                    end: 113,
+                ))),
+                Statement(Emit((
+                    start: 113,
+                    end: 115,
+                ))),
+                Statement(Emit((
+                    start: 115,
+                    end: 117,
+                ))),
+                Statement(Emit((
+                    start: 117,
+                    end: 119,
+                ))),
+                Statement(Emit((
+                    start: 119,
+                    end: 122,
+                ))),
+                Statement(Emit((
+                    start: 122,
+                    end: 125,
+                ))),
+                Statement(Emit((
+                    start: 125,
+                    end: 128,
+                ))),
+                Statement(Emit((
+                    start: 128,
+                    end: 131,
+                ))),
+                Statement(Emit((
+                    start: 131,
+                    end: 134,
+                ))),
+                Statement(Emit((
+                    start: 134,
+                    end: 137,
+                ))),
+                Statement(Emit((
+                    start: 137,
+                    end: 140,
+                ))),
+                Statement(Emit((
+                    start: 140,
+                    end: 143,
+                ))),
+                Statement(Emit((
+                    start: 143,
+                    end: 146,
+                ))),
+                Statement(Emit((
+                    start: 146,
+                    end: 149,
+                ))),
+                Statement(Emit((
+                    start: 149,
+                    end: 152,
+                ))),
+                Statement(Emit((
+                    start: 152,
+                    end: 155,
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 158,
                     end: 159,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 162,
                     end: 163,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 166,
                     end: 168,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 171,
                     end: 172,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 175,
                     end: 176,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 179,
                     end: 181,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 182,
                     end: 183,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 184,
                     end: 185,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 186,
                     end: 188,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 188,
                     end: 189,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 190,
                     end: 191,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 194,
                     end: 195,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 198,
                     end: 199,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 202,
                     end: 204,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 205,
                     end: 206,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 207,
                     end: 208,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 208,
                     value: 207,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -2711,105 +2707,106 @@
                 49: "shr3",
             },
             body: [
-                Emit((
+                Block(25),
+                Statement(Emit((
                     start: 4,
                     end: 5,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 6,
                     end: 8,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 8,
                     end: 10,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 10,
                     end: 11,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 11,
                     end: 12,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 12,
                     end: 15,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 15,
                     end: 18,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 18,
                     end: 19,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 19,
                     end: 20,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 20,
                     end: 23,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 23,
                     end: 26,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 26,
                     end: 27,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 27,
                     end: 28,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 28,
                     end: 31,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 31,
                     end: 34,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 34,
                     end: 35,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 35,
                     end: 36,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 36,
                     end: 39,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 39,
                     end: 42,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 42,
                     end: 43,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 43,
                     end: 44,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 44,
                     end: 47,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 47,
                     end: 50,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -3194,153 +3191,154 @@
                 77: "gte5",
             },
             body: [
-                Emit((
+                Block(37),
+                Statement(Emit((
                     start: 6,
                     end: 7,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 7,
                     end: 8,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 8,
                     end: 9,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 9,
                     end: 12,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 12,
                     end: 15,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 15,
                     end: 18,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 18,
                     end: 19,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 19,
                     end: 20,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 20,
                     end: 21,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 21,
                     end: 24,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 24,
                     end: 27,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 27,
                     end: 30,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 30,
                     end: 31,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 31,
                     end: 32,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 32,
                     end: 33,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 33,
                     end: 36,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 36,
                     end: 39,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 39,
                     end: 42,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 42,
                     end: 43,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 43,
                     end: 44,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 44,
                     end: 45,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 45,
                     end: 48,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 48,
                     end: 51,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 51,
                     end: 54,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 54,
                     end: 55,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 55,
                     end: 56,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 56,
                     end: 57,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 57,
                     end: 60,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 60,
                     end: 63,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 63,
                     end: 66,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 66,
                     end: 67,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 67,
                     end: 68,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 68,
                     end: 69,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 69,
                     end: 72,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 72,
                     end: 75,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 75,
                     end: 78,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -3505,133 +3503,134 @@
                 3: "two_u",
             },
             body: [
-                Store(
+                Block(32),
+                Statement(Store(
                     pointer: 4,
                     value: 1,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 5,
                     end: 7,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 6,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 7,
                     end: 9,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 8,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 9,
                     end: 12,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 11,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 12,
                     end: 15,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 14,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 15,
                     end: 17,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 16,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 17,
                     end: 19,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 18,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 19,
                     end: 21,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 20,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 21,
                     end: 23,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 22,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 23,
                     end: 25,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 24,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 25,
                     end: 27,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 26,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 28,
                     end: 30,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 29,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 31,
                     end: 33,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 4,
                     value: 32,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 35,
                     end: 36,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 37,
                     end: 39,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 35,
                     value: 38,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 39,
                     end: 40,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 41,
                     end: 43,
-                )),
-                Store(
+                ))),
+                Statement(Store(
                     pointer: 39,
                     value: 42,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -3856,73 +3855,74 @@
                 49: "f7",
             },
             body: [
-                Emit((
+                Block(17),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 2,
                     end: 4,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 4,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 6,
                     end: 8,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 8,
                     end: 11,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 11,
                     end: 15,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 15,
                     end: 20,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 20,
                     end: 25,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 26,
                     end: 27,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 27,
                     end: 29,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 29,
                     end: 31,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 31,
                     end: 33,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 33,
                     end: 36,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 36,
                     end: 40,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 40,
                     end: 45,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 45,
                     end: 50,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -3984,76 +3984,79 @@
                     0: "id",
                 },
                 body: [
-                    Call(
+                    Block(13),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(1),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 2,
                         end: 6,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 1,
                         arguments: [
                             3,
                             5,
                         ],
                         result: Some(6),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [],
                         result: Some(7),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 3,
                         arguments: [
                             11,
                         ],
                         result: Some(12),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 8,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 9,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 10,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 11,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 12,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 13,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

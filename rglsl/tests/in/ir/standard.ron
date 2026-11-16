@@ -42,9 +42,10 @@
                 0: "a",
             },
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
     ],
@@ -74,6 +75,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [
@@ -169,94 +173,97 @@
                     13: "a",
                 },
                 body: [
-                    Emit((
+                    Block(21),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 2,
                         value: 1,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 4,
                         value: 3,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 5,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 2,
                         value: 7,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 8,
                         end: 9,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 4,
                         value: 8,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 9,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 10,
                         end: 11,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 2,
                         value: 10,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 4,
                         value: 11,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 12,
                         end: 13,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 12,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(13),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 14,
                         end: 19,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(18),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

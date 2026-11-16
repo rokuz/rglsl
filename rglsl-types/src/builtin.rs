@@ -11,6 +11,7 @@ use crate::flavor::{BarycentricFlavor, FragmentDensityFlavor};
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum SubgroupMask {
     Eq,
@@ -23,6 +24,7 @@ pub enum SubgroupMask {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum AmdBarycentric {
     NoPerspective,
@@ -37,6 +39,7 @@ pub enum AmdBarycentric {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ShaderBallot {
     Size,
@@ -47,6 +50,7 @@ pub enum ShaderBallot {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum ShaderCore {
     WarpsPerSmNv,
@@ -64,6 +68,7 @@ pub enum ShaderCore {
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 pub enum BuiltIn {
     // This must be at the top so that it gets sorted to the top. PrimitiveIndex is considered a non SV
