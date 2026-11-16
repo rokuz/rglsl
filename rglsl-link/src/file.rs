@@ -37,6 +37,8 @@ enum Flat {
 struct File {
     format_version: u32,
     object: ObjectModule,
+    modules: Vec<rglsl::Module>,
+    functions: Vec<rglsl::Function>,
     bodies: Vec<Vec<Flat>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     spans: Vec<rglsl::ModuleSpans>,
@@ -55,19 +57,35 @@ enum Open {
 
 pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
     let mut object = object.clone();
-    let modules = modules(&mut object);
-    let spans = modules.into_iter().map(rglsl::collect_spans).collect();
-    let bodies = body_slots(&mut object)
+    let spans = module_slots(&mut object)
         .into_iter()
-        .map(|body| flatten(&core::mem::take(body)))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(rglsl::collect_spans)
+        .collect();
+    let mut functions = Vec::new();
+    let mut bodies = Vec::new();
+    for function in function_slots(&mut object) {
+        bodies.push(flatten(&core::mem::take(&mut function.body))?);
+        functions.push(core::mem::take(function));
+    }
+    let modules = module_slots(&mut object)
+        .into_iter()
+        .map(core::mem::take)
+        .collect();
     let file = File {
         format_version: FORMAT_VERSION,
         object,
+        modules,
+        functions,
         bodies,
         spans,
     };
-    ron::ser::to_string(&file).map_err(|error| FileError::Encode(error.to_string()))
+    let text = ron::ser::to_string(&file).map_err(|error| FileError::Encode(error.to_string()))?;
+    check_structure_depth(&text).map_err(|_| {
+        FileError::Encode(String::from(
+            "the object module is nested deeper than its format allows",
+        ))
+    })?;
+    Ok(text)
 }
 
 pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
@@ -75,6 +93,8 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     let File {
         format_version,
         mut object,
+        modules,
+        functions,
         bodies,
         spans,
     } = ron::de::from_str(text).map_err(|error| undecodable(text, &error))?;
@@ -84,15 +104,26 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
             expected: FORMAT_VERSION,
         });
     }
-    let slots = body_slots(&mut object);
+    let slots = module_slots(&mut object);
+    if slots.len() != modules.len() {
+        return Err(decode_error("the number of modules does not match"));
+    }
+    for (slot, module) in slots.into_iter().zip(modules) {
+        *slot = module;
+    }
+    let slots = function_slots(&mut object);
+    if slots.len() != functions.len() {
+        return Err(decode_error("the number of functions does not match"));
+    }
     if slots.len() != bodies.len() {
         return Err(decode_error("the number of function bodies does not match"));
     }
-    for (slot, flat) in slots.into_iter().zip(bodies) {
-        *slot = unflatten(flat)?;
+    for ((slot, function), flat) in slots.into_iter().zip(functions).zip(bodies) {
+        *slot = function;
+        slot.body = unflatten(flat)?;
     }
     if !spans.is_empty() {
-        let modules = modules(&mut object);
+        let modules = module_slots(&mut object);
         if modules.len() != spans.len() {
             return Err(decode_error("the number of span tables does not match"));
         }
@@ -211,14 +242,19 @@ fn units(object: &mut ObjectModule) -> Vec<&mut CompiledUnit> {
         ref mut target,
         ..
     } = *object;
-    let mut units = Vec::from([unit]);
+    let mut units = Vec::from([&mut **unit]);
     if let ObjectTarget::Library(ref mut library) = *target {
-        units.extend(library.variants.iter_mut().map(|variant| &mut variant.unit));
+        units.extend(
+            library
+                .variants
+                .iter_mut()
+                .map(|variant| &mut *variant.unit),
+        );
     }
     units
 }
 
-fn modules(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
+fn module_slots(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
     let mut modules = Vec::new();
     for unit in units(object) {
         let mut next = Some(unit);
@@ -228,27 +264,23 @@ fn modules(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
                 ref mut specialized,
                 ..
             } = *unit;
-            modules.push(module);
+            modules.push(&mut **module);
             next = specialized.as_deref_mut();
         }
     }
     modules
 }
 
-fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {
+fn function_slots(object: &mut ObjectModule) -> Vec<&mut rglsl::Function> {
     let mut slots = Vec::new();
-    for module in modules(object) {
+    for module in module_slots(object) {
         let rglsl::Module {
             ref mut functions,
             ref mut entry_points,
             ..
         } = *module;
-        slots.extend(functions.iter_mut().map(|(_, function)| &mut function.body));
-        slots.extend(
-            entry_points
-                .iter_mut()
-                .map(|entry| &mut entry.function.body),
-        );
+        slots.extend(functions.iter_mut().map(|(_, function)| function));
+        slots.extend(entry_points.iter_mut().map(|entry| &mut entry.function));
     }
     slots
 }
@@ -364,7 +396,7 @@ fn settle(open: &mut Vec<Open>) -> Result<Option<Block>, FileError> {
     }
 }
 
-const MAX_STRUCTURE_DEPTH: usize = 32;
+const MAX_STRUCTURE_DEPTH: usize = 20;
 
 fn check_structure_depth(text: &str) -> Result<(), FileError> {
     let bytes = text.as_bytes();

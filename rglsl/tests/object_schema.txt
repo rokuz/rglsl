@@ -1,4 +1,4 @@
-FORMAT_VERSION 33
+FORMAT_VERSION 34
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -20,7 +20,7 @@ BuiltIn b5e0a6dcf44048a4
 Bytes b5d60d85d4bb59b3
 ClockSource 50e2dd400974d3f6
 CollectiveOperation 81943b5923902fa8
-CompiledUnit 2692e6960d9dd2ae
+CompiledUnit 0bbe70b8ced76347
 ConservativeDepth 2016f4ffbf48a719
 Constant b193de7977ec725a
 CooperativeData 1b51b8817b4979aa
@@ -54,7 +54,7 @@ EntryPoint 40ea184a6bb7c543
 Expression 2fdf2293812f74f6
 FastIndexMap 7576af5d6f823d59
 FastIndexSet d194a8992562c601
-File ac0a9f320d11dec9
+File 4356d7b880b7786b
 Flat 9d99d47005752981
 Flavor 01e57e5c191d6229
 FragmentModes 69924ae4a1f55c28
@@ -88,7 +88,7 @@ InterlockScope 11be0ce095cd544e
 Interpolation c7591385668298f8
 InterpolationLocation 511cdd8d456fcb1e
 Library e05675b5c96f4f74
-LibraryVariant 7a179ae8b972417e
+LibraryVariant 2dfab183e3302ed7
 Linkage 66a1615157157a52
 Literal f8d8707b2e28a5de
 LocalVariable bf2dd0e7b87ae890
@@ -112,7 +112,7 @@ NamedExpressions ef68b8e46f50368c
 NonMaxU32 199642326e90593c
 NonUniform 7e7e6f71d7d2ee0f
 NonUniformExpressions 651f697f46ed4fd6
-ObjectModule 5dee667ec83db863
+ObjectModule 14e7bee5336479f6
 ObjectTarget f561cfc18b160d9c
 Override 05b77bb9c5845bca
 ParameterQualifier 68637599b8e15cdc

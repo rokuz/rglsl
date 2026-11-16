@@ -30,6 +30,16 @@ impl InlineDepth {
 #[error("a walk driven by the frame stack stopped before it finished")]
 pub struct Stalled;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Base(usize);
+
+impl Base {
+    #[must_use]
+    pub fn here() -> Self {
+        Self(stack_address())
+    }
+}
+
 #[derive(Clone)]
 pub struct Stack<'b> {
     spawned: Rc<Cell<Option<Frame<'b>>>>,
@@ -112,9 +122,16 @@ impl<'b, T: 'b> Future for Call<'b, T> {
 }
 
 pub fn run<'b, T: 'b, F: Future<Output = T> + 'b>(root: impl FnOnce(Stack<'b>) -> F) -> Option<T> {
+    run_from(Base::here(), root)
+}
+
+pub fn run_from<'b, T: 'b, F: Future<Output = T> + 'b>(
+    base: Base,
+    root: impl FnOnce(Stack<'b>) -> F,
+) -> Option<T> {
     let stack = Stack {
         spawned: Rc::new(Cell::new(None)),
-        base: stack_address(),
+        base: base.0,
     };
     let mut root = core::pin::pin!(root(stack.clone()));
     let mut frames: Vec<Frame<'b>> = Vec::new();

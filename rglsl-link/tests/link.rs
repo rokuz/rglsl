@@ -188,8 +188,8 @@ fn corrupted_object_files_are_rejected_when_decoded() -> TestResult {
         );
     }
     let duplicate_type = text.replacen(
-        "types:[",
-        "types:[(name:None,inner:Scalar((kind:Float,width:4))),",
+        "modules:[(types:[",
+        "modules:[(types:[(name:None,inner:Scalar((kind:Float,width:4))),",
         1,
     );
     assert!(matches!(

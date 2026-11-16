@@ -1412,7 +1412,7 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
     async fn parse_initializer(self) -> Result<Spanned<Initializer>> {
         let start = self.start();
         if !self.eat("{") {
-            let expression = self.clone().parse_assignment().await?.expression;
+            let expression = self.call(self.clone().parse_assignment()).await?.expression;
             return Ok(self.spanned(start, Initializer::Expression(expression)));
         }
         let mut elements = Vec::new();
@@ -1773,9 +1773,9 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
         let kind = if self.eat(";") {
             StatementKind::Expression(None)
         } else if self.starts_declaration() {
-            StatementKind::Declaration(Box::new(self.clone().parse_declaration().await?))
+            StatementKind::Declaration(Box::new(self.call(self.clone().parse_declaration()).await?))
         } else {
-            let expression = self.clone().parse_expression().await?.expression;
+            let expression = self.call(self.clone().parse_expression()).await?.expression;
             self.expect(";")?;
             StatementKind::Expression(Some(expression))
         };

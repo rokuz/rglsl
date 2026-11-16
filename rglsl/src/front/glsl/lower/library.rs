@@ -448,9 +448,7 @@ fn once(
     {
         let specialized = context.run(true, names);
         if specialized.accepted.contains(accepted) {
-            object.unit.specialized = specialized
-                .object
-                .map(|specialized| alloc::boxed::Box::new(specialized.unit));
+            object.unit.specialized = specialized.object.map(|specialized| specialized.unit);
         } else if !specialized.accepted.intersects(accepted)
             && !specialized.unknown.intersects(accepted)
         {

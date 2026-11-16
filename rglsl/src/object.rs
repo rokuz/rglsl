@@ -11,7 +11,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 33;
+pub const FORMAT_VERSION: u32 = 34;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
@@ -20,7 +20,7 @@ pub struct ObjectModule {
     pub format_version: u32,
     pub name: Option<String>,
     pub target: ObjectTarget,
-    pub unit: CompiledUnit,
+    pub unit: Box<CompiledUnit>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ pub struct Library {
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 pub struct LibraryVariant {
     pub stages: ShaderStageMask,
-    pub unit: CompiledUnit,
+    pub unit: Box<CompiledUnit>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,7 +54,7 @@ pub struct LibraryVariant {
 pub struct CompiledUnit {
     pub glsl_version: u32,
     pub extensions: Vec<String>,
-    pub module: Module,
+    pub module: Box<Module>,
     pub functions: Vec<FunctionSymbol>,
     pub globals: Vec<GlobalSymbol>,
     pub layout: StageLayout,
@@ -85,7 +85,7 @@ impl CompiledUnit {
         Self {
             glsl_version: 0,
             extensions: Vec::new(),
-            module,
+            module: Box::new(module),
             functions: Vec::new(),
             globals: Vec::new(),
             layout: StageLayout::default(),
@@ -127,12 +127,12 @@ impl CompiledUnit {
 }
 
 impl ObjectModule {
-    pub const fn new(target: ObjectTarget, unit: CompiledUnit) -> Self {
+    pub fn new(target: ObjectTarget, unit: CompiledUnit) -> Self {
         Self {
             format_version: FORMAT_VERSION,
             name: None,
             target,
-            unit,
+            unit: Box::new(unit),
         }
     }
 
@@ -194,7 +194,7 @@ impl ObjectModule {
                     variants: Vec::new(),
                     rejections: Vec::new(),
                 }),
-                unit: unit.for_library_stage(stage),
+                unit: Box::new(unit.for_library_stage(stage)),
             }),
             None => Err(library
                 .rejections
@@ -258,7 +258,7 @@ impl ObjectModule {
                     variants: Vec::new(),
                     rejections: Vec::new(),
                 }),
-                unit: unit.into_library_stage(stage),
+                unit: Box::new(unit.into_library_stage(stage)),
             }),
             None => Err(rejections
                 .into_iter()
@@ -288,10 +288,10 @@ impl ObjectModule {
     }
 
     pub fn units(&self) -> impl Iterator<Item = &CompiledUnit> {
-        core::iter::once(&self.unit).chain(
+        core::iter::once(&*self.unit).chain(
             self.library()
                 .into_iter()
-                .flat_map(|library| library.variants.iter().map(|variant| &variant.unit)),
+                .flat_map(|library| library.variants.iter().map(|variant| &*variant.unit)),
         )
     }
 }

@@ -137,8 +137,10 @@ impl<'b, 'a> LowererCx<'b, 'a> {
 
 macro_rules! lowerer_on_heap {
     ($lowerer:expr, |$cx:ident| $frame:expr) => {{
-        let cell = core::cell::RefCell::new($lowerer);
-        rglsl_types::stack::run(|stack| {
+        let lowerer = $lowerer;
+        let base = lowerer.stack_base;
+        let cell = core::cell::RefCell::new(lowerer);
+        rglsl_types::stack::run_from(base, |stack| {
             let $cx = super::function::LowererCx::new(&cell, stack);
             $frame
         })
@@ -150,8 +152,10 @@ pub(super) use lowerer_on_heap;
 
 macro_rules! on_heap {
     ($lowerer:expr, |$cx:ident| $frame:expr) => {{
-        let cell = core::cell::RefCell::new($lowerer);
-        rglsl_types::stack::run(|stack| {
+        let lowerer = $lowerer;
+        let base = lowerer.lw.stack_base;
+        let cell = core::cell::RefCell::new(lowerer);
+        rglsl_types::stack::run_from(base, |stack| {
             let $cx = super::function::Cx::new(&cell, stack);
             $frame
         })

@@ -45,6 +45,7 @@ use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
 use rglsl_types::extension::Extension;
 use rglsl_types::probe::StageProbe;
+use rglsl_types::stack::Base;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
@@ -70,7 +71,7 @@ pub(super) fn parse(
         crate::compact::compact(&mut module, crate::compact::KeepUnused::Declarations)
             .map_err(|_| ParseErrors::from(Vec::from([internal(Span::UNDEFINED)])))?;
     }
-    Ok(module)
+    Ok(*module)
 }
 
 pub(super) fn compile_program(
@@ -382,7 +383,7 @@ fn lower_parsed_object(
     if object.unit.work_group_size_constant {
         object.unit.specialized = lower_parsed(options, source, mode, parsed, names, true, class)
             .ok()
-            .map(|specialized| alloc::boxed::Box::new(specialized.unit));
+            .map(|specialized| specialized.unit);
     }
     Ok(object)
 }
@@ -1172,6 +1173,7 @@ pub(super) struct Lowerer<'a> {
     pub(super) declared_local_size: [Option<u32>; 3],
     pub(super) debug: Option<DebugCollector>,
     pub(super) flat_expressions: bool,
+    pub(super) stack_base: Base,
 }
 
 #[cfg(test)]
@@ -1202,6 +1204,7 @@ impl<'a> Lowerer<'a> {
         Self {
             source_map,
             flat_expressions: flat_expressions(),
+            stack_base: Base::here(),
             unit,
             analysis,
             options,

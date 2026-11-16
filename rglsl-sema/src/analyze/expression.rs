@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::{InlineDepth, run};
+use rglsl_types::stack::{InlineDepth, run_from};
 
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, Identifier,
@@ -698,9 +698,12 @@ impl Analyzer<'_> {
         if let Some(operand) = self.flat_expression(expression) {
             return operand;
         }
+        let base = self.stack_base;
         let finished = {
             let analyzer = RefCell::new(&mut *self);
-            run(|stack| Cx::new(&analyzer, stack).expression(expression))
+            run_from(base, |stack| {
+                Cx::new(&analyzer, stack).expression(expression)
+            })
         };
         finished.unwrap_or_else(|| self.stalled(Operand::error()))
     }
