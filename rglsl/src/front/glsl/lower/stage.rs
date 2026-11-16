@@ -653,22 +653,7 @@ impl FunctionLowerer<'_, '_> {
         self.lw.globals.insert(symbol, found);
         Ok(found)
     }
-}
 
-fn format_size_error(name: &str, stage: ShaderStage) -> String {
-    let what = match stage {
-        ShaderStage::Geometry => "the input primitive",
-        ShaderStage::TessControl => "layout(vertices = N)",
-        _ => "its declaration",
-    };
-    alloc::format!("the size of `{name}` is not known: declare {what}")
-}
-
-fn format_member(name: &str) -> String {
-    alloc::format!("the built-in block member `{name}`")
-}
-
-impl FunctionLowerer<'_, '_> {
     pub(super) fn primitive_statement(
         &mut self,
         primitive: Primitive,
@@ -692,4 +677,17 @@ impl FunctionLowerer<'_, '_> {
         self.push(statement, at);
         Ok(())
     }
+}
+
+fn format_size_error(name: &str, stage: ShaderStage) -> String {
+    let what = match stage {
+        ShaderStage::Geometry => "the input primitive",
+        ShaderStage::TessControl => "layout(vertices = N)",
+        _ => "its declaration",
+    };
+    alloc::format!("the size of `{name}` is not known: declare {what}")
+}
+
+fn format_member(name: &str) -> String {
+    alloc::format!("the built-in block member `{name}`")
 }

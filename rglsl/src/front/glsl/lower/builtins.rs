@@ -780,9 +780,7 @@ impl FunctionLowerer<'_, '_> {
         }
         self.split_coordinate(coordinate, size, opaque, false, at)
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     pub(super) fn builtin_call(
         &mut self,
         id: BuiltinFunctionId,

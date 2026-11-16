@@ -168,8 +168,6 @@ pub enum DiagnosticKind {
     },
     #[error("an array size must be greater than zero")]
     ArraySizeNotPositive,
-    #[error("internal error: the analysis stopped")]
-    Internal,
     #[error("an array size is required here")]
     UnsizedArrayNotAllowed,
     #[error("opaque type `{0}` can only be used for uniforms and `in` parameters")]

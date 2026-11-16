@@ -230,9 +230,7 @@ impl super::function::FunctionLowerer<'_, '_> {
         }
         Ok(TypeInner::Spirv { opcode, operands })
     }
-}
 
-impl super::function::FunctionLowerer<'_, '_> {
     fn spirv_result_type(&mut self, ty: GlslType, at: Span) -> Result<Handle<crate::Type>> {
         if matches!(ty.kind, TypeKind::Spirv(_)) || !ty.is_opaque() {
             return self.ir_type(&ty, at);

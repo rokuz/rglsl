@@ -386,24 +386,7 @@ impl FunctionLowerer<'_, '_> {
             }
         }
     }
-}
 
-fn paired_vectors(from: &GlslType, to: &GlslType) -> bool {
-    !from.is_array()
-        && !to.is_array()
-        && matches!(
-            (from.kind, to.kind),
-            (
-                TypeKind::LongVector { size: left, .. },
-                TypeKind::CooperativeVector { size: right, .. }
-            ) | (
-                TypeKind::CooperativeVector { size: left, .. },
-                TypeKind::LongVector { size: right, .. }
-            ) if left == right
-        )
-}
-
-impl FunctionLowerer<'_, '_> {
     pub(super) fn call(
         &mut self,
         expression: &AstExpression,
@@ -763,4 +746,19 @@ impl FunctionLowerer<'_, '_> {
         let ir = self.ir_type(ty, at)?;
         self.add(Expression::Compose { ty: ir, components }, at)
     }
+}
+
+fn paired_vectors(from: &GlslType, to: &GlslType) -> bool {
+    !from.is_array()
+        && !to.is_array()
+        && matches!(
+            (from.kind, to.kind),
+            (
+                TypeKind::LongVector { size: left, .. },
+                TypeKind::CooperativeVector { size: right, .. }
+            ) | (
+                TypeKind::CooperativeVector { size: left, .. },
+                TypeKind::LongVector { size: right, .. }
+            ) if left == right
+        )
 }

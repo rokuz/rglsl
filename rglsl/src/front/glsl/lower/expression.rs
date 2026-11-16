@@ -1930,9 +1930,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         }
         self.add(Expression::Binary { op, left, right }, at)
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     pub(super) fn typed_child(
         &mut self,
         expression: &AstExpression,

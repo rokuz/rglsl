@@ -4,10 +4,10 @@ A syntax tree, parser and pretty printer for Vulkan GLSL (`#version 450` / `460`
 rglsl compiler front end and by `rglsl-fuzz`. `#![no_std]` with `alloc`.
 
 - `rglsl_ast::parse(&str) -> Result<TranslationUnit, ParseError>`: a hand-written lexer and
-  recursive-descent parser whose frames live on a heap stack (`rglsl_types::stack`). It never
-  panics and has no nesting limit: any depth parses in constant system stack
-  (`docs/design/stack.md`). Flat chains (binary operators of any precedence, unary prefixes,
-  `.field`/`[index]`/`++` postfixes, assignment chains, `?:` else chains) are parsed in loops.
+  recursive-descent parser that recurses through `rglsl_types::stack::recurse`, which continues
+  deep nesting on heap stack segments. It never panics and has no nesting limit. Flat chains
+  (binary operators of any precedence, unary prefixes, `.field`/`[index]`/`++` postfixes,
+  assignment chains, `?:` else chains) are parsed in loops.
 - `rglsl_ast::Spine` and `Chain`: the spine of a flat chain (`ExpressionKind::chain`,
   `ExpressionKind::link`), for passes that walk chains in a loop; `ExpressionKind::children`
   and `children_mut` for work lists. `Drop`, `Clone` and `==` on expressions are iterative.

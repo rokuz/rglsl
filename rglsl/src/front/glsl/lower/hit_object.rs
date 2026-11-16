@@ -100,9 +100,7 @@ impl FunctionLowerer<'_, '_> {
             crate::RayTracingData::Location(_) => Err(internal(at)),
         }
     }
-}
 
-impl FunctionLowerer<'_, '_> {
     fn hit_object_trace(
         &mut self,
         arguments: &[AstExpression],

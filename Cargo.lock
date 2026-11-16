@@ -532,7 +532,6 @@ dependencies = [
  "rustc-hash",
  "serde",
  "stacker",
- "thiserror",
 ]
 
 [[package]]
