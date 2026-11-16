@@ -2,14 +2,13 @@ use crate::scope::QualifierFlags;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::ops::Deref;
-use core::slice;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
     Expression, ExpressionKind, FunctionCall, FunctionIdentifier, Identifier, TypeSpecifier,
 };
 use rglsl_types::extension::Extension;
+use rglsl_types::small_vec::SmallVec;
 
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
@@ -191,55 +190,11 @@ const fn offset_index(kind: BuiltinKind) -> Option<usize> {
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
 const ABORT: &str = "abortEXT";
 
-enum SmallOperands {
-    Empty,
-    Single(Operand),
-    Heap(Vec<Operand>),
-}
-
-impl SmallOperands {
-    const fn new() -> Self {
-        Self::Empty
-    }
-
-    fn push(&mut self, operand: Operand) {
-        match self {
-            Self::Empty => *self = Self::Single(operand),
-            Self::Single(first) => {
-                let first = core::mem::replace(first, Operand::error());
-                let mut heap = Vec::with_capacity(4);
-                heap.push(first);
-                heap.push(operand);
-                *self = Self::Heap(heap);
-            }
-            Self::Heap(heap) => heap.push(operand),
-        }
-    }
-}
-
-impl Deref for SmallOperands {
-    type Target = [Operand];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Empty => &[],
-            Self::Single(single) => slice::from_ref(single),
-            Self::Heap(heap) => heap.as_slice(),
-        }
-    }
-}
+pub(crate) type Operands = SmallVec<Operand, 1>;
 
 impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn operands(self, arguments: &'b [Expression]) -> Vec<Operand> {
-        let mut operands = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            operands.push(self.clone().child_expression(argument).await);
-        }
-        operands
-    }
-
-    async fn small_operands(self, arguments: &'b [Expression]) -> SmallOperands {
-        let mut operands = SmallOperands::new();
+    pub(crate) async fn operands(self, arguments: &'b [Expression]) -> Operands {
+        let mut operands = Operands::with_capacity(arguments.len());
         for argument in arguments {
             operands.push(self.clone().child_expression(argument).await);
         }
@@ -377,7 +332,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                     .await;
             }
         }
-        let operands = self.clone().small_operands(arguments).await;
+        let operands = self.clone().operands(arguments).await;
         self.with(|analyzer| {
             analyzer.function_call_with(expression, span, name, arguments, &operands)
         })
@@ -397,7 +352,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                     .await
             }
         };
-        let operands = self.clone().small_operands(arguments).await;
+        let operands = self.clone().operands(arguments).await;
         self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, &operands))
     }
 }
@@ -1019,7 +974,7 @@ impl Analyzer<'_> {
         &mut self,
         expression: &Expression,
         span: Span,
-        operands: Vec<Operand>,
+        operands: Operands,
     ) -> Operand {
         if operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
@@ -1827,7 +1782,7 @@ impl Analyzer<'_> {
                 self.record_conversion(argument, &operand.ty, element);
             }
             let value = if constant {
-                let mut combined = crate::constant::ConstantValues::new();
+                let mut combined = ConstantValues::new();
                 let mut all_present = true;
                 for (operand, element) in operands.iter().zip(&element_types) {
                     let Some(value) = operand.value.as_ref() else {

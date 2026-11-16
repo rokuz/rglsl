@@ -9,6 +9,7 @@ pub mod extension;
 pub mod flavor;
 pub mod probe;
 pub mod small_float;
+pub mod small_vec;
 pub mod spv;
 pub mod stack;
 

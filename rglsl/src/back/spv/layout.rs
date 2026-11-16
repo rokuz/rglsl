@@ -1,8 +1,5 @@
 use alloc::vec::Vec;
-use core::{
-    iter,
-    ops::{Deref, DerefMut},
-};
+use core::iter;
 
 use spirv::{MAGIC_NUMBER, Op, Word};
 
@@ -84,46 +81,6 @@ impl super::reclaimable::Reclaimable for LogicalLayout {
             declarations: self.declarations.reclaim(),
             function_declarations: self.function_declarations.reclaim(),
             function_definitions: self.function_definitions.reclaim(),
-        }
-    }
-}
-
-impl Operands {
-    const fn new() -> Self {
-        Self::Inline(arrayvec::ArrayVec::new_const())
-    }
-
-    fn push(&mut self, operand: Word) {
-        match *self {
-            Self::Inline(ref mut inline) => {
-                if let Err(err) = inline.try_push(operand) {
-                    let mut heap = Vec::with_capacity(12);
-                    heap.extend_from_slice(inline);
-                    heap.push(err.element());
-                    *self = Self::Heap(heap);
-                }
-            }
-            Self::Heap(ref mut heap) => heap.push(operand),
-        }
-    }
-}
-
-impl Deref for Operands {
-    type Target = [Word];
-
-    fn deref(&self) -> &[Word] {
-        match *self {
-            Self::Inline(ref inline) => inline.as_slice(),
-            Self::Heap(ref heap) => heap.as_slice(),
-        }
-    }
-}
-
-impl DerefMut for Operands {
-    fn deref_mut(&mut self) -> &mut [Word] {
-        match *self {
-            Self::Inline(ref mut inline) => inline.as_mut_slice(),
-            Self::Heap(ref mut heap) => heap.as_mut_slice(),
         }
     }
 }

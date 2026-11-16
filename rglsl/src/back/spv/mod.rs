@@ -71,11 +71,7 @@ struct LogicalLayout {
     function_definitions: Vec<Word>,
 }
 
-#[derive(Clone)]
-enum Operands {
-    Inline(arrayvec::ArrayVec<Word, 6>),
-    Heap(Vec<Word>),
-}
+type Operands = rglsl_types::small_vec::SmallVec<Word, 6>;
 
 #[derive(Clone)]
 struct Instruction {

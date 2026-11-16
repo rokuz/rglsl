@@ -1,12 +1,10 @@
-use alloc::vec::{self, Vec};
-use core::ops::{Deref, DerefMut};
-use core::slice;
+use alloc::vec::Vec;
 
-use arrayvec::ArrayVec;
 use rglsl_ast::ast::{BinaryOperator, UnaryOperator};
 
 use crate::builtins::kind::{Comparison, Math, Pure, Relation};
 use crate::types::Scalar;
+use rglsl_types::small_vec::SmallVec;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -196,226 +194,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone)]
-enum ConstantValuesInner {
-    Empty,
-    Single(Value),
-    Heap(Vec<Value>),
-}
-
-#[derive(Debug, Clone)]
-pub struct ConstantValues(ConstantValuesInner);
-
-impl Default for ConstantValues {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PartialEq for ConstantValues {
-    fn eq(&self, other: &Self) -> bool {
-        self.as_slice() == other.as_slice()
-    }
-}
-
-impl PartialEq<[Value]> for ConstantValues {
-    fn eq(&self, other: &[Value]) -> bool {
-        self.as_slice() == other
-    }
-}
-
-impl PartialEq<Vec<Value>> for ConstantValues {
-    fn eq(&self, other: &Vec<Value>) -> bool {
-        self.as_slice() == other.as_slice()
-    }
-}
-
-impl ConstantValues {
-    pub const fn new() -> Self {
-        Self(ConstantValuesInner::Empty)
-    }
-
-    pub fn with_capacity(capacity: usize) -> Self {
-        if capacity <= 1 {
-            Self::new()
-        } else {
-            Self(ConstantValuesInner::Heap(Vec::with_capacity(capacity)))
-        }
-    }
-
-    pub const fn single(value: Value) -> Self {
-        Self(ConstantValuesInner::Single(value))
-    }
-
-    pub fn splat(value: Value, count: usize) -> Self {
-        match count {
-            0 => Self::new(),
-            1 => Self::single(value),
-            _ => Self(ConstantValuesInner::Heap(alloc::vec![value; count])),
-        }
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        match &mut self.0 {
-            ConstantValuesInner::Empty => {}
-            ConstantValuesInner::Single(_) => {
-                if len == 0 {
-                    self.0 = ConstantValuesInner::Empty;
-                }
-            }
-            ConstantValuesInner::Heap(heap) => heap.truncate(len),
-        }
-    }
-
-    pub const fn as_slice(&self) -> &[Value] {
-        match &self.0 {
-            ConstantValuesInner::Empty => &[],
-            ConstantValuesInner::Single(value) => slice::from_ref(value),
-            ConstantValuesInner::Heap(heap) => heap.as_slice(),
-        }
-    }
-
-    pub const fn as_mut_slice(&mut self) -> &mut [Value] {
-        match &mut self.0 {
-            ConstantValuesInner::Empty => &mut [],
-            ConstantValuesInner::Single(value) => slice::from_mut(value),
-            ConstantValuesInner::Heap(heap) => heap.as_mut_slice(),
-        }
-    }
-
-    pub fn push(&mut self, value: Value) {
-        match &mut self.0 {
-            ConstantValuesInner::Empty => {
-                self.0 = ConstantValuesInner::Single(value);
-            }
-            ConstantValuesInner::Single(first) => {
-                let mut heap = Vec::with_capacity(4);
-                heap.push(*first);
-                heap.push(value);
-                self.0 = ConstantValuesInner::Heap(heap);
-            }
-            ConstantValuesInner::Heap(heap) => heap.push(value),
-        }
-    }
-}
-
-impl Deref for ConstantValues {
-    type Target = [Value];
-
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
-    }
-}
-
-impl DerefMut for ConstantValues {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut_slice()
-    }
-}
-
-impl AsRef<[Value]> for ConstantValues {
-    fn as_ref(&self) -> &[Value] {
-        self.as_slice()
-    }
-}
-
-impl From<Vec<Value>> for ConstantValues {
-    fn from(values: Vec<Value>) -> Self {
-        match values.as_slice() {
-            [] => Self::new(),
-            [single] => Self::single(*single),
-            _ => Self(ConstantValuesInner::Heap(values)),
-        }
-    }
-}
-
-impl From<&[Value]> for ConstantValues {
-    fn from(values: &[Value]) -> Self {
-        match values {
-            [] => Self::new(),
-            [single] => Self::single(*single),
-            _ => Self(ConstantValuesInner::Heap(values.to_vec())),
-        }
-    }
-}
-
-impl Extend<Value> for ConstantValues {
-    fn extend<I: IntoIterator<Item = Value>>(&mut self, iter: I) {
-        for value in iter {
-            self.push(value);
-        }
-    }
-}
-
-impl FromIterator<Value> for ConstantValues {
-    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
-        let iter = iter.into_iter();
-        let (lower, _) = iter.size_hint();
-        let mut out = Self::with_capacity(lower);
-        out.extend(iter);
-        out
-    }
-}
-
-#[derive(Debug)]
-pub enum ConstantValuesIter {
-    Single(Option<Value>),
-    Heap(vec::IntoIter<Value>),
-}
-
-impl Iterator for ConstantValuesIter {
-    type Item = Value;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Single(slot) => slot.take(),
-            Self::Heap(iter) => iter.next(),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Single(slot) => {
-                let len = usize::from(slot.is_some());
-                (len, Some(len))
-            }
-            Self::Heap(iter) => iter.size_hint(),
-        }
-    }
-}
-
-impl DoubleEndedIterator for ConstantValuesIter {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Single(slot) => slot.take(),
-            Self::Heap(iter) => iter.next_back(),
-        }
-    }
-}
-
-impl ExactSizeIterator for ConstantValuesIter {}
-
-impl IntoIterator for ConstantValues {
-    type Item = Value;
-    type IntoIter = ConstantValuesIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self.0 {
-            ConstantValuesInner::Empty => ConstantValuesIter::Single(None),
-            ConstantValuesInner::Single(value) => ConstantValuesIter::Single(Some(value)),
-            ConstantValuesInner::Heap(heap) => ConstantValuesIter::Heap(heap.into_iter()),
-        }
-    }
-}
-
-impl<'a> IntoIterator for &'a ConstantValues {
-    type Item = &'a Value;
-    type IntoIter = slice::Iter<'a, Value>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
-    }
-}
+pub type ConstantValues = SmallVec<Value, 1>;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Constant {
@@ -429,15 +208,15 @@ impl Constant {
         }
     }
 
-    pub const fn single(value: Value) -> Self {
+    pub fn single(value: Value) -> Self {
         Self {
-            values: ConstantValues::single(value),
+            values: ConstantValues::from([value]),
         }
     }
 
     pub fn splat(value: Value, count: usize) -> Self {
         Self {
-            values: ConstantValues::splat(value, count),
+            values: ConstantValues::from_elem(value, count),
         }
     }
 
@@ -1056,10 +835,10 @@ pub fn fold_builtin(kind: Pure, arguments: &[Constant], result: Scalar) -> Optio
     };
     let values = (0..length)
         .map(|index| {
-            let components: ArrayVec<Value, 4> = arguments
+            let components = arguments
                 .iter()
                 .map(|argument| pick(argument, index))
-                .collect::<Option<ArrayVec<Value, 4>>>()?;
+                .collect::<Option<SmallVec<Value, 4>>>()?;
             component(kind, result, &components)
         })
         .collect::<Option<ConstantValues>>()?;
