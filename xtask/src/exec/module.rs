@@ -161,13 +161,16 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<Module, String> {
 
 pub fn parse(words: &[u32]) -> Result<Module, String> {
     match words.first() {
-        Some(&MAGIC) => {}
+        Some(&MAGIC) => parse_native(words),
         Some(magic) if magic.swap_bytes() == MAGIC => {
             let swapped: Vec<u32> = words.iter().map(|w| w.swap_bytes()).collect();
-            return parse(&swapped);
+            parse_native(&swapped)
         }
-        _ => return Err("not a SPIR-V module (bad magic number)".into()),
+        _ => Err("not a SPIR-V module (bad magic number)".into()),
     }
+}
+
+fn parse_native(words: &[u32]) -> Result<Module, String> {
     let mut position = HEADER_WORDS;
     if words.len() < position {
         return Err("the SPIR-V header is truncated".into());
