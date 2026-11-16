@@ -1,4 +1,4 @@
-FORMAT_VERSION 32
+FORMAT_VERSION 33
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -106,7 +106,7 @@ MeshOutputLayout 3a855b7808db3ecf
 MeshOutputTopology 761e235109a9275b
 MeshShaderInfo 8c77766328b43f32
 MicroTriangleVertexValue a44f088bad914637
-Module bd93ecbc9d3efc33
+Module 7ab4ec8374153ec4
 ModuleSpans 01cf410f8f5b67b9
 NamedExpressions ef68b8e46f50368c
 NonMaxU32 199642326e90593c

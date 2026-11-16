@@ -12525,6 +12525,32 @@ void main() {
 }
 
 #[test]
+fn uniform_buffer_unsized_arrays_need_the_extension_in_the_module() -> crate::TestResult {
+    let mut module = parse(
+        ShaderStage::Compute,
+        "#version 450
+#extension GL_EXT_uniform_buffer_unsized_array : require
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0) uniform U { vec4 a; vec4 b[]; } u;
+layout(set = 0, binding = 1) buffer Out { vec4 o; };
+void main() { o = u.a + u.b[gl_LocalInvocationIndex]; }
+",
+    )?;
+    assert!(module.uniform_buffer_unsized_arrays);
+    module.uniform_buffer_unsized_arrays = false;
+    let error = Validator::new(ValidationFlags::all())
+        .validate(&module)
+        .err()
+        .ok_or("a runtime-sized uniform block without the extension is valid")?;
+    assert!(
+        format!("{:?}", error.as_inner()).contains("UnsizedMember"),
+        "{:?}",
+        error.as_inner()
+    );
+    Ok(())
+}
+
+#[test]
 fn tile_image_1d_arrays_and_rejections() -> crate::TestResult {
     let module = compile_valid(
         ShaderStage::Fragment,

@@ -411,6 +411,7 @@ impl Builder {
                 shader_64bit_indexing,
                 variable_pointers,
                 replicated_composites,
+                uniform_buffer_unsized_arrays,
                 ray_tracing,
                 spirv_requirements,
                 source_extensions,
@@ -428,6 +429,7 @@ impl Builder {
                     source.shader_64bit_indexing,
                     source.variable_pointers,
                     source.replicated_composites,
+                    source.uniform_buffer_unsized_arrays,
                     source.ray_tracing,
                     core::mem::take(&mut source.spirv_requirements),
                     core::mem::take(&mut source.source_extensions),
@@ -460,6 +462,7 @@ impl Builder {
             self.module.shader_64bit_indexing |= shader_64bit_indexing;
             self.module.variable_pointers |= variable_pointers;
             self.module.replicated_composites |= replicated_composites;
+            self.module.uniform_buffer_unsized_arrays |= uniform_buffer_unsized_arrays;
             self.module.ray_tracing |= ray_tracing;
             for extension in source_extensions {
                 if let Err(position) = self.module.source_extensions.binary_search(&extension) {

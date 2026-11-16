@@ -139,6 +139,8 @@ pub struct Validator {
     /// constant expressions as errors.
     overrides_resolved: bool,
 
+    uniform_buffer_unsized_arrays: bool,
+
     /// A checklist of expressions that must be visited by a specific kind of
     /// statement.
     ///
@@ -350,6 +352,7 @@ impl Validator {
             valid_expression_list: Vec::new(),
             valid_expression_set: HandleSet::new(),
             overrides_resolved: false,
+            uniform_buffer_unsized_arrays: false,
             needs_visit: HandleSet::new(),
         }
     }
@@ -489,6 +492,7 @@ impl Validator {
     ) -> Result<ModuleInfo, WithSpan<ValidationError>> {
         self.reset();
         self.reset_types(module.types.len());
+        self.uniform_buffer_unsized_arrays = module.uniform_buffer_unsized_arrays;
 
         Self::validate_module_handles(module).map_err(|e| e.with_span())?;
 

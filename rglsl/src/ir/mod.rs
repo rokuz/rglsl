@@ -4211,6 +4211,12 @@ pub struct Module {
         serde(skip_serializing_if = "core::ops::Not::not")
     )]
     #[cfg_attr(feature = "deserialize", serde(default))]
+    pub uniform_buffer_unsized_arrays: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
     pub legacy_buffer_blocks: bool,
     #[cfg_attr(
         feature = "serialize",

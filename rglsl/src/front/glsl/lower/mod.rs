@@ -1183,6 +1183,9 @@ impl<'a> Lowerer<'a> {
                 shader_64bit_indexing: analysis.shader_64bit_indexing,
                 variable_pointers: analysis.variable_pointers,
                 replicated_composites: analysis.replicated_composites,
+                uniform_buffer_unsized_arrays: analysis
+                    .extensions
+                    .contains(Extension::ExtUniformBufferUnsizedArray),
                 legacy_buffer_blocks: !analysis.storage_buffer_class,
                 source_extensions: analysis
                     .requested_extensions
