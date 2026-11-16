@@ -1,5 +1,7 @@
 use std::fmt::Write as _;
 
+use rglsl_types::stack::recurse;
+
 use super::data::{Rng, Value};
 use super::reflect::{DataType, Layout, Scalar, ScalarKind};
 
@@ -90,7 +92,7 @@ impl Types {
                 format!("{}mat{columns}x{rows}", prefix(*scalar)?)
             }
             DataType::Array { element, length } => {
-                let inner = self.declarator(element)?;
+                let inner = recurse(|| self.declarator(element))?;
                 return Ok(Declarator {
                     base: inner.base,
                     suffix: format!("[{length}]{}", inner.suffix),
@@ -113,7 +115,7 @@ impl Types {
         }
         let mut body = String::new();
         for (index, member) in members.iter().enumerate() {
-            let declarator = self.declarator(member)?;
+            let declarator = recurse(|| self.declarator(member))?;
             let _ = writeln!(body, "    {};", declarator.declare(&format!("m{index}")));
         }
         let name = format!("RglslStruct{}", self.structs.len());
@@ -177,15 +179,7 @@ pub fn assign_literals(
             );
         }
         DataType::Vector { scalar, count } => {
-            let values: Vec<String> = (0..*count)
-                .map(|_| literal(*scalar, Value::random(*scalar, rng)))
-                .collect();
-            let _ = writeln!(
-                out,
-                "    {target} = {}vec{count}({});",
-                prefix(*scalar)?,
-                values.join(", ")
-            );
+            assign_vector(target, *scalar, *count, rng, out)?;
         }
         DataType::Matrix {
             scalar,
@@ -193,29 +187,46 @@ pub fn assign_literals(
             rows,
         } => {
             for column in 0..*columns {
-                assign_literals(
-                    &format!("{target}[{column}]"),
-                    &DataType::Vector {
-                        scalar: *scalar,
-                        count: *rows,
-                    },
-                    rng,
-                    out,
-                )?;
+                assign_vector(&format!("{target}[{column}]"), *scalar, *rows, rng, out)?;
             }
         }
         DataType::Array { element, length } => {
             for index in 0..*length {
-                assign_literals(&format!("{target}[{index}]"), element, rng, out)?;
+                recurse(|| assign_literals(&format!("{target}[{index}]"), element, rng, out))?;
             }
         }
         DataType::Struct(members) => {
             for (index, member) in members.iter().enumerate() {
-                assign_literals(&format!("{target}.m{index}"), member, rng, out)?;
+                recurse(|| assign_literals(&format!("{target}.m{index}"), member, rng, out))?;
             }
         }
     }
     Ok(())
+}
+
+fn assign_vector(
+    target: &str,
+    scalar: Scalar,
+    count: u32,
+    rng: &mut Rng,
+    out: &mut String,
+) -> Result<(), String> {
+    let values: Vec<String> = (0..count)
+        .map(|_| literal(scalar, Value::random(scalar, rng)))
+        .collect();
+    let _ = writeln!(
+        out,
+        "    {target} = {}vec{count}({});",
+        prefix(scalar)?,
+        values.join(", ")
+    );
+    Ok(())
+}
+
+const fn vector_std430(scalar: Scalar, count: u32) -> (u32, u32) {
+    let bytes = scalar.bytes();
+    let align = bytes * if count == 3 { 4 } else { count };
+    (bytes * count, align)
 }
 
 fn round_up(value: u32, multiple: u32) -> u32 {
@@ -229,14 +240,13 @@ pub fn std430(ty: &DataType) -> (Layout, u32, u32) {
             (Layout::Scalar(*scalar), bytes, bytes)
         }
         DataType::Vector { scalar, count } => {
-            let bytes = scalar.bytes();
-            let align = bytes * if *count == 3 { 4 } else { *count };
+            let (size, align) = vector_std430(*scalar, *count);
             (
                 Layout::Vector {
                     scalar: *scalar,
                     count: *count,
                 },
-                bytes * count,
+                size,
                 align,
             )
         }
@@ -245,10 +255,7 @@ pub fn std430(ty: &DataType) -> (Layout, u32, u32) {
             columns,
             rows,
         } => {
-            let (_, size, align) = std430(&DataType::Vector {
-                scalar: *scalar,
-                count: *rows,
-            });
+            let (size, align) = vector_std430(*scalar, *rows);
             let stride = round_up(size, align);
             (
                 Layout::Matrix {
@@ -263,7 +270,7 @@ pub fn std430(ty: &DataType) -> (Layout, u32, u32) {
             )
         }
         DataType::Array { element, length } => {
-            let (layout, size, align) = std430(element);
+            let (layout, size, align) = recurse(|| std430(element));
             let stride = round_up(size, align);
             (
                 Layout::Array {
@@ -280,7 +287,7 @@ pub fn std430(ty: &DataType) -> (Layout, u32, u32) {
             let mut align = 1;
             let mut layouts = Vec::new();
             for member in members {
-                let (layout, size, member_align) = std430(member);
+                let (layout, size, member_align) = recurse(|| std430(member));
                 offset = round_up(offset, member_align);
                 layouts.push((offset, layout));
                 offset += size;
@@ -404,7 +411,7 @@ mod tests {
         ]);
         let (layout, size, align) = std430(&ty);
         assert_eq!((size, align), (80, 16));
-        let Layout::Struct { members } = layout else {
+        let Layout::Struct { members } = &layout else {
             panic!("a struct layout");
         };
         let offsets: Vec<u32> = members.iter().map(|(offset, _)| *offset).collect();
@@ -415,5 +422,29 @@ mod tests {
         array.slots(0, 0, &mut slots);
         assert_eq!(slots.len(), 12);
         assert_eq!(slots[3].offset, 16);
+    }
+
+    #[test]
+    fn walks_deeply_nested_types() -> anyhow::Result<()> {
+        let mut ty = DataType::Scalar(U32);
+        for _ in 0..10_000 {
+            ty = DataType::Struct(vec![DataType::Array {
+                element: Box::new(ty),
+                length: 1,
+            }]);
+        }
+        let mut out = String::new();
+        assign_literals("p", &ty, &mut Rng::new(1), &mut out).map_err(anyhow::Error::msg)?;
+        assert_eq!(out.lines().count(), 1);
+        let (layout, size, _) = std430(&ty);
+        assert_eq!((size, layout.size(0)), (4, 4));
+        let mut slots = Vec::new();
+        layout.slots(0, 0, &mut slots);
+        assert_eq!(slots.len(), 1);
+        assert!(!layout.has_runtime_array() && !layout.has_pointer());
+        assert_eq!(layout.runtime_stride(), 0);
+        assert!(layout.clone() == layout && ty.clone() == ty);
+        assert!(format!("{layout:?}{ty:?}").len() > 10_000);
+        Ok(())
     }
 }

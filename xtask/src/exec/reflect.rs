@@ -1,4 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::mem;
+
+use rglsl_types::stack::recurse;
 
 use spirv::{
     BuiltIn, Capability, Decoration, Dim, ExecutionMode, ExecutionModel, ImageFormat, Op,
@@ -30,7 +34,7 @@ impl Scalar {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Eq)]
 pub enum Layout {
     Scalar(Scalar),
     Vector {
@@ -100,11 +104,11 @@ impl Layout {
                 if length == 0 {
                     return 0;
                 }
-                stride * (length - 1) + element.size(runtime_length).max(*stride)
+                stride * (length - 1) + recurse(|| element.size(runtime_length)).max(*stride)
             }
             Self::Struct { members } => members
                 .iter()
-                .map(|(offset, member)| offset + member.size(runtime_length))
+                .map(|(offset, member)| offset + recurse(|| member.size(runtime_length)))
                 .max()
                 .unwrap_or(0),
             Self::Pointer(_) => ADDRESS.bytes(),
@@ -114,8 +118,10 @@ impl Layout {
     pub fn has_runtime_array(&self) -> bool {
         match self {
             Self::Array { length: None, .. } => true,
-            Self::Array { element, .. } => element.has_runtime_array(),
-            Self::Struct { members } => members.iter().any(|(_, m)| m.has_runtime_array()),
+            Self::Array { element, .. } => recurse(|| element.has_runtime_array()),
+            Self::Struct { members } => members
+                .iter()
+                .any(|(_, m)| recurse(|| m.has_runtime_array())),
             _ => false,
         }
     }
@@ -127,10 +133,10 @@ impl Layout {
                 stride,
                 ..
             } => *stride,
-            Self::Array { element, .. } => element.runtime_stride(),
+            Self::Array { element, .. } => recurse(|| element.runtime_stride()),
             Self::Struct { members } => members
                 .iter()
-                .map(|(_, m)| m.runtime_stride())
+                .map(|(_, m)| recurse(|| m.runtime_stride()))
                 .max()
                 .unwrap_or(0),
             _ => 0,
@@ -178,12 +184,12 @@ impl Layout {
                 stride,
             } => {
                 for i in 0..length.unwrap_or(runtime_length) {
-                    element.slots(base + i * stride, runtime_length, out);
+                    recurse(|| element.slots(base + i * stride, runtime_length, out));
                 }
             }
             Self::Struct { members } => {
                 for (offset, member) in members {
-                    member.slots(base + offset, runtime_length, out);
+                    recurse(|| member.slots(base + offset, runtime_length, out));
                 }
             }
             Self::Pointer(_) => out.push(Slot {
@@ -208,13 +214,13 @@ impl Layout {
             } => {
                 if element.has_pointer() {
                     for i in 0..length.unwrap_or(runtime_length) {
-                        element.pointers(base + i * stride, runtime_length, out);
+                        recurse(|| element.pointers(base + i * stride, runtime_length, out));
                     }
                 }
             }
             Self::Struct { members } => {
                 for (offset, member) in members {
-                    member.pointers(base + offset, runtime_length, out);
+                    recurse(|| member.pointers(base + offset, runtime_length, out));
                 }
             }
             Self::Pointer(pointee) => out.push((base, pointee)),
@@ -224,14 +230,164 @@ impl Layout {
     pub fn has_pointer(&self) -> bool {
         match self {
             Self::Scalar(_) | Self::Vector { .. } | Self::Matrix { .. } => false,
-            Self::Array { element, .. } => element.has_pointer(),
-            Self::Struct { members } => members.iter().any(|(_, m)| m.has_pointer()),
+            Self::Array { element, .. } => recurse(|| element.has_pointer()),
+            Self::Struct { members } => members.iter().any(|(_, m)| recurse(|| m.has_pointer())),
             Self::Pointer(_) => true,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Clone for Layout {
+    fn clone(&self) -> Self {
+        recurse(|| match self {
+            Self::Scalar(scalar) => Self::Scalar(*scalar),
+            Self::Vector { scalar, count } => Self::Vector {
+                scalar: *scalar,
+                count: *count,
+            },
+            Self::Matrix {
+                scalar,
+                columns,
+                rows,
+                stride,
+                row_major,
+            } => Self::Matrix {
+                scalar: *scalar,
+                columns: *columns,
+                rows: *rows,
+                stride: *stride,
+                row_major: *row_major,
+            },
+            Self::Array {
+                element,
+                length,
+                stride,
+            } => Self::Array {
+                element: element.clone(),
+                length: *length,
+                stride: *stride,
+            },
+            Self::Struct { members } => Self::Struct {
+                members: members.clone(),
+            },
+            Self::Pointer(pointee) => Self::Pointer(pointee.clone()),
+        })
+    }
+}
+
+impl PartialEq for Layout {
+    fn eq(&self, other: &Self) -> bool {
+        recurse(|| match (self, other) {
+            (Self::Scalar(a), Self::Scalar(b)) => a == b,
+            (
+                Self::Vector { scalar, count },
+                Self::Vector {
+                    scalar: other_scalar,
+                    count: other_count,
+                },
+            ) => scalar == other_scalar && count == other_count,
+            (
+                Self::Matrix {
+                    scalar,
+                    columns,
+                    rows,
+                    stride,
+                    row_major,
+                },
+                Self::Matrix {
+                    scalar: other_scalar,
+                    columns: other_columns,
+                    rows: other_rows,
+                    stride: other_stride,
+                    row_major: other_row_major,
+                },
+            ) => {
+                scalar == other_scalar
+                    && columns == other_columns
+                    && rows == other_rows
+                    && stride == other_stride
+                    && row_major == other_row_major
+            }
+            (
+                Self::Array {
+                    element,
+                    length,
+                    stride,
+                },
+                Self::Array {
+                    element: other_element,
+                    length: other_length,
+                    stride: other_stride,
+                },
+            ) => element == other_element && length == other_length && stride == other_stride,
+            (
+                Self::Struct { members },
+                Self::Struct {
+                    members: other_members,
+                },
+            ) => members == other_members,
+            (Self::Pointer(a), Self::Pointer(b)) => a == b,
+            _ => false,
+        })
+    }
+}
+
+impl fmt::Debug for Layout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        recurse(|| match self {
+            Self::Scalar(scalar) => f.debug_tuple("Scalar").field(scalar).finish(),
+            Self::Vector { scalar, count } => f
+                .debug_struct("Vector")
+                .field("scalar", scalar)
+                .field("count", count)
+                .finish(),
+            Self::Matrix {
+                scalar,
+                columns,
+                rows,
+                stride,
+                row_major,
+            } => f
+                .debug_struct("Matrix")
+                .field("scalar", scalar)
+                .field("columns", columns)
+                .field("rows", rows)
+                .field("stride", stride)
+                .field("row_major", row_major)
+                .finish(),
+            Self::Array {
+                element,
+                length,
+                stride,
+            } => f
+                .debug_struct("Array")
+                .field("element", element)
+                .field("length", length)
+                .field("stride", stride)
+                .finish(),
+            Self::Struct { members } => f.debug_struct("Struct").field("members", members).finish(),
+            Self::Pointer(pointee) => f.debug_tuple("Pointer").field(pointee).finish(),
+        })
+    }
+}
+
+impl Drop for Layout {
+    fn drop(&mut self) {
+        match self {
+            Self::Array { element, .. } | Self::Pointer(Pointee::Block(element)) => {
+                let element = mem::replace(&mut **element, Self::Scalar(ADDRESS));
+                recurse(|| drop(element));
+            }
+            Self::Struct { members } => {
+                let members = mem::take(members);
+                recurse(|| drop(members));
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Eq)]
 pub enum DataType {
     Scalar(Scalar),
     Vector {
@@ -248,6 +404,115 @@ pub enum DataType {
         length: u32,
     },
     Struct(Vec<DataType>),
+}
+
+const UNIT: DataType = DataType::Struct(Vec::new());
+
+impl Clone for DataType {
+    fn clone(&self) -> Self {
+        recurse(|| match self {
+            Self::Scalar(scalar) => Self::Scalar(*scalar),
+            Self::Vector { scalar, count } => Self::Vector {
+                scalar: *scalar,
+                count: *count,
+            },
+            Self::Matrix {
+                scalar,
+                columns,
+                rows,
+            } => Self::Matrix {
+                scalar: *scalar,
+                columns: *columns,
+                rows: *rows,
+            },
+            Self::Array { element, length } => Self::Array {
+                element: element.clone(),
+                length: *length,
+            },
+            Self::Struct(members) => Self::Struct(members.clone()),
+        })
+    }
+}
+
+impl PartialEq for DataType {
+    fn eq(&self, other: &Self) -> bool {
+        recurse(|| match (self, other) {
+            (Self::Scalar(a), Self::Scalar(b)) => a == b,
+            (
+                Self::Vector { scalar, count },
+                Self::Vector {
+                    scalar: other_scalar,
+                    count: other_count,
+                },
+            ) => scalar == other_scalar && count == other_count,
+            (
+                Self::Matrix {
+                    scalar,
+                    columns,
+                    rows,
+                },
+                Self::Matrix {
+                    scalar: other_scalar,
+                    columns: other_columns,
+                    rows: other_rows,
+                },
+            ) => scalar == other_scalar && columns == other_columns && rows == other_rows,
+            (
+                Self::Array { element, length },
+                Self::Array {
+                    element: other_element,
+                    length: other_length,
+                },
+            ) => element == other_element && length == other_length,
+            (Self::Struct(a), Self::Struct(b)) => a == b,
+            _ => false,
+        })
+    }
+}
+
+impl fmt::Debug for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        recurse(|| match self {
+            Self::Scalar(scalar) => f.debug_tuple("Scalar").field(scalar).finish(),
+            Self::Vector { scalar, count } => f
+                .debug_struct("Vector")
+                .field("scalar", scalar)
+                .field("count", count)
+                .finish(),
+            Self::Matrix {
+                scalar,
+                columns,
+                rows,
+            } => f
+                .debug_struct("Matrix")
+                .field("scalar", scalar)
+                .field("columns", columns)
+                .field("rows", rows)
+                .finish(),
+            Self::Array { element, length } => f
+                .debug_struct("Array")
+                .field("element", element)
+                .field("length", length)
+                .finish(),
+            Self::Struct(members) => f.debug_tuple("Struct").field(members).finish(),
+        })
+    }
+}
+
+impl Drop for DataType {
+    fn drop(&mut self) {
+        match self {
+            Self::Array { element, .. } => {
+                let element = mem::replace(&mut **element, UNIT);
+                recurse(|| drop(element));
+            }
+            Self::Struct(members) => {
+                let members = mem::take(members);
+                recurse(|| drop(members));
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -737,16 +1002,11 @@ impl Types<'_> {
         })
     }
 
-    fn layout(&self, id: u32, matrix: Option<(u32, bool)>, depth: u32) -> Result<Layout, String> {
-        self.layout_in(id, matrix, depth, &mut Vec::new())
+    fn layout(&self, id: u32, matrix: Option<(u32, bool)>) -> Result<Layout, String> {
+        self.layout_in(id, matrix, &mut Vec::new())
     }
 
-    fn pointee(
-        &self,
-        pointer: u32,
-        depth: u32,
-        enclosing: &mut Vec<u32>,
-    ) -> Result<Pointee, String> {
+    fn pointee(&self, pointer: u32, enclosing: &mut Vec<u32>) -> Result<Pointee, String> {
         let instruction = self
             .get(pointer)
             .filter(|p| p.is(Op::TypePointer))
@@ -762,7 +1022,7 @@ impl Types<'_> {
             ));
         }
         enclosing.push(target);
-        let layout = self.layout_in(target, None, depth + 1, enclosing);
+        let layout = recurse(|| self.layout_in(target, None, enclosing));
         enclosing.pop();
         Ok(Pointee::Block(Box::new(layout?)))
     }
@@ -771,12 +1031,8 @@ impl Types<'_> {
         &self,
         id: u32,
         matrix: Option<(u32, bool)>,
-        depth: u32,
         enclosing: &mut Vec<u32>,
     ) -> Result<Layout, String> {
-        if depth > 32 {
-            return Err("type nesting too deep".into());
-        }
         let instruction = self
             .get(id)
             .ok_or_else(|| format!("unsupported type %{id}"))?;
@@ -799,7 +1055,7 @@ impl Types<'_> {
             let column = instruction.word(1).ok_or("bad matrix type")?;
             let columns = instruction.word(2).ok_or("bad matrix type")?;
             let Layout::Vector { scalar, count } =
-                self.layout_in(column, None, depth + 1, enclosing)?
+                recurse(|| self.layout_in(column, None, enclosing))?
             else {
                 return Err("bad matrix column type".into());
             };
@@ -829,7 +1085,7 @@ impl Types<'_> {
                 .value(id, Decoration::ArrayStride)
                 .ok_or_else(|| "array without an ArrayStride".to_string())?;
             return Ok(Layout::Array {
-                element: Box::new(self.layout_in(element, matrix, depth + 1, enclosing)?),
+                element: Box::new(recurse(|| self.layout_in(element, matrix, enclosing))?),
                 length,
                 stride,
             });
@@ -853,21 +1109,18 @@ impl Types<'_> {
                     });
                 members.push((
                     offset,
-                    self.layout_in(*member, matrix, depth + 1, enclosing)?,
+                    recurse(|| self.layout_in(*member, matrix, enclosing))?,
                 ));
             }
             return Ok(Layout::Struct { members });
         }
         if op == Op::TypePointer as u32 {
-            return Ok(Layout::Pointer(self.pointee(id, depth, enclosing)?));
+            return Ok(Layout::Pointer(self.pointee(id, enclosing)?));
         }
         Err(format!("unsupported type {} in a buffer", op_name(op)))
     }
 
-    fn data_type(&self, id: u32, depth: u32) -> Result<DataType, String> {
-        if depth > 32 {
-            return Err("type nesting too deep".into());
-        }
+    fn data_type(&self, id: u32) -> Result<DataType, String> {
         let instruction = self
             .get(id)
             .ok_or_else(|| format!("unsupported type %{id}"))?;
@@ -892,7 +1145,7 @@ impl Types<'_> {
             let DataType::Vector {
                 scalar,
                 count: rows,
-            } = self.data_type(column, depth + 1)?
+            } = recurse(|| self.data_type(column))?
             else {
                 return Err("bad matrix column type".into());
             };
@@ -909,7 +1162,7 @@ impl Types<'_> {
                 .and_then(|l| self.constant_u32(l))
                 .ok_or_else(|| "array length is not a constant".to_string())?;
             return Ok(DataType::Array {
-                element: Box::new(self.data_type(element, depth + 1)?),
+                element: Box::new(recurse(|| self.data_type(element))?),
                 length,
             });
         }
@@ -917,7 +1170,7 @@ impl Types<'_> {
             let members = instruction
                 .rest(1)
                 .iter()
-                .map(|member| self.data_type(*member, depth + 1))
+                .map(|member| recurse(|| self.data_type(*member)))
                 .collect::<Result<Vec<_>, _>>()?;
             return Ok(DataType::Struct(members));
         }
@@ -1557,7 +1810,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     reflection.inputs.extend(varyings);
                 }
             }
-            StorageClass::PushConstant => match types.layout(pointee, None, 0) {
+            StorageClass::PushConstant => match types.layout(pointee, None) {
                 Ok(layout) => {
                     roots.insert(
                         id,
@@ -1637,7 +1890,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             | StorageClass::Image => {}
             StorageClass::ShaderRecordBufferKHR if is_ray_tracing(model) => {
                 reflection.ray_storage.insert(class);
-                let layout = types.layout(pointee, None, 0);
+                let layout = types.layout(pointee, None);
                 if let Ok(layout) = &layout {
                     roots.insert(
                         id,
@@ -1661,11 +1914,11 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                 reflection.ray_variables.push(RayVariable {
                     class,
                     location: decorations.value(id, Decoration::Location).unwrap_or(0),
-                    ty: types.data_type(pointee, 0),
+                    ty: types.data_type(pointee),
                 });
             }
             StorageClass::TaskPayloadWorkgroupEXT if is_mesh_shading(model) => {
-                reflection.task_payload = Some(types.data_type(pointee, 0));
+                reflection.task_payload = Some(types.data_type(pointee));
             }
             other => reflection.problems.push(format!("{other:?} variables")),
         }
@@ -1730,9 +1983,9 @@ enum XfbStep {
     Type { id: u32, offset: u32 },
 }
 
-fn xfb_type_size(types: &Types, id: u32, depth: u32) -> Result<(u32, u32), String> {
+fn xfb_type_size(types: &Types, id: u32) -> Result<(u32, u32), String> {
     let mut fields = Vec::new();
-    flatten_xfb(types, id, 0, depth + 1, &mut fields)?;
+    flatten_xfb(types, id, 0, &mut fields)?;
     let alignment = fields
         .iter()
         .map(|(_, scalar)| xfb_alignment(*scalar))
@@ -1750,12 +2003,8 @@ fn flatten_xfb(
     types: &Types,
     id: u32,
     base: u32,
-    depth: u32,
     out: &mut Vec<(u32, Scalar)>,
 ) -> Result<(), String> {
-    if depth > 32 {
-        return Err("transform feedback type nesting too deep".into());
-    }
     let mut work = vec![XfbStep::Type { id, offset: base }];
     let mut steps = 0usize;
     while let Some(XfbStep::Type { id, offset }) = work.pop() {
@@ -1774,7 +2023,7 @@ fn flatten_xfb(
         } else if instruction.is(Op::TypeVector) || instruction.is(Op::TypeMatrix) {
             let element = instruction.word(1).ok_or("bad vector type")?;
             let count = instruction.word(2).ok_or("bad vector type")?;
-            let (size, _) = xfb_type_size(types, element, depth)?;
+            let (size, _) = recurse(|| xfb_type_size(types, element))?;
             for index in (0..count).rev() {
                 work.push(XfbStep::Type {
                     id: element,
@@ -1787,7 +2036,7 @@ fn flatten_xfb(
                 .word(2)
                 .and_then(|length| types.constant_u32(length))
                 .ok_or("transform feedback array without a constant length")?;
-            let (size, _) = xfb_type_size(types, element, depth)?;
+            let (size, _) = recurse(|| xfb_type_size(types, element))?;
             for index in (0..length).rev() {
                 work.push(XfbStep::Type {
                     id: element,
@@ -1799,7 +2048,7 @@ fn flatten_xfb(
             let mut members = Vec::new();
             for (index, member) in instruction.rest(1).iter().enumerate() {
                 let index = u32::try_from(index).map_err(|_| "struct too large")?;
-                let (size, alignment) = xfb_type_size(types, *member, depth)?;
+                let (size, alignment) = recurse(|| xfb_type_size(types, *member))?;
                 let at = types
                     .decorations
                     .member_value(id, index, Decoration::Offset)
@@ -1897,7 +2146,7 @@ fn xfb_fields(module: &Module, types: &Types, outputs: &[(u32, u32)]) -> Result<
                     continue;
                 };
                 let mut fields = Vec::new();
-                flatten_xfb(types, *member, offset, 0, &mut fields)?;
+                flatten_xfb(types, *member, offset, &mut fields)?;
                 let written = member_written(variable, index, &constant);
                 xfb.fields
                     .extend(fields.into_iter().map(|(offset, scalar)| XfbField {
@@ -1911,7 +2160,7 @@ fn xfb_fields(module: &Module, types: &Types, outputs: &[(u32, u32)]) -> Result<
             (buffer, decorations.value(variable, Decoration::Offset))
         {
             let mut fields = Vec::new();
-            flatten_xfb(types, pointee, offset, 0, &mut fields)?;
+            flatten_xfb(types, pointee, offset, &mut fields)?;
             let written = written.iter().any(|(id, _)| *id == variable);
             xfb.fields
                 .extend(fields.into_iter().map(|(offset, scalar)| XfbField {
@@ -2238,7 +2487,7 @@ fn decode_unit(module: &Module, types: &Types, function: u32) -> u64 {
     parameter
         .and_then(|parameter| types.get(parameter.word(0)?))
         .filter(|pointer| pointer.is(Op::TypePointer))
-        .and_then(|pointer| types.layout(pointer.word(2)?, None, 0).ok())
+        .and_then(|pointer| types.layout(pointer.word(2)?, None).ok())
         .map_or(DECODE_UNIT, |layout| u64::from(layout.size(0)).max(1))
 }
 
@@ -2471,7 +2720,7 @@ fn pointer_fields(
         let Some(field) = address_field(&defs, types, roots, value) else {
             continue;
         };
-        let pointee = types.pointee(result_type, 0, &mut Vec::new())?;
+        let pointee = types.pointee(result_type, &mut Vec::new())?;
         match fields.iter().find(|f| f.field == field) {
             Some(known) if known.pointee != pointee => {
                 return Err(format!(
@@ -2611,7 +2860,7 @@ fn resource_kind(types: &Types, class: StorageClass, variable: u32, pointee: u32
     }
     match class {
         StorageClass::Uniform | StorageClass::StorageBuffer => {
-            let layout = match types.layout(pointee, None, 0) {
+            let layout = match types.layout(pointee, None) {
                 Ok(layout) => layout,
                 Err(error) => return ResourceKind::Unsupported(error),
             };
@@ -2992,7 +3241,7 @@ mod tests {
         let ResourceKind::StorageBuffer { layout, .. } = &reflection.resources[0].kind else {
             panic!("expected a storage buffer");
         };
-        let Layout::Struct { members } = layout else {
+        let Layout::Struct { members } = &layout else {
             panic!("expected a block");
         };
         assert_eq!(

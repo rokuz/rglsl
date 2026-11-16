@@ -122,16 +122,6 @@ functions = [
 reason = "the fuzzer generates nesting up to its parameters; it does not walk input"
 bound = "max_depth, MAX_BLOCK_NESTING_DEPTH = 5, max_struct_nesting_depth, depth > 8 caps, vector sizes"
 
-[xtask-exec]
-functions = [
-    "rglsl_xtask::exec::reflect::",
-    "rglsl_xtask::exec::glsl::",
-    "rglsl_xtask::exec::module::parse",
-    "core::ptr::drop_in_place<",
-]
-reason = "reflection data types of the exec harness are built with a depth cap; a module is byte-swapped once"
-bound = "32"
-
 [xtask-builtins]
 functions = ["rglsl_xtask::builtins::generate::Shader::constant"]
 reason = "constants of built-in prototype types"
