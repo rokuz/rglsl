@@ -6,6 +6,7 @@ use rglsl_ast::Span;
 use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_types::extension::Extension;
 
+use super::call::Operands;
 use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::diagnostic::DiagnosticKind;
@@ -132,7 +133,7 @@ fn is_component(ty: &Type, scalar: Scalar) -> bool {
 
 enum TensorArguments {
     Parameters(Vec<Operand>),
-    Operands(Vec<Operand>),
+    Operands(Operands),
 }
 
 impl<'b> Cx<'b, Analyzer<'_>> {
@@ -294,7 +295,7 @@ impl Analyzer<'_> {
         evaluated: TensorArguments,
     ) -> Operand {
         let (parameters, operands) = match evaluated {
-            TensorArguments::Parameters(parameters) => (parameters, Vec::new()),
+            TensorArguments::Parameters(parameters) => (parameters, Operands::new()),
             TensorArguments::Operands(operands) => (Vec::new(), operands),
         };
         let no_match = |analyzer: &mut Self| {

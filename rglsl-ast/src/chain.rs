@@ -1,133 +1,14 @@
 use alloc::boxed::Box;
-use alloc::vec::{self, Vec};
-use core::ops::{Deref, DerefMut};
-use core::slice;
+use alloc::vec::Vec;
 
-use arrayvec::ArrayVec;
+use rglsl_types::small_vec::SmallVec;
+use rglsl_types::stack::InlineDepth;
 
 use crate::ast::{Expression, ExpressionKind, FunctionCall, FunctionIdentifier, NodeId};
 use crate::deep::{Nested, deep_clone, deep_eq, drop_owned};
 use crate::span::Span;
 
-const SPINE_INLINE: usize = 16;
-
-#[derive(Debug, Clone)]
-enum SpineLinksInner<'a> {
-    Inline(ArrayVec<&'a Expression, SPINE_INLINE>),
-    Heap(Vec<&'a Expression>),
-}
-
-#[derive(Debug, Clone)]
-pub struct SpineLinks<'a>(SpineLinksInner<'a>);
-
-impl<'a> Default for SpineLinks<'a> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'a> SpineLinks<'a> {
-    pub const fn new() -> Self {
-        Self(SpineLinksInner::Inline(ArrayVec::new_const()))
-    }
-
-    pub fn push(&mut self, value: &'a Expression) {
-        match &mut self.0 {
-            SpineLinksInner::Inline(inline) => {
-                if let Err(overflow) = inline.try_push(value) {
-                    let mut heap = Vec::with_capacity(SPINE_INLINE * 2);
-                    heap.extend_from_slice(inline);
-                    heap.push(overflow.element());
-                    self.0 = SpineLinksInner::Heap(heap);
-                }
-            }
-            SpineLinksInner::Heap(heap) => heap.push(value),
-        }
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        match &mut self.0 {
-            SpineLinksInner::Inline(inline) => inline.truncate(len),
-            SpineLinksInner::Heap(heap) => heap.truncate(len),
-        }
-    }
-}
-
-impl<'a> Deref for SpineLinks<'a> {
-    type Target = [&'a Expression];
-
-    fn deref(&self) -> &Self::Target {
-        match &self.0 {
-            SpineLinksInner::Inline(inline) => inline.as_slice(),
-            SpineLinksInner::Heap(heap) => heap.as_slice(),
-        }
-    }
-}
-
-impl<'a> DerefMut for SpineLinks<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match &mut self.0 {
-            SpineLinksInner::Inline(inline) => inline.as_mut_slice(),
-            SpineLinksInner::Heap(heap) => heap.as_mut_slice(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum SpineLinksIter<'a> {
-    Inline(arrayvec::IntoIter<&'a Expression, SPINE_INLINE>),
-    Heap(vec::IntoIter<&'a Expression>),
-}
-
-impl<'a> Iterator for SpineLinksIter<'a> {
-    type Item = &'a Expression;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Inline(iter) => iter.next(),
-            Self::Heap(iter) => iter.next(),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Inline(iter) => iter.size_hint(),
-            Self::Heap(iter) => iter.size_hint(),
-        }
-    }
-}
-
-impl DoubleEndedIterator for SpineLinksIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Inline(iter) => iter.next_back(),
-            Self::Heap(iter) => iter.next_back(),
-        }
-    }
-}
-
-impl ExactSizeIterator for SpineLinksIter<'_> {}
-
-impl<'a> IntoIterator for SpineLinks<'a> {
-    type Item = &'a Expression;
-    type IntoIter = SpineLinksIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self.0 {
-            SpineLinksInner::Inline(inline) => SpineLinksIter::Inline(inline.into_iter()),
-            SpineLinksInner::Heap(heap) => SpineLinksIter::Heap(heap.into_iter()),
-        }
-    }
-}
-
-impl<'a, 'b> IntoIterator for &'b SpineLinks<'a> {
-    type Item = &'b &'a Expression;
-    type IntoIter = slice::Iter<'b, &'a Expression>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
+pub type SpineLinks<'a> = SmallVec<&'a Expression, 16>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Chain {
@@ -474,13 +355,17 @@ impl ExpressionKind {
             _ => false,
         }
     }
-    pub(crate) fn exceeds_depth(&self, remaining: u8) -> bool {
+    pub(crate) fn exceeds_inline_depth(&self) -> bool {
+        self.exceeds(InlineDepth::MAX)
+    }
+
+    fn exceeds(&self, depth: InlineDepth) -> bool {
         if self.is_leaf() {
             return false;
         }
-        if remaining == 0 {
+        let Some(nested) = depth.nested() else {
             return true;
-        }
+        };
         if let Self::FunctionCall(call) = self
             && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
                 &call.function.node
@@ -490,7 +375,7 @@ impl ExpressionKind {
         }
         let mut deep = false;
         self.for_each_child(|child| {
-            if !deep && child.kind.exceeds_depth(remaining - 1) {
+            if !deep && child.kind.exceeds(nested) {
                 deep = true;
             }
         });
@@ -536,7 +421,7 @@ impl Nested for ExpressionKind {
 
 impl Drop for ExpressionKind {
     fn drop(&mut self) {
-        if !self.exceeds_depth(6) {
+        if !self.exceeds_inline_depth() {
             return;
         }
         let mut pending = Vec::new();

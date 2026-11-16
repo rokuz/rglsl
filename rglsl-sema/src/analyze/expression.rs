@@ -3,9 +3,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use arrayvec::ArrayVec;
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::run;
+use rglsl_types::stack::{InlineDepth, run};
 
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, Identifier,
@@ -13,99 +12,98 @@ use rglsl_ast::ast::{
 };
 use rglsl_ast::{Chain, Span, Spine, SpineLinks};
 
+use super::call::Operands;
 use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
 use crate::constant::{Constant, Linear, Value, fold_binary, fold_linear, fold_unary};
 use crate::diagnostic::DiagnosticKind;
 use crate::layout_id::LayoutId;
-use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind};
+use crate::scope::{Lookup, Origin, Qualifiers, Storage, SymbolId, SymbolKind, Variable};
 use crate::types::CooperativeUse;
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
 use rglsl_types::ShaderStage;
 
-impl Analyzer<'_> {
-    fn can_eval_simple(expression: &Expression) -> bool {
-        match &expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_) => true,
-            ExpressionKind::FunctionCall(call) => {
-                matches!(
-                    &call.function.node,
-                    FunctionIdentifier::Constructor(specifier)
-                        if Self::is_simple_type_specifier(specifier)
-                ) && call.arguments.len() <= 4
-                    && call
-                        .arguments
-                        .iter()
-                        .all(|argument| argument.kind.is_leaf())
-            }
-            _ => false,
-        }
-    }
+struct Access {
+    place: Place,
+    storage: Storage,
+    writeonly: bool,
+    non_uniform: bool,
+    image_format: Option<LayoutId>,
+}
 
-    pub(crate) fn try_simple_expression(&mut self, expression: &Expression) -> Option<Operand> {
-        let span = expression.span;
-        let uses = self.specialization_uses;
-        let operand = match &expression.kind {
+impl Access {
+    const TEMPORARY: Self = Self {
+        place: Place::Temporary,
+        storage: Storage::None,
+        writeonly: false,
+        non_uniform: false,
+        image_format: None,
+    };
+}
+
+impl Analyzer<'_> {
+    fn leaf_operand(&mut self, expression: &Expression) -> Option<Operand> {
+        Some(match &expression.kind {
             ExpressionKind::Variable(name) => self.variable(expression, name),
-            ExpressionKind::Number(number) => self.number(span, number),
+            ExpressionKind::Number(number) => self.number(expression.span, number),
             ExpressionKind::Bool(value) => {
                 Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
             }
             ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
-            ExpressionKind::FunctionCall(call) if Self::can_eval_simple(expression) => {
-                let FunctionIdentifier::Constructor(specifier) = &call.function.node else {
-                    return None;
-                };
-                let close = Span::new(span.end.saturating_sub(1), span.end);
-                let ty = self.try_simple_type_specifier(specifier, close)?;
-                let mut operands = ArrayVec::<Operand, 4>::new();
-                for argument in &call.arguments {
-                    operands.push(self.try_simple_expression(argument)?);
-                }
-                self.constructor_with(expression, close, &call.arguments, ty, &operands)
-            }
             _ => return None,
-        };
-        Some(self.recorded(expression, uses, operand))
+        })
     }
 
-    fn can_eval_flat(expression: &Expression, depth: u8) -> bool {
-        if Self::can_eval_simple(expression) {
+    fn is_flat(expression: &Expression, depth: InlineDepth) -> bool {
+        if let ExpressionKind::FunctionCall(call) = &expression.kind {
+            return matches!(
+                &call.function.node,
+                FunctionIdentifier::Constructor(specifier)
+                    if Self::is_simple_type_specifier(specifier)
+            ) && call
+                .arguments
+                .iter()
+                .all(|argument| argument.kind.is_leaf());
+        }
+        if expression.kind.is_leaf() {
             return true;
         }
-        if depth == 0 {
+        let Some(nested) = depth.nested() else {
             return false;
-        }
-        let next = depth - 1;
+        };
         match &expression.kind {
-            ExpressionKind::Parenthesized(inner) => Self::can_eval_flat(inner, next),
-            ExpressionKind::Unary { operator, operand }
-                if !matches!(
+            ExpressionKind::Parenthesized(inner) => Self::is_flat(inner, nested),
+            ExpressionKind::Unary { operator, operand } => {
+                !matches!(
                     operator,
                     UnaryOperator::Increment | UnaryOperator::Decrement
-                ) =>
-            {
-                Self::can_eval_flat(operand, next)
+                ) && Self::is_flat(operand, nested)
             }
             ExpressionKind::Binary { left, right, .. } => {
-                Self::can_eval_flat(left, next) && Self::can_eval_flat(right, next)
+                Self::is_flat(left, nested) && Self::is_flat(right, nested)
             }
             _ => false,
         }
     }
 
-    fn eval_flat(&mut self, expression: &Expression) -> Option<Operand> {
-        if let Some(operand) = self.try_simple_expression(expression) {
-            return Some(operand);
-        }
+    fn flat_operand(&mut self, expression: &Expression) -> Option<Operand> {
         let uses = self.specialization_uses;
         let operand = match &expression.kind {
-            ExpressionKind::Parenthesized(inner) => self.eval_flat(inner)?,
+            ExpressionKind::FunctionCall(call) => {
+                let FunctionIdentifier::Constructor(specifier) = &call.function.node else {
+                    return None;
+                };
+                let close = closing_parenthesis(expression);
+                let ty = self.simple_type_specifier(specifier, close)?;
+                let mut operands = Operands::with_capacity(call.arguments.len());
+                for argument in &call.arguments {
+                    operands.push(self.flat_operand(argument)?);
+                }
+                self.constructor_with(expression, close, &call.arguments, ty, &operands)
+            }
+            ExpressionKind::Parenthesized(inner) => self.flat_operand(inner)?,
             ExpressionKind::Unary { operator, operand } => {
-                let inner = self.eval_flat(operand)?;
+                let inner = self.flat_operand(operand)?;
                 self.unary_checked(expression.span, *operator, inner)
             }
             ExpressionKind::Binary {
@@ -113,25 +111,28 @@ impl Analyzer<'_> {
                 left,
                 right,
             } => {
-                let left_operand = self.eval_flat(left)?;
-                let right_operand = self.eval_flat(right)?;
+                let left_operand = self.flat_operand(left)?;
+                let right_operand = self.flat_operand(right)?;
                 let span = Span::new(left.span.end, right.span.start);
                 self.binary_checked(*operator, left, right, span, left_operand, right_operand)
             }
-            _ => return None,
+            _ => self.leaf_operand(expression)?,
         };
         Some(self.recorded(expression, uses, operand))
     }
 
-    pub(crate) fn try_flat_expression(&mut self, expression: &Expression) -> Option<Operand> {
-        if let Some(operand) = self.try_simple_expression(expression) {
-            return Some(operand);
+    fn flat_expression(&mut self, expression: &Expression) -> Option<Operand> {
+        if self.flat_expressions && Self::is_flat(expression, InlineDepth::MAX) {
+            self.flat_operand(expression)
+        } else {
+            None
         }
-        if !Self::can_eval_flat(expression, 5) {
-            return None;
-        }
-        self.eval_flat(expression)
     }
+}
+
+pub(crate) const fn closing_parenthesis(call: &Expression) -> Span {
+    let end = call.span.end;
+    Span::new(end.saturating_sub(1), end)
 }
 
 impl<'b> Cx<'b, Analyzer<'_>> {
@@ -140,16 +141,20 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     }
 
     pub(crate) async fn child_expression(self, expression: &'b Expression) -> Operand {
-        if let Some(operand) = self.with(|analyzer| analyzer.try_flat_expression(expression)) {
+        if let Some(operand) = self.with(|analyzer| analyzer.flat_expression(expression)) {
             return operand;
         }
-        self.call(self.clone().expression(expression)).await
+        self.call(self.clone().nested_expression(expression)).await
     }
 
     pub(crate) async fn expression(self, expression: &'b Expression) -> Operand {
-        if let Some(operand) = self.with(|analyzer| analyzer.try_flat_expression(expression)) {
+        if let Some(operand) = self.with(|analyzer| analyzer.flat_expression(expression)) {
             return operand;
         }
+        self.clone().nested_expression(expression).await
+    }
+
+    async fn nested_expression(self, expression: &'b Expression) -> Operand {
         if matches!(expression.kind, ExpressionKind::Parenthesized(_)) {
             return self.clone().binary_chain(expression).await;
         }
@@ -315,24 +320,21 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     }
 
     async fn expression_kind(self, expression: &'b Expression) -> Operand {
-        let span = expression.span;
         match &expression.kind {
-            ExpressionKind::Variable(name) => {
-                self.with(|analyzer| analyzer.variable(expression, name))
-            }
-            ExpressionKind::Number(number) => self.with(|analyzer| analyzer.number(span, number)),
-            ExpressionKind::Bool(value) => {
-                Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
-            }
-            ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
-            ExpressionKind::Parenthesized(inner) => self.clone().child_expression(inner).await,
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => self
+                .with(|analyzer| analyzer.leaf_operand(expression))
+                .unwrap_or_else(Operand::error),
             ExpressionKind::FunctionCall(call) => {
                 self.clone().call_expression(expression, call).await
             }
             ExpressionKind::Sequence(expressions) => {
                 self.call(self.clone().sequence(expressions)).await
             }
-            ExpressionKind::Subscript { .. }
+            ExpressionKind::Parenthesized(_)
+            | ExpressionKind::Subscript { .. }
             | ExpressionKind::FieldSelection { .. }
             | ExpressionKind::Postfix { .. }
             | ExpressionKind::Unary { .. }
@@ -693,7 +695,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
-        if let Some(operand) = self.try_flat_expression(expression) {
+        if let Some(operand) = self.flat_expression(expression) {
             return operand;
         }
         let finished = {
@@ -756,148 +758,97 @@ impl Analyzer<'_> {
         })
     }
 
-    fn variable_place(&self, id: SymbolId) -> (Place, Storage) {
-        let Some(symbol) = self.symbol(id) else {
-            return (Place::Temporary, Storage::None);
-        };
-        match &symbol.kind {
-            SymbolKind::Variable(variable) => {
-                let qualifiers = &variable.qualifiers;
-                let block_storage = match variable.ty.kind {
-                    TypeKind::Block(block) => self.types.block(block).map(|block| block.storage),
-                    _ => None,
+    fn access(&self, id: SymbolId) -> Access {
+        match self.symbol(id).map(|symbol| &symbol.kind) {
+            Some(SymbolKind::Variable(variable)) => self.variable_access(variable),
+            Some(SymbolKind::BlockMember { instance, index }) => {
+                let Some(variable) = self.symbol(*instance).and_then(|symbol| symbol.variable())
+                else {
+                    return Access::TEMPORARY;
                 };
-                let storage = match block_storage {
-                    Some(BlockStorage::Uniform) => Storage::Uniform,
-                    Some(BlockStorage::Buffer) => Storage::Buffer,
-                    Some(BlockStorage::Shared) => Storage::Shared,
-                    Some(BlockStorage::In) => Storage::In,
-                    Some(BlockStorage::Out) => Storage::Out,
-                    Some(BlockStorage::ResourceHeap) => Storage::ResourceHeap,
-                    Some(BlockStorage::SamplerHeap) => Storage::SamplerHeap,
-                    Some(ray) => super::ray::storage_of_block(ray).unwrap_or(Storage::None),
-                    None => qualifiers.storage,
-                };
-                let shader_record = match variable.ty.kind {
+                let block = self.variable_access(variable);
+                let member = match variable.ty.kind {
                     TypeKind::Block(block) => self
                         .types
                         .block(block)
-                        .is_some_and(|block| super::ray::is_shader_record(&block.qualifiers)),
-                    _ => false,
+                        .and_then(|block| block.members.get(usize::try_from(*index).ok()?)),
+                    _ => None,
                 };
-                let place = if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
-                    Place::ReadOnly("it is `const`")
-                } else if matches!(storage, Storage::ResourceHeap | Storage::SamplerHeap) {
-                    Place::ReadOnly("it is a descriptor heap")
-                } else if storage == Storage::Uniform {
-                    Place::ReadOnly("it is a uniform")
-                } else if shader_record {
-                    Place::ReadOnly("can't modify a shaderrecordnv qualified buffer")
-                } else if storage == Storage::HitAttribute
-                    && !self.stage_is(ShaderStage::Intersection)
-                {
-                    Place::ReadOnly("cannot modify hitAttributeNV in this stage")
-                } else if storage == Storage::TaskPayloadShared && self.stage_is(ShaderStage::Mesh)
-                {
-                    Place::ReadOnly(
-                        "can't modify variable with storage qualifier taskPayloadSharedEXT in mesh shaders",
-                    )
-                } else if storage == Storage::In && variable.origin != Origin::Parameter {
-                    Place::ReadOnly("it is a shader input")
-                } else if qualifiers.flags.contains(QualifierFlags::READONLY)
-                    && !variable.ty.is_opaque()
-                {
-                    Place::ReadOnly("it is read-only")
-                } else if variable.ty.is_opaque() {
-                    Place::ReadOnly("it has an opaque type")
-                } else {
-                    Place::Writable
-                };
-                (place, storage)
-            }
-            SymbolKind::BlockMember { instance, index } => {
-                let (place, storage) = self.variable_place(*instance);
-                let readonly = self
-                    .symbol(*instance)
-                    .and_then(|symbol| symbol.variable())
-                    .and_then(|variable| match variable.ty.kind {
-                        TypeKind::Block(block) => self.types.block(block),
-                        _ => None,
-                    })
-                    .and_then(|block| block.members.get(usize::try_from(*index).ok()?))
-                    .is_some_and(|member| {
-                        member.qualifiers.flags.contains(QualifierFlags::READONLY)
-                    });
-                if readonly && place == Place::Writable {
-                    (Place::ReadOnly("it is read-only"), storage)
-                } else {
-                    (place, storage)
+                let member_has =
+                    |flag| member.is_some_and(|member| member.qualifiers.flags.contains(flag));
+                let place =
+                    if member_has(QualifierFlags::READONLY) && block.place == Place::Writable {
+                        Place::ReadOnly("it is read-only")
+                    } else {
+                        block.place
+                    };
+                Access {
+                    place,
+                    storage: block.storage,
+                    writeonly: block.writeonly || member_has(QualifierFlags::WRITEONLY),
+                    non_uniform: block.non_uniform,
+                    image_format: member.and_then(|member| member.qualifiers.image_format()),
                 }
             }
-            SymbolKind::Struct(_)
-            | SymbolKind::Reference(_)
-            | SymbolKind::BufferType(_)
-            | SymbolKind::BlockName => (Place::Temporary, Storage::None),
+            Some(
+                SymbolKind::Struct(_)
+                | SymbolKind::Reference(_)
+                | SymbolKind::BufferType(_)
+                | SymbolKind::BlockName,
+            )
+            | None => Access::TEMPORARY,
         }
     }
 
-    fn is_writeonly(&self, id: SymbolId) -> bool {
-        match self.symbol(id).map(|symbol| &symbol.kind) {
-            Some(SymbolKind::Variable(variable)) => {
-                variable
-                    .qualifiers
-                    .flags
-                    .contains(QualifierFlags::WRITEONLY)
-                    && !variable.ty.is_opaque()
-            }
-            Some(SymbolKind::BlockMember { instance, index }) => {
-                self.is_writeonly(*instance)
-                    || self
-                        .symbol(*instance)
-                        .and_then(|symbol| symbol.variable())
-                        .and_then(|variable| match variable.ty.kind {
-                            TypeKind::Block(block) => self.types.block(block),
-                            _ => None,
-                        })
-                        .and_then(|block| block.members.get(usize::try_from(*index).ok()?))
-                        .is_some_and(|member| {
-                            member.qualifiers.flags.contains(QualifierFlags::WRITEONLY)
-                        })
-            }
-            _ => false,
-        }
-    }
-
-    fn is_non_uniform(&self, id: SymbolId) -> bool {
-        match self.symbol(id).map(|symbol| &symbol.kind) {
-            Some(SymbolKind::Variable(variable)) => variable
-                .qualifiers
-                .flags
-                .contains(QualifierFlags::NONUNIFORM),
-            Some(SymbolKind::BlockMember { instance, .. }) => self.is_non_uniform(*instance),
-            _ => false,
-        }
-    }
-
-    fn image_format_of(&self, id: SymbolId) -> Option<LayoutId> {
-        match self.symbol(id).map(|symbol| &symbol.kind)? {
-            SymbolKind::Variable(variable) => variable.qualifiers.image_format(),
-            SymbolKind::BlockMember { instance, index } => {
-                let variable = self.symbol(*instance)?.variable()?;
-                let TypeKind::Block(block) = variable.ty.kind else {
-                    return None;
-                };
-                self.types
-                    .block(block)?
-                    .members
-                    .get(usize::try_from(*index).ok()?)?
-                    .qualifiers
-                    .image_format()
-            }
-            SymbolKind::Struct(_)
-            | SymbolKind::Reference(_)
-            | SymbolKind::BufferType(_)
-            | SymbolKind::BlockName => None,
+    fn variable_access(&self, variable: &Variable) -> Access {
+        let qualifiers = &variable.qualifiers;
+        let block = match variable.ty.kind {
+            TypeKind::Block(block) => self.types.block(block),
+            _ => None,
+        };
+        let storage = match block.map(|block| block.storage) {
+            Some(BlockStorage::Uniform) => Storage::Uniform,
+            Some(BlockStorage::Buffer) => Storage::Buffer,
+            Some(BlockStorage::Shared) => Storage::Shared,
+            Some(BlockStorage::In) => Storage::In,
+            Some(BlockStorage::Out) => Storage::Out,
+            Some(BlockStorage::ResourceHeap) => Storage::ResourceHeap,
+            Some(BlockStorage::SamplerHeap) => Storage::SamplerHeap,
+            Some(ray) => super::ray::storage_of_block(ray).unwrap_or(Storage::None),
+            None => qualifiers.storage,
+        };
+        let shader_record =
+            block.is_some_and(|block| super::ray::is_shader_record(&block.qualifiers));
+        let place = if qualifiers.flags.contains(QualifierFlags::CONSTANT) {
+            Place::ReadOnly("it is `const`")
+        } else if matches!(storage, Storage::ResourceHeap | Storage::SamplerHeap) {
+            Place::ReadOnly("it is a descriptor heap")
+        } else if storage == Storage::Uniform {
+            Place::ReadOnly("it is a uniform")
+        } else if shader_record {
+            Place::ReadOnly("can't modify a shaderrecordnv qualified buffer")
+        } else if storage == Storage::HitAttribute && !self.stage_is(ShaderStage::Intersection) {
+            Place::ReadOnly("cannot modify hitAttributeNV in this stage")
+        } else if storage == Storage::TaskPayloadShared && self.stage_is(ShaderStage::Mesh) {
+            Place::ReadOnly(
+                "can't modify variable with storage qualifier taskPayloadSharedEXT in mesh shaders",
+            )
+        } else if storage == Storage::In && variable.origin != Origin::Parameter {
+            Place::ReadOnly("it is a shader input")
+        } else if qualifiers.flags.contains(QualifierFlags::READONLY) && !variable.ty.is_opaque() {
+            Place::ReadOnly("it is read-only")
+        } else if variable.ty.is_opaque() {
+            Place::ReadOnly("it has an opaque type")
+        } else {
+            Place::Writable
+        };
+        Access {
+            place,
+            storage,
+            writeonly: qualifiers.flags.contains(QualifierFlags::WRITEONLY)
+                && !variable.ty.is_opaque(),
+            non_uniform: qualifiers.flags.contains(QualifierFlags::NONUNIFORM),
+            image_format: qualifiers.image_format(),
         }
     }
 
@@ -941,31 +892,6 @@ impl Analyzer<'_> {
                 return Operand::error();
             }
         };
-        if let Some(SymbolKind::Variable(variable)) = self.symbol(id).map(|symbol| &symbol.kind)
-            && variable.origin == Origin::Local
-            && variable.qualifiers.flags.is_empty()
-            && variable.qualifiers.storage == Storage::None
-            && !variable.ty.is_error()
-            && !variable.ty.is_opaque()
-            && !variable.ty.is_reference()
-            && !matches!(variable.ty.kind, TypeKind::Block(_))
-        {
-            let ty = variable.ty.clone();
-            self.references.insert(expression.id, id);
-            return Operand {
-                ty,
-                constant: false,
-                value: None,
-                place: Place::Writable,
-                root: Some(id),
-                storage: Storage::None,
-                specialization: false,
-                writeonly: false,
-                non_uniform: false,
-                through_reference: false,
-                image_format: None,
-            };
-        }
         if self.is_library() && self.is_builtin_symbol(id) {
             self.builtin_variable_stages(expression.span, name, true);
         }
@@ -1024,9 +950,13 @@ impl Analyzer<'_> {
         if ty.is_error() {
             return Operand::error();
         }
-        let (place, storage) = self.variable_place(id);
-        let writeonly = self.is_writeonly(id);
-        let non_uniform = self.is_non_uniform(id);
+        let Access {
+            place,
+            storage,
+            writeonly,
+            non_uniform,
+            image_format,
+        } = self.access(id);
         if ty.is_reference()
             && self
                 .symbol(id)
@@ -1035,7 +965,6 @@ impl Analyzer<'_> {
         {
             self.vulkan_memory_model = true;
         }
-        let image_format = self.image_format_of(id);
         Operand {
             ty,
             constant,

@@ -12,6 +12,20 @@ type Body<'b, T> = Pin<Box<dyn Future<Output = T> + 'b>>;
 
 pub const INLINE_STACK_BYTES: usize = 32 * 1024;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InlineDepth(u8);
+
+impl InlineDepth {
+    pub const MAX: Self = Self(6);
+
+    pub const fn nested(self) -> Option<Self> {
+        match self.0.checked_sub(1) {
+            Some(remaining) => Some(Self(remaining)),
+            None => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("a walk driven by the frame stack stopped before it finished")]
 pub struct Stalled;

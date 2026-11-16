@@ -2,9 +2,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ops::{Deref, DerefMut};
-
-use arrayvec::ArrayVec;
+use rglsl_types::small_vec::SmallVec;
 use rglsl_types::{FastHashMap, FastHashSet};
 
 use rglsl_ast::Span;
@@ -517,64 +515,7 @@ impl PartialEq for Symbols {
 
 impl Eq for Symbols {}
 
-#[derive(Debug, Clone)]
-enum ScopeLevels {
-    Inline(ArrayVec<(usize, BoundEntry), 2>),
-    Heap(Vec<(usize, BoundEntry)>),
-}
-
-impl ScopeLevels {
-    fn from_single(item: (usize, BoundEntry)) -> Self {
-        let mut inline = ArrayVec::new();
-        inline.push(item);
-        Self::Inline(inline)
-    }
-
-    fn push(&mut self, item: (usize, BoundEntry)) {
-        match self {
-            Self::Inline(inline) => {
-                if let Err(overflow) = inline.try_push(item) {
-                    let mut heap = Vec::with_capacity(4);
-                    heap.extend_from_slice(inline);
-                    heap.push(overflow.element());
-                    *self = Self::Heap(heap);
-                }
-            }
-            Self::Heap(heap) => heap.push(item),
-        }
-    }
-
-    fn remove(&mut self, position: usize) {
-        match self {
-            Self::Inline(inline) => {
-                inline.remove(position);
-            }
-            Self::Heap(heap) => {
-                heap.remove(position);
-            }
-        }
-    }
-}
-
-impl Deref for ScopeLevels {
-    type Target = [(usize, BoundEntry)];
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Inline(inline) => inline.as_slice(),
-            Self::Heap(heap) => heap.as_slice(),
-        }
-    }
-}
-
-impl DerefMut for ScopeLevels {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Inline(inline) => inline.as_mut_slice(),
-            Self::Heap(heap) => heap.as_mut_slice(),
-        }
-    }
-}
+type ScopeLevels = SmallVec<(usize, BoundEntry), 2>;
 
 #[derive(Debug, Clone, Default)]
 pub struct Scopes {
@@ -652,10 +593,8 @@ impl Scopes {
             }
             None => {
                 let shared: Arc<str> = Arc::from(name);
-                self.bound.insert(
-                    Arc::clone(&shared),
-                    ScopeLevels::from_single((index, entry)),
-                );
+                self.bound
+                    .insert(Arc::clone(&shared), ScopeLevels::from([(index, entry)]));
                 Some(shared)
             }
         }

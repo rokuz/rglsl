@@ -245,6 +245,26 @@ impl FileInput {
         }
     }
 
+    fn skip_comment_text(&mut self, end: u8) {
+        if self.ended {
+            return;
+        }
+        let start = self.pos;
+        let rest = self.text.as_bytes().get(start..).unwrap_or_default();
+        let length = rest
+            .iter()
+            .position(|&byte| byte == end || matches!(byte, b'\n' | b'\r' | b'\\'))
+            .unwrap_or(rest.len());
+        self.pos += length;
+        if let Some(last) = self
+            .text
+            .get(start..self.pos)
+            .and_then(|skipped| skipped.chars().next_back())
+        {
+            self.char_start = self.pos - last.len_utf8();
+        }
+    }
+
     fn report(&mut self, events: &mut Events, kind: DiagnosticKind, at: At) {
         if kind.severity() == Severity::Error {
             self.ended = true;
@@ -391,6 +411,7 @@ impl FileInput {
                     match next {
                         Some('/') => {
                             let ending = loop {
+                                self.skip_comment_text(b'\n');
                                 match self.getch(context, events, true) {
                                     Some('\n') => break Kind::Newline,
                                     None => break Kind::End,
@@ -482,6 +503,7 @@ impl FileInput {
                     self.report(events, DiagnosticKind::UnterminatedComment, at);
                     return false;
                 }
+                self.skip_comment_text(b'*');
                 character = self.getch(context, events, false);
             }
             character = self.getch(context, events, false);

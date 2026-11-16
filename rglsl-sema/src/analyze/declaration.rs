@@ -1017,7 +1017,7 @@ impl Analyzer<'_> {
             )
     }
 
-    pub(crate) fn try_simple_type_specifier(
+    pub(crate) fn simple_type_specifier(
         &mut self,
         specifier: &TypeSpecifier,
         span: Span,
@@ -1029,7 +1029,7 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn bare_type_specifier(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
-        if let Some(ty) = self.try_simple_type_specifier(specifier, span) {
+        if let Some(ty) = self.simple_type_specifier(specifier, span) {
             return ty;
         }
         let finished = {
@@ -2199,10 +2199,8 @@ impl Analyzer<'_> {
         initializer: &Spanned<Initializer>,
         expected: &Type,
     ) -> Operand {
-        if let Initializer::Expression(expression) = &initializer.node
-            && let Some(operand) = self.try_flat_expression(expression)
-        {
-            return operand;
+        if let Initializer::Expression(expression) = &initializer.node {
+            return self.expression(expression);
         }
         let finished = {
             let analyzer = RefCell::new(&mut *self);
@@ -3373,8 +3371,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         specifier: &'b TypeSpecifier,
         span: Span,
     ) -> Type {
-        if let Some(ty) = self.with(|analyzer| analyzer.try_simple_type_specifier(specifier, span))
-        {
+        if let Some(ty) = self.with(|analyzer| analyzer.simple_type_specifier(specifier, span)) {
             return ty;
         }
         let base = match &specifier.non_array {

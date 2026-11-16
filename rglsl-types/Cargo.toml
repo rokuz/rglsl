@@ -24,6 +24,7 @@ std = []
 
 [dependencies]
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+arrayvec.workspace = true
 bitflags.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true

@@ -6,10 +6,17 @@ use spirv::Word;
 use crate::{Handle, UniqueArena};
 
 pub(super) fn bytes_to_words(bytes: &[u8]) -> Vec<Word> {
-    bytes
-        .chunks(4)
-        .map(|chars| chars.iter().rev().fold(0u32, |u, c| (u << 8) | *c as u32))
-        .collect()
+    let (whole, rest) = bytes.as_chunks::<4>();
+    let mut words = Vec::with_capacity(whole.len() + 1);
+    words.extend(whole.iter().map(|&chunk| Word::from_le_bytes(chunk)));
+    if !rest.is_empty() {
+        words.push(
+            rest.iter()
+                .rev()
+                .fold(0, |word, &byte| (word << 8) | Word::from(byte)),
+        );
+    }
+    words
 }
 
 pub(super) fn string_to_words(input: &str) -> Vec<Word> {

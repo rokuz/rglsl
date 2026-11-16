@@ -5,6 +5,7 @@ use rglsl_ast::ast::{
     UnaryOperator as AstUnary,
 };
 use rglsl_ast::{Spine, SpineLinks};
+use rglsl_sema::ExpressionInfo;
 use rglsl_sema::types::Type as GlslType;
 
 use super::expression::{Chain, Place};
@@ -42,15 +43,19 @@ struct FlatLevel<'b> {
 }
 
 impl FunctionLowerer<'_, '_> {
-    fn folds(&self, expression: &AstExpression) -> Result<bool> {
+    pub(super) fn folds(&self, expression: &AstExpression) -> Result<bool> {
         let info = self.info(expression)?;
         Ok(if info.is_specialization {
             !self.specializing && !is_direct(expression)
         } else {
-            info.is_constant
-                && info.value.is_some()
-                && !info.ty.contains_reference(&self.lw.analysis.types)
+            self.is_folded_constant(info)
         })
+    }
+
+    pub(super) fn is_folded_constant(&self, info: &ExpressionInfo) -> bool {
+        info.is_constant
+            && info.value.is_some()
+            && !info.ty.contains_reference(&self.lw.analysis.types)
     }
 
     fn lowered_binary_spine<'e>(&self, expression: &'e AstExpression) -> Result<Spine<'e>> {
@@ -100,7 +105,7 @@ impl FunctionLowerer<'_, '_> {
         Ok(spine)
     }
 
-    fn passed_on(
+    pub(super) fn passed_on(
         &mut self,
         expression: &AstExpression,
         value: Option<Handle<Expression>>,
@@ -440,21 +445,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if constant == (operator == AstBinary::LogicalOr) {
                 return Ok(left.0);
             }
-            return self.clone().rvalue_child(right).await;
+            return self.clone().rvalue(right).await;
         }
-        let value = if logical && !self.with(|this| this.pure(right))? {
-            {
-                let frame = self.clone().short_circuit(operator, left.0, right, at);
-                self.nest(frame).await
-            }?
-        } else {
-            let right = self.clone().typed_child(right).await?;
-            self.with(|this| this.binary_typed(operator, left, right, at))??
-        };
-        if self.with(|this| this.info(node))??.non_uniform {
-            self.with(|this| this.mark_operation(value))?;
+        if logical && !self.with(|this| this.pure(right))? {
+            let frame = self.clone().short_circuit(operator, left.0, right, at);
+            let value = self.nest(frame).await?;
+            return self.with(|this| this.marked_operation(node, value))?;
         }
-        Ok(value)
+        let right = self.clone().typed_child(right).await?;
+        self.with(|this| this.binary_node(node, operator, left, right, at))?
     }
 
     pub(super) async fn unary_chain(

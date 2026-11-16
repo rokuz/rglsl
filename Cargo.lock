@@ -373,7 +373,6 @@ dependencies = [
 name = "rglsl-ast"
 version = "0.1.0"
 dependencies = [
- "arrayvec",
  "rglsl-types",
  "thiserror",
 ]
@@ -485,6 +484,7 @@ name = "rglsl-types"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "arrayvec",
  "bitflags",
  "hashbrown",
  "indexmap",

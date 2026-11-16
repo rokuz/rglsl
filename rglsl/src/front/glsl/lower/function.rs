@@ -346,52 +346,6 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     }
 
     pub(super) fn add(&mut self, expression: Expression, span: Span) -> Result<Handle<Expression>> {
-        let fast_kind = match expression {
-            Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => {
-                Some(ExpressionKind::Const)
-            }
-            Expression::LocalVariable(_)
-            | Expression::GlobalVariable(_)
-            | Expression::FunctionArgument(_)
-            | Expression::Load { .. } => Some(ExpressionKind::Runtime),
-            Expression::Binary { left, right, .. }
-                if !self.tracker.is_const_or_override(left)
-                    || !self.tracker.is_const_or_override(right) =>
-            {
-                Some(ExpressionKind::Runtime)
-            }
-            Expression::Unary { expr, .. } | Expression::As { expr, .. }
-                if !self.tracker.is_const_or_override(expr) =>
-            {
-                Some(ExpressionKind::Runtime)
-            }
-            Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. }
-                if !self.tracker.is_const_or_override(base) =>
-            {
-                Some(ExpressionKind::Runtime)
-            }
-            Expression::Access { base, index }
-                if !self.tracker.is_const_or_override(base)
-                    || !self.tracker.is_const_or_override(index) =>
-            {
-                Some(ExpressionKind::Runtime)
-            }
-            _ => None,
-        };
-        if let Some(kind) = fast_kind {
-            let is_running = self.emitter.is_running();
-            let needs_pre_emit = expression.needs_pre_emit();
-            let handle = if is_running && needs_pre_emit {
-                self.block.extend(self.emitter.finish(&self.expressions));
-                let handle = self.expressions.append(expression, span);
-                self.emitter.start(&self.expressions);
-                handle
-            } else {
-                self.expressions.append(expression, span)
-            };
-            self.tracker.insert(handle, kind);
-            return Ok(handle);
-        }
         let mut evaluator = ConstantEvaluator::for_glsl_function(
             &mut self.lw.module,
             &mut self.expressions,

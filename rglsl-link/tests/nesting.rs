@@ -242,6 +242,18 @@ fn struct_constructor(count: usize) -> String {
 fn deep_expressions_compile_on_a_small_stack(depth: usize) -> TestResult {
     let cases = [
         ("parentheses", "b = ", "(", "b", ")"),
+        ("left-nested parentheses", "b = ", "(", "b", " + b)"),
+        ("left-nested precedence", "b = ", "(", "b", " * b + b)"),
+        (
+            "left-nested conditionals",
+            "b = ",
+            "(",
+            "b",
+            " > 0 ? b : b)",
+        ),
+        ("left-nested sequences", "b = ", "(", "b", ", b)"),
+        ("left-nested postfix", "v = ", "(", "v", ".wzyx + v)"),
+        ("left-nested assignments", "b = ", "(", "b", " + (b = 2))"),
         ("negation", "b = ", "-(", "b", ")"),
         ("logical not", "t = ", "!(", "t", ")"),
         ("bitwise not", "b = ", "~(", "b", ")"),
