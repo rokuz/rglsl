@@ -251,11 +251,51 @@ fn cases() -> Vec<Case> {
             "spirv-dis",
             &["-V", "--spirv-dis", TARGET_SHADER],
             &[TARGET_SHADER],
-        ),
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
         Case::new(
             "H-spirv-dis",
             &["-H", "--spirv-dis", TARGET_SHADER],
             &[TARGET_SHADER],
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
+        Case::new(
+            "spirv-dis-link",
+            &[
+                "--spirv-dis",
+                "-V",
+                "--aml",
+                "--amb",
+                "link.vk.crossStageIO.1.vert",
+                "link.vk.crossStageIO.1.geom",
+                "link.vk.crossStageIO.1.frag",
+            ],
+            &[
+                "link.vk.crossStageIO.1.vert",
+                "link.vk.crossStageIO.1.geom",
+                "link.vk.crossStageIO.1.frag",
+            ],
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
+        Case::new(
+            "spirv-dis-gVS",
+            &[
+                "-V",
+                "--spirv-dis",
+                "--target-env",
+                "vulkan1.2",
+                "-gVS",
+                "-o",
+                "out.spv",
+                "spv.debuginfo.glsl.comp",
+            ],
+            &["spv.debuginfo.glsl.comp"],
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
+        Case::new(
+            "spirv-dis-without-spirv",
+            &["-l", "--spirv-dis", DEBUG_SHADER],
+            &[DEBUG_SHADER],
         ),
         Case::new(
             "entry-point-rename",
@@ -1220,6 +1260,7 @@ fn hex_skeleton(text: &str) -> Vec<String> {
 struct Environment {
     glslang: Tool,
     spirv_val: Tool,
+    spirv_dis: Tool,
     rglsl: PathBuf,
     expected: interface::Expected,
     test_dir: PathBuf,
@@ -1448,7 +1489,7 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
     }
     compare_files(env, case, &glslang, &ours, &mut problems)?;
     if disassembly::prints_disassembly(case) {
-        disassembly::check_case(env, case, &glslang, &mut problems)?;
+        disassembly::check_case(env, case, &glslang, &ours, &mut problems)?;
     }
     Ok(if problems.is_empty() {
         match case.ignore_stdout {
@@ -1492,6 +1533,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     let env = Environment {
         glslang: oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?,
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
+        spirv_dis: oracles::find_tool(root, "spirv-dis", "RGLSL_SPIRV_DIS")?,
         rglsl: build_rglsl(root)?,
         expected: interface::Expected::load(root)?,
         test_dir,
@@ -1536,6 +1578,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         let _ = writeln!(report, "{}\t{label}\t{command}\t{note}", case.name);
     }
     failed += disassembly::sweep(&env, options.filter.as_deref(), &mut report)?;
+    failed += disassembly::sweep_standard(&env, options.filter.as_deref(), &mut report)?;
     let sweep = reflection::sweep(&env, &glslang_dir, options.filter.as_deref())?;
     passed += sweep.passed;
     expected += sweep.expected;

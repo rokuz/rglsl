@@ -501,8 +501,13 @@ impl<'a> Session<'a> {
                 )));
             }
             self.outputs.push(path);
-            if self.options.disassemble && !self.options.spirv_tools_disassembler {
-                let disassembly = rglsl_dis::disassemble(words, rglsl_dis::Form::Glslang);
+            let form = if self.options.spirv_tools_disassembler {
+                Some(rglsl_dis::Form::Standard)
+            } else {
+                self.options.disassemble.then_some(rglsl_dis::Form::Glslang)
+            };
+            if let Some(form) = form {
+                let disassembly = rglsl_dis::disassemble(words, form);
                 output::stdout_bytes(&disassembly.text);
                 if disassembly.failed {
                     return Ok(EXIT_USAGE);

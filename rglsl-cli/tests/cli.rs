@@ -449,7 +449,7 @@ fn indents_structured_control_flow() -> TestResult {
 }
 
 #[test]
-fn spirv_dis_prints_no_disassembly() -> TestResult {
+fn spirv_dis_prints_the_standard_form() -> TestResult {
     let directory = work_dir("spirv_dis")?;
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
     for args in [
@@ -458,9 +458,18 @@ fn spirv_dis_prints_no_disassembly() -> TestResult {
     ] {
         let run = rglsl(&directory, args)?;
         assert_eq!(run.code, Some(0), "{}", run.stderr);
-        assert_eq!(run.stdout, "");
+        assert!(
+            run.stdout.starts_with("; SPIR-V\n; Version: 1.0\n"),
+            "{}",
+            run.stdout
+        );
+        assert!(run.stdout.contains("       %main = OpFunction %void None "));
+        assert!(!run.stdout.contains("// Module Version"));
         assert!(directory.join("frag.spv").is_file());
     }
+    let run = rglsl(&directory, &["-l", "--spirv-dis", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(run.stdout, "");
     Ok(())
 }
 

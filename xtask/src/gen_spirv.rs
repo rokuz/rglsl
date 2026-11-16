@@ -2,6 +2,7 @@ mod backend;
 mod cpp;
 mod disassembler;
 mod grammar;
+mod standard;
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -89,6 +90,16 @@ pub fn run(root: &Path, glslang_dir: Option<&Path>, check: bool) -> Result<i32> 
                 symbols: &symbols,
                 grammar: core,
             })?,
+        ),
+        (
+            root.join("rglsl-dis")
+                .join("src")
+                .join("standard")
+                .join("grammar.rs"),
+            standard::generate(
+                &unified,
+                &read(&headers.join("include").join("spirv").join("spir-v.xml"))?,
+            )?,
         ),
     ];
 

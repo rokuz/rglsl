@@ -141,6 +141,8 @@ typedef uint32_t rglsl_disassembly;
 
 #define RGLSL_DISASSEMBLY_GLSLANG 0
 
+#define RGLSL_DISASSEMBLY_STANDARD 1
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus

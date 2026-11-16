@@ -128,10 +128,9 @@ Options:
   --shift-as-binding [stage] <num> [<set>]...
   --shift-as-bindings | --sab       base binding number for acceleration
                                     structures
-  --spirv-dis                       accepted for compatibility; rglsl has no
-                                    standard-form disassembler (as glslang
-                                    without SPIRV-Tools), so nothing is printed
-                                    and -H prints nothing either
+  --spirv-dis                       output standard-form disassembly; works
+                                    only when a SPIR-V generation option is
+                                    also used; -H then prints this form too
   --stdin                           read from stdin instead of from a file;
                                     requires providing the shader stage using -S
   --target-env {vulkan1.0 | vulkan1.1 | vulkan1.2 | vulkan1.3 | vulkan1.4 |

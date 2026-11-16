@@ -17,10 +17,145 @@ fn disassemble(words: &[u32]) -> String {
 }
 
 use super::{Case, Environment, Run, spirv_words};
+
+struct StandardTally {
+    identical: usize,
+    rejected: usize,
+    failures: Vec<(String, String)>,
+}
+
+enum StandardOutcome {
+    Identical,
+    Rejected,
+    Different(String),
+}
+
+fn standard_one(env: &Environment, case: &corpus::Case, work: &Path) -> Result<StandardOutcome> {
+    let directory = work.join(&case.name);
+    fs::create_dir_all(&directory)?;
+    let module = directory.join("rglsl.spv");
+    if module.exists() {
+        fs::remove_file(&module)?;
+    }
+    let mut command = Command::new(&env.rglsl);
+    command
+        .current_dir(&env.test_dir)
+        .args(case.target.rglsl_args())
+        .args(["-V", "--spirv-dis", "-o"])
+        .arg(&module);
+    let runtests = corpus::runtests_options(&case.name);
+    for directory in runtests.include_dirs {
+        command.arg(format!("-I{directory}"));
+    }
+    for line in runtests.preamble {
+        command.args(["--preamble-text", line]);
+    }
+    if runtests.hlsl_offsets {
+        command.arg("--hlsl-offsets");
+    }
+    command.arg(&case.name);
+    let output = process::run(command, env.timeout)?;
+    if !matches!(output.exit, Exit::Code(0)) || spirv_words(&module).is_none() {
+        return Ok(StandardOutcome::Rejected);
+    }
+    let reference = spirv_dis(env, &module)?;
+    Ok(if reference == output.stdout {
+        StandardOutcome::Identical
+    } else {
+        StandardOutcome::Different(first_line_difference(&reference, &output.stdout))
+    })
+}
+
+pub(super) fn sweep_standard(
+    env: &Environment,
+    filter: Option<&str>,
+    report: &mut String,
+) -> Result<usize> {
+    let glslang_dir = env
+        .test_dir
+        .parent()
+        .ok_or_else(|| anyhow!("{} has no parent", env.test_dir.display()))?;
+    let mut cases = corpus::load(glslang_dir)?;
+    cases.retain(|case| {
+        Corpus::ALL.contains(&case.corpus) && filter.is_none_or(|filter| case.name.contains(filter))
+    });
+    if cases.is_empty() {
+        return Ok(0);
+    }
+    let work = env.work.join("spirv-dis");
+    let next = AtomicUsize::new(0);
+    let tally = Mutex::new(StandardTally {
+        identical: 0,
+        rejected: 0,
+        failures: Vec::new(),
+    });
+    let errors = Mutex::new(Vec::new());
+    let jobs = std::thread::available_parallelism().map_or(4, |count| count.get());
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(case) = cases.get(index) else {
+                        break;
+                    };
+                    let outcome = standard_one(env, case, &work);
+                    let Ok(mut tally) = tally.lock() else {
+                        break;
+                    };
+                    match outcome {
+                        Ok(StandardOutcome::Identical) => tally.identical += 1,
+                        Ok(StandardOutcome::Rejected) => tally.rejected += 1,
+                        Ok(StandardOutcome::Different(problem)) => {
+                            tally.failures.push((case.name.clone(), problem));
+                        }
+                        Err(error) => {
+                            if let Ok(mut errors) = errors.lock() {
+                                errors.push(format!("{}: {error:#}", case.name));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let errors = errors
+        .into_inner()
+        .map_err(|_| anyhow!("a spirv-dis sweep worker panicked"))?;
+    let mut tally = tally
+        .into_inner()
+        .map_err(|_| anyhow!("a spirv-dis sweep worker panicked"))?;
+    tally.failures.extend(
+        errors
+            .into_iter()
+            .map(|error| (String::from("(spirv-dis)"), error)),
+    );
+    tally.failures.sort();
+    for (name, problem) in &tally.failures {
+        println!("{:8} {:36} {problem}", "FAIL", format!("spirv-dis:{name}"));
+        let _ = writeln!(report, "spirv-dis:{name}\tFAIL\t--spirv-dis\t{problem}");
+    }
+    println!(
+        "\nspirv-dis sweep over {} shaders: {} identical to spirv-dis, {} not compiled by rglsl; {} failed",
+        cases.len(),
+        tally.identical,
+        tally.rejected,
+        tally.failures.len()
+    );
+    let _ = writeln!(
+        report,
+        "spirv-dis:*\tsweep\t--spirv-dis\t{} identical, {} rglsl rejects, {} failed",
+        tally.identical,
+        tally.rejected,
+        tally.failures.len()
+    );
+    Ok(tally.failures.len())
+}
 use crate::corpus::{self, Corpus};
 use crate::process::{self, Exit};
 
 const MODULE_START: &str = "// Module Version";
+const STANDARD_START: &str = "; SPIR-V\n";
 const OPERAND_COUNT_ERROR: &str = " ERROR, incorrect number of operands consumed.";
 const DISASSEMBLY_FAILED: &str = "Disassembly failed: ";
 
@@ -34,30 +169,59 @@ fn uses_spirv_tools_disassembler(args: &[&str]) -> bool {
     args.contains(&"--spirv-dis")
 }
 
+fn spirv_dis(env: &Environment, module: &Path) -> Result<String> {
+    let mut command = Command::new(&env.spirv_dis.path);
+    command.arg(module);
+    let output = process::run(command, env.timeout)?;
+    match output.exit {
+        Exit::Code(0) => Ok(output.stdout),
+        _ => Err(anyhow!(
+            "spirv-dis rejects {}: {}",
+            module.display(),
+            output.stderr.trim()
+        )),
+    }
+}
+
 pub(super) fn check_case(
     env: &Environment,
     case: &Case,
     glslang: &Run,
+    ours: &Run,
     problems: &mut Vec<String>,
 ) -> Result<()> {
     let directory = env.work.join(case.name).join("glslang");
     let mut expected = Vec::new();
-    if !uses_spirv_tools_disassembler(&case.args) {
+    let standard = uses_spirv_tools_disassembler(&case.args);
+    if !standard {
         for name in &glslang.files {
             if let Some(words) = spirv_words(&directory.join(name)) {
                 expected.push(disassemble(&words));
             }
         }
     }
-    if let Some(problem) = compare(&glslang.raw_stdout, &expected) {
+    if let Some(problem) = compare(&glslang.raw_stdout, &expected, MODULE_START) {
         problems.push(format!("disassembly: {problem}"));
+    }
+    if standard {
+        let directory = env.work.join(case.name).join("rglsl");
+        let mut expected = Vec::new();
+        for name in &ours.files {
+            let module = directory.join(name);
+            if spirv_words(&module).is_some() {
+                expected.push(spirv_dis(env, &module)?);
+            }
+        }
+        if let Some(problem) = compare(&ours.raw_stdout, &expected, STANDARD_START) {
+            problems.push(format!("spirv-dis: {problem}"));
+        }
     }
     Ok(())
 }
 
-fn module_starts(stdout: &str) -> Vec<usize> {
+fn module_starts(stdout: &str, marker: &str) -> Vec<usize> {
     stdout
-        .match_indices(MODULE_START)
+        .match_indices(marker)
         .map(|(position, _)| position)
         .filter(|&position| position == 0 || stdout[..position].ends_with('\n'))
         .collect()
@@ -77,8 +241,8 @@ fn first_line_difference(reference: &str, ours: &str) -> String {
     String::from("glslang's output ends early")
 }
 
-fn compare(stdout: &str, expected: &[String]) -> Option<String> {
-    let starts = module_starts(stdout);
+fn compare(stdout: &str, expected: &[String], marker: &str) -> Option<String> {
+    let starts = module_starts(stdout, marker);
     if starts.len() != expected.len() {
         return Some(format!(
             "glslang printed {} disassemblies for {} modules",
@@ -174,7 +338,7 @@ fn sweep_one(env: &Environment, case: &corpus::Case, work: &Path) -> Result<Outc
     else {
         return Ok(Outcome::GlslangRejected);
     };
-    let mismatch = compare(&output.stdout, &[disassemble(&words)]);
+    let mismatch = compare(&output.stdout, &[disassemble(&words)], MODULE_START);
     let output = process::run(
         command(
             &env.rglsl,
@@ -313,11 +477,14 @@ mod tests {
         let first = String::from("// Module Version 10000\n  Capability Shader\n");
         let second = String::from("// Module Version 10300\n  Capability Shader\n");
         let stdout = format!("a.vert\n{first}b.frag\n{second}");
-        assert_eq!(compare(&stdout, &[second.clone(), first.clone()]), None);
-        assert!(compare(&stdout, std::slice::from_ref(&first)).is_some());
-        assert!(compare("a.vert\n", &[]).is_none());
+        assert_eq!(
+            compare(&stdout, &[second.clone(), first.clone()], MODULE_START),
+            None
+        );
+        assert!(compare(&stdout, std::slice::from_ref(&first), MODULE_START).is_some());
+        assert!(compare("a.vert\n", &[], MODULE_START).is_none());
         let changed = stdout.replace("10300", "10400");
-        let problem = compare(&changed, &[first, second]).unwrap_or_default();
+        let problem = compare(&changed, &[first, second], MODULE_START).unwrap_or_default();
         assert!(problem.starts_with("line 1: glslang `// Module Version 10400`"));
     }
 }

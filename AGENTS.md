@@ -15,7 +15,7 @@ Adding a GLSL extension: `EXTENSIONS.md`.
 | `rglsl-ast/` | GLSL AST, parser and printer; shared by the compiler frontend and the fuzzer |
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format; the compiler API (`src/compiler`: `CompileOptions`, `ProgramOptions`, `Compiler::{compile_unit, preprocess, build}`, glslang-style diagnostics, depfiles) and glslang's reflection (`src/reflect`) |
-| `rglsl-dis/` | text forms of SPIR-V: glslang's `-H` disassembly (`src/glslang`) and hexadecimal text (`-x`, `--vn`) |
+| `rglsl-dis/` | text forms of SPIR-V: glslang's `-H` disassembly (`src/glslang`), SPIRV-Tools' `spirv-dis` form (`src/standard`, `--spirv-dis`) and hexadecimal text (`-x`, `--vn`) |
 | `tests/link/` | link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics) |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0) |
@@ -96,7 +96,7 @@ cargo test --workspace --all-features
 cargo test --release -p rglsl-link --test nesting -- --ignored   # 100,000-level nesting
 cargo deny check
 
-cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, spirv-val, spirv-as (+ exec oracles)
+cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, spirv-val, spirv-as, spirv-dis (+ exec oracles)
 cargo xtask snapshots                                        # spirv-val on the SPIR-V snapshots of rglsl/tests
 cargo xtask test [--glslang-dir ../glslang] [--no-exec]      # glslang's corpus (+ exec on the local GPU)
 cargo xtask test --filter NAME --no-progress-file            # quick check of some shaders
@@ -115,7 +115,9 @@ cargo xtask gen-spirv [--check]                              # regenerate (or ch
                                                    # rglsl/src/back/spv/grammar.rs (enumerants the
                                                    # `spirv` crate lacks; names listed in
                                                    # xtask/src/gen_spirv/backend.rs) and
-                                                   # rglsl-dis/src/glslang/glslang_tables.rs (-H)
+                                                   # rglsl-dis/src/glslang/glslang_tables.rs (-H) and
+                                                   # rglsl-dis/src/standard/grammar.rs (--spirv-dis,
+                                                   # from SPIRV-Headers' grammars and spir-v.xml)
 SPIRV_VAL=target/oracles/bin/spirv-val sh samples/c/run.sh   # C and C++ samples (SANITIZE=address, LEAKS=1 on macOS)
 cargo xtask bench [--runs N] [--filter NAME] [--debug-info g|gVS]
                                                    # compile time against glslang, one process at a time:

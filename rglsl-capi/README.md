@@ -72,7 +72,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_object_read(data, size, &object, &diagnostics)` | `.rglo` bytes to an object |
 | `rglsl_program_options_create` and its setters | options of the link and of SPIR-V generation: auto mapping, binding shifts per stage, keep uncalled, debug info, SPIR-V version, the command line and working directory recorded by `-gV`, limits, linking (`--no-link`), generating SPIR-V (`-l` without `-V`), reflection (`-q`, `RGLSL_REFLECT_*` for the `--reflect-*` options) |
 | `rglsl_limits_create`, `_decode`, `_set`, `_get`, `_message_count`, `_message`, `_configuration` | resource limits: glslang's defaults, a `.conf` file and its messages, `-c` |
-| `rglsl_disassemble(words, count, form, &text)` | `-H` (`RGLSL_DISASSEMBLY_GLSLANG`); `RGLSL_RESULT_INVALID_SPIRV` with the text up to the error for malformed SPIR-V |
+| `rglsl_disassemble(words, count, form, &text)` | `-H` (`RGLSL_DISASSEMBLY_GLSLANG`) and `--spirv-dis` (`RGLSL_DISASSEMBLY_STANDARD`, the form of SPIRV-Tools' `spirv-dis`); `RGLSL_RESULT_INVALID_SPIRV` with the text up to the error for malformed SPIR-V |
 | `rglsl_hex_text(words, count, variable_name, &text)` | `-x`, `--vn` |
 | `rglsl_depfile(targets, count, dependencies, count, &text)` | `--depfile` |
 | `rglsl_diagnostics_format(diagnostics, flags, &text)`, `rglsl_diagnostics_info_log` | glslang's message lines, with `RGLSL_FORMAT_ERROR_COLUMN`, `_ABSOLUTE_PATH`, `_UNNAMED_SOURCE`; the info log adds glslang's summary line |

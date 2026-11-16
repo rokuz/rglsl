@@ -64,9 +64,10 @@ commands:
       --check             only check that the committed header is up to date
   gen-spirv           generate the SPIR-V tables from the pinned sources in target/oracles:
                       rglsl/src/back/spv/grammar.rs (enumerants the `spirv` crate lacks, from
-                      SPIRV-Headers' grammar, else glslang's headers) and
+                      SPIRV-Headers' grammar, else glslang's headers),
                       rglsl-dis/src/glslang/glslang_tables.rs (the -H tables of glslang's
-                      SPIRV/doc.cpp and disassemble.cpp)
+                      SPIRV/doc.cpp and disassemble.cpp) and rglsl-dis/src/standard/grammar.rs
+                      (the --spirv-dis tables of SPIRV-Headers' grammars and spir-v.xml)
       --glslang-dir DIR   glslang checkout to read (default: target/oracles/src/glslang;
                           its HEAD must be the pinned commit)
       --check             only check that the committed files are up to date

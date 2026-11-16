@@ -9,10 +9,10 @@ use std::ptr;
 use rglsl_c::{
     Blob, CompileOptions, Compiler, Diagnostics, Limits, Object, Program, ProgramOptions,
     RGLSL_DEBUG_INFO_LINES, RGLSL_DEBUG_INFO_STRIPPED, RGLSL_DISASSEMBLY_GLSLANG,
-    RGLSL_FORMAT_ERROR_COLUMN, RGLSL_FORMAT_UNNAMED_SOURCE, RGLSL_REFLECT_ALL_BLOCK_VARIABLES,
-    RGLSL_RESOURCE_TEXTURE, RGLSL_RESULT_COMPILE_FAILED, RGLSL_RESULT_INVALID_ARGUMENT,
-    RGLSL_RESULT_INVALID_SPIRV, RGLSL_RESULT_OK, RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT,
-    RGLSL_STAGE_VERTEX, ResultCode, Stage,
+    RGLSL_DISASSEMBLY_STANDARD, RGLSL_FORMAT_ERROR_COLUMN, RGLSL_FORMAT_UNNAMED_SOURCE,
+    RGLSL_REFLECT_ALL_BLOCK_VARIABLES, RGLSL_RESOURCE_TEXTURE, RGLSL_RESULT_COMPILE_FAILED,
+    RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_SPIRV, RGLSL_RESULT_OK,
+    RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX, ResultCode, Stage,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -438,6 +438,20 @@ fn text_forms_of_spirv() -> TestResult {
     assert!(
         disassembled.starts_with("// Module Version 10000\n"),
         "{disassembled}"
+    );
+    let mut blob = ptr::null_mut();
+    let code = unsafe {
+        rglsl_c::rglsl_disassemble(
+            words.as_ptr(),
+            words.len(),
+            RGLSL_DISASSEMBLY_STANDARD,
+            &raw mut blob,
+        )
+    };
+    assert_eq!(code, RGLSL_RESULT_OK);
+    assert_eq!(
+        text(blob)?,
+        "; SPIR-V\n; Version: 1.0\n; Generator: Khronos Glslang Reference Front End; 11\n; Bound: 2\n; Schema: 0\n"
     );
     let truncated = [0x0723_0203_u32, 0x0001_0000];
     let mut blob = ptr::null_mut();

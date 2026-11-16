@@ -2,12 +2,14 @@
 
 mod glslang;
 mod hex;
+mod standard;
 
 pub use hex::hex_text;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Form {
     Glslang,
+    Standard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,5 +27,6 @@ impl Disassembly {
 pub fn disassemble(words: &[u32], form: Form) -> Disassembly {
     match form {
         Form::Glslang => glslang::disassemble(words),
+        Form::Standard => standard::disassemble(words),
     }
 }

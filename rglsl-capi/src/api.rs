@@ -172,6 +172,7 @@ impl Resource {
 pub struct Disassembly(u32);
 
 pub const RGLSL_DISASSEMBLY_GLSLANG: Disassembly = Disassembly(0);
+pub const RGLSL_DISASSEMBLY_STANDARD: Disassembly = Disassembly(1);
 
 impl Disassembly {
     pub const fn from_raw(value: u32) -> Self {
@@ -181,6 +182,7 @@ impl Disassembly {
     fn form(self) -> Result<rglsl_dis::Form, Failure> {
         match self {
             RGLSL_DISASSEMBLY_GLSLANG => Ok(rglsl_dis::Form::Glslang),
+            RGLSL_DISASSEMBLY_STANDARD => Ok(rglsl_dis::Form::Standard),
             _ => Err(Failure::argument(format!(
                 "{} is not a disassembly form",
                 self.0
