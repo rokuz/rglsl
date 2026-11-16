@@ -1662,11 +1662,6 @@ impl<'a> ConstantEvaluator<'a> {
                 fun, expected, given,
             ));
         }
-        let required = |arg: Option<Handle<Expression>>| {
-            arg.ok_or(ConstantEvaluatorError::InvalidMathArgCount(
-                fun, expected, given,
-            ))
-        };
 
         if matches!(self.behavior, Behavior::Glsl(_))
             && let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span)
@@ -1674,7 +1669,84 @@ impl<'a> ConstantEvaluator<'a> {
             return result;
         }
 
+        let args = MathArgs {
+            fun,
+            arg,
+            arg1,
+            arg2,
+            expected,
+            given,
+        };
+        use crate::MathFunction as Mf;
         // NOTE: We try to match the declaration order of `MathFunction` here.
+        match fun {
+            Mf::Abs
+            | Mf::Min
+            | Mf::Max
+            | Mf::Clamp
+            | Mf::Sign
+            | Mf::Fma
+            | Mf::Step
+            | Mf::Sqrt
+            | Mf::InverseSqrt => self.math_arithmetic(args, span),
+            Mf::Cos
+            | Mf::Cosh
+            | Mf::Sin
+            | Mf::Sinh
+            | Mf::Tan
+            | Mf::Tanh
+            | Mf::Acos
+            | Mf::Asin
+            | Mf::Atan
+            | Mf::Atan2
+            | Mf::Asinh
+            | Mf::Acosh
+            | Mf::Atanh
+            | Mf::Radians
+            | Mf::Degrees => self.math_trigonometry(args, span),
+            Mf::Ceil
+            | Mf::Floor
+            | Mf::RoundEven
+            | Mf::Fract
+            | Mf::Trunc
+            | Mf::Exp
+            | Mf::Exp2
+            | Mf::Log
+            | Mf::Log2
+            | Mf::Pow => self.math_exponential(args, span),
+            Mf::CountTrailingZeros
+            | Mf::CountLeadingZeros
+            | Mf::CountOneBits
+            | Mf::ReverseBits
+            | Mf::FirstTrailingBit
+            | Mf::FirstLeadingBit => self.math_bits(args, span),
+            Mf::Dot4I8Packed
+            | Mf::Dot4U8Packed
+            | Mf::Cross
+            | Mf::Dot
+            | Mf::Length
+            | Mf::Distance
+            | Mf::Normalize => self.math_vector(args, span),
+            // unimplemented
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
+
+    fn math_arithmetic(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs {
+            fun,
+            arg,
+            arg1,
+            arg2,
+            ..
+        } = args;
+        let required = |arg| args.required(arg);
         match fun {
             // comparison
             crate::MathFunction::Abs => {
@@ -1712,6 +1784,63 @@ impl<'a> ConstantEvaluator<'a> {
                 )
             }
 
+            // computational
+            crate::MathFunction::Sign => {
+                component_wise_signed!(self, span, [arg], |e| {
+                    Ok([if e.is_zero() {
+                        Zero::zero()
+                    } else {
+                        e.signum()
+                    }])
+                })
+            }
+            crate::MathFunction::Fma => {
+                component_wise_float!(
+                    self,
+                    span,
+                    [arg, required(arg1)?, required(arg2)?],
+                    |e1, e2, e3| { Ok([e1.mul_add(e2, e3)]) }
+                )
+            }
+            crate::MathFunction::Step => {
+                component_wise_float(self, span, [arg, required(arg1)?], |x| match x {
+                    Float::F32([edge, x]) => Ok(Float::F32([if edge <= x { 1.0 } else { 0.0 }])),
+                    Float::F16([edge, x]) => Ok(Float::F16([if edge <= x {
+                        f16::one()
+                    } else {
+                        f16::zero()
+                    }])),
+                })
+            }
+            crate::MathFunction::Sqrt => {
+                component_wise_float!(self, span, [arg], |e| {
+                    if e >= Zero::zero() {
+                        Ok([e.sqrt()])
+                    } else {
+                        Err(ConstantEvaluatorError::InvalidMathArgValue("sqrt".into()))
+                    }
+                })
+            }
+            crate::MathFunction::InverseSqrt => {
+                component_wise_float(self, span, [arg], |e| match e {
+                    Float::F32([e]) => Ok(Float::F32([1. / e.sqrt()])),
+                    Float::F16([e]) => Ok(Float::F16([f16::from_f32(1. / f32::from(e).sqrt())])),
+                })
+            }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
+
+    fn math_trigonometry(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, arg1, .. } = args;
+        let required = |arg| args.required(arg);
+        match fun {
             // trigonometry
             crate::MathFunction::Cos => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.cos()]) })
@@ -1804,7 +1933,20 @@ impl<'a> ConstantEvaluator<'a> {
                     }
                 })
             }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
 
+    fn math_exponential(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, arg1, .. } = args;
+        let required = |arg| args.required(arg);
+        match fun {
             // decomposition
             crate::MathFunction::Ceil => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.ceil()]) })
@@ -1823,21 +1965,6 @@ impl<'a> ConstantEvaluator<'a> {
                         // <https://github.com/rust-lang/rust/issues/96710>.
                         //
                         // [polyfill source]: https://github.com/imeka/ndarray-ndimage/blob/8b14b4d6ecfbc96a8a052f802e342a7049c68d8f/src/lib.rs#L98
-                        fn round_ties_even(x: f64) -> f64 {
-                            let i = x as i64;
-                            let f = (x - i as f64).abs();
-                            if f == 0.5 {
-                                if i & 1 == 1 {
-                                    // -1.5, 1.5, 3.5, ...
-                                    (x.abs() + 0.5).copysign(x)
-                                } else {
-                                    (x.abs() - 0.5).copysign(x)
-                                }
-                            } else {
-                                x.round()
-                            }
-                        }
-
                         Ok(Float::F16([(f16::from_f64(round_ties_even(f64::from(e))))]))
                     }
                 })
@@ -1912,51 +2039,19 @@ impl<'a> ConstantEvaluator<'a> {
                     }
                 })
             }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
 
-            // computational
-            crate::MathFunction::Sign => {
-                component_wise_signed!(self, span, [arg], |e| {
-                    Ok([if e.is_zero() {
-                        Zero::zero()
-                    } else {
-                        e.signum()
-                    }])
-                })
-            }
-            crate::MathFunction::Fma => {
-                component_wise_float!(
-                    self,
-                    span,
-                    [arg, required(arg1)?, required(arg2)?],
-                    |e1, e2, e3| { Ok([e1.mul_add(e2, e3)]) }
-                )
-            }
-            crate::MathFunction::Step => {
-                component_wise_float(self, span, [arg, required(arg1)?], |x| match x {
-                    Float::F32([edge, x]) => Ok(Float::F32([if edge <= x { 1.0 } else { 0.0 }])),
-                    Float::F16([edge, x]) => Ok(Float::F16([if edge <= x {
-                        f16::one()
-                    } else {
-                        f16::zero()
-                    }])),
-                })
-            }
-            crate::MathFunction::Sqrt => {
-                component_wise_float!(self, span, [arg], |e| {
-                    if e >= Zero::zero() {
-                        Ok([e.sqrt()])
-                    } else {
-                        Err(ConstantEvaluatorError::InvalidMathArgValue("sqrt".into()))
-                    }
-                })
-            }
-            crate::MathFunction::InverseSqrt => {
-                component_wise_float(self, span, [arg], |e| match e {
-                    Float::F32([e]) => Ok(Float::F32([1. / e.sqrt()])),
-                    Float::F16([e]) => Ok(Float::F16([f16::from_f32(1. / f32::from(e).sqrt())])),
-                })
-            }
-
+    fn math_bits(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, .. } = args;
+        match fun {
             // bits
             crate::MathFunction::CountTrailingZeros => {
                 component_wise_concrete_int!(self, span, [arg], |e| {
@@ -1991,7 +2086,20 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::FirstLeadingBit => {
                 component_wise_concrete_int(self, span, [arg], |ci| Ok(first_leading_bit(ci)))
             }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
 
+    fn math_vector(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, arg1, .. } = args;
+        let required = |arg| args.required(arg);
+        match fun {
             // vector
             crate::MathFunction::Dot4I8Packed => {
                 self.packed_dot_product(arg, required(arg1)?, span, true)
@@ -2006,32 +2114,6 @@ impl<'a> ConstantEvaluator<'a> {
                 let e2 = self.extract_vec(required(arg1)?, false)?;
                 if e1.len() != e2.len() {
                     return Err(ConstantEvaluatorError::InvalidMathArg);
-                }
-
-                fn float_dot_checked<P>(a: &[P], b: &[P]) -> Result<P, ConstantEvaluatorError>
-                where
-                    P: num_traits::Float,
-                {
-                    let result = a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(&aa, &bb)| aa * bb)
-                        .fold(P::zero(), |acc, x| acc + x);
-                    if result.is_finite() {
-                        Ok(result)
-                    } else {
-                        Err(ConstantEvaluatorError::Overflow("in dot built-in".into()))
-                    }
-                }
-
-                fn int_dot_wrapping<P>(a: &[P], b: &[P]) -> P
-                where
-                    P: num_traits::PrimInt + num_traits::WrappingAdd + num_traits::WrappingMul,
-                {
-                    a.iter()
-                        .zip(b.iter())
-                        .map(|(&aa, bb)| aa.wrapping_mul(bb))
-                        .fold(P::zero(), |acc, x| acc.wrapping_add(&x))
                 }
 
                 let result = match_literal_vector!(match (e1, e2) => Literal {
@@ -2060,23 +2142,6 @@ impl<'a> ConstantEvaluator<'a> {
                     return Err(ConstantEvaluatorError::InvalidMathArg);
                 }
 
-                fn float_distance<F>(a: &[F], b: &[F]) -> F
-                where
-                    F: core::ops::Mul<F>,
-                    F: num_traits::Float + iter::Sum + core::ops::Sub,
-                {
-                    if a.len() == 1 {
-                        // Avoids possible overflow in squaring
-                        (a[0] - b[0]).abs()
-                    } else {
-                        a.iter()
-                            .zip(b.iter())
-                            .map(|(&aa, &bb)| aa - bb)
-                            .map(|ei| ei * ei)
-                            .sum::<F>()
-                            .sqrt()
-                    }
-                }
                 let result = match_literal_vector!(match (e1, e2) => Literal {
                     Float => |e1, e2| { float_distance(e1, e2) },
                 })?;
@@ -2086,35 +2151,11 @@ impl<'a> ConstantEvaluator<'a> {
                 // https://www.w3.org/TR/WGSL/#normalize-builtin
                 let e1 = self.extract_vec(arg, true)?;
 
-                fn float_normalize<F>(
-                    e: &[F],
-                ) -> Result<ArrayVec<F, { crate::VectorSize::MAX }>, ConstantEvaluatorError>
-                where
-                    F: core::ops::Mul<F>,
-                    F: num_traits::Float + iter::Sum,
-                {
-                    let len = match float_length(e) {
-                        Some(len) if !len.is_zero() => Ok(len),
-                        Some(_) => Err(ConstantEvaluatorError::InvalidMathArgValue(
-                            "normalize".into(),
-                        )),
-                        None => Err(ConstantEvaluatorError::Overflow("normalize".into())),
-                    }?;
-
-                    let mut out = ArrayVec::new();
-                    for &ei in e {
-                        out.push(ei / len);
-                    }
-                    Ok(out)
-                }
-
                 let result = match_literal_vector!(match e1 => LiteralVector {
                     Float => |e1| { float_normalize(e1)? },
                 })?;
                 result.register_as_evaluated_expr(self, span)
             }
-
-            // unimplemented
             _ => Err(ConstantEvaluatorError::NotImplemented(format!(
                 "{fun:?} built-in function"
             ))),
@@ -3702,6 +3743,113 @@ where
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+fn round_ties_even(x: f64) -> f64 {
+    let i = x as i64;
+    let f = (x - i as f64).abs();
+    if f == 0.5 {
+        if i & 1 == 1 {
+            // -1.5, 1.5, 3.5, ...
+            (x.abs() + 0.5).copysign(x)
+        } else {
+            (x.abs() - 0.5).copysign(x)
+        }
+    } else {
+        x.round()
+    }
+}
+
+fn float_dot_checked<P>(a: &[P], b: &[P]) -> Result<P, ConstantEvaluatorError>
+where
+    P: num_traits::Float,
+{
+    let result = a
+        .iter()
+        .zip(b.iter())
+        .map(|(&aa, &bb)| aa * bb)
+        .fold(P::zero(), |acc, x| acc + x);
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(ConstantEvaluatorError::Overflow("in dot built-in".into()))
+    }
+}
+
+fn int_dot_wrapping<P>(a: &[P], b: &[P]) -> P
+where
+    P: num_traits::PrimInt + num_traits::WrappingAdd + num_traits::WrappingMul,
+{
+    a.iter()
+        .zip(b.iter())
+        .map(|(&aa, bb)| aa.wrapping_mul(bb))
+        .fold(P::zero(), |acc, x| acc.wrapping_add(&x))
+}
+
+fn float_distance<F>(a: &[F], b: &[F]) -> F
+where
+    F: core::ops::Mul<F>,
+    F: num_traits::Float + iter::Sum + core::ops::Sub,
+{
+    if a.len() == 1 {
+        // Avoids possible overflow in squaring
+        (a[0] - b[0]).abs()
+    } else {
+        a.iter()
+            .zip(b.iter())
+            .map(|(&aa, &bb)| aa - bb)
+            .map(|ei| ei * ei)
+            .sum::<F>()
+            .sqrt()
+    }
+}
+
+fn float_normalize<F>(
+    e: &[F],
+) -> Result<ArrayVec<F, { crate::VectorSize::MAX }>, ConstantEvaluatorError>
+where
+    F: core::ops::Mul<F>,
+    F: num_traits::Float + iter::Sum,
+{
+    let len = match float_length(e) {
+        Some(len) if !len.is_zero() => Ok(len),
+        Some(_) => Err(ConstantEvaluatorError::InvalidMathArgValue(
+            "normalize".into(),
+        )),
+        None => Err(ConstantEvaluatorError::Overflow("normalize".into())),
+    }?;
+
+    let mut out = ArrayVec::new();
+    for &ei in e {
+        out.push(ei / len);
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Copy)]
+struct MathArgs {
+    fun: crate::MathFunction,
+    arg: Handle<Expression>,
+    arg1: Option<Handle<Expression>>,
+    arg2: Option<Handle<Expression>>,
+    expected: usize,
+    given: usize,
+}
+
+impl MathArgs {
+    const fn required(
+        &self,
+        arg: Option<Handle<Expression>>,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        match arg {
+            Some(arg) => Ok(arg),
+            None => Err(ConstantEvaluatorError::InvalidMathArgCount(
+                self.fun,
+                self.expected,
+                self.given,
+            )),
+        }
+    }
 }
 
 fn floored_modulo(left: f64, right: f64) -> f64 {
