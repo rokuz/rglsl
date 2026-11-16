@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, TranslationUnit,
 };
@@ -41,7 +40,7 @@ pub fn is_macro(name: &str) -> bool {
 }
 
 pub fn uses_macros(unit: &TranslationUnit) -> Result<bool, Error> {
-    Ok(expressions(unit)?
+    Ok(expressions(unit)
         .into_iter()
         .any(|expression| macro_name(expression).is_some()))
 }
@@ -128,7 +127,7 @@ pub fn parse_shader(source: &str) -> Result<TranslationUnit, ParseError> {
     parse(&strip_header(source))
 }
 
-pub fn expand_macros(unit: &TranslationUnit) -> Result<TranslationUnit, Stalled> {
+pub fn expand_macros(unit: &TranslationUnit) -> TranslationUnit {
     let mut expanded = unit.clone();
     let mut builder = Builder::new(expanded.next_id());
     rewrite_expressions(&mut expanded, &mut |expression| {
@@ -171,11 +170,8 @@ pub fn expand_macros(unit: &TranslationUnit) -> Result<TranslationUnit, Stalled>
         } else {
             argument
         };
-    })?;
-    Ok(TranslationUnit::new(
-        expanded.external_declarations,
-        builder.next_id(),
-    ))
+    });
+    TranslationUnit::new(expanded.external_declarations, builder.next_id())
 }
 
 fn expand_in_bounds(expression: &mut Expression, unsigned: bool, builder: &mut Builder) {

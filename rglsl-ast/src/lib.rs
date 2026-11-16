@@ -48,7 +48,6 @@ pub use chain::{Chain, Spine, SpineLinks, placeholder};
 pub use error::{ParseError, ParseErrorKind};
 pub use parser::{NON_UNIFORM, parse, parse_prefix};
 pub use printer::print;
-pub use rglsl_types::stack::Stalled;
 pub use scalar::{NumericFeatures, Scalar};
 pub use span::{LineColumn, Span, line_column};
 pub use walk::{expressions, statement_expressions, try_visit_expressions, visit_expressions};

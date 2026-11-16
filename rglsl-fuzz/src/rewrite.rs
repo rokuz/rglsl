@@ -5,19 +5,10 @@ use rglsl_ast::ast::{
     Initializer, JumpStatement, Node, SingleTypeQualifier, Spanned, Statement, StatementKind,
     StructSpecifier, TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
-use rglsl_types::stack::{Stalled, run};
+use rglsl_types::stack::recurse;
 
-use crate::stack::{
-    Cx, child_statements, child_statements_mut, take_initializer, take_statement, take_type,
-};
-use std::cell::RefCell;
-
-pub fn rewrite_expressions(
-    unit: &mut TranslationUnit,
-    visit: &mut dyn FnMut(&mut Expression),
-) -> Result<(), Stalled> {
-    let state = RefCell::new(Rewriter { visit });
-    run(|stack| Cx::new(&state, stack).unit(unit)).ok_or(Stalled)
+pub fn rewrite_expressions(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut Expression)) {
+    Rewriter { visit }.unit(unit);
 }
 
 pub fn visit_statements<'a>(statement: &'a Statement, visit: &mut dyn FnMut(&'a Statement)) {
@@ -40,13 +31,11 @@ pub fn function_statements(unit: &TranslationUnit) -> Vec<(usize, &Statement)> {
     result
 }
 
-pub fn statement_expression_ids(
-    statement: &Statement,
-) -> Result<Vec<rglsl_ast::ast::NodeId>, Stalled> {
+pub fn statement_expression_ids(statement: &Statement) -> Vec<rglsl_ast::ast::NodeId> {
     let mut probe = statement.clone();
     let mut ids = Vec::new();
-    rewrite_statement_expressions(&mut probe, &mut |expression| ids.push(expression.id))?;
-    Ok(ids)
+    rewrite_statement_expressions(&mut probe, &mut |expression| ids.push(expression.id));
+    ids
 }
 
 pub fn replace_statements(
@@ -63,11 +52,8 @@ pub fn replace_statements(
 pub fn rewrite_statement_expressions(
     statement: &mut Statement,
     visit: &mut dyn FnMut(&mut Expression),
-) -> Result<(), Stalled> {
-    let state = RefCell::new(Rewriter { visit });
-    let original = take_statement(statement);
-    *statement = run(|stack| Cx::new(&state, stack).statement(original)).ok_or(Stalled)?;
-    Ok(())
+) {
+    Rewriter { visit }.statement(statement);
 }
 
 pub fn rewrite_statements(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut Statement)) {
@@ -80,40 +66,13 @@ pub fn rewrite_statements(unit: &mut TranslationUnit, visit: &mut dyn FnMut(&mut
     }
 }
 
-enum PostOrder {
-    Visit(Statement),
-    Build(Statement, usize),
-}
-
 fn statement_post_order(statement: &mut Statement, visit: &mut dyn FnMut(&mut Statement)) {
-    let mut tasks = vec![PostOrder::Visit(take_statement(statement))];
-    let mut done: Vec<Statement> = Vec::new();
-    while let Some(task) = tasks.pop() {
-        match task {
-            PostOrder::Visit(mut node) => {
-                let children: Vec<Statement> = child_statements_mut(&mut node.kind)
-                    .into_iter()
-                    .map(take_statement)
-                    .collect();
-                tasks.push(PostOrder::Build(node, children.len()));
-                tasks.extend(children.into_iter().rev().map(PostOrder::Visit));
-            }
-            PostOrder::Build(mut node, count) => {
-                let start = done.len().saturating_sub(count);
-                for (slot, child) in child_statements_mut(&mut node.kind)
-                    .into_iter()
-                    .zip(done.drain(start..))
-                {
-                    *slot = child;
-                }
-                visit(&mut node);
-                done.push(node);
-            }
+    recurse(|| {
+        for child in child_statements_mut(&mut statement.kind) {
+            statement_post_order(child, visit);
         }
-    }
-    if let Some(result) = done.pop() {
-        *statement = result;
-    }
+        visit(statement);
+    });
 }
 
 pub fn take_expression(slot: &mut Expression) -> Expression {
@@ -127,127 +86,99 @@ struct Rewriter<'a> {
     visit: &'a mut dyn FnMut(&mut Expression),
 }
 
-impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
-    async fn unit(self, unit: &'b mut TranslationUnit) {
+impl Rewriter<'_> {
+    fn unit(&mut self, unit: &mut TranslationUnit) {
         for declaration in &mut unit.external_declarations {
             match declaration {
                 ExternalDeclaration::FunctionDefinition(definition) => {
-                    self.clone()
-                        .prototype(&mut definition.kind.prototype.node)
-                        .await;
+                    self.prototype(&mut definition.kind.prototype.node);
                     for statement in &mut definition.kind.body.node.statements {
-                        self.statement_in(statement).await;
+                        self.statement(statement);
                     }
                 }
-                ExternalDeclaration::Declaration(declaration) => {
-                    self.clone().declaration(declaration).await;
-                }
+                ExternalDeclaration::Declaration(declaration) => self.declaration(declaration),
                 ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
             }
         }
     }
 
-    async fn statement_in(&self, slot: &mut Statement) {
-        let statement = take_statement(slot);
-        *slot = self.call(self.clone().statement(statement)).await;
-    }
-
-    async fn expression_in(&self, slot: &mut Expression) {
-        let expression = take_expression(slot);
-        *slot = self.call(self.clone().expression(expression)).await;
-    }
-
-    async fn specifier_in(&self, slot: &mut TypeSpecifier) {
-        let specifier = take_type(slot);
-        *slot = self.call(self.clone().specifier(specifier)).await;
-    }
-
-    async fn initializer_in(&self, slot: &mut Initializer) {
-        let initializer = take_initializer(slot);
-        *slot = self.call(self.clone().initializer(initializer)).await;
-    }
-
-    async fn qualifier(self, qualifier: &mut Spanned<TypeQualifier>) {
+    fn qualifier(&mut self, qualifier: &mut Spanned<TypeQualifier>) {
         for single in &mut qualifier.node.qualifiers {
             if let SingleTypeQualifier::Layout(layout) = &mut single.node {
                 for id in &mut layout.ids {
                     if let Some(value) = &mut id.node.value {
-                        self.expression_in(value).await;
+                        self.expression(value);
                     }
                 }
             }
         }
     }
 
-    async fn array(self, specifier: Option<&mut Spanned<ArraySpecifier>>) {
+    fn array(&mut self, specifier: Option<&mut Spanned<ArraySpecifier>>) {
         let Some(specifier) = specifier else {
             return;
         };
         for dimension in &mut specifier.node.dimensions {
             if let ArrayDimension::Sized(size) = &mut dimension.node {
-                self.expression_in(size).await;
+                self.expression(size);
             }
         }
     }
 
-    async fn fully_specified(self, ty: &mut Spanned<FullySpecifiedType>) {
+    fn fully_specified(&mut self, ty: &mut Spanned<FullySpecifiedType>) {
         if let Some(qualifier) = &mut ty.node.qualifier {
-            self.clone().qualifier(qualifier).await;
+            self.qualifier(qualifier);
         }
-        self.specifier_in(&mut ty.node.specifier.node).await;
+        self.specifier(&mut ty.node.specifier.node);
     }
 
-    async fn specifier(self, mut specifier: TypeSpecifier) -> TypeSpecifier {
-        if let TypeSpecifierNonArray::Struct(StructSpecifier {
-            declarations: members,
-            ..
-        })
-        | TypeSpecifierNonArray::InlineBlock(members) = &mut specifier.non_array
-        {
-            for member in members {
-                self.clone().fully_specified(&mut member.node.ty).await;
-                for declarator in &mut member.node.declarators {
-                    self.clone().array(declarator.node.array.as_mut()).await;
+    fn specifier(&mut self, specifier: &mut TypeSpecifier) {
+        recurse(|| {
+            if let TypeSpecifierNonArray::Struct(StructSpecifier {
+                declarations: members,
+                ..
+            })
+            | TypeSpecifierNonArray::InlineBlock(members) = &mut specifier.non_array
+            {
+                for member in members {
+                    self.fully_specified(&mut member.node.ty);
+                    for declarator in &mut member.node.declarators {
+                        self.array(declarator.node.array.as_mut());
+                    }
                 }
             }
-        }
-        self.clone().array(specifier.array.as_mut()).await;
-        specifier
+            self.array(specifier.array.as_mut());
+        });
     }
 
-    async fn prototype(self, prototype: &mut FunctionPrototype) {
-        self.clone()
-            .fully_specified(&mut prototype.return_type)
-            .await;
+    fn prototype(&mut self, prototype: &mut FunctionPrototype) {
+        self.fully_specified(&mut prototype.return_type);
         for parameter in &mut prototype.parameters {
-            self.clone().fully_specified(&mut parameter.kind.ty).await;
-            self.clone().array(parameter.kind.array.as_mut()).await;
+            self.fully_specified(&mut parameter.kind.ty);
+            self.array(parameter.kind.array.as_mut());
         }
     }
 
-    async fn initializer(self, mut initializer: Initializer) -> Initializer {
-        match &mut initializer {
-            Initializer::Expression(expression) => self.expression_in(expression).await,
+    fn initializer(&mut self, initializer: &mut Initializer) {
+        recurse(|| match initializer {
+            Initializer::Expression(expression) => self.expression(expression),
             Initializer::List(items) => {
                 for item in items {
-                    self.initializer_in(&mut item.node).await;
+                    self.initializer(&mut item.node);
                 }
             }
-        }
-        initializer
+        });
     }
 
-    async fn declaration(self, declaration: &mut Declaration) {
+    fn declaration(&mut self, declaration: &mut Declaration) {
         match &mut declaration.kind {
-            DeclarationKind::FunctionPrototype(prototype) => {
-                self.clone().prototype(&mut prototype.node).await;
-            }
+            DeclarationKind::FunctionPrototype(prototype) => self.prototype(&mut prototype.node),
             DeclarationKind::InitDeclaratorList(list) => {
-                self.clone().fully_specified(&mut list.ty).await;
+                self.fully_specified(&mut list.ty);
                 for declarator in &mut list.declarators {
-                    self.clone().array(declarator.kind.array.as_mut()).await;
+                    self.array(declarator.kind.array.as_mut());
                     if let Some(initializer) = &mut declarator.kind.initializer {
-                        self.initializer_in(&mut initializer.node).await;
+                        self.initializer(&mut initializer.node);
                     }
                 }
             }
@@ -256,52 +187,47 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
                 structure,
                 instance,
             } => {
-                self.clone().qualifier(&mut structure.qualifier).await;
+                self.qualifier(&mut structure.qualifier);
                 for member in &mut structure.members {
-                    self.clone().fully_specified(&mut member.node.ty).await;
+                    self.fully_specified(&mut member.node.ty);
                     for declarator in &mut member.node.declarators {
-                        self.clone().array(declarator.node.array.as_mut()).await;
+                        self.array(declarator.node.array.as_mut());
                     }
                 }
                 if let Some(instance) = instance {
-                    self.clone().array(instance.node.array.as_mut()).await;
+                    self.array(instance.node.array.as_mut());
                 }
             }
             DeclarationKind::Qualifier(qualifier)
-            | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => {
-                self.clone().qualifier(qualifier).await;
-            }
+            | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => self.qualifier(qualifier),
             DeclarationKind::SpirvInstruction { prototype, .. } => {
-                self.clone().prototype(&mut prototype.node).await;
+                self.prototype(&mut prototype.node);
             }
             DeclarationKind::SpirvExecutionMode(_) => {}
         }
     }
 
-    async fn condition(self, condition: &mut Condition) {
+    fn condition(&mut self, condition: &mut Condition) {
         match condition {
-            Condition::Expression(expression) => self.expression_in(expression).await,
+            Condition::Expression(expression) => self.expression(expression),
             Condition::Declaration(declaration) => {
-                self.clone().fully_specified(&mut declaration.kind.ty).await;
-                self.initializer_in(&mut declaration.kind.initializer.node)
-                    .await;
+                self.fully_specified(&mut declaration.kind.ty);
+                self.initializer(&mut declaration.kind.initializer.node);
             }
         }
     }
 
-    async fn statement(self, mut statement: Statement) -> Statement {
-        match &mut statement.kind {
+    fn statement(&mut self, statement: &mut Statement) {
+        recurse(|| match &mut statement.kind {
             StatementKind::Compound(compound) => {
                 for statement in &mut compound.statements {
-                    self.statement_in(statement).await;
+                    self.statement(statement);
                 }
             }
-            StatementKind::Declaration(declaration) => {
-                self.clone().declaration(declaration).await;
-            }
+            StatementKind::Declaration(declaration) => self.declaration(declaration),
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
-                    self.expression_in(expression).await;
+                    self.expression(expression);
                 }
             }
             StatementKind::Selection {
@@ -309,44 +235,42 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
                 then_branch,
                 else_branch,
             } => {
-                self.expression_in(condition).await;
-                self.statement_in(then_branch).await;
+                self.expression(condition);
+                self.statement(then_branch);
                 if let Some(else_branch) = else_branch {
-                    self.statement_in(else_branch).await;
+                    self.statement(else_branch);
                 }
             }
             StatementKind::Switch {
                 selector,
                 statements,
             } => {
-                self.expression_in(selector).await;
+                self.expression(selector);
                 for statement in statements {
-                    self.statement_in(statement).await;
+                    self.statement(statement);
                 }
             }
-            StatementKind::CaseLabel(CaseLabel::Case(label)) => self.expression_in(label).await,
+            StatementKind::CaseLabel(CaseLabel::Case(label)) => self.expression(label),
             StatementKind::CaseLabel(CaseLabel::Default) => {}
             StatementKind::While { condition, body } => {
-                self.clone().condition(condition).await;
-                self.statement_in(body).await;
+                self.condition(condition);
+                self.statement(body);
             }
             StatementKind::DoWhile { body, condition } => {
-                self.statement_in(body).await;
-                self.expression_in(condition).await;
+                self.statement(body);
+                self.expression(condition);
             }
             StatementKind::For(statement) => {
-                self.statement_in(&mut statement.init).await;
+                self.statement(&mut statement.init);
                 if let Some(condition) = &mut statement.condition {
-                    self.clone().condition(condition).await;
+                    self.condition(condition);
                 }
                 if let Some(increment) = &mut statement.increment {
-                    self.expression_in(increment).await;
+                    self.expression(increment);
                 }
-                self.statement_in(&mut statement.body).await;
+                self.statement(&mut statement.body);
             }
-            StatementKind::Jump(JumpStatement::Return(Some(value))) => {
-                self.expression_in(value).await;
-            }
+            StatementKind::Jump(JumpStatement::Return(Some(value))) => self.expression(value),
             StatementKind::Jump(_) => {}
             StatementKind::Attributed {
                 attributes,
@@ -356,64 +280,76 @@ impl<'b, 'v: 'b> Cx<'b, Rewriter<'v>> {
                     .iter_mut()
                     .filter_map(|attribute| attribute.argument.as_mut())
                 {
-                    self.expression_in(argument).await;
+                    self.expression(argument);
                 }
-                self.statement_in(statement).await;
+                self.statement(statement);
             }
-        }
-        statement
+        });
     }
 
-    async fn expression(self, expression: Expression) -> Expression {
-        let mut tasks = Vec::from([Rewrite::Visit(expression)]);
-        let mut done: Vec<Expression> = Vec::new();
-        while let Some(task) = tasks.pop() {
-            match task {
-                Rewrite::Visit(mut node) => {
-                    if let ExpressionKind::FunctionCall(call) = &mut node.kind
-                        && let FunctionIdentifier::Constructor(specifier)
-                        | FunctionIdentifier::Cast(specifier) = &mut call.function.node
-                    {
-                        self.specifier_in(specifier).await;
-                    }
-                    let count = node.kind.child_count();
-                    if count == 0 {
-                        self.with(|state| (state.visit)(&mut node));
-                        done.push(node);
-                    } else {
-                        let mark = tasks.len() + 1;
-                        tasks.push(Rewrite::Build(rglsl_ast::placeholder(), count));
-                        node.kind.for_each_child_mut(|child| {
-                            tasks.push(Rewrite::Visit(take_expression(child)));
-                        });
-                        if let Some(slot) = tasks.get_mut(mark - 1) {
-                            *slot = Rewrite::Build(node, count);
-                        }
-                        if let Some(added) = tasks.get_mut(mark..) {
-                            added.reverse();
-                        }
-                    }
-                }
-                Rewrite::Build(mut node, count) => {
-                    let start = done.len().saturating_sub(count);
-                    {
-                        let mut iter = done.drain(start..);
-                        node.kind.for_each_child_mut(|slot| {
-                            if let Some(child) = iter.next() {
-                                *slot = child;
-                            }
-                        });
-                    }
-                    self.with(|state| (state.visit)(&mut node));
-                    done.push(node);
-                }
+    fn expression(&mut self, expression: &mut Expression) {
+        recurse(|| {
+            if let ExpressionKind::FunctionCall(call) = &mut expression.kind
+                && let FunctionIdentifier::Constructor(specifier)
+                | FunctionIdentifier::Cast(specifier) = &mut call.function.node
+            {
+                self.specifier(specifier);
             }
-        }
-        done.pop().unwrap_or_else(rglsl_ast::placeholder)
+            expression
+                .kind
+                .for_each_child_mut(|child| self.expression(child));
+            (self.visit)(expression);
+        });
     }
 }
 
-enum Rewrite {
-    Visit(Expression),
-    Build(Expression, usize),
+pub fn child_statements(kind: &StatementKind) -> Vec<&Statement> {
+    match kind {
+        StatementKind::Compound(compound) => compound.statements.iter().collect(),
+        StatementKind::Switch { statements, .. } => statements.iter().collect(),
+        StatementKind::Selection {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let mut children = vec![&**then_branch];
+            children.extend(else_branch.as_deref());
+            children
+        }
+        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => vec![&**body],
+        StatementKind::For(statement) => vec![&statement.init, &statement.body],
+        StatementKind::Attributed { statement, .. } => vec![&**statement],
+        StatementKind::Declaration(_)
+        | StatementKind::Expression(_)
+        | StatementKind::CaseLabel(_)
+        | StatementKind::Jump(_) => Vec::new(),
+    }
+}
+
+pub fn child_statements_mut(kind: &mut StatementKind) -> Vec<&mut Statement> {
+    match kind {
+        StatementKind::Compound(compound) => compound.statements.iter_mut().collect(),
+        StatementKind::Switch { statements, .. } => statements.iter_mut().collect(),
+        StatementKind::Selection {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let mut children = vec![&mut **then_branch];
+            children.extend(else_branch.as_deref_mut());
+            children
+        }
+        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
+            vec![&mut **body]
+        }
+        StatementKind::For(statement) => {
+            let rglsl_ast::ast::ForStatement { init, body, .. } = &mut **statement;
+            vec![init, body]
+        }
+        StatementKind::Attributed { statement, .. } => vec![&mut **statement],
+        StatementKind::Declaration(_)
+        | StatementKind::Expression(_)
+        | StatementKind::CaseLabel(_)
+        | StatementKind::Jump(_) => Vec::new(),
+    }
 }

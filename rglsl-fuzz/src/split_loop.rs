@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use std::collections::BTreeSet;
 
 use rglsl_ast::ast::{
@@ -47,7 +46,7 @@ pub fn writes_symbol(
     statement: &Statement,
     analysis: &Analysis,
     symbol: rglsl_sema::scope::SymbolId,
-) -> Result<bool, Stalled> {
+) -> bool {
     let mut probe = statement.clone();
     let mut writes = false;
     let refers = |expression: &Expression| {
@@ -71,8 +70,8 @@ pub fn writes_symbol(
             }
         }
         _ => {}
-    })?;
-    Ok(writes)
+    });
+    writes
 }
 
 fn literal_value(expression: &Expression) -> Option<(i64, bool)> {
@@ -200,23 +199,18 @@ fn split_candidate<'s>(
     ))
 }
 
-fn split_info(
-    statement: &Statement,
-    analysis: &Analysis,
-) -> Result<Option<LoopSplitInfo>, Stalled> {
-    let Some((mut info, symbol, body)) = split_candidate(statement, analysis) else {
-        return Ok(None);
-    };
-    if writes_symbol(body, analysis, symbol)? {
-        return Ok(None);
+fn split_info(statement: &Statement, analysis: &Analysis) -> Option<LoopSplitInfo> {
+    let (mut info, symbol, body) = split_candidate(statement, analysis)?;
+    if writes_symbol(body, analysis, symbol) {
+        return None;
     }
     let mut probe = statement.clone();
     rewrite_statement_expressions(&mut probe, &mut |expression| {
         if analysis.references.get(&expression.id) == Some(&symbol) {
             info.references.insert(expression.id);
         }
-    })?;
-    Ok(Some(info))
+    });
+    Some(info)
 }
 
 fn literal(builder: &mut Builder, value: i64, unsigned: bool) -> Expression {
@@ -227,7 +221,7 @@ fn literal(builder: &mut Builder, value: i64, unsigned: bool) -> Expression {
     }
 }
 
-fn renamed(statement: &Statement, info: &LoopSplitInfo, name: &str) -> Result<Statement, Stalled> {
+fn renamed(statement: &Statement, info: &LoopSplitInfo, name: &str) -> Statement {
     let mut copy = statement.clone();
     rewrite_statement_expressions(&mut copy, &mut |expression| {
         if info.references.contains(&expression.id)
@@ -235,7 +229,7 @@ fn renamed(statement: &Statement, info: &LoopSplitInfo, name: &str) -> Result<St
         {
             name.clone_into(variable);
         }
-    })?;
+    });
     if let StatementKind::For(for_statement) = &mut copy.kind
         && let StatementKind::Declaration(declaration) = &mut for_statement.init.kind
         && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
@@ -246,7 +240,7 @@ fn renamed(statement: &Statement, info: &LoopSplitInfo, name: &str) -> Result<St
             }
         }
     }
-    Ok(copy)
+    copy
 }
 
 fn split(
@@ -254,11 +248,11 @@ fn split(
     info: &LoopSplitInfo,
     split_after: i64,
     mut builder: Builder,
-) -> Result<Statement, Stalled> {
+) -> Statement {
     let name = format!("{SPLIT_LOOP_COUNTER_PREFIX}{}", info.counter);
     let direction = if info.increasing { 1 } else { -1 };
     let middle = info.start + direction * split_after;
-    let mut first = renamed(&statement, info, &name)?;
+    let mut first = renamed(&statement, info, &name);
     if let StatementKind::For(for_statement) = &mut first.kind {
         let counter = builder.variable(&name);
         let bound = literal(&mut builder, middle, info.unsigned);
@@ -270,7 +264,7 @@ fn split(
         let test = builder.binary(operator, counter, bound);
         for_statement.condition = Some(Condition::Expression(test));
     }
-    let mut second = renamed(&statement, info, &name)?;
+    let mut second = renamed(&statement, info, &name);
     if let StatementKind::For(for_statement) = &mut second.kind
         && let StatementKind::Declaration(declaration) = &mut for_statement.init.kind
         && let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind
@@ -283,29 +277,26 @@ fn split(
             ));
         }
     }
-    Ok(builder.block(vec![first, second]))
+    builder.block(vec![first, second])
 }
 
-pub fn suitable(point: &InjectionPoint<'_>, analysis: &Analysis) -> Result<bool, Stalled> {
-    Ok(match point.next {
-        Some(next) => split_info(next, analysis)?.is_some(),
+pub fn suitable(point: &InjectionPoint<'_>, analysis: &Analysis) -> bool {
+    match point.next {
+        Some(next) => split_info(next, analysis).is_some(),
         None => false,
-    })
+    }
 }
 
-pub fn apply(
-    input: &PassInput<'_>,
-    random: &mut Random,
-) -> Result<Option<TranslationUnit>, Stalled> {
+pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
     let mut points = Vec::new();
-    for point in injection_points(input.unit, input.analysis)? {
-        if suitable(&point, input.analysis)? {
+    for point in injection_points(input.unit, input.analysis) {
+        if suitable(&point, input.analysis) {
             points.push(point);
         }
     }
     let points = choose(points, input.probabilities.split_loops, random);
     if points.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut builder = Builder::new(input.unit.next_id());
     let mut edits = Vec::new();
@@ -313,7 +304,7 @@ pub fn apply(
         let Some(next) = point.next else {
             continue;
         };
-        let Some(info) = split_info(next, input.analysis)? else {
+        let Some(info) = split_info(next, input.analysis) else {
             continue;
         };
         let span = u32::try_from((info.start - info.end).unsigned_abs()).unwrap_or(0);
@@ -327,6 +318,6 @@ pub fn apply(
         ));
     }
     let mut result = input.unit.clone();
-    apply_edits(&mut result, edits, &mut builder)?;
-    Ok(Some(result))
+    apply_edits(&mut result, edits, &mut builder);
+    Some(result)
 }

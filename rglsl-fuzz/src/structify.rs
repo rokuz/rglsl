@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{
@@ -176,19 +175,16 @@ fn constructor(
     builder.construct_specifier(named_type(generated.name.clone()), arguments)
 }
 
-pub fn apply(
-    input: &PassInput<'_>,
-    random: &mut Random,
-) -> Result<Option<TranslationUnit>, Stalled> {
+pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
     let chosen = choose(
         candidates(input.unit, input.analysis),
         input.probabilities.structify,
         random,
     );
     if chosen.is_empty() {
-        return Ok(None);
+        return None;
     }
-    let mut next_id = next_id_with_prefix(input.unit, STRUCTIFICATION_STRUCT_PREFIX)?;
+    let mut next_id = next_id_with_prefix(input.unit, STRUCTIFICATION_STRUCT_PREFIX);
     let mut builder = Builder::new(input.unit.next_id());
     let mut definitions = Vec::new();
     let mut replacements = BTreeMap::new();
@@ -272,10 +268,10 @@ pub fn apply(
             access = builder.field(access, name);
         }
         *expression = access;
-    })?;
+    });
     let text = definitions.join("\n");
     let Ok(parsed) = parse_unit("structification", &text) else {
-        return Ok(None);
+        return None;
     };
     let position = result
         .external_declarations
@@ -293,8 +289,8 @@ pub fn apply(
         .external_declarations
         .extend(parsed.external_declarations);
     result.external_declarations.extend(tail);
-    Ok(Some(TranslationUnit::new(
+    Some(TranslationUnit::new(
         result.external_declarations,
         builder.next_id(),
-    )))
+    ))
 }

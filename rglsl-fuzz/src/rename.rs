@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     Condition, Declaration, DeclarationKind, ExpressionKind, ExternalDeclaration,
     FullySpecifiedType, FunctionIdentifier, FunctionPrototype, Identifier, Statement,
@@ -24,7 +23,7 @@ impl<F: Fn(NameKind, &str) -> Option<String>> Renamer for F {
     }
 }
 
-pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) -> Result<(), Stalled> {
+pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) {
     rewrite_expressions(unit, &mut |expression| match &mut expression.kind {
         ExpressionKind::Variable(name) => {
             if let Some(new) = renamer.rename(NameKind::Variable, name) {
@@ -43,7 +42,7 @@ pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) -> Result<(
             FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => {}
         },
         _ => {}
-    })?;
+    });
     for external in &mut unit.external_declarations {
         match external {
             ExternalDeclaration::FunctionDefinition(definition) => {
@@ -56,7 +55,6 @@ pub fn rename_all(unit: &mut TranslationUnit, renamer: &dyn Renamer) -> Result<(
         }
     }
     rewrite_statements(unit, &mut |statement| statement_names(statement, renamer));
-    Ok(())
 }
 
 fn identifier(identifier: &mut Identifier, kind: NameKind, renamer: &dyn Renamer) {

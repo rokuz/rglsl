@@ -1,8 +1,6 @@
 use alloc::vec::Vec;
 use core::convert::Infallible;
 
-use rglsl_types::stack::Stalled;
-
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
     ExpressionKind, ExternalDeclaration, FullySpecifiedType, FunctionIdentifier, FunctionPrototype,
@@ -313,14 +311,14 @@ pub fn visit_expressions<'a>(unit: &'a TranslationUnit, mut visit: impl FnMut(&'
     });
 }
 
-pub fn expressions(unit: &TranslationUnit) -> Result<Vec<&Expression>, Stalled> {
+pub fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
     let capacity = usize::try_from(unit.next_id()).unwrap_or(0);
     let mut found = Vec::with_capacity(capacity);
     visit_expressions(unit, |expression| found.push(expression));
-    Ok(found)
+    found
 }
 
-pub fn statement_expressions(statement: &Statement) -> Result<Vec<&Expression>, Stalled> {
+pub fn statement_expressions(statement: &Statement) -> Vec<&Expression> {
     let mut found = Vec::new();
     let mut work = Vec::with_capacity(32);
     work.push(Step::Statement(statement));
@@ -328,5 +326,5 @@ pub fn statement_expressions(statement: &Statement) -> Result<Vec<&Expression>, 
         found.push(expression);
         Ok(())
     });
-    Ok(found)
+    found
 }

@@ -3,7 +3,10 @@ use rglsl::back::spv;
 use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::valid::{ValidationFlags, Validator};
-use rglsl_link::{CompileOptions, Compiler, Options as LinkOptions, decode, encode, link};
+use rglsl_link::{
+    CompileOptions, Compiler, Input, Options as LinkOptions, ProgramOptions, Source, decode,
+    encode, link,
+};
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -1233,6 +1236,90 @@ fn auto_sampled_textures_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn reflected(source: &str, options: rglsl_link::reflect::Options) -> Result<String, String> {
+    let program = ProgramOptions {
+        reflection: Some(options),
+        ..ProgramOptions::default()
+    };
+    let build = Compiler::new().build(
+        &[Input {
+            source: Source::Glsl(source),
+            options: CompileOptions::new("deep.frag", ShaderStage::Fragment),
+        }],
+        &program,
+        &mut |_| None,
+    );
+    if build.compile_failed() || build.link_failed() {
+        return Err(format!("not built: {}", build.link));
+    }
+    build
+        .reflection
+        .ok_or_else(|| String::from("no reflection"))
+}
+
+fn deep_reflection_on_a_small_stack(depth: usize) -> TestResult {
+    let last = depth - 1;
+    let sources = [
+        (
+            "statements",
+            shader(
+                "layout(binding = 0) uniform U { int x; } u;",
+                &format!(
+                    "{}b = u.x;{}",
+                    "if (t) { ".repeat(depth),
+                    " }".repeat(depth)
+                ),
+            ),
+            "x",
+        ),
+        (
+            "expressions",
+            shader(
+                "layout(binding = 0) uniform U { int x; } u;",
+                &format!("b = {}u.x{};", "(".repeat(depth), ")".repeat(depth)),
+            ),
+            "x",
+        ),
+        (
+            "initializers",
+            shader(
+                "layout(binding = 0) uniform U { int x; } u;",
+                &format!(
+                    "int i[1]{} = {}u.x{};",
+                    "[1]".repeat(depth),
+                    "{".repeat(depth + 1),
+                    "}".repeat(depth + 1)
+                ),
+            ),
+            "x",
+        ),
+        (
+            "block members",
+            shader(
+                &format!(
+                    "{}layout(std140, binding = 0) uniform U {{ S{last} s; }} u;",
+                    struct_chain(depth)
+                ),
+                "b = u.s.b;",
+            ),
+            ".b",
+        ),
+    ];
+    for (name, source, expected) in sources {
+        let options = rglsl_link::reflect::Options {
+            all_block_variables: true,
+            ..rglsl_link::reflect::Options::default()
+        };
+        let text = on_small_stack(move || reflected(&source, options))?
+            .map_err(|error| format!("reflection of {name} at {depth}: {error}"))?;
+        assert!(
+            text.contains(expected),
+            "reflection of {name} at {depth}: {text}"
+        );
+    }
+    Ok(())
+}
+
 type Group = (fn(usize) -> TestResult, usize);
 
 fn every_kind(depth: usize) -> Vec<Group> {
@@ -1256,6 +1343,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
         (deep_object_files_link_on_a_small_stack, depth),
         (deep_debug_info_compiles_on_a_small_stack, depth),
         (auto_sampled_textures_on_a_small_stack, depth),
+        (deep_reflection_on_a_small_stack, depth),
     ])
 }
 

@@ -447,10 +447,7 @@ impl Compiler {
             keep_uncalled: options.keep_uncalled,
             auto_map_bindings: options.auto_map_bindings,
         };
-        Some(
-            reflect::reflect(settings, &inputs)
-                .unwrap_or_else(|stalled| format!("internal error: {stalled}\n")),
-        )
+        Some(reflect::reflect(settings, &inputs))
     }
 
     fn analyze(

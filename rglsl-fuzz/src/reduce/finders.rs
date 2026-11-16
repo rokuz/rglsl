@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     CaseLabel, Condition, DeclarationKind, Expression, ExpressionKind, ExternalDeclaration,
     FunctionIdentifier, Initializer, JumpStatement, NodeId, Statement, StatementKind,
@@ -92,24 +91,20 @@ impl Pass {
     }
 }
 
-pub fn find(
-    pass: Pass,
-    unit: &TranslationUnit,
-    analysis: &Analysis,
-) -> Result<Vec<Opportunity>, Stalled> {
+pub fn find(pass: Pass, unit: &TranslationUnit, analysis: &Analysis) -> Vec<Opportunity> {
     let mut builder = Builder::new(unit.next_id());
-    Ok(match pass {
+    match pass {
         Pass::RemoveDead => remove_dead(unit),
-        Pass::RemoveLive => remove_live(unit)?,
+        Pass::RemoveLive => remove_live(unit),
         Pass::Unwrap => unwrap(unit, &mut builder),
         Pass::Unswitchify => unswitchify(unit, &mut builder),
-        Pass::Identity => identity(unit, &mut builder)?,
-        Pass::InlineOutlined => inline_outlined(unit, &mut builder)?,
-        Pass::MergeLoops => merge_loops(unit)?,
-        Pass::Destructify => destructify(unit, &mut builder)?,
-        Pass::Devectorize => devectorize(unit, &mut builder)?,
+        Pass::Identity => identity(unit, &mut builder),
+        Pass::InlineOutlined => inline_outlined(unit, &mut builder),
+        Pass::MergeLoops => merge_loops(unit),
+        Pass::Destructify => destructify(unit, &mut builder),
+        Pass::Devectorize => devectorize(unit, &mut builder),
         Pass::Flatten => flatten(unit, &mut builder),
-        Pass::StripUnused => strip_unused_generated(unit)?
+        Pass::StripUnused => strip_unused_generated(unit)
             .map(|stripped| {
                 vec![Opportunity {
                     changes: stripped
@@ -122,9 +117,9 @@ pub fn find(
         Pass::RemoveStatement => remove_statement(unit),
         Pass::RemoveExternal => remove_external(unit),
         Pass::CompoundToBody => compound_to_body(unit, &mut builder),
-        Pass::ExpressionToConstant => expression_to_constant(unit, analysis, &mut builder)?,
-        Pass::ExpressionToOperand => expression_to_operand(unit, analysis, &mut builder)?,
-    })
+        Pass::ExpressionToConstant => expression_to_constant(unit, analysis, &mut builder),
+        Pass::ExpressionToOperand => expression_to_operand(unit, analysis, &mut builder),
+    }
 }
 
 fn call_name(expression: &Expression) -> Option<&str> {
@@ -214,14 +209,14 @@ fn locally_declared(statement: &Statement) -> BTreeSet<String> {
     names
 }
 
-fn side_effect_free_live_block(statement: &Statement) -> Result<bool, Stalled> {
+fn side_effect_free_live_block(statement: &Statement) -> bool {
     let StatementKind::Compound(compound) = &statement.kind else {
-        return Ok(false);
+        return false;
     };
     if compound.statements.first().is_some_and(|first| {
         declares_name(first, &|name| name.starts_with(GLF_OUT_VAR_BACKUP_PREFIX))
     }) {
-        return Ok(true);
+        return true;
     }
     let local = locally_declared(statement);
     let mut mentions_live = false;
@@ -266,18 +261,18 @@ fn side_effect_free_live_block(statement: &Statement) -> Result<bool, Stalled> {
             FunctionIdentifier::Expression(_) | FunctionIdentifier::Method { .. } => safe = false,
         },
         _ => {}
-    })?;
-    Ok(mentions_live && safe && !jumps)
+    });
+    mentions_live && safe && !jumps
 }
 
-fn remove_live(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
+fn remove_live(unit: &TranslationUnit) -> Vec<Opportunity> {
     let mut result = Vec::new();
     for (_, statement) in function_statements(unit) {
-        if side_effect_free_live_block(statement)? {
+        if side_effect_free_live_block(statement) {
             result.push(Opportunity::single(Change::Statement(statement.id, None)));
         }
     }
-    Ok(result)
+    result
 }
 
 fn unwrap(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
@@ -363,9 +358,9 @@ fn unswitchify(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity
     result
 }
 
-fn identity(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Opportunity>, Stalled> {
+fn identity(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
     let mut result = Vec::new();
-    for expression in rglsl_ast::expressions(unit)? {
+    for expression in rglsl_ast::expressions(unit) {
         let Some(name) = macro_name(expression) else {
             continue;
         };
@@ -384,7 +379,7 @@ fn identity(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Opportu
             replacement,
         )));
     }
-    Ok(result)
+    result
 }
 
 fn outlined_functions(unit: &TranslationUnit) -> BTreeMap<String, (Vec<String>, Expression)> {
@@ -418,13 +413,10 @@ fn outlined_functions(unit: &TranslationUnit) -> BTreeMap<String, (Vec<String>, 
     functions
 }
 
-fn inline_outlined(
-    unit: &TranslationUnit,
-    builder: &mut Builder,
-) -> Result<Vec<Opportunity>, Stalled> {
+fn inline_outlined(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
     let functions = outlined_functions(unit);
     let mut result = Vec::new();
-    for expression in rglsl_ast::expressions(unit)? {
+    for expression in rglsl_ast::expressions(unit) {
         let Some(name) = call_name(expression) else {
             continue;
         };
@@ -449,7 +441,7 @@ fn inline_outlined(
             {
                 *inner = (*argument).clone();
             }
-        })?;
+        });
         let StatementKind::Expression(Some(inlined)) = &mut holder.kind else {
             continue;
         };
@@ -460,7 +452,7 @@ fn inline_outlined(
             replacement,
         )));
     }
-    Ok(result)
+    result
 }
 
 fn split_counter(statement: &Statement) -> Option<(String, String)> {
@@ -481,7 +473,7 @@ fn split_counter(statement: &Statement) -> Option<(String, String)> {
     Some((name.clone(), original.to_owned()))
 }
 
-fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
+fn merge_loops(unit: &TranslationUnit) -> Vec<Opportunity> {
     let mut result = Vec::new();
     for (_, statement) in function_statements(unit) {
         let StatementKind::Compound(compound) = &statement.kind else {
@@ -528,7 +520,7 @@ fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
                 {
                     original.clone_into(name);
                 }
-            })?;
+            });
             result.push(Opportunity {
                 changes: vec![
                     Change::Statement(first.id, None),
@@ -537,7 +529,7 @@ fn merge_loops(unit: &TranslationUnit) -> Result<Vec<Opportunity>, Stalled> {
             });
         }
     }
-    Ok(result)
+    result
 }
 
 fn field_path(
@@ -622,7 +614,7 @@ fn chain_matches(expression: &Expression, variable: &str, names: &[String]) -> b
     matches!(&current.kind, ExpressionKind::Variable(name) if name == variable)
 }
 
-fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Opportunity>, Stalled> {
+fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
     let structs = global_structs(unit);
     let mut result = Vec::new();
     for (_, statement) in function_statements(unit) {
@@ -655,7 +647,7 @@ fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Oppo
         };
         let replacement = builder.declare(ty, &original, initializer);
         let mut changes = vec![Change::Statement(statement.id, Some(replacement))];
-        for expression in rglsl_ast::expressions(unit)? {
+        for expression in rglsl_ast::expressions(unit) {
             if chain_matches(expression, variable, &names) {
                 let new = builder.variable(&original);
                 changes.push(Change::Expression(expression.id, new));
@@ -663,10 +655,10 @@ fn destructify(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Oppo
         }
         result.push(Opportunity { changes });
     }
-    Ok(result)
+    result
 }
 
-fn devectorize(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Opportunity>, Stalled> {
+fn devectorize(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opportunity> {
     let mut result = Vec::new();
     let mut merged_names = BTreeSet::new();
     for (_, statement) in function_statements(unit) {
@@ -678,7 +670,7 @@ fn devectorize(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Oppo
             }
         }
     }
-    let expressions = rglsl_ast::expressions(unit)?;
+    let expressions = rglsl_ast::expressions(unit);
     for merged in &merged_names {
         let Some(components) = component_data(merged) else {
             continue;
@@ -730,7 +722,7 @@ fn devectorize(unit: &TranslationUnit, builder: &mut Builder) -> Result<Vec<Oppo
             result.push(Opportunity::single(Change::Statement(statement.id, None)));
         }
     }
-    Ok(result)
+    result
 }
 
 fn is_access(expression: &Expression, merged: &str, swizzle: &str) -> bool {
@@ -849,7 +841,7 @@ fn compound_to_body(unit: &TranslationUnit, builder: &mut Builder) -> Vec<Opport
     result
 }
 
-fn lvalue_ids(unit: &TranslationUnit, analysis: &Analysis) -> Result<BTreeSet<NodeId>, Stalled> {
+fn lvalue_ids(unit: &TranslationUnit, analysis: &Analysis) -> BTreeSet<NodeId> {
     fn mark(expression: &Expression, ids: &mut BTreeSet<NodeId>) {
         let mut current = expression;
         loop {
@@ -863,7 +855,7 @@ fn lvalue_ids(unit: &TranslationUnit, analysis: &Analysis) -> Result<BTreeSet<No
         }
     }
     let mut ids = BTreeSet::new();
-    for expression in rglsl_ast::expressions(unit)? {
+    for expression in rglsl_ast::expressions(unit) {
         match &expression.kind {
             ExpressionKind::Assignment { target, .. } => mark(target, &mut ids),
             ExpressionKind::Postfix { operand, .. }
@@ -885,30 +877,30 @@ fn lvalue_ids(unit: &TranslationUnit, analysis: &Analysis) -> Result<BTreeSet<No
             _ => {}
         }
     }
-    Ok(ids)
+    ids
 }
 
-fn body_expression_ids(unit: &TranslationUnit) -> Result<BTreeSet<NodeId>, Stalled> {
+fn body_expression_ids(unit: &TranslationUnit) -> BTreeSet<NodeId> {
     let mut ids = BTreeSet::new();
     for external in &unit.external_declarations {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
             for statement in &definition.kind.body.node.statements {
-                ids.extend(statement_expression_ids(statement)?);
+                ids.extend(statement_expression_ids(statement));
             }
         }
     }
-    Ok(ids)
+    ids
 }
 
 fn expression_to_constant(
     unit: &TranslationUnit,
     analysis: &Analysis,
     builder: &mut Builder,
-) -> Result<Vec<Opportunity>, Stalled> {
-    let lvalues = lvalue_ids(unit, analysis)?;
-    let bodies = body_expression_ids(unit)?;
+) -> Vec<Opportunity> {
+    let lvalues = lvalue_ids(unit, analysis);
+    let bodies = body_expression_ids(unit);
     let mut result = Vec::new();
-    for expression in rglsl_ast::expressions(unit)? {
+    for expression in rglsl_ast::expressions(unit) {
         if lvalues.contains(&expression.id) || !bodies.contains(&expression.id) {
             continue;
         }
@@ -930,18 +922,18 @@ fn expression_to_constant(
             constant,
         )));
     }
-    Ok(result)
+    result
 }
 
 fn expression_to_operand(
     unit: &TranslationUnit,
     analysis: &Analysis,
     builder: &mut Builder,
-) -> Result<Vec<Opportunity>, Stalled> {
-    let lvalues = lvalue_ids(unit, analysis)?;
-    let bodies = body_expression_ids(unit)?;
+) -> Vec<Opportunity> {
+    let lvalues = lvalue_ids(unit, analysis);
+    let bodies = body_expression_ids(unit);
     let mut result = Vec::new();
-    for expression in rglsl_ast::expressions(unit)? {
+    for expression in rglsl_ast::expressions(unit) {
         if lvalues.contains(&expression.id) || !bodies.contains(&expression.id) {
             continue;
         }
@@ -971,5 +963,5 @@ fn expression_to_operand(
             }
         }
     }
-    Ok(result)
+    result
 }

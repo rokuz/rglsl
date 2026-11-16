@@ -171,8 +171,8 @@ pub fn add_guards(
     stage: ShaderStage,
     bound: u32,
 ) -> Result<Option<TranslationUnit>, Error> {
-    let analysis = analyze_shader(unit, stage, true, None)?;
-    let mut result = in_bounds(unit, &analysis)?;
+    let analysis = analyze_shader(unit, stage, true, None);
+    let mut result = in_bounds(unit, &analysis);
     let mut builder = Builder::new(result.next_id());
     let looped = truncate_loops(&mut result, &mut builder);
     initialise(&mut result, &mut builder);

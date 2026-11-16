@@ -67,7 +67,7 @@ fn every_expression_of_every_sample_has_a_type() -> TestResult {
     let mut total = 0;
     for (name, source) in parseable_samples()? {
         let (unit, analysis) = analyzed(&source, true)?;
-        let found = expressions(&unit)?;
+        let found = expressions(&unit);
         assert!(!found.is_empty(), "{name}");
         for expression in found {
             total += 1;

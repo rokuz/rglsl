@@ -181,7 +181,7 @@ fn count_statements(statement: &Statement) -> usize {
     let mut pending = vec![statement];
     while let Some(statement) = pending.pop() {
         count += 1;
-        pending.extend(crate::stack::child_statements(&statement.kind));
+        pending.extend(crate::rewrite::child_statements(&statement.kind));
     }
     count
 }
@@ -541,7 +541,7 @@ fn replace_with_canonical_sampler(
             *name = canonical.to_owned();
             replaced_use = true;
         }
-    })?;
+    });
     let mut kept = Vec::new();
     for mut external in core::mem::take(&mut unit.external_declarations) {
         if let ExternalDeclaration::Declaration(declaration) = &mut external
@@ -590,5 +590,5 @@ pub fn node_count(unit: &TranslationUnit) -> Result<usize, Error> {
             _ => 0,
         })
         .sum();
-    Ok(expressions(unit)?.len() + statements + unit.external_declarations.len())
+    Ok(expressions(unit).len() + statements + unit.external_declarations.len())
 }

@@ -1,8 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::future::Future;
-use std::rc::Rc;
 
 use rglsl::front::glsl::Analyzed;
 use rglsl::{AddressSpace, Module, TypeInner};
@@ -10,7 +8,7 @@ use rglsl_ast::ast::{DeclarationKind, ExpressionKind, ExternalDeclaration};
 use rglsl_sema::analyze::is_shader_record;
 use rglsl_sema::scope::{Origin, Storage, SymbolKind};
 use rglsl_sema::{Analysis, LayoutId, SymbolId};
-use rglsl_types::stack::{Call, Stack, Stalled, run};
+use rglsl_types::stack::recurse;
 
 use super::database::Object;
 use super::source::{BlockDefaults, declared_globals, io_name};
@@ -66,18 +64,6 @@ pub(super) struct UnitCx<'p, 'd, 'a> {
     pub(super) expressions: Vec<&'a rglsl_ast::ast::Expression>,
 }
 
-#[derive(Clone)]
-pub(super) struct Cx<'b, 'c, 'p, 'd, 'a> {
-    pub(super) unit: &'c UnitCx<'p, 'd, 'a>,
-    pub(super) stack: Stack<'b>,
-}
-
-impl<'b> Cx<'b, '_, '_, '_, '_> {
-    pub(super) fn call<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
-        self.stack.call(frame)
-    }
-}
-
 impl UnitCx<'_, '_, '_> {
     pub(super) fn options(&self) -> Options {
         self.program.settings.options
@@ -95,25 +81,17 @@ impl UnitCx<'_, '_, '_> {
         self.processed.borrow_mut().insert((self.unit, key));
     }
 
-    pub(super) fn event(&self, event: Event) -> Result<(), Stalled> {
+    pub(super) fn event(&self, event: Event) {
         match event {
-            Event::Deref(key) => run(|stack| {
-                let cx = Cx { unit: self, stack };
-                cx.dereferenced_uniform(key)
-            })
-            .ok_or(Stalled),
-            Event::Symbol(symbol, key) => run(|stack| {
-                let cx = Cx { unit: self, stack };
-                cx.visit_symbol(symbol, key)
-            })
-            .ok_or(Stalled),
-            Event::Call(_) => Ok(()),
+            Event::Deref(key) => self.dereferenced_uniform(key),
+            Event::Symbol(symbol, key) => self.visit_symbol(symbol, key),
+            Event::Call(_) => {}
         }
     }
 
-    pub(super) fn linker_object(&self, symbol: SymbolId, key: Key) -> Result<(), Stalled> {
+    pub(super) fn linker_object(&self, symbol: SymbolId, key: Key) {
         let Some(variable) = self.analysis.symbol(symbol).and_then(|s| s.variable()) else {
-            return Ok(());
+            return;
         };
         let options = self.options();
         let storage = variable.qualifiers.storage;
@@ -124,12 +102,11 @@ impl UnitCx<'_, '_, '_> {
             if ty.as_ref().is_some_and(|ty| {
                 ty.is_block() && matches!(ty.packing, Pack::Std140 | Pack::Shared)
             }) {
-                return self.event(Event::Symbol(symbol, key));
+                self.event(Event::Symbol(symbol, key));
             }
         } else if options.all_io_variables && matches!(storage, Storage::In | Storage::Out) {
-            return self.event(Event::Symbol(symbol, key));
+            self.event(Event::Symbol(symbol, key));
         }
-        Ok(())
     }
 
     pub(super) fn anonymous_index(&self, symbol: SymbolId) -> usize {
@@ -447,24 +424,23 @@ impl UnitCx<'_, '_, '_> {
     }
 }
 
-impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
-    pub(super) async fn visit_symbol(self, symbol: SymbolId, key: Key) {
-        let unit = self.unit;
-        let Some(variable) = unit.analysis.symbol(symbol).and_then(|s| s.variable()) else {
+impl UnitCx<'_, '_, '_> {
+    fn visit_symbol(&self, symbol: SymbolId, key: Key) {
+        let Some(variable) = self.analysis.symbol(symbol).and_then(|s| s.variable()) else {
             return;
         };
-        let options = unit.options();
+        let options = self.options();
         let storage = variable.qualifiers.storage;
-        let Some(ty) = unit.symbol_type(symbol) else {
+        let Some(ty) = self.symbol_type(symbol) else {
             return;
         };
         if storage == Storage::Uniform {
             if ty.is_block() {
                 if options.shared_std140_ubo {
-                    self.call(self.clone().add_uniform(symbol, key)).await;
+                    self.add_uniform(symbol, key);
                 }
             } else {
-                self.call(self.clone().add_uniform(symbol, key)).await;
+                self.add_uniform(symbol, key);
             }
         }
         if options.shared_std140_ssbo
@@ -472,26 +448,25 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
             && ty.is_block()
             && matches!(ty.packing, Pack::Std140 | Pack::Shared)
         {
-            self.call(self.clone().add_uniform(symbol, key)).await;
+            self.add_uniform(symbol, key);
         }
-        let program = unit.program;
-        if (unit.stage == program.first && storage == Storage::In)
-            || (unit.stage == program.last && storage == Storage::Out)
+        let program = self.program;
+        if (self.stage == program.first && storage == Storage::In)
+            || (self.stage == program.last && storage == Storage::Out)
         {
             self.add_pipe_io(symbol, key, &ty);
         }
     }
 
-    pub(super) async fn add_uniform(self, symbol: SymbolId, key: Key) {
-        let unit = self.unit;
-        if unit.processed(key) {
+    fn add_uniform(&self, symbol: SymbolId, key: Key) {
+        if self.processed(key) {
             return;
         }
-        unit.mark(key);
-        let Some(found) = unit.analysis.symbol(symbol) else {
+        self.mark(key);
+        let Some(found) = self.analysis.symbol(symbol) else {
             return;
         };
-        let Some(ty) = unit.symbol_type(symbol) else {
+        let Some(ty) = self.symbol_type(symbol) else {
             return;
         };
         let mut block_index = -1;
@@ -499,18 +474,18 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         let mut base_name = found.name.clone();
         if ty.is_block() {
             offset = 0;
-            let block_name = unit.block_name(&ty);
+            let block_name = self.block_name(&ty);
             base_name = if found.name.is_empty() {
                 String::new()
             } else {
                 block_name.clone()
             };
-            block_index = unit.add_block_name(&block_name, &ty, unit.layouts.block_size(&ty));
+            block_index = self.add_block_name(&block_name, &ty, self.layouts.block_size(&ty));
         }
         let storage = ty.storage;
-        let active = unit.update_stage_masks.get();
-        self.call(self.clone().blow_up(
-            Rc::from(Vec::new()),
+        let active = self.update_stage_masks.get();
+        self.blow_up(
+            &[],
             Blow {
                 base: ty,
                 name: base_name,
@@ -523,13 +498,11 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                 storage,
                 active,
             },
-        ))
-        .await;
+        );
     }
 
-    pub(super) async fn dereferenced_uniform(self, top: Key) {
-        let unit = self.unit;
-        let Some((symbol, base_key, steps)) = unit.chain(top) else {
+    fn dereferenced_uniform(&self, top: Key) {
+        let Some((symbol, base_key, steps)) = self.chain(top) else {
             return;
         };
         let Some(last) = steps.last() else {
@@ -538,7 +511,7 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         if (last.left.is_vector() || last.left.is_matrix()) && !last.left.is_array() {
             return;
         }
-        let Some(found) = unit.analysis.symbol(symbol) else {
+        let Some(found) = self.analysis.symbol(symbol) else {
             return;
         };
         let Some(variable) = found.variable() else {
@@ -550,10 +523,10 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         ) {
             return;
         }
-        if unit.processed(top) {
+        if self.processed(top) {
             return;
         }
-        let Some(base) = unit.symbol_type(symbol) else {
+        let Some(base) = self.symbol_type(symbol) else {
             return;
         };
         let mut offset = -1;
@@ -562,16 +535,16 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         let block = base.is_block();
         if block {
             offset = 0;
-            let block_name = unit.block_name(&base);
+            let block_name = self.block_name(&base);
             let base_name = if anonymous {
                 String::new()
             } else {
                 block_name.clone()
             };
-            block_index = unit.add_block_name(&block_name, &base, unit.layouts.block_size(&base));
-            if unit.options().all_block_variables {
-                self.call(self.clone().blow_up(
-                    Rc::from(Vec::new()),
+            block_index = self.add_block_name(&block_name, &base, self.layouts.block_size(&base));
+            if self.options().all_block_variables {
+                self.blow_up(
+                    &[],
                     Blow {
                         base: base.clone(),
                         name: base_name,
@@ -584,8 +557,7 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                         storage: base.storage,
                         active: false,
                     },
-                ))
-                .await;
+                );
             }
         }
         let mut derefs = Vec::new();
@@ -594,10 +566,10 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                 continue;
             }
             derefs.push(step.clone());
-            unit.mark(step.key);
+            self.mark(step.key);
         }
         derefs.reverse();
-        unit.mark(base_key);
+        self.mark(base_key);
         let mut array_size = 0;
         if last.left.granular()
             && last.left.is_array()
@@ -608,13 +580,13 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         let base_name = if anonymous {
             String::new()
         } else if block {
-            unit.block_name(&base)
+            self.block_name(&base)
         } else {
             found.name.clone()
         };
         let storage = base.storage;
-        self.call(self.clone().blow_up(
-            Rc::from(derefs),
+        self.blow_up(
+            &derefs,
             Blow {
                 base,
                 name: base_name,
@@ -627,14 +599,12 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                 storage,
                 active: true,
             },
-        ))
-        .await;
+        );
     }
 
-    pub(super) async fn blow_up(self, derefs: Rc<[Step]>, call: Blow) {
-        let unit = self.unit;
-        let layouts = &unit.layouts;
-        let options = unit.options();
+    fn blow_up(&self, derefs: &[Step], call: Blow) {
+        let layouts = &self.layouts;
+        let options = self.options();
         let strict = options.strict_array_suffix;
         let mut block_parent = call.base.is_block() && call.base.storage == Storage::Buffer;
         let mut name = call.name.clone();
@@ -658,18 +628,15 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                         } else if strict || !call.base.is_block() {
                             let _ = write!(child_name, "[{index}]");
                         }
-                        self.call(self.clone().blow_up(
-                            Rc::clone(&derefs),
-                            Blow {
-                                base: terminal.clone(),
-                                name: child_name,
-                                deref: position + 1,
-                                offset,
-                                top_stride,
-                                ..call.clone()
-                            },
-                        ))
-                        .await;
+                        let child = Blow {
+                            base: terminal.clone(),
+                            name: child_name,
+                            deref: position + 1,
+                            offset,
+                            top_stride,
+                            ..call.clone()
+                        };
+                        recurse(|| self.blow_up(derefs, child));
                         if offset >= 0 {
                             offset += stride;
                         }
@@ -733,19 +700,16 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                     if offset >= 0 {
                         offset = base_offset + stride * index;
                     }
-                    self.call(self.clone().blow_up(
-                        Rc::clone(&derefs),
-                        Blow {
-                            base: terminal.element(),
-                            name: child_name,
-                            deref: end,
-                            offset,
-                            array_size: 0,
-                            top_stride,
-                            ..call.clone()
-                        },
-                    ))
-                    .await;
+                    let child = Blow {
+                        base: terminal.element(),
+                        name: child_name,
+                        deref: end,
+                        offset,
+                        array_size: 0,
+                        top_stride,
+                        ..call.clone()
+                    };
+                    recurse(|| self.blow_up(derefs, child));
                 }
             } else {
                 let member_offsets = if base_offset >= 0 {
@@ -838,8 +802,7 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                             active: call.active,
                         }
                     };
-                    self.call(self.clone().blow_up(Rc::clone(&derefs), child))
-                        .await;
+                    recurse(|| self.blow_up(derefs, child));
                 }
             }
             return;
@@ -853,9 +816,9 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
             call.array_size
         };
         let separate = options.separate_buffers && call.storage == Storage::Buffer;
-        let bit = unit.bit();
+        let bit = self.bit();
         let stage_bit = options.all_block_variables && call.active;
-        let mut database = unit.program.database.borrow_mut();
+        let mut database = self.program.database.borrow_mut();
         let existing = database.names.get(&name).copied();
         let variables = if separate {
             &mut database.buffer_variables
@@ -899,22 +862,21 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         }
     }
 
-    pub(super) fn add_pipe_io(&self, symbol: SymbolId, key: Key, ty: &RType) {
-        let unit = self.unit;
-        if unit.processed(key) {
+    fn add_pipe_io(&self, symbol: SymbolId, key: Key, ty: &RType) {
+        if self.processed(key) {
             return;
         }
-        unit.mark(key);
-        let Some(found) = unit.analysis.symbol(symbol) else {
+        self.mark(key);
+        let Some(found) = self.analysis.symbol(symbol) else {
             return;
         };
         let input = ty.storage == Storage::In;
-        if unit.options().unwrap_io_blocks {
+        if self.options().unwrap_io_blocks {
             let anonymous = found.name.is_empty();
             let base_name = if anonymous {
                 String::new()
             } else if ty.is_block() {
-                unit.block_name(ty)
+                self.block_name(ty)
             } else {
                 String::from(io_name(&found.name))
             };
@@ -927,12 +889,12 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
             return;
         }
         let name = if found.name.is_empty() {
-            format!("anon@{}", unit.anonymous_index(symbol))
+            format!("anon@{}", self.anonymous_index(symbol))
         } else {
             String::from(io_name(&found.name))
         };
-        let bit = unit.bit();
-        let mut database = unit.program.database.borrow_mut();
+        let bit = self.bit();
+        let mut database = self.program.database.borrow_mut();
         let database = &mut *database;
         let (items, names) = if input {
             (&mut database.pipe_inputs, &mut database.pipe_in_names)
@@ -954,9 +916,8 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
         }
     }
 
-    pub(super) fn blow_up_io(&self, input: bool, base_name: String, ty: RType) {
-        let unit = self.unit;
-        let layouts = &unit.layouts;
+    fn blow_up_io(&self, input: bool, base_name: String, ty: RType) {
+        let layouts = &self.layouts;
         let mut pending = vec![(base_name, ty)];
         while let Some((mut name, ty)) = pending.pop() {
             if !ty.granular() {
@@ -981,12 +942,12 @@ impl<'b, 'c: 'b, 'p, 'd, 'a> Cx<'b, 'c, 'p, 'd, 'a> {
                 pending.extend(children.into_iter().rev());
                 continue;
             }
-            if unit.options().basic_array_suffix && ty.is_array() {
+            if self.options().basic_array_suffix && ty.is_array() {
                 name.push_str("[0]");
             }
             let key = format!("{} {name}", if input { "in" } else { "out" });
-            let bit = unit.bit();
-            let mut database = unit.program.database.borrow_mut();
+            let bit = self.bit();
+            let mut database = self.program.database.borrow_mut();
             let database = &mut *database;
             let items = if input {
                 &mut database.pipe_inputs

@@ -28,10 +28,7 @@ fn print(unit: &TranslationUnit) -> String {
 }
 
 fn expressions(unit: &TranslationUnit) -> Vec<&Expression> {
-    match crate::expressions(unit) {
-        Ok(found) => found,
-        Err(error) => panic!("{error}"),
-    }
+    crate::expressions(unit)
 }
 
 fn rejected<T, E>(result: Result<T, E>, why: &str) -> TestResult<E> {

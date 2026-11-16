@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::future::Future;
 
 use rglsl_ast::ast::{
     Condition, DeclarationKind, Expression, ExpressionKind, FunctionIdentifier, InitDeclaratorList,
@@ -10,7 +8,7 @@ use rglsl_sema::analyze::Callee;
 use rglsl_sema::scope::{Origin, SymbolKind};
 use rglsl_sema::types::TypeKind;
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
-use rglsl_types::stack::{Call, Stack, Stalled, run};
+use rglsl_types::stack::recurse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Key {
@@ -53,66 +51,43 @@ pub struct Walked {
     pub derefs: BTreeMap<Key, Deref>,
 }
 
-pub fn global_initializers(
-    analysis: &Analysis,
-    list: &InitDeclaratorList,
-) -> Result<Walked, Stalled> {
-    let walker = Walker {
-        analysis,
-        walked: RefCell::new(Walked::default()),
-    };
-    let finished = run(|stack| {
-        let cx = Cx {
-            walker: &walker,
-            stack,
-        };
-        async move {
-            for declarator in &list.declarators {
-                if let Some(ref initializer) = declarator.kind.initializer {
-                    cx.call(cx.clone().initializer(initializer)).await;
-                }
-            }
+pub fn global_initializers(analysis: &Analysis, list: &InitDeclaratorList) -> Walked {
+    let mut walker = Walker::new(analysis);
+    for declarator in &list.declarators {
+        if let Some(ref initializer) = declarator.kind.initializer {
+            walker.initializer(initializer);
         }
-    });
-    finished.ok_or(Stalled)?;
-    Ok(walker.walked.into_inner())
+    }
+    walker.walked
 }
 
-pub fn function_body(analysis: &Analysis, statements: &[Statement]) -> Result<Walked, Stalled> {
-    let walker = Walker {
-        analysis,
-        walked: RefCell::new(Walked::default()),
-    };
-    let finished = run(|stack| {
-        let cx = Cx {
-            walker: &walker,
-            stack,
-        };
-        async move {
-            for statement in statements {
-                cx.call(cx.clone().statement(statement)).await;
-            }
-        }
-    });
-    finished.ok_or(Stalled)?;
-    Ok(walker.walked.into_inner())
+pub fn function_body(analysis: &Analysis, statements: &[Statement]) -> Walked {
+    let mut walker = Walker::new(analysis);
+    for statement in statements {
+        walker.statement(statement);
+    }
+    walker.walked
 }
 
 struct Walker<'a> {
     analysis: &'a Analysis,
-    walked: RefCell<Walked>,
+    walked: Walked,
 }
 
-impl Walker<'_> {
-    fn event(&self, event: Event) {
-        self.walked.borrow_mut().events.push(event);
+impl<'a> Walker<'a> {
+    fn new(analysis: &'a Analysis) -> Self {
+        Self {
+            analysis,
+            walked: Walked::default(),
+        }
     }
 
-    fn deref(&self, key: Key, left: Operand, op: Op) {
-        self.walked
-            .borrow_mut()
-            .derefs
-            .insert(key, Deref { left, op });
+    fn event(&mut self, event: Event) {
+        self.walked.events.push(event);
+    }
+
+    fn deref(&mut self, key: Key, left: Operand, op: Op) {
+        self.walked.derefs.insert(key, Deref { left, op });
         self.event(Event::Deref(key));
     }
 
@@ -165,37 +140,25 @@ impl Walker<'_> {
     }
 }
 
-#[derive(Clone)]
-struct Cx<'b, 'a> {
-    walker: &'b Walker<'a>,
-    stack: Stack<'b>,
-}
-
-impl<'b> Cx<'b, '_> {
-    fn call<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
-        self.stack.call(frame)
-    }
-}
-
-impl<'b, 'a: 'b> Cx<'b, 'a> {
-    async fn statement(self, statement: &'a Statement) {
-        match statement.kind {
+impl Walker<'_> {
+    fn statement(&mut self, statement: &Statement) {
+        recurse(|| match statement.kind {
             StatementKind::Compound(ref compound) => {
                 for inner in &compound.statements {
-                    self.call(self.clone().statement(inner)).await;
+                    self.statement(inner);
                 }
             }
             StatementKind::Declaration(ref declaration) => {
                 if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
                     for declarator in &list.declarators {
                         if let Some(ref initializer) = declarator.kind.initializer {
-                            self.call(self.clone().initializer(initializer)).await;
+                            self.initializer(initializer);
                         }
                     }
                 }
             }
             StatementKind::Expression(Some(ref expression)) => {
-                self.call(self.clone().expression(expression)).await;
+                self.expression(expression);
             }
             StatementKind::Expression(None)
             | StatementKind::CaseLabel(_)
@@ -214,179 +177,180 @@ impl<'b, 'a: 'b> Cx<'b, 'a> {
                 ref then_branch,
                 ref else_branch,
             } => {
-                self.call(self.clone().expression(condition)).await;
-                self.call(self.clone().statement(then_branch)).await;
+                self.expression(condition);
+                self.statement(then_branch);
                 if let Some(else_branch) = else_branch {
-                    self.call(self.clone().statement(else_branch)).await;
+                    self.statement(else_branch);
                 }
             }
             StatementKind::Switch {
                 ref selector,
                 ref statements,
             } => {
-                self.call(self.clone().expression(selector)).await;
+                self.expression(selector);
                 for inner in statements {
-                    self.call(self.clone().statement(inner)).await;
+                    self.statement(inner);
                 }
             }
             StatementKind::While {
                 ref condition,
                 ref body,
             } => {
-                self.call(self.clone().condition(condition)).await;
-                self.call(self.clone().statement(body)).await;
+                self.condition(condition);
+                self.statement(body);
             }
             StatementKind::DoWhile {
                 ref body,
                 ref condition,
             } => {
-                self.call(self.clone().expression(condition)).await;
-                self.call(self.clone().statement(body)).await;
+                self.expression(condition);
+                self.statement(body);
             }
             StatementKind::For(ref inner) => {
-                self.call(self.clone().statement(&inner.init)).await;
+                self.statement(&inner.init);
                 if let Some(ref condition) = inner.condition {
-                    self.call(self.clone().condition(condition)).await;
+                    self.condition(condition);
                 }
-                self.call(self.clone().statement(&inner.body)).await;
+                self.statement(&inner.body);
                 if let Some(ref increment) = inner.increment {
-                    self.call(self.clone().expression(increment)).await;
+                    self.expression(increment);
                 }
             }
             StatementKind::Jump(JumpStatement::Return(Some(ref expression))) => {
-                self.call(self.clone().expression(expression)).await;
+                self.expression(expression);
             }
             StatementKind::Attributed { ref statement, .. } => {
-                self.call(self.clone().statement(statement)).await;
+                self.statement(statement);
             }
-        }
+        });
     }
 
-    async fn condition(self, condition: &'a Condition) {
+    fn condition(&mut self, condition: &Condition) {
         match *condition {
             Condition::Expression(ref expression) => {
-                self.call(self.clone().expression(expression)).await;
+                self.expression(expression);
             }
             Condition::Declaration(ref declaration) => {
-                self.call(self.clone().initializer(&declaration.kind.initializer))
-                    .await;
+                self.initializer(&declaration.kind.initializer);
             }
         }
     }
 
-    async fn initializer(self, initializer: &'a Spanned<Initializer>) {
-        match initializer.node {
+    fn initializer(&mut self, initializer: &Spanned<Initializer>) {
+        recurse(|| match initializer.node {
             Initializer::Expression(ref expression) => {
-                self.call(self.clone().expression(expression)).await;
+                self.expression(expression);
             }
             Initializer::List(ref items) => {
                 for item in items {
-                    self.call(self.clone().initializer(item)).await;
+                    self.initializer(item);
                 }
             }
-        }
+        });
     }
 
-    async fn expression(self, expression: &'a Expression) {
-        let walker = self.walker;
-        if walker.folded(expression) {
-            return;
-        }
-        let analysis = walker.analysis;
-        match expression.kind {
-            ExpressionKind::Variable(_) => {
-                let Some(&symbol) = analysis.references.get(&expression.id) else {
-                    return;
-                };
-                match analysis.symbol(symbol).map(|symbol| &symbol.kind) {
-                    Some(SymbolKind::Variable(variable))
-                        if matches!(variable.origin, Origin::Global | Origin::BuiltIn) =>
-                    {
-                        walker.event(Event::Symbol(symbol, Key::Node(expression.id)));
+    fn expression(&mut self, expression: &Expression) {
+        recurse(|| {
+            if self.folded(expression) {
+                return;
+            }
+            let analysis = self.analysis;
+            match expression.kind {
+                ExpressionKind::Variable(_) => {
+                    let Some(&symbol) = analysis.references.get(&expression.id) else {
+                        return;
+                    };
+                    match analysis.symbol(symbol).map(|symbol| &symbol.kind) {
+                        Some(SymbolKind::Variable(variable))
+                            if matches!(variable.origin, Origin::Global | Origin::BuiltIn) =>
+                        {
+                            self.event(Event::Symbol(symbol, Key::Node(expression.id)));
+                        }
+                        Some(&SymbolKind::BlockMember { instance, index }) => {
+                            let key = Key::Instance(expression.id);
+                            self.deref(
+                                Key::Node(expression.id),
+                                Operand::Symbol(instance, key),
+                                Op::Member(usize::try_from(index).unwrap_or(usize::MAX)),
+                            );
+                            self.event(Event::Symbol(instance, key));
+                        }
+                        _ => {}
                     }
-                    Some(&SymbolKind::BlockMember { instance, index }) => {
-                        let key = Key::Instance(expression.id);
-                        walker.deref(
+                }
+                ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => {
+                }
+                ExpressionKind::Parenthesized(ref inner) => {
+                    self.expression(inner);
+                }
+                ExpressionKind::Subscript {
+                    ref base,
+                    ref index,
+                } => {
+                    let op = self.constant(index).map_or(Op::Indirect, Op::Direct);
+                    self.deref(Key::Node(expression.id), self.operand(base), op);
+                    self.expression(base);
+                    self.expression(index);
+                }
+                ExpressionKind::FieldSelection {
+                    ref base,
+                    ref field,
+                } => {
+                    if self.aggregate(base) {
+                        self.deref(
                             Key::Node(expression.id),
-                            Operand::Symbol(instance, key),
-                            Op::Member(usize::try_from(index).unwrap_or(usize::MAX)),
+                            self.operand(base),
+                            Op::Field(field.node.clone()),
                         );
-                        walker.event(Event::Symbol(instance, key));
                     }
-                    _ => {}
+                    self.expression(base);
+                }
+                ExpressionKind::FunctionCall(ref call) => {
+                    if let Some(&Callee::Function(function)) = analysis.calls.get(&expression.id) {
+                        self.event(Event::Call(function));
+                    }
+                    if let FunctionIdentifier::Method { ref object, .. } = call.function.node {
+                        self.expression(object);
+                    }
+                    for argument in &call.arguments {
+                        self.expression(argument);
+                    }
+                }
+                ExpressionKind::Postfix { ref operand, .. }
+                | ExpressionKind::Unary { ref operand, .. } => {
+                    self.expression(operand);
+                }
+                ExpressionKind::Binary {
+                    ref left,
+                    ref right,
+                    ..
+                } => {
+                    self.expression(left);
+                    self.expression(right);
+                }
+                ExpressionKind::Conditional {
+                    ref condition,
+                    ref then_expression,
+                    ref else_expression,
+                } => {
+                    self.expression(condition);
+                    self.expression(then_expression);
+                    self.expression(else_expression);
+                }
+                ExpressionKind::Assignment {
+                    ref target,
+                    ref value,
+                    ..
+                } => {
+                    self.expression(target);
+                    self.expression(value);
+                }
+                ExpressionKind::Sequence(ref items) => {
+                    for item in items {
+                        self.expression(item);
+                    }
                 }
             }
-            ExpressionKind::Number(_) | ExpressionKind::Bool(_) | ExpressionKind::String(_) => {}
-            ExpressionKind::Parenthesized(ref inner) => {
-                self.call(self.clone().expression(inner)).await;
-            }
-            ExpressionKind::Subscript {
-                ref base,
-                ref index,
-            } => {
-                let op = walker.constant(index).map_or(Op::Indirect, Op::Direct);
-                walker.deref(Key::Node(expression.id), walker.operand(base), op);
-                self.call(self.clone().expression(base)).await;
-                self.call(self.clone().expression(index)).await;
-            }
-            ExpressionKind::FieldSelection {
-                ref base,
-                ref field,
-            } => {
-                if walker.aggregate(base) {
-                    walker.deref(
-                        Key::Node(expression.id),
-                        walker.operand(base),
-                        Op::Field(field.node.clone()),
-                    );
-                }
-                self.call(self.clone().expression(base)).await;
-            }
-            ExpressionKind::FunctionCall(ref call) => {
-                if let Some(&Callee::Function(function)) = analysis.calls.get(&expression.id) {
-                    walker.event(Event::Call(function));
-                }
-                if let FunctionIdentifier::Method { ref object, .. } = call.function.node {
-                    self.call(self.clone().expression(object)).await;
-                }
-                for argument in &call.arguments {
-                    self.call(self.clone().expression(argument)).await;
-                }
-            }
-            ExpressionKind::Postfix { ref operand, .. }
-            | ExpressionKind::Unary { ref operand, .. } => {
-                self.call(self.clone().expression(operand)).await;
-            }
-            ExpressionKind::Binary {
-                ref left,
-                ref right,
-                ..
-            } => {
-                self.call(self.clone().expression(left)).await;
-                self.call(self.clone().expression(right)).await;
-            }
-            ExpressionKind::Conditional {
-                ref condition,
-                ref then_expression,
-                ref else_expression,
-            } => {
-                self.call(self.clone().expression(condition)).await;
-                self.call(self.clone().expression(then_expression)).await;
-                self.call(self.clone().expression(else_expression)).await;
-            }
-            ExpressionKind::Assignment {
-                ref target,
-                ref value,
-                ..
-            } => {
-                self.call(self.clone().expression(target)).await;
-                self.call(self.clone().expression(value)).await;
-            }
-            ExpressionKind::Sequence(ref items) => {
-                for item in items {
-                    self.call(self.clone().expression(item)).await;
-                }
-            }
-        }
+        });
     }
 }

@@ -11,7 +11,6 @@ use std::fmt::Write as _;
 
 use rglsl::front::glsl::Analyzed;
 use rglsl::{Module, ShaderStage};
-use rglsl_ast::Stalled;
 use rglsl_ast::ast::{
     DeclarationKind, ExternalDeclaration, FunctionDefinition, InitDeclaratorList, Node,
 };
@@ -81,7 +80,7 @@ fn stage_index(stage: ShaderStage) -> usize {
         .unwrap_or(0)
 }
 
-pub fn reflect(settings: Settings, stages: &[StageInput]) -> Result<String, Stalled> {
+pub fn reflect(settings: Settings, stages: &[StageInput]) -> String {
     let mut ordered: Vec<&StageInput> = stages.iter().collect();
     ordered.sort_by_key(|input| stage_index(input.stage));
     let (first, last) = if settings.options.intermediate_io {
@@ -103,9 +102,9 @@ pub fn reflect(settings: Settings, stages: &[StageInput]) -> Result<String, Stal
             first,
             last,
         };
-        program.add_stage(input)?;
+        program.add_stage(input);
     }
-    Ok(database.into_inner().dump())
+    database.into_inner().dump()
 }
 
 struct Program<'d> {
@@ -146,7 +145,7 @@ fn signature(analysis: &Analysis, function: FunctionId) -> String {
 }
 
 impl Program<'_> {
-    fn add_stage(&self, input: &StageInput) -> Result<(), Stalled> {
+    fn add_stage(&self, input: &StageInput) {
         let units: Vec<&Analyzed> = input.units.iter().map(|unit| unit.analyzed).collect();
         let entry_points: usize = units
             .iter()
@@ -165,7 +164,7 @@ impl Program<'_> {
             })
             .sum();
         if entry_points != 1 {
-            return Ok(());
+            return;
         }
         let stage = stage_index(input.stage);
         if input.stage == ShaderStage::Compute {
@@ -214,17 +213,14 @@ impl Program<'_> {
             .iter()
             .map(|function| {
                 let analysis = units.get(function.unit).map(|unit| &unit.analysis);
-                analysis.map_or_else(
-                    || Ok(Walked::default()),
-                    |analysis| match function.item {
-                        Item::Function(definition) => {
-                            walk::function_body(analysis, &definition.kind.body.node.statements)
-                        }
-                        Item::Globals(list) => walk::global_initializers(analysis, list),
-                    },
-                )
+                analysis.map_or_else(Walked::default, |analysis| match function.item {
+                    Item::Function(definition) => {
+                        walk::function_body(analysis, &definition.kind.body.node.statements)
+                    }
+                    Item::Globals(list) => walk::global_initializers(analysis, list),
+                })
             })
-            .collect::<Result<_, Stalled>>()?;
+            .collect();
         let reachable = self.reachable(input, &functions, &walked);
         let processed = RefCell::new(BTreeSet::new());
         let defaults: Vec<_> = units.iter().map(|unit| block_defaults(unit)).collect();
@@ -242,7 +238,7 @@ impl Program<'_> {
         let heap_bindings = self.heap_bindings(input, &used);
         let mut contexts = Vec::with_capacity(units.len());
         for (index, unit) in units.iter().enumerate() {
-            let expressions = rglsl_ast::expressions(&unit.unit)?;
+            let expressions = rglsl_ast::expressions(&unit.unit);
             contexts.push(UnitCx {
                 program: self,
                 unit: index,
@@ -270,7 +266,7 @@ impl Program<'_> {
             cx.derefs.replace(walked.derefs.clone());
             cx.update_stage_masks.set(true);
             for event in &walked.events {
-                cx.event(*event)?;
+                cx.event(*event);
             }
         }
         if self.settings.options.shared_std140_ubo
@@ -291,7 +287,7 @@ impl Program<'_> {
                         continue;
                     }
                     linker += 1;
-                    cx.linker_object(symbol, Key::Linker(linker))?;
+                    cx.linker_object(symbol, Key::Linker(linker));
                 }
             }
             if self.settings.options.all_io_variables
@@ -319,7 +315,6 @@ impl Program<'_> {
                 object.stages |= bit;
             }
         }
-        Ok(())
     }
 
     fn heap_bindings(
