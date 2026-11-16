@@ -1,12 +1,8 @@
 use alloc::format;
 use alloc::string::String;
-use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
 use core::fmt;
-use core::future::Future;
-use core::ops::Deref;
 
-use rglsl_types::stack::{Call, Stack, run};
+use rglsl_types::stack::recurse;
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, Attribute, CaseLabel, CompoundStatement, Condition,
@@ -21,9 +17,9 @@ use crate::ast::{
 const INDENT: &str = "    ";
 
 pub fn print(unit: &TranslationUnit) -> Result<String, fmt::Error> {
-    let printer = Printer::default();
-    let finished = run(|stack| printer.cx(stack).translation_unit(unit));
-    printer.finish(finished)
+    let mut printer = Printer::default();
+    printer.translation_unit(unit);
+    printer.finish()
 }
 
 impl fmt::Display for TranslationUnit {
@@ -34,53 +30,33 @@ impl fmt::Display for TranslationUnit {
 
 impl fmt::Display for Expression {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let printer = Printer::default();
-        let finished = run(|stack| printer.cx(stack).expression(self));
-        formatter.write_str(&printer.finish(finished)?)
+        let mut printer = Printer::default();
+        printer.expression(self);
+        formatter.write_str(&printer.finish()?)
     }
 }
 
 impl fmt::Display for Statement {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let printer = Printer::default();
-        let finished = run(|stack| printer.cx(stack).statement(self));
-        formatter.write_str(&printer.finish(finished)?)
+        let mut printer = Printer::default();
+        printer.statement(self);
+        formatter.write_str(&printer.finish()?)
     }
 }
 
 impl fmt::Display for Declaration {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let printer = Printer::default();
-        let finished = run(|stack| printer.cx(stack).declaration(self));
-        formatter.write_str(&printer.finish(finished)?)
+        let mut printer = Printer::default();
+        printer.declaration(self);
+        formatter.write_str(&printer.finish()?)
     }
 }
 
 #[derive(Debug, Default)]
 struct Printer {
-    output: RefCell<String>,
-    depth: Cell<usize>,
-    failed: Cell<bool>,
-}
-
-#[derive(Clone)]
-struct Cx<'b> {
-    printer: &'b Printer,
-    stack: Stack<'b>,
-}
-
-impl Deref for Cx<'_> {
-    type Target = Printer;
-
-    fn deref(&self) -> &Printer {
-        self.printer
-    }
-}
-
-impl<'b> Cx<'b> {
-    fn call<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
-        self.stack.call(frame)
-    }
+    output: String,
+    depth: usize,
+    failed: bool,
 }
 
 const fn is_single_line(external: &ExternalDeclaration) -> bool {
@@ -108,50 +84,43 @@ const fn is_directive(external: &ExternalDeclaration) -> bool {
 }
 
 impl Printer {
-    const fn cx<'b>(&'b self, stack: Stack<'b>) -> Cx<'b> {
-        Cx {
-            printer: self,
-            stack,
+    fn finish(self) -> Result<String, fmt::Error> {
+        if self.failed {
+            Err(fmt::Error)
+        } else {
+            Ok(self.output)
         }
     }
 
-    fn finish(self, finished: Option<()>) -> Result<String, fmt::Error> {
-        match finished {
-            Some(()) if !self.failed.get() => Ok(self.output.into_inner()),
-            _ => Err(fmt::Error),
+    fn write(&mut self, text: &str) {
+        self.output.push_str(text);
+    }
+
+    fn indent(&mut self) {
+        for _ in 0..self.depth {
+            self.output.push_str(INDENT);
         }
     }
 
-    fn write(&self, text: &str) {
-        self.output.borrow_mut().push_str(text);
+    fn line_end(&mut self) {
+        self.output.push('\n');
     }
 
-    fn indent(&self) {
-        let mut output = self.output.borrow_mut();
-        for _ in 0..self.depth.get() {
-            output.push_str(INDENT);
-        }
+    const fn deeper(&mut self) {
+        self.depth = self.depth.saturating_add(1);
     }
 
-    fn line_end(&self) {
-        self.output.borrow_mut().push('\n');
+    const fn shallower(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
-    fn deeper(&self) {
-        self.depth.set(self.depth.get().saturating_add(1));
-    }
-
-    fn shallower(&self) {
-        self.depth.set(self.depth.get().saturating_sub(1));
-    }
-
-    fn comma(&self, index: usize) {
+    fn comma(&mut self, index: usize) {
         if index > 0 {
             self.write(", ");
         }
     }
 
-    fn string(&self, value: &str) {
+    fn string(&mut self, value: &str) {
         let mut escaped = String::from("\"");
         for character in value.chars() {
             match character {
@@ -175,8 +144,8 @@ impl Printer {
     }
 }
 
-impl<'b> Cx<'b> {
-    async fn translation_unit(self, unit: &'b TranslationUnit) {
+impl Printer {
+    fn translation_unit(&mut self, unit: &TranslationUnit) {
         let mut previous: Option<&ExternalDeclaration> = None;
         for external in &unit.external_declarations {
             if let Some(previous) = previous {
@@ -187,77 +156,66 @@ impl<'b> Cx<'b> {
                     self.line_end();
                 }
             }
-            self.call(self.clone().external_declaration(external)).await;
+            self.external_declaration(external);
             self.line_end();
             previous = Some(external);
         }
     }
 
-    async fn external_declaration(self, external: &'b ExternalDeclaration) {
+    fn external_declaration(&mut self, external: &ExternalDeclaration) {
         match external {
             ExternalDeclaration::Directive(directive) => self.write(&directive.node.raw),
             ExternalDeclaration::Semicolon(_) => self.write(";"),
             ExternalDeclaration::Declaration(declaration) => {
-                self.call(self.clone().declaration(declaration)).await;
+                self.declaration(declaration);
             }
             ExternalDeclaration::FunctionDefinition(definition) => {
-                self.call(
-                    self.clone()
-                        .function_prototype(&definition.kind.prototype.node),
-                )
-                .await;
+                self.function_prototype(&definition.kind.prototype.node);
                 self.write(" ");
-                self.call(self.clone().compound(&definition.kind.body.node))
-                    .await;
+                self.compound(&definition.kind.body.node);
             }
         }
     }
 
-    async fn declaration(self, declaration: &'b Declaration) {
+    fn declaration(&mut self, declaration: &Declaration) {
         match &declaration.kind {
             DeclarationKind::FunctionPrototype(prototype) => {
-                self.call(self.clone().function_prototype(&prototype.node))
-                    .await;
+                self.function_prototype(&prototype.node);
             }
             DeclarationKind::InitDeclaratorList(list) => {
-                self.call(self.clone().init_declarator_list(list)).await;
+                self.init_declarator_list(list);
             }
             DeclarationKind::Precision { qualifier, ty } => {
                 self.write("precision ");
                 self.write(qualifier.node.keyword());
                 self.write(" ");
-                self.call(self.clone().type_specifier(&ty.node)).await;
+                self.type_specifier(&ty.node);
             }
             DeclarationKind::Block {
                 structure,
                 instance,
             } => {
-                self.call(self.clone().type_qualifier(&structure.qualifier.node))
-                    .await;
+                self.type_qualifier(&structure.qualifier.node);
                 self.write(" ");
                 self.write(&structure.name.node);
                 self.write(" ");
-                self.call(self.clone().struct_declaration_list(&structure.members))
-                    .await;
+                self.struct_declaration_list(&structure.members);
                 if let Some(instance) = instance {
                     self.write(" ");
                     self.write(&instance.node.name.node);
-                    self.call(self.clone().optional_array_specifier(
+                    self.optional_array_specifier(
                         instance.node.array.as_ref().map(|inner| &inner.node),
-                    ))
-                    .await;
+                    );
                 }
             }
             DeclarationKind::Qualifier(qualifier) => {
-                self.call(self.clone().type_qualifier(&qualifier.node))
-                    .await;
+                self.type_qualifier(&qualifier.node);
             }
             DeclarationKind::QualifiedIdentifiers {
                 qualifier,
                 identifiers,
             } => {
-                self.call(self.clone().type_qualifier(&qualifier.node))
-                    .await;
+                self.type_qualifier(&qualifier.node);
                 self.write(" ");
                 for (index, identifier) in identifiers.iter().enumerate() {
                     self.comma(index);
@@ -269,35 +227,25 @@ impl<'b> Cx<'b> {
                 prototype,
             } => {
                 self.write("spirv_instruction(");
-                self.call(
-                    self.clone()
-                        .spirv_requirements(&instruction.node.requirements),
-                )
-                .await;
+                self.spirv_requirements(&instruction.node.requirements);
                 if !instruction.node.requirements.is_empty() {
                     self.write(", ");
                 }
-                self.call(
-                    self.clone()
-                        .spirv_instruction_qualifiers(&instruction.node.qualifiers),
-                )
-                .await;
+                self.spirv_instruction_qualifiers(&instruction.node.qualifiers);
                 self.write(") ");
-                self.call(self.clone().function_prototype(&prototype.node))
-                    .await;
+                self.function_prototype(&prototype.node);
             }
             DeclarationKind::SpirvExecutionMode(mode) => {
                 self.write(mode.node.kind.keyword());
                 self.write("(");
-                self.call(self.clone().spirv_requirements(&mode.node.requirements))
-                    .await;
+                self.spirv_requirements(&mode.node.requirements);
                 if !mode.node.requirements.is_empty() {
                     self.write(", ");
                 }
-                self.call(self.clone().expression(&mode.node.mode)).await;
+                self.expression(&mode.node.mode);
                 for operand in &mode.node.operands {
                     self.write(", ");
-                    self.call(self.clone().expression(operand)).await;
+                    self.expression(operand);
                 }
                 self.write(")");
             }
@@ -305,76 +253,65 @@ impl<'b> Cx<'b> {
         self.write(";");
     }
 
-    async fn spirv_requirements(self, requirements: &'b [Spanned<SpirvRequirement>]) {
+    fn spirv_requirements(&mut self, requirements: &[Spanned<SpirvRequirement>]) {
         for (index, requirement) in requirements.iter().enumerate() {
             self.comma(index);
             self.write(&requirement.node.name.node);
             self.write(" = [");
             for (index, value) in requirement.node.values.iter().enumerate() {
                 self.comma(index);
-                self.call(self.clone().expression(value)).await;
+                self.expression(value);
             }
             self.write("]");
         }
     }
 
-    async fn spirv_instruction_qualifiers(
-        self,
-        qualifiers: &'b [Spanned<SpirvInstructionQualifier>],
-    ) {
+    fn spirv_instruction_qualifiers(&mut self, qualifiers: &[Spanned<SpirvInstructionQualifier>]) {
         for (index, qualifier) in qualifiers.iter().enumerate() {
             self.comma(index);
             self.write(&qualifier.node.name.node);
             self.write(" = ");
-            self.call(self.clone().expression(&qualifier.node.value))
-                .await;
+            self.expression(&qualifier.node.value);
         }
     }
 
-    async fn spirv_decorate(self, decorate: &'b SpirvDecorate) {
+    fn spirv_decorate(&mut self, decorate: &SpirvDecorate) {
         self.write(decorate.kind.keyword());
         self.write("(");
-        self.call(self.clone().spirv_requirements(&decorate.requirements))
-            .await;
+        self.spirv_requirements(&decorate.requirements);
         if !decorate.requirements.is_empty() {
             self.write(", ");
         }
-        self.call(self.clone().expression(&decorate.decoration))
-            .await;
+        self.expression(&decorate.decoration);
         for operand in &decorate.operands {
             self.write(", ");
-            self.call(self.clone().expression(operand)).await;
+            self.expression(operand);
         }
         self.write(")");
     }
 
-    async fn spirv_type(self, specifier: &'b SpirvTypeSpecifier) {
+    fn spirv_type(&mut self, specifier: &SpirvTypeSpecifier) {
         self.write("spirv_type(");
-        self.call(self.clone().spirv_requirements(&specifier.requirements))
-            .await;
+        self.spirv_requirements(&specifier.requirements);
         if !specifier.requirements.is_empty() {
             self.write(", ");
         }
-        self.call(
-            self.clone()
-                .spirv_instruction_qualifiers(&specifier.instruction),
-        )
-        .await;
+        self.spirv_instruction_qualifiers(&specifier.instruction);
         for parameter in &specifier.parameters {
             self.write(", ");
             match parameter {
                 SpirvTypeParameter::Constant(value) => {
-                    self.call(self.clone().expression(value)).await;
+                    self.expression(value);
                 }
                 SpirvTypeParameter::Type(ty) => {
-                    self.call(self.clone().type_specifier(&ty.node)).await;
+                    self.type_specifier(&ty.node);
                 }
             }
         }
         self.write(")");
     }
 
-    async fn attribute_list(self, attributes: &'b [Attribute]) {
+    fn attribute_list(&mut self, attributes: &[Attribute]) {
         self.write("[[");
         for (index, attribute) in attributes.iter().enumerate() {
             if index > 0 {
@@ -383,104 +320,82 @@ impl<'b> Cx<'b> {
             self.write(&attribute.name.node);
             if let Some(argument) = &attribute.argument {
                 self.write("(");
-                self.call(self.clone().expression(argument)).await;
+                self.expression(argument);
                 self.write(")");
             }
         }
         self.write("]]");
     }
 
-    async fn function_prototype(self, prototype: &'b FunctionPrototype) {
+    fn function_prototype(&mut self, prototype: &FunctionPrototype) {
         if !prototype.attributes.is_empty() {
-            self.call(self.clone().attribute_list(&prototype.attributes))
-                .await;
+            self.attribute_list(&prototype.attributes);
             self.write(" ");
         }
-        self.call(
-            self.clone()
-                .fully_specified_type(&prototype.return_type.node),
-        )
-        .await;
+        self.fully_specified_type(&prototype.return_type.node);
         self.write(" ");
         self.write(&prototype.name.node);
         self.write("(");
         for (index, parameter) in prototype.parameters.iter().enumerate() {
             self.comma(index);
-            self.call(self.clone().fully_specified_type(&parameter.kind.ty.node))
-                .await;
+            self.fully_specified_type(&parameter.kind.ty.node);
             if let Some(name) = &parameter.kind.name {
                 self.write(" ");
                 self.write(&name.node);
             }
-            self.call(
-                self.clone().optional_array_specifier(
-                    parameter.kind.array.as_ref().map(|inner| &inner.node),
-                ),
-            )
-            .await;
+            self.optional_array_specifier(parameter.kind.array.as_ref().map(|inner| &inner.node));
         }
         self.write(")");
         if !prototype.trailing_attributes.is_empty() {
             self.write(" ");
-            self.call(self.clone().attribute_list(&prototype.trailing_attributes))
-                .await;
+            self.attribute_list(&prototype.trailing_attributes);
         }
     }
 
-    async fn init_declarator_list(self, list: &'b InitDeclaratorList) {
-        self.call(self.clone().fully_specified_type(&list.ty.node))
-            .await;
+    fn init_declarator_list(&mut self, list: &InitDeclaratorList) {
+        self.fully_specified_type(&list.ty.node);
         if !list.declarators.is_empty() {
             self.write(" ");
         }
         for (index, declarator) in list.declarators.iter().enumerate() {
             self.comma(index);
             self.write(&declarator.kind.name.node);
-            self.call(
-                self.clone().optional_array_specifier(
-                    declarator.kind.array.as_ref().map(|inner| &inner.node),
-                ),
-            )
-            .await;
+            self.optional_array_specifier(declarator.kind.array.as_ref().map(|inner| &inner.node));
             if let Some(initializer) = &declarator.kind.initializer {
                 self.write(" = ");
-                self.call(self.clone().initializer(&initializer.node)).await;
+                self.initializer(&initializer.node);
             }
         }
     }
 
-    async fn initializer(self, initializer: &'b Initializer) {
-        match initializer {
-            Initializer::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await;
-            }
+    fn initializer(&mut self, initializer: &Initializer) {
+        recurse(|| match initializer {
+            Initializer::Expression(expression) => self.expression(expression),
             Initializer::List(elements) => {
                 self.write("{");
                 for (index, element) in elements.iter().enumerate() {
                     self.comma(index);
-                    self.call(self.clone().initializer(&element.node)).await;
+                    self.initializer(&element.node);
                 }
                 self.write("}");
             }
-        }
+        });
     }
 
-    async fn struct_declaration_list(self, declarations: &'b [Spanned<StructDeclaration>]) {
+    fn struct_declaration_list(&mut self, declarations: &[Spanned<StructDeclaration>]) {
         self.write("{");
         self.line_end();
         self.deeper();
         for declaration in declarations {
             self.indent();
-            self.call(self.clone().fully_specified_type(&declaration.node.ty.node))
-                .await;
+            self.fully_specified_type(&declaration.node.ty.node);
             self.write(" ");
             for (index, declarator) in declaration.node.declarators.iter().enumerate() {
                 self.comma(index);
                 self.write(&declarator.node.name.node);
-                self.call(self.clone().optional_array_specifier(
+                self.optional_array_specifier(
                     declarator.node.array.as_ref().map(|inner| &inner.node),
-                ))
-                .await;
+                );
             }
             self.write(";");
             self.line_end();
@@ -490,17 +405,15 @@ impl<'b> Cx<'b> {
         self.write("}");
     }
 
-    async fn fully_specified_type(self, ty: &'b FullySpecifiedType) {
+    fn fully_specified_type(&mut self, ty: &FullySpecifiedType) {
         if let Some(qualifier) = &ty.qualifier {
-            self.call(self.clone().type_qualifier(&qualifier.node))
-                .await;
+            self.type_qualifier(&qualifier.node);
             self.write(" ");
         }
-        self.call(self.clone().type_specifier(&ty.specifier.node))
-            .await;
+        self.type_specifier(&ty.specifier.node);
     }
 
-    async fn type_qualifier(self, qualifier: &'b TypeQualifier) {
+    fn type_qualifier(&mut self, qualifier: &TypeQualifier) {
         for (index, single) in qualifier.qualifiers.iter().enumerate() {
             if index > 0 {
                 self.write(" ");
@@ -527,16 +440,15 @@ impl<'b> Cx<'b> {
                 SingleTypeQualifier::NonUniform => self.write("nonuniformEXT"),
                 SingleTypeQualifier::SpirvStorageClass(class) => {
                     self.write("spirv_storage_class(");
-                    self.call(self.clone().spirv_requirements(&class.requirements))
-                        .await;
+                    self.spirv_requirements(&class.requirements);
                     if !class.requirements.is_empty() {
                         self.write(", ");
                     }
-                    self.call(self.clone().expression(&class.class)).await;
+                    self.expression(&class.class);
                     self.write(")");
                 }
                 SingleTypeQualifier::SpirvDecorate(decorate) => {
-                    self.call(self.clone().spirv_decorate(decorate)).await;
+                    self.spirv_decorate(decorate);
                 }
                 SingleTypeQualifier::SpirvByReference => self.write("spirv_by_reference"),
                 SingleTypeQualifier::SpirvLiteral => self.write("spirv_literal"),
@@ -547,7 +459,7 @@ impl<'b> Cx<'b> {
                         self.write(&id.node.name.node);
                         if let Some(value) = &id.node.value {
                             self.write(" = ");
-                            self.call(self.clone().expression(value)).await;
+                            self.expression(value);
                         }
                     }
                     self.write(")");
@@ -556,106 +468,99 @@ impl<'b> Cx<'b> {
         }
     }
 
-    async fn type_specifier(self, specifier: &'b TypeSpecifier) {
-        match &specifier.non_array {
-            TypeSpecifierNonArray::Void => self.write("void"),
-            TypeSpecifierNonArray::Basic(basic) => {
-                use fmt::Write as _;
-                if write!(self.output.borrow_mut(), "{basic}").is_err() {
-                    self.failed.set(true);
+    fn type_specifier(&mut self, specifier: &TypeSpecifier) {
+        recurse(|| {
+            match &specifier.non_array {
+                TypeSpecifierNonArray::Void => self.write("void"),
+                TypeSpecifierNonArray::Basic(basic) => {
+                    use fmt::Write as _;
+                    if write!(self.output, "{basic}").is_err() {
+                        self.failed = true;
+                    }
+                }
+                TypeSpecifierNonArray::Opaque(keyword) => {
+                    use fmt::Write as _;
+                    if write!(self.output, "{keyword}").is_err() {
+                        self.failed = true;
+                    }
+                }
+                TypeSpecifierNonArray::TypeName(name) => self.write(name),
+                TypeSpecifierNonArray::Parameterized(kind) => self.write(kind.keyword()),
+                TypeSpecifierNonArray::Struct(specifier) => {
+                    self.write("struct ");
+                    if let Some(name) = &specifier.name {
+                        self.write(&name.node);
+                        self.write(" ");
+                    }
+                    self.struct_declaration_list(&specifier.declarations);
+                }
+                TypeSpecifierNonArray::InlineBlock(declarations) => {
+                    self.struct_declaration_list(declarations);
+                }
+                TypeSpecifierNonArray::Spirv(specifier) => {
+                    self.spirv_type(specifier);
                 }
             }
-            TypeSpecifierNonArray::Opaque(keyword) => {
-                use fmt::Write as _;
-                if write!(self.output.borrow_mut(), "{keyword}").is_err() {
-                    self.failed.set(true);
+            if let Some(parameters) = &specifier.parameters {
+                self.write("<");
+                let mut first = true;
+                if let Some(element) = &parameters.node.element {
+                    self.type_specifier(&element.node);
+                    first = false;
                 }
-            }
-            TypeSpecifierNonArray::TypeName(name) => self.write(name),
-            TypeSpecifierNonArray::Parameterized(kind) => self.write(kind.keyword()),
-            TypeSpecifierNonArray::Struct(specifier) => {
-                self.write("struct ");
-                if let Some(name) = &specifier.name {
-                    self.write(&name.node);
-                    self.write(" ");
+                for value in &parameters.node.values {
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.expression(value);
                 }
-                self.call(
-                    self.clone()
-                        .struct_declaration_list(&specifier.declarations),
-                )
-                .await;
+                self.write(">");
             }
-            TypeSpecifierNonArray::InlineBlock(declarations) => {
-                self.call(self.clone().struct_declaration_list(declarations))
-                    .await;
-            }
-            TypeSpecifierNonArray::Spirv(specifier) => {
-                self.call(self.clone().spirv_type(specifier)).await;
-            }
-        }
-        if let Some(parameters) = &specifier.parameters {
-            self.write("<");
-            let mut first = true;
-            if let Some(element) = &parameters.node.element {
-                self.call(self.clone().type_specifier(&element.node)).await;
-                first = false;
-            }
-            for value in &parameters.node.values {
-                if !first {
-                    self.write(", ");
-                }
-                first = false;
-                self.call(self.clone().expression(value)).await;
-            }
-            self.write(">");
-        }
-        self.call(
-            self.clone()
-                .optional_array_specifier(specifier.array.as_ref().map(|inner| &inner.node)),
-        )
-        .await;
+            self.optional_array_specifier(specifier.array.as_ref().map(|inner| &inner.node));
+        });
     }
 
-    async fn optional_array_specifier(self, specifier: Option<&'b ArraySpecifier>) {
+    fn optional_array_specifier(&mut self, specifier: Option<&ArraySpecifier>) {
         let Some(specifier) = specifier else {
             return;
         };
         for dimension in &specifier.dimensions {
             self.write("[");
             if let ArrayDimension::Sized(size) = &dimension.node {
-                self.call(self.clone().expression(size)).await;
+                self.expression(size);
             }
             self.write("]");
         }
     }
 
-    async fn compound(self, compound: &'b CompoundStatement) {
+    fn compound(&mut self, compound: &CompoundStatement) {
         self.write("{");
         self.line_end();
         self.deeper();
         for statement in &compound.statements {
-            self.call(self.clone().statement(statement)).await;
+            self.statement(statement);
         }
         self.shallower();
         self.indent();
         self.write("}");
     }
 
-    async fn statement(self, statement: &'b Statement) {
+    fn statement(&mut self, statement: &Statement) {
         self.indent();
-        self.call(self.clone().statement_content(statement)).await;
+        self.statement_content(statement);
         self.line_end();
     }
 
-    async fn statement_content(self, statement: &'b Statement) {
-        match &statement.kind {
-            StatementKind::Compound(compound) => self.call(self.clone().compound(compound)).await,
+    fn statement_content(&mut self, statement: &Statement) {
+        recurse(|| match &statement.kind {
+            StatementKind::Compound(compound) => self.compound(compound),
             StatementKind::Declaration(declaration) => {
-                self.call(self.clone().declaration(declaration)).await;
+                self.declaration(declaration);
             }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression {
-                    self.call(self.clone().expression(expression)).await;
+                    self.expression(expression);
                 }
                 self.write(";");
             }
@@ -664,87 +569,82 @@ impl<'b> Cx<'b> {
                 then_branch,
                 else_branch,
             } => {
-                self.call(
-                    self.clone()
-                        .selection(condition, then_branch, else_branch.as_deref()),
-                )
-                .await;
+                self.selection(condition, then_branch, else_branch.as_deref());
             }
             StatementKind::Switch {
                 selector,
                 statements,
-            } => self.call(self.clone().switch(selector, statements)).await,
-            StatementKind::CaseLabel(label) => self.call(self.clone().case_label(label)).await,
+            } => self.switch(selector, statements),
+            StatementKind::CaseLabel(label) => self.case_label(label),
             StatementKind::While { condition, body } => {
                 self.write("while (");
-                self.call(self.clone().condition(condition)).await;
+                self.condition(condition);
                 self.write(")");
-                self.call(self.clone().body(body)).await;
+                self.body(body);
             }
             StatementKind::DoWhile { body, condition } => {
                 self.write("do");
-                if self.call(self.clone().body(body)).await {
+                if self.body(body) {
                     self.write(" ");
                 } else {
                     self.line_end();
                     self.indent();
                 }
                 self.write("while (");
-                self.call(self.clone().expression(condition)).await;
+                self.expression(condition);
                 self.write(");");
             }
             StatementKind::For(statement) => {
                 self.write("for (");
-                self.call(self.clone().statement_content(&statement.init))
-                    .await;
+                self.statement_content(&statement.init);
                 if let Some(condition) = &statement.condition {
                     self.write(" ");
-                    self.call(self.clone().condition(condition)).await;
+                    self.condition(condition);
                 }
                 self.write(";");
                 if let Some(increment) = &statement.increment {
                     self.write(" ");
-                    self.call(self.clone().expression(increment)).await;
+                    self.expression(increment);
                 }
                 self.write(")");
-                self.call(self.clone().body(&statement.body)).await;
+                self.body(&statement.body);
             }
-            StatementKind::Jump(jump) => self.call(self.clone().jump(jump)).await,
+            StatementKind::Jump(jump) => self.jump(jump),
             StatementKind::Attributed {
                 attributes,
                 statement,
             } => {
-                self.call(self.clone().attribute_list(attributes)).await;
+                self.attribute_list(attributes);
                 self.write(" ");
-                self.call(self.clone().statement_content(statement)).await;
+                self.statement_content(statement);
             }
-        }
+        });
     }
 
-    async fn body(self, body: &'b Statement) -> bool {
+    fn body(&mut self, body: &Statement) -> bool {
         if let StatementKind::Compound(compound) = &body.kind {
             self.write(" ");
-            self.call(self.clone().compound(compound)).await;
+            self.compound(compound);
             return true;
         }
         self.line_end();
         self.deeper();
         self.indent();
-        self.call(self.clone().statement_content(body)).await;
+        self.statement_content(body);
         self.shallower();
         false
     }
 
-    async fn selection(
-        self,
-        condition: &'b Expression,
-        then_branch: &'b Statement,
-        else_branch: Option<&'b Statement>,
+    fn selection(
+        &mut self,
+        condition: &Expression,
+        then_branch: &Statement,
+        else_branch: Option<&Statement>,
     ) {
         self.write("if (");
-        self.call(self.clone().expression(condition)).await;
+        self.expression(condition);
         self.write(")");
-        let then_is_compound = self.call(self.clone().body(then_branch)).await;
+        let then_is_compound = self.body(then_branch);
         let Some(else_branch) = else_branch else {
             return;
         };
@@ -757,24 +657,24 @@ impl<'b> Cx<'b> {
         self.write("else");
         if matches!(else_branch.kind, StatementKind::Selection { .. }) {
             self.write(" ");
-            self.call(self.clone().statement_content(else_branch)).await;
+            self.statement_content(else_branch);
         } else {
-            self.call(self.clone().body(else_branch)).await;
+            self.body(else_branch);
         }
     }
 
-    async fn switch(self, selector: &'b Expression, statements: &'b [Statement]) {
+    fn switch(&mut self, selector: &Expression, statements: &[Statement]) {
         self.write("switch (");
-        self.call(self.clone().expression(selector)).await;
+        self.expression(selector);
         self.write(") {");
         self.line_end();
         self.deeper();
         for statement in statements {
             if matches!(statement.kind, StatementKind::CaseLabel(_)) {
-                self.call(self.clone().statement(statement)).await;
+                self.statement(statement);
             } else {
                 self.deeper();
-                self.call(self.clone().statement(statement)).await;
+                self.statement(statement);
                 self.shallower();
             }
         }
@@ -783,35 +683,33 @@ impl<'b> Cx<'b> {
         self.write("}");
     }
 
-    async fn case_label(self, label: &'b CaseLabel) {
+    fn case_label(&mut self, label: &CaseLabel) {
         match label {
             CaseLabel::Case(value) => {
                 self.write("case ");
-                self.call(self.clone().expression(value)).await;
+                self.expression(value);
                 self.write(":");
             }
             CaseLabel::Default => self.write("default:"),
         }
     }
 
-    async fn condition(self, condition: &'b Condition) {
+    fn condition(&mut self, condition: &Condition) {
         match condition {
             Condition::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await;
+                self.expression(expression);
             }
             Condition::Declaration(declaration) => {
-                self.call(self.clone().fully_specified_type(&declaration.kind.ty.node))
-                    .await;
+                self.fully_specified_type(&declaration.kind.ty.node);
                 self.write(" ");
                 self.write(&declaration.kind.name.node);
                 self.write(" = ");
-                self.call(self.clone().initializer(&declaration.kind.initializer.node))
-                    .await;
+                self.initializer(&declaration.kind.initializer.node);
             }
         }
     }
 
-    async fn jump(self, jump: &'b JumpStatement) {
+    fn jump(&mut self, jump: &JumpStatement) {
         match jump {
             JumpStatement::Continue => self.write("continue;"),
             JumpStatement::Break => self.write("break;"),
@@ -823,134 +721,103 @@ impl<'b> Cx<'b> {
             JumpStatement::Return(None) => self.write("return;"),
             JumpStatement::Return(Some(value)) => {
                 self.write("return ");
-                self.call(self.clone().expression(value)).await;
+                self.expression(value);
                 self.write(";");
             }
         }
     }
 
-    async fn expression(self, expression: &'b Expression) {
-        let mut pieces = Vec::from([Piece::Expression(expression)]);
-        while let Some(piece) = pieces.pop() {
-            match piece {
-                Piece::Text(text) => self.write(text),
-                Piece::String(value) => self.string(value),
-                Piece::Type(specifier) => self.call(self.clone().type_specifier(specifier)).await,
-                Piece::Expression(expression) => {
-                    let start = pieces.len();
-                    expression_pieces(expression, &mut pieces);
-                    if let Some(added) = pieces.get_mut(start..) {
-                        added.reverse();
+    fn expression(&mut self, expression: &Expression) {
+        recurse(|| match &expression.kind {
+            ExpressionKind::Variable(name) => self.write(name),
+            ExpressionKind::Number(literal) => self.write(&literal.text),
+            ExpressionKind::Bool(value) => self.write(if *value { "true" } else { "false" }),
+            ExpressionKind::String(value) => self.string(value),
+            ExpressionKind::Parenthesized(inner) => {
+                self.write("(");
+                self.expression(inner);
+                self.write(")");
+            }
+            ExpressionKind::Subscript { base, index } => {
+                self.expression(base);
+                self.write("[");
+                self.expression(index);
+                self.write("]");
+            }
+            ExpressionKind::FunctionCall(call) => {
+                match &call.function.node {
+                    FunctionIdentifier::Constructor(specifier)
+                    | FunctionIdentifier::Cast(specifier) => self.type_specifier(specifier),
+                    FunctionIdentifier::Function(name) => self.write(name),
+                    FunctionIdentifier::Expression(callee) => self.expression(callee),
+                    FunctionIdentifier::Method { object, name } => {
+                        self.expression(object);
+                        self.write(".");
+                        self.write(&name.node);
                     }
                 }
+                self.write("(");
+                self.separated(&call.arguments);
+                self.write(")");
             }
-        }
-    }
-}
-
-enum Piece<'a> {
-    Text(&'a str),
-    String(&'a str),
-    Type(&'a TypeSpecifier),
-    Expression(&'a Expression),
-}
-
-fn separated_pieces<'a>(items: &'a [Expression], pieces: &mut Vec<Piece<'a>>) {
-    for (index, item) in items.iter().enumerate() {
-        if index > 0 {
-            pieces.push(Piece::Text(", "));
-        }
-        pieces.push(Piece::Expression(item));
-    }
-}
-
-fn expression_pieces<'a>(expression: &'a Expression, pieces: &mut Vec<Piece<'a>>) {
-    match &expression.kind {
-        ExpressionKind::Variable(name) => pieces.push(Piece::Text(name)),
-        ExpressionKind::Number(literal) => pieces.push(Piece::Text(&literal.text)),
-        ExpressionKind::Bool(value) => {
-            pieces.push(Piece::Text(if *value { "true" } else { "false" }));
-        }
-        ExpressionKind::String(value) => pieces.push(Piece::String(value)),
-        ExpressionKind::Parenthesized(inner) => {
-            pieces.push(Piece::Text("("));
-            pieces.push(Piece::Expression(inner));
-            pieces.push(Piece::Text(")"));
-        }
-        ExpressionKind::Subscript { base, index } => {
-            pieces.push(Piece::Expression(base));
-            pieces.push(Piece::Text("["));
-            pieces.push(Piece::Expression(index));
-            pieces.push(Piece::Text("]"));
-        }
-        ExpressionKind::FunctionCall(call) => {
-            match &call.function.node {
-                FunctionIdentifier::Constructor(specifier)
-                | FunctionIdentifier::Cast(specifier) => {
-                    pieces.push(Piece::Type(specifier));
+            ExpressionKind::FieldSelection { base, field } => {
+                self.expression(base);
+                self.write(".");
+                self.write(&field.node);
+            }
+            ExpressionKind::Postfix { operand, operator } => {
+                self.expression(operand);
+                self.write(operator.symbol());
+            }
+            ExpressionKind::Unary { operator, operand } => {
+                self.write(operator.symbol());
+                if is_sign(*operator) && starts_with_sign(operand) {
+                    self.write(" ");
                 }
-                FunctionIdentifier::Function(name) => pieces.push(Piece::Text(name)),
-                FunctionIdentifier::Expression(callee) => pieces.push(Piece::Expression(callee)),
-                FunctionIdentifier::Method { object, name } => {
-                    pieces.push(Piece::Expression(object));
-                    pieces.push(Piece::Text("."));
-                    pieces.push(Piece::Text(&name.node));
-                }
+                self.expression(operand);
             }
-            pieces.push(Piece::Text("("));
-            separated_pieces(&call.arguments, pieces);
-            pieces.push(Piece::Text(")"));
-        }
-        ExpressionKind::FieldSelection { base, field } => {
-            pieces.push(Piece::Expression(base));
-            pieces.push(Piece::Text("."));
-            pieces.push(Piece::Text(&field.node));
-        }
-        ExpressionKind::Postfix { operand, operator } => {
-            pieces.push(Piece::Expression(operand));
-            pieces.push(Piece::Text(operator.symbol()));
-        }
-        ExpressionKind::Unary { operator, operand } => {
-            pieces.push(Piece::Text(operator.symbol()));
-            if is_sign(*operator) && starts_with_sign(operand) {
-                pieces.push(Piece::Text(" "));
+            ExpressionKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                self.expression(left);
+                self.write(" ");
+                self.write(operator.symbol());
+                self.write(" ");
+                self.expression(right);
             }
-            pieces.push(Piece::Expression(operand));
+            ExpressionKind::Conditional {
+                condition,
+                then_expression,
+                else_expression,
+            } => {
+                self.expression(condition);
+                self.write(" ? ");
+                self.expression(then_expression);
+                self.write(" : ");
+                self.expression(else_expression);
+            }
+            ExpressionKind::Assignment {
+                operator,
+                target,
+                value,
+            } => {
+                self.expression(target);
+                self.write(" ");
+                self.write(operator.symbol());
+                self.write(" ");
+                self.expression(value);
+            }
+            ExpressionKind::Sequence(expressions) => self.separated(expressions),
+        });
+    }
+
+    fn separated(&mut self, items: &[Expression]) {
+        for (index, item) in items.iter().enumerate() {
+            self.comma(index);
+            self.expression(item);
         }
-        ExpressionKind::Binary {
-            operator,
-            left,
-            right,
-        } => {
-            pieces.push(Piece::Expression(left));
-            pieces.push(Piece::Text(" "));
-            pieces.push(Piece::Text(operator.symbol()));
-            pieces.push(Piece::Text(" "));
-            pieces.push(Piece::Expression(right));
-        }
-        ExpressionKind::Conditional {
-            condition,
-            then_expression,
-            else_expression,
-        } => {
-            pieces.push(Piece::Expression(condition));
-            pieces.push(Piece::Text(" ? "));
-            pieces.push(Piece::Expression(then_expression));
-            pieces.push(Piece::Text(" : "));
-            pieces.push(Piece::Expression(else_expression));
-        }
-        ExpressionKind::Assignment {
-            operator,
-            target,
-            value,
-        } => {
-            pieces.push(Piece::Expression(target));
-            pieces.push(Piece::Text(" "));
-            pieces.push(Piece::Text(operator.symbol()));
-            pieces.push(Piece::Text(" "));
-            pieces.push(Piece::Expression(value));
-        }
-        ExpressionKind::Sequence(expressions) => separated_pieces(expressions, pieces),
     }
 }
 
@@ -975,14 +842,13 @@ mod tests {
     use super::Printer;
 
     #[test]
-    fn an_unfinished_print_is_an_error() {
-        assert_eq!(Printer::default().finish(None), Err(fmt::Error));
-        let failed = Printer::default();
+    fn a_failed_print_is_an_error() {
+        let mut failed = Printer::default();
         failed.write("text");
-        failed.failed.set(true);
-        assert_eq!(failed.finish(Some(())), Err(fmt::Error));
-        let printed = Printer::default();
+        failed.failed = true;
+        assert_eq!(failed.finish(), Err(fmt::Error));
+        let mut printed = Printer::default();
         printed.write("text");
-        assert_eq!(printed.finish(Some(())).as_deref(), Ok("text"));
+        assert_eq!(printed.finish().as_deref(), Ok("text"));
     }
 }

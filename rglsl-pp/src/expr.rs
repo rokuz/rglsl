@@ -1,9 +1,8 @@
-use alloc::vec::Vec;
-
 use crate::diagnostic::DiagnosticKind;
 use crate::expand::Expand;
 use crate::preprocessor::Preprocessor;
 use crate::token::{Kind, Token};
+use rglsl_types::stack::recurse;
 
 const MIN_PRECEDENCE: u8 = 0;
 const LOGICAL_OR: u8 = 2;
@@ -112,18 +111,12 @@ struct State {
     error: bool,
 }
 
-#[derive(Clone)]
-struct Level {
-    precedence: u8,
-    short_circuit: bool,
-    start: Token,
-}
-
 enum Operand {
     Value,
     Failed,
     Retry,
-    Nested(u8, Resume),
+    Parenthesized,
+    Unary(UnaryOp),
 }
 
 #[derive(Clone, Copy)]
@@ -145,78 +138,56 @@ impl UnaryOp {
     }
 }
 
-enum Resume {
-    Parenthesized,
-    Unary(UnaryOp),
-    Binary { left: i32, operation: Binary },
-}
-
-enum Step {
-    Operand,
-    AfterOperand,
-    Operators,
-    Return,
-}
-
-impl Level {
-    fn nested(&self, precedence: u8) -> Self {
-        Self {
-            precedence,
-            ..self.clone()
-        }
-    }
-}
-
 impl Preprocessor<'_> {
     pub(crate) fn evaluate(&mut self, token: Token) -> (i32, bool, Token) {
         let mut state = State {
             value: 0,
             error: false,
         };
-        let mut level = Level {
-            precedence: MIN_PRECEDENCE,
-            short_circuit: false,
-            start: token.clone(),
-        };
-        let mut token = token;
-        let mut suspended: Vec<(Level, Resume)> = Vec::new();
-        let mut step = Step::Operand;
-        loop {
-            step = match step {
-                Step::Operand => {
-                    level.start = token.clone();
-                    match self.operand(&mut token, &mut state) {
-                        Operand::Value => Step::AfterOperand,
-                        Operand::Failed => Step::Return,
-                        Operand::Retry => Step::Operand,
-                        Operand::Nested(precedence, resume) => {
-                            let nested = level.nested(precedence);
-                            suspended.push((core::mem::replace(&mut level, nested), resume));
-                            Step::Operand
+        let token = self.eval(token, MIN_PRECEDENCE, &mut state);
+        (state.value, state.error, token)
+    }
+
+    fn eval(&mut self, mut token: Token, precedence: u8, state: &mut State) -> Token {
+        recurse(|| {
+            let start = loop {
+                let start = token.clone();
+                match self.operand(&mut token, state) {
+                    Operand::Value => break start,
+                    Operand::Failed => return token,
+                    Operand::Retry => {}
+                    Operand::Parenthesized => {
+                        token = self.eval(token, MIN_PRECEDENCE, state);
+                        if !state.error {
+                            if !token.kind.is_op(")") {
+                                self.fail(DiagnosticKind::ExpectedCloseParen, &start, state);
+                                return token;
+                            }
+                            token = self.scan();
                         }
+                        break start;
                     }
-                }
-                Step::AfterOperand => {
-                    token = self.eval_to_token(token, &mut state);
-                    Step::Operators
-                }
-                Step::Operators => match self.operator(&mut token, &mut level, &state) {
-                    Some((precedence, resume)) => {
-                        let nested = level.nested(precedence);
-                        suspended.push((core::mem::replace(&mut level, nested), resume));
-                        Step::Operand
+                    Operand::Unary(unary) => {
+                        token = self.eval(token, UNARY, state);
+                        state.value = unary.apply(state.value);
+                        break start;
                     }
-                    None => Step::Return,
-                },
-                Step::Return => {
-                    let Some((outer, resume)) = suspended.pop() else {
-                        return (state.value, state.error, token);
-                    };
-                    level = outer;
-                    self.resume(resume, &mut token, &level, &mut state)
                 }
             };
-        }
+            token = self.eval_to_token(token, state);
+            while let Some((operation, operation_precedence)) =
+                self.operator(&mut token, precedence, state)
+            {
+                let left = state.value;
+                token = self.eval(token, operation_precedence, state);
+                if matches!(operation, Binary::Divide | Binary::Remainder) && state.value == 0 {
+                    self.report(DiagnosticKind::DivisionByZero, start.at);
+                    state.value = 1;
+                }
+                state.value = operation.apply(left, state.value);
+            }
+            token
+        })
     }
 
     fn fail(&mut self, kind: DiagnosticKind, token: &Token, state: &mut State) {
@@ -267,7 +238,7 @@ impl Preprocessor<'_> {
         }
         if token.kind.is_op("(") {
             *token = self.scan();
-            return Operand::Nested(MIN_PRECEDENCE, Resume::Parenthesized);
+            return Operand::Parenthesized;
         }
         let unary = match token.kind {
             Kind::Op("+") => Some(UnaryOp::Plus),
@@ -281,64 +252,24 @@ impl Preprocessor<'_> {
             return Operand::Failed;
         };
         *token = self.scan();
-        Operand::Nested(UNARY, Resume::Unary(unary))
+        Operand::Unary(unary)
     }
 
     fn operator(
         &mut self,
         token: &mut Token,
-        level: &mut Level,
+        precedence: u8,
         state: &State,
-    ) -> Option<(u8, Resume)> {
+    ) -> Option<(Binary, u8)> {
         if state.error || token.kind.is_op(")") || token.kind == Kind::Newline {
             return None;
         }
         let (operation, operation_precedence) = Binary::from_kind(token.kind)?;
-        if operation_precedence <= level.precedence {
+        if operation_precedence <= precedence {
             return None;
         }
-        let left = state.value;
-        if !level.short_circuit
-            && ((operation == Binary::LogicalOr && left == 1)
-                || (operation == Binary::LogicalAnd && left == 0))
-        {
-            level.short_circuit = true;
-        }
         *token = self.scan();
-        Some((operation_precedence, Resume::Binary { left, operation }))
-    }
-
-    fn resume(
-        &mut self,
-        resume: Resume,
-        token: &mut Token,
-        level: &Level,
-        state: &mut State,
-    ) -> Step {
-        match resume {
-            Resume::Parenthesized => {
-                if !state.error {
-                    if !token.kind.is_op(")") {
-                        self.fail(DiagnosticKind::ExpectedCloseParen, &level.start, state);
-                        return Step::Return;
-                    }
-                    *token = self.scan();
-                }
-                Step::AfterOperand
-            }
-            Resume::Unary(unary) => {
-                state.value = unary.apply(state.value);
-                Step::AfterOperand
-            }
-            Resume::Binary { left, operation } => {
-                if matches!(operation, Binary::Divide | Binary::Remainder) && state.value == 0 {
-                    self.report(DiagnosticKind::DivisionByZero, level.start.at);
-                    state.value = 1;
-                }
-                state.value = operation.apply(left, state.value);
-                Step::Operators
-            }
-        }
+        Some((operation, operation_precedence))
     }
 
     fn eval_to_token(&mut self, mut token: Token, state: &mut State) -> Token {

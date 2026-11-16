@@ -23,6 +23,9 @@ allow = [
     "Zlib",
 ]
 private = { ignore = true }
+exceptions = [
+    { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
+]
 
 [sources]
 allow-git = []
