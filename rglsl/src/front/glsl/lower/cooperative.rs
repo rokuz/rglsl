@@ -303,7 +303,7 @@ impl FunctionLowerer<'_, '_> {
         ty: &GlslType,
         at: Span,
     ) -> Result<()> {
-        let argument = self.lw.ir_type(ty, at)?;
+        let argument = self.lw.lowered_type(ty, at)?;
         let inner = self.lw.module.types[argument].inner.clone();
         let members =
             crate::proc::long_math_result_members(fun, &inner).ok_or_else(|| internal(at))?;
@@ -366,7 +366,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 let destination = argument(target)?;
                 let destination_ty = self.with(|this| this.info(destination))??.ty.clone();
-                let ty = self.with(|this| this.lw.ir_type(&destination_ty, at))??;
+                let ty = self.clone().ir_type(destination_ty.clone(), at).await?;
                 let place = {
                     let frame = self.clone().place(destination);
                     self.nest(frame).await
@@ -393,7 +393,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let matrix = argument(0)?;
                 if let CooperativeCall::Load { .. } = kind {
                     let matrix_ty = self.with(|this| this.info(matrix))??.ty.clone();
-                    let ty = self.with(|this| this.lw.ir_type(&matrix_ty, at))??;
+                    let ty = self.clone().ir_type(matrix_ty.clone(), at).await?;
                     let place = {
                         let frame = self.clone().place(matrix);
                         self.nest(frame).await
@@ -421,7 +421,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }?;
                 let vector = argument(0)?;
                 let vector_ty = self.with(|this| this.info(vector))??.ty.clone();
-                let ty = self.with(|this| this.lw.ir_type(&vector_ty, at))??;
+                let ty = self.clone().ir_type(vector_ty.clone(), at).await?;
                 let place = {
                     let frame = self.clone().place(vector);
                     self.nest(frame).await
@@ -597,7 +597,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }?;
                 let result = argument(0)?;
                 let result_ty = self.with(|this| this.info(result))??.ty.clone();
-                let ty = self.with(|this| this.lw.ir_type(&result_ty, at))??;
+                let ty = self.clone().ir_type(result_ty.clone(), at).await?;
                 let place = {
                     let frame = self.clone().place(result);
                     self.nest(frame).await
@@ -629,7 +629,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             CooperativeCall::SaturatedConvert => {
                 let target = argument(0)?;
                 let target_ty = self.with(|this| this.info(target))??.ty.clone();
-                let ty = self.with(|this| this.lw.ir_type(&target_ty, at))??;
+                let ty = self.clone().ir_type(target_ty.clone(), at).await?;
                 let place = {
                     let frame = self.clone().place(target);
                     self.nest(frame).await
@@ -692,7 +692,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     ) -> Result<Handle<Expression>> {
         let operation = match kind {
             TensorCall::CreateLayout | TensorCall::CreateView => {
-                let ty = self.with(|this| this.lw.ir_type(result, at))??;
+                let ty = self.clone().ir_type(result.clone(), at).await?;
                 return self.with(|this| this.add(Expression::TensorCreate { ty }, at))?;
             }
             TensorCall::LayoutSetBlockSize => TensorOperation::LayoutSetBlockSize,
@@ -880,7 +880,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Some(target) => self.with(|this| this.info(target))??.ty.clone(),
             None => result.clone(),
         };
-        let ty = self.with(|this| this.lw.ir_type(&result_ty, at))??;
+        let ty = self.clone().ir_type(result_ty.clone(), at).await?;
         let value = self.with(|this| {
             this.result_statement(
                 Expression::CooperativeMatrixResult { ty },

@@ -351,7 +351,7 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Handle<Expression>> {
         let name = function.name.as_str();
         if let Pure::PackedBitcast { extract } = pure {
-            let ty = self.lw.ir_type(call_type, at)?;
+            let ty = self.lw.lowered_type(call_type, at)?;
             let expr = values.first().copied().ok_or_else(|| internal(at))?;
             let offset = if extract {
                 let offset = values.get(1).copied().ok_or_else(|| internal(at))?;
@@ -478,7 +478,7 @@ impl FunctionLowerer<'_, '_> {
                     let r = self.add(Expression::AccessIndex { base: right, index }, at)?;
                     components.push(self.binary_op(BinaryOperator::Multiply, l, r, at)?);
                 }
-                let ty = self.lw.ir_type(result, at)?;
+                let ty = self.lw.plain_ir_type(result, at)?;
                 self.add(Expression::Compose { ty, components }, at)
             }
             Pure::Bits(operation @ (BitOperation::Extract | BitOperation::Insert)) => {
@@ -694,7 +694,7 @@ impl FunctionLowerer<'_, '_> {
         if source.base_scalar().is_none() {
             return Err(internal(at));
         }
-        let ty = self.lw.ir_type(result, at)?;
+        let ty = self.lw.lowered_type(result, at)?;
         self.add(
             Expression::Bitcast {
                 expr: value,
@@ -2058,7 +2058,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
         }
         let output_ty = self.with(|this| this.info(output))??.ty.clone();
-        let footprint = self.with(|this| this.lw.ir_type(&output_ty, at))??;
+        let footprint = self.clone().ir_type(output_ty.clone(), at).await?;
         let three = self.with(|this| {
             matches!(
                 this.lw.module.types[footprint].inner,

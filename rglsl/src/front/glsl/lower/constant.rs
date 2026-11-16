@@ -136,7 +136,24 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
+    pub(super) async fn constant_value(
+        self,
+        ty: GlslType,
+        values: &[Value],
+        span: Span,
+    ) -> Result<Handle<Expression>> {
+        if let Some(Shape::Literal(value)) =
+            self.with(|this| shape(&ty, values, &this.analysis.types))?
+        {
+            return self.with(|this| this.global_literal(value, span));
+        }
+        let frame = self
+            .clone()
+            .global_constant(ty, ConstantValues::from(values), span);
+        self.nest(frame).await
+    }
+
     pub(super) async fn global_constant(
         self,
         ty: GlslType,

@@ -46,6 +46,24 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     jump_targets: Vec<JumpTarget>,
 }
 
+pub(super) struct Scratch {
+    pub(super) expressions: Arena<Expression>,
+    pub(super) locals: Arena<LocalVariable>,
+    tracker: ExpressionKindTracker,
+    emitter: Emitter,
+    pub(super) block: Block,
+    variables: FastHashMap<SymbolId, Local>,
+    unflagged: Vec<SymbolId>,
+    purity: RefCell<FastHashMap<rglsl_ast::ast::NodeId, bool>>,
+    specializing: bool,
+    non_uniform: crate::NonUniformExpressions,
+    precision: crate::PrecisionExpressions,
+    stepped: Option<Handle<Expression>>,
+    physical_bases: BTreeMap<Handle<Expression>, Handle<crate::Type>>,
+    argument_types: Vec<Handle<crate::Type>>,
+    jump_targets: Vec<JumpTarget>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct JumpTarget {
     pub(super) breaks: usize,
@@ -105,13 +123,16 @@ impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
 }
 
 #[derive(Clone)]
-pub(super) struct LowererCx<'b, 'a> {
-    lowerer: &'b RefCell<&'b mut Lowerer<'a>>,
+pub(super) struct LowererCx<'b, 'l, 'a> {
+    lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
     stack: Stack<'b>,
 }
 
-impl<'b, 'a> LowererCx<'b, 'a> {
-    pub(super) const fn new(lowerer: &'b RefCell<&'b mut Lowerer<'a>>, stack: Stack<'b>) -> Self {
+impl<'b, 'l, 'a> LowererCx<'b, 'l, 'a> {
+    pub(super) const fn new(
+        lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
+        stack: Stack<'b>,
+    ) -> Self {
         Self { lowerer, stack }
     }
 
@@ -120,50 +141,76 @@ impl<'b, 'a> LowererCx<'b, 'a> {
             .lowerer
             .try_borrow_mut()
             .map_err(|_| internal(Span::UNDEFINED))?;
-        Ok(work(&mut lowerer))
-    }
-
-    pub(super) fn try_with<T>(
-        &self,
-        work: impl FnOnce(&mut Lowerer<'a>) -> Result<T>,
-    ) -> Result<T> {
-        self.with(work)?
+        Ok(work(lowerer.lw))
     }
 
     pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
         self.stack.call(frame)
     }
+
+    pub(super) fn function(&self) -> Cx<'b, 'l, 'a> {
+        Cx::new(self.lowerer, self.stack.clone())
+    }
 }
 
-macro_rules! lowerer_on_heap {
-    ($lowerer:expr, |$cx:ident| $frame:expr) => {{
-        let lowerer = $lowerer;
-        let base = lowerer.stack_base;
-        let cell = core::cell::RefCell::new(lowerer);
-        rglsl_types::stack::run_from(base, |stack| {
-            let $cx = super::function::LowererCx::new(&cell, stack);
-            $frame
-        })
-        .unwrap_or_else(|| Err(super::internal(crate::Span::UNDEFINED)))
-    }};
-}
+impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
+    pub(super) fn lowerer(&self) -> LowererCx<'b, 'l, 'a> {
+        LowererCx::new(self.lowerer, self.stack.clone())
+    }
 
-pub(super) use lowerer_on_heap;
+    pub(super) async fn prepare(self, ty: &GlslType, at: Span) -> Result<()> {
+        if self.with(|this| this.lw.lowerable(ty))? {
+            return Ok(());
+        }
+        self.ir_type(ty.clone(), at).await.map(|_| ())
+    }
+
+    pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        let frame = self.lowerer().global_ref(symbol, at);
+        self.nest(frame).await
+    }
+
+    pub(super) async fn ir_type(self, ty: GlslType, at: Span) -> Result<Handle<crate::Type>> {
+        if let Some(result) = self.with(|this| this.lw.plain_type(&ty, false, false, at))? {
+            return result;
+        }
+        let frame = self.lowerer().ir_type(ty, at);
+        self.nest(frame).await
+    }
+}
 
 macro_rules! on_heap {
     ($lowerer:expr, |$cx:ident| $frame:expr) => {{
-        let lowerer = $lowerer;
+        let lowerer: &mut super::function::FunctionLowerer<'_, '_> = $lowerer;
         let base = lowerer.lw.stack_base;
-        let cell = core::cell::RefCell::new(lowerer);
-        rglsl_types::stack::run_from(base, |stack| {
-            let $cx = super::function::Cx::new(&cell, stack);
-            $frame
-        })
-        .unwrap_or_else(|| Err(super::internal(crate::Span::UNDEFINED)))
+        let walking = alloc::rc::Rc::clone(&lowerer.lw.walking);
+        if walking.replace(true) {
+            Err(super::internal(crate::Span::UNDEFINED))
+        } else {
+            let cell = core::cell::RefCell::new(lowerer);
+            let result = rglsl_types::stack::run_from(base, |stack| {
+                let $cx = super::function::Cx::new(&cell, stack);
+                $frame
+            });
+            walking.set(false);
+            result.unwrap_or_else(|| Err(super::internal(crate::Span::UNDEFINED)))
+        }
     }};
 }
 
 pub(super) use on_heap;
+
+macro_rules! lowerer_on_heap {
+    ($lowerer:expr, |$cx:ident| $frame:expr) => {{
+        let mut holder = super::function::FunctionLowerer::new($lowerer);
+        super::function::on_heap!(&mut holder, |function| {
+            let $cx = function.lowerer();
+            $frame
+        })
+    }};
+}
+
+pub(super) use lowerer_on_heap;
 
 pub(super) fn ends_in_jump(block: &Block) -> bool {
     block.last().is_some_and(Statement::ends_block)
@@ -221,6 +268,55 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             argument_types: Vec::new(),
             jump_targets: Vec::new(),
         }
+    }
+
+    pub(super) fn enter_scratch(&mut self) -> Scratch {
+        let expressions = Arena::new();
+        let mut emitter = Emitter::default();
+        emitter.start(&expressions);
+        let mut scratch = Scratch {
+            expressions,
+            locals: Arena::new(),
+            tracker: ExpressionKindTracker::new(),
+            emitter,
+            block: Block::new(),
+            variables: FastHashMap::default(),
+            unflagged: Vec::with_capacity(8),
+            purity: RefCell::new(FastHashMap::default()),
+            specializing: true,
+            non_uniform: crate::NonUniformExpressions::default(),
+            precision: crate::PrecisionExpressions::default(),
+            stepped: None,
+            physical_bases: BTreeMap::new(),
+            argument_types: Vec::new(),
+            jump_targets: Vec::new(),
+        };
+        self.swap_scratch(&mut scratch);
+        scratch
+    }
+
+    pub(super) fn leave_scratch(&mut self, mut outer: Scratch) -> Scratch {
+        self.flush();
+        self.swap_scratch(&mut outer);
+        outer
+    }
+
+    const fn swap_scratch(&mut self, scratch: &mut Scratch) {
+        core::mem::swap(&mut self.expressions, &mut scratch.expressions);
+        core::mem::swap(&mut self.locals, &mut scratch.locals);
+        core::mem::swap(&mut self.tracker, &mut scratch.tracker);
+        core::mem::swap(&mut self.emitter, &mut scratch.emitter);
+        core::mem::swap(&mut self.block, &mut scratch.block);
+        core::mem::swap(&mut self.variables, &mut scratch.variables);
+        core::mem::swap(&mut self.unflagged, &mut scratch.unflagged);
+        core::mem::swap(&mut self.purity, &mut scratch.purity);
+        core::mem::swap(&mut self.specializing, &mut scratch.specializing);
+        core::mem::swap(&mut self.non_uniform, &mut scratch.non_uniform);
+        core::mem::swap(&mut self.precision, &mut scratch.precision);
+        core::mem::swap(&mut self.stepped, &mut scratch.stepped);
+        core::mem::swap(&mut self.physical_bases, &mut scratch.physical_bases);
+        core::mem::swap(&mut self.argument_types, &mut scratch.argument_types);
+        core::mem::swap(&mut self.jump_targets, &mut scratch.jump_targets);
     }
 
     pub(super) fn enter_jump_target(&mut self, is_loop: bool) {
@@ -417,7 +513,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<LocalVariable>> {
-        let ir = self.lw.ir_type(ty, span)?;
+        let ir = self.lw.lowered_type(ty, span)?;
         Ok(self.locals.append(
             LocalVariable {
                 name,

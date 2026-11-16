@@ -241,7 +241,7 @@ impl FunctionLowerer<'_, '_> {
             (TypeKind::Vector { size, .. }, _) => {
                 let mut components = self.flatten(values, target, at)?;
                 components.truncate(usize::from(size));
-                let ir = self.lw.ir_type(ty, at)?;
+                let ir = self.lw.plain_ir_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
             (TypeKind::Matrix { columns, rows, .. }, &[(value, ref from)]) if from.is_scalar() => {
@@ -249,7 +249,7 @@ impl FunctionLowerer<'_, '_> {
                 let diagonal = self.scalar_to(value, source, target, at)?;
                 let zero = Literal::zero(scalar(target)).ok_or_else(|| internal(at))?;
                 let zero = self.literal(zero, at)?;
-                let column_ty = self.lw.ir_type(&GlslType::vector(target, rows), at)?;
+                let column_ty = self.lw.plain_ir_type(&GlslType::vector(target, rows), at)?;
                 let mut components = Vec::with_capacity(usize::from(columns));
                 for column in 0..columns {
                     let parts = (0..rows)
@@ -263,7 +263,7 @@ impl FunctionLowerer<'_, '_> {
                         at,
                     )?);
                 }
-                let ir = self.lw.ir_type(ty, at)?;
+                let ir = self.lw.plain_ir_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
             (TypeKind::Matrix { columns, rows, .. }, &[(value, ref from)]) if from.is_matrix() => {
@@ -279,7 +279,7 @@ impl FunctionLowerer<'_, '_> {
                 let one = Literal::one(scalar(target)).ok_or_else(|| internal(at))?;
                 let zero = self.literal(zero, at)?;
                 let one = self.literal(one, at)?;
-                let column_ty = self.lw.ir_type(&GlslType::vector(target, rows), at)?;
+                let column_ty = self.lw.plain_ir_type(&GlslType::vector(target, rows), at)?;
                 let mut components = Vec::with_capacity(usize::from(columns));
                 for column in 0..columns {
                     let source_column = if column < source_columns {
@@ -307,12 +307,12 @@ impl FunctionLowerer<'_, '_> {
                         at,
                     )?);
                 }
-                let ir = self.lw.ir_type(ty, at)?;
+                let ir = self.lw.plain_ir_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
             (TypeKind::Matrix { columns, rows, .. }, _) => {
                 let flattened = self.flatten(values, target, at)?;
-                let column_ty = self.lw.ir_type(&GlslType::vector(target, rows), at)?;
+                let column_ty = self.lw.plain_ir_type(&GlslType::vector(target, rows), at)?;
                 let mut components = Vec::with_capacity(usize::from(columns));
                 for chunk in flattened
                     .chunks(usize::from(rows))
@@ -326,7 +326,7 @@ impl FunctionLowerer<'_, '_> {
                         at,
                     )?);
                 }
-                let ir = self.lw.ir_type(ty, at)?;
+                let ir = self.lw.plain_ir_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
             _ => Err(internal(at)),
@@ -349,7 +349,7 @@ impl FunctionLowerer<'_, '_> {
             [(value, ref from)] if paired_vectors(from, ty) => {
                 let source = from.with_scalar(target);
                 let converted = self.convert(value, from, &source, at)?;
-                let ty = self.lw.ir_type(ty, at)?;
+                let ty = self.lw.lowered_type(ty, at)?;
                 self.add(
                     Expression::Bitcast {
                         expr: converted,
@@ -361,7 +361,7 @@ impl FunctionLowerer<'_, '_> {
             }
             [(value, ref from)] if from.same_shape(ty) => self.convert(value, from, ty, at),
             [(expr, ref from)] if from.as_cooperative_matrix().is_some() => {
-                let ty = self.lw.ir_type(ty, at)?;
+                let ty = self.lw.lowered_type(ty, at)?;
                 self.add(
                     Expression::Convert {
                         expr,
@@ -380,7 +380,7 @@ impl FunctionLowerer<'_, '_> {
                     .or(ty.sized_vector_length().and_then(ArraySize::nominal))
                     .ok_or_else(|| internal(at))?;
                 components.truncate(usize::try_from(count).map_err(|_| internal(at))?);
-                let ir = self.lw.ir_type(ty, at)?;
+                let ir = self.lw.lowered_type(ty, at)?;
                 self.add(Expression::Compose { ty: ir, components }, at)
             }
         }
@@ -626,13 +626,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             return self.with(|this| this.literal(Literal::I32(length), at))?;
         }
         if ty.as_cooperative_matrix().is_some() {
-            let matrix = self.with(|this| this.lw.ir_type(&ty, at))??;
+            let matrix = self.clone().ir_type(ty.clone(), at).await?;
             let length = self
                 .with(|this| this.add(Expression::CooperativeMatrixLength { ty: matrix }, at))??;
             return self.with(|this| this.as_kind(length, crate::Scalar::I32, at))?;
         }
         if let Some(ArraySize::Specialized(size)) = ty.outer_size().or(ty.sized_vector_length()) {
-            let handle = self.with(|this| this.lw.specialized_size(size, at))??;
+            let frame = self.lowerer().specialized_size(size, at);
+            let handle = self.nest(frame).await?;
             let value = self.with(|this| this.add(Expression::Override(handle), at))??;
             let size_ty = self.with(|this| this.lw.module.overrides[handle].ty)?;
             return match self.with(|this| this.lw.module.types[size_ty].inner.clone())? {
@@ -897,7 +898,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }?);
         }
-        let ir = self.with(|this| this.lw.ir_type(ty, at))??;
+        let ir = self.clone().ir_type(ty.clone(), at).await?;
         self.with(|this| this.add(Expression::Compose { ty: ir, components }, at))?
     }
 }

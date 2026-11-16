@@ -1212,6 +1212,7 @@ pub(super) struct Lowerer<'a> {
     pub(super) work_group_size_placeholders: [Option<Handle<crate::Override>>; 3],
     pub(super) work_group_size: Option<Handle<crate::Override>>,
     pub(super) heap_structs: BTreeMap<StructId, Handle<Type>>,
+    pub(super) spirv_types: BTreeMap<rglsl_sema::spirv::SpirvTypeId, Handle<Type>>,
     pub(super) heap_runtime_offsets:
         BTreeMap<Handle<GlobalVariable>, &'a rglsl_ast::ast::Expression>,
     pub(super) ray_data: BTreeMap<(usize, u32), Handle<GlobalVariable>>,
@@ -1232,6 +1233,7 @@ pub(super) struct Lowerer<'a> {
     pub(super) debug: Option<DebugCollector>,
     pub(super) flat_expressions: bool,
     pub(super) stack_base: Base,
+    pub(super) walking: alloc::rc::Rc<core::cell::Cell<bool>>,
 }
 
 #[cfg(test)]
@@ -1263,6 +1265,7 @@ impl<'a> Lowerer<'a> {
             source_map,
             flat_expressions: flat_expressions(),
             stack_base: Base::here(),
+            walking: alloc::rc::Rc::default(),
             unit,
             analysis,
             options,
@@ -1345,6 +1348,7 @@ impl<'a> Lowerer<'a> {
             work_group_size_placeholders: [None; 3],
             work_group_size: None,
             heap_structs: BTreeMap::new(),
+            spirv_types: BTreeMap::new(),
             heap_runtime_offsets: BTreeMap::new(),
             ray_data: BTreeMap::new(),
             incoming_ray_payload: None,

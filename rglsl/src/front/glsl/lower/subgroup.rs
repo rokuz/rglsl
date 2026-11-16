@@ -185,7 +185,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     let frame = self.clone().collective_operation(collective, arguments, at);
                     self.nest(frame).await
                 }?;
-                let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
+                let ty = self.clone().ir_type(ty.clone(), at).await?;
                 let result = self.with(|this| {
                     this.push_with_result(
                         Expression::SubgroupOperationResult { ty },
@@ -255,7 +255,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         }
                     }
                 };
-                let ty = self.with(|this| this.lw.ir_type(&ty, at))??;
+                let ty = self.clone().ir_type(ty.clone(), at).await?;
                 let result = self.with(|this| {
                     this.push_with_result(
                         Expression::SubgroupOperationResult { ty },
@@ -462,7 +462,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let ty = match result_type {
             ResultType::Fixed(inner) => self.with(|this| this.lw.insert_type(inner))?,
-            ResultType::Argument(ty) => self.with(|this| this.lw.ir_type(&ty, at))??,
+            ResultType::Argument(ty) => self.clone().ir_type(ty.clone(), at).await?,
         };
         let result = self.with(|this| {
             this.push_with_result(

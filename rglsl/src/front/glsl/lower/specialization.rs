@@ -106,10 +106,10 @@ fn remap(
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Specialized<'e> {
     Expression(&'e AstExpression),
-    Initializer(&'e Spanned<Initializer>, &'e GlslType),
+    Initializer(&'e Spanned<Initializer>, GlslType),
 }
 
 fn not_specializable(span: Span) -> super::Error {
@@ -155,9 +155,11 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Handle<Override>> {
         match initializer.node {
             Initializer::Expression(ref expression) => self.specialization(expression, name, span),
-            Initializer::List(_) => {
-                self.specialization_of(Specialized::Initializer(initializer, ty), name, span)
-            }
+            Initializer::List(_) => self.specialization_of(
+                Specialized::Initializer(initializer, ty.clone()),
+                name,
+                span,
+            ),
         }
     }
 
@@ -332,7 +334,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn specialization(
         self,
         expression: &'b AstExpression,
@@ -347,30 +349,52 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         }
     }
 
-    async fn specialization_of(
+    pub(super) async fn specialized_initializer(
         self,
-        source: Specialized<'_>,
+        initializer: &'b Spanned<Initializer>,
+        ty: GlslType,
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
-        let (value, ty, expressions, statements, has_locals) = self.try_with(|this| {
-            let mut scratch = FunctionLowerer::new(this);
-            scratch.specializing = true;
-            let (value, ty) = match source {
-                Specialized::Expression(expression) => scratch.typed(expression)?,
-                Specialized::Initializer(initializer, ty) => {
-                    (scratch.initializer(initializer, ty)?, ty.clone())
-                }
-            };
-            scratch.flush();
-            Ok((
-                value,
-                ty,
-                core::mem::take(&mut scratch.expressions),
-                core::mem::take(&mut scratch.block),
-                !scratch.locals.is_empty(),
-            ))
-        })?;
+        match initializer.node {
+            Initializer::Expression(ref expression) => {
+                let frame = self.clone().specialization(expression, name, span);
+                self.nest(frame).await
+            }
+            Initializer::List(_) => {
+                let frame = self.clone().specialization_of(
+                    Specialized::Initializer(initializer, ty),
+                    name,
+                    span,
+                );
+                self.nest(frame).await
+            }
+        }
+    }
+
+    async fn specialization_of(
+        self,
+        source: Specialized<'b>,
+        name: Option<String>,
+        span: Span,
+    ) -> Result<Handle<Override>> {
+        let function = self.function();
+        let outer = function.with(FunctionLowerer::enter_scratch)?;
+        let typed = match source {
+            Specialized::Expression(expression) => function.clone().typed(expression).await,
+            Specialized::Initializer(initializer, ty) => function
+                .clone()
+                .initializer(initializer, ty.clone())
+                .await
+                .map(|value| (value, ty)),
+        };
+        let scratch = function.with(|this| this.leave_scratch(outer))?;
+        let (value, ty) = typed?;
+        let (expressions, statements, has_locals) = (
+            scratch.expressions,
+            scratch.block,
+            !scratch.locals.is_empty(),
+        );
         if has_locals
             || statements
                 .iter()

@@ -87,11 +87,15 @@ impl Lowerer<'_> {
         ))
     }
 
-    pub(super) fn reference_type(&mut self, block: BlockId, span: Span) -> Result<Handle<Type>> {
-        super::function::lowerer_on_heap!(self, |cx| cx.reference_type(block, span))
+    pub(super) fn lowered_reference(&self, block: BlockId, span: Span) -> Result<Handle<Type>> {
+        let (_, qualifiers) = self.reference_space(block, span)?;
+        self.references
+            .get(&(block, qualifiers))
+            .copied()
+            .ok_or_else(|| internal(span))
     }
 
-    fn reference_space(
+    pub(super) fn reference_space(
         &self,
         block: BlockId,
         span: Span,
@@ -124,7 +128,7 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn reference_type(self, block: BlockId, span: Span) -> Result<Handle<Type>> {
         let (space, qualifiers) = self.with(|this| this.reference_space(block, span))??;
         if let Some(handle) =
@@ -358,7 +362,7 @@ impl FunctionLowerer<'_, '_> {
         };
         let mut pointer = self.add(Expression::AccessIndex { base: value, index }, at)?;
         let boolean = self.lw.block_bools.contains(&(block, index));
-        let reference = self.lw.reference_type(block, at)?;
+        let reference = self.lw.lowered_reference(block, at)?;
         if let TypeInner::Pointer { base: pointee, .. } = self.lw.module.types[reference].inner {
             self.physical_bases.insert(value, pointee);
             if let Some(requalified) = self.member_requalification(block, pointee, index, at)? {
@@ -410,7 +414,7 @@ impl FunctionLowerer<'_, '_> {
             .get(usize::try_from(index).map_err(|_| internal(at))?)
             .map(|member| member.ty)
             .ok_or_else(|| internal(at))?;
-        let reference = self.lw.reference_type(block, at)?;
+        let reference = self.lw.lowered_reference(block, at)?;
         let TypeInner::Pointer {
             space:
                 AddressSpace::PhysicalStorage {
@@ -509,7 +513,7 @@ impl FunctionLowerer<'_, '_> {
     ) -> Result<Handle<Expression>> {
         let block = reference.1.as_reference().ok_or_else(|| internal(at))?;
         let size = self.lw.reference_element_size(block, at)?;
-        let ty = self.lw.reference_type(block, at)?;
+        let ty = self.lw.lowered_reference(block, at)?;
         let address = self.add(
             Expression::PhysicalAddress {
                 pointer: reference.0,
@@ -674,7 +678,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             self.nest(frame).await
         }?;
         if let Some(block) = ty.as_reference() {
-            let target = self.with(|this| this.lw.reference_type(block, at))??;
+            let frame = self.lowerer().reference_type(block, at);
+            let target = self.nest(frame).await?;
             return self
                 .with(|this| this.add(Expression::PhysicalPointer { value, ty: target }, at))?;
         }

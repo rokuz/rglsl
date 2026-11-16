@@ -2457,7 +2457,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
         if let Some(found) = self.with(|this| this.globals.get(&symbol).copied())? {
             return Ok(found);

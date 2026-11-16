@@ -63,7 +63,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 }
                 let data = argument(2)?;
                 let data_ty = self.with(|this| this.info(data))??.ty.clone();
-                let ty = self.with(|this| this.lw.ir_type(&data_ty, at))??;
+                let ty = self.clone().ir_type(data_ty.clone(), at).await?;
                 let place = {
                     let frame = self.clone().place(data);
                     self.nest(frame).await

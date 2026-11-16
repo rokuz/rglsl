@@ -334,6 +334,40 @@ fn deep_expressions_compile_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn deep_specialization_compiles_on_a_small_stack(depth: usize) -> TestResult {
+    let constant = "layout(constant_id = 0) const int S = 2;";
+    compiles_at(depth, "lengths of specialization-sized arrays", |count| {
+        shader(
+            constant,
+            &format!(
+                "int x[{}S{}]; b = x.length();",
+                "int[".repeat(count),
+                "](0, 0).length()".repeat(count)
+            ),
+        )
+    })?;
+    compiles_at(depth, "specialization-constant chains", |count| {
+        shader(
+            &chain_of(constant, count, |level| {
+                let previous = if level == 1 {
+                    String::from("S")
+                } else {
+                    format!("T{}", level - 1)
+                };
+                format!("const int T{level} = {previous} + 1;\n")
+            }),
+            &format!("int x[T{}]; b = x.length();", count - 1),
+        )
+    })?;
+    compiles_at(depth, "specialization-sized dimensions", |count| {
+        shader(
+            "layout(constant_id = 0) const int S = 1;",
+            &format!("int x{}; b = x.length();", "[S]".repeat(count)),
+        )
+    })?;
+    Ok(())
+}
+
 fn deep_statements_compile_on_a_small_stack(depth: usize) -> TestResult {
     let cases = [
         ("blocks", "{ ", " }"),
@@ -1163,6 +1197,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
             depth,
         ),
         (deep_statements_compile_on_a_small_stack, depth),
+        (deep_specialization_compiles_on_a_small_stack, depth),
         (deep_types_compile_on_a_small_stack, depth),
         (deep_initializers_compile_on_a_small_stack, depth),
         (array_initializer_lists, depth),

@@ -535,7 +535,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn per_vertex_array(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
         let analysis = self.with(|this| this.analysis)?;
         let record = self.with(|this| this.symbol(symbol).ok_or_else(|| internal(at)))??;
