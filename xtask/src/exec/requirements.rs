@@ -360,16 +360,17 @@ pub fn capability(capability: Capability) -> Requirement {
             E("VK_EXT_conservative_rasterization"),
             F("ConservativeRasterizationPropertiesEXT.fullyCoveredFragmentShaderInputVariable"),
         ],
-        C::WorkgroupMemoryExplicitLayoutKHR => {
-            needs![E("VK_KHR_workgroup_memory_explicit_layout")]
-        }
+        C::WorkgroupMemoryExplicitLayoutKHR => needs![
+            E("VK_KHR_workgroup_memory_explicit_layout"),
+            F("WorkgroupMemoryExplicitLayoutFeaturesKHR.workgroupMemoryExplicitLayout"),
+        ],
         C::WorkgroupMemoryExplicitLayout8BitAccessKHR => needs![
             E("VK_KHR_workgroup_memory_explicit_layout"),
-            F("Storage8BitFeatures.storageBuffer8BitAccess"),
+            F("WorkgroupMemoryExplicitLayoutFeaturesKHR.workgroupMemoryExplicitLayout8BitAccess"),
         ],
         C::WorkgroupMemoryExplicitLayout16BitAccessKHR => needs![
             E("VK_KHR_workgroup_memory_explicit_layout"),
-            F("Storage16BitFeatures.storageBuffer16BitAccess"),
+            F("WorkgroupMemoryExplicitLayoutFeaturesKHR.workgroupMemoryExplicitLayout16BitAccess"),
         ],
         _ => Requirement::Unsupported("a capability the harness does not enable"),
     }
@@ -625,6 +626,11 @@ pub const EARLY_AND_LATE_FRAGMENT_TESTS: [Need; 1] = [F(
 
 pub const TERMINATE_INVOCATION: [Need; 1] = [E("VK_KHR_shader_terminate_invocation")];
 
+pub const UNIFORM_BUFFER_UNSIZED_ARRAY: [Need; 2] = [
+    E("VK_EXT_shader_uniform_buffer_unsized_array"),
+    F("ShaderUniformBufferUnsizedArrayFeaturesEXT.shaderUniformBufferUnsizedArray"),
+];
+
 pub fn extension_needs(name: &str) -> &'static [Need] {
     match name {
         "SPV_KHR_terminate_invocation" => &TERMINATE_INVOCATION,
@@ -704,6 +710,7 @@ pub fn probes() -> Vec<Need> {
     needs.extend(SUBGROUP_UNIFORM_CONTROL_FLOW);
     needs.extend(EARLY_AND_LATE_FRAGMENT_TESTS);
     needs.extend(TERMINATE_INVOCATION);
+    needs.extend(UNIFORM_BUFFER_UNSIZED_ARRAY);
     needs.extend([
         E("VK_AMD_gpu_shader_half_float"),
         E("VK_AMD_gpu_shader_int16"),
@@ -833,8 +840,23 @@ mod tests {
         assert!(extension("SPV_KHR_workgroup_memory_explicit_layout"));
         assert_eq!(
             capability(Capability::WorkgroupMemoryExplicitLayoutKHR),
-            Requirement::Needs(&[Need::Extension("VK_KHR_workgroup_memory_explicit_layout")])
+            Requirement::Needs(&[
+                E("VK_KHR_workgroup_memory_explicit_layout"),
+                F("WorkgroupMemoryExplicitLayoutFeaturesKHR.workgroupMemoryExplicitLayout"),
+            ])
         );
+        assert_eq!(
+            capability(Capability::WorkgroupMemoryExplicitLayout16BitAccessKHR),
+            Requirement::Needs(&[
+                E("VK_KHR_workgroup_memory_explicit_layout"),
+                F(
+                    "WorkgroupMemoryExplicitLayoutFeaturesKHR.workgroupMemoryExplicitLayout16BitAccess"
+                ),
+            ])
+        );
+        assert!(probes().contains(&F(
+            "ShaderUniformBufferUnsizedArrayFeaturesEXT.shaderUniformBufferUnsizedArray"
+        )));
         assert!(probes().contains(&E("VK_KHR_workgroup_memory_explicit_layout")));
         assert!(probes().contains(&E("VK_KHR_shader_terminate_invocation")));
     }
