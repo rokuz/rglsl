@@ -2,8 +2,8 @@ use alloc::{string::String, vec, vec::Vec};
 
 use rglsl_ast::ast::{Expression as AstExpression, ExpressionKind, Initializer, Spanned};
 use rglsl_sema::types::{SpecializedSize, Type as GlslType};
+use rglsl_types::stack::recurse;
 
-use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{Arena, Expression, Handle, Literal, Override, Scalar, Span, Statement, TypeInner};
 
@@ -125,7 +125,7 @@ impl<'a> Lowerer<'a> {
         size: SpecializedSize,
         span: Span,
     ) -> Result<Handle<Override>> {
-        super::function::lowerer_on_heap!(self, |cx| cx.specialized_size(size, span))
+        super::function::FunctionLowerer::new(self).specialized_size(size, span)
     }
 
     fn specialization_of(
@@ -134,7 +134,7 @@ impl<'a> Lowerer<'a> {
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
-        super::function::lowerer_on_heap!(self, |cx| cx.specialization_of(source, name, span))
+        super::function::FunctionLowerer::new(self).specialization_of(source, name, span)
     }
 
     pub(super) fn specialization(
@@ -143,7 +143,7 @@ impl<'a> Lowerer<'a> {
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
-        super::function::lowerer_on_heap!(self, |cx| cx.specialization(expression, name, span))
+        super::function::FunctionLowerer::new(self).specialization(expression, name, span)
     }
 
     pub(super) fn specialized_initializer(
@@ -334,61 +334,47 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
-    pub(super) async fn specialization(
-        self,
-        expression: &'b AstExpression,
+impl super::function::FunctionLowerer<'_, '_> {
+    pub(super) fn specialization(
+        &mut self,
+        expression: &AstExpression,
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
-        {
-            let frame =
-                self.clone()
-                    .specialization_of(Specialized::Expression(expression), name, span);
-            self.nest(frame).await
-        }
+        recurse(|| self.specialization_of(Specialized::Expression(expression), name, span))
     }
 
-    pub(super) async fn specialized_initializer(
-        self,
-        initializer: &'b Spanned<Initializer>,
+    pub(super) fn specialized_initializer(
+        &mut self,
+        initializer: &Spanned<Initializer>,
         ty: GlslType,
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
         match initializer.node {
             Initializer::Expression(ref expression) => {
-                let frame = self.clone().specialization(expression, name, span);
-                self.nest(frame).await
+                recurse(|| self.specialization(expression, name, span))
             }
-            Initializer::List(_) => {
-                let frame = self.clone().specialization_of(
-                    Specialized::Initializer(initializer, ty),
-                    name,
-                    span,
-                );
-                self.nest(frame).await
-            }
+            Initializer::List(_) => recurse(|| {
+                self.specialization_of(Specialized::Initializer(initializer, ty), name, span)
+            }),
         }
     }
 
-    async fn specialization_of(
-        self,
-        source: Specialized<'b>,
+    fn specialization_of(
+        &mut self,
+        source: Specialized<'_>,
         name: Option<String>,
         span: Span,
     ) -> Result<Handle<Override>> {
-        let function = self.function();
-        let outer = function.with(FunctionLowerer::enter_scratch)?;
+        let outer = self.enter_scratch();
         let typed = match source {
-            Specialized::Expression(expression) => function.clone().typed(expression).await,
-            Specialized::Initializer(initializer, ty) => function
-                .clone()
-                .initializer(initializer, ty.clone())
-                .await
-                .map(|value| (value, ty)),
+            Specialized::Expression(expression) => self.typed(expression),
+            Specialized::Initializer(initializer, ty) => {
+                self.initializer(initializer, &ty).map(|value| (value, ty))
+            }
         };
-        let scratch = function.with(|this| this.leave_scratch(outer))?;
+        let scratch = self.leave_scratch(outer);
         let (value, ty) = typed?;
         let (expressions, statements, has_locals) = (
             scratch.expressions,
@@ -402,68 +388,52 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
         {
             return Err(not_specializable(span));
         }
-        let root = self.with(|this| this.global_tree(&expressions, value, span))??;
-        if let Expression::Override(handle) =
-            self.with(|this| this.module.global_expressions[root].clone())?
-        {
+        let root = self.lw.global_tree(&expressions, value, span)?;
+        if let Expression::Override(handle) = self.lw.module.global_expressions[root].clone() {
             return Ok(handle);
         }
-        let ir = {
-            let frame = self.clone().ir_type(ty.clone(), span);
-            self.nest(frame).await
-        }?;
-        self.with(|this| {
-            this.module.overrides.append(
-                Override {
-                    name,
-                    id: None,
-                    ty: ir,
-                    init: Some(root),
-                },
-                span,
-            )
-        })
+        let ir = recurse(|| self.ir_type(&ty, span))?;
+        Ok(self.lw.module.overrides.append(
+            Override {
+                name,
+                id: None,
+                ty: ir,
+                init: Some(root),
+            },
+            span,
+        ))
     }
 
-    pub(super) async fn specialized_size(
-        self,
+    pub(super) fn specialized_size(
+        &mut self,
         size: SpecializedSize,
         span: Span,
     ) -> Result<Handle<Override>> {
         match size {
-            SpecializedSize::Constant { symbol, .. } => match {
-                let frame = self.clone().global_ref(symbol, span);
-                self.nest(frame).await
-            }? {
-                GlobalRef::Override(handle) => Ok(handle),
-                _ => Err(internal(span)),
-            },
+            SpecializedSize::Constant { symbol, .. } => {
+                match recurse(|| self.global_ref(symbol, span))? {
+                    GlobalRef::Override(handle) => Ok(handle),
+                    _ => Err(internal(span)),
+                }
+            }
             SpecializedSize::Expression(node) => {
-                if let Some(handle) =
-                    self.with(|this| this.specialized_sizes.get(&node).copied())?
-                {
+                if let Some(handle) = self.lw.specialized_sizes.get(&node).copied() {
                     return Ok(handle);
                 }
-                if self.with(|this| this.size_expressions.is_empty())? {
-                    self.with(|this| {
-                        this.size_expressions = rglsl_ast::expressions(this.unit)
-                            .into_iter()
-                            .map(|expression| (expression.id, expression))
-                            .collect();
-                        Ok(())
-                    })??;
+                if self.lw.size_expressions.is_empty() {
+                    self.lw.size_expressions = rglsl_ast::expressions(self.lw.unit)
+                        .into_iter()
+                        .map(|expression| (expression.id, expression))
+                        .collect();
                 }
-                let expression = self.with(|this| {
-                    this.size_expressions
-                        .get(&node)
-                        .copied()
-                        .ok_or_else(|| internal(span))
-                })??;
-                let handle = {
-                    let frame = self.clone().specialization(expression, None, span);
-                    self.nest(frame).await
-                }?;
-                self.with(|this| this.specialized_sizes.insert(node, handle))?;
+                let expression = self
+                    .lw
+                    .size_expressions
+                    .get(&node)
+                    .copied()
+                    .ok_or_else(|| internal(span))?;
+                let handle = recurse(|| self.specialization(expression, None, span))?;
+                self.lw.specialized_sizes.insert(node, handle);
                 Ok(handle)
             }
         }

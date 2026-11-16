@@ -3,6 +3,7 @@ use core::num::NonZeroU32;
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::TensorArmCall;
 use rglsl_sema::types::ArraySize as GlslArraySize;
+use rglsl_types::stack::recurse;
 
 use super::{Lowerer, Result, internal};
 use crate::{CooperativeSize, Expression, Handle, Span, Statement};
@@ -21,92 +22,66 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    pub(super) async fn tensor_arm_call(
-        self,
+impl super::function::FunctionLowerer<'_, '_> {
+    pub(super) fn tensor_arm_call(
+        &mut self,
         kind: TensorArmCall,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
-        let tensor = {
-            let frame = self.clone().rvalue(argument(0)?);
-            self.nest(frame).await
-        }?;
+        let tensor = recurse(|| self.rvalue(argument(0)?))?;
         match kind {
             TensorArmCall::Size { dimension } => {
-                let size = self.with(|this| {
-                    this.add(Expression::TensorQuerySize { tensor, dimension }, at)
-                })??;
+                let size = (self.add(Expression::TensorQuerySize { tensor, dimension }, at))?;
                 Ok(Some(size))
             }
             TensorArmCall::Read {
                 nontemporal,
                 out_of_bounds,
             } => {
-                let coordinates = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
+                let coordinates = recurse(|| self.rvalue(argument(1)?))?;
                 let out_of_bounds = if out_of_bounds {
-                    Some({
-                        let frame = self.clone().rvalue(argument(4)?);
-                        self.nest(frame).await
-                    }?)
+                    Some(recurse(|| self.rvalue(argument(4)?))?)
                 } else {
                     None
                 };
                 let first_extra = if out_of_bounds.is_some() { 5 } else { 4 };
                 for extra in arguments.iter().skip(first_extra) {
-                    let frame = self.clone().rvalue(extra);
-                    let _ = self.nest(frame).await?;
+                    let _ = recurse(|| self.rvalue(extra))?;
                 }
                 let data = argument(2)?;
-                let data_ty = self.with(|this| this.info(data))??.ty.clone();
-                let ty = self.clone().ir_type(data_ty.clone(), at).await?;
-                let place = {
-                    let frame = self.clone().place(data);
-                    self.nest(frame).await
-                }?;
-                let value = self.with(|this| {
-                    this.add(
-                        Expression::TensorRead {
-                            ty,
-                            tensor,
-                            coordinates,
-                            nontemporal,
-                            out_of_bounds,
-                        },
-                        at,
-                    )
-                })??;
-                self.with(|this| this.store(&place, value, at))??;
+                let data_ty = self.info(data)?.ty.clone();
+                let ty = self.ir_type(&data_ty, at)?;
+                let place = recurse(|| self.place(data))?;
+                let value = (self.add(
+                    Expression::TensorRead {
+                        ty,
+                        tensor,
+                        coordinates,
+                        nontemporal,
+                        out_of_bounds,
+                    },
+                    at,
+                ))?;
+                self.store(&place, value, at)?;
                 Ok(None)
             }
             TensorArmCall::Write { nontemporal } => {
-                let coordinates = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let value = {
-                    let frame = self.clone().rvalue(argument(2)?);
-                    self.nest(frame).await
-                }?;
+                let coordinates = recurse(|| self.rvalue(argument(1)?))?;
+                let value = recurse(|| self.rvalue(argument(2)?))?;
                 for extra in arguments.iter().skip(4) {
-                    let frame = self.clone().rvalue(extra);
-                    let _ = self.nest(frame).await?;
+                    let _ = recurse(|| self.rvalue(extra))?;
                 }
-                self.with(|this| {
-                    this.push(
-                        Statement::TensorWrite {
-                            tensor,
-                            coordinates,
-                            value,
-                            nontemporal,
-                        },
-                        at,
-                    );
-                })?;
+                self.push(
+                    Statement::TensorWrite {
+                        tensor,
+                        coordinates,
+                        value,
+                        nontemporal,
+                    },
+                    at,
+                );
                 Ok(None)
             }
         }

@@ -7,6 +7,7 @@ use rglsl_ast::ast::{
 use rglsl_ast::{Spine, SpineLinks};
 use rglsl_sema::ExpressionInfo;
 use rglsl_sema::types::Type as GlslType;
+use rglsl_types::stack::recurse;
 
 use super::expression::{Chain, Place};
 use super::function::FunctionLowerer;
@@ -230,36 +231,35 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    async fn flat_conditionals(
-        self,
-        links: Vec<&'b AstExpression>,
+impl FunctionLowerer<'_, '_> {
+    fn flat_conditionals(
+        &mut self,
+        links: &[&AstExpression],
         valued: bool,
-        tail: &'b AstExpression,
+        tail: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        let links = links.as_slice();
         let outer_span = links.first().map_or(tail.span, |node| node.span);
-        let outer = self.with(|this| this.at(outer_span))?;
+        let outer = self.at(outer_span);
         if links.is_empty() {
             return Err(internal(outer));
         }
         let none = u32::try_from(links.len()).map_err(|_| internal(outer))?;
-        let taken = self.with(|this| this.local(&GlslType::UINT, None, outer))??;
-        self.with(|this| this.set_taken(taken, none, outer))??;
+        let taken = self.local(&GlslType::UINT, None, outer)?;
+        self.set_taken(taken, none, outer)?;
         let mut results = Vec::with_capacity(links.len());
         for &node in links {
             results.push(if valued {
-                let ty = &self.with(|this| this.info(node))??.ty;
-                let at = self.with(|this| this.at(node.span))?;
-                Some(self.with(|this| this.local(ty, None, at))??)
+                let ty = &self.info(node)?.ty;
+                let at = self.at(node.span);
+                Some(self.local(ty, None, at)?)
             } else {
                 None
             });
         }
         for (level, (&node, &result)) in (0u32..).zip(links.iter().zip(&results)) {
-            let at = self.with(|this| this.at(node.span))?;
+            let at = self.at(node.span);
             let last = level.checked_add(1) == Some(none);
-            let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
+            let (condition, then_expression) = self.conditional_parts(node)?;
             let chosen = FlatLevel {
                 condition,
                 then_expression,
@@ -270,26 +270,21 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 at,
             };
             if level == 0 {
-                let chosen = self.nest(self.clone().flat_level(chosen)).await;
+                let chosen = recurse(|| self.flat_level(chosen));
                 chosen?;
             } else {
-                let pending = self.with(|this| this.taken_is(taken, none, at))??;
-                let accept = self
-                    .clone()
-                    .block(self.nest(self.clone().flat_level(chosen)))
-                    .await;
+                let pending = self.taken_is(taken, none, at)?;
+                let accept = self.block(|this| this.flat_level(chosen));
                 let accept = accept?;
-                self.with(|this| {
-                    this.push(
-                        Statement::If {
-                            condition: pending,
-                            accept,
-                            reject: Block::new(),
-                            control: SelectionControl::None,
-                        },
-                        at,
-                    );
-                })?;
+                self.push(
+                    Statement::If {
+                        condition: pending,
+                        accept,
+                        reject: Block::new(),
+                        control: SelectionControl::None,
+                    },
+                    at,
+                );
             }
         }
         if !valued {
@@ -302,40 +297,36 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             let (&[_, inner], &[Some(result), Some(inner_result)]) = pair else {
                 return Err(internal(outer));
             };
-            let at = self.with(|this| this.at(inner.span))?;
-            let skip = self.with(|this| this.taken_is(taken, level, at))??;
-            let reject = self.try_with(|this| {
-                Ok(this.nested(|this| {
-                    let pointer = this.local_pointer(inner_result, at)?;
-                    let loaded = this.add(Expression::Load { pointer }, at)?;
-                    let (value, _) = this.typed_value(inner, Some(loaded))?;
-                    let pointer = this.local_pointer(result, at)?;
-                    this.push(Statement::Store { pointer, value }, at);
-                    Ok(())
-                }))
-            })??;
-            self.with(|this| {
-                this.push(
-                    Statement::If {
-                        condition: skip,
-                        accept: Block::new(),
-                        reject,
-                        control: SelectionControl::None,
-                    },
-                    at,
-                );
+            let at = self.at(inner.span);
+            let skip = self.taken_is(taken, level, at)?;
+            let reject = self.block(|this| {
+                let pointer = this.local_pointer(inner_result, at)?;
+                let loaded = this.add(Expression::Load { pointer }, at)?;
+                let (value, _) = this.typed_value(inner, Some(loaded))?;
+                let pointer = this.local_pointer(result, at)?;
+                this.push(Statement::Store { pointer, value }, at);
+                Ok(())
             })?;
+            self.push(
+                Statement::If {
+                    condition: skip,
+                    accept: Block::new(),
+                    reject,
+                    control: SelectionControl::None,
+                },
+                at,
+            );
         }
         let result = results
             .first()
             .copied()
             .flatten()
             .ok_or_else(|| internal(outer))?;
-        let pointer = self.with(|this| this.local_pointer(result, outer))??;
-        self.with(|this| this.add(Expression::Load { pointer }, outer).map(Some))?
+        let pointer = self.local_pointer(result, outer)?;
+        self.add(Expression::Load { pointer }, outer).map(Some)
     }
 
-    async fn flat_level(self, level: FlatLevel<'b>) -> Result<()> {
+    fn flat_level(&mut self, level: FlatLevel<'_>) -> Result<()> {
         let FlatLevel {
             condition,
             then_expression,
@@ -345,36 +336,27 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             level,
             at,
         } = level;
-        let condition = self.nest(self.clone().rvalue(condition)).await?;
-        let cx = self.clone();
-        let accepted = async move {
-            cx.nest(cx.clone().branch(then_expression, result, at))
-                .await?;
-            cx.try_with(|this| this.set_taken(taken, level, at))
-        };
-        let accept = self.clone().block(self.nest(accepted)).await?;
+        let condition = recurse(|| self.rvalue(condition))?;
+        let accept = self.block(|this| {
+            recurse(|| this.branch(then_expression, result, at))?;
+            this.set_taken(taken, level, at)
+        })?;
         let reject = match tail {
-            Some(tail) => {
-                self.clone()
-                    .block(self.nest(self.clone().branch(tail, result, at)))
-                    .await?
-            }
+            Some(tail) => self.block(|this| this.branch(tail, result, at))?,
             None => Block::new(),
         };
-        self.with(|this| {
-            this.push(
-                Statement::If {
-                    condition,
-                    accept,
-                    reject,
-                    control: SelectionControl::None,
-                },
-                at,
-            );
-        })?;
+        self.push(
+            Statement::If {
+                condition,
+                accept,
+                reject,
+                control: SelectionControl::None,
+            },
+            at,
+        );
         Ok(())
     }
-    pub(super) async fn access_chain(self, expression: &'b AstExpression) -> Result<Chain> {
+    pub(super) fn access_chain(&mut self, expression: &AstExpression) -> Result<Chain> {
         let mut links = SpineLinks::new();
         let mut current = expression;
         while let ExpressionKind::Subscript { ref base, .. }
@@ -383,51 +365,48 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             links.push(current);
             current = base;
         }
-        let head = self.clone().chain_head(current).await?;
-        let mut chain = self.with(|this| this.chain_marked(current, head))??;
+        let head = self.chain_head(current)?;
+        let mut chain = self.chain_marked(current, head)?;
         for node in links.into_iter().rev() {
-            let at = self.with(|this| this.at(node.span))?;
+            let at = self.at(node.span);
             let linked = match node.kind {
                 ExpressionKind::Subscript {
                     ref base,
                     ref index,
-                } => {
-                    let frame = self.clone().subscript_chain(chain, base, index, at);
-                    self.nest(frame).await
-                }?,
+                } => recurse(|| self.subscript_chain(chain, base, index, at))?,
                 ExpressionKind::FieldSelection {
                     ref base,
                     ref field,
-                } => self.with(|this| this.field_chain(chain, base, field, at))??,
+                } => self.field_chain(chain, base, field, at)?,
                 _ => return Err(internal(at)),
             };
-            chain = self.with(|this| this.chain_marked(node, linked))??;
+            chain = self.chain_marked(node, linked)?;
         }
         Ok(chain)
     }
 
-    pub(super) async fn binary_chain(
-        self,
-        expression: &'b AstExpression,
+    pub(super) fn binary_chain(
+        &mut self,
+        expression: &AstExpression,
     ) -> Result<Handle<Expression>> {
-        let spine = self.with(|this| this.lowered_binary_spine(expression))??;
-        let mut left = self.clone().typed_child(spine.head).await?;
+        let spine = self.lowered_binary_spine(expression)?;
+        let mut left = self.typed_child(spine.head)?;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
             let value = match node.kind {
                 ExpressionKind::Parenthesized(_) => left.0,
-                _ => self.clone().binary_link(node, left).await?,
+                _ => self.binary_link(node, left)?,
             };
             if links.peek().is_none() {
                 return Ok(value);
             }
-            left = self.with(|this| this.passed_on(node, Some(value)))??;
+            left = self.passed_on(node, Some(value))?;
         }
-        Err(internal(self.with(|this| this.at(expression.span))?))
+        Err(internal(self.at(expression.span)))
     }
 
-    async fn binary_link(self, node: &'b AstExpression, left: Typed) -> Result<Handle<Expression>> {
-        let at = self.with(|this| this.at(node.span))?;
+    fn binary_link(&mut self, node: &AstExpression, left: Typed) -> Result<Handle<Expression>> {
+        let at = self.at(node.span);
         let ExpressionKind::Binary {
             operator,
             left: ref left_operand,
@@ -438,47 +417,43 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         };
         let logical = matches!(operator, AstBinary::LogicalAnd | AstBinary::LogicalOr);
         if let Some(constant) = logical
-            .then(|| self.with(|this| this.constant_condition(left_operand)))
+            .then(|| Ok(self.constant_condition(left_operand)))
             .transpose()?
             .flatten()
         {
             if constant == (operator == AstBinary::LogicalOr) {
                 return Ok(left.0);
             }
-            return self.clone().rvalue(right).await;
+            return self.rvalue(right);
         }
-        if logical && !self.with(|this| this.pure(right))? {
-            let frame = self.clone().short_circuit(operator, left.0, right, at);
-            let value = self.nest(frame).await?;
-            return self.with(|this| this.marked_operation(node, value))?;
+        if logical && !self.pure(right) {
+            let value = recurse(|| self.short_circuit(operator, left.0, right, at))?;
+            return self.marked_operation(node, value);
         }
-        let right = self.clone().typed_child(right).await?;
-        self.with(|this| this.binary_node(node, operator, left, right, at))?
+        let right = self.typed_child(right)?;
+        self.binary_node(node, operator, left, right, at)
     }
 
-    pub(super) async fn unary_chain(
-        self,
-        expression: &'b AstExpression,
-    ) -> Result<Handle<Expression>> {
-        let spine = self.with(|this| this.lowered_spine(expression))??;
+    pub(super) fn unary_chain(&mut self, expression: &AstExpression) -> Result<Handle<Expression>> {
+        let spine = self.lowered_spine(expression)?;
         let mut operand: Option<Typed> = None;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
-            let value = self.clone().unary_link(node, operand.take()).await?;
+            let value = self.unary_link(node, operand.take())?;
             if links.peek().is_none() {
                 return Ok(value);
             }
-            operand = Some(self.with(|this| this.passed_on(node, Some(value)))??);
+            operand = Some(self.passed_on(node, Some(value))?);
         }
-        Err(internal(self.with(|this| this.at(expression.span))?))
+        Err(internal(self.at(expression.span)))
     }
 
-    async fn unary_link(
-        self,
-        node: &'b AstExpression,
+    fn unary_link(
+        &mut self,
+        node: &AstExpression,
         operand: Option<Typed>,
     ) -> Result<Handle<Expression>> {
-        let at = self.with(|this| this.at(node.span))?;
+        let at = self.at(node.span);
         let ExpressionKind::Unary {
             operator,
             operand: ref inner,
@@ -490,32 +465,27 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if operand.is_some() {
                 return Err(internal(at));
             }
-            return {
-                let frame =
-                    self.clone()
-                        .increment(inner, operator == AstUnary::Increment, false, at);
-                self.nest(frame).await
-            };
+            return recurse(|| self.increment(inner, operator == AstUnary::Increment, false, at));
         }
         let (value, ty) = match operand {
             Some(typed) => typed,
-            None => self.clone().typed_child(inner).await?,
+            None => self.typed_child(inner)?,
         };
-        let value = self.with(|this| this.unary_typed(operator, at, value, ty))??;
-        if self.with(|this| this.info(node))??.non_uniform {
-            self.with(|this| this.mark_value(value))?;
+        let value = self.unary_typed(operator, at, value, ty)?;
+        if self.info(node)?.non_uniform {
+            self.mark_value(value);
         }
         Ok(value)
     }
 
-    pub(super) async fn assignment_chain(
-        self,
-        expression: &'b AstExpression,
+    pub(super) fn assignment_chain(
+        &mut self,
+        expression: &AstExpression,
     ) -> Result<Handle<Expression>> {
         let spine = Spine::of(expression);
         let mut pending = Vec::with_capacity(spine.links.len());
         for node in spine.links {
-            let at = self.with(|this| this.at(node.span))?;
+            let at = self.at(node.span);
             let ExpressionKind::Assignment {
                 operator,
                 ref target,
@@ -524,16 +494,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             else {
                 return Err(internal(at));
             };
-            let place = self.clone().place_child(target).await?;
+            let place = self.place_child(target)?;
             let old = match super::expression::compound(operator) {
-                Some(_) => Some(self.with(|this| this.compound_old(target, &place, at))??),
+                Some(_) => Some(self.compound_old(target, &place, at)?),
                 None => None,
             };
             pending.push(Pending { node, place, old });
         }
         let mut inner = None;
         while let Some(Pending { node, place, old }) = pending.pop() {
-            let at = self.with(|this| this.at(node.span))?;
+            let at = self.at(node.span);
             let ExpressionKind::Assignment {
                 operator,
                 ref target,
@@ -543,155 +513,110 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 return Err(internal(at));
             };
             let typed = match inner.take() {
-                Some(result) => self.with(|this| this.passed_on(value, Some(result)))??,
-                None => self.clone().typed_child(value).await?,
+                Some(result) => self.passed_on(value, Some(result))?,
+                None => self.typed_child(value)?,
             };
             let result = match (super::expression::compound(operator), old) {
                 (None, _) => typed.0,
-                (Some(binary), Some(old)) => self.with(|this| {
-                    this.compound_assignment(binary, (target, &place, old), value, typed, at)
-                })??,
+                (Some(binary), Some(old)) => {
+                    (self.compound_assignment(binary, (target, &place, old), value, typed, at))?
+                }
                 (Some(_), None) => return Err(internal(at)),
             };
-            self.with(|this| this.store(&place, result, at))??;
+            self.store(&place, result, at)?;
             inner = Some(result);
         }
-        let at = self.with(|this| this.at(expression.span))?;
+        let at = self.at(expression.span);
         inner.ok_or_else(|| internal(at))
     }
 
-    pub(super) async fn conditional_chain(
-        self,
-        expression: &'b AstExpression,
+    pub(super) fn conditional_chain(
+        &mut self,
+        expression: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        if let Some(chosen) = self.with(|this| this.constant_choice(expression))? {
-            if self.with(|this| this.info(expression))??.ty.is_void() {
-                let frame = self.clone().effect(chosen);
-                let result = self.nest(frame).await;
+        if let Some(chosen) = self.constant_choice(expression) {
+            if self.info(expression)?.ty.is_void() {
+                let result = recurse(|| self.effect(chosen));
                 return result.map(|()| None);
             }
-            let frame = self.clone().rvalue(chosen);
-            let result = self.nest(frame).await;
+            let result = recurse(|| self.rvalue(chosen));
             return result.map(Some);
         }
-        let spine = self.with(|this| this.conditional_spine(expression))??;
-        let modes = self.with(|this| this.conditional_modes(&spine.links, spine.head))??;
+        let spine = self.conditional_spine(expression)?;
+        let modes = self.conditional_modes(&spine.links, spine.head)?;
         let first = modes
             .first()
             .copied()
-            .ok_or(self.with(|this| internal(this.at(expression.span)))?)?;
+            .ok_or(internal(self.at(expression.span)))?;
         let run = modes.iter().take_while(|mode| **mode == first).count();
         let links = spine
             .links
             .get(..run)
-            .ok_or(self.with(|this| internal(this.at(expression.span)))?)?;
+            .ok_or(internal(self.at(expression.span)))?;
         let tail = spine.links.get(run).copied().unwrap_or(spine.head);
         match (first, links) {
-            (Mode::Select, _) => {
-                let frame = self.clone().select_chain(links.to_vec(), tail);
-                self.nest(frame).await
-            }
-            .map(Some),
-            (_, &[node]) => {
-                let frame = self.clone().single_conditional(node, first, tail);
-                self.nest(frame).await
-            }
-            _ => {
-                let frame =
-                    self.clone()
-                        .flat_conditionals(links.to_vec(), first == Mode::Local, tail);
-                self.nest(frame).await
-            }
+            (Mode::Select, _) => recurse(|| self.select_chain(links, tail)).map(Some),
+            (_, &[node]) => recurse(|| self.single_conditional(node, first, tail)),
+            _ => recurse(|| self.flat_conditionals(links, first == Mode::Local, tail)),
         }
     }
 
-    async fn select_chain(
-        self,
-        links: Vec<&'b AstExpression>,
-        tail: &'b AstExpression,
+    fn select_chain(
+        &mut self,
+        links: &[&AstExpression],
+        tail: &AstExpression,
     ) -> Result<Handle<Expression>> {
-        let links = links.as_slice();
         let mut parts = Vec::with_capacity(links.len());
         for &node in links {
-            let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
-            let condition = {
-                let frame = self.clone().rvalue(condition);
-                self.nest(frame).await
-            }?;
-            let accept = {
-                let frame = self.clone().rvalue(then_expression);
-                self.nest(frame).await
-            }?;
+            let (condition, then_expression) = self.conditional_parts(node)?;
+            let condition = recurse(|| self.rvalue(condition))?;
+            let accept = recurse(|| self.rvalue(then_expression))?;
             parts.push((node, condition, accept));
         }
-        let mut reject = {
-            let frame = self.clone().rvalue(tail);
-            self.nest(frame).await
-        }?;
+        let mut reject = recurse(|| self.rvalue(tail))?;
         while let Some((node, condition, accept)) = parts.pop() {
-            let at = self.with(|this| this.at(node.span))?;
-            let value = self.with(|this| {
-                this.add(
-                    Expression::Select {
-                        condition,
-                        accept,
-                        reject,
-                    },
-                    at,
-                )
-            })??;
+            let at = self.at(node.span);
+            let value = (self.add(
+                Expression::Select {
+                    condition,
+                    accept,
+                    reject,
+                },
+                at,
+            ))?;
             if parts.is_empty() {
                 return Ok(value);
             }
-            reject = self.with(|this| this.passed_on(node, Some(value)))??.0;
+            reject = self.passed_on(node, Some(value))?.0;
         }
-        Err(internal(self.with(|this| this.at(tail.span))?))
+        Err(internal(self.at(tail.span)))
     }
 
-    async fn single_conditional(
-        self,
-        node: &'b AstExpression,
+    fn single_conditional(
+        &mut self,
+        node: &AstExpression,
         mode: Mode,
-        tail: &'b AstExpression,
+        tail: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        let at = self.with(|this| this.at(node.span))?;
-        let (condition, then_expression) = self.with(|this| this.conditional_parts(node))??;
-        let condition = {
-            let frame = self.clone().rvalue(condition);
-            self.nest(frame).await
-        }?;
+        let at = self.at(node.span);
+        let (condition, then_expression) = self.conditional_parts(node)?;
+        let condition = recurse(|| self.rvalue(condition))?;
         if mode == Mode::Effect {
-            return {
-                let frame = self
-                    .clone()
-                    .conditional_effect(condition, [then_expression, tail], at);
-                self.nest(frame).await
-            };
+            return recurse(|| self.conditional_effect(condition, [then_expression, tail], at));
         }
-        let ty = &self.with(|this| this.info(node))??.ty;
-        {
-            let frame = self
-                .clone()
-                .conditional_local(ty, condition, [then_expression, tail], at);
-            self.nest(frame).await
-        }
+        let ty = &self.info(node)?.ty;
+        recurse(|| self.conditional_local(ty, condition, [then_expression, tail], at))
     }
 
-    async fn branch(
-        self,
-        expression: &'b AstExpression,
+    fn branch(
+        &mut self,
+        expression: &AstExpression,
         result: Option<Handle<LocalVariable>>,
         at: Span,
     ) -> Result<()> {
         match result {
-            Some(local) => {
-                let frame = self.clone().stored(expression, local, at);
-                self.nest(frame).await
-            }
-            None => {
-                let frame = self.clone().effect(expression);
-                self.nest(frame).await
-            }
+            Some(local) => recurse(|| self.stored(expression, local, at)),
+            None => recurse(|| self.effect(expression)),
         }
     }
 }

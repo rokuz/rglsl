@@ -9,6 +9,7 @@ use rglsl_sema::types::{
 };
 use rglsl_sema::{LayoutId, SymbolId};
 use rglsl_types::extension::Extension;
+use rglsl_types::stack::recurse;
 
 use super::globals::{image_access, image_format, storage_access};
 use super::types::{image_dimension, matrix_layout};
@@ -94,8 +95,8 @@ impl<'a> Lowerer<'a> {
         row_major: bool,
         at: Span,
     ) -> Result<Vec<StructMember>> {
-        super::function::lowerer_on_heap!(self, |cx| cx
-            .heap_members(block, members, packing, row_major, at))
+        super::function::FunctionLowerer::new(self)
+            .heap_members(block, members, packing, row_major, at)
     }
 
     pub(super) fn is_heap_view(&self, qualifiers: &Qualifiers) -> bool {
@@ -488,85 +489,67 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
-    async fn heap_leaf(
-        self,
-        ty: GlslType,
-        qualifiers: &'b Qualifiers,
+impl super::function::FunctionLowerer<'_, '_> {
+    fn heap_leaf(
+        &mut self,
+        ty: &GlslType,
+        qualifiers: &Qualifiers,
         at: Span,
     ) -> Result<Handle<Type>> {
-        let ty = &ty;
         match ty.kind {
             TypeKind::Tensor { scalar, rank } => {
-                let rank = {
-                    let frame = self.clone().cooperative_size(rank, at);
-                    self.nest(frame).await
-                }?;
-                Ok(self.with(|this| {
-                    this.insert_type(TypeInner::Tensor {
-                        scalar: super::types::scalar(scalar),
-                        rank,
-                    })
-                })?)
+                let rank = recurse(|| self.cooperative_size(rank, at))?;
+                Ok(self.lw.insert_type(TypeInner::Tensor {
+                    scalar: super::types::scalar(scalar),
+                    rank,
+                }))
             }
             TypeKind::Opaque(opaque) => {
                 let inner = Lowerer::heap_opaque(opaque, qualifiers, at)?;
-                Ok(self.with(|this| this.insert_type(inner))?)
+                Ok(self.lw.insert_type(inner))
             }
             TypeKind::Block(id) => {
-                let (packing, row_major, space) =
-                    self.with(|this| this.descriptor_layout(id, at))??;
-                let base = {
-                    let frame = self.clone().block_struct(id, packing, row_major, at);
-                    self.nest(frame).await
-                }?;
+                let (packing, row_major, space) = self.lw.descriptor_layout(id, at)?;
+                let base = recurse(|| self.block_struct(id, packing, row_major, at))?;
                 Ok(self
-                    .with(|this| this.insert_type(TypeInner::BufferDescriptor { base, space }))?)
+                    .lw
+                    .insert_type(TypeInner::BufferDescriptor { base, space }))
             }
-            TypeKind::Struct(id) => {
-                let frame = self.clone().heap_struct(id, at);
-                self.nest(frame).await
-            }
+            TypeKind::Struct(id) => recurse(|| self.heap_struct(id, at)),
             _ => Err(internal(at)),
         }
     }
 
-    async fn heap_struct(self, id: StructId, at: Span) -> Result<Handle<Type>> {
-        if let Some(handle) = self.with(|this| this.heap_structs.get(&id).copied())? {
+    fn heap_struct(&mut self, id: StructId, at: Span) -> Result<Handle<Type>> {
+        if let Some(handle) = self.lw.heap_structs.get(&id).copied() {
             return Ok(handle);
         }
-        let analysis = self.with(|this| this.analysis)?;
+        let analysis = self.lw.analysis;
         let structure = analysis.types.structure(id).ok_or_else(|| internal(at))?;
-        let members = {
-            let frame = self
-                .clone()
-                .heap_members(None, &structure.members, None, false, at);
-            self.nest(frame).await
-        }?;
-        let handle = self.with(|this| {
-            this.module.types.insert(
-                Type {
-                    name: structure.name.clone(),
-                    inner: TypeInner::Struct { members, span: 0 },
-                },
-                at,
-            )
-        })?;
-        self.with(|this| this.heap_structs.insert(id, handle))?;
+        let members = recurse(|| self.heap_members(None, &structure.members, None, false, at))?;
+        let handle = self.lw.module.types.insert(
+            Type {
+                name: structure.name.clone(),
+                inner: TypeInner::Struct { members, span: 0 },
+            },
+            at,
+        );
+        self.lw.heap_structs.insert(id, handle);
         Ok(handle)
     }
 
-    async fn heap_members(
-        self,
-        block: Option<&'b Qualifiers>,
-        members: &'b [Member],
+    fn heap_members(
+        &mut self,
+        block: Option<&Qualifiers>,
+        members: &[Member],
         packing: Option<Packing>,
         row_major: bool,
         at: Span,
     ) -> Result<Vec<StructMember>> {
         let offsets = match packing {
             Some(packing) => Some(
-                self.with(|this| this.packed_offsets(block, members, packing, row_major, at))??,
+                self.lw
+                    .packed_offsets(block, members, packing, row_major, at)?,
             ),
             None => None,
         };
@@ -580,12 +563,9 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
                 None => explicit,
             };
             let size = layout_u32(qualifiers, LayoutId::DescriptorSize, at)?;
-            let (ty, matrix_layout) = if self.with(|this| this.contains_descriptor(&member.ty))? {
+            let (ty, matrix_layout) = if self.lw.contains_descriptor(&member.ty) {
                 let element = GlslType::new(member.ty.kind);
-                let leaf = {
-                    let frame = self.clone().heap_leaf(element.clone(), qualifiers, at);
-                    self.nest(frame).await
-                }?;
+                let leaf = recurse(|| self.heap_leaf(&element, qualifiers, at))?;
                 let stride = if member.ty.is_array() {
                     size.unwrap_or(0)
                 } else {
@@ -594,29 +574,22 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
                 let mut ty = leaf;
                 let last = member.ty.dimensions().len().saturating_sub(1);
                 for (position, dimension) in member.ty.dimensions().iter().enumerate().rev() {
-                    let size = {
-                        let frame = self.clone().array_size(*dimension, at);
-                        self.nest(frame).await
-                    }?;
+                    let size = recurse(|| self.array_size(*dimension, at))?;
                     let stride = if position == last { stride } else { 0 };
-                    ty = self.with(|this| {
-                        this.insert_type(TypeInner::Array {
-                            base: ty,
-                            size,
-                            stride,
-                        })
-                    })?;
+                    ty = self.lw.insert_type(TypeInner::Array {
+                        base: ty,
+                        size,
+                        stride,
+                    });
                 }
                 (ty, None)
             } else {
-                self.with(|this| this.heap_data_check(&member.ty, at))??;
-                let ty = {
-                    let frame = self.clone().ir_type(member.ty.clone(), at);
-                    self.nest(frame).await
-                }?;
-                let (ty, layout) = self.with(|this| {
-                    this.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)
-                })??;
+                self.lw.heap_data_check(&member.ty, at)?;
+                let ty = recurse(|| self.ir_type(&member.ty, at))?;
+                let (ty, layout) =
+                    (self
+                        .lw
+                        .laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at))?;
                 (ty, matrix_layout(&layout))
             };
             lowered.push(StructMember {
