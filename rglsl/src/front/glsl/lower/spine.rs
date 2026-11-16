@@ -5,6 +5,7 @@ use rglsl_ast::ast::{
     UnaryOperator as AstUnary,
 };
 use rglsl_ast::{Spine, SpineLinks};
+use rglsl_sema::ExpressionInfo;
 use rglsl_sema::types::Type as GlslType;
 
 use super::expression::{Chain, Place};
@@ -47,10 +48,14 @@ impl FunctionLowerer<'_, '_> {
         Ok(if info.is_specialization {
             !self.specializing && !is_direct(expression)
         } else {
-            info.is_constant
-                && info.value.is_some()
-                && !info.ty.contains_reference(&self.lw.analysis.types)
+            self.is_folded_constant(info)
         })
+    }
+
+    pub(super) fn is_folded_constant(&self, info: &ExpressionInfo) -> bool {
+        info.is_constant
+            && info.value.is_some()
+            && !info.ty.contains_reference(&self.lw.analysis.types)
     }
 
     fn lowered_binary_spine<'e>(&self, expression: &'e AstExpression) -> Result<Spine<'e>> {

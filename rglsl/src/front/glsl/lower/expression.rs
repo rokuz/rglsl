@@ -130,7 +130,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         if info.is_specialization {
             return false;
         }
-        if self.folds(expression).is_ok_and(|folds| folds) {
+        if self.is_folded_constant(info) {
             return true;
         }
         if let ExpressionKind::Variable(_) = expression.kind {
@@ -264,15 +264,26 @@ impl<'a> FunctionLowerer<'_, 'a> {
         self.convert(value, &from, ty, at)
     }
 
+    pub(super) fn flat_initializer(
+        &mut self,
+        initializer: &Spanned<Initializer>,
+        ty: &GlslType,
+    ) -> Option<Result<Handle<Expression>>> {
+        let Initializer::Expression(ref expression) = initializer.node else {
+            return None;
+        };
+        let typed = self.flat_typed_expression(expression)?;
+        let at = self.at(initializer.span);
+        Some(typed.and_then(|typed| self.initialized(typed, ty, at)))
+    }
+
     pub(super) fn initializer(
         &mut self,
         initializer: &Spanned<Initializer>,
         ty: &GlslType,
     ) -> Result<Handle<Expression>> {
-        if let Initializer::Expression(ref expression) = initializer.node {
-            let typed = self.typed(expression)?;
-            let at = self.at(initializer.span);
-            return self.initialized(typed, ty, at);
+        if let Some(value) = self.flat_initializer(initializer, ty) {
+            return value;
         }
         super::function::on_heap!(self, |cx| cx.initializer(initializer, ty.clone()))
     }
@@ -551,8 +562,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 let handle = self.lw.specialization(expression, None, at)?;
                 return self.add(Expression::Override(handle), at).map(Some);
             }
-        } else if info.is_constant
-            && !info.ty.contains_reference(&self.lw.analysis.types)
+        } else if self.is_folded_constant(info)
             && let Some(ref value) = info.value
         {
             return self.constant(&info.ty, &value.values, at).map(Some);

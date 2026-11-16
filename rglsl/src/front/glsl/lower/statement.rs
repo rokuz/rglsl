@@ -404,10 +404,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             else {
                 continue;
             };
-            let value = self
-                .clone()
-                .initializer(prepared.initializer, prepared.ty)
-                .await?;
+            let flat =
+                self.with(|this| this.flat_initializer(prepared.initializer, &prepared.ty))?;
+            let value = match flat {
+                Some(value) => value?,
+                None => {
+                    let frame = self.clone().initializer(prepared.initializer, prepared.ty);
+                    self.nest(frame).await?
+                }
+            };
             self.with(|this| {
                 this.store_local_initializer(prepared.local, prepared.ir, value, prepared.at)
             })??;
