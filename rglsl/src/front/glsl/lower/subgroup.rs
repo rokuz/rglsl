@@ -4,6 +4,7 @@ use rglsl_sema::builtins::kind::{
     SubgroupMemory, SubgroupOperation as Operation,
 };
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
+use rglsl_types::stack::recurse;
 
 use super::function::FunctionLowerer;
 use super::{Result, internal, unsupported};
@@ -96,11 +97,11 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    async fn collective_operation(
-        self,
+impl FunctionLowerer<'_, '_> {
+    fn collective_operation(
+        &mut self,
         collective: Collective,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<CollectiveOperation> {
         let second = || arguments.get(1).ok_or_else(|| internal(at));
@@ -109,34 +110,25 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             Collective::InclusiveScan => CollectiveOperation::InclusiveScan,
             Collective::ExclusiveScan => CollectiveOperation::ExclusiveScan,
             Collective::Clustered => {
-                let size = self.try_with(|this| {
-                    Ok(this.constant_index(second()?).ok_or_else(|| internal(at)))
-                })??;
+                let size = (Ok(self.constant_index(second()?).ok_or_else(|| internal(at))))??;
                 CollectiveOperation::ClusteredReduce(size)
             }
-            Collective::PartitionedReduce => CollectiveOperation::PartitionedReduce({
-                let frame = self.clone().rvalue(second()?);
-                self.nest(frame).await
-            }?),
+            Collective::PartitionedReduce => {
+                CollectiveOperation::PartitionedReduce(recurse(|| self.rvalue(second()?))?)
+            }
             Collective::PartitionedInclusiveScan => {
-                CollectiveOperation::PartitionedInclusiveScan({
-                    let frame = self.clone().rvalue(second()?);
-                    self.nest(frame).await
-                }?)
+                CollectiveOperation::PartitionedInclusiveScan(recurse(|| self.rvalue(second()?))?)
             }
             Collective::PartitionedExclusiveScan => {
-                CollectiveOperation::PartitionedExclusiveScan({
-                    let frame = self.clone().rvalue(second()?);
-                    self.nest(frame).await
-                }?)
+                CollectiveOperation::PartitionedExclusiveScan(recurse(|| self.rvalue(second()?))?)
             }
         })
     }
 
-    pub(super) async fn subgroup(
-        self,
+    pub(super) fn subgroup(
+        &mut self,
         kind: Subgroup,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
@@ -146,140 +138,104 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 memory: used,
             } => {
                 let semantics = memory(used) | MemorySemantics::ACQUIRE_RELEASE;
-                self.with(|this| {
-                    this.push(
-                        Statement::ScopedBarrier {
-                            execution: execution.then_some(MemoryScope::Subgroup),
-                            memory: MemoryScope::Subgroup,
-                            semantics,
-                        },
-                        at,
-                    );
-                })?;
+                self.push(
+                    Statement::ScopedBarrier {
+                        execution: execution.then_some(MemoryScope::Subgroup),
+                        memory: MemoryScope::Subgroup,
+                        semantics,
+                    },
+                    at,
+                );
                 Ok(None)
             }
             Subgroup::Ballot => {
-                let predicate = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::SubgroupBallotResult,
-                        |result| Statement::SubgroupBallot {
-                            result,
-                            predicate: Some(predicate),
-                        },
-                        at,
-                    )
-                })?;
+                let predicate = recurse(|| self.rvalue(argument(0)?))?;
+                let result = self.push_with_result(
+                    Expression::SubgroupBallotResult,
+                    |result| Statement::SubgroupBallot {
+                        result,
+                        predicate: Some(predicate),
+                    },
+                    at,
+                );
                 Ok(Some(result))
             }
             Subgroup::Collective(op, collective) => {
                 let op = operation(op);
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let collective_op = {
-                    let frame = self.clone().collective_operation(collective, arguments, at);
-                    self.nest(frame).await
-                }?;
-                let ty = self.clone().ir_type(ty.clone(), at).await?;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::SubgroupOperationResult { ty },
-                        |result| Statement::SubgroupCollectiveOperation {
-                            op,
-                            collective_op,
-                            argument: value,
-                            result,
-                        },
-                        at,
-                    )
-                })?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
+                let collective_op =
+                    recurse(|| self.collective_operation(collective, arguments, at))?;
+                let ty = self.ir_type(&ty, at)?;
+                let result = self.push_with_result(
+                    Expression::SubgroupOperationResult { ty },
+                    |result| Statement::SubgroupCollectiveOperation {
+                        op,
+                        collective_op,
+                        argument: value,
+                        result,
+                    },
+                    at,
+                );
                 Ok(Some(result))
             }
             Subgroup::Gather(gather) => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
                 let mode = match gather {
                     Gather::BroadcastFirst => GatherMode::BroadcastFirst,
                     Gather::QuadSwap(quad) => GatherMode::QuadSwap(direction(quad)),
-                    Gather::Broadcast => GatherMode::Broadcast({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?),
-                    Gather::Shuffle => GatherMode::Shuffle({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?),
-                    Gather::ShuffleXor => GatherMode::ShuffleXor({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?),
-                    Gather::ShuffleUp => GatherMode::ShuffleUp({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?),
-                    Gather::ShuffleDown => GatherMode::ShuffleDown({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?),
-                    Gather::QuadBroadcast => GatherMode::QuadBroadcast({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?),
+                    Gather::Broadcast => {
+                        GatherMode::Broadcast(recurse(|| self.rvalue(argument(1)?))?)
+                    }
+                    Gather::Shuffle => GatherMode::Shuffle(recurse(|| self.rvalue(argument(1)?))?),
+                    Gather::ShuffleXor => {
+                        GatherMode::ShuffleXor(recurse(|| self.rvalue(argument(1)?))?)
+                    }
+                    Gather::ShuffleUp => {
+                        GatherMode::ShuffleUp(recurse(|| self.rvalue(argument(1)?))?)
+                    }
+                    Gather::ShuffleDown => {
+                        GatherMode::ShuffleDown(recurse(|| self.rvalue(argument(1)?))?)
+                    }
+                    Gather::QuadBroadcast => {
+                        GatherMode::QuadBroadcast(recurse(|| self.rvalue(argument(1)?))?)
+                    }
                     Gather::Rotate => GatherMode::Rotate {
-                        delta: {
-                            let frame = self.clone().rvalue(argument(1)?);
-                            self.nest(frame).await
-                        }?,
+                        delta: { recurse(|| self.rvalue(argument(1)?)) }?,
                         cluster_size: None,
                     },
                     Gather::ClusteredRotate => {
-                        let delta = {
-                            let frame = self.clone().rvalue(argument(1)?);
-                            self.nest(frame).await
-                        }?;
-                        let size = self.try_with(|this| {
-                            Ok(this.constant_index(argument(2)?).ok_or_else(|| {
-                                unsupported("a cluster size that is not a constant expression", at)
-                            }))
-                        })??;
+                        let delta = recurse(|| self.rvalue(argument(1)?))?;
+                        let size = (Ok(self.constant_index(argument(2)?).ok_or_else(|| {
+                            unsupported("a cluster size that is not a constant expression", at)
+                        })))??;
                         GatherMode::Rotate {
                             delta,
                             cluster_size: Some(size),
                         }
                     }
                 };
-                let ty = self.clone().ir_type(ty.clone(), at).await?;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::SubgroupOperationResult { ty },
-                        |result| Statement::SubgroupGather {
-                            mode,
-                            argument: value,
-                            result,
-                        },
-                        at,
-                    )
-                })?;
+                let ty = self.ir_type(&ty, at)?;
+                let result = self.push_with_result(
+                    Expression::SubgroupOperationResult { ty },
+                    |result| Statement::SubgroupGather {
+                        mode,
+                        argument: value,
+                        result,
+                    },
+                    at,
+                );
                 Ok(Some(result))
             }
             Subgroup::Function(function) => {
-                let frame = self.clone().subgroup_function(function, arguments, at);
-                self.nest(frame).await
+                recurse(|| self.subgroup_function(function, arguments, at))
             }
         }
     }
 
-    async fn subgroup_function(
-        self,
+    fn subgroup_function(
+        &mut self,
         function: Function,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
@@ -292,107 +248,65 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let (fun, result_type) = match function {
             Function::Elect => (SubgroupFunction::Elect, ResultType::Fixed(boolean)),
             Function::AllEqual => (
-                SubgroupFunction::AllEqual({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::AllEqual(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
             Function::QuadAll => (
-                SubgroupFunction::QuadAll({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::QuadAll(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
             Function::QuadAny => (
-                SubgroupFunction::QuadAny({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::QuadAny(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
             Function::InverseBallot => (
-                SubgroupFunction::InverseBallot({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::InverseBallot(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
             Function::BallotBitExtract => (
                 SubgroupFunction::BallotBitExtract {
-                    ballot: {
-                        let frame = self.clone().rvalue(argument(0)?);
-                        self.nest(frame).await
-                    }?,
-                    index: {
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?,
+                    ballot: { recurse(|| self.rvalue(argument(0)?)) }?,
+                    index: { recurse(|| self.rvalue(argument(1)?)) }?,
                 },
                 ResultType::Fixed(boolean),
             ),
             Function::BallotBitCount(collective) => (
                 SubgroupFunction::BallotBitCount {
-                    ballot: {
-                        let frame = self.clone().rvalue(argument(0)?);
-                        self.nest(frame).await
-                    }?,
+                    ballot: { recurse(|| self.rvalue(argument(0)?)) }?,
                     collective_op: {
-                        let frame = self.clone().collective_operation(collective, arguments, at);
-                        self.nest(frame).await
+                        recurse(|| self.collective_operation(collective, arguments, at))
                     }?,
                 },
                 ResultType::Fixed(unsigned),
             ),
             Function::BallotFindLsb => (
-                SubgroupFunction::BallotFindLsb({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::BallotFindLsb(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(unsigned),
             ),
             Function::BallotFindMsb => (
-                SubgroupFunction::BallotFindMsb({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::BallotFindMsb(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(unsigned),
             ),
             Function::Partition => (
-                SubgroupFunction::Partition({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::Partition(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(ballot),
             ),
             Function::ArbBallot => {
-                let predicate = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let result = self.with(|this| this.subgroup_result_type(ballot))?;
-                let mask = self.with(|this| {
-                    this.push_with_result(
+                let predicate = recurse(|| self.rvalue(argument(0)?))?;
+                let result = self.subgroup_result_type(ballot);
+                let mask = self.push_with_result(
+                    result,
+                    |result| Statement::SubgroupFunction {
+                        fun: SubgroupFunction::KhrBallot(predicate),
                         result,
-                        |result| Statement::SubgroupFunction {
-                            fun: SubgroupFunction::KhrBallot(predicate),
-                            result,
-                        },
-                        at,
-                    )
-                })?;
-                return self.with(|this| this.ballot_to_u64(mask, at).map(Some))?;
+                    },
+                    at,
+                );
+                return self.ballot_to_u64(mask, at).map(Some);
             }
             Function::ReadInvocation => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let index = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
+                let index = recurse(|| self.rvalue(argument(1)?))?;
                 (
                     SubgroupFunction::KhrReadInvocation {
                         argument: value,
@@ -402,10 +316,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             Function::ReadFirstInvocation => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
                 (
                     SubgroupFunction::KhrReadFirstInvocation(value),
                     ResultType::Argument(ty),
@@ -416,14 +327,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 collective,
                 non_uniform,
             } => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let collective_op = {
-                    let frame = self.clone().collective_operation(collective, arguments, at);
-                    self.nest(frame).await
-                }?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
+                let collective_op =
+                    recurse(|| self.collective_operation(collective, arguments, at))?;
                 (
                     SubgroupFunction::Group {
                         op: operation(op),
@@ -434,60 +340,43 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ResultType::Argument(ty),
                 )
             }
-            Function::Amd(amd) => {
-                let frame = self.clone().amd_shader_ballot(amd, arguments, at);
-                self.nest(frame).await?
-            }
+            Function::Amd(amd) => recurse(|| self.amd_shader_ballot(amd, arguments, at))?,
             Function::AllInvocations => (
-                SubgroupFunction::KhrAll({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::KhrAll(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
             Function::AnyInvocation => (
-                SubgroupFunction::KhrAny({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::KhrAny(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
             Function::AllInvocationsEqual => (
-                SubgroupFunction::KhrAllEqual({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::KhrAllEqual(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(boolean),
             ),
         };
         let ty = match result_type {
-            ResultType::Fixed(inner) => self.with(|this| this.lw.insert_type(inner))?,
-            ResultType::Argument(ty) => self.clone().ir_type(ty.clone(), at).await?,
+            ResultType::Fixed(inner) => self.lw.insert_type(inner),
+            ResultType::Argument(ty) => self.ir_type(&ty, at)?,
         };
-        let result = self.with(|this| {
-            this.push_with_result(
-                Expression::SubgroupOperationResult { ty },
-                |result| Statement::SubgroupFunction { fun, result },
-                at,
-            )
-        })?;
+        let result = self.push_with_result(
+            Expression::SubgroupOperationResult { ty },
+            |result| Statement::SubgroupFunction { fun, result },
+            at,
+        );
         Ok(Some(result))
     }
 
-    async fn amd_shader_ballot(
-        self,
+    fn amd_shader_ballot(
+        &mut self,
         function: AmdShaderBallot,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<(SubgroupFunction, ResultType)> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         Ok(match function {
             AmdShaderBallot::Swizzle => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let offset = self.try_with(|this| this.lane_pattern(argument(1)?, at))?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
+                let offset = self.lane_pattern(argument(1)?, at)?;
                 (
                     SubgroupFunction::AmdSwizzle {
                         argument: value,
@@ -497,11 +386,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             AmdShaderBallot::SwizzleMasked => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let mask = self.try_with(|this| this.lane_pattern(argument(1)?, at))?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
+                let mask = self.lane_pattern(argument(1)?, at)?;
                 (
                     SubgroupFunction::AmdSwizzleMasked {
                         argument: value,
@@ -511,18 +397,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             AmdShaderBallot::WriteInvocation => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let written = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let index = {
-                    let frame = self.clone().rvalue(argument(2)?);
-                    self.nest(frame).await
-                }?;
+                let (value, ty) = recurse(|| self.typed(argument(0)?))?;
+                let written = recurse(|| self.rvalue(argument(1)?))?;
+                let index = recurse(|| self.rvalue(argument(2)?))?;
                 (
                     SubgroupFunction::AmdWriteInvocation {
                         argument: value,
@@ -533,10 +410,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             AmdShaderBallot::Mbcnt => (
-                SubgroupFunction::AmdMbcnt({
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?),
+                SubgroupFunction::AmdMbcnt(recurse(|| self.rvalue(argument(0)?))?),
                 ResultType::Fixed(TypeInner::Scalar(Scalar::U32)),
             ),
         })

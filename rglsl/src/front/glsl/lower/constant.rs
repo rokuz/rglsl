@@ -1,7 +1,8 @@
 use alloc::vec::Vec;
 
-use rglsl_sema::constant::{ConstantValues, Value};
+use rglsl_sema::constant::Value;
 use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
+use rglsl_types::stack::recurse;
 
 use super::{Lowerer, Result, internal};
 use crate::{Expression, Handle, Literal, Span};
@@ -125,84 +126,33 @@ impl Lowerer<'_> {
         values: &[Value],
         span: Span,
     ) -> Result<Handle<Expression>> {
-        if let Some(Shape::Literal(value)) = shape(ty, values, &self.analysis.types) {
-            return Ok(self.global_literal(value, span));
-        }
-        super::function::lowerer_on_heap!(self, |cx| cx.global_constant(
-            ty.clone(),
-            ConstantValues::from(values),
-            span
-        ))
+        super::function::FunctionLowerer::new(self).global_constant(ty, values, span)
     }
 }
 
-impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
-    pub(super) async fn constant_value(
-        self,
-        ty: GlslType,
+impl super::function::FunctionLowerer<'_, '_> {
+    pub(super) fn global_constant(
+        &mut self,
+        ty: &GlslType,
         values: &[Value],
         span: Span,
     ) -> Result<Handle<Expression>> {
-        if let Some(Shape::Literal(value)) =
-            self.with(|this| shape(&ty, values, &this.analysis.types))?
-        {
-            return self.with(|this| this.global_literal(value, span));
-        }
-        let frame = self
-            .clone()
-            .global_constant(ty, ConstantValues::from(values), span);
-        self.nest(frame).await
-    }
-
-    pub(super) async fn global_constant(
-        self,
-        ty: GlslType,
-        values: ConstantValues,
-        span: Span,
-    ) -> Result<Handle<Expression>> {
-        let end = values.len();
-        let values: alloc::rc::Rc<[Value]> = alloc::rc::Rc::from(values.as_slice());
-        self.nest(self.clone().global_constant_part(ty, values, 0..end, span))
-            .await
-    }
-
-    async fn global_constant_part(
-        self,
-        ty: GlslType,
-        all: alloc::rc::Rc<[Value]>,
-        range: core::ops::Range<usize>,
-        span: Span,
-    ) -> Result<Handle<Expression>> {
-        let offset = range.start;
-        let values = all.get(range).ok_or_else(|| internal(span))?;
-        let ty = &ty;
-        let analysis = self.with(|this| this.analysis)?;
+        let analysis = self.lw.analysis;
         match shape(ty, values, &analysis.types).ok_or_else(|| internal(span))? {
-            Shape::Literal(value) => self.with(|this| this.global_literal(value, span)),
+            Shape::Literal(value) => Ok(self.lw.global_literal(value, span)),
             Shape::Compose(parts) => {
                 let mut components = Vec::with_capacity(parts.len());
                 for (part, start, size) in parts {
-                    let start = offset.checked_add(start).ok_or_else(|| internal(span))?;
                     let end = start.checked_add(size).ok_or_else(|| internal(span))?;
-                    components.push({
-                        let frame = self.clone().global_constant_part(
-                            part.clone(),
-                            alloc::rc::Rc::clone(&all),
-                            start..end,
-                            span,
-                        );
-                        self.nest(frame).await
-                    }?);
+                    let slice = values.get(start..end).ok_or_else(|| internal(span))?;
+                    components.push(recurse(|| self.global_constant(&part, slice, span))?);
                 }
-                let ir = {
-                    let frame = self.clone().ir_type(ty.clone(), span);
-                    self.nest(frame).await
-                }?;
-                Ok(self.with(|this| {
-                    this.module
-                        .global_expressions
-                        .append(Expression::Compose { ty: ir, components }, span)
-                })?)
+                let ir = self.ir_type(ty, span)?;
+                Ok(self
+                    .lw
+                    .module
+                    .global_expressions
+                    .append(Expression::Compose { ty: ir, components }, span))
             }
         }
     }

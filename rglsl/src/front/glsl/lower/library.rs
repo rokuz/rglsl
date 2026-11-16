@@ -73,11 +73,11 @@ fn body_fingerprint(body: &Block) -> String {
     let mut text = String::new();
     let mut pending = Vec::from([body.span_iter()]);
     while let Some(top) = pending.last_mut() {
-        let Some((statement, span)) = top.next() else {
+        let Some((statement, _span)) = top.next() else {
             pending.pop();
             continue;
         };
-        text.push_str(&format!("{statement:?}{span:?};"));
+        text.push_str(&format!("{statement:?}span:?;"));
         let start = pending.len();
         statement.for_each_child_block(|child| pending.push(child.span_iter()));
         if let Some(added) = pending.get_mut(start..) {

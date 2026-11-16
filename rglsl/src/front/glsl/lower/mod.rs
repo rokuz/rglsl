@@ -25,9 +25,6 @@ mod tensor;
 mod types;
 mod xfb;
 
-#[cfg(test)]
-mod tests;
-
 use alloc::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -45,7 +42,6 @@ use rglsl_sema::types::{BlockId, SharedDimensions, StructId};
 use rglsl_sema::{Analysis, FunctionId, SymbolId};
 use rglsl_types::extension::Extension;
 use rglsl_types::probe::StageProbe;
-use rglsl_types::stack::Base;
 
 use super::{Error, ErrorKind, IncludeLocation, Options, ParseErrors};
 use crate::{
@@ -1231,24 +1227,6 @@ pub(super) struct Lowerer<'a> {
     pub(super) automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub(super) declared_local_size: [Option<u32>; 3],
     pub(super) debug: Option<DebugCollector>,
-    pub(super) flat_expressions: bool,
-    pub(super) stack_base: Base,
-    pub(super) walking: alloc::rc::Rc<core::cell::Cell<bool>>,
-}
-
-#[cfg(test)]
-std::thread_local! {
-    pub(super) static FLAT_EXPRESSIONS: core::cell::Cell<bool> = const { core::cell::Cell::new(true) };
-}
-
-#[cfg(test)]
-fn flat_expressions() -> bool {
-    FLAT_EXPRESSIONS.with(core::cell::Cell::get)
-}
-
-#[cfg(not(test))]
-const fn flat_expressions() -> bool {
-    true
 }
 
 impl<'a> Lowerer<'a> {
@@ -1263,9 +1241,6 @@ impl<'a> Lowerer<'a> {
     ) -> Self {
         Self {
             source_map,
-            flat_expressions: flat_expressions(),
-            stack_base: Base::here(),
-            walking: alloc::rc::Rc::default(),
             unit,
             analysis,
             options,

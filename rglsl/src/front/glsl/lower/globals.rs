@@ -1,6 +1,7 @@
 use alloc::{format, string::String, vec, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
 use rglsl_types::extension::Extension;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::{
     BlockInstance, BlockStructure, Declaration, DeclarationKind, ExternalDeclaration,
@@ -331,7 +332,7 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn global_ref(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        super::function::lowerer_on_heap!(self, |cx| cx.global_ref(symbol, at))
+        super::function::FunctionLowerer::new(self).global_ref(symbol, at)
     }
 
     pub(super) fn reserve_explicit_locations(&mut self) {
@@ -2457,54 +2458,38 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
-    pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        if let Some(found) = self.with(|this| this.globals.get(&symbol).copied())? {
+impl super::function::FunctionLowerer<'_, '_> {
+    pub(super) fn global_ref(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        if let Some(found) = self.lw.globals.get(&symbol).copied() {
             return Ok(found);
         }
-        if let Some((name, span)) = self.with(|this| this.deferred_private.remove(&symbol))? {
-            let variable =
-                self.with(|this| this.variable(symbol).ok_or_else(|| internal(at)))??;
+        if let Some((name, span)) = self.lw.deferred_private.remove(&symbol) {
+            let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
             let (ty, qualifiers) = (variable.ty.clone(), variable.qualifiers.clone());
-            let ty = {
-                let frame = self
-                    .clone()
-                    .variable_ir_type(ty.clone(), qualifiers.clone(), span);
-                self.nest(frame).await
-            }?;
-            let global = self.with(|this| this.ray_query_global(name, ty, span))?;
+            let ty = recurse(|| self.variable_ir_type(&ty, &qualifiers, span))?;
+            let global = self.lw.ray_query_global(name, ty, span);
             let found = GlobalRef::Variable(global);
-            self.with(|this| {
-                this.globals.insert(symbol, found);
-                this.function_private.insert(global);
-            })?;
+            self.lw.globals.insert(symbol, found);
+            self.lw.function_private.insert(global);
             return Ok(found);
         }
-        if self.with(|this| this.has_local_size_ids())?
-            && self.with(|this| this.is_work_group_size(symbol))?
-        {
-            let handle = self.with(|this| this.work_group_size_override(at))??;
-            self.with(|this| this.globals.insert(symbol, GlobalRef::Override(handle)))?;
+        if self.lw.has_local_size_ids() && self.lw.is_work_group_size(symbol) {
+            let handle = self.lw.work_group_size_override(at)?;
+            self.lw.globals.insert(symbol, GlobalRef::Override(handle));
             return Ok(GlobalRef::Override(handle));
         }
-        let analysis = self.with(|this| this.analysis)?;
-        let record = self.with(|this| this.symbol(symbol).ok_or_else(|| internal(at)))??;
+        let analysis = self.lw.analysis;
+        let record = self.lw.symbol(symbol).ok_or_else(|| internal(at))?;
         let (ty, output, value, volatile) = match record.kind {
             SymbolKind::Variable(ref variable) => {
                 if variable.origin != Origin::BuiltIn {
                     return Err(internal(at));
                 }
-                if let Some(handle) = {
-                    let frame = self.clone().builtin_override(symbol, variable, at);
-                    self.nest(frame).await
-                }? {
+                if let Some(handle) = recurse(|| self.builtin_override(symbol, variable, at))? {
                     return Ok(handle);
                 }
-                if self.with(|this| this.is_per_vertex_array(symbol))? {
-                    return {
-                        let frame = self.clone().per_vertex_array(symbol, at);
-                        self.nest(frame).await
-                    };
+                if self.lw.is_per_vertex_array(symbol) {
+                    return recurse(|| self.per_vertex_array(symbol, at));
                 }
                 (
                     variable.ty.clone(),
@@ -2514,8 +2499,7 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
                 )
             }
             SymbolKind::BlockMember { instance, index } => {
-                let instance =
-                    self.with(|this| this.variable(instance).ok_or_else(|| internal(at)))??;
+                let instance = self.lw.variable(instance).ok_or_else(|| internal(at))?;
                 let TypeKind::Block(block) = instance.ty.kind else {
                     return Err(internal(at));
                 };
@@ -2539,46 +2523,35 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
         let name = record.name.clone();
         let found = match value {
             Some(value) => {
-                let ir = {
-                    let frame = self.clone().ir_type(ty.clone(), at);
-                    self.nest(frame).await
-                }?;
-                let init = {
-                    let frame = self
-                        .clone()
-                        .global_constant(ty.clone(), value.values.clone(), at);
-                    self.nest(frame).await
-                }?;
-                let handle = self.with(|this| {
-                    this.module.constants.append(
-                        crate::Constant {
-                            name: Some(name),
-                            ty: ir,
-                            init,
-                        },
-                        at,
-                    )
-                })?;
+                let ir = recurse(|| self.ir_type(&ty, at))?;
+                let init = recurse(|| self.global_constant(&ty, &value.values, at))?;
+                let handle = self.lw.module.constants.append(
+                    crate::Constant {
+                        name: Some(name),
+                        ty: ir,
+                        init,
+                    },
+                    at,
+                );
                 GlobalRef::Constant(handle)
             }
-            None => GlobalRef::Variable({
-                let frame = self.clone().builtin_variable(
+            None => GlobalRef::Variable(recurse(|| {
+                self.builtin_variable(
                     String::from(&name),
                     analysis.builtins.variable(symbol),
                     ty.clone(),
                     output,
                     volatile,
                     at,
-                );
-                self.nest(frame).await
-            }?),
+                )
+            })?),
         };
-        self.with(|this| this.globals.insert(symbol, found))?;
+        self.lw.globals.insert(symbol, found);
         Ok(found)
     }
 
-    async fn builtin_variable(
-        self,
+    fn builtin_variable(
+        &mut self,
         name: String,
         row: Option<&'static BuiltinVariable>,
         ty: GlslType,
@@ -2592,89 +2565,73 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
             .and_then(|row| Some((row, row.builtin()?)))
             .ok_or_else(|| unsupported(format!("the built-in variable `{name}`"), at))?;
         let key = row.global_key();
-        if let Some(handle) = self.with(|this| this.builtins.get(key).copied())? {
+        if let Some(handle) = self.lw.builtins.get(key).copied() {
             return Ok(handle);
         }
         let builtin = match builtin {
             BuiltIn::Layer { .. } => BuiltIn::Layer {
-                viewport_relative: self.with(|this| this.layer_layout.viewport_relative)?,
-                secondary_view_offset: self.with(|this| this.layer_layout.secondary_view_offset)?,
+                viewport_relative: self.lw.layer_layout.viewport_relative,
+                secondary_view_offset: self.lw.layer_layout.secondary_view_offset,
             },
             BuiltIn::SampleMask { .. } if output => BuiltIn::SampleMask {
-                override_coverage: self.with(|this| this.override_coverage)?,
+                override_coverage: self.lw.override_coverage,
             },
             other => other,
         };
         let ir = if variables::implicitly_sized(name) {
-            let size = self.with(|this| {
-                this.builtin_sizes
-                    .get(name)
-                    .copied()
-                    .or(match ty.outer_size() {
-                        Some(GlslArraySize::Sized(size)) => Some(size),
-                        _ => None,
-                    })
-                    .ok_or_else(|| {
-                        unsupported(format!("`{name}` without a size or a constant index"), at)
-                    })
-            })??;
+            let size = (self
+                .lw
+                .builtin_sizes
+                .get(name)
+                .copied()
+                .or(match ty.outer_size() {
+                    Some(GlslArraySize::Sized(size)) => Some(size),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    unsupported(format!("`{name}` without a size or a constant index"), at)
+                }))?;
             let element = ty.element_type().ok_or_else(|| internal(at))?;
             let sized = element.array_of(GlslArraySize::Sized(size));
-            {
-                let frame = self.clone().ir_type(sized.clone(), at);
-                self.nest(frame).await
-            }?
+            { recurse(|| self.ir_type(&sized, at)) }?
         } else if let BuiltIn::ShaderBallot(ShaderBallot::Mask(_)) = builtin {
-            {
-                let frame = self.clone().ir_type(GlslType::vector(Scalar::Uint, 4), at);
-                self.nest(frame).await
-            }?
+            { recurse(|| self.ir_type(&GlslType::vector(Scalar::Uint, 4), at)) }?
         } else if row.has(VariableFlags::TRANSPOSED) {
-            {
-                let frame = self
-                    .clone()
-                    .ir_type(GlslType::matrix(Scalar::Float, 4, 3), at);
-                self.nest(frame).await
-            }?
+            { recurse(|| self.ir_type(&GlslType::matrix(Scalar::Float, 4, 3), at)) }?
         } else {
-            {
-                let frame = self.clone().ir_type(ty.clone(), at);
-                self.nest(frame).await
-            }?
+            { recurse(|| self.ir_type(ty, at)) }?
         };
         let memory_decorations = if volatile {
             MemoryDecorations::VOLATILE
         } else {
-            self.with(|this| this.ray_builtin_decorations(builtin))?
+            self.lw.ray_builtin_decorations(builtin)
         };
-        let handle = self.with(|this| {
-            this.module.global_variables.append(
-                GlobalVariable {
-                    name: Some(String::from(row.global_name())),
-                    space: if output {
-                        AddressSpace::Output
-                    } else {
-                        AddressSpace::Input
-                    },
-                    binding: None,
-                    ty: ir,
-                    init: None,
-                    memory_decorations,
-                    io: Some(Binding::BuiltIn(builtin)),
-                    xfb: None,
-                    input_attachment_index: None,
-                    heap_offset: None,
-                    tile_attachment: false,
-                    spirv_decorations: Vec::new(),
-                    relaxed_precision: false,
-                    immediate_bank: None,
-                    block: None,
+        let handle = self.lw.module.global_variables.append(
+            GlobalVariable {
+                name: Some(String::from(row.global_name())),
+                space: if output {
+                    AddressSpace::Output
+                } else {
+                    AddressSpace::Input
                 },
-                at,
-            )
-        })?;
-        self.with(|this| this.interface.push(handle))?;
-        self.with(|this| this.builtins.insert(String::from(key), handle))?;
+                binding: None,
+                ty: ir,
+                init: None,
+                memory_decorations,
+                io: Some(Binding::BuiltIn(builtin)),
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                spirv_decorations: Vec::new(),
+                relaxed_precision: false,
+                immediate_bank: None,
+                block: None,
+            },
+            at,
+        );
+        self.lw.interface.push(handle);
+        self.lw.builtins.insert(String::from(key), handle);
         Ok(handle)
     }
 }

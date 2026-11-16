@@ -1,6 +1,7 @@
 use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::{Expression as AstExpression, FunctionCall, FunctionIdentifier};
 use rglsl_sema::scope::Direction;
@@ -402,14 +403,14 @@ fn paired_vectors(from: &GlslType, to: &GlslType) -> bool {
         )
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    pub(super) async fn call(
-        self,
-        expression: &'b AstExpression,
-        call: &'b FunctionCall,
+impl FunctionLowerer<'_, '_> {
+    pub(super) fn call(
+        &mut self,
+        expression: &AstExpression,
+        call: &FunctionCall,
     ) -> Result<Option<Handle<Expression>>> {
-        let at = self.with(|this| this.at(expression.span))?;
-        let analysis = self.with(|this| this.lw.analysis)?;
+        let at = self.at(expression.span);
+        let analysis = self.lw.analysis;
         let arguments = call.arguments.as_slice();
         match analysis.calls.get(&expression.id) {
             Some(&Callee::Function(id))
@@ -417,108 +418,66 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     .function(id)
                     .is_some_and(|function| function.spirv_instruction.is_some()) =>
             {
-                let frame = self.clone().spirv_call(id, arguments, at);
-                self.nest(frame).await
+                recurse(|| self.spirv_call(id, arguments, at))
             }
-            Some(&Callee::Function(id)) => {
-                self.clone()
-                    .user_function_call(expression, id, arguments, at)
-                    .await
-            }
+            Some(&Callee::Function(id)) => self.user_function_call(expression, id, arguments, at),
             Some(&Callee::NonUniform) => {
-                let frame = self.clone().non_uniform_value(arguments, at);
-                self.nest(frame).await
+                { recurse(|| self.non_uniform_value(arguments, at)) }.map(Some)
             }
-            .map(Some),
             Some(&Callee::DebugPrintf) => {
-                let frame = self.clone().debug_printf(arguments, at);
-                self.nest(frame).await
+                { recurse(|| self.debug_printf(arguments, at)) }.map(|()| None)
             }
-            .map(|()| None),
-            Some(&Callee::Abort) => {
-                let frame = self.clone().abort(arguments, at);
-                self.nest(frame).await
-            }
-            .map(|()| None),
-            Some(&Callee::Builtin(id)) => {
-                self.clone()
-                    .builtin_function_call(expression, id, arguments, at)
-                    .await
-            }
-            Some(&Callee::Constructor(ref ty)) => {
-                self.clone().constructor_call(ty, arguments, at).await
-            }
+            Some(&Callee::Abort) => recurse(|| self.abort(arguments, at)).map(|()| None),
+            Some(&Callee::Builtin(id)) => self.builtin_function_call(expression, id, arguments, at),
+            Some(&Callee::Constructor(ref ty)) => self.constructor_call(ty, arguments, at),
             Some(&Callee::Cooperative(kind)) => {
-                let frame = self.clone().cooperative_call(kind, arguments, at);
-                self.nest(frame).await
+                recurse(|| self.cooperative_call(kind, arguments, at))
             }
             Some(&Callee::Tensor(kind)) => {
-                let frame = self
-                    .clone()
-                    .tensor_function_call(expression, kind, arguments, at);
-                self.nest(frame).await
+                recurse(|| self.tensor_function_call(expression, kind, arguments, at))
             }
-            Some(&Callee::TensorArm(kind)) => {
-                let frame = self.clone().tensor_arm_call(kind, arguments, at);
-                self.nest(frame).await
-            }
+            Some(&Callee::TensorArm(kind)) => recurse(|| self.tensor_arm_call(kind, arguments, at)),
             Some(&Callee::Matrix(kind)) => {
-                let frame = self
-                    .clone()
-                    .matrix_function_call(expression, kind, arguments, at);
-                self.nest(frame).await
+                recurse(|| self.matrix_function_call(expression, kind, arguments, at))
             }
-            Some(&Callee::Length) => {
-                let frame = self.clone().length_call(call, at);
-                self.nest(frame).await
-            }
+            Some(&Callee::Length) => recurse(|| self.length_call(call, at)),
             None => Err(internal(at)),
         }
     }
 
-    async fn user_function_call(
-        self,
-        expression: &'b AstExpression,
+    fn user_function_call(
+        &mut self,
+        expression: &AstExpression,
         id: FunctionId,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let non_uniform = self.with(|this| this.info(expression))??.non_uniform;
-        {
-            let frame = self.clone().user_call(id, arguments, non_uniform, at);
-            self.nest(frame).await
-        }
+        let non_uniform = self.info(expression)?.non_uniform;
+        recurse(|| self.user_call(id, arguments, non_uniform, at))
     }
 
-    async fn builtin_function_call(
-        self,
-        expression: &'b AstExpression,
+    fn builtin_function_call(
+        &mut self,
+        expression: &AstExpression,
         id: rglsl_sema::BuiltinFunctionId,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let result = &self.with(|this| this.info(expression))??.ty;
-        {
-            let frame = self.clone().builtin_call(id, result, arguments, at);
-            self.nest(frame).await
-        }
+        let result = &self.info(expression)?.ty;
+        recurse(|| self.builtin_call(id, result, arguments, at))
     }
 
-    async fn constructor_call(
-        self,
-        ty: &'b GlslType,
-        arguments: &'b [AstExpression],
+    fn constructor_call(
+        &mut self,
+        ty: &GlslType,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         if ty
             .as_opaque()
             .is_some_and(rglsl_sema::types::Opaque::is_acceleration_structure)
         {
-            return {
-                let frame = self.clone().acceleration_structure_from(arguments, at);
-                self.nest(frame).await
-            }
-            .map(Some);
+            return recurse(|| self.acceleration_structure_from(arguments, at)).map(Some);
         }
         if ty.is_opaque() {
             return Err(unsupported(
@@ -526,203 +485,156 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 at,
             ));
         }
-        {
-            let frame = self.clone().construct(ty, arguments, at);
-            self.nest(frame).await
-        }
-        .map(Some)
+        { recurse(|| self.construct(ty, arguments, at)) }.map(Some)
     }
 
-    async fn tensor_function_call(
-        self,
-        expression: &'b AstExpression,
+    fn tensor_function_call(
+        &mut self,
+        expression: &AstExpression,
         kind: rglsl_sema::TensorCall,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let result = &self.with(|this| this.info(expression))??.ty;
-        {
-            let frame = self.clone().tensor_call(kind, result, arguments, at);
-            self.nest(frame).await
-        }
-        .map(Some)
+        let result = &self.info(expression)?.ty;
+        { recurse(|| self.tensor_call(kind, result, arguments, at)) }.map(Some)
     }
 
-    async fn matrix_function_call(
-        self,
-        expression: &'b AstExpression,
+    fn matrix_function_call(
+        &mut self,
+        expression: &AstExpression,
         kind: rglsl_sema::MatrixCall,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let result = &self.with(|this| this.info(expression))??.ty;
-        {
-            let frame = self.clone().matrix_call(kind, result, arguments, at);
-            self.nest(frame).await
-        }
+        let result = &self.info(expression)?.ty;
+        recurse(|| self.matrix_call(kind, result, arguments, at))
     }
 
-    async fn length_call(
-        self,
-        call: &'b FunctionCall,
-        at: Span,
-    ) -> Result<Option<Handle<Expression>>> {
+    fn length_call(&mut self, call: &FunctionCall, at: Span) -> Result<Option<Handle<Expression>>> {
         match call.function.node {
             FunctionIdentifier::Method {
                 ref object,
                 ref name,
-            } if name.node == "length64" => {
-                let frame = self.clone().wide_length(object, at);
-                self.nest(frame).await
-            }
-            .map(Some),
+            } if name.node == "length64" => recurse(|| self.wide_length(object, at)).map(Some),
             FunctionIdentifier::Method { ref object, .. } => {
-                let frame = self.clone().length(object, at);
-                self.nest(frame).await
+                { recurse(|| self.length(object, at)) }.map(Some)
             }
-            .map(Some),
             _ => Err(internal(at)),
         }
     }
 
-    async fn wide_length(self, object: &'b AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let ty = self.with(|this| this.info(object))??.ty.clone();
+    fn wide_length(&mut self, object: &AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let ty = self.info(object)?.ty.clone();
         if let Some(length) = ty.length() {
-            return self.with(|this| this.literal(Literal::I64(i64::from(length)), at))?;
+            return self.literal(Literal::I64(i64::from(length)), at);
         }
-        let builtin = self.with(|this| {
-            this.lw
-                .variable_symbol(object)
-                .and_then(|symbol| this.lw.symbol(symbol))
-                .is_some_and(|symbol| this.lw.builtin_sizes.contains_key(symbol.name.as_str()))
-        })?;
+        let builtin = self
+            .lw
+            .variable_symbol(object)
+            .and_then(|symbol| self.lw.symbol(symbol))
+            .is_some_and(|symbol| self.lw.builtin_sizes.contains_key(symbol.name.as_str()));
         let runtime = ty.outer_size() == Some(ArraySize::Unsized)
             && !builtin
             && ty.as_cooperative_matrix().is_none()
             && ty.sized_vector_length().is_none();
         if runtime {
-            let place = {
-                let frame = self.clone().place(object);
-                self.nest(frame).await
-            }?;
+            let place = recurse(|| self.place(object))?;
             if place.swizzle.is_some() {
                 return Err(internal(at));
             }
-            let length =
-                self.with(|this| this.add(Expression::WideArrayLength(place.pointer), at))??;
-            return self.with(|this| this.as_kind(length, crate::Scalar::I64, at))?;
+            let length = self.add(Expression::WideArrayLength(place.pointer), at)?;
+            return self.as_kind(length, crate::Scalar::I64, at);
         }
-        let length = {
-            let frame = self.clone().length(object, at);
-            self.nest(frame).await
-        }?;
-        self.with(|this| this.as_kind(length, crate::Scalar::I64, at))?
+        let length = recurse(|| self.length(object, at))?;
+        self.as_kind(length, crate::Scalar::I64, at)
     }
 
-    async fn length(self, object: &'b AstExpression, at: Span) -> Result<Handle<Expression>> {
-        let ty = self.with(|this| this.info(object))??.ty.clone();
+    fn length(&mut self, object: &AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let ty = self.info(object)?.ty.clone();
         if let Some(length) = ty.length() {
             let length = i32::try_from(length).map_err(|_| internal(at))?;
-            return self.with(|this| this.literal(Literal::I32(length), at))?;
+            return self.literal(Literal::I32(length), at);
         }
         if ty.as_cooperative_matrix().is_some() {
-            let matrix = self.clone().ir_type(ty.clone(), at).await?;
-            let length = self
-                .with(|this| this.add(Expression::CooperativeMatrixLength { ty: matrix }, at))??;
-            return self.with(|this| this.as_kind(length, crate::Scalar::I32, at))?;
+            let matrix = self.ir_type(&ty, at)?;
+            let length = self.add(Expression::CooperativeMatrixLength { ty: matrix }, at)?;
+            return self.as_kind(length, crate::Scalar::I32, at);
         }
         if let Some(ArraySize::Specialized(size)) = ty.outer_size().or(ty.sized_vector_length()) {
-            let frame = self.lowerer().specialized_size(size, at);
-            let handle = self.nest(frame).await?;
-            let value = self.with(|this| this.add(Expression::Override(handle), at))??;
-            let size_ty = self.with(|this| this.lw.module.overrides[handle].ty)?;
-            return match self.with(|this| this.lw.module.types[size_ty].inner.clone())? {
+            let handle = recurse(|| self.specialized_size(size, at))?;
+            let value = self.add(Expression::Override(handle), at)?;
+            let size_ty = self.lw.module.overrides[handle].ty;
+            return match self.lw.module.types[size_ty].inner.clone() {
                 crate::TypeInner::Scalar(crate::Scalar::I32) => Ok(value),
-                _ => self.with(|this| this.as_kind(value, crate::Scalar::I32, at))?,
+                _ => self.as_kind(value, crate::Scalar::I32, at),
             };
         }
         if ty.outer_size() == Some(ArraySize::Unsized)
-            && let Some(symbol) = self.with(|this| this.lw.variable_symbol(object))?
-            && let Some(name) = self.with(|this| this.lw.symbol(symbol).map(|s| s.name.as_str()))?
-            && let Some(size) = self.with(|this| this.lw.builtin_sizes.get(name).copied())?
+            && let Some(symbol) = self.lw.variable_symbol(object)
+            && let Some(name) = self.lw.symbol(symbol).map(|s| s.name.as_str())
+            && let Some(size) = self.lw.builtin_sizes.get(name).copied()
         {
             let size = i32::try_from(size).map_err(|_| internal(at))?;
-            return self.with(|this| this.literal(Literal::I32(size), at))?;
+            return self.literal(Literal::I32(size), at);
         }
-        let place = {
-            let frame = self.clone().place(object);
-            self.nest(frame).await
-        }?;
+        let place = recurse(|| self.place(object))?;
         if place.swizzle.is_some() {
             return Err(internal(at));
         }
-        let length = self.with(|this| this.add(Expression::ArrayLength(place.pointer), at))??;
-        self.with(|this| this.as_kind(length, crate::Scalar::I32, at))?
+        let length = self.add(Expression::ArrayLength(place.pointer), at)?;
+        self.as_kind(length, crate::Scalar::I32, at)
     }
 
-    async fn non_uniform_value(
-        self,
-        arguments: &'b [AstExpression],
+    fn non_uniform_value(
+        &mut self,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
         let argument = arguments.first().ok_or_else(|| internal(at))?;
-        let (value, ty) = {
-            let frame = self.clone().typed(argument);
-            self.nest(frame).await
-        }?;
-        let shared = self.with(|this| this.tracker.is_const_or_override(value))?
+        let (value, ty) = recurse(|| self.typed(argument))?;
+        let shared = self.tracker.is_const_or_override(value)
             || matches!(
-                self.with(|this| this.expressions[value].clone())?,
+                self.expressions[value].clone(),
                 Expression::FunctionArgument(_)
                     | Expression::GlobalVariable(_)
                     | Expression::LocalVariable(_)
             );
         let value = if shared && !ty.is_opaque() {
-            let pointer = self.with(|this| this.spill(value, &ty, at))??;
-            self.with(|this| this.add(Expression::Load { pointer }, at))??
+            let pointer = self.spill(value, &ty, at)?;
+            self.add(Expression::Load { pointer }, at)?
         } else {
             value
         };
-        self.with(|this| this.mark(value, NonUniform::VALUE))?;
+        self.mark(value, NonUniform::VALUE);
         Ok(value)
     }
 
-    async fn user_call(
-        self,
+    fn user_call(
+        &mut self,
         id: FunctionId,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         non_uniform: bool,
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let analysis = self.with(|this| this.lw.analysis)?;
+        let analysis = self.lw.analysis;
         let function = analysis.function(id).ok_or_else(|| internal(at))?;
-        let handle = self.with(|this| this.user_call_target(id, arguments, at))??;
-        let parameter_types: Vec<Handle<crate::Type>> = self.with(|this| {
-            this.lw.module.functions[handle]
-                .arguments
-                .iter()
-                .map(|argument| argument.ty)
-                .collect()
+        let handle = self.user_call_target(id, arguments, at)?;
+        let parameter_types: Vec<Handle<crate::Type>> = self.lw.module.functions[handle]
+            .arguments
+            .iter()
+            .map(|argument| argument.ty)
+            .collect();
+        let (values, writebacks) = recurse(|| {
+            self.user_call_arguments(arguments, &function.parameters, parameter_types, at)
         })?;
-        let (values, writebacks) = {
-            let frame = self.clone().user_call_arguments(
-                arguments,
-                &function.parameters,
-                parameter_types,
-                at,
-            );
-            self.nest(frame).await
-        }?;
         let returns = !function.return_type.is_void();
-        self.with(|this| {
-            this.user_call_finish(handle, values, writebacks, returns, non_uniform, at)
-        })?
+        self.user_call_finish(handle, values, writebacks, returns, non_uniform, at)
     }
 
-    async fn user_call_arguments(
-        self,
-        arguments: &'b [AstExpression],
-        parameters: &'b [rglsl_sema::scope::Parameter],
+    fn user_call_arguments(
+        &mut self,
+        arguments: &[AstExpression],
+        parameters: &[rglsl_sema::scope::Parameter],
         parameter_types: Vec<Handle<crate::Type>>,
         at: Span,
     ) -> Result<(Vec<Handle<Expression>>, Vec<Writeback>)> {
@@ -731,25 +643,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         for ((argument, parameter), &parameter_ty) in
             arguments.iter().zip(parameters).zip(&parameter_types)
         {
-            let writeback = {
-                let frame = self.clone().user_call_argument(
-                    argument,
-                    parameter,
-                    parameter_ty,
-                    Rc::clone(&values),
-                    at,
-                );
-                self.nest(frame).await
-            }?;
+            let writeback = recurse(|| {
+                self.user_call_argument(argument, parameter, parameter_ty, Rc::clone(&values), at)
+            })?;
             writebacks.extend(writeback);
         }
         Ok((values.take(), writebacks))
     }
 
-    async fn user_call_argument(
-        self,
-        argument: &'b AstExpression,
-        parameter: &'b rglsl_sema::scope::Parameter,
+    fn user_call_argument(
+        &mut self,
+        argument: &AstExpression,
+        parameter: &rglsl_sema::scope::Parameter,
         parameter_ty: Handle<crate::Type>,
         values: Values,
         at: Span,
@@ -761,144 +666,101 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .as_opaque()
                 .is_some_and(rglsl_sema::types::Opaque::is_private_object)
         {
-            return {
-                let frame = self.clone().private_argument(argument, values);
-                self.nest(frame).await
-            }
-            .map(|()| None);
+            return recurse(|| self.private_argument(argument, values)).map(|()| None);
         }
         if input && matches!(parameter.ty.kind, TypeKind::Spirv(_)) {
-            return {
-                let frame = self
-                    .clone()
-                    .spirv_in_argument(argument, &parameter.ty, values, at);
-                self.nest(frame).await
-            }
-            .map(|()| None);
+            return recurse(|| self.spirv_in_argument(argument, &parameter.ty, values, at))
+                .map(|()| None);
         }
         if input {
-            return {
-                let frame =
-                    self.clone()
-                        .in_argument_value(argument, parameter, parameter_ty, values, at);
-                self.nest(frame).await
-            }
+            return recurse(|| {
+                self.in_argument_value(argument, parameter, parameter_ty, values, at)
+            })
             .map(|()| None);
         }
-        {
-            let frame = self
-                .clone()
-                .out_argument_place(argument, parameter, values, at);
-            self.nest(frame).await
-        }
-        .map(Some)
+        { recurse(|| self.out_argument_place(argument, parameter, values, at)) }.map(Some)
     }
 
-    async fn private_argument(self, argument: &'b AstExpression, values: Values) -> Result<()> {
-        let pointer = {
-            let frame = self.clone().ray_query_pointer(argument);
-            self.nest(frame).await
-        }?;
+    fn private_argument(&mut self, argument: &AstExpression, values: Values) -> Result<()> {
+        let pointer = recurse(|| self.ray_query_pointer(argument))?;
         values.borrow_mut().push(pointer);
         Ok(())
     }
 
-    async fn spirv_in_argument(
-        self,
-        argument: &'b AstExpression,
-        ty: &'b GlslType,
+    fn spirv_in_argument(
+        &mut self,
+        argument: &AstExpression,
+        ty: &GlslType,
         values: Values,
         at: Span,
     ) -> Result<()> {
-        let value = {
-            let frame = self.clone().rvalue(argument);
-            self.nest(frame).await
-        }?;
-        let pointer = self.with(|this| this.spirv_argument(ty, value, at))??;
+        let value = recurse(|| self.rvalue(argument))?;
+        let pointer = self.spirv_argument(ty, value, at)?;
         values.borrow_mut().push(pointer);
         Ok(())
     }
 
-    async fn in_argument_value(
-        self,
-        argument: &'b AstExpression,
-        parameter: &'b rglsl_sema::scope::Parameter,
+    fn in_argument_value(
+        &mut self,
+        argument: &AstExpression,
+        parameter: &rglsl_sema::scope::Parameter,
         parameter_ty: Handle<crate::Type>,
         values: Values,
         at: Span,
     ) -> Result<()> {
-        let value = {
-            let frame = self.clone().rvalue(argument);
-            self.nest(frame).await
-        }?;
-        let value = self.with(|this| this.in_argument(value, parameter, parameter_ty, at))??;
+        let value = recurse(|| self.rvalue(argument))?;
+        let value = self.in_argument(value, parameter, parameter_ty, at)?;
         values.borrow_mut().push(value);
         Ok(())
     }
 
-    async fn out_argument_place(
-        self,
-        argument: &'b AstExpression,
-        parameter: &'b rglsl_sema::scope::Parameter,
+    fn out_argument_place(
+        &mut self,
+        argument: &AstExpression,
+        parameter: &rglsl_sema::scope::Parameter,
         values: Values,
         at: Span,
     ) -> Result<Writeback> {
-        let place = {
-            let frame = self.clone().place(argument);
-            self.nest(frame).await
-        }?;
-        let (pointer, writeback) =
-            self.with(|this| this.out_argument(argument, place, parameter, at))??;
+        let place = recurse(|| self.place(argument))?;
+        let (pointer, writeback) = self.out_argument(argument, place, parameter, at)?;
         values.borrow_mut().push(pointer);
         Ok(writeback)
     }
 
-    pub(super) async fn construct(
-        self,
-        ty: &'b GlslType,
-        arguments: &'b [AstExpression],
+    pub(super) fn construct(
+        &mut self,
+        ty: &GlslType,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
         if let &[ref argument] = arguments {
-            let from_reference = self.with(|this| this.info(argument))??.ty.is_reference();
+            let from_reference = self.info(argument)?.ty.is_reference();
             let numeric = ty.is_scalar() || ty.is_vector();
             if ty.is_reference() || (from_reference && numeric) {
-                return {
-                    let frame = self.clone().reference_construct(ty, argument, at);
-                    self.nest(frame).await
-                };
+                return recurse(|| self.reference_construct(ty, argument, at));
             }
         }
         if ty.is_array() || ty.is_struct() {
-            return {
-                let frame = self.clone().construct_composite(ty, arguments, at);
-                self.nest(frame).await
-            };
+            return recurse(|| self.construct_composite(ty, arguments, at));
         }
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            values.push({
-                let frame = self.clone().typed(argument);
-                self.nest(frame).await
-            }?);
+            values.push(recurse(|| self.typed(argument))?);
         }
-        self.with(|this| this.construct_values(ty, at, &values))?
+        self.construct_values(ty, at, &values)
     }
 
-    async fn construct_composite(
-        self,
-        ty: &'b GlslType,
-        arguments: &'b [AstExpression],
+    fn construct_composite(
+        &mut self,
+        ty: &GlslType,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
         let mut components = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            components.push({
-                let frame = self.clone().rvalue(argument);
-                self.nest(frame).await
-            }?);
+            components.push(recurse(|| self.rvalue(argument))?);
         }
-        let ir = self.clone().ir_type(ty.clone(), at).await?;
-        self.with(|this| this.add(Expression::Compose { ty: ir, components }, at))?
+        let ir = self.ir_type(ty, at)?;
+        self.add(Expression::Compose { ty: ir, components }, at)
     }
 }

@@ -1,5 +1,6 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::NodeId;
 use rglsl_ast::ast::{
@@ -24,7 +25,7 @@ const OP_TYPE_VECTOR: u32 = 23;
 
 impl Lowerer<'_> {
     pub(super) fn spirv_type(&mut self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
-        super::function::lowerer_on_heap!(self, |cx| cx.spirv_type(id, span))
+        super::function::FunctionLowerer::new(self).spirv_type(id, span)
     }
 
     pub(super) fn spirv_requirements(&mut self) {
@@ -177,9 +178,9 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
-    pub(super) async fn spirv_type(self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
-        let analysis = self.with(|this| this.analysis)?;
+impl super::function::FunctionLowerer<'_, '_> {
+    pub(super) fn spirv_type(&mut self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
+        let analysis = self.lw.analysis;
         let ty = analysis.types.spirv(id).ok_or_else(|| internal(span))?;
         if !ty.instruction.set.is_empty() {
             return Err(unsupported("`spirv_type` with an instruction set", span));
@@ -204,10 +205,7 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
                     ));
                 }
                 SpirvTypeParameter::Type(ref parameter) => {
-                    let handle = {
-                        let frame = self.clone().ir_type(parameter.clone(), span);
-                        self.nest(frame).await
-                    }?;
+                    let handle = recurse(|| self.ir_type(parameter, span))?;
                     operands.push(SpirvTypeOperand::Type(handle));
                 }
             }
@@ -224,10 +222,9 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
                 4 => Some(VectorSize::Quad),
                 _ => None,
             };
-            if let (Some(size), &TypeInner::Scalar(scalar)) = (
-                size,
-                &self.with(|this| this.module.types[base].inner.clone())?,
-            ) {
+            if let (Some(size), &TypeInner::Scalar(scalar)) =
+                (size, &self.lw.module.types[base].inner.clone())
+            {
                 return Ok(TypeInner::Vector { size, scalar });
             }
         }
@@ -235,21 +232,21 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    async fn spirv_result_type(self, ty: GlslType, at: Span) -> Result<Handle<crate::Type>> {
+impl super::function::FunctionLowerer<'_, '_> {
+    fn spirv_result_type(&mut self, ty: GlslType, at: Span) -> Result<Handle<crate::Type>> {
         if matches!(ty.kind, TypeKind::Spirv(_)) || !ty.is_opaque() {
-            return self.ir_type(ty, at).await;
+            return self.ir_type(&ty, at);
         }
         Err(unsupported("opaque results of `spirv_instruction`", at))
     }
 
-    pub(super) async fn spirv_call(
-        self,
+    pub(super) fn spirv_call(
+        &mut self,
         id: FunctionId,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
-        let analysis = self.with(|this| this.lw.analysis)?;
+        let analysis = self.lw.analysis;
         let function = analysis.function(id).ok_or_else(|| internal(at))?;
         let spirv = function
             .spirv_instruction
@@ -269,7 +266,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .flags
                 .contains(QualifierFlags::SPIRV_LITERAL)
             {
-                let info = self.with(|this| this.info(argument))??;
+                let info = self.info(argument)?;
                 let value = info
                     .value
                     .as_ref()
@@ -286,10 +283,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .flags
                 .contains(QualifierFlags::SPIRV_BY_REFERENCE)
             {
-                let place = {
-                    let frame = self.clone().place(argument);
-                    self.nest(frame).await
-                }?;
+                let place = recurse(|| self.place(argument))?;
                 if place.boolean || place.spilled {
                     return Err(unsupported(
                         "this argument of a `spirv_by_reference` parameter",
@@ -299,15 +293,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 let pointer = match place.swizzle {
                     None => place.pointer,
                     Some(ref components) => match components[..] {
-                        [index] => self.with(|this| {
-                            this.add(
+                        [index] => {
+                            (self.add(
                                 Expression::AccessIndex {
                                     base: place.pointer,
                                     index,
                                 },
                                 at,
-                            )
-                        })??,
+                            ))?
+                        }
                         _ => {
                             return Err(unsupported(
                                 "a swizzle as the argument of a `spirv_by_reference` parameter",
@@ -318,38 +312,29 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 operands.push(SpirvOperand::Pointer(pointer));
             } else {
-                operands.push(SpirvOperand::Value({
-                    let frame = self.clone().rvalue(argument);
-                    self.nest(frame).await
-                }?));
+                operands.push(SpirvOperand::Value(recurse(|| self.rvalue(argument))?));
             }
         }
         let result = if function.return_type.is_void() {
             None
         } else {
-            Some(
-                self.clone()
-                    .spirv_result_type(function.return_type.clone(), at)
-                    .await?,
-            )
+            Some(self.spirv_result_type(function.return_type.clone(), at)?)
         };
         match result {
-            Some(ty) => Ok(Some(self.with(|this| {
-                this.push_with_result(
-                    Expression::SpirvInstructionResult { ty },
-                    |result| Statement::SpirvInstruction {
-                        instruction,
-                        operands,
-                        result: Some(result),
-                    },
-                    at,
-                )
-            })?)),
+            Some(ty) => Ok(Some(self.push_with_result(
+                Expression::SpirvInstructionResult { ty },
+                |result| Statement::SpirvInstruction {
+                    instruction,
+                    operands,
+                    result: Some(result),
+                },
+                at,
+            ))),
             None => {
-                self.with(|lowerer| {
-                    let emitted = lowerer.emitter.finish(&lowerer.expressions);
-                    lowerer.block.extend(emitted);
-                    lowerer.block.push(
+                {
+                    let emitted = self.emitter.finish(&self.expressions);
+                    self.block.extend(emitted);
+                    self.block.push(
                         Statement::SpirvInstruction {
                             instruction,
                             operands,
@@ -357,8 +342,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         },
                         at,
                     );
-                    lowerer.emitter.start(&lowerer.expressions);
-                })?;
+                    self.emitter.start(&self.expressions);
+                }
                 Ok(None)
             }
         }

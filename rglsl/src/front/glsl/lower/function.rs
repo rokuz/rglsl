@@ -1,9 +1,8 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::cell::RefCell;
-use core::future::Future;
 use rglsl_sema::scope::QualifierFlags;
 
-use rglsl_types::stack::{Call, Stack};
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::{FunctionDefinition, Node};
 use rglsl_sema::scope::Direction;
@@ -71,155 +70,41 @@ pub(super) struct JumpTarget {
     innermost_loop: Option<usize>,
 }
 
-#[derive(Clone)]
-pub(super) struct Cx<'b, 'l, 'a> {
-    lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
-    stack: Stack<'b>,
-}
-
-impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
-    pub(super) const fn new(
-        lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
-        stack: Stack<'b>,
-    ) -> Self {
-        Self { lowerer, stack }
-    }
-
-    pub(super) fn with<T>(
-        &self,
-        work: impl FnOnce(&mut FunctionLowerer<'l, 'a>) -> T,
-    ) -> Result<T> {
-        let mut lowerer = self
-            .lowerer
-            .try_borrow_mut()
-            .map_err(|_| internal(Span::UNDEFINED))?;
-        Ok(work(&mut lowerer))
-    }
-
-    pub(super) fn try_with<T>(
-        &self,
-        work: impl FnOnce(&mut FunctionLowerer<'l, 'a>) -> Result<T>,
-    ) -> Result<T> {
-        self.with(work)?
-    }
-
-    pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
-        self.stack.call(frame)
-    }
-
-    pub(super) async fn block_with<T: 'b>(self, frame: Call<'b, Result<T>>) -> Result<(Block, T)> {
-        let outer = self.with(|this| this.open_block())?;
-        let result = frame.await;
-        let mut value = None;
-        let result = result.map(|inner| value = Some(inner));
-        let block = self.try_with(|this| this.close_block(outer, result))?;
-        let at = Span::UNDEFINED;
-        Ok((block, value.ok_or_else(|| internal(at))?))
-    }
-
-    pub(super) async fn block(self, frame: Call<'b, Result<()>>) -> Result<Block> {
-        self.block_with(frame).await.map(|(block, ())| block)
-    }
-}
-
-#[derive(Clone)]
-pub(super) struct LowererCx<'b, 'l, 'a> {
-    lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
-    stack: Stack<'b>,
-}
-
-impl<'b, 'l, 'a> LowererCx<'b, 'l, 'a> {
-    pub(super) const fn new(
-        lowerer: &'b RefCell<&'b mut FunctionLowerer<'l, 'a>>,
-        stack: Stack<'b>,
-    ) -> Self {
-        Self { lowerer, stack }
-    }
-
-    pub(super) fn with<T>(&self, work: impl FnOnce(&mut Lowerer<'a>) -> T) -> Result<T> {
-        let mut lowerer = self
-            .lowerer
-            .try_borrow_mut()
-            .map_err(|_| internal(Span::UNDEFINED))?;
-        Ok(work(lowerer.lw))
-    }
-
-    pub(super) fn nest<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
-        self.stack.call(frame)
-    }
-
-    pub(super) fn function(&self) -> Cx<'b, 'l, 'a> {
-        Cx::new(self.lowerer, self.stack.clone())
-    }
-}
-
-impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
-    pub(super) fn lowerer(&self) -> LowererCx<'b, 'l, 'a> {
-        LowererCx::new(self.lowerer, self.stack.clone())
-    }
-
-    pub(super) async fn prepare(self, ty: &GlslType, at: Span) -> Result<()> {
-        if self.with(|this| this.lw.lowerable(ty))? {
-            return Ok(());
-        }
-        self.ir_type(ty.clone(), at).await.map(|_| ())
-    }
-
-    pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        if let Some(found) = self.with(|this| this.lw.globals.get(&symbol).copied())? {
-            return Ok(found);
-        }
-        let frame = self.lowerer().global_ref(symbol, at);
-        self.nest(frame).await
-    }
-
-    pub(super) async fn ir_type(self, ty: GlslType, at: Span) -> Result<Handle<crate::Type>> {
-        if let Some(result) = self.with(|this| this.lw.plain_type(&ty, false, false, at))? {
-            return result;
-        }
-        let frame = self.lowerer().ir_type(ty, at);
-        self.nest(frame).await
-    }
-}
-
-macro_rules! on_heap {
-    ($lowerer:expr, |$cx:ident| $frame:expr) => {{
-        let lowerer: &mut super::function::FunctionLowerer<'_, '_> = $lowerer;
-        let base = lowerer.lw.stack_base;
-        let walking = alloc::rc::Rc::clone(&lowerer.lw.walking);
-        if walking.replace(true) {
-            Err(super::internal(crate::Span::UNDEFINED))
-        } else {
-            let cell = core::cell::RefCell::new(lowerer);
-            let result = rglsl_types::stack::run_from(base, |stack| {
-                let $cx = super::function::Cx::new(&cell, stack);
-                $frame
-            });
-            walking.set(false);
-            result.unwrap_or_else(|| Err(super::internal(crate::Span::UNDEFINED)))
-        }
-    }};
-}
-
-pub(super) use on_heap;
-
-macro_rules! lowerer_on_heap {
-    ($lowerer:expr, |$cx:ident| $frame:expr) => {{
-        let mut holder = super::function::FunctionLowerer::new($lowerer);
-        super::function::on_heap!(&mut holder, |function| {
-            let $cx = function.lowerer();
-            $frame
-        })
-    }};
-}
-
-pub(super) use lowerer_on_heap;
-
 pub(super) fn ends_in_jump(block: &Block) -> bool {
     block.last().is_some_and(Statement::ends_block)
 }
 
 impl<'l, 'a> FunctionLowerer<'l, 'a> {
+    pub(super) fn block_with<T>(
+        &mut self,
+        body: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<(Block, T)> {
+        self.flush();
+        let outer = core::mem::take(&mut self.block);
+        let result = recurse(|| body(self));
+        self.flush();
+        let inner = core::mem::replace(&mut self.block, outer);
+        result.map(|value| (inner, value))
+    }
+
+    pub(super) fn block(&mut self, body: impl FnOnce(&mut Self) -> Result<()>) -> Result<Block> {
+        self.block_with(body).map(|(block, ())| block)
+    }
+
+    pub(super) fn prepare(&mut self, ty: &GlslType, at: Span) -> Result<()> {
+        if self.lw.lowerable(ty) {
+            return Ok(());
+        }
+        self.ir_type(ty, at).map(|_| ())
+    }
+
+    pub(super) fn ir_type(&mut self, ty: &GlslType, at: Span) -> Result<Handle<crate::Type>> {
+        if let Some(result) = self.lw.plain_type(ty, false, false, at) {
+            return result;
+        }
+        recurse(|| self.ir_type_with(ty, false, false, at))
+    }
+
     pub(super) fn new(lw: &'l mut Lowerer<'a>) -> Self {
         Self::with_statements(lw, 0)
     }
@@ -490,26 +375,6 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         result
     }
 
-    pub(super) fn nested(&mut self, body: impl FnOnce(&mut Self) -> Result<()>) -> Result<Block> {
-        self.flush();
-        let outer = core::mem::take(&mut self.block);
-        let result = body(self);
-        self.flush();
-        let inner = core::mem::replace(&mut self.block, outer);
-        result.map(|()| inner)
-    }
-
-    pub(super) fn open_block(&mut self) -> Block {
-        self.flush();
-        core::mem::take(&mut self.block)
-    }
-
-    pub(super) fn close_block(&mut self, outer: Block, result: Result<()>) -> Result<Block> {
-        self.flush();
-        let inner = core::mem::replace(&mut self.block, outer);
-        result.map(|()| inner)
-    }
-
     pub(super) fn terminated(&self) -> bool {
         ends_in_jump(&self.block)
     }
@@ -584,8 +449,6 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
         }
     }
 }
-
-impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {}
 
 impl<'a> Lowerer<'a> {
     fn tensor_array_type(

@@ -1,6 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use rglsl_sema::scope::QualifierFlags;
 use rglsl_types::extension::Extension;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::{Expression as AstExpression, Spanned, TypeQualifier};
 use rglsl_sema::builtins::kind::Primitive;
@@ -535,11 +536,11 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
-    pub(super) async fn per_vertex_array(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
-        let analysis = self.with(|this| this.analysis)?;
-        let record = self.with(|this| this.symbol(symbol).ok_or_else(|| internal(at)))??;
-        let variable = self.with(|this| this.variable(symbol).ok_or_else(|| internal(at)))??;
+impl FunctionLowerer<'_, '_> {
+    pub(super) fn per_vertex_array(&mut self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        let analysis = self.lw.analysis;
+        let record = self.lw.symbol(symbol).ok_or_else(|| internal(at))?;
+        let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
         let TypeKind::Block(id) = variable.ty.kind else {
             return Err(internal(at));
         };
@@ -547,10 +548,10 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
         let input = block.storage == BlockStorage::In;
         let size = match variable.ty.outer_size() {
             Some(GlslArraySize::Sized(size)) => size,
-            _ if self.with(|this| this.layout_missing())? => 1,
+            _ if self.lw.layout_missing() => 1,
             _ => {
                 return Err(semantic(
-                    format_size_error(&record.name, self.with(|this| this.stage())?),
+                    format_size_error(&record.name, self.lw.stage()),
                     at,
                 ));
             }
@@ -569,36 +570,34 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
             }
             let position = u32::try_from(members.len()).map_err(|_| internal(at))?;
             if position != index {
-                self.with(|this| this.member_indices.insert((id, index), position))?;
+                self.lw.member_indices.insert((id, index), position);
             }
             let builtin = with_invariant(
                 row.builtin()
                     .ok_or_else(|| unsupported(format_member(&member.name), at))?,
                 member.qualifiers.flags.contains(QualifierFlags::INVARIANT)
-                    || (!input && self.with(|this| this.invariant_all)?),
+                    || (!input && self.lw.invariant_all),
             );
             let mut sized = member.ty.clone();
             for (depth, size) in member.ty.dimensions().iter().enumerate() {
                 if *size == GlslArraySize::Unsized {
                     let used = if depth == 0 {
-                        self.with(|this| this.member_sizes.get(&(id, index)).copied())?
+                        self.lw.member_sizes.get(&(id, index)).copied()
                     } else {
-                        self.with(|this| {
-                            this.member_dimension_sizes
-                                .get(&(id, index, depth))
-                                .copied()
-                        })?
+                        self.lw
+                            .member_dimension_sizes
+                            .get(&(id, index, depth))
+                            .copied()
                     };
                     sized.set_dimension(depth, GlslArraySize::Sized(used.unwrap_or(1)));
                 }
             }
-            let ty = {
-                let frame = self.clone().ir_type(sized.clone(), at);
-                self.nest(frame).await
-            }?;
-            self.with(|lowerer| lowerer.layouter.update(lowerer.module.to_ctx()))?
+            let ty = recurse(|| self.ir_type(&sized, at))?;
+            self.lw
+                .layouter
+                .update(self.lw.module.to_ctx())
                 .map_err(|_| internal(at))?;
-            let layout = self.with(|this| this.layouter[ty])?;
+            let layout = self.lw.layouter[ty];
             offset = layout.alignment.round_up(offset);
             alignment = layout.alignment.max(alignment);
             members.push(crate::StructMember {
@@ -614,53 +613,44 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
             });
             offset = offset.saturating_add(layout.size);
         }
-        let structure = self.with(|this| {
-            this.module.types.insert(
-                crate::Type {
-                    name: Some(block.name.clone()),
-                    inner: TypeInner::Struct {
-                        members,
-                        span: alignment.round_up(offset),
-                    },
+        let structure = self.lw.module.types.insert(
+            crate::Type {
+                name: Some(block.name.clone()),
+                inner: TypeInner::Struct {
+                    members,
+                    span: alignment.round_up(offset),
                 },
-                Span::UNDEFINED,
-            )
-        })?;
-        let ty = {
-            let frame =
-                self.clone()
-                    .wrap_arrays(structure, ([GlslArraySize::Sized(size)]).to_vec(), at);
-            self.nest(frame).await
-        }?;
-        let handle = self.with(|this| {
-            this.module.global_variables.append(
-                GlobalVariable {
-                    name: Some(record.name.clone()),
-                    space: if input {
-                        AddressSpace::Input
-                    } else {
-                        AddressSpace::Output
-                    },
-                    binding: None,
-                    ty,
-                    init: None,
-                    memory_decorations: MemoryDecorations::empty(),
-                    io: None,
-                    xfb: None,
-                    input_attachment_index: None,
-                    heap_offset: None,
-                    tile_attachment: false,
-                    spirv_decorations: Vec::new(),
-                    relaxed_precision: false,
-                    immediate_bank: None,
-                    block: None,
+            },
+            Span::UNDEFINED,
+        );
+        let ty = recurse(|| self.wrap_arrays(structure, &([GlslArraySize::Sized(size)]), at))?;
+        let handle = self.lw.module.global_variables.append(
+            GlobalVariable {
+                name: Some(record.name.clone()),
+                space: if input {
+                    AddressSpace::Input
+                } else {
+                    AddressSpace::Output
                 },
-                at,
-            )
-        })?;
-        self.with(|this| this.interface.push(handle))?;
+                binding: None,
+                ty,
+                init: None,
+                memory_decorations: MemoryDecorations::empty(),
+                io: None,
+                xfb: None,
+                input_attachment_index: None,
+                heap_offset: None,
+                tile_attachment: false,
+                spirv_decorations: Vec::new(),
+                relaxed_precision: false,
+                immediate_bank: None,
+                block: None,
+            },
+            at,
+        );
+        self.lw.interface.push(handle);
         let found = GlobalRef::Variable(handle);
-        self.with(|this| this.globals.insert(symbol, found))?;
+        self.lw.globals.insert(symbol, found);
         Ok(found)
     }
 }
@@ -703,5 +693,3 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 }
-
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {}

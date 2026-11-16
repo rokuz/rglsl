@@ -1,6 +1,7 @@
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::builtins::kind::{AtomicOperation, Barrier, MemoryBarrier, SplitPhase};
 use rglsl_sema::types::{Opaque, TypeKind};
+use rglsl_types::stack::recurse;
 
 use super::function::FunctionLowerer;
 use super::types::{scalar, vector_size};
@@ -248,15 +249,15 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    pub(super) async fn atomic(
-        self,
+impl FunctionLowerer<'_, '_> {
+    pub(super) fn atomic(
+        &mut self,
         operation: AtomicOperation,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let (memory, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
-        let memory_ty = self.with(|this| this.info(memory))??.ty.clone();
+        let memory_ty = self.info(memory)?.ty.clone();
         let element = memory_ty.scalar_type().ok_or_else(|| internal(at))?;
         let element = scalar(element);
         let value_inner = match memory_ty.kind {
@@ -266,56 +267,46 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             },
             _ => TypeInner::Scalar(element),
         };
-        let place = {
-            let frame = self.clone().place(memory);
-            self.nest(frame).await
-        }?;
+        let place = recurse(|| self.place(memory))?;
         let count = atomic_operands(operation).min(rest.len());
         let (values, scope) = rest.split_at(count);
         let mut operands = alloc::vec::Vec::with_capacity(values.len());
         for argument in values {
-            let (value, ty) = {
-                let frame = self.clone().typed(argument);
-                self.nest(frame).await
-            }?;
-            operands.push(self.with(|this| this.convert(value, &ty, &memory_ty, at))??);
+            let (value, ty) = recurse(|| self.typed(argument))?;
+            operands.push(self.convert(value, &ty, &memory_ty, at)?);
         }
         let order = if scope.is_empty() {
             None
         } else {
-            Some(self.with(|this| this.memory_order(scope, at))??)
+            Some(self.memory_order(scope, at)?)
         };
         let pointer = place.pointer;
         let (fun, value, comparison) = match (operation, order, operands.as_slice()) {
             (AtomicOperation::Load, Some(order), &[]) => {
-                let ty = self.with(|this| this.lw.insert_type(TypeInner::Scalar(element)))?;
-                let result = self.with(|this| {
-                    this.push_with_result(
-                        Expression::AtomicResult {
-                            ty,
-                            comparison: false,
-                        },
-                        |result| Statement::AtomicLoad {
-                            location: AtomicLocation::Pointer(pointer),
-                            order,
-                            result,
-                        },
-                        at,
-                    )
-                })?;
+                let ty = self.lw.insert_type(TypeInner::Scalar(element));
+                let result = self.push_with_result(
+                    Expression::AtomicResult {
+                        ty,
+                        comparison: false,
+                    },
+                    |result| Statement::AtomicLoad {
+                        location: AtomicLocation::Pointer(pointer),
+                        order,
+                        result,
+                    },
+                    at,
+                );
                 return Ok(Some(result));
             }
             (AtomicOperation::Store, Some(order), &[value]) => {
-                self.with(|this| {
-                    this.push(
-                        Statement::AtomicStore {
-                            location: AtomicLocation::Pointer(pointer),
-                            value,
-                            order,
-                        },
-                        at,
-                    );
-                })?;
+                self.push(
+                    Statement::AtomicStore {
+                        location: AtomicLocation::Pointer(pointer),
+                        value,
+                        order,
+                    },
+                    at,
+                );
                 return Ok(None);
             }
             (AtomicOperation::CompareSwap, _, &[compare, value]) => (
@@ -356,71 +347,59 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             ) => return Err(internal(at)),
         };
         let ty = if comparison {
-            self.with(|this| {
-                this.lw.module.generate_predeclared_type(
-                    PredeclaredType::AtomicCompareExchangeWeakResult(element),
-                )
-            })?
+            self.lw.module.generate_predeclared_type(
+                PredeclaredType::AtomicCompareExchangeWeakResult(element),
+            )
         } else {
-            self.with(|this| this.lw.insert_type(value_inner))?
+            self.lw.insert_type(value_inner)
         };
-        let result = self.with(|this| {
-            this.push_with_result(
-                Expression::AtomicResult { ty, comparison },
-                |result| Statement::Atomic {
-                    pointer,
-                    fun,
-                    value,
-                    result: Some(result),
-                    order,
+        let result = self.push_with_result(
+            Expression::AtomicResult { ty, comparison },
+            |result| Statement::Atomic {
+                pointer,
+                fun,
+                value,
+                result: Some(result),
+                order,
+            },
+            at,
+        );
+        if comparison {
+            self.add(
+                Expression::AccessIndex {
+                    base: result,
+                    index: 0,
                 },
                 at,
             )
-        })?;
-        if comparison {
-            self.with(|this| {
-                this.add(
-                    Expression::AccessIndex {
-                        base: result,
-                        index: 0,
-                    },
-                    at,
-                )
-                .map(Some)
-            })?
+            .map(Some)
         } else {
             Ok(Some(result))
         }
     }
 
-    pub(super) async fn image_atomic(
-        self,
+    pub(super) fn image_atomic(
+        &mut self,
         operation: AtomicOperation,
         image: Handle<Expression>,
         opaque: Opaque,
         non_uniform: bool,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         if non_uniform {
-            self.with(|this| this.mark(image, NonUniform::VALUE))?;
+            self.mark(image, NonUniform::VALUE);
         }
         let coordinate_argument = arguments.get(1).ok_or_else(|| internal(at))?;
-        let (coordinate, ty) = {
-            let frame = self.clone().typed(coordinate_argument);
-            self.nest(frame).await
-        }?;
+        let (coordinate, ty) = recurse(|| self.typed(coordinate_argument))?;
         let size = ty.component_count().ok_or_else(|| internal(at))?;
         let (coordinate, array_index) =
-            self.with(|this| this.split_storage_coordinate(coordinate, size, opaque, at))??;
+            self.split_storage_coordinate(coordinate, size, opaque, at)?;
         let mut rest = arguments.get(2..).ok_or_else(|| internal(at))?;
         let sample = if opaque.multisample {
             let (sample, tail) = rest.split_first().ok_or_else(|| internal(at))?;
             rest = tail;
-            Some({
-                let frame = self.clone().rvalue(sample);
-                self.nest(frame).await
-            }?)
+            Some(recurse(|| self.rvalue(sample))?)
         } else {
             None
         };
@@ -429,30 +408,26 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let mut operands = alloc::vec::Vec::with_capacity(values.len());
         let mut value_ty = None;
         for argument in values {
-            let (value, ty) = {
-                let frame = self.clone().typed(argument);
-                self.nest(frame).await
-            }?;
+            let (value, ty) = recurse(|| self.typed(argument))?;
             if value_ty.is_none() {
                 value_ty = Some(ty);
             }
             operands.push(value);
         }
         let order = if scope.is_empty() {
-            let semantics = if self.with(|this| this.lw.analysis.vulkan_memory_model)?
-                && self.with(|this| this.image_is_volatile(image))?
+            let semantics = if self.lw.analysis.vulkan_memory_model && self.image_is_volatile(image)
             {
                 MemorySemantics::VOLATILE
             } else {
                 MemorySemantics::empty()
             };
             MemoryOrder {
-                scope: self.with(|this| this.default_scope())?,
+                scope: self.default_scope(),
                 semantics,
                 unequal: semantics,
             }
         } else {
-            self.with(|this| this.memory_order(scope, at))??
+            self.memory_order(scope, at)?
         };
         let texel = Texel {
             image,
@@ -474,34 +449,30 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 TypeInner::Scalar(scalar(element))
             }
         };
-        let ty = self.with(|this| this.lw.insert_type(value_inner))?;
+        let ty = self.lw.insert_type(value_inner);
         let result = Expression::AtomicResult {
             ty,
             comparison: false,
         };
         match (operation, operands.as_slice()) {
-            (AtomicOperation::Load, &[]) => Ok(Some(self.with(|this| {
-                this.push_with_result(
+            (AtomicOperation::Load, &[]) => Ok(Some(self.push_with_result(
+                result,
+                |result| Statement::AtomicLoad {
+                    location: AtomicLocation::Texel(texel),
+                    order,
                     result,
-                    |result| Statement::AtomicLoad {
+                },
+                at,
+            ))),
+            (AtomicOperation::Store, &[value]) => {
+                self.push(
+                    Statement::AtomicStore {
                         location: AtomicLocation::Texel(texel),
+                        value,
                         order,
-                        result,
                     },
                     at,
-                )
-            })?)),
-            (AtomicOperation::Store, &[value]) => {
-                self.with(|this| {
-                    this.push(
-                        Statement::AtomicStore {
-                            location: AtomicLocation::Texel(texel),
-                            value,
-                            order,
-                        },
-                        at,
-                    );
-                })?;
+                );
                 Ok(None)
             }
             _ => {
@@ -518,22 +489,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ),
                     _ => return Err(internal(at)),
                 };
-                Ok(Some(self.with(|this| {
-                    this.push_with_result(
-                        result,
-                        |result| Statement::ImageAtomic {
-                            image,
-                            coordinate,
-                            array_index,
-                            fun,
-                            value,
-                            sample,
-                            result: Some(result),
-                            order: Some(order),
-                        },
-                        at,
-                    )
-                })?))
+                Ok(Some(self.push_with_result(
+                    result,
+                    |result| Statement::ImageAtomic {
+                        image,
+                        coordinate,
+                        array_index,
+                        fun,
+                        value,
+                        sample,
+                        result: Some(result),
+                        order: Some(order),
+                    },
+                    at,
+                )))
             }
         }
     }

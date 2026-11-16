@@ -4,6 +4,7 @@ use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::types::{ArraySize as GlslArraySize, Scalar as GlslScalar, Type as GlslType};
 use rglsl_sema::{Callee, CooperativeCall, MatrixCall, QcomConversion, TensorCall};
 use rglsl_types::extension::Extension;
+use rglsl_types::stack::recurse;
 
 use rglsl_sema::builtins::kind::{BitOperation, Pure};
 
@@ -317,11 +318,11 @@ impl FunctionLowerer<'_, '_> {
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    pub(super) async fn cooperative_call(
-        self,
+impl FunctionLowerer<'_, '_> {
+    pub(super) fn cooperative_call(
+        &mut self,
         kind: CooperativeCall,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
@@ -341,7 +342,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 };
                 if let Some(name) = name {
                     for array in [argument(0)?, argument(target)?] {
-                        let size = self.with(|this| this.info(array))??.ty.outer_size();
+                        let size = self.info(array)?.ty.outer_size();
                         if size == Some(GlslArraySize::Unsized) {
                             return Err(semantic(
                                 format!(
@@ -352,106 +353,65 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         }
                     }
                 }
-                let expr = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
+                let expr = recurse(|| self.rvalue(argument(0)?))?;
                 let index = if conversion == ArrayConversion::SubArray {
-                    Some({
-                        let frame = self.clone().rvalue(argument(1)?);
-                        self.nest(frame).await
-                    }?)
+                    Some(recurse(|| self.rvalue(argument(1)?))?)
                 } else {
                     None
                 };
                 let destination = argument(target)?;
-                let destination_ty = self.with(|this| this.info(destination))??.ty.clone();
-                let ty = self.clone().ir_type(destination_ty.clone(), at).await?;
-                let place = {
-                    let frame = self.clone().place(destination);
-                    self.nest(frame).await
-                }?;
-                let value = self.with(|this| {
-                    this.add(
-                        Expression::ArrayConversion {
-                            conversion,
-                            expr,
-                            index,
-                            ty,
-                        },
-                        at,
-                    )
-                })??;
-                self.with(|this| this.store(&place, value, at))??;
+                let destination_ty = self.info(destination)?.ty.clone();
+                let ty = self.ir_type(&destination_ty, at)?;
+                let place = recurse(|| self.place(destination))?;
+                let value = (self.add(
+                    Expression::ArrayConversion {
+                        conversion,
+                        expr,
+                        index,
+                        ty,
+                    },
+                    at,
+                ))?;
+                self.store(&place, value, at)?;
                 Ok(None)
             }
             CooperativeCall::Load { .. } | CooperativeCall::Store { .. } => {
-                let data = {
-                    let frame = self.clone().cooperative_data(&arguments[1..], at);
-                    self.nest(frame).await
-                }?;
+                let data = recurse(|| self.cooperative_data(&arguments[1..], at))?;
                 let matrix = argument(0)?;
                 if let CooperativeCall::Load { .. } = kind {
-                    let matrix_ty = self.with(|this| this.info(matrix))??.ty.clone();
-                    let ty = self.clone().ir_type(matrix_ty.clone(), at).await?;
-                    let place = {
-                        let frame = self.clone().place(matrix);
-                        self.nest(frame).await
-                    }?;
-                    let value =
-                        self.with(|this| this.add(Expression::CooperativeLoad { ty, data }, at))??;
-                    self.with(|this| this.store(&place, value, at))??;
+                    let matrix_ty = self.info(matrix)?.ty.clone();
+                    let ty = self.ir_type(&matrix_ty, at)?;
+                    let place = recurse(|| self.place(matrix))?;
+                    let value = self.add(Expression::CooperativeLoad { ty, data }, at)?;
+                    self.store(&place, value, at)?;
                 } else {
-                    let target = {
-                        let frame = self.clone().rvalue(matrix);
-                        self.nest(frame).await
-                    }?;
-                    self.with(|this| this.push(Statement::CooperativeStore { target, data }, at))?;
+                    let target = recurse(|| self.rvalue(matrix))?;
+                    self.push(Statement::CooperativeStore { target, data }, at);
                 }
                 Ok(None)
             }
             CooperativeCall::VectorLoad => {
-                let pointer = {
-                    let frame = self.clone().array_pointer(argument(1)?, at);
-                    self.nest(frame).await
-                }?;
-                let offset = {
-                    let frame = self.clone().rvalue(argument(2)?);
-                    self.nest(frame).await
-                }?;
+                let pointer = recurse(|| self.array_pointer(argument(1)?, at))?;
+                let offset = recurse(|| self.rvalue(argument(2)?))?;
                 let vector = argument(0)?;
-                let vector_ty = self.with(|this| this.info(vector))??.ty.clone();
-                let ty = self.clone().ir_type(vector_ty.clone(), at).await?;
-                let place = {
-                    let frame = self.clone().place(vector);
-                    self.nest(frame).await
-                }?;
-                let value = self.with(|this| {
-                    this.add(
-                        Expression::CooperativeVectorLoad {
-                            ty,
-                            pointer,
-                            offset,
-                        },
-                        at,
-                    )
-                })??;
-                self.with(|this| this.store(&place, value, at))??;
+                let vector_ty = self.info(vector)?.ty.clone();
+                let ty = self.ir_type(&vector_ty, at)?;
+                let place = recurse(|| self.place(vector))?;
+                let value = (self.add(
+                    Expression::CooperativeVectorLoad {
+                        ty,
+                        pointer,
+                        offset,
+                    },
+                    at,
+                ))?;
+                self.store(&place, value, at)?;
                 Ok(None)
             }
             CooperativeCall::VectorStore | CooperativeCall::VectorReduceSum => {
-                let value = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let pointer = {
-                    let frame = self.clone().array_pointer(argument(1)?, at);
-                    self.nest(frame).await
-                }?;
-                let offset = {
-                    let frame = self.clone().rvalue(argument(2)?);
-                    self.nest(frame).await
-                }?;
+                let value = recurse(|| self.rvalue(argument(0)?))?;
+                let pointer = recurse(|| self.array_pointer(argument(1)?, at))?;
+                let offset = recurse(|| self.rvalue(argument(2)?))?;
                 let function = if kind == CooperativeCall::VectorStore {
                     CooperativeVectorFunction::Store {
                         value,
@@ -465,105 +425,55 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         offset,
                     }
                 };
-                self.with(|this| this.push(Statement::CooperativeVector(function), at))?;
+                self.push(Statement::CooperativeVector(function), at);
                 Ok(None)
             }
-            other => {
-                self.nest(self.clone().cooperative_vector_call(other, arguments, at))
-                    .await
-            }
+            other => recurse(|| self.cooperative_vector_call(other, arguments, at)),
         }
     }
 
-    async fn cooperative_vector_call(
-        self,
+    fn cooperative_vector_call(
+        &mut self,
         kind: CooperativeCall,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
         match kind {
             CooperativeCall::VectorOuterProduct => {
-                let a = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let b = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let matrix = {
-                    let frame = self.clone().array_pointer(argument(2)?, at);
-                    self.nest(frame).await
-                }?;
-                let offset = {
-                    let frame = self.clone().rvalue(argument(3)?);
-                    self.nest(frame).await
-                }?;
-                let stride = {
-                    let frame = self.clone().rvalue(argument(4)?);
-                    self.nest(frame).await
-                }?;
-                let layout = {
-                    let frame = self.clone().rvalue(argument(5)?);
-                    self.nest(frame).await
-                }?;
-                let interpretation = {
-                    let frame = self.clone().rvalue(argument(6)?);
-                    self.nest(frame).await
-                }?;
-                self.with(|this| {
-                    this.push(
-                        Statement::CooperativeVector(
-                            CooperativeVectorFunction::OuterProductAccumulate {
-                                a,
-                                b,
-                                matrix,
-                                offset,
-                                stride,
-                                layout,
-                                interpretation,
-                            },
-                        ),
-                        at,
-                    );
-                })?;
+                let a = recurse(|| self.rvalue(argument(0)?))?;
+                let b = recurse(|| self.rvalue(argument(1)?))?;
+                let matrix = recurse(|| self.array_pointer(argument(2)?, at))?;
+                let offset = recurse(|| self.rvalue(argument(3)?))?;
+                let stride = recurse(|| self.rvalue(argument(4)?))?;
+                let layout = recurse(|| self.rvalue(argument(5)?))?;
+                let interpretation = recurse(|| self.rvalue(argument(6)?))?;
+                self.push(
+                    Statement::CooperativeVector(
+                        CooperativeVectorFunction::OuterProductAccumulate {
+                            a,
+                            b,
+                            matrix,
+                            offset,
+                            stride,
+                            layout,
+                            interpretation,
+                        },
+                    ),
+                    at,
+                );
                 Ok(None)
             }
             CooperativeCall::VectorMatMul { bias } => {
-                let input = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let input_interpretation = {
-                    let frame = self.clone().rvalue(argument(2)?);
-                    self.nest(frame).await
-                }?;
-                let matrix = {
-                    let frame = self.clone().array_pointer(argument(3)?, at);
-                    self.nest(frame).await
-                }?;
-                let matrix_offset = {
-                    let frame = self.clone().rvalue(argument(4)?);
-                    self.nest(frame).await
-                }?;
-                let matrix_interpretation = {
-                    let frame = self.clone().rvalue(argument(5)?);
-                    self.nest(frame).await
-                }?;
+                let input = recurse(|| self.rvalue(argument(1)?))?;
+                let input_interpretation = recurse(|| self.rvalue(argument(2)?))?;
+                let matrix = recurse(|| self.array_pointer(argument(3)?, at))?;
+                let matrix_offset = recurse(|| self.rvalue(argument(4)?))?;
+                let matrix_interpretation = recurse(|| self.rvalue(argument(5)?))?;
                 let (bias, rest) = if bias {
-                    let pointer = {
-                        let frame = self.clone().array_pointer(argument(6)?, at);
-                        self.nest(frame).await
-                    }?;
-                    let offset = {
-                        let frame = self.clone().rvalue(argument(7)?);
-                        self.nest(frame).await
-                    }?;
-                    let interpretation = {
-                        let frame = self.clone().rvalue(argument(8)?);
-                        self.nest(frame).await
-                    }?;
+                    let pointer = recurse(|| self.array_pointer(argument(6)?, at))?;
+                    let offset = recurse(|| self.rvalue(argument(7)?))?;
+                    let interpretation = recurse(|| self.rvalue(argument(8)?))?;
                     (
                         Some(CooperativeVectorBias {
                             pointer,
@@ -575,99 +485,62 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 } else {
                     (None, 6)
                 };
-                let rows = {
-                    let frame = self.clone().rvalue(argument(rest)?);
-                    self.nest(frame).await
-                }?;
-                let columns = {
-                    let frame = self.clone().rvalue(argument(rest + 1)?);
-                    self.nest(frame).await
-                }?;
-                let layout = {
-                    let frame = self.clone().rvalue(argument(rest + 2)?);
-                    self.nest(frame).await
-                }?;
-                let transpose = {
-                    let frame = self.clone().rvalue(argument(rest + 3)?);
-                    self.nest(frame).await
-                }?;
-                let stride = {
-                    let frame = self.clone().rvalue(argument(rest + 4)?);
-                    self.nest(frame).await
-                }?;
+                let rows = recurse(|| self.rvalue(argument(rest)?))?;
+                let columns = recurse(|| self.rvalue(argument(rest + 1)?))?;
+                let layout = recurse(|| self.rvalue(argument(rest + 2)?))?;
+                let transpose = recurse(|| self.rvalue(argument(rest + 3)?))?;
+                let stride = recurse(|| self.rvalue(argument(rest + 4)?))?;
                 let result = argument(0)?;
-                let result_ty = self.with(|this| this.info(result))??.ty.clone();
-                let ty = self.clone().ir_type(result_ty.clone(), at).await?;
-                let place = {
-                    let frame = self.clone().place(result);
-                    self.nest(frame).await
-                }?;
-                let value = self.with(|this| {
-                    this.add(
-                        Expression::CooperativeVectorMatMul {
-                            ty,
-                            operation: CooperativeVectorMatMul {
-                                input,
-                                input_interpretation,
-                                matrix,
-                                matrix_offset,
-                                matrix_interpretation,
-                                bias,
-                                rows,
-                                columns,
-                                layout,
-                                transpose,
-                                stride,
-                            },
+                let result_ty = self.info(result)?.ty.clone();
+                let ty = self.ir_type(&result_ty, at)?;
+                let place = recurse(|| self.place(result))?;
+                let value = (self.add(
+                    Expression::CooperativeVectorMatMul {
+                        ty,
+                        operation: CooperativeVectorMatMul {
+                            input,
+                            input_interpretation,
+                            matrix,
+                            matrix_offset,
+                            matrix_interpretation,
+                            bias,
+                            rows,
+                            columns,
+                            layout,
+                            transpose,
+                            stride,
                         },
-                        at,
-                    )
-                })??;
-                self.with(|this| this.store(&place, value, at))??;
+                    },
+                    at,
+                ))?;
+                self.store(&place, value, at)?;
                 Ok(None)
             }
             CooperativeCall::SaturatedConvert => {
                 let target = argument(0)?;
-                let target_ty = self.with(|this| this.info(target))??.ty.clone();
-                let ty = self.clone().ir_type(target_ty.clone(), at).await?;
-                let place = {
-                    let frame = self.clone().place(target);
-                    self.nest(frame).await
-                }?;
-                let expr = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let flavor = self.with(|this| this.cooperative_flavor())?;
-                let value = self.with(|this| {
-                    this.add(
-                        Expression::Convert {
-                            expr,
-                            ty,
-                            saturating: true,
-                            flavor,
-                        },
-                        at,
-                    )
-                })??;
-                self.with(|this| this.store(&place, value, at))??;
+                let target_ty = self.info(target)?.ty.clone();
+                let ty = self.ir_type(&target_ty, at)?;
+                let place = recurse(|| self.place(target))?;
+                let expr = recurse(|| self.rvalue(argument(1)?))?;
+                let flavor = self.cooperative_flavor();
+                let value = (self.add(
+                    Expression::Convert {
+                        expr,
+                        ty,
+                        saturating: true,
+                        flavor,
+                    },
+                    at,
+                ))?;
+                self.store(&place, value, at)?;
                 Ok(None)
             }
             CooperativeCall::MulAdd { saturating, .. } => {
-                let a = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let b = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let c = {
-                    let frame = self.clone().rvalue(argument(2)?);
-                    self.nest(frame).await
-                }?;
-                self.with(|this| {
-                    this.add(
+                let a = recurse(|| self.rvalue(argument(0)?))?;
+                let b = recurse(|| self.rvalue(argument(1)?))?;
+                let c = recurse(|| self.rvalue(argument(2)?))?;
+                {
+                    self.add(
                         Expression::CooperativeMultiplyAdd {
                             a,
                             b,
@@ -677,23 +550,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         at,
                     )
                     .map(Some)
-                })?
+                }
             }
             _ => Err(internal(at)),
         }
     }
 
-    pub(super) async fn tensor_call(
-        self,
+    pub(super) fn tensor_call(
+        &mut self,
         kind: TensorCall,
-        result: &'b GlslType,
-        arguments: &'b [AstExpression],
+        result: &GlslType,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Handle<Expression>> {
         let operation = match kind {
             TensorCall::CreateLayout | TensorCall::CreateView => {
-                let ty = self.clone().ir_type(result.clone(), at).await?;
-                return self.with(|this| this.add(Expression::TensorCreate { ty }, at))?;
+                let ty = self.ir_type(result, at)?;
+                return self.add(Expression::TensorCreate { ty }, at);
             }
             TensorCall::LayoutSetBlockSize => TensorOperation::LayoutSetBlockSize,
             TensorCall::LayoutSetDimension => TensorOperation::LayoutSetDimension,
@@ -705,19 +578,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             TensorCall::ViewSetClip => TensorOperation::ViewSetClip,
         };
         let (base, rest) = arguments.split_first().ok_or_else(|| internal(at))?;
-        let base = {
-            let frame = self.clone().rvalue(base);
-            self.nest(frame).await
-        }?;
+        let base = recurse(|| self.rvalue(base))?;
         let mut operands = Vec::with_capacity(rest.len());
         for argument in rest {
-            operands.push({
-                let frame = self.clone().rvalue(argument);
-                self.nest(frame).await
-            }?);
+            operands.push(recurse(|| self.rvalue(argument))?);
         }
-        self.with(|this| {
-            this.add(
+        {
+            self.add(
                 Expression::TensorSet {
                     base,
                     operation,
@@ -725,79 +592,56 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             )
-        })?
+        }
     }
 
-    pub(super) async fn matrix_call(
-        self,
+    pub(super) fn matrix_call(
+        &mut self,
         kind: MatrixCall,
-        result: &'b GlslType,
-        arguments: &'b [AstExpression],
+        result: &GlslType,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<Option<Handle<Expression>>> {
         let argument = |index: usize| arguments.get(index).ok_or_else(|| internal(at));
-        let flavor = self.with(|this| match this.cooperative_flavor() {
+        let flavor = match self.cooperative_flavor() {
             Flavor::Ext => Flavor::Ext,
             Flavor::Khr | Flavor::Nv => Flavor::Nv,
-        })?;
+        };
         let (function, target) = match kind {
             MatrixCall::LoadTensor { view } | MatrixCall::StoreTensor { view } => {
-                let pointer = {
-                    let frame = self
-                        .clone()
-                        .cooperative_element(argument(1)?, argument(2)?, at);
-                    self.nest(frame).await
-                }?;
-                let layout = {
-                    let frame = self.clone().rvalue(argument(3)?);
-                    self.nest(frame).await
-                }?;
+                let pointer = recurse(|| self.cooperative_element(argument(1)?, argument(2)?, at))?;
+                let layout = recurse(|| self.rvalue(argument(3)?))?;
                 let view_value = if view {
-                    Some({
-                        let frame = self.clone().rvalue(argument(4)?);
-                        self.nest(frame).await
-                    }?)
+                    Some(recurse(|| self.rvalue(argument(4)?))?)
                 } else {
                     None
                 };
                 let start = if view { 5 } else { 4 };
                 if let MatrixCall::StoreTensor { .. } = kind {
-                    let value = {
-                        let frame = self.clone().rvalue(argument(0)?);
-                        self.nest(frame).await
-                    }?;
-                    self.with(|this| {
-                        this.push(
-                            Statement::CooperativeMatrix {
-                                function: CooperativeMatrixFunction::StoreTensor {
-                                    pointer,
-                                    value,
-                                    layout,
-                                    view: view_value,
-                                },
-                                result: None,
+                    let value = recurse(|| self.rvalue(argument(0)?))?;
+                    self.push(
+                        Statement::CooperativeMatrix {
+                            function: CooperativeMatrixFunction::StoreTensor {
+                                pointer,
+                                value,
+                                layout,
+                                view: view_value,
                             },
-                            at,
-                        );
-                    })?;
+                            result: None,
+                        },
+                        at,
+                    );
                     return Ok(None);
                 }
                 let decode = match arguments.get(start) {
-                    Some(argument) => {
-                        Some(self.with(|this| this.referenced_function(argument, at))??)
-                    }
+                    Some(argument) => Some(self.referenced_function(argument, at)?),
                     None => None,
                 };
                 let decode_vector = match arguments.get(start + 1) {
-                    Some(argument) => {
-                        Some(self.with(|this| this.referenced_function(argument, at))??)
-                    }
+                    Some(argument) => Some(self.referenced_function(argument, at)?),
                     None => None,
                 };
-                let object = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
+                let object = recurse(|| self.rvalue(argument(0)?))?;
                 (
                     CooperativeMatrixFunction::LoadTensor {
                         pointer,
@@ -811,22 +655,15 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             MatrixCall::Transpose { .. } => {
-                let matrix = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
+                let matrix = recurse(|| self.rvalue(argument(1)?))?;
                 (
                     CooperativeMatrixFunction::Transpose { matrix, flavor },
                     Some(argument(0)?),
                 )
             }
             MatrixCall::Reduce { mask, .. } => {
-                let matrix = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let combine =
-                    self.try_with(|this| Ok(this.referenced_function(argument(3)?, at)))??;
+                let matrix = recurse(|| self.rvalue(argument(1)?))?;
+                let combine = self.referenced_function(argument(3)?, at)?;
                 (
                     CooperativeMatrixFunction::Reduce {
                         matrix,
@@ -838,18 +675,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             MatrixCall::PerElement { .. } => {
-                let matrix = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
-                let function =
-                    self.try_with(|this| Ok(this.referenced_function(argument(2)?, at)))??;
+                let matrix = recurse(|| self.rvalue(argument(1)?))?;
+                let function = self.referenced_function(argument(2)?, at)?;
                 let mut extra = Vec::new();
                 for argument in arguments.iter().skip(3) {
-                    extra.push({
-                        let frame = self.clone().rvalue(argument);
-                        self.nest(frame).await
-                    }?);
+                    extra.push(recurse(|| self.rvalue(argument))?);
                 }
                 (
                     CooperativeMatrixFunction::PerElement {
@@ -862,14 +692,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 )
             }
             MatrixCall::GetCoordinate => {
-                let matrix = {
-                    let frame = self.clone().rvalue(argument(0)?);
-                    self.nest(frame).await
-                }?;
-                let index = {
-                    let frame = self.clone().rvalue(argument(1)?);
-                    self.nest(frame).await
-                }?;
+                let matrix = recurse(|| self.rvalue(argument(0)?))?;
+                let index = recurse(|| self.rvalue(argument(1)?))?;
                 (
                     CooperativeMatrixFunction::GetCoordinate { matrix, index },
                     None,
@@ -877,101 +701,69 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
         };
         let result_ty = match target {
-            Some(target) => self.with(|this| this.info(target))??.ty.clone(),
+            Some(target) => self.info(target)?.ty.clone(),
             None => result.clone(),
         };
-        let ty = self.clone().ir_type(result_ty.clone(), at).await?;
-        let value = self.with(|this| {
-            this.result_statement(
-                Expression::CooperativeMatrixResult { ty },
-                |result| Statement::CooperativeMatrix {
-                    function,
-                    result: Some(result),
-                },
-                at,
-            )
-        })?;
+        let ty = self.ir_type(&result_ty, at)?;
+        let value = self.result_statement(
+            Expression::CooperativeMatrixResult { ty },
+            |result| Statement::CooperativeMatrix {
+                function,
+                result: Some(result),
+            },
+            at,
+        );
         match target {
             Some(target) => {
-                let place = {
-                    let frame = self.clone().place(target);
-                    self.nest(frame).await
-                }?;
-                self.with(|this| this.store(&place, value, at))??;
+                let place = recurse(|| self.place(target))?;
+                self.store(&place, value, at)?;
                 Ok(None)
             }
             None => Ok(Some(value)),
         }
     }
 
-    async fn cooperative_element(
-        self,
-        buffer: &'b AstExpression,
-        element: &'b AstExpression,
+    fn cooperative_element(
+        &mut self,
+        buffer: &AstExpression,
+        element: &AstExpression,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let base = {
-            let frame = self.clone().array_pointer(buffer, at);
-            self.nest(frame).await
-        }?;
-        let index = {
-            let frame = self.clone().rvalue(element);
-            self.nest(frame).await
-        }?;
-        self.with(|this| this.add(Expression::Access { base, index }, at))?
+        let base = recurse(|| self.array_pointer(buffer, at))?;
+        let index = recurse(|| self.rvalue(element))?;
+        self.add(Expression::Access { base, index }, at)
     }
 
-    async fn array_pointer(
-        self,
-        buffer: &'b AstExpression,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let place = {
-            let frame = self.clone().place(buffer);
-            self.nest(frame).await
-        }?;
+    fn array_pointer(&mut self, buffer: &AstExpression, at: Span) -> Result<Handle<Expression>> {
+        let place = recurse(|| self.place(buffer))?;
         if place.swizzle.is_some() {
             return Err(internal(at));
         }
         Ok(place.pointer)
     }
 
-    async fn cooperative_data(
-        self,
-        arguments: &'b [AstExpression],
+    fn cooperative_data(
+        &mut self,
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<CooperativeData> {
         let &[ref buffer, ref element, ref stride, ref layout] = arguments else {
             return Err(internal(at));
         };
-        let place = {
-            let frame = self.clone().place(buffer);
-            self.nest(frame).await
-        }?;
+        let place = recurse(|| self.place(buffer))?;
         if place.swizzle.is_some() {
             return Err(internal(at));
         }
-        let index = {
-            let frame = self.clone().rvalue(element);
-            self.nest(frame).await
-        }?;
-        let pointer = self.with(|this| {
-            this.add(
-                Expression::Access {
-                    base: place.pointer,
-                    index,
-                },
-                at,
-            )
-        })??;
-        let stride = {
-            let frame = self.clone().rvalue(stride);
-            self.nest(frame).await
-        }?;
-        let layout = {
-            let frame = self.clone().rvalue(layout);
-            self.nest(frame).await
-        }?;
+        let index = recurse(|| self.rvalue(element))?;
+        let pointer = (self.add(
+            Expression::Access {
+                base: place.pointer,
+                index,
+            },
+            at,
+        ))?;
+        let stride = recurse(|| self.rvalue(stride))?;
+        let layout = recurse(|| self.rvalue(layout))?;
         Ok(CooperativeData {
             pointer,
             stride: Some(stride),

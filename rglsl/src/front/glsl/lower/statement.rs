@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use rglsl_sema::scope::QualifierFlags;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::{
     AssignmentOperator, Attribute, CaseLabel, Condition, Declaration, DeclarationKind,
@@ -60,10 +61,6 @@ struct PreparedDeclarator<'d> {
 }
 
 impl FunctionLowerer<'_, '_> {
-    pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
-        super::function::on_heap!(self, |cx| cx.statements(statements))
-    }
-
     fn inverts_y(&self) -> bool {
         self.lw.options.invert_y
             && self.lw.stage_map(|stage| {
@@ -148,7 +145,7 @@ impl FunctionLowerer<'_, '_> {
                 .is_some_and(|version| version >= (1, 6))
     }
 
-    fn jump(
+    fn emit_jump(
         &mut self,
         jump: &JumpStatement,
         value: Option<crate::Handle<Expression>>,
@@ -373,73 +370,67 @@ fn declarators(
     }
 }
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    async fn jump(self, jump: &'b JumpStatement, at: crate::Span) -> Result<()> {
+impl FunctionLowerer<'_, '_> {
+    fn jump(&mut self, jump: &JumpStatement, at: crate::Span) -> Result<()> {
         let value = match *jump {
-            JumpStatement::Return(Some(ref value)) => Some(self.clone().rvalue(value).await?),
+            JumpStatement::Return(Some(ref value)) => Some(self.rvalue(value)?),
             _ => None,
         };
-        self.try_with(|this| this.jump(jump, value, at))
+        self.emit_jump(jump, value, at)
     }
 
-    async fn condition(self, condition: &'b Condition) -> Result<crate::Handle<Expression>> {
+    fn condition(&mut self, condition: &Condition) -> Result<crate::Handle<Expression>> {
         match *condition {
-            Condition::Expression(ref expression) => self.clone().rvalue(expression).await,
+            Condition::Expression(ref expression) => self.rvalue(expression),
             Condition::Declaration(ref declaration) => {
-                let at = self.with(|this| this.at(declaration.span))?;
-                let analysis = self.with(|this| this.lw.analysis)?;
+                let at = self.at(declaration.span);
+                let analysis = self.lw.analysis;
                 let symbol = *analysis
                     .declarations
                     .get(&declaration.id)
                     .ok_or_else(|| internal(at))?;
                 let ty = self
-                    .with(|this| this.lw.variable(symbol))?
+                    .lw
+                    .variable(symbol)
                     .map(|variable| variable.ty.clone())
                     .ok_or_else(|| internal(at))?;
-                self.clone().prepare(&ty, at).await?;
+                self.prepare(&ty, at)?;
                 let name = Some(declaration.kind.name.node.clone());
-                let local = self.with(|this| this.local(&ty, name, at))??;
-                self.with(|this| this.bind_variable(symbol, Local::Variable(local)))?;
-                let value = self
-                    .clone()
-                    .initializer(&declaration.kind.initializer, ty)
-                    .await?;
-                self.try_with(|this| {
-                    let pointer = this.local_pointer(local, at)?;
-                    this.push(IrStatement::Store { pointer, value }, at);
-                    let pointer = this.local_pointer(local, at)?;
-                    this.add(Expression::Load { pointer }, at)
-                })
+                let local = self.local(&ty, name, at)?;
+                self.bind_variable(symbol, Local::Variable(local));
+                let value = self.initializer(&declaration.kind.initializer, &ty)?;
+                {
+                    let pointer = self.local_pointer(local, at)?;
+                    self.push(IrStatement::Store { pointer, value }, at);
+                    let pointer = self.local_pointer(local, at)?;
+                    self.add(Expression::Load { pointer }, at)
+                }
             }
         }
     }
 
-    async fn unreachable_declaration(self, statement: &'b Statement) -> Result<()> {
+    fn unreachable_declaration(&mut self, statement: &Statement) -> Result<()> {
         let StatementKind::Declaration(ref declaration) = statement.kind else {
             return Ok(());
         };
-        self.with(|this| this.check_local_declaration(declaration))??;
+        self.check_local_declaration(declaration)?;
         for declarator in declarators(declaration) {
-            self.clone()
-                .prepare_local_declarator(declarator, false)
-                .await?;
+            self.prepare_local_declarator(declarator, false)?;
         }
         Ok(())
     }
 
-    async fn prepare_local_declarator(
-        self,
-        declarator: &'b rglsl_ast::ast::Node<rglsl_ast::ast::InitDeclarator>,
+    fn prepare_local_declarator<'d>(
+        &mut self,
+        declarator: &'d rglsl_ast::ast::Node<rglsl_ast::ast::InitDeclarator>,
         reachable: bool,
-    ) -> Result<Option<PreparedDeclarator<'b>>> {
-        let at = self.with(|this| this.at(declarator.span))?;
-        let analysis = self.with(|this| this.lw.analysis)?;
+    ) -> Result<Option<PreparedDeclarator<'d>>> {
+        let at = self.at(declarator.span);
+        let analysis = self.lw.analysis;
         let Some(&symbol) = analysis.declarations.get(&declarator.id) else {
             return Ok(None);
         };
-        let variable = self
-            .with(|this| this.lw.variable(symbol))?
-            .ok_or_else(|| internal(at))?;
+        let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
         if variable
             .qualifiers
             .flags
@@ -447,11 +438,10 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             && let Some(initializer) = declarator.kind.initializer.as_ref()
         {
             let name = Some(declarator.kind.name.node.clone());
-            let frame =
-                self.lowerer()
-                    .specialized_initializer(initializer, variable.ty.clone(), name, at);
-            let handle = self.nest(frame).await?;
-            self.with(|this| this.lw.globals.insert(symbol, GlobalRef::Override(handle)))?;
+            let handle = recurse(|| {
+                self.specialized_initializer(initializer, variable.ty.clone(), name, at)
+            })?;
+            self.lw.globals.insert(symbol, GlobalRef::Override(handle));
             return Ok(None);
         }
         if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
@@ -460,25 +450,20 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .as_ref()
                 .is_some_and(|value| shape(&variable.ty, &value.values, &analysis.types).is_some())
         {
-            self.with(|this| this.bind_variable(symbol, Local::Constant))?;
-            if self.with(|this| this.lw.debug.is_some())?
+            self.bind_variable(symbol, Local::Constant);
+            if self.lw.debug.is_some()
                 && let Some(ref value) = variable.value
             {
-                let ir = self.clone().ir_type(variable.ty.clone(), at).await?;
-                let frame = self
-                    .lowerer()
-                    .constant_value(variable.ty.clone(), &value.values, at);
-                let init = self.nest(frame).await?;
-                self.with(|this| {
-                    this.lw.module.constants.append(
-                        crate::Constant {
-                            name: Some(declarator.kind.name.node.clone()),
-                            ty: ir,
-                            init,
-                        },
-                        at,
-                    )
-                })?;
+                let ir = self.ir_type(&variable.ty, at)?;
+                let init = recurse(|| self.global_constant(&variable.ty, &value.values, at))?;
+                self.lw.module.constants.append(
+                    crate::Constant {
+                        name: Some(declarator.kind.name.node.clone()),
+                        ty: ir,
+                        init,
+                    },
+                    at,
+                );
             }
             return Ok(None);
         }
@@ -491,20 +476,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 .and_then(|element| element.as_opaque())
                 .is_some_and(rglsl_sema::types::Opaque::is_private_object)
         {
-            self.with(|this| {
-                this.lw
-                    .deferred_private
-                    .insert(symbol, (declarator.kind.name.node.clone(), at))
-            })?;
+            self.lw
+                .deferred_private
+                .insert(symbol, (declarator.kind.name.node.clone(), at));
             return Ok(None);
         }
-        let frame = self
-            .lowerer()
-            .variable_ir_type(ty.clone(), variable.qualifiers.clone(), at);
-        let ir = self.nest(frame).await?;
-        let local =
-            self.with(|this| this.local_typed(ir, Some(declarator.kind.name.node.clone()), at))?;
-        self.with(|this| this.bind_variable(symbol, Local::Variable(local)))?;
+        let ir = recurse(|| self.variable_ir_type(&ty, &variable.qualifiers, at))?;
+        let local = self.local_typed(ir, Some(declarator.kind.name.node.clone()), at);
+        self.bind_variable(symbol, Local::Variable(local));
         let Some(initializer) = declarator.kind.initializer.as_ref().filter(|_| reachable) else {
             return Ok(None);
         };
@@ -517,293 +496,258 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }))
     }
 
-    async fn position_assignment(
-        self,
-        expression: &'b AstExpression,
-        target: &'b AstExpression,
-        value: &'b AstExpression,
+    fn position_assignment(
+        &mut self,
+        expression: &AstExpression,
+        target: &AstExpression,
+        value: &AstExpression,
     ) -> Result<()> {
-        let at = self.with(|this| this.at(expression.span))?;
-        let place = self.clone().place_child(target).await?;
-        let (mut value, _) = self.clone().typed_child(value).await?;
-        if self.with(|this| this.is_position(&place))? {
-            value = self.with(|this| this.negated_y(value, at))??;
+        let at = self.at(expression.span);
+        let place = self.place_child(target)?;
+        let (mut value, _) = self.typed_child(value)?;
+        if self.is_position(&place) {
+            value = self.negated_y(value, at)?;
         }
-        self.with(|this| this.store(&place, value, at))?
+        self.store(&place, value, at)
     }
 
-    async fn local_declaration(self, declaration: &'b Declaration) -> Result<()> {
-        self.with(|this| this.check_local_declaration(declaration))??;
+    fn local_declaration(&mut self, declaration: &Declaration) -> Result<()> {
+        self.check_local_declaration(declaration)?;
         for declarator in declarators(declaration) {
-            let Some(prepared) = self
-                .clone()
-                .prepare_local_declarator(declarator, true)
-                .await?
-            else {
+            let Some(prepared) = self.prepare_local_declarator(declarator, true)? else {
                 continue;
             };
-            let flat =
-                self.with(|this| this.flat_initializer(prepared.initializer, &prepared.ty))?;
-            let value = match flat {
-                Some(value) => value?,
-                None => {
-                    let frame = self.clone().initializer(prepared.initializer, prepared.ty);
-                    self.nest(frame).await?
-                }
-            };
-            self.with(|this| {
-                this.store_local_initializer(prepared.local, prepared.ir, value, prepared.at)
-            })??;
+            let value = recurse(|| self.initializer(prepared.initializer, &prepared.ty))?;
+            self.store_local_initializer(prepared.local, prepared.ir, value, prepared.at)?;
         }
         Ok(())
     }
 
-    pub(super) async fn statements(self, statements: &'b [Statement]) -> Result<()> {
+    pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
         for statement in statements {
-            if self.with(|this| this.terminated())? {
-                self.clone().unreachable_declaration(statement).await?;
+            if self.terminated() {
+                self.unreachable_declaration(statement)?;
             } else {
-                self.clone().statement(statement).await?;
+                self.statement(statement)?;
             }
         }
         Ok(())
     }
 
-    async fn statement(self, statement: &'b Statement) -> Result<()> {
-        let at = self.with(|this| this.at(statement.span))?;
+    fn statement(&mut self, statement: &Statement) -> Result<()> {
+        let at = self.at(statement.span);
         match statement.kind {
             StatementKind::Compound(ref compound) => {
-                self.with(|this| {
-                    if let Some(first) = compound.statements.first() {
-                        this.lw.debug_scope(
-                            statement.span.start,
-                            statement.span.end,
-                            statement_anchor(first),
-                        );
-                    }
-                })?;
-                let frame = self.clone().statements(&compound.statements);
-                self.nest(frame).await
+                if let Some(first) = compound.statements.first() {
+                    self.lw.debug_scope(
+                        statement.span.start,
+                        statement.span.end,
+                        statement_anchor(first),
+                    );
+                }
+                recurse(|| self.statements(&compound.statements))
             }
-            StatementKind::Declaration(ref declaration) => {
-                self.clone().local_declaration(declaration).await
-            }
+            StatementKind::Declaration(ref declaration) => self.local_declaration(declaration),
             StatementKind::Expression(Some(ref expression)) => match expression.kind {
                 ExpressionKind::Assignment {
                     operator: AssignmentOperator::Assign,
                     ref target,
                     ref value,
-                } if self.with(|this| this.inverts_y())? => {
-                    self.clone()
-                        .position_assignment(expression, target, value)
-                        .await
-                }
-                _ => self.clone().effect(expression).await,
+                } if self.inverts_y() => self.position_assignment(expression, target, value),
+                _ => self.effect(expression),
             },
             StatementKind::Expression(None) => Ok(()),
             StatementKind::Selection {
                 ref condition,
                 ref then_branch,
                 ref else_branch,
-            } => {
-                let frame = self.clone().selection(
+            } => recurse(|| {
+                self.selection(
                     condition,
                     then_branch,
                     else_branch.as_deref(),
                     SelectionControl::None,
                     at,
-                );
-                self.nest(frame).await
-            }
+                )
+            }),
             StatementKind::Switch {
                 ref selector,
                 ref statements,
-            } => {
-                let frame = self
-                    .clone()
-                    .switch(selector, statements, SelectionControl::None, at);
-                self.nest(frame).await
-            }
+            } => recurse(|| self.switch(selector, statements, SelectionControl::None, at)),
             StatementKind::CaseLabel(_) => Err(semantic("a case label outside a switch", at)),
             StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
-                let frame = self.clone().iteration(statement, LoopControl::default());
-                self.nest(frame).await
+                recurse(|| self.iteration(statement, LoopControl::default()))
             }
             StatementKind::Attributed {
                 ref attributes,
                 ref statement,
-            } => {
-                let frame = self.clone().attributed(attributes, statement);
-                self.nest(frame).await
-            }
-            StatementKind::Jump(ref jump) => self.clone().jump(jump, at).await,
+            } => recurse(|| self.attributed(attributes, statement)),
+            StatementKind::Jump(ref jump) => self.jump(jump, at),
         }
     }
 
-    async fn loop_body(self, body: &'b Statement) -> Result<()> {
+    fn loop_body(&mut self, body: &Statement) -> Result<()> {
         match body.kind {
             StatementKind::Compound(ref compound) => {
-                let frame = self.clone().statements(&compound.statements);
-                self.nest(frame).await
+                recurse(|| self.statements(&compound.statements))
             }
-            _ => {
-                let frame = self.clone().statement(body);
-                self.nest(frame).await
-            }
+            _ => recurse(|| self.statement(body)),
         }
     }
 
-    async fn attributed(self, attributes: &'b [Attribute], statement: &'b Statement) -> Result<()> {
+    fn attributed(&mut self, attributes: &[Attribute], statement: &Statement) -> Result<()> {
         match statement.kind {
             StatementKind::While { .. } | StatementKind::DoWhile { .. } | StatementKind::For(_) => {
-                let control = self.with(|this| this.loop_control(attributes))?;
-                {
-                    let frame = self.clone().iteration(statement, control);
-                    self.nest(frame).await
-                }
+                let control = self.loop_control(attributes);
+                recurse(|| self.iteration(statement, control))
             }
             StatementKind::Selection {
                 ref condition,
                 ref then_branch,
                 ref else_branch,
-            } => {
-                let frame = self.clone().selection(
+            } => recurse(|| {
+                self.selection(
                     condition,
                     then_branch,
                     else_branch.as_deref(),
                     selection_control(attributes),
-                    self.with(|this| this.at(statement.span))?,
-                );
-                self.nest(frame).await
-            }
+                    self.at(statement.span),
+                )
+            }),
             StatementKind::Switch {
                 ref selector,
                 ref statements,
-            } => {
-                let frame = self.clone().switch(
+            } => recurse(|| {
+                self.switch(
                     selector,
                     statements,
                     selection_control(attributes),
-                    self.with(|this| this.at(statement.span))?,
-                );
-                self.nest(frame).await
-            }
-            _ => {
-                let frame = self.clone().statement(statement);
-                self.nest(frame).await
-            }
+                    self.at(statement.span),
+                )
+            }),
+            _ => recurse(|| self.statement(statement)),
         }
     }
 
-    async fn selection(
-        self,
-        condition: &'b rglsl_ast::ast::Expression,
-        then_branch: &'b Statement,
-        else_branch: Option<&'b Statement>,
+    fn selection(
+        &mut self,
+        condition: &rglsl_ast::ast::Expression,
+        then_branch: &Statement,
+        else_branch: Option<&Statement>,
         control: SelectionControl,
         at: crate::Span,
     ) -> Result<()> {
-        if let Some(taken) = self.with(|this| this.constant_condition(condition))? {
+        if let Some(taken) = self.constant_condition(condition) {
             let branch = if taken {
                 Some(then_branch)
             } else {
                 else_branch
             };
             if let Some(branch) = branch {
-                let frame = self.clone().statement(branch);
-                let result = self.nest(frame).await;
+                let result = recurse(|| self.statement(branch));
                 result?;
             }
             return Ok(());
         }
-        let condition = {
-            let frame = self.clone().rvalue(condition);
-            self.nest(frame).await
-        }?;
-        let accept = {
-            self.clone()
-                .block(self.nest(self.clone().statement(then_branch)))
-                .await
-        }?;
+        let condition = recurse(|| self.rvalue(condition))?;
+        let accept = self.block(|this| this.statement(then_branch))?;
         let reject = match else_branch {
-            Some(branch) => {
-                self.clone()
-                    .block(self.nest(self.clone().statement(branch)))
-                    .await
-            }?,
+            Some(branch) => self.block(|this| this.statement(branch))?,
             None => Block::new(),
         };
-        self.with(|this| {
-            this.push(
-                IrStatement::If {
-                    condition,
-                    accept,
-                    reject,
-                    control,
-                },
-                at,
-            );
-        })?;
+        self.push(
+            IrStatement::If {
+                condition,
+                accept,
+                reject,
+                control,
+            },
+            at,
+        );
         Ok(())
     }
 
-    async fn iteration(self, statement: &'b Statement, control: LoopControl) -> Result<()> {
-        let at = self.with(|this| this.at(statement.span))?;
-        self.with(|this| {
+    fn iteration(&mut self, statement: &Statement, control: LoopControl) -> Result<()> {
+        let at = self.at(statement.span);
+        {
             let anchor = match statement.kind {
                 StatementKind::DoWhile { ref condition, .. } => condition.span.start,
                 _ => statement.span.start,
             };
-            this.lw
+            self.lw
                 .debug_scope(statement.span.start, statement.span.end, anchor);
-        })?;
+        }
         match statement.kind {
             StatementKind::While {
                 ref condition,
                 ref body,
-            } => {
-                let frame = self.clone().while_loop(condition, body, control, at);
-                self.nest(frame).await
-            }
+            } => recurse(|| self.while_loop(condition, body, control, at)),
             StatementKind::DoWhile {
                 ref body,
                 ref condition,
-            } => {
-                let frame = self.clone().do_while_loop(body, condition, control, at);
-                self.nest(frame).await
-            }
+            } => recurse(|| self.do_while_loop(body, condition, control, at)),
             StatementKind::For(ref for_statement) => {
-                let frame = self.clone().for_loop(for_statement, control, at);
-                self.nest(frame).await
+                recurse(|| self.for_loop(for_statement, control, at))
             }
             _ => Err(internal(at)),
         }
     }
 
-    async fn while_loop(
-        self,
-        condition: &'b Condition,
-        body: &'b Statement,
+    fn while_loop(
+        &mut self,
+        condition: &Condition,
+        body: &Statement,
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
-        let constant = self.with(|this| this.constant_loop_condition(condition))?;
+        let constant = self.constant_loop_condition(condition);
         if constant == Some(false) {
             return Ok(());
         }
-        self.with(|this| this.enter_jump_target(true))?;
-        let cx = self.clone();
-        let frame = async move {
+        self.enter_jump_target(true);
+        let body = self.block(|this| {
             if constant.is_none() {
-                let condition = cx.clone().condition(condition).await?;
-                cx.with(|this| this.break_unless(condition, at))??;
+                let condition = this.condition(condition)?;
+                this.break_unless(condition, at)?;
             }
-            cx.nest(cx.clone().loop_body(body)).await
-        };
-        let body = { self.clone().block(self.nest(frame)).await }?;
-        self.with(|this| this.leave_jump_target(at))??;
-        self.with(|this| {
-            this.push(
+            recurse(|| this.loop_body(body))
+        })?;
+        self.leave_jump_target(at)?;
+        self.push(
+            IrStatement::Loop {
+                body,
+                continuing: Block::new(),
+                break_if: None,
+                control,
+            },
+            at,
+        );
+        Ok(())
+    }
+
+    fn do_while_loop(
+        &mut self,
+        body: &Statement,
+        condition: &rglsl_ast::ast::Expression,
+        control: LoopControl,
+        at: crate::Span,
+    ) -> Result<()> {
+        let constant = self.constant_condition(condition);
+        self.enter_jump_target(true);
+        let mut body = self.block(|this| this.statement(body))?;
+        let mut target = self.leave_jump_target(at)?;
+        if constant == Some(false) && target.continues == 0 {
+            if self.strip_trailing_break(&mut body) {
+                target.breaks = target.breaks.saturating_sub(1);
+            }
+            if target.breaks == 0 {
+                self.splice(body);
+                return Ok(());
+            }
+            if !ends_in_jump(&body) {
+                body.push(IrStatement::Break, at);
+            }
+            self.push(
                 IrStatement::Loop {
                     body,
                     continuing: Block::new(),
@@ -812,176 +756,110 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 },
                 at,
             );
-        })?;
-        Ok(())
-    }
-
-    async fn do_while_loop(
-        self,
-        body: &'b Statement,
-        condition: &'b rglsl_ast::ast::Expression,
-        control: LoopControl,
-        at: crate::Span,
-    ) -> Result<()> {
-        let constant = self.with(|this| this.constant_condition(condition))?;
-        self.with(|this| this.enter_jump_target(true))?;
-        let mut body = {
-            self.clone()
-                .block(self.nest(self.clone().statement(body)))
-                .await
-        }?;
-        let mut target = self.with(|this| this.leave_jump_target(at))??;
-        if constant == Some(false) && target.continues == 0 {
-            if self.with(|this| this.strip_trailing_break(&mut body))? {
-                target.breaks = target.breaks.saturating_sub(1);
-            }
-            if target.breaks == 0 {
-                self.with(|this| this.splice(body))?;
-                return Ok(());
-            }
-            if !ends_in_jump(&body) {
-                body.push(IrStatement::Break, at);
-            }
-            self.with(|this| {
-                this.push(
-                    IrStatement::Loop {
-                        body,
-                        continuing: Block::new(),
-                        break_if: None,
-                        control,
-                    },
-                    at,
-                );
-            })?;
             return Ok(());
         }
-        let cx = self.clone();
-        let frame = async move {
+        let (continuing, break_if) = self.block_with(|this| {
             if constant == Some(true) {
                 return Ok(None);
             }
-            let value = cx.nest(cx.clone().rvalue(condition)).await?;
-            cx.try_with(|lowerer| {
-                if lowerer.is_true(value) {
-                    return Ok(None);
-                }
-                lowerer
-                    .add(
-                        Expression::Unary {
-                            op: UnaryOperator::LogicalNot,
-                            expr: value,
-                        },
-                        at,
-                    )
-                    .map(Some)
-            })
-        };
-        let (continuing, break_if) = { self.clone().block_with(self.nest(frame)).await }?;
-        self.with(|this| {
-            this.push(
-                IrStatement::Loop {
-                    body,
-                    continuing,
-                    break_if,
-                    control,
+            let value = recurse(|| this.rvalue(condition))?;
+            if this.is_true(value) {
+                return Ok(None);
+            }
+            this.add(
+                Expression::Unary {
+                    op: UnaryOperator::LogicalNot,
+                    expr: value,
                 },
                 at,
-            );
+            )
+            .map(Some)
         })?;
+        self.push(
+            IrStatement::Loop {
+                body,
+                continuing,
+                break_if,
+                control,
+            },
+            at,
+        );
         Ok(())
     }
 
-    async fn for_loop(
-        self,
-        statement: &'b ForStatement,
+    fn for_loop(
+        &mut self,
+        statement: &ForStatement,
         control: LoopControl,
         at: crate::Span,
     ) -> Result<()> {
-        {
-            let frame = self.clone().statement(&statement.init);
-            self.nest(frame).await
-        }?;
+        recurse(|| self.statement(&statement.init))?;
         let constant = match statement.condition {
-            Some(ref condition) => self.with(|this| this.constant_loop_condition(condition))?,
+            Some(ref condition) => self.constant_loop_condition(condition),
             None => Some(true),
         };
         if constant == Some(false) {
             return Ok(());
         }
-        self.with(|this| this.enter_jump_target(true))?;
-        let cx = self.clone();
-        let frame = async move {
+        self.enter_jump_target(true);
+        let body = self.block(|this| {
             if let (Some(condition), None) = (statement.condition.as_ref(), constant) {
-                let condition = cx.clone().condition(condition).await?;
-                cx.with(|this| this.break_unless(condition, at))??;
+                let condition = this.condition(condition)?;
+                this.break_unless(condition, at)?;
             }
-            cx.nest(cx.clone().loop_body(&statement.body)).await
-        };
-        let body = { self.clone().block(self.nest(frame)).await }?;
-        self.with(|this| this.leave_jump_target(at))??;
-        let cx = self.clone();
-        let frame = async move {
-            match statement.increment {
-                Some(ref increment) => cx.nest(cx.clone().effect(increment)).await,
-                None => Ok(()),
-            }
-        };
-        let continuing = { self.clone().block(self.nest(frame)).await }?;
-        self.with(|this| {
-            this.push(
-                IrStatement::Loop {
-                    body,
-                    continuing,
-                    break_if: None,
-                    control,
-                },
-                at,
-            );
+            recurse(|| this.loop_body(&statement.body))
         })?;
+        self.leave_jump_target(at)?;
+        let continuing = self.block(|this| match statement.increment {
+            Some(ref increment) => recurse(|| this.effect(increment)),
+            None => Ok(()),
+        })?;
+        self.push(
+            IrStatement::Loop {
+                body,
+                continuing,
+                break_if: None,
+                control,
+            },
+            at,
+        );
         Ok(())
     }
 
-    async fn switch(
-        self,
-        selector: &'b rglsl_ast::ast::Expression,
-        statements: &'b [Statement],
+    fn switch(
+        &mut self,
+        selector: &rglsl_ast::ast::Expression,
+        statements: &[Statement],
         control: SelectionControl,
         at: crate::Span,
     ) -> Result<()> {
         if statements.is_empty() {
-            return {
-                let frame = self.clone().effect(selector);
-                self.nest(frame).await
-            };
+            return recurse(|| self.effect(selector));
         }
-        let constant = self.with(|this| this.constant_selector(selector))?;
+        let constant = self.constant_selector(selector);
         let (value, ty) = match constant {
             Some((_, ref ty)) => (None, ty.clone()),
             None => {
-                let (value, ty) = {
-                    let frame = self.clone().typed(selector);
-                    self.nest(frame).await
-                }?;
+                let (value, ty) = recurse(|| self.typed(selector))?;
                 (Some(value), ty)
             }
         };
         let unsigned = ty == GlslType::scalar(GlslScalar::Uint);
-        let mut groups: Vec<CaseGroup<'b>> = Vec::new();
+        let mut groups: Vec<CaseGroup<'_>> = Vec::new();
         for statement in statements {
             match statement.kind {
                 StatementKind::CaseLabel(ref label) => {
                     let case = match *label {
                         CaseLabel::Default => SwitchValue::Default,
                         CaseLabel::Case(ref expression) => {
-                            let label_at = self.with(|this| this.at(expression.span))?;
-                            let constant = self.with(|this| {
-                                this.lw
-                                    .analysis
-                                    .expression(expression.id)
-                                    .and_then(|info| info.value.as_ref())
-                                    .and_then(|value| value.first())
-                                    .ok_or_else(|| internal(label_at))
-                            })??;
+                            let label_at = self.at(expression.span);
+                            let constant = (self
+                                .lw
+                                .analysis
+                                .expression(expression.id)
+                                .and_then(|info| info.value.as_ref())
+                                .and_then(|value| value.first())
+                                .ok_or_else(|| internal(label_at)))?;
                             switch_value(constant, unsigned).ok_or_else(|| internal(label_at))?
                         }
                     };
@@ -1001,14 +879,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         if let Some((selected, _)) = constant {
             let selected = switch_value(selected, unsigned).ok_or_else(|| internal(at))?;
-            let frame = self
-                .clone()
-                .constant_switch(selector, groups, selected, control, at);
-            let result = self.nest(frame).await;
+            let result = recurse(|| self.constant_switch(selector, groups, selected, control, at));
             return result;
         }
         let value = value.ok_or_else(|| internal(at))?;
-        self.with(|this| this.enter_jump_target(false))?;
+        self.enter_jump_target(false);
         let mut cases = Vec::new();
         for (labels, body) in groups {
             let count = labels.len();
@@ -1021,11 +896,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     });
                     continue;
                 }
-                let mut block = {
-                    let frame = self.clone().case_statements(body.clone());
-                    self.clone().block(self.nest(frame)).await
-                }?;
-                let fall_through = if self.with(|this| this.strip_trailing_break(&mut block))? {
+                let mut block = self.block(|this| this.case_statements(body.clone()))?;
+                let fall_through = if self.strip_trailing_break(&mut block) {
                     false
                 } else {
                     !ends_in_jump(&block)
@@ -1037,7 +909,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 });
             }
         }
-        self.with(|this| this.leave_jump_target(at))??;
+        self.leave_jump_target(at)?;
         if let Some(last) = cases.last_mut() {
             last.fall_through = false;
         }
@@ -1048,36 +920,33 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 fall_through: false,
             });
         }
-        self.with(|this| {
-            this.push(
-                IrStatement::Switch {
-                    selector: value,
-                    cases,
-                    control,
-                },
-                at,
-            );
-        })?;
+        self.push(
+            IrStatement::Switch {
+                selector: value,
+                cases,
+                control,
+            },
+            at,
+        );
         Ok(())
     }
 
-    async fn case_statements(self, statements: Vec<&'b Statement>) -> Result<()> {
+    fn case_statements(&mut self, statements: Vec<&Statement>) -> Result<()> {
         for statement in statements {
-            if self.with(|this| this.terminated())? {
-                self.clone().unreachable_declaration(statement).await?;
+            if self.terminated() {
+                self.unreachable_declaration(statement)?;
             } else {
-                let frame = self.clone().statement(statement);
-                let result = self.nest(frame).await;
+                let result = recurse(|| self.statement(statement));
                 result?;
             }
         }
         Ok(())
     }
 
-    async fn constant_switch(
-        self,
-        selector: &'b rglsl_ast::ast::Expression,
-        groups: Vec<CaseGroup<'b>>,
+    fn constant_switch(
+        &mut self,
+        selector: &rglsl_ast::ast::Expression,
+        groups: Vec<CaseGroup<'_>>,
         selected: SwitchValue,
         control: SelectionControl,
         at: crate::Span,
@@ -1094,48 +963,40 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             .get(..chosen.unwrap_or(groups.len()))
             .unwrap_or_default();
         for statement in skipped.iter().flat_map(|&(_, ref body)| body.iter()) {
-            self.clone().unreachable_declaration(statement).await?;
+            self.unreachable_declaration(statement)?;
         }
         let Some(chosen) = chosen else {
             return Ok(());
         };
-        let statements: Vec<&'b Statement> = groups
+        let statements: Vec<&Statement> = groups
             .get(chosen..)
             .unwrap_or_default()
             .iter()
             .flat_map(|&(_, ref body)| body.iter().copied())
             .collect();
-        self.with(|this| this.enter_jump_target(false))?;
-        let mut block = {
-            let frame = self.clone().case_statements(statements);
-            self.clone().block(self.nest(frame)).await
-        }?;
-        let mut target = self.with(|this| this.leave_jump_target(at))??;
-        if self.with(|this| this.strip_trailing_break(&mut block))? {
+        self.enter_jump_target(false);
+        let mut block = self.block(|this| this.case_statements(statements))?;
+        let mut target = self.leave_jump_target(at)?;
+        if self.strip_trailing_break(&mut block) {
             target.breaks = target.breaks.saturating_sub(1);
         }
         if target.breaks == 0 {
-            self.with(|this| this.splice(block))?;
+            self.splice(block);
             return Ok(());
         }
-        let selector = {
-            let frame = self.clone().rvalue(selector);
-            self.nest(frame).await
-        }?;
-        self.with(|this| {
-            this.push(
-                IrStatement::Switch {
-                    selector,
-                    cases: alloc::vec![SwitchCase {
-                        value: SwitchValue::Default,
-                        body: block,
-                        fall_through: false,
-                    }],
-                    control,
-                },
-                at,
-            );
-        })?;
+        let selector = recurse(|| self.rvalue(selector))?;
+        self.push(
+            IrStatement::Switch {
+                selector,
+                cases: alloc::vec![SwitchCase {
+                    value: SwitchValue::Default,
+                    body: block,
+                    fall_through: false,
+                }],
+                control,
+            },
+            at,
+        );
         Ok(())
     }
 }

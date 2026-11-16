@@ -3,9 +3,6 @@ functions = [
     "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::for_each_child",
     "rglsl_sema::analyze::expression::<impl rglsl_sema::analyze::Analyzer>::is_flat",
     "rglsl_sema::analyze::expression::<impl rglsl_sema::analyze::Analyzer>::flat_operand",
-    "rglsl::front::glsl::lower::expression::<impl rglsl::front::glsl::lower::function::FunctionLowerer>::is_flat",
-    "rglsl::front::glsl::lower::expression::<impl rglsl::front::glsl::lower::function::FunctionLowerer>::flat_typed",
-    "rglsl::front::glsl::lower::expression::<impl rglsl::front::glsl::lower::function::FunctionLowerer>::flat_value",
 ]
 reason = "InlineDepth <= 7, pending decision: flat expressions are folded inline below the frame stack"
 bound = "InlineDepth::MAX = 6, at most 7 frames"

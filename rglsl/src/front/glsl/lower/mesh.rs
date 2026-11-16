@@ -2,6 +2,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use rglsl_sema::scope::QualifierFlags;
 use rglsl_types::extension::Extension;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::ast::Expression as AstExpression;
 use rglsl_sema::builtins::kind::Mesh;
@@ -157,19 +158,16 @@ impl Lowerer<'_> {
 
 impl FunctionLowerer<'_, '_> {}
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
-    pub(super) async fn mesh_statement(
-        self,
+impl FunctionLowerer<'_, '_> {
+    pub(super) fn mesh_statement(
+        &mut self,
         mesh: Mesh,
-        arguments: &'b [AstExpression],
+        arguments: &[AstExpression],
         at: Span,
     ) -> Result<()> {
         let mut values = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            values.push({
-                let frame = self.clone().rvalue(argument);
-                self.nest(frame).await
-            }?);
+            values.push(recurse(|| self.rvalue(argument))?);
         }
         let function = match (mesh, values.as_slice()) {
             (Mesh::SetOutputs, &[vertex_count, primitive_count]) => MeshFunction::SetMeshOutputs {
@@ -189,7 +187,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 return Err(internal(at));
             }
         };
-        self.with(|this| this.push(Statement::MeshFunction(function), at))?;
+        self.push(Statement::MeshFunction(function), at);
         Ok(())
     }
 }
