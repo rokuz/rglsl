@@ -7,7 +7,6 @@ mod declaration;
 mod expression;
 mod extension;
 mod fragment;
-mod frames;
 mod heap;
 mod layout_ids;
 mod layout_qualifiers;
@@ -38,7 +37,6 @@ use core::cell::RefCell;
 use rglsl_types::extension::{Extension, ExtensionSet};
 
 use rglsl_types::probe::StageProbe;
-use rglsl_types::stack::Base;
 use rglsl_types::{FastHashMap, FastHashSet, ShaderStageMask};
 
 use rglsl_ast::ast::{DirectiveKind, ExternalDeclaration, NodeId};
@@ -237,7 +235,7 @@ pub fn analyze_library(
     analyzer.version = version;
     analyzer.unit(unit);
     let mut analysis = analyzer.finish();
-    set_no_contraction(unit, &mut analysis);
+    analysis.no_contraction = precise::no_contraction(unit, &analysis);
     analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
     analysis
 }
@@ -255,15 +253,6 @@ pub fn analyze_with_tables(
     options: &Options,
     tables: &dyn BuiltinTables,
 ) -> Analysis {
-    analyze_unit(unit, options, tables, true)
-}
-
-pub(crate) fn analyze_unit(
-    unit: &TranslationUnit,
-    options: &Options,
-    tables: &dyn BuiltinTables,
-    flat_expressions: bool,
-) -> Analysis {
     let mut diagnostics = Vec::new();
     let version = version_of(unit, &mut diagnostics);
     let effective = match version {
@@ -273,22 +262,11 @@ pub(crate) fn analyze_unit(
     let builtins = tables.builtins(effective, options.stage, &options.limits);
     let mut analyzer = Analyzer::new(options, builtins, diagnostics);
     analyzer.version = version;
-    analyzer.flat_expressions = flat_expressions;
     analyzer.unit(unit);
     let mut analysis = analyzer.finish();
-    set_no_contraction(unit, &mut analysis);
+    analysis.no_contraction = precise::no_contraction(unit, &analysis);
     analysis.relaxed_precision = precision::relaxed_precision(unit, &analysis);
     analysis
-}
-
-fn set_no_contraction(unit: &TranslationUnit, analysis: &mut Analysis) {
-    match precise::no_contraction(unit, analysis) {
-        Ok(nodes) => analysis.no_contraction = nodes,
-        Err(_) => analysis.diagnostics.push(Diagnostic {
-            span: Span::default(),
-            kind: DiagnosticKind::Internal,
-        }),
-    }
 }
 
 fn version_of(unit: &TranslationUnit, diagnostics: &mut Vec<Diagnostic>) -> Option<u32> {
@@ -450,8 +428,6 @@ pub(crate) struct Analyzer<'a> {
     pub spirv_execution_modes: SpirvExecutionModes,
     pub inductive_loops: BTreeSet<SymbolId>,
     pub index_limitations: Vec<limitations::IndexLimitation>,
-    pub flat_expressions: bool,
-    pub stack_base: Base,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -533,8 +509,6 @@ impl<'a> Analyzer<'a> {
             spirv_execution_modes: SpirvExecutionModes::new(),
             inductive_loops: BTreeSet::new(),
             index_limitations: Vec::new(),
-            flat_expressions: true,
-            stack_base: Base::here(),
         }
     }
 
@@ -930,6 +904,11 @@ impl<'a> Analyzer<'a> {
     pub(crate) fn error(&mut self, span: Span, kind: DiagnosticKind) {
         self.diagnostics.push(Diagnostic { span, kind });
         self.trust.push(self.probe.compatible());
+    }
+
+    pub(crate) fn stalled<T>(&mut self, fallback: T) -> T {
+        self.error(Span::default(), DiagnosticKind::Internal);
+        fallback
     }
 
     pub(crate) fn target_limit(&mut self, span: Span, kind: DiagnosticKind) {

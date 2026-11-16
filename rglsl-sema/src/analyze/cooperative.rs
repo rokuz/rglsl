@@ -5,7 +5,6 @@ use rglsl_ast::Span;
 use rglsl_ast::ast::{Expression, ExpressionKind, ParameterizedType, Spanned, TypeParameters};
 use rglsl_types::extension::Extension;
 
-use super::frames::Cx;
 use super::{Analyzer, Operand};
 use crate::builtins::kind::{
     BitOperation, BuiltinKind, Decompose, Math, Pure, Subgroup, SubgroupFunction, Wide,
@@ -878,25 +877,23 @@ impl Analyzer<'_> {
             | BuiltinKind::Texture(_) => return None,
         })
     }
-}
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn ignored_type_parameters(self, parameters: &'b Spanned<TypeParameters>) {
+    pub(crate) fn ignored_type_parameters(&mut self, parameters: &Spanned<TypeParameters>) {
         if let Some(element) = &parameters.node.element {
-            self.call(self.clone().type_specifier(element)).await;
+            self.type_specifier(element);
         }
-        let uses = self.with(|analyzer| analyzer.specialization_uses);
+        let uses = self.specialization_uses;
         for value in &parameters.node.values {
-            let operand = self.call(self.clone().expression(value)).await;
-            self.with(|analyzer| analyzer.type_parameter_with(value, &operand));
+            let operand = self.expression(value);
+            self.type_parameter_with(value, &operand);
         }
-        self.with(|analyzer| analyzer.specialization_uses = uses);
+        self.specialization_uses = uses;
     }
 
-    pub(crate) async fn parameterized_type(
-        self,
+    pub(crate) fn parameterized_type(
+        &mut self,
         kind: ParameterizedType,
-        parameters: Option<&'b Spanned<TypeParameters>>,
+        parameters: Option<&Spanned<TypeParameters>>,
         span: Span,
     ) -> Type {
         let keyword = kind.keyword();
@@ -904,7 +901,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             kind,
             ParameterizedType::TensorLayoutNv | ParameterizedType::TensorViewNv
         ) {
-            self.with(|analyzer| analyzer.storage_buffer_class = true);
+            self.storage_buffer_class = true;
         }
         if !matches!(
             kind,
@@ -912,7 +909,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 | ParameterizedType::TensorArm
                 | ParameterizedType::CooperativeVectorNv
         ) {
-            self.with(|analyzer| analyzer.vulkan_memory_model = true);
+            self.vulkan_memory_model = true;
         }
         let Some(parameters) = parameters else {
             let reason = if kind == ParameterizedType::TensorArm {
@@ -920,22 +917,20 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             } else {
                 "missing type parameters"
             };
-            return self.with(|analyzer| analyzer.parameter_error(span, keyword, reason));
+            return self.parameter_error(span, keyword, reason);
         };
         let element = match &parameters.node.element {
             Some(element) => {
-                let ty = self.call(self.clone().type_specifier(element)).await;
+                let ty = self.type_specifier(element);
                 if ty.is_error() {
                     return Type::ERROR;
                 }
                 if matches!(ty.kind, TypeKind::Struct(_)) {
-                    return self.with(|analyzer| {
-                        analyzer.parameter_error(
-                            span,
-                            keyword,
-                            "structure type not allowed as type parameter",
-                        )
-                    });
+                    return self.parameter_error(
+                        span,
+                        keyword,
+                        "structure type not allowed as type parameter",
+                    );
                 }
                 Some(ty)
             }
@@ -943,18 +938,18 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         };
         let mut values = Vec::with_capacity(parameters.node.values.len());
         let mut failed = false;
-        let uses = self.with(|analyzer| analyzer.specialization_uses);
+        let uses = self.specialization_uses;
         for value in &parameters.node.values {
-            let operand = self.call(self.clone().expression(value)).await;
-            match self.with(|analyzer| analyzer.type_parameter_with(value, &operand)) {
+            let operand = self.expression(value);
+            match self.type_parameter_with(value, &operand) {
                 Some(parameter) => values.push(parameter),
                 None => failed = true,
             }
         }
-        self.with(|analyzer| analyzer.specialization_uses = uses);
+        self.specialization_uses = uses;
         if failed {
             return Type::ERROR;
         }
-        self.with(|analyzer| analyzer.parameterized_type_with(kind, span, element, &values))
+        self.parameterized_type_with(kind, span, element, &values)
     }
 }

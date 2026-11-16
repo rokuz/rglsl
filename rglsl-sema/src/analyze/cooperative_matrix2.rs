@@ -7,7 +7,6 @@ use rglsl_ast::ast::{Expression, ExpressionKind};
 use rglsl_types::extension::Extension;
 
 use super::call::Operands;
-use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::diagnostic::DiagnosticKind;
 use crate::scope::{Direction, FunctionId};
@@ -136,73 +135,56 @@ enum TensorArguments {
     Operands(Operands),
 }
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn tensor_function(
-        self,
-        expression: &'b Expression,
+impl Analyzer<'_> {
+    pub(crate) fn tensor_function(
+        &mut self,
+        expression: &Expression,
         span: Span,
-        name: &'b str,
+        name: &str,
         call: TensorCall,
-        arguments: &'b [Expression],
+        arguments: &[Expression],
     ) -> Operand {
-        let enabled = self.with(|analyzer| {
-            analyzer.require_extension(span, Extension::NvCooperativeMatrix2, name)
-        });
+        let enabled = self.require_extension(span, Extension::NvCooperativeMatrix2, name);
         if !enabled {
-            self.call(self.clone().operands(arguments)).await;
+            self.operands(arguments);
             return Operand::error();
         }
         let evaluated = match call {
             TensorCall::CreateLayout | TensorCall::CreateView => {
-                let uses = self.with(|analyzer| analyzer.specialization_uses);
+                let uses = self.specialization_uses;
                 let mut parameters = Vec::with_capacity(arguments.len());
                 for argument in arguments {
-                    parameters.push(self.call(self.clone().expression(argument)).await);
+                    parameters.push(self.expression(argument));
                 }
-                self.with(|analyzer| analyzer.specialization_uses = uses);
+                self.specialization_uses = uses;
                 TensorArguments::Parameters(parameters)
             }
-            _ => TensorArguments::Operands(self.call(self.clone().operands(arguments)).await),
+            _ => TensorArguments::Operands(self.operands(arguments)),
         };
-        self.with(|analyzer| {
-            analyzer.tensor_function_with(expression, span, name, call, arguments, evaluated)
-        })
+        self.tensor_function_with(expression, span, name, call, arguments, evaluated)
     }
 
-    pub(crate) async fn matrix2_function(
-        self,
-        expression: &'b Expression,
+    pub(crate) fn matrix2_function(
+        &mut self,
+        expression: &Expression,
         span: Span,
-        name: &'b str,
-        arguments: &'b [Expression],
+        name: &str,
+        arguments: &[Expression],
     ) -> Operand {
-        let references: Vec<Option<FunctionId>> = self.with(|analyzer| {
-            arguments
-                .iter()
-                .map(|argument| analyzer.function_reference(argument))
-                .collect()
-        });
+        let references: Vec<Option<FunctionId>> = arguments
+            .iter()
+            .map(|argument| self.function_reference(argument))
+            .collect();
         let mut operands = Vec::with_capacity(arguments.len());
         for (argument, reference) in arguments.iter().zip(&references) {
             operands.push(match reference {
                 Some(_) => Operand::temporary(Type::VOID),
-                None => self.call(self.clone().expression(argument)).await,
+                None => self.expression(argument),
             });
         }
-        self.with(|analyzer| {
-            analyzer.matrix2_function_with(
-                expression,
-                span,
-                name,
-                arguments,
-                &references,
-                &operands,
-            )
-        })
+        self.matrix2_function_with(expression, span, name, arguments, &references, &operands)
     }
-}
 
-impl Analyzer<'_> {
     fn matrix2_error(&mut self, span: Span, name: &str, reason: &'static str) -> Operand {
         self.error(
             span,

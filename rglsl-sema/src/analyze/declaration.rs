@@ -1,10 +1,9 @@
 use crate::scope::QualifierFlags;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::cell::RefCell;
 
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::run_from;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
@@ -15,7 +14,6 @@ use rglsl_ast::ast::{
     StructSpecifier, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 
-use super::frames::Cx;
 use super::heap::is_heap_storage;
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::builtins::variables::{self, Redeclaration};
@@ -533,17 +531,6 @@ impl Analyzer<'_> {
         }
     }
 
-    pub(crate) fn qualifiers(&mut self, qualifier: &Spanned<TypeQualifier>) -> Qualifiers {
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).qualifiers(qualifier)
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
-    }
-
     fn auxiliary_qualifier(&mut self, span: Span, storage: StorageQualifier, result: &Qualifiers) {
         if result.flags.intersects(QualifierFlags::AUXILIARY) || result.per_vertex.is_some() {
             self.error(
@@ -929,44 +916,11 @@ impl Analyzer<'_> {
         }
     }
 
-    pub(crate) fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
-        if ty.qualifier.is_none() {
-            let mut qualifiers = Qualifiers::default();
-            self.default_precision_of(ty, &mut qualifiers);
-            return qualifiers;
-        }
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).optional_qualifiers(ty)
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Qualifiers::default()))
-    }
-
     fn default_precision_of(&mut self, ty: &FullySpecifiedType, qualifiers: &mut Qualifiers) {
         if qualifiers.precision.is_none() {
             qualifiers.precision =
                 precision_key(&ty.specifier.node).map(|key| self.scopes.default_precision(&key));
         }
-    }
-
-    pub(crate) fn array_sizes(
-        &mut self,
-        specifier: Option<&Spanned<ArraySpecifier>>,
-    ) -> Vec<ArraySize> {
-        if specifier.is_none() {
-            return Vec::new();
-        }
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).array_sizes(specifier)
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Vec::new()))
     }
 
     fn array_size_with(&mut self, expression: &Expression, operand: &Operand) -> ArraySize {
@@ -1011,10 +965,6 @@ impl Analyzer<'_> {
         }
     }
 
-    pub(crate) fn type_specifier(&mut self, specifier: &Spanned<TypeSpecifier>) -> Type {
-        self.bare_type_specifier(&specifier.node, specifier.span)
-    }
-
     pub(crate) const fn is_simple_type_specifier(specifier: &TypeSpecifier) -> bool {
         specifier.parameters.is_none()
             && specifier.array.is_none()
@@ -1035,20 +985,6 @@ impl Analyzer<'_> {
             return None;
         }
         Some(self.base_type(specifier, span))
-    }
-
-    pub(crate) fn bare_type_specifier(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
-        if let Some(ty) = self.simple_type_specifier(specifier, span) {
-            return ty;
-        }
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).bare_type_specifier(specifier, span)
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Type::ERROR))
     }
 
     fn base_type(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
@@ -1106,21 +1042,6 @@ impl Analyzer<'_> {
                 Type::ERROR
             }
         }
-    }
-
-    pub(crate) fn struct_members(
-        &mut self,
-        declarations: &[Spanned<StructDeclaration>],
-        in_block: Option<&Qualifiers>,
-    ) -> Vec<Member> {
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).struct_members(declarations, in_block.cloned())
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Vec::new()))
     }
 
     fn member_qualifier_checks(
@@ -2208,25 +2129,6 @@ impl Analyzer<'_> {
         operand
     }
 
-    pub(crate) fn initializer(
-        &mut self,
-        span: Span,
-        initializer: &Spanned<Initializer>,
-        expected: &Type,
-    ) -> Operand {
-        if let Initializer::Expression(expression) = &initializer.node {
-            return self.expression(expression);
-        }
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).initializer(span, initializer, expected.clone())
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Operand::error()))
-    }
-
     fn start_list(&mut self, span: Span, items: &[Spanned<Initializer>], expected: &Type) -> List {
         let count = u32::try_from(items.len()).unwrap_or(u32::MAX);
         let mut element_types: Vec<Type> = Vec::new();
@@ -3165,7 +3067,7 @@ impl Analyzer<'_> {
             );
             for attribute in attributes {
                 if let Some(argument) = &attribute.argument {
-                    self.value_expression(argument);
+                    self.expression(argument);
                     continue;
                 }
                 match attribute.name.node.as_str() {
@@ -3303,8 +3205,8 @@ pub const fn is_null_initializer(initializer: &Initializer) -> bool {
     matches!(*initializer, Initializer::List(ref items) if items.is_empty())
 }
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn qualifiers(self, qualifier: &'b Spanned<TypeQualifier>) -> Qualifiers {
+impl Analyzer<'_> {
+    pub(crate) fn qualifiers(&mut self, qualifier: &Spanned<TypeQualifier>) -> Qualifiers {
         let mut result = Qualifiers::default();
         for single in &qualifier.node.qualifiers {
             match &single.node {
@@ -3313,16 +3215,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                         let known = LayoutId::from_name(&id.node.name.node);
                         let value = match &id.node.value {
                             Some(expression) => {
-                                let operand = self.call(self.clone().expression(expression)).await;
-                                self.with(|analyzer| {
-                                    analyzer.layout_value(
-                                        known,
-                                        &id.node.name.node,
-                                        expression,
-                                        &operand,
-                                    )
-                                })
-                                .map_or(LayoutValue::Invalid, LayoutValue::Constant)
+                                let operand = self.expression(expression);
+                                self.layout_value(known, &id.node.name.node, expression, &operand)
+                                    .map_or(LayoutValue::Invalid, LayoutValue::Constant)
                             }
                             None => LayoutValue::Flag,
                         };
@@ -3335,30 +3230,29 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                     }
                 }
                 SingleTypeQualifier::SpirvDecorate(decorate) => {
-                    if let Some(decoration) = self.call(self.clone().spirv_decorate(decorate)).await
-                    {
+                    if let Some(decoration) = self.spirv_decorate(decorate) {
                         result.spirv_decorations.push(decoration);
                     }
                 }
-                _ => self.with(|analyzer| analyzer.single_qualifier(single, &mut result)),
+                _ => self.single_qualifier(single, &mut result),
             }
         }
-        self.with(|analyzer| analyzer.finish_qualifiers(&result));
+        self.finish_qualifiers(&result);
         result
     }
 
-    pub(crate) async fn optional_qualifiers(self, ty: &'b FullySpecifiedType) -> Qualifiers {
+    pub(crate) fn optional_qualifiers(&mut self, ty: &FullySpecifiedType) -> Qualifiers {
         let mut qualifiers = match &ty.qualifier {
-            Some(qualifier) => self.call(self.clone().qualifiers(qualifier)).await,
+            Some(qualifier) => self.qualifiers(qualifier),
             None => Qualifiers::default(),
         };
-        self.with(|analyzer| analyzer.default_precision_of(ty, &mut qualifiers));
+        self.default_precision_of(ty, &mut qualifiers);
         qualifiers
     }
 
-    pub(crate) async fn array_sizes(
-        self,
-        specifier: Option<&'b Spanned<ArraySpecifier>>,
+    pub(crate) fn array_sizes(
+        &mut self,
+        specifier: Option<&Spanned<ArraySpecifier>>,
     ) -> Vec<ArraySize> {
         let Some(specifier) = specifier else {
             return Vec::new();
@@ -3368,122 +3262,91 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             sizes.push(match &dimension.node {
                 ArrayDimension::Unsized => ArraySize::Unsized,
                 ArrayDimension::Sized(expression) => {
-                    let operand = self.call(self.clone().expression(expression)).await;
-                    self.with(|analyzer| analyzer.array_size_with(expression, &operand))
+                    let operand = self.expression(expression);
+                    self.array_size_with(expression, &operand)
                 }
             });
         }
         sizes
     }
 
-    pub(crate) async fn type_specifier(self, specifier: &'b Spanned<TypeSpecifier>) -> Type {
-        self.call(
-            self.clone()
-                .bare_type_specifier(&specifier.node, specifier.span),
-        )
-        .await
+    pub(crate) fn type_specifier(&mut self, specifier: &Spanned<TypeSpecifier>) -> Type {
+        self.bare_type_specifier(&specifier.node, specifier.span)
     }
 
-    pub(crate) async fn bare_type_specifier(
-        self,
-        specifier: &'b TypeSpecifier,
-        span: Span,
-    ) -> Type {
-        if let Some(ty) = self.with(|analyzer| analyzer.simple_type_specifier(specifier, span)) {
-            return ty;
-        }
-        let base = match &specifier.non_array {
-            TypeSpecifierNonArray::Parameterized(kind) => {
-                self.call(self.clone().parameterized_type(
-                    *kind,
-                    specifier.parameters.as_ref(),
-                    span,
-                ))
-                .await
+    pub(crate) fn bare_type_specifier(&mut self, specifier: &TypeSpecifier, span: Span) -> Type {
+        recurse(|| {
+            if let Some(ty) = self.simple_type_specifier(specifier, span) {
+                return ty;
             }
-            TypeSpecifierNonArray::Struct(structure) => {
-                self.call(self.clone().struct_specifier(structure)).await
-            }
-            TypeSpecifierNonArray::Spirv(spirv) => {
-                self.call(self.clone().spirv_type_specifier(spirv)).await
-            }
-            _ => {
-                if let Some(parameters) = specifier.parameters.as_ref() {
-                    self.call(self.clone().ignored_type_parameters(parameters))
-                        .await;
+            let base = match &specifier.non_array {
+                TypeSpecifierNonArray::Parameterized(kind) => {
+                    self.parameterized_type(*kind, specifier.parameters.as_ref(), span)
                 }
-                self.with(|analyzer| analyzer.base_type(specifier, span))
-            }
-        };
-        if specifier.array.is_none() {
-            return base;
-        }
-        let dimensions = self
-            .call(self.clone().array_sizes(specifier.array.as_ref()))
-            .await;
-        base.with_dimensions(&dimensions)
-    }
-
-    pub(crate) async fn struct_members(
-        self,
-        declarations: &'b [Spanned<StructDeclaration>],
-        in_block: Option<Qualifiers>,
-    ) -> Vec<Member> {
-        let in_heap = in_block
-            .as_ref()
-            .is_some_and(|block| is_heap_storage(block.storage));
-        let mut members: Vec<Member> = Vec::new();
-        let count = declarations.len();
-        for (position, declaration) in declarations.iter().enumerate() {
-            let placement = Placement {
-                in_block: in_block.clone(),
-                in_heap,
-                last: position + 1 == count,
+                TypeSpecifierNonArray::Struct(structure) => self.struct_specifier(structure),
+                TypeSpecifierNonArray::Spirv(spirv) => self.spirv_type_specifier(spirv),
+                _ => {
+                    if let Some(parameters) = specifier.parameters.as_ref() {
+                        self.ignored_type_parameters(parameters);
+                    }
+                    self.base_type(specifier, span)
+                }
             };
-            if let TypeSpecifierNonArray::InlineBlock(ref inner) =
-                declaration.node.ty.node.specifier.node.non_array
-            {
-                members = self
-                    .call(
-                        self.clone()
-                            .inline_block_members(declaration, inner, placement, members),
-                    )
-                    .await;
-            } else {
-                members = self
-                    .call(self.clone().plain_members(declaration, placement, members))
-                    .await;
+            if specifier.array.is_none() {
+                return base;
             }
-        }
-        members
+            let dimensions = self.array_sizes(specifier.array.as_ref());
+            base.with_dimensions(&dimensions)
+        })
     }
 
-    async fn inline_block_members(
-        self,
-        declaration: &'b Spanned<StructDeclaration>,
-        inner: &'b [Spanned<StructDeclaration>],
+    pub(crate) fn struct_members(
+        &mut self,
+        declarations: &[Spanned<StructDeclaration>],
+        in_block: Option<&Qualifiers>,
+    ) -> Vec<Member> {
+        recurse(|| {
+            let in_heap = in_block.is_some_and(|block| is_heap_storage(block.storage));
+            let mut members: Vec<Member> = Vec::new();
+            let count = declarations.len();
+            for (position, declaration) in declarations.iter().enumerate() {
+                let placement = Placement {
+                    in_block: in_block.cloned(),
+                    in_heap,
+                    last: position + 1 == count,
+                };
+                if let TypeSpecifierNonArray::InlineBlock(ref inner) =
+                    declaration.node.ty.node.specifier.node.non_array
+                {
+                    members = self.inline_block_members(declaration, inner, placement, members);
+                } else {
+                    members = self.plain_members(declaration, placement, members);
+                }
+            }
+            members
+        })
+    }
+
+    fn inline_block_members(
+        &mut self,
+        declaration: &Spanned<StructDeclaration>,
+        inner: &[Spanned<StructDeclaration>],
         placement: Placement,
         mut members: Vec<Member>,
     ) -> Vec<Member> {
-        let qualifiers = self
-            .call(self.clone().optional_qualifiers(&declaration.node.ty.node))
-            .await;
-        let base = self
-            .call(self.clone().inline_reference(
-                declaration.node.ty.span,
-                qualifiers,
-                inner,
-                placement.in_heap,
-            ))
-            .await;
+        let qualifiers = self.optional_qualifiers(&declaration.node.ty.node);
+        let base = self.inline_reference(
+            declaration.node.ty.span,
+            qualifiers,
+            inner,
+            placement.in_heap,
+        );
         let mut member_qualifiers = Qualifiers::default();
         if let Some(block) = &placement.in_block {
             member_qualifiers.storage = block.storage;
         }
         for declarator in &declaration.node.declarators {
-            let dimensions = self
-                .call(self.clone().array_sizes(declarator.node.array.as_ref()))
-                .await;
+            let dimensions = self.array_sizes(declarator.node.array.as_ref());
             let ty = base.clone().with_dimensions(&dimensions);
             members.push(Member {
                 name: declarator.node.name.node.clone(),
@@ -3494,99 +3357,73 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         members
     }
 
-    async fn plain_members(
-        self,
-        declaration: &'b Spanned<StructDeclaration>,
+    fn plain_members(
+        &mut self,
+        declaration: &Spanned<StructDeclaration>,
         placement: Placement,
         mut members: Vec<Member>,
     ) -> Vec<Member> {
-        let mut qualifiers = self
-            .call(self.clone().optional_qualifiers(&declaration.node.ty.node))
-            .await;
-        self.with(|analyzer| {
-            analyzer.member_qualifier_checks(declaration, placement.in_heap, &mut qualifiers);
-            if matches!(
-                declaration.node.ty.node.specifier.node.non_array,
-                TypeSpecifierNonArray::Struct(_)
-            ) {
-                analyzer.error(
-                    declaration.node.ty.node.specifier.span,
-                    DiagnosticKind::NestedStructDefinition,
-                );
-            }
-        });
-        let base = self
-            .call(
-                self.clone()
-                    .type_specifier(&declaration.node.ty.node.specifier),
-            )
-            .await;
-        let qualifiers = self.with(|analyzer| {
-            analyzer.member_storage(declaration, qualifiers, placement.in_block.as_ref())
-        });
+        let mut qualifiers = self.optional_qualifiers(&declaration.node.ty.node);
+        self.member_qualifier_checks(declaration, placement.in_heap, &mut qualifiers);
+        if matches!(
+            declaration.node.ty.node.specifier.node.non_array,
+            TypeSpecifierNonArray::Struct(_)
+        ) {
+            self.error(
+                declaration.node.ty.node.specifier.span,
+                DiagnosticKind::NestedStructDefinition,
+            );
+        }
+        let base = self.type_specifier(&declaration.node.ty.node.specifier);
+        let qualifiers = self.member_storage(declaration, qualifiers, placement.in_block.as_ref());
         for declarator in &declaration.node.declarators {
-            let dimensions = self
-                .call(self.clone().array_sizes(declarator.node.array.as_ref()))
-                .await;
-            self.with(|analyzer| {
-                analyzer.typed_member(
-                    declarator,
-                    &qualifiers,
-                    &base,
-                    placement.place(),
-                    &mut members,
-                    &dimensions,
-                );
-            });
+            let dimensions = self.array_sizes(declarator.node.array.as_ref());
+            self.typed_member(
+                declarator,
+                &qualifiers,
+                &base,
+                placement.place(),
+                &mut members,
+                &dimensions,
+            );
         }
         members
     }
 
-    async fn struct_specifier(self, specifier: &'b StructSpecifier) -> Type {
-        let members = self
-            .call(self.clone().struct_members(&specifier.declarations, None))
-            .await;
-        self.with(|analyzer| analyzer.struct_specifier_with(specifier, members))
-    }
-}
-
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn initializer(
-        self,
-        span: Span,
-        initializer: &'b Spanned<Initializer>,
-        expected: Type,
-    ) -> Operand {
-        match &initializer.node {
-            Initializer::Expression(expression) => self.clone().value_expression(expression).await,
-            Initializer::List(items) => {
-                self.call(self.clone().initializer_list(span, items, expected))
-                    .await
-            }
-        }
+    fn struct_specifier(&mut self, specifier: &StructSpecifier) -> Type {
+        let members = self.struct_members(&specifier.declarations, None);
+        self.struct_specifier_with(specifier, members)
     }
 
-    async fn initializer_list(
-        self,
+    pub(crate) fn initializer(
+        &mut self,
         span: Span,
-        items: &'b [Spanned<Initializer>],
-        expected: Type,
+        initializer: &Spanned<Initializer>,
+        expected: &Type,
     ) -> Operand {
-        let mut list = self.with(|analyzer| analyzer.start_list(span, items, &expected));
+        recurse(|| match &initializer.node {
+            Initializer::Expression(expression) => self.expression(expression),
+            Initializer::List(items) => self.initializer_list(span, items, expected),
+        })
+    }
+
+    fn initializer_list(
+        &mut self,
+        span: Span,
+        items: &[Spanned<Initializer>],
+        expected: &Type,
+    ) -> Operand {
+        let mut list = self.start_list(span, items, expected);
         for (index, item) in items.iter().enumerate() {
             let element = list
                 .element_types
                 .get(index)
                 .cloned()
                 .unwrap_or(Type::ERROR);
-            let operand = self
-                .call(self.clone().initializer(span, item, element.clone()))
-                .await;
-            self.with(|analyzer| {
-                analyzer.list_item(span, items, &expected, &mut list, &element, operand);
-            });
+            let operand = self.initializer(span, item, &element);
+            self.list_item(span, items, expected, &mut list, &element, operand);
         }
-        self.with(|analyzer| analyzer.finish_list(span, &expected, list))
+        self.finish_list(span, expected, list)
     }
 }
 
