@@ -23,7 +23,7 @@ use core::result::Result;
 
 #[derive(Clone, Debug)]
 pub struct Rule {
-    pub arguments: arrayvec::ArrayVec<TypeResolution, 4>,
+    pub arguments: rglsl_types::small_vec::SmallVec<TypeResolution, 4>,
     pub conclusion: Conclusion,
 }
 

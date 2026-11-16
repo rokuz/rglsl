@@ -5,25 +5,6 @@
 use crate::ir;
 use crate::proc::overloads::list::{MathType, StaticRule};
 
-pub const FLOAT_SCALARS: [ir::Scalar; 3] = [ir::Scalar::F32, ir::Scalar::F16, ir::Scalar::F64];
-
-pub const CONCRETE_INT_SCALARS: [ir::Scalar; 8] = [
-    ir::Scalar::I32,
-    ir::Scalar::U32,
-    ir::Scalar::I16,
-    ir::Scalar::U16,
-    ir::Scalar::I64,
-    ir::Scalar::U64,
-    ir::Scalar::I8,
-    ir::Scalar::U8,
-];
-
-pub const VECTOR_SIZES: [ir::VectorSize; 3] = [
-    ir::VectorSize::Bi,
-    ir::VectorSize::Tri,
-    ir::VectorSize::Quad,
-];
-
 pub const fn scalar_or_vecn(scalar: ir::Scalar) -> [MathType; 4] {
     [
         MathType::Scalar(scalar),

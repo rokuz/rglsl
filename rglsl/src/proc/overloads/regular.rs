@@ -186,13 +186,8 @@ fn make_rule(
     conclusion_rule: ConclusionRule,
 ) -> Option<Rule> {
     let inner = size.to_inner(scalar);
-    let arg = TypeResolution::Value(inner);
-    let mut arguments = arrayvec::ArrayVec::new();
-    for _ in 0..arity {
-        arguments.push(arg.clone());
-    }
     Some(Rule {
-        arguments,
+        arguments: rglsl_types::small_vec::SmallVec::from_elem(TypeResolution::Value(inner), arity),
         conclusion: conclusion_rule.conclude(size, scalar)?,
     })
 }

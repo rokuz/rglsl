@@ -44,55 +44,49 @@ impl MathType {
     }
 }
 
+const MAX_ARGUMENTS: usize = 4;
+
 #[derive(Clone, Copy)]
 pub(in crate::proc::overloads) struct StaticRule {
-    pub arity: u8,
-    pub arguments: [MathType; 4],
-    pub conclusion: MathType,
+    arguments: [Option<MathType>; MAX_ARGUMENTS],
+    conclusion: MathType,
 }
 
 impl StaticRule {
-    pub(in crate::proc::overloads) const EMPTY: Self = Self {
-        arity: 0,
-        arguments: [MathType::Scalar(ir::Scalar::BOOL); 4],
-        conclusion: MathType::Scalar(ir::Scalar::BOOL),
-    };
-
     pub(in crate::proc::overloads) const fn new<const N: usize>(
-        args: [MathType; N],
+        arguments: [MathType; N],
         conclusion: MathType,
     ) -> Self {
-        let mut arguments = [MathType::Scalar(ir::Scalar::BOOL); 4];
-        let mut i = 0;
-        while i < N {
-            arguments[i] = args[i];
-            i += 1;
+        let mut slots = [None; MAX_ARGUMENTS];
+        let mut index = 0;
+        while index < N {
+            slots[index] = Some(arguments[index]);
+            index += 1;
         }
         Self {
-            arity: N as u8,
-            arguments,
+            arguments: slots,
             conclusion,
         }
     }
 
-    const fn argument(&self, index: usize) -> Option<MathType> {
-        if index < self.arity as usize {
-            Some(self.arguments[index])
-        } else {
-            None
-        }
+    fn arguments(&self) -> impl Iterator<Item = MathType> + '_ {
+        self.arguments.iter().map_while(|argument| *argument)
+    }
+
+    fn arity(&self) -> usize {
+        self.arguments().count()
+    }
+
+    fn argument(&self, index: usize) -> Option<MathType> {
+        self.arguments().nth(index)
     }
 
     fn to_rule(self) -> Rule {
-        let mut arguments = arrayvec::ArrayVec::new();
-        let mut i = 0;
-        let len = self.arity as usize;
-        while i < len {
-            arguments.push(TypeResolution::Value(self.arguments[i].to_inner()));
-            i += 1;
-        }
         Rule {
-            arguments,
+            arguments: self
+                .arguments()
+                .map(|argument| TypeResolution::Value(argument.to_inner()))
+                .collect(),
             conclusion: Conclusion::Value(self.conclusion.to_inner()),
         }
     }
@@ -144,7 +138,7 @@ impl crate::proc::overloads::OverloadSet for List {
 
     fn min_arguments(&self) -> Option<usize> {
         self.members().fold(None, |best, (_, rule)| {
-            let len = rule.arity as usize;
+            let len = rule.arity();
             Some(match best {
                 Some(best) => core::cmp::max(best, len),
                 None => len,
@@ -153,9 +147,8 @@ impl crate::proc::overloads::OverloadSet for List {
     }
 
     fn max_arguments(&self) -> Option<usize> {
-        self.members().fold(None, |n, (_, rule)| {
-            core::cmp::max(n, Some(rule.arity as usize))
-        })
+        self.members()
+            .fold(None, |n, (_, rule)| core::cmp::max(n, Some(rule.arity())))
     }
 
     fn arg(&self, i: usize, arg_ty: &ir::TypeInner, types: &crate::UniqueArena<ir::Type>) -> Self {
