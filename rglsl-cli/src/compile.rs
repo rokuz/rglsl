@@ -257,6 +257,7 @@ impl<'a> Session<'a> {
             command_line: Some(options.command_line.clone()),
             working_directory: self.directory.clone(),
             limits: self.limits,
+            validate_io: options.validate_io,
             reflection: options.reflect.then_some(options.reflect_options),
         }
     }

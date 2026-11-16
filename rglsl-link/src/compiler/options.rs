@@ -291,6 +291,7 @@ pub struct ProgramOptions {
     pub command_line: Option<String>,
     pub working_directory: Option<String>,
     pub limits: ResourceLimits,
+    pub validate_io: bool,
     pub reflection: Option<reflect::Options>,
 }
 
@@ -310,6 +311,7 @@ impl Default for ProgramOptions {
             command_line: None,
             working_directory: None,
             limits: ResourceLimits::default(),
+            validate_io: false,
             reflection: None,
         }
     }
@@ -328,6 +330,7 @@ impl ProgramOptions {
                 .collect(),
             keep_uncalled: self.keep_uncalled,
             limits: self.limits,
+            validate_io: self.validate_io,
         }
     }
 }

@@ -441,6 +441,9 @@ pub fn link_program_staged(
     for pair in pipeline.windows(2) {
         if let [from, to] = *pair {
             check_interface(from, to, &mut unstaged);
+            if options.validate_io {
+                crate::stage_io::check(from, to, &mut unstaged);
+            }
         }
     }
     errors.extend(unstaged.into_iter().map(|error| (None, error)));

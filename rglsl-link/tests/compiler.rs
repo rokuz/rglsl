@@ -387,3 +387,32 @@ fn enhanced_messages_keep_the_first_error() {
     assert_eq!(first.errors(), 1);
     assert_eq!(first.list.first(), all.list.first());
 }
+
+#[test]
+fn validate_io_needs_an_output_for_every_input_read() {
+    let vertex = "#version 450\nvoid main() { gl_Position = vec4(0.0); }\n";
+    let fragment = "#version 450\nlayout(location = 2) in vec4 tint;\nlayout(location = 0) out vec4 color;\nvoid helper() {}\nvoid main() {\n    color = tint;\n}\n";
+    let inputs = [
+        glsl(
+            vertex,
+            CompileOptions::new("plain.vert", ShaderStage::Vertex),
+        ),
+        glsl(
+            fragment,
+            CompileOptions::new("tinted.frag", ShaderStage::Fragment),
+        ),
+    ];
+    let compiler = Compiler::new();
+    let lenient = compiler.build(&inputs, &ProgramOptions::default(), &mut |_| None);
+    assert!(!lenient.link_failed(), "{}", lenient.link);
+    let options = ProgramOptions {
+        validate_io: true,
+        ..ProgramOptions::default()
+    };
+    let strict = compiler.build(&inputs, &options, &mut |_| None);
+    assert!(strict.link_failed());
+    assert_eq!(
+        strict.link.to_string(),
+        "ERROR: tinted.frag:6: Linking fragment and vertex stages: Preceding stage has no matching declaration for statically used input: tint"
+    );
+}

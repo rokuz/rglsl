@@ -315,6 +315,8 @@ rglsl_result rglsl_compile_options_set_discard_is_terminate(rglsl_compile_option
 rglsl_result rglsl_compile_options_set_no_storage_format(rglsl_compile_options *options,
                                                          bool enabled);
 
+rglsl_result rglsl_program_options_set_validate_io(rglsl_program_options *options, bool enabled);
+
 rglsl_result rglsl_compile_options_add_undefine(rglsl_compile_options *options, const char *name);
 
 rglsl_result rglsl_compile_options_add_preamble_text(rglsl_compile_options *options,

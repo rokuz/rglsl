@@ -53,6 +53,7 @@ pub struct Options {
     pub discard_is_terminate: bool,
     pub no_storage_format: bool,
     pub enhanced_messages: bool,
+    pub validate_io: bool,
     pub shifts: Vec<Shift>,
     pub resource_sets: Vec<ResourceSet>,
     pub quiet: bool,
@@ -380,7 +381,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         },
         "no-link" => options.no_link = true,
         "lto" => return Err(Exit::unsupported(&argument, "link time optimization")),
-        "validate-io" => return Err(Exit::unsupported(&argument, "cross stage IO validation")),
+        "validate-io" => options.validate_io = true,
         "bindings-per-resource-type" => {
             return Err(Exit::unsupported(
                 &argument,
@@ -549,6 +550,11 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     }
     if options.reflect && !options.link {
         return Err(Exit::error("reflection requires -l for linking"));
+    }
+    if options.validate_io && !options.link {
+        return Err(Exit::error(
+            "cross stage IO validation requires -l for linking",
+        ));
     }
     if options.output.is_some() && !options.spirv && !options.object {
         return Err(Exit::error("no binary generation requested (e.g., -V)"));

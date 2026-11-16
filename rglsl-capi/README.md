@@ -72,6 +72,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_compiler_build(compiler, sources, options, count, program_options, &program, &diagnostics)` | what `rglsl -V`/`-l` does with GLSL files: one source of a stage is compiled as a program, several are compiled and linked, or compiled on their own without linking; `rglsl_program_reflection`, `rglsl_program_file_count`, `rglsl_program_file` |
 | `rglsl_object_read(data, size, &object, &diagnostics)` | `.rglo` bytes to an object |
 | `rglsl_program_options_create` and its setters | options of the link and of SPIR-V generation: auto mapping, binding shifts per stage, keep uncalled, debug info, SPIR-V version, the command line and working directory recorded by `-gV`, limits, linking (`--no-link`), generating SPIR-V (`-l` without `-V`), reflection (`-q`, `RGLSL_REFLECT_*` for the `--reflect-*` options) |
+| `rglsl_program_options_set_validate_io` | `--validate-io`: an input a stage reads needs an output of the stage before |
 | `rglsl_limits_create`, `_decode`, `_set`, `_get`, `_message_count`, `_message`, `_configuration` | resource limits: glslang's defaults, a `.conf` file and its messages, `-c` |
 | `rglsl_disassemble(words, count, form, &text)` | `-H` (`RGLSL_DISASSEMBLY_GLSLANG`) and `--spirv-dis` (`RGLSL_DISASSEMBLY_STANDARD`, the form of SPIRV-Tools' `spirv-dis`); `RGLSL_RESULT_INVALID_SPIRV` with the text up to the error for malformed SPIR-V |
 | `rglsl_hex_text(words, count, variable_name, &text)` | `-x`, `--vn` |

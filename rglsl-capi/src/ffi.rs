@@ -609,6 +609,15 @@ pub unsafe extern "C" fn rglsl_compile_options_set_no_storage_format(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_validate_io(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.validate_io = enabled)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_compile_options_add_undefine(
     options: *mut CompileOptions,
     name: *const c_char,

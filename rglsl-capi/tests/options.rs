@@ -510,3 +510,26 @@ void main() {
     assert!(text.contains("(NMin)"), "{text}");
     Ok(())
 }
+
+#[test]
+fn validate_io_rejects_inputs_without_outputs() -> TestResult {
+    let compiler = compiler()?;
+    let vertex = options(c"plain.vert", RGLSL_STAGE_VERTEX)?;
+    let fragment = options(c"tinted.frag", RGLSL_STAGE_FRAGMENT)?;
+    let program_options = program_options()?;
+    let code =
+        unsafe { rglsl_c::rglsl_program_options_set_validate_io(program_options.pointer, true) };
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let sources = [
+        c"#version 450\nvoid main() { gl_Position = vec4(0.0); }\n",
+        c"#version 450\nlayout(location = 2) in vec4 tint;\nlayout(location = 0) out vec4 color;\nvoid main() { color = tint; }\n",
+    ];
+    let (code, program, diagnostics) =
+        build(&compiler, &sources, &[&vertex, &fragment], &program_options);
+    assert_eq!(code, rglsl_c::RGLSL_RESULT_LINK_FAILED);
+    assert!(program.is_null());
+    let diagnostics = Owned::new(diagnostics, rglsl_c::rglsl_diagnostics_destroy)?;
+    let text = string(unsafe { rglsl_c::rglsl_diagnostics_text(diagnostics.as_const()) })?;
+    assert!(text.contains("statically used input: tint"), "{text}");
+    Ok(())
+}

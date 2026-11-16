@@ -12,6 +12,7 @@ mod layout;
 mod merge;
 mod program;
 pub mod reflect;
+mod stage_io;
 mod unify;
 mod workgroup;
 
@@ -56,6 +57,7 @@ pub struct Options {
     pub binding_shifts: Vec<(ShaderStage, rglsl::proc::BindingShifts)>,
     pub keep_uncalled: bool,
     pub limits: rglsl_sema::ResourceLimits,
+    pub validate_io: bool,
 }
 
 impl Options {

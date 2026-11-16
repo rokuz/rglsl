@@ -145,6 +145,8 @@ Options:
                                      * spirv1.5  under --target-env vulkan1.2
                                      * spirv1.6  under --target-env vulkan1.3
                                      * spirv1.6  under --target-env vulkan1.4
+  --validate-io                     validate cross stage IO: an input a stage
+                                    reads needs an output of the stage before
   --variable-name <name> | --vn <name>
                                     creates a C header file that contains a
                                     uint32_t array named <name> initialized with

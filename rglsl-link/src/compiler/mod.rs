@@ -254,6 +254,17 @@ pub(crate) fn link_diagnostic(stage: Option<ShaderStage>, error: &LinkError) -> 
             Origin::Stages(stages.to_lowercase()),
             format!("{what} of `{name}` must match between stages"),
         ),
+        (_, LinkError::UnmatchedInput { stages, name, at }) => Diagnostic {
+            file: at.as_ref().and_then(|at| at.file.clone()),
+            line: at.as_ref().map(|at| at.line),
+            ..Diagnostic::linking(
+                Severity::Error,
+                Origin::Stages(stages.clone()),
+                format!(
+                    "Preceding stage has no matching declaration for statically used input: {name}"
+                ),
+            )
+        },
         (Some(stage), _) => {
             Diagnostic::linking(Severity::Error, Origin::Stage(stage), error.to_string())
         }

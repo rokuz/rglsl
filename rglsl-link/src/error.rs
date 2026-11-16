@@ -90,6 +90,15 @@ pub enum LinkError {
         message: String,
         at: Option<SourcePosition>,
     },
+    #[error(
+        "{stages} stages: preceding stage has no matching declaration for statically used input `{name}`{at}",
+        at = position_suffix(.at.as_ref())
+    )]
+    UnmatchedInput {
+        stages: String,
+        name: String,
+        at: Option<SourcePosition>,
+    },
     #[error("internal linker error: {0}")]
     Internal(String),
 }
