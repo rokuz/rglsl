@@ -152,19 +152,23 @@ fn differs(reference: &Run, variant: &Run) -> Option<bool> {
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
-    let Ok(entries) = fs::read_dir(from) else {
-        return Ok(());
-    };
-    fs::create_dir_all(to)?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name() else {
+    let mut pending = vec![(from.to_path_buf(), to.to_path_buf())];
+    while let Some((from, to)) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&from) else {
             continue;
         };
-        if path.is_dir() {
-            copy_tree(&path, &to.join(name))?;
-        } else {
-            fs::copy(&path, to.join(name))?;
+        fs::create_dir_all(&to)?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let target = to.join(name);
+            if path.is_dir() {
+                pending.push((path, target));
+            } else {
+                fs::copy(&path, target)?;
+            }
         }
     }
     Ok(())
