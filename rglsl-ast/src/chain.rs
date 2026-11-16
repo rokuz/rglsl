@@ -5,7 +5,9 @@ use rglsl_types::small_vec::SmallVec;
 use rglsl_types::stack::InlineDepth;
 
 use crate::ast::{Expression, ExpressionKind, FunctionCall, FunctionIdentifier, NodeId};
-use crate::deep::{Nested, deep_clone, deep_eq, drop_owned};
+use crate::deep::{
+    Composite, Part, PartMut, clone_composite, drop_owned, empty_type, eq_composite,
+};
 use crate::span::Span;
 
 pub type SpineLinks<'a> = SmallVec<&'a Expression, 16>;
@@ -246,10 +248,10 @@ impl ExpressionKind {
                         object: hole(),
                         name: name.clone(),
                     },
-                    FunctionIdentifier::Constructor(ty) => {
-                        FunctionIdentifier::Constructor(ty.clone())
+                    FunctionIdentifier::Constructor(_) => {
+                        FunctionIdentifier::Constructor(Box::new(empty_type()))
                     }
-                    FunctionIdentifier::Cast(ty) => FunctionIdentifier::Cast(ty.clone()),
+                    FunctionIdentifier::Cast(_) => FunctionIdentifier::Cast(Box::new(empty_type())),
                     FunctionIdentifier::Function(name) => {
                         FunctionIdentifier::Function(name.clone())
                     }
@@ -310,12 +312,10 @@ impl ExpressionKind {
                             FunctionIdentifier::Method { name: right, .. },
                         ) => left == right,
                         (
-                            FunctionIdentifier::Constructor(left),
-                            FunctionIdentifier::Constructor(right),
+                            FunctionIdentifier::Constructor(_),
+                            FunctionIdentifier::Constructor(_),
                         )
-                        | (FunctionIdentifier::Cast(left), FunctionIdentifier::Cast(right)) => {
-                            left == right
-                        }
+                        | (FunctionIdentifier::Cast(_), FunctionIdentifier::Cast(_)) => true,
                         (
                             FunctionIdentifier::Function(left),
                             FunctionIdentifier::Function(right),
@@ -383,39 +383,33 @@ impl ExpressionKind {
     }
 }
 
-impl Nested for ExpressionKind {
-    type Node = Expression;
-
-    fn kind(node: &Expression) -> &Self {
-        &node.kind
+impl Composite for ExpressionKind {
+    fn parts<'a>(&'a self, f: &mut dyn FnMut(Part<'a>)) {
+        if let Self::FunctionCall(call) = self
+            && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
+                &call.function.node
+        {
+            f(Part::Type(ty));
+        }
+        self.for_each_child(|child| f(Part::Expression(child)));
     }
 
-    fn rebuild(node: &Expression, kind: Self) -> Expression {
-        Expression::new(node.id, node.span, kind)
+    fn parts_mut(&mut self, f: &mut dyn FnMut(PartMut<'_>)) {
+        if let Self::FunctionCall(call) = self
+            && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
+                &mut call.function.node
+        {
+            f(PartMut::Type(ty));
+        }
+        self.for_each_child_mut(|child| f(PartMut::Expression(child)));
     }
 
-    fn has_children(&self) -> bool {
-        self.child_count() != 0
+    fn hollow(&self) -> Self {
+        self.shell()
     }
 
-    fn child_count(&self) -> usize {
-        Self::child_count(self)
-    }
-
-    fn for_each_child<'a>(&'a self, f: impl FnMut(&'a Expression)) {
-        Self::for_each_child(self, f);
-    }
-
-    fn for_each_child_mut<'a>(&'a mut self, f: impl FnMut(&'a mut Expression)) {
-        Self::for_each_child_mut(self, f);
-    }
-
-    fn shell(&self) -> Self {
-        Self::shell(self)
-    }
-
-    fn same_shell(&self, other: &Self) -> bool {
-        Self::same_shell(self, other)
+    fn same_hollow(&self, other: &Self) -> bool {
+        self.same_shell(other)
     }
 }
 
@@ -432,13 +426,13 @@ impl Drop for ExpressionKind {
 
 impl Clone for ExpressionKind {
     fn clone(&self) -> Self {
-        deep_clone(self)
+        clone_composite(self)
     }
 }
 
 impl PartialEq for ExpressionKind {
     fn eq(&self, other: &Self) -> bool {
-        deep_eq(self, other)
+        eq_composite(self, other)
     }
 }
 

@@ -210,16 +210,21 @@ impl<'a> Lowerer<'a> {
         qualifiers: &Qualifiers,
         at: Span,
     ) -> Result<TypeInner> {
-        let opaque = match ty.kind {
-            TypeKind::Opaque(opaque) => opaque,
-            TypeKind::Tensor { scalar, rank } => {
-                return Ok(TypeInner::Tensor {
-                    scalar: super::types::scalar(scalar),
-                    rank: self.tensor_rank(rank, at)?,
-                });
-            }
-            _ => return Err(internal(at)),
-        };
+        match ty.kind {
+            TypeKind::Opaque(opaque) => Self::heap_opaque(opaque, qualifiers, at),
+            TypeKind::Tensor { scalar, rank } => Ok(TypeInner::Tensor {
+                scalar: super::types::scalar(scalar),
+                rank: self.tensor_rank(rank, at)?,
+            }),
+            _ => Err(internal(at)),
+        }
+    }
+
+    fn heap_opaque(
+        opaque: rglsl_sema::types::Opaque,
+        qualifiers: &Qualifiers,
+        at: Span,
+    ) -> Result<TypeInner> {
         match opaque.kind {
             OpaqueKind::Image => {
                 let format = qualifiers
@@ -270,10 +275,15 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(super) fn buffer_descriptor(&mut self, id: BlockId, at: Span) -> Result<Handle<Type>> {
+        let (packing, row_major, space) = self.descriptor_layout(id, at)?;
+        let base = self.block_struct(id, packing, row_major, at)?;
+        Ok(self.insert_type(TypeInner::BufferDescriptor { base, space }))
+    }
+
+    fn descriptor_layout(&self, id: BlockId, at: Span) -> Result<(Packing, bool, AddressSpace)> {
         let block = self.analysis.types.block(id).ok_or_else(|| internal(at))?;
         let buffer = block.storage == BlockStorage::Buffer;
         let (packing, row_major) = self.block_packing(&block.qualifiers, buffer, false);
-        let base = self.block_struct(id, packing, row_major, at)?;
         let space = if buffer {
             AddressSpace::Storage {
                 access: storage_access(&block.qualifiers),
@@ -281,7 +291,7 @@ impl<'a> Lowerer<'a> {
         } else {
             AddressSpace::Uniform
         };
-        Ok(self.insert_type(TypeInner::BufferDescriptor { base, space }))
+        Ok((packing, row_major, space))
     }
 
     fn packed_offsets(
@@ -307,10 +317,15 @@ impl<'a> Lowerer<'a> {
     }
 
     fn heap_data_type(&mut self, ty: &GlslType, at: Span) -> Result<Handle<Type>> {
+        self.heap_data_check(ty, at)?;
+        self.ir_type(ty, at)
+    }
+
+    fn heap_data_check(&self, ty: &GlslType, at: Span) -> Result<()> {
         if ty.contains_scalar(&self.analysis.types, rglsl_sema::types::Scalar::Bool) {
             return Err(unsupported("booleans in descriptor heaps", at));
         }
-        self.ir_type(ty, at)
+        Ok(())
     }
 
     fn data_heap_struct(
@@ -473,7 +488,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     async fn heap_leaf(
         self,
         ty: GlslType,
@@ -482,11 +497,32 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<Type>> {
         let ty = &ty;
         match ty.kind {
-            TypeKind::Opaque(_) | TypeKind::Tensor { .. } => {
-                let inner = self.with(|this| this.heap_image(ty, qualifiers, at))??;
+            TypeKind::Tensor { scalar, rank } => {
+                let rank = {
+                    let frame = self.clone().cooperative_size(rank, at);
+                    self.nest(frame).await
+                }?;
+                Ok(self.with(|this| {
+                    this.insert_type(TypeInner::Tensor {
+                        scalar: super::types::scalar(scalar),
+                        rank,
+                    })
+                })?)
+            }
+            TypeKind::Opaque(opaque) => {
+                let inner = Lowerer::heap_opaque(opaque, qualifiers, at)?;
                 Ok(self.with(|this| this.insert_type(inner))?)
             }
-            TypeKind::Block(id) => self.with(|this| this.buffer_descriptor(id, at))?,
+            TypeKind::Block(id) => {
+                let (packing, row_major, space) =
+                    self.with(|this| this.descriptor_layout(id, at))??;
+                let base = {
+                    let frame = self.clone().block_struct(id, packing, row_major, at);
+                    self.nest(frame).await
+                }?;
+                Ok(self
+                    .with(|this| this.insert_type(TypeInner::BufferDescriptor { base, space }))?)
+            }
             TypeKind::Struct(id) => {
                 let frame = self.clone().heap_struct(id, at);
                 self.nest(frame).await
@@ -555,14 +591,29 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 } else {
                     0
                 };
-                (
-                    self.with(|this| {
-                        this.descriptor_arrays(leaf, member.ty.dimensions(), stride, at)
-                    })??,
-                    None,
-                )
+                let mut ty = leaf;
+                let last = member.ty.dimensions().len().saturating_sub(1);
+                for (position, dimension) in member.ty.dimensions().iter().enumerate().rev() {
+                    let size = {
+                        let frame = self.clone().array_size(*dimension, at);
+                        self.nest(frame).await
+                    }?;
+                    let stride = if position == last { stride } else { 0 };
+                    ty = self.with(|this| {
+                        this.insert_type(TypeInner::Array {
+                            base: ty,
+                            size,
+                            stride,
+                        })
+                    })?;
+                }
+                (ty, None)
             } else {
-                let ty = self.with(|this| this.heap_data_type(&member.ty, at))??;
+                self.with(|this| this.heap_data_check(&member.ty, at))??;
+                let ty = {
+                    let frame = self.clone().ir_type(member.ty.clone(), at);
+                    self.nest(frame).await
+                }?;
                 let (ty, layout) = self.with(|this| {
                     this.laid_out(&member.ty, ty, Packing::Scalar, member_row_major, at)
                 })??;

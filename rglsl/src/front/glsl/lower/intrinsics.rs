@@ -13,7 +13,6 @@ use rglsl_sema::spirv::{
 };
 use rglsl_sema::types::{Type as GlslType, TypeKind};
 
-use super::function::FunctionLowerer;
 use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::{
     Expression, Handle, Span, SpirvDecoration, SpirvDecorationOperands, SpirvExecutionMode,
@@ -178,7 +177,7 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn spirv_type(self, id: SpirvTypeId, span: Span) -> Result<TypeInner> {
         let analysis = self.with(|this| this.analysis)?;
         let ty = analysis.types.spirv(id).ok_or_else(|| internal(span))?;
@@ -236,16 +235,14 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     }
 }
 
-impl FunctionLowerer<'_, '_> {
-    fn spirv_result_type(&mut self, ty: &GlslType, at: Span) -> Result<Handle<crate::Type>> {
+impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    async fn spirv_result_type(self, ty: GlslType, at: Span) -> Result<Handle<crate::Type>> {
         if matches!(ty.kind, TypeKind::Spirv(_)) || !ty.is_opaque() {
-            return self.lw.ir_type(ty, at);
+            return self.ir_type(ty, at).await;
         }
         Err(unsupported("opaque results of `spirv_instruction`", at))
     }
-}
 
-impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     pub(super) async fn spirv_call(
         self,
         id: FunctionId,
@@ -330,7 +327,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let result = if function.return_type.is_void() {
             None
         } else {
-            Some(self.with(|this| this.spirv_result_type(&function.return_type, at))??)
+            Some(
+                self.clone()
+                    .spirv_result_type(function.return_type.clone(), at)
+                    .await?,
+            )
         };
         match result {
             Some(ty) => Ok(Some(self.with(|this| {

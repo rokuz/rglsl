@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut, RangeBounds};
 use crate::{Span, Statement};
 
 /// A code block is a vector of statements, with maybe a vector of spans.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Block {
     body: Vec<Statement>,
     span_info: Vec<Span>,
@@ -155,6 +155,15 @@ impl<'a> Iterator for Walk<'a> {
             self.pending[start..].reverse();
             return Some(statement);
         }
+    }
+}
+
+impl core::fmt::Debug for Block {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("Block")
+            .field("statements", &self.body.len())
+            .finish_non_exhaustive()
     }
 }
 

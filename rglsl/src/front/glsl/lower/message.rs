@@ -162,7 +162,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     ty,
                 )
             };
-            let plain = self.with(|this| this.lw.ir_type(&ty, at))??;
+            let plain = self.clone().ir_type(ty.clone(), at).await?;
             let (laid, layout) =
                 self.with(|this| this.lw.laid_out(&ty, plain, Packing::Scalar, false, at))??;
             let member_alignment = Alignment::new(layout.alignment).ok_or_else(|| internal(at))?;

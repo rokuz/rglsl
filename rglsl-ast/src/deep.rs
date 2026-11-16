@@ -1,13 +1,15 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::fmt;
 use core::mem;
 
 use crate::ast::{
-    ArrayDimension, CompoundStatement, Expression, ExpressionKind, ForStatement,
-    FullySpecifiedType, FunctionIdentifier, Initializer, LayoutQualifierId, NodeId,
-    SingleTypeQualifier, Spanned, SpirvTypeParameter, SpirvTypeSpecifier, Statement, StatementKind,
-    StructDeclaration, StructSpecifier, TypeParameters, TypeQualifier, TypeSpecifier,
-    TypeSpecifierNonArray,
+    ArrayDimension, ArraySpecifier, CompoundStatement, Expression, ExpressionKind, ForStatement,
+    FullySpecifiedType, FunctionIdentifier, Initializer, LayoutQualifier, LayoutQualifierId,
+    NodeId, SingleTypeQualifier, Spanned, SpirvDecorate, SpirvInstructionQualifier,
+    SpirvRequirement, SpirvStorageClass, SpirvTypeParameter, SpirvTypeSpecifier, Statement,
+    StatementKind, StructDeclaration, StructDeclarator, StructSpecifier, TypeParameters,
+    TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 use crate::chain::placeholder;
 use crate::span::Span;
@@ -142,51 +144,6 @@ fn take_type(specifier: &mut TypeSpecifier, into: &mut Vec<Owned>) {
     }
 }
 
-fn take_qualifier(qualifier: &mut Option<Spanned<TypeQualifier>>, into: &mut Vec<Owned>) {
-    let Some(qualifier) = qualifier else {
-        return;
-    };
-    for single in &mut qualifier.node.qualifiers {
-        match &mut single.node {
-            SingleTypeQualifier::Layout(layout) => {
-                for LayoutQualifierId { value, .. } in layout.ids.iter_mut().map(|id| &mut id.node)
-                {
-                    if let Some(value) = value {
-                        take_expression(value, into);
-                    }
-                }
-            }
-            SingleTypeQualifier::SpirvDecorate(decorate) => {
-                for operand in &mut decorate.operands {
-                    take_expression(operand, into);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn take_array(array: &mut Option<Spanned<crate::ast::ArraySpecifier>>, into: &mut Vec<Owned>) {
-    let Some(array) = array else {
-        return;
-    };
-    for dimension in &mut array.node.dimensions {
-        if let ArrayDimension::Sized(size) = &mut dimension.node {
-            take_expression(size, into);
-        }
-    }
-}
-
-fn take_members(members: &mut [Spanned<StructDeclaration>], into: &mut Vec<Owned>) {
-    for member in members {
-        take_qualifier(&mut member.node.ty.node.qualifier, into);
-        take_type(&mut member.node.ty.node.specifier.node, into);
-        for declarator in &mut member.node.declarators {
-            take_array(&mut declarator.node.array, into);
-        }
-    }
-}
-
 impl TypeSpecifier {
     pub(crate) const fn is_leaf_type(&self) -> bool {
         self.parameters.is_none()
@@ -200,34 +157,7 @@ impl TypeSpecifier {
     }
 
     pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        match &mut self.non_array {
-            TypeSpecifierNonArray::Struct(structure) => {
-                take_members(&mut structure.declarations, into);
-            }
-            TypeSpecifierNonArray::InlineBlock(members) => take_members(members, into),
-            TypeSpecifierNonArray::Spirv(spirv) => {
-                for parameter in &mut spirv.parameters {
-                    match parameter {
-                        SpirvTypeParameter::Constant(value) => take_expression(value, into),
-                        SpirvTypeParameter::Type(ty) => take_type(&mut ty.node, into),
-                    }
-                }
-            }
-            TypeSpecifierNonArray::Void
-            | TypeSpecifierNonArray::Basic(_)
-            | TypeSpecifierNonArray::Opaque(_)
-            | TypeSpecifierNonArray::Parameterized(_)
-            | TypeSpecifierNonArray::TypeName(_) => {}
-        }
-        if let Some(parameters) = &mut self.parameters {
-            if let Some(element) = &mut parameters.node.element {
-                take_type(&mut element.node, into);
-            }
-            for value in &mut parameters.node.values {
-                take_expression(value, into);
-            }
-        }
-        take_array(&mut self.array, into);
+        take_parts(self, into);
     }
 }
 
@@ -255,14 +185,15 @@ impl Initializer {
 
 impl ExpressionKind {
     pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        if let Self::FunctionCall(call) = self
-            && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
-                &mut call.function.node
-        {
-            take_type(ty, into);
-        }
-        self.for_each_child_mut(|child| take_expression(child, into));
+        take_parts(self, into);
     }
+}
+
+fn take_parts<C: Composite>(composite: &mut C, into: &mut Vec<Owned>) {
+    composite.parts_mut(&mut |part| match part {
+        PartMut::Expression(expression) => take_expression(expression, into),
+        PartMut::Type(specifier) => take_type(specifier, into),
+    });
 }
 
 impl StatementKind {
@@ -639,80 +570,395 @@ impl PartialEq for Initializer {
 
 impl Eq for Initializer {}
 
-fn member_shell(member: &Spanned<StructDeclaration>) -> Spanned<StructDeclaration> {
+#[derive(Clone, Copy)]
+pub(crate) enum Part<'a> {
+    Expression(&'a Expression),
+    Type(&'a TypeSpecifier),
+}
+
+pub(crate) enum PartMut<'a> {
+    Expression(&'a mut Expression),
+    Type(&'a mut TypeSpecifier),
+}
+
+enum Built {
+    Expression(Expression),
+    Type(TypeSpecifier),
+}
+
+pub(crate) trait Composite: Sized {
+    fn parts<'a>(&'a self, f: &mut dyn FnMut(Part<'a>));
+    fn parts_mut(&mut self, f: &mut dyn FnMut(PartMut<'_>));
+    fn hollow(&self) -> Self;
+    fn same_hollow(&self, other: &Self) -> bool;
+}
+
+impl<'a> Part<'a> {
+    fn parts(self, f: &mut dyn FnMut(Part<'a>)) {
+        match self {
+            Self::Expression(expression) => expression.kind.parts(f),
+            Self::Type(specifier) => specifier.parts(f),
+        }
+    }
+
+    fn count(self) -> usize {
+        let mut count = 0;
+        self.parts(&mut |_| count += 1);
+        count
+    }
+
+    fn build(self, built: &mut Vec<Built>, count: usize) -> Built {
+        match self {
+            Self::Expression(expression) => {
+                let mut kind = expression.kind.hollow();
+                fill_parts(&mut kind, built, count);
+                Built::Expression(Expression::new(expression.id, expression.span, kind))
+            }
+            Self::Type(specifier) => {
+                let mut specifier = specifier.hollow();
+                fill_parts(&mut specifier, built, count);
+                Built::Type(specifier)
+            }
+        }
+    }
+
+    fn same_hollow(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Expression(left), Self::Expression(right)) => left.kind.same_hollow(&right.kind),
+            (Self::Type(left), Self::Type(right)) => left.same_hollow(right),
+            _ => false,
+        }
+    }
+}
+
+fn fill_parts<C: Composite>(shell: &mut C, built: &mut Vec<Built>, count: usize) {
+    let start = built.len().saturating_sub(count);
+    let mut items = built.split_off(start).into_iter();
+    shell.parts_mut(&mut |slot| match (slot, items.next()) {
+        (PartMut::Expression(slot), Some(Built::Expression(value))) => *slot = value,
+        (PartMut::Type(slot), Some(Built::Type(value))) => *slot = value,
+        _ => {}
+    });
+}
+
+pub(crate) fn clone_composite<C: Composite>(root: &C) -> C {
+    let mut shell = root.hollow();
+    let mut tasks: Vec<(Part<'_>, bool)> = Vec::new();
+    root.parts(&mut |part| tasks.push((part, false)));
+    let count = tasks.len();
+    if count == 0 {
+        return shell;
+    }
+    tasks.reverse();
+    let mut built = Vec::with_capacity(count);
+    while let Some((part, expanded)) = tasks.pop() {
+        if expanded {
+            let children = part.count();
+            let value = part.build(&mut built, children);
+            built.push(value);
+            continue;
+        }
+        let mark = tasks.len();
+        tasks.push((part, true));
+        part.parts(&mut |child| tasks.push((child, false)));
+        match tasks.get_mut(mark + 1..) {
+            Some(added) if !added.is_empty() => added.reverse(),
+            _ => {
+                tasks.truncate(mark);
+                let value = part.build(&mut built, 0);
+                built.push(value);
+            }
+        }
+    }
+    fill_parts(&mut shell, &mut built, count);
+    shell
+}
+
+pub(crate) fn eq_composite<C: Composite>(left: &C, right: &C) -> bool {
+    if !left.same_hollow(right) {
+        return false;
+    }
+    let mut left_parts: Vec<Part<'_>> = Vec::new();
+    let mut right_parts: Vec<Part<'_>> = Vec::new();
+    left.parts(&mut |part| left_parts.push(part));
+    right.parts(&mut |part| right_parts.push(part));
+    let mut pending: Vec<(Part<'_>, Part<'_>)> = Vec::new();
+    loop {
+        if left_parts.len() != right_parts.len() {
+            return false;
+        }
+        pending.extend(left_parts.drain(..).zip(right_parts.drain(..)));
+        let Some((left, right)) = pending.pop() else {
+            return true;
+        };
+        if !left.same_hollow(right) {
+            return false;
+        }
+        left.parts(&mut |part| left_parts.push(part));
+        right.parts(&mut |part| right_parts.push(part));
+    }
+}
+
+fn requirement_parts<'a>(
+    requirements: &'a [Spanned<SpirvRequirement>],
+    f: &mut dyn FnMut(Part<'a>),
+) {
+    for requirement in requirements {
+        for value in &requirement.node.values {
+            f(Part::Expression(value));
+        }
+    }
+}
+
+fn requirement_parts_mut(
+    requirements: &mut [Spanned<SpirvRequirement>],
+    f: &mut dyn FnMut(PartMut<'_>),
+) {
+    for requirement in requirements {
+        for value in &mut requirement.node.values {
+            f(PartMut::Expression(value));
+        }
+    }
+}
+
+fn qualifier_parts<'a>(qualifier: &'a Option<Spanned<TypeQualifier>>, f: &mut dyn FnMut(Part<'a>)) {
+    let Some(qualifier) = qualifier else {
+        return;
+    };
+    for single in &qualifier.node.qualifiers {
+        match &single.node {
+            SingleTypeQualifier::Layout(layout) => {
+                for id in &layout.ids {
+                    if let Some(value) = &id.node.value {
+                        f(Part::Expression(value));
+                    }
+                }
+            }
+            SingleTypeQualifier::SpirvStorageClass(class) => {
+                requirement_parts(&class.requirements, f);
+                f(Part::Expression(&class.class));
+            }
+            SingleTypeQualifier::SpirvDecorate(decorate) => {
+                requirement_parts(&decorate.requirements, f);
+                f(Part::Expression(&decorate.decoration));
+                for operand in &decorate.operands {
+                    f(Part::Expression(operand));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn qualifier_parts_mut(
+    qualifier: &mut Option<Spanned<TypeQualifier>>,
+    f: &mut dyn FnMut(PartMut<'_>),
+) {
+    let Some(qualifier) = qualifier else {
+        return;
+    };
+    for single in &mut qualifier.node.qualifiers {
+        match &mut single.node {
+            SingleTypeQualifier::Layout(layout) => {
+                for id in &mut layout.ids {
+                    if let Some(value) = &mut id.node.value {
+                        f(PartMut::Expression(value));
+                    }
+                }
+            }
+            SingleTypeQualifier::SpirvStorageClass(class) => {
+                requirement_parts_mut(&mut class.requirements, f);
+                f(PartMut::Expression(&mut class.class));
+            }
+            SingleTypeQualifier::SpirvDecorate(decorate) => {
+                requirement_parts_mut(&mut decorate.requirements, f);
+                f(PartMut::Expression(&mut decorate.decoration));
+                for operand in &mut decorate.operands {
+                    f(PartMut::Expression(operand));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn array_parts<'a>(array: &'a Option<Spanned<ArraySpecifier>>, f: &mut dyn FnMut(Part<'a>)) {
+    let Some(array) = array else {
+        return;
+    };
+    for dimension in &array.node.dimensions {
+        if let ArrayDimension::Sized(size) = &dimension.node {
+            f(Part::Expression(size));
+        }
+    }
+}
+
+fn array_parts_mut(array: &mut Option<Spanned<ArraySpecifier>>, f: &mut dyn FnMut(PartMut<'_>)) {
+    let Some(array) = array else {
+        return;
+    };
+    for dimension in &mut array.node.dimensions {
+        if let ArrayDimension::Sized(size) = &mut dimension.node {
+            f(PartMut::Expression(size));
+        }
+    }
+}
+
+fn member_parts<'a>(members: &'a [Spanned<StructDeclaration>], f: &mut dyn FnMut(Part<'a>)) {
+    for member in members {
+        qualifier_parts(&member.node.ty.node.qualifier, f);
+        f(Part::Type(&member.node.ty.node.specifier.node));
+        for declarator in &member.node.declarators {
+            array_parts(&declarator.node.array, f);
+        }
+    }
+}
+
+fn member_parts_mut(members: &mut [Spanned<StructDeclaration>], f: &mut dyn FnMut(PartMut<'_>)) {
+    for member in members {
+        qualifier_parts_mut(&mut member.node.ty.node.qualifier, f);
+        f(PartMut::Type(&mut member.node.ty.node.specifier.node));
+        for declarator in &mut member.node.declarators {
+            array_parts_mut(&mut declarator.node.array, f);
+        }
+    }
+}
+
+fn requirements_hollow(
+    requirements: &[Spanned<SpirvRequirement>],
+) -> Vec<Spanned<SpirvRequirement>> {
+    requirements
+        .iter()
+        .map(|requirement| {
+            Spanned::new(
+                requirement.span,
+                SpirvRequirement {
+                    name: requirement.node.name.clone(),
+                    values: requirement
+                        .node
+                        .values
+                        .iter()
+                        .map(|_| placeholder())
+                        .collect(),
+                },
+            )
+        })
+        .collect()
+}
+
+fn qualifier_hollow(qualifier: &Option<Spanned<TypeQualifier>>) -> Option<Spanned<TypeQualifier>> {
+    let qualifier = qualifier.as_ref()?;
+    let qualifiers = qualifier
+        .node
+        .qualifiers
+        .iter()
+        .map(|single| {
+            let node = match &single.node {
+                SingleTypeQualifier::Layout(layout) => {
+                    SingleTypeQualifier::Layout(LayoutQualifier {
+                        ids: layout
+                            .ids
+                            .iter()
+                            .map(|id| {
+                                Spanned::new(
+                                    id.span,
+                                    LayoutQualifierId {
+                                        name: id.node.name.clone(),
+                                        value: id.node.value.as_ref().map(|_| placeholder()),
+                                    },
+                                )
+                            })
+                            .collect(),
+                    })
+                }
+                SingleTypeQualifier::SpirvStorageClass(class) => {
+                    SingleTypeQualifier::SpirvStorageClass(SpirvStorageClass {
+                        requirements: requirements_hollow(&class.requirements),
+                        class: placeholder(),
+                    })
+                }
+                SingleTypeQualifier::SpirvDecorate(decorate) => {
+                    SingleTypeQualifier::SpirvDecorate(SpirvDecorate {
+                        kind: decorate.kind,
+                        requirements: requirements_hollow(&decorate.requirements),
+                        decoration: placeholder(),
+                        operands: decorate.operands.iter().map(|_| placeholder()).collect(),
+                    })
+                }
+                other => other.clone(),
+            };
+            Spanned::new(single.span, node)
+        })
+        .collect();
+    Some(Spanned::new(qualifier.span, TypeQualifier { qualifiers }))
+}
+
+fn array_hollow(array: &Option<Spanned<ArraySpecifier>>) -> Option<Spanned<ArraySpecifier>> {
+    let array = array.as_ref()?;
+    Some(Spanned::new(
+        array.span,
+        ArraySpecifier {
+            dimensions: array
+                .node
+                .dimensions
+                .iter()
+                .map(|dimension| {
+                    Spanned::new(
+                        dimension.span,
+                        match dimension.node {
+                            ArrayDimension::Unsized => ArrayDimension::Unsized,
+                            ArrayDimension::Sized(_) => ArrayDimension::Sized(placeholder()),
+                        },
+                    )
+                })
+                .collect(),
+        },
+    ))
+}
+
+fn member_hollow(member: &Spanned<StructDeclaration>) -> Spanned<StructDeclaration> {
     Spanned::new(
         member.span,
         StructDeclaration {
             ty: Spanned::new(
                 member.node.ty.span,
                 FullySpecifiedType {
-                    qualifier: member.node.ty.node.qualifier.clone(),
+                    qualifier: qualifier_hollow(&member.node.ty.node.qualifier),
                     specifier: Spanned::new(member.node.ty.node.specifier.span, empty_type()),
                 },
             ),
-            declarators: member.node.declarators.clone(),
+            declarators: member
+                .node
+                .declarators
+                .iter()
+                .map(|declarator| {
+                    Spanned::new(
+                        declarator.span,
+                        StructDeclarator {
+                            name: declarator.node.name.clone(),
+                            array: array_hollow(&declarator.node.array),
+                        },
+                    )
+                })
+                .collect(),
         },
     )
 }
 
-fn same_members(left: &[Spanned<StructDeclaration>], right: &[Spanned<StructDeclaration>]) -> bool {
-    left.len() == right.len()
-        && left.iter().zip(right).all(|(left, right)| {
-            left.node.ty.node.qualifier == right.node.ty.node.qualifier
-                && left.node.declarators == right.node.declarators
-        })
-}
-
-impl Nested for TypeSpecifier {
-    type Node = Spanned<Self>;
-
-    fn kind(node: &Spanned<Self>) -> &Self {
-        &node.node
-    }
-
-    fn rebuild(node: &Spanned<Self>, kind: Self) -> Spanned<Self> {
-        Spanned::new(node.span, kind)
-    }
-
-    fn has_children(&self) -> bool {
-        self.child_count() != 0
-    }
-
-    fn child_count(&self) -> usize {
-        let non_array = match &self.non_array {
-            TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
-            | TypeSpecifierNonArray::InlineBlock(declarations) => declarations.len(),
-            TypeSpecifierNonArray::Spirv(spirv) => spirv
-                .parameters
-                .iter()
-                .filter(|parameter| matches!(parameter, SpirvTypeParameter::Type(_)))
-                .count(),
-            TypeSpecifierNonArray::Void
-            | TypeSpecifierNonArray::Basic(_)
-            | TypeSpecifierNonArray::Opaque(_)
-            | TypeSpecifierNonArray::Parameterized(_)
-            | TypeSpecifierNonArray::TypeName(_) => 0,
-        };
-        let element = usize::from(
-            self.parameters
-                .as_ref()
-                .is_some_and(|parameters| parameters.node.element.is_some()),
-        );
-        non_array + element
-    }
-
-    fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a Spanned<Self>)) {
+impl Composite for TypeSpecifier {
+    fn parts<'a>(&'a self, f: &mut dyn FnMut(Part<'a>)) {
         match &self.non_array {
-            TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
-            | TypeSpecifierNonArray::InlineBlock(declarations) => {
-                for member in declarations {
-                    f(&member.node.ty.node.specifier);
-                }
-            }
+            TypeSpecifierNonArray::Struct(structure) => member_parts(&structure.declarations, f),
+            TypeSpecifierNonArray::InlineBlock(members) => member_parts(members, f),
             TypeSpecifierNonArray::Spirv(spirv) => {
+                requirement_parts(&spirv.requirements, f);
+                for qualifier in &spirv.instruction {
+                    f(Part::Expression(&qualifier.node.value));
+                }
                 for parameter in &spirv.parameters {
-                    if let SpirvTypeParameter::Type(ty) = parameter {
-                        f(ty);
+                    match parameter {
+                        SpirvTypeParameter::Constant(value) => f(Part::Expression(value)),
+                        SpirvTypeParameter::Type(ty) => f(Part::Type(&ty.node)),
                     }
                 }
             }
@@ -722,27 +968,32 @@ impl Nested for TypeSpecifier {
             | TypeSpecifierNonArray::Parameterized(_)
             | TypeSpecifierNonArray::TypeName(_) => {}
         }
-        if let Some(element) = self
-            .parameters
-            .as_ref()
-            .and_then(|parameters| parameters.node.element.as_deref())
-        {
-            f(element);
+        if let Some(parameters) = &self.parameters {
+            if let Some(element) = &parameters.node.element {
+                f(Part::Type(&element.node));
+            }
+            for value in &parameters.node.values {
+                f(Part::Expression(value));
+            }
         }
+        array_parts(&self.array, f);
     }
 
-    fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut Spanned<Self>)) {
+    fn parts_mut(&mut self, f: &mut dyn FnMut(PartMut<'_>)) {
         match &mut self.non_array {
-            TypeSpecifierNonArray::Struct(StructSpecifier { declarations, .. })
-            | TypeSpecifierNonArray::InlineBlock(declarations) => {
-                for member in declarations {
-                    f(&mut member.node.ty.node.specifier);
-                }
+            TypeSpecifierNonArray::Struct(structure) => {
+                member_parts_mut(&mut structure.declarations, f);
             }
+            TypeSpecifierNonArray::InlineBlock(members) => member_parts_mut(members, f),
             TypeSpecifierNonArray::Spirv(spirv) => {
+                requirement_parts_mut(&mut spirv.requirements, f);
+                for qualifier in &mut spirv.instruction {
+                    f(PartMut::Expression(&mut qualifier.node.value));
+                }
                 for parameter in &mut spirv.parameters {
-                    if let SpirvTypeParameter::Type(ty) = parameter {
-                        f(ty);
+                    match parameter {
+                        SpirvTypeParameter::Constant(value) => f(PartMut::Expression(value)),
+                        SpirvTypeParameter::Type(ty) => f(PartMut::Type(&mut ty.node)),
                     }
                 }
             }
@@ -752,36 +1003,50 @@ impl Nested for TypeSpecifier {
             | TypeSpecifierNonArray::Parameterized(_)
             | TypeSpecifierNonArray::TypeName(_) => {}
         }
-        if let Some(element) = self
-            .parameters
-            .as_mut()
-            .and_then(|parameters| parameters.node.element.as_deref_mut())
-        {
-            f(element);
+        if let Some(parameters) = &mut self.parameters {
+            if let Some(element) = &mut parameters.node.element {
+                f(PartMut::Type(&mut element.node));
+            }
+            for value in &mut parameters.node.values {
+                f(PartMut::Expression(value));
+            }
         }
+        array_parts_mut(&mut self.array, f);
     }
 
-    fn shell(&self) -> Self {
+    fn hollow(&self) -> Self {
         let non_array = match &self.non_array {
             TypeSpecifierNonArray::Struct(structure) => {
                 TypeSpecifierNonArray::Struct(StructSpecifier {
                     name: structure.name.clone(),
-                    declarations: structure.declarations.iter().map(member_shell).collect(),
+                    declarations: structure.declarations.iter().map(member_hollow).collect(),
                 })
             }
             TypeSpecifierNonArray::InlineBlock(members) => {
-                TypeSpecifierNonArray::InlineBlock(members.iter().map(member_shell).collect())
+                TypeSpecifierNonArray::InlineBlock(members.iter().map(member_hollow).collect())
             }
             TypeSpecifierNonArray::Spirv(spirv) => {
                 TypeSpecifierNonArray::Spirv(Box::new(SpirvTypeSpecifier {
-                    requirements: spirv.requirements.clone(),
-                    instruction: spirv.instruction.clone(),
+                    requirements: requirements_hollow(&spirv.requirements),
+                    instruction: spirv
+                        .instruction
+                        .iter()
+                        .map(|qualifier| {
+                            Spanned::new(
+                                qualifier.span,
+                                SpirvInstructionQualifier {
+                                    name: qualifier.node.name.clone(),
+                                    value: placeholder(),
+                                },
+                            )
+                        })
+                        .collect(),
                     parameters: spirv
                         .parameters
                         .iter()
                         .map(|parameter| match parameter {
-                            SpirvTypeParameter::Constant(value) => {
-                                SpirvTypeParameter::Constant(value.clone())
+                            SpirvTypeParameter::Constant(_) => {
+                                SpirvTypeParameter::Constant(placeholder())
                             }
                             SpirvTypeParameter::Type(ty) => SpirvTypeParameter::Type(Box::new(
                                 Spanned::new(ty.span, empty_type()),
@@ -807,80 +1072,271 @@ impl Nested for TypeSpecifier {
                         .element
                         .as_ref()
                         .map(|element| Box::new(Spanned::new(element.span, empty_type()))),
-                    values: parameters.node.values.clone(),
+                    values: parameters
+                        .node
+                        .values
+                        .iter()
+                        .map(|_| placeholder())
+                        .collect(),
                 },
             )
         });
         Self {
             non_array,
             parameters,
-            array: self.array.clone(),
+            array: array_hollow(&self.array),
         }
     }
 
-    fn same_shell(&self, other: &Self) -> bool {
-        let same_non_array =
-            match (&self.non_array, &other.non_array) {
-                (TypeSpecifierNonArray::Struct(left), TypeSpecifierNonArray::Struct(right)) => {
-                    left.name == right.name && same_members(&left.declarations, &right.declarations)
-                }
-                (
-                    TypeSpecifierNonArray::InlineBlock(left),
-                    TypeSpecifierNonArray::InlineBlock(right),
-                ) => same_members(left, right),
-                (TypeSpecifierNonArray::Spirv(left), TypeSpecifierNonArray::Spirv(right)) => {
-                    left.requirements == right.requirements
-                        && left.instruction == right.instruction
-                        && left.parameters.len() == right.parameters.len()
-                        && left.parameters.iter().zip(&right.parameters).all(
-                            |(left, right)| match (left, right) {
-                                (
-                                    SpirvTypeParameter::Constant(left),
-                                    SpirvTypeParameter::Constant(right),
-                                ) => left == right,
-                                (SpirvTypeParameter::Type(_), SpirvTypeParameter::Type(_)) => true,
-                                _ => false,
-                            },
-                        )
-                }
-                (TypeSpecifierNonArray::Void, TypeSpecifierNonArray::Void) => true,
-                (TypeSpecifierNonArray::Basic(left), TypeSpecifierNonArray::Basic(right)) => {
-                    left == right
-                }
-                (TypeSpecifierNonArray::Opaque(left), TypeSpecifierNonArray::Opaque(right)) => {
-                    left == right
-                }
-                (TypeSpecifierNonArray::TypeName(left), TypeSpecifierNonArray::TypeName(right)) => {
-                    left == right
-                }
-                (
-                    TypeSpecifierNonArray::Parameterized(left),
-                    TypeSpecifierNonArray::Parameterized(right),
-                ) => left == right,
-                _ => false,
-            };
-        let same_parameters = match (&self.parameters, &other.parameters) {
-            (None, None) => true,
-            (Some(left), Some(right)) => {
-                left.node.element.is_some() == right.node.element.is_some()
-                    && left.node.values == right.node.values
-            }
-            _ => false,
-        };
-        same_non_array && same_parameters && self.array == other.array
+    fn same_hollow(&self, other: &Self) -> bool {
+        if self.is_leaf_type() && other.is_leaf_type() {
+            return self.non_array == other.non_array;
+        }
+        let (left, right) = (self.hollow(), other.hollow());
+        left.non_array == right.non_array
+            && left.parameters == right.parameters
+            && left.array == right.array
     }
 }
 
 impl Clone for TypeSpecifier {
     fn clone(&self) -> Self {
-        deep_clone(self)
+        clone_composite(self)
     }
 }
 
 impl PartialEq for TypeSpecifier {
     fn eq(&self, other: &Self) -> bool {
-        deep_eq(self, other)
+        eq_composite(self, other)
     }
 }
 
 impl Eq for TypeSpecifier {}
+
+enum Printed<T> {
+    Item(T),
+    Close,
+}
+
+fn print_tree<T: Copy>(
+    formatter: &mut fmt::Formatter<'_>,
+    roots: Vec<T>,
+    children: impl Fn(T, &mut Vec<T>),
+    head: impl Fn(T, &mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    if roots.is_empty() {
+        return Ok(());
+    }
+    formatter.write_str(" [")?;
+    let mut steps = Vec::from([Printed::Close]);
+    steps.extend(roots.into_iter().rev().map(Printed::Item));
+    let mut nested = Vec::new();
+    while let Some(step) = steps.pop() {
+        match step {
+            Printed::Close => formatter.write_str("]; ")?,
+            Printed::Item(item) => {
+                head(item, formatter)?;
+                nested.clear();
+                children(item, &mut nested);
+                if nested.is_empty() {
+                    formatter.write_str("; ")?;
+                } else {
+                    formatter.write_str(" [")?;
+                    steps.push(Printed::Close);
+                    steps.extend(nested.drain(..).rev().map(Printed::Item));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_parts(formatter: &mut fmt::Formatter<'_>, roots: Vec<Part<'_>>) -> fmt::Result {
+    print_tree(
+        formatter,
+        roots,
+        |part, into| part.parts(&mut |child| into.push(child)),
+        |part, formatter| match part {
+            Part::Expression(expression) => {
+                write!(formatter, "{:?} {:?} ", expression.id, expression.span)?;
+                shallow_expression(&expression.kind, formatter)
+            }
+            Part::Type(specifier) => shallow_type(specifier, formatter),
+        },
+    )
+}
+
+fn shallow_expression(kind: &ExpressionKind, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match kind {
+        ExpressionKind::Variable(name) => formatter.debug_tuple("Variable").field(name).finish(),
+        ExpressionKind::Number(number) => formatter.debug_tuple("Number").field(number).finish(),
+        ExpressionKind::Bool(value) => formatter.debug_tuple("Bool").field(value).finish(),
+        ExpressionKind::String(text) => formatter.debug_tuple("String").field(text).finish(),
+        ExpressionKind::Parenthesized(_) => formatter.write_str("Parenthesized"),
+        ExpressionKind::Subscript { .. } => formatter.write_str("Subscript"),
+        ExpressionKind::FunctionCall(call) => match &call.function.node {
+            FunctionIdentifier::Constructor(_) => formatter.write_str("Constructor"),
+            FunctionIdentifier::Cast(_) => formatter.write_str("Cast"),
+            FunctionIdentifier::Function(name) => {
+                formatter.debug_tuple("Function").field(name).finish()
+            }
+            FunctionIdentifier::Expression(_) => formatter.write_str("Call"),
+            FunctionIdentifier::Method { name, .. } => {
+                formatter.debug_tuple("Method").field(name).finish()
+            }
+        },
+        ExpressionKind::FieldSelection { field, .. } => formatter
+            .debug_tuple("FieldSelection")
+            .field(field)
+            .finish(),
+        ExpressionKind::Postfix { operator, .. } => {
+            formatter.debug_tuple("Postfix").field(operator).finish()
+        }
+        ExpressionKind::Unary { operator, .. } => {
+            formatter.debug_tuple("Unary").field(operator).finish()
+        }
+        ExpressionKind::Binary { operator, .. } => {
+            formatter.debug_tuple("Binary").field(operator).finish()
+        }
+        ExpressionKind::Conditional { .. } => formatter.write_str("Conditional"),
+        ExpressionKind::Assignment { operator, .. } => {
+            formatter.debug_tuple("Assignment").field(operator).finish()
+        }
+        ExpressionKind::Sequence(_) => formatter.write_str("Sequence"),
+    }
+}
+
+fn member_names(members: &[Spanned<StructDeclaration>]) -> Vec<&str> {
+    members
+        .iter()
+        .flat_map(|member| &member.node.declarators)
+        .map(|declarator| declarator.node.name.node.as_str())
+        .collect()
+}
+
+fn shallow_type(specifier: &TypeSpecifier, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut debug = formatter.debug_struct("TypeSpecifier");
+    match &specifier.non_array {
+        TypeSpecifierNonArray::Struct(structure) => debug
+            .field(
+                "struct",
+                &structure.name.as_ref().map(|name| name.node.as_str()),
+            )
+            .field("members", &member_names(&structure.declarations)),
+        TypeSpecifierNonArray::InlineBlock(members) => debug.field("block", &member_names(members)),
+        TypeSpecifierNonArray::Spirv(spirv) => {
+            debug.field("spirv_parameters", &spirv.parameters.len())
+        }
+        leaf => debug.field("non_array", leaf),
+    };
+    if let Some(parameters) = &specifier.parameters {
+        debug
+            .field("element", &parameters.node.element.is_some())
+            .field("values", &parameters.node.values.len());
+    }
+    if let Some(array) = &specifier.array {
+        debug.field("dimensions", &array.node.dimensions.len());
+    }
+    debug.finish()
+}
+
+fn shallow_statement(kind: &StatementKind, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match kind {
+        StatementKind::Compound(_) => formatter.write_str("Compound"),
+        StatementKind::Declaration(declaration) => formatter
+            .debug_tuple("Declaration")
+            .field(declaration)
+            .finish(),
+        StatementKind::Expression(expression) => formatter
+            .debug_tuple("Expression")
+            .field(expression)
+            .finish(),
+        StatementKind::Selection { condition, .. } => formatter
+            .debug_struct("Selection")
+            .field("condition", condition)
+            .finish_non_exhaustive(),
+        StatementKind::Switch { selector, .. } => formatter
+            .debug_struct("Switch")
+            .field("selector", selector)
+            .finish_non_exhaustive(),
+        StatementKind::CaseLabel(label) => formatter.debug_tuple("CaseLabel").field(label).finish(),
+        StatementKind::While { condition, .. } => formatter
+            .debug_struct("While")
+            .field("condition", condition)
+            .finish_non_exhaustive(),
+        StatementKind::DoWhile { condition, .. } => formatter
+            .debug_struct("DoWhile")
+            .field("condition", condition)
+            .finish_non_exhaustive(),
+        StatementKind::For(statement) => formatter
+            .debug_struct("For")
+            .field("condition", &statement.condition)
+            .field("increment", &statement.increment)
+            .finish_non_exhaustive(),
+        StatementKind::Jump(jump) => formatter.debug_tuple("Jump").field(jump).finish(),
+        StatementKind::Attributed { attributes, .. } => formatter
+            .debug_struct("Attributed")
+            .field("attributes", attributes)
+            .finish_non_exhaustive(),
+    }
+}
+
+impl fmt::Debug for ExpressionKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        shallow_expression(self, formatter)?;
+        let mut parts = Vec::new();
+        self.parts(&mut |part| parts.push(part));
+        print_parts(formatter, parts)
+    }
+}
+
+impl fmt::Debug for TypeSpecifier {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        shallow_type(self, formatter)?;
+        let mut parts = Vec::new();
+        self.parts(&mut |part| parts.push(part));
+        print_parts(formatter, parts)
+    }
+}
+
+impl fmt::Debug for StatementKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        shallow_statement(self, formatter)?;
+        let mut roots = Vec::new();
+        Nested::for_each_child(self, |child| roots.push(child));
+        print_tree(
+            formatter,
+            roots,
+            |statement: &Statement, into| {
+                Nested::for_each_child(&statement.kind, |child| into.push(child));
+            },
+            |statement, formatter| {
+                write!(formatter, "{:?} {:?} ", statement.id, statement.span)?;
+                shallow_statement(&statement.kind, formatter)
+            },
+        )
+    }
+}
+
+impl fmt::Debug for Initializer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let shallow = |initializer: &Self, formatter: &mut fmt::Formatter<'_>| match initializer {
+            Self::Expression(expression) => formatter
+                .debug_tuple("Expression")
+                .field(expression)
+                .finish(),
+            Self::List(_) => formatter.write_str("List"),
+        };
+        shallow(self, formatter)?;
+        let mut roots = Vec::new();
+        Nested::for_each_child(self, |child| roots.push(child));
+        print_tree(
+            formatter,
+            roots,
+            |item: &Spanned<Self>, into| {
+                Nested::for_each_child(&item.node, |child| into.push(child));
+            },
+            |item, formatter| shallow(&item.node, formatter),
+        )
+    }
+}

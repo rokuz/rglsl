@@ -286,21 +286,16 @@ impl Lowerer<'_> {
 }
 
 impl FunctionLowerer<'_, '_> {
-    pub(super) fn ray_builtin_chain(
-        &mut self,
-        symbol: SymbolId,
-        at: Span,
-    ) -> Result<Option<Chain>> {
-        let transposed = self
-            .lw
+    pub(super) fn is_transposed(&self, symbol: SymbolId) -> bool {
+        self.lw
             .analysis
             .builtins
             .variable(symbol)
-            .is_some_and(|row| row.has(VariableFlags::TRANSPOSED));
-        if !transposed {
-            return Ok(None);
-        }
-        let GlobalRef::Variable(global) = self.lw.global_ref(symbol, at)? else {
+            .is_some_and(|row| row.has(VariableFlags::TRANSPOSED))
+    }
+
+    pub(super) fn transposed_chain(&mut self, global: GlobalRef, at: Span) -> Result<Chain> {
+        let GlobalRef::Variable(global) = global else {
             return Err(internal(at));
         };
         let pointer = self.add(Expression::GlobalVariable(global), at)?;
@@ -315,7 +310,7 @@ impl FunctionLowerer<'_, '_> {
             },
             at,
         )?;
-        Ok(Some(Chain::Value(transposed)))
+        Ok(Chain::Value(transposed))
     }
 
     fn constant_bool(&self, expression: &AstExpression, at: Span) -> Result<bool> {
@@ -717,7 +712,7 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn builtin_override(
         self,
         symbol: SymbolId,

@@ -19,6 +19,14 @@ use crate::{
     Span, Statement, SwizzleComponent, UnaryOperator,
 };
 
+type TypePairs = Vec<(Handle<crate::Type>, Handle<crate::Type>)>;
+
+enum Folded {
+    Value(Handle<Expression>),
+    Deferred,
+    No,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Place {
     pub pointer: Handle<Expression>,
@@ -131,7 +139,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
             return false;
         }
         if self.is_folded_constant(info) {
-            return true;
+            return Self::is_flat_constant(&info.ty);
         }
         if let ExpressionKind::Variable(_) = expression.kind {
             return self.flat_local(expression).is_some();
@@ -158,7 +166,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
 
     fn flat_typed(&mut self, expression: &AstExpression) -> Result<(Handle<Expression>, GlslType)> {
         self.stepped = None;
-        let value = match self.folded_value(expression)? {
+        let value = match self.flat_folded_value(expression)? {
             Some(value) => value,
             None => self.flat_value(expression)?,
         };
@@ -238,20 +246,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(value)
     }
 
-    pub(super) fn typed(
-        &mut self,
-        expression: &AstExpression,
-    ) -> Result<(Handle<Expression>, GlslType)> {
-        if let Some(result) = self.flat_typed_expression(expression) {
-            return result;
-        }
-        super::function::on_heap!(self, |cx| cx.nested_typed(expression))
-    }
-
-    pub(super) fn rvalue(&mut self, expression: &AstExpression) -> Result<Handle<Expression>> {
-        self.typed(expression).map(|(value, _)| value)
-    }
-
     fn initialized(
         &mut self,
         (value, from): (Handle<Expression>, GlslType),
@@ -295,7 +289,109 @@ impl<'a> FunctionLowerer<'_, 'a> {
         to: Handle<crate::Type>,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        super::function::on_heap!(self, |cx| cx.relayout(value, from, to, at))
+        struct Pending {
+            value: Handle<Expression>,
+            to: Handle<crate::Type>,
+            parts: Vec<(Handle<crate::Type>, Handle<crate::Type>)>,
+            components: Vec<Handle<Expression>>,
+        }
+        let mut stack: Vec<Pending> = Vec::new();
+        let mut request = Some((value, from, to));
+        let mut result = None;
+        loop {
+            if let Some((value, from, to)) = request.take() {
+                match self.relayout_parts(value, from, to, at)? {
+                    Ok(done) => result = Some(done),
+                    Err(parts) => stack.push(Pending {
+                        value,
+                        to,
+                        components: Vec::with_capacity(parts.len()),
+                        parts,
+                    }),
+                }
+            }
+            let Some(top) = stack.last_mut() else {
+                return result.ok_or_else(|| internal(at));
+            };
+            if let Some(done) = result.take() {
+                top.components.push(done);
+            }
+            let index = top.components.len();
+            if let Some(&(from, to)) = top.parts.get(index) {
+                let base = top.value;
+                let index = u32::try_from(index).map_err(|_| internal(at))?;
+                let part = self.add(Expression::AccessIndex { base, index }, at)?;
+                request = Some((part, from, to));
+                continue;
+            }
+            let Some(done) = stack.pop() else {
+                return Err(internal(at));
+            };
+            result = Some(self.add(
+                Expression::Compose {
+                    ty: done.to,
+                    components: done.components,
+                },
+                at,
+            )?);
+        }
+    }
+
+    fn relayout_parts(
+        &mut self,
+        value: Handle<Expression>,
+        from: Handle<crate::Type>,
+        to: Handle<crate::Type>,
+        at: Span,
+    ) -> Result<core::result::Result<Handle<Expression>, TypePairs>> {
+        if from == to {
+            return Ok(Ok(value));
+        }
+        let types = &self.lw.module.types;
+        Ok(Err(match (&types[from].inner, &types[to].inner) {
+            (
+                &crate::TypeInner::Struct {
+                    members: ref from_members,
+                    ..
+                },
+                &crate::TypeInner::Struct {
+                    members: ref to_members,
+                    ..
+                },
+            ) if from_members.len() == to_members.len() => from_members
+                .iter()
+                .zip(to_members)
+                .map(|(from, to)| (from.ty, to.ty))
+                .collect(),
+            (
+                &crate::TypeInner::Array {
+                    base: from_base,
+                    size: crate::ArraySize::Constant(from_size),
+                    ..
+                },
+                &crate::TypeInner::Array {
+                    base: to_base,
+                    size: crate::ArraySize::Constant(to_size),
+                    ..
+                },
+            ) if from_size == to_size => {
+                (0..from_size.get()).map(|_| (from_base, to_base)).collect()
+            }
+            (
+                &(crate::TypeInner::Scalar(from_scalar)
+                | crate::TypeInner::Vector {
+                    scalar: from_scalar,
+                    ..
+                }),
+                &(crate::TypeInner::Scalar(to_scalar)
+                | crate::TypeInner::Vector {
+                    scalar: to_scalar, ..
+                }),
+            ) if from_scalar != to_scalar => {
+                return self.as_kind(value, to_scalar, at).map(Ok);
+            }
+            _ => return Err(internal(at)),
+        }))
     }
 
     fn equality(
@@ -306,7 +402,126 @@ impl<'a> FunctionLowerer<'_, 'a> {
         equal: bool,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        super::function::on_heap!(self, |cx| cx.equality(left, right, ty.clone(), equal, at))
+        struct Pending {
+            left: Handle<Expression>,
+            right: Handle<Expression>,
+            parts: Vec<GlslType>,
+            next: u32,
+            result: Option<Handle<Expression>>,
+        }
+        let (op, combine, reduce) = if equal {
+            (
+                BinaryOperator::Equal,
+                BinaryOperator::LogicalAnd,
+                RelationalFunction::All,
+            )
+        } else {
+            (
+                BinaryOperator::NotEqual,
+                BinaryOperator::LogicalOr,
+                RelationalFunction::Any,
+            )
+        };
+        let mut stack: Vec<Pending> = Vec::new();
+        let mut request = Some((left, right, ty.clone()));
+        let mut result = None;
+        loop {
+            if let Some((left, right, ty)) = request.take() {
+                match self.equality_parts(left, right, &ty, op, reduce, at)? {
+                    Ok(compared) => result = Some(compared),
+                    Err(parts) => stack.push(Pending {
+                        left,
+                        right,
+                        parts,
+                        next: 0,
+                        result: None,
+                    }),
+                }
+            }
+            let Some(top) = stack.last_mut() else {
+                return result.ok_or_else(|| internal(at));
+            };
+            if let Some(compared) = result.take() {
+                top.result = Some(match top.result {
+                    None => compared,
+                    Some(previous) => self.add(
+                        Expression::Binary {
+                            op: combine,
+                            left: previous,
+                            right: compared,
+                        },
+                        at,
+                    )?,
+                });
+                top.next = top.next.checked_add(1).ok_or_else(|| internal(at))?;
+            }
+            let index = top.next;
+            if let Some(part) = usize::try_from(index)
+                .ok()
+                .and_then(|index| top.parts.get(index))
+            {
+                let part = part.clone();
+                let (left, right) = (top.left, top.right);
+                let l = self.add(Expression::AccessIndex { base: left, index }, at)?;
+                let r = self.add(Expression::AccessIndex { base: right, index }, at)?;
+                request = Some((l, r, part));
+                continue;
+            }
+            let Some(done) = stack.pop() else {
+                return Err(internal(at));
+            };
+            result = Some(done.result.ok_or_else(|| internal(at))?);
+        }
+    }
+
+    fn equality_parts(
+        &mut self,
+        left: Handle<Expression>,
+        right: Handle<Expression>,
+        ty: &GlslType,
+        op: BinaryOperator,
+        reduce: RelationalFunction,
+        at: Span,
+    ) -> Result<core::result::Result<Handle<Expression>, Vec<GlslType>>> {
+        if ty.is_array() {
+            let element = ty.element_type().ok_or_else(|| internal(at))?;
+            let length = ty
+                .length()
+                .ok_or_else(|| unsupported("comparing runtime-sized arrays", at))?;
+            return Ok(Err((0..length).map(|_| element.clone()).collect()));
+        }
+        Ok(Err(match ty.kind {
+            TypeKind::Scalar(_) => {
+                return self.add(Expression::Binary { op, left, right }, at).map(Ok);
+            }
+            TypeKind::Vector { .. } => {
+                let argument = self.add(Expression::Binary { op, left, right }, at)?;
+                return self
+                    .add(
+                        Expression::Relational {
+                            fun: reduce,
+                            argument,
+                        },
+                        at,
+                    )
+                    .map(Ok);
+            }
+            TypeKind::Matrix { columns, .. } => {
+                let column = ty.column_type().ok_or_else(|| internal(at))?;
+                (0..columns).map(|_| column.clone()).collect()
+            }
+            TypeKind::Struct(id) => self
+                .lw
+                .analysis
+                .types
+                .structure(id)
+                .ok_or_else(|| internal(at))?
+                .members
+                .iter()
+                .map(|member| member.ty.clone())
+                .collect(),
+            _ => return Err(internal(at)),
+        }))
     }
 
     fn convert_booleans(
@@ -316,35 +531,137 @@ impl<'a> FunctionLowerer<'_, 'a> {
         to_bool: bool,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        super::function::on_heap!(self, |cx| cx.convert_booleans(value, integer, to_bool, at))
+        struct Pending {
+            value: Handle<Expression>,
+            target: Handle<crate::Type>,
+            base: Handle<crate::Type>,
+            count: u32,
+            components: Vec<Handle<Expression>>,
+        }
+        let mut stack: Vec<Pending> = Vec::new();
+        let mut request = Some((value, integer));
+        let mut result = None;
+        loop {
+            if let Some((value, integer)) = request.take() {
+                match self.lw.module.types[integer].inner {
+                    crate::TypeInner::Array {
+                        base,
+                        size: crate::ArraySize::Constant(count),
+                        ..
+                    } => {
+                        let target = if to_bool {
+                            self.boolean_twin(integer, at)?
+                        } else {
+                            integer
+                        };
+                        stack.push(Pending {
+                            value,
+                            target,
+                            base,
+                            count: count.get(),
+                            components: Vec::new(),
+                        });
+                    }
+                    crate::TypeInner::Array { .. } => return Err(internal(at)),
+                    _ => {
+                        let scalar = if to_bool {
+                            crate::Scalar::BOOL
+                        } else {
+                            crate::Scalar::U32
+                        };
+                        result = Some(self.as_kind(value, scalar, at)?);
+                    }
+                }
+            }
+            let Some(top) = stack.last_mut() else {
+                return result.ok_or_else(|| internal(at));
+            };
+            if let Some(done) = result.take() {
+                top.components.push(done);
+            }
+            let index = u32::try_from(top.components.len()).map_err(|_| internal(at))?;
+            if index < top.count {
+                let (base, element) = (top.value, top.base);
+                let part = self.add(Expression::AccessIndex { base, index }, at)?;
+                request = Some((part, element));
+                continue;
+            }
+            let Some(done) = stack.pop() else {
+                return Err(internal(at));
+            };
+            result = Some(self.add(
+                Expression::Compose {
+                    ty: done.target,
+                    components: done.components,
+                },
+                at,
+            )?);
+        }
     }
 
-    pub(super) fn constant(
+    fn boolean_twin(&mut self, ty: Handle<crate::Type>, at: Span) -> Result<Handle<crate::Type>> {
+        let scalar = crate::Scalar::BOOL;
+        let mut sizes = Vec::new();
+        let mut current = ty;
+        let leaf = loop {
+            match self.lw.module.types[current].inner {
+                crate::TypeInner::Scalar(_) => break crate::TypeInner::Scalar(scalar),
+                crate::TypeInner::Vector { size, .. } => {
+                    break crate::TypeInner::Vector { size, scalar };
+                }
+                crate::TypeInner::Array { base, size, .. } => {
+                    sizes.push(size);
+                    current = base;
+                }
+                _ => return Err(internal(at)),
+            }
+        };
+        let mut twin = self.lw.insert_type(leaf);
+        while let Some(size) = sizes.pop() {
+            self.lw
+                .layouter
+                .update(self.lw.module.to_ctx())
+                .map_err(|_| internal(at))?;
+            let stride = self.lw.layouter[twin].to_stride();
+            twin = self.lw.insert_type(crate::TypeInner::Array {
+                base: twin,
+                size,
+                stride,
+            });
+        }
+        Ok(twin)
+    }
+
+    const fn is_flat_constant(ty: &GlslType) -> bool {
+        !ty.is_array() && matches!(ty.kind, TypeKind::Scalar(_) | TypeKind::Vector { .. })
+    }
+
+    fn flat_constant(
         &mut self,
         ty: &GlslType,
         values: &[Value],
         at: Span,
     ) -> Result<Handle<Expression>> {
-        if !ty.is_array() {
-            match ty.kind {
-                TypeKind::Scalar(_) => {
-                    let value = values.first().copied().ok_or_else(|| internal(at))?;
-                    return self.literal(literal(value), at);
-                }
-                TypeKind::Vector { size, .. } => {
-                    let len = usize::from(size);
-                    let slice = values.get(..len).ok_or_else(|| internal(at))?;
-                    let mut components = Vec::with_capacity(len);
-                    for &value in slice {
-                        components.push(self.literal(literal(value), at)?);
-                    }
-                    let ir = self.lw.ir_type(ty, at)?;
-                    return self.add(Expression::Compose { ty: ir, components }, at);
-                }
-                _ => {}
-            }
+        if ty.is_array() {
+            return Err(internal(at));
         }
-        super::function::on_heap!(self, |cx| cx.constant(ty.clone(), values, at))
+        match ty.kind {
+            TypeKind::Scalar(_) => {
+                let value = values.first().copied().ok_or_else(|| internal(at))?;
+                self.literal(literal(value), at)
+            }
+            TypeKind::Vector { size, .. } => {
+                let len = usize::from(size);
+                let slice = values.get(..len).ok_or_else(|| internal(at))?;
+                let mut components = Vec::with_capacity(len);
+                for &value in slice {
+                    components.push(self.literal(literal(value), at)?);
+                }
+                let ir = self.lw.plain_ir_type(ty, at)?;
+                self.add(Expression::Compose { ty: ir, components }, at)
+            }
+            _ => Err(internal(at)),
+        }
     }
 
     pub(super) fn heap_pointee(&self, pointer: Handle<Expression>) -> Option<Handle<crate::Type>> {
@@ -551,21 +868,42 @@ impl<'a> FunctionLowerer<'_, 'a> {
         Ok(value)
     }
 
-    pub(super) fn folded_value(
+    fn folded_now(&mut self, expression: &AstExpression) -> Result<Folded> {
+        let info = self.info(expression)?;
+        if info.is_specialization {
+            return Ok(if !self.specializing && !is_direct(expression) {
+                Folded::Deferred
+            } else {
+                Folded::No
+            });
+        }
+        if !self.is_folded_constant(info) {
+            return Ok(Folded::No);
+        }
+        let Some(ref value) = info.value else {
+            return Ok(Folded::No);
+        };
+        if !Self::is_flat_constant(&info.ty) {
+            return Ok(Folded::Deferred);
+        }
+        let at = self.at(expression.span);
+        self.flat_constant(&info.ty, &value.values, at)
+            .map(Folded::Value)
+    }
+
+    fn flat_folded_value(
         &mut self,
         expression: &AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
         let at = self.at(expression.span);
         let info = self.info(expression)?;
         if info.is_specialization {
-            if !self.specializing && !is_direct(expression) {
-                let handle = self.lw.specialization(expression, None, at)?;
-                return self.add(Expression::Override(handle), at).map(Some);
-            }
-        } else if self.is_folded_constant(info)
+            return Err(internal(at));
+        }
+        if self.is_folded_constant(info)
             && let Some(ref value) = info.value
         {
-            return self.constant(&info.ty, &value.values, at).map(Some);
+            return self.flat_constant(&info.ty, &value.values, at).map(Some);
         }
         Ok(None)
     }
@@ -673,7 +1011,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                     let column = self.add(Expression::AccessIndex { base: value, index }, at)?;
                     components.push(self.as_kind(column, target_scalar, at)?);
                 }
-                let ty = self.lw.ir_type(to, at)?;
+                let ty = self.lw.plain_ir_type(to, at)?;
                 self.add(Expression::Compose { ty, components }, at)
             }
             _ => self.as_kind(value, target_scalar, at),
@@ -1305,7 +1643,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
         like: &GlslType,
         at: Span,
     ) -> Result<Handle<Expression>> {
-        let ty = self.lw.ir_type(like, at)?;
+        let ty = self.lw.lowered_type(like, at)?;
         match self.lw.module.types[ty].inner {
             crate::TypeInner::Vector { size, .. } => {
                 self.add(Expression::Splat { size, value }, at)
@@ -1345,7 +1683,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
             TypeKind::Matrix { columns, rows, .. } => {
                 let column = self.splat(value, rows, at)?;
                 let components = (0..columns).map(|_| column).collect();
-                let ty = self.lw.ir_type(ty, at)?;
+                let ty = self.lw.plain_ir_type(ty, at)?;
                 self.add(Expression::Compose { ty, components }, at)
             }
             _ => Ok(value),
@@ -1389,7 +1727,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                                 at,
                             )?);
                         }
-                        let ty = self.lw.ir_type(&ty, at)?;
+                        let ty = self.lw.plain_ir_type(&ty, at)?;
                         self.add(Expression::Compose { ty, components }, at)
                     }
                     _ if base.is_unsigned() => {
@@ -1637,7 +1975,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
                 at,
             )?);
         }
-        let ty = self.lw.ir_type(matrix_ty, at)?;
+        let ty = self.lw.plain_ir_type(matrix_ty, at)?;
         self.add(Expression::Compose { ty, components }, at)
     }
 
@@ -1804,7 +2142,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         self.nest(frame).await
                     }?);
                 }
-                let ty = self.with(|this| this.lw.ir_type(ty, at))??;
+                let ty = self.clone().ir_type(ty.clone(), at).await?;
                 self.with(|this| this.add(Expression::Compose { ty, components }, at))?
             }
         }
@@ -1823,10 +2161,42 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        match self.with(|this| this.folded_value(expression))?? {
-            Some(value) => Ok(Some(value)),
-            None => self.clone().computed_value(expression).await,
+        match self.with(|this| this.folded_now(expression))?? {
+            Folded::Value(value) => Ok(Some(value)),
+            Folded::Deferred => match self.clone().folded_value(expression).await? {
+                Some(value) => Ok(Some(value)),
+                None => self.clone().computed_value(expression).await,
+            },
+            Folded::No => self.clone().computed_value(expression).await,
         }
+    }
+
+    async fn folded_value(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<Option<Handle<Expression>>> {
+        let at = self.with(|this| this.at(expression.span))?;
+        let info = self.with(|this| this.info(expression))??;
+        if info.is_specialization {
+            if !self.with(|this| this.specializing)? && !is_direct(expression) {
+                let frame = self.lowerer().specialization(expression, None, at);
+                let handle = self.nest(frame).await?;
+                return self
+                    .with(|this| this.add(Expression::Override(handle), at))?
+                    .map(Some);
+            }
+        } else if self.with(|this| this.is_folded_constant(info))?
+            && let Some(ref value) = info.value
+        {
+            if FunctionLowerer::is_flat_constant(&info.ty) {
+                return self
+                    .with(|this| this.flat_constant(&info.ty, &value.values, at))?
+                    .map(Some);
+            }
+            let frame = self.clone().constant(info.ty.clone(), &value.values, at);
+            return self.nest(frame).await.map(Some);
+        }
+        Ok(None)
     }
 
     async fn computed_value(
@@ -2115,9 +2485,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                     })
                     .ok_or_else(|| internal(at))
             })??;
-            let GlobalRef::Variable(global) =
-                self.with(|this| this.lw.global_ref(instance, at))??
-            else {
+            let GlobalRef::Variable(global) = self.clone().global_ref(instance, at).await? else {
                 return Err(internal(at));
             };
             let base = self.with(|this| this.add(Expression::GlobalVariable(global), at))??;
@@ -2132,10 +2500,11 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| this.add(Expression::AccessIndex { base, index }, at))??;
             return Ok(Chain::Place(Place::pointer(pointer, false)));
         }
-        if let Some(chain) = self.with(|this| this.ray_builtin_chain(symbol, at))?? {
-            return Ok(chain);
+        if self.with(|this| this.is_transposed(symbol))? {
+            let global = self.clone().global_ref(symbol, at).await?;
+            return self.with(|this| this.transposed_chain(global, at))?;
         }
-        let global = self.with(|this| this.lw.global_ref(symbol, at))??;
+        let global = self.clone().global_ref(symbol, at).await?;
         if let GlobalRef::Variable(handle) = global
             && let Some(crate::Binding::BuiltIn(crate::BuiltIn::ShaderBallot(
                 crate::ShaderBallot::Mask(_),
@@ -2320,155 +2689,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         })?
     }
 
-    async fn relayout(
-        self,
-        value: Handle<Expression>,
-        from: Handle<crate::Type>,
-        to: Handle<crate::Type>,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        if from == to {
-            return Ok(value);
-        }
-        let (from_inner, to_inner) = self.with(|this| {
-            (
-                this.lw.module.types[from].inner.clone(),
-                this.lw.module.types[to].inner.clone(),
-            )
-        })?;
-        let parts: Vec<(Handle<crate::Type>, Handle<crate::Type>)> = match (&from_inner, &to_inner)
-        {
-            (
-                &crate::TypeInner::Struct {
-                    members: ref from_members,
-                    ..
-                },
-                &crate::TypeInner::Struct {
-                    members: ref to_members,
-                    ..
-                },
-            ) if from_members.len() == to_members.len() => from_members
-                .iter()
-                .zip(to_members)
-                .map(|(from, to)| (from.ty, to.ty))
-                .collect(),
-            (
-                &crate::TypeInner::Array {
-                    base: from_base,
-                    size: crate::ArraySize::Constant(from_size),
-                    ..
-                },
-                &crate::TypeInner::Array {
-                    base: to_base,
-                    size: crate::ArraySize::Constant(to_size),
-                    ..
-                },
-            ) if from_size == to_size => {
-                (0..from_size.get()).map(|_| (from_base, to_base)).collect()
-            }
-            (
-                &(crate::TypeInner::Scalar(from_scalar)
-                | crate::TypeInner::Vector {
-                    scalar: from_scalar,
-                    ..
-                }),
-                &(crate::TypeInner::Scalar(to_scalar)
-                | crate::TypeInner::Vector {
-                    scalar: to_scalar, ..
-                }),
-            ) if from_scalar != to_scalar => {
-                return self.with(|this| this.as_kind(value, to_scalar, at))?;
-            }
-            _ => return Err(internal(at)),
-        };
-        let mut components = Vec::with_capacity(parts.len());
-        for (index, (from, to)) in (0_u32..).zip(parts) {
-            let part =
-                self.with(|this| this.add(Expression::AccessIndex { base: value, index }, at))??;
-            components.push({
-                let frame = self.clone().relayout(part, from, to, at);
-                self.nest(frame).await
-            }?);
-        }
-        self.with(|this| this.add(Expression::Compose { ty: to, components }, at))?
-    }
-
-    async fn convert_booleans(
-        self,
-        value: Handle<Expression>,
-        integer: Handle<crate::Type>,
-        to_bool: bool,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        match self.with(|this| this.lw.module.types[integer].inner.clone())? {
-            crate::TypeInner::Array {
-                base,
-                size: crate::ArraySize::Constant(count),
-                ..
-            } => {
-                let target = if to_bool {
-                    {
-                        let frame = self.clone().boolean_twin(integer, at);
-                        self.nest(frame).await
-                    }?
-                } else {
-                    integer
-                };
-                let mut components = Vec::new();
-                for index in 0..count.get() {
-                    let part = self.with(|this| {
-                        this.add(Expression::AccessIndex { base: value, index }, at)
-                    })??;
-                    components.push({
-                        let frame = self.clone().convert_booleans(part, base, to_bool, at);
-                        self.nest(frame).await
-                    }?);
-                }
-                self.with(|this| {
-                    this.add(
-                        Expression::Compose {
-                            ty: target,
-                            components,
-                        },
-                        at,
-                    )
-                })?
-            }
-            crate::TypeInner::Array { .. } => Err(internal(at)),
-            _ if to_bool => self.with(|this| this.as_kind(value, crate::Scalar::BOOL, at))?,
-            _ => self.with(|this| this.as_kind(value, crate::Scalar::U32, at))?,
-        }
-    }
-
-    async fn boolean_twin(self, ty: Handle<crate::Type>, at: Span) -> Result<Handle<crate::Type>> {
-        let scalar = crate::Scalar::BOOL;
-        let inner = match self.with(|this| this.lw.module.types[ty].inner.clone())? {
-            crate::TypeInner::Scalar(_) => crate::TypeInner::Scalar(scalar),
-            crate::TypeInner::Vector { size, .. } => crate::TypeInner::Vector { size, scalar },
-            crate::TypeInner::Array { base, size, .. } => {
-                let element = {
-                    let frame = self.clone().boolean_twin(base, at);
-                    self.nest(frame).await
-                }?;
-                let stride = self.try_with(|lowerer| {
-                    lowerer
-                        .lw
-                        .layouter
-                        .update(lowerer.lw.module.to_ctx())
-                        .map_err(|_| internal(at))?;
-                    Ok(lowerer.lw.layouter[element].to_stride())
-                })?;
-                crate::TypeInner::Array {
-                    base: element,
-                    size,
-                    stride,
-                }
-            }
-            _ => return Err(internal(at)),
-        };
-        self.with(|this| this.lw.insert_type(inner))
-    }
-
     pub(super) async fn increment(
         self,
         operand: &'b AstExpression,
@@ -2630,99 +2850,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self.with(|this| this.add(Expression::Load { pointer }, at))?
     }
 
-    async fn equality(
-        self,
-        left: Handle<Expression>,
-        right: Handle<Expression>,
-        ty: GlslType,
-        equal: bool,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let ty = &ty;
-        let (op, combine, reduce) = if equal {
-            (
-                BinaryOperator::Equal,
-                BinaryOperator::LogicalAnd,
-                RelationalFunction::All,
-            )
-        } else {
-            (
-                BinaryOperator::NotEqual,
-                BinaryOperator::LogicalOr,
-                RelationalFunction::Any,
-            )
-        };
-        let parts: Vec<GlslType> = if ty.is_array() {
-            let element = ty.element_type().ok_or_else(|| internal(at))?;
-            let length = ty
-                .length()
-                .ok_or_else(|| unsupported("comparing runtime-sized arrays", at))?;
-            (0..length).map(|_| element.clone()).collect()
-        } else {
-            match ty.kind {
-                TypeKind::Scalar(_) => {
-                    return self
-                        .with(|this| this.add(Expression::Binary { op, left, right }, at))?;
-                }
-                TypeKind::Vector { .. } => {
-                    let argument =
-                        self.with(|this| this.add(Expression::Binary { op, left, right }, at))??;
-                    return self.with(|this| {
-                        this.add(
-                            Expression::Relational {
-                                fun: reduce,
-                                argument,
-                            },
-                            at,
-                        )
-                    })?;
-                }
-                TypeKind::Matrix { columns, .. } => {
-                    let column = ty.column_type().ok_or_else(|| internal(at))?;
-                    (0..columns).map(|_| column.clone()).collect()
-                }
-                TypeKind::Struct(id) => self
-                    .with(|this| {
-                        this.lw
-                            .analysis
-                            .types
-                            .structure(id)
-                            .ok_or_else(|| internal(at))
-                    })??
-                    .members
-                    .iter()
-                    .map(|member| member.ty.clone())
-                    .collect(),
-                _ => return Err(internal(at)),
-            }
-        };
-        let mut result = None;
-        for (index, part) in (0_u32..).zip(&parts) {
-            let l =
-                self.with(|this| this.add(Expression::AccessIndex { base: left, index }, at))??;
-            let r =
-                self.with(|this| this.add(Expression::AccessIndex { base: right, index }, at))??;
-            let compared = {
-                let frame = self.clone().equality(l, r, part.clone(), equal, at);
-                self.nest(frame).await
-            }?;
-            result = Some(match result {
-                None => compared,
-                Some(previous) => self.with(|this| {
-                    this.add(
-                        Expression::Binary {
-                            op: combine,
-                            left: previous,
-                            right: compared,
-                        },
-                        at,
-                    )
-                })??,
-            });
-        }
-        result.ok_or_else(|| internal(at))
-    }
-
     pub(super) async fn initializer(
         self,
         initializer: &'b Spanned<Initializer>,
@@ -2736,7 +2863,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.with(|this| this.initialized(typed, ty, at))?
             }
             Initializer::List(ref items) if items.is_empty() => {
-                let ty = self.with(|this| this.lw.ir_type(ty, at))??;
+                let ty = self.clone().ir_type(ty.clone(), at).await?;
                 self.with(|this| this.add(Expression::ZeroValue(ty), at))?
             }
             Initializer::List(ref items) => {
@@ -2771,7 +2898,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                         self.nest(frame).await
                     }?);
                 }
-                let ty = self.with(|this| this.lw.ir_type(ty, at))??;
+                let ty = self.clone().ir_type(ty.clone(), at).await?;
                 self.with(|this| this.add(Expression::Compose { ty, components }, at))?
             }
         }

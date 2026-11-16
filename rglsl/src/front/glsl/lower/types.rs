@@ -10,7 +10,7 @@ use alloc::collections::BTreeMap;
 use rglsl_ast::ast::NodeId;
 use rglsl_sema::SymbolId;
 use rglsl_sema::layout::{
-    ArrayLengths, MemberPlacer, Shape, TypeLayout, member_row_major, type_layout,
+    ArrayLengths, MemberLayout, MemberPlacer, Shape, TypeLayout, member_row_major, type_layout,
 };
 use rglsl_sema::types::SpecializedSize;
 
@@ -113,7 +113,123 @@ impl Lowerer<'_> {
         layout: &TypeLayout,
         span: Span,
     ) -> Result<Handle<Type>> {
-        super::function::lowerer_on_heap!(self, |cx| cx.apply_layout_inner(ty, layout, span))
+        enum Pending<'t> {
+            Array {
+                ty: Handle<Type>,
+                size: ArraySize,
+                stride: u32,
+            },
+            Struct {
+                ty: Handle<Type>,
+                members: Vec<StructMember>,
+                laid: &'t [MemberLayout],
+                size: u32,
+                next: usize,
+            },
+        }
+        let mut stack: Vec<Pending<'_>> = Vec::new();
+        let mut request = Some((ty, layout));
+        let mut result = None;
+        loop {
+            if let Some((ty, layout)) = request.take() {
+                let laid = match (&self.module.types[ty].inner, &layout.shape) {
+                    (
+                        &TypeInner::Array { base, size, .. },
+                        &Shape::Array {
+                            stride,
+                            ref element,
+                        },
+                    ) => {
+                        stack.push(Pending::Array { ty, size, stride });
+                        request = Some((base, &**element));
+                        continue;
+                    }
+                    (&TypeInner::Struct { ref members, .. }, &Shape::Struct(ref laid)) => {
+                        if members.len() != laid.len() {
+                            return Err(internal(span));
+                        }
+                        stack.push(Pending::Struct {
+                            ty,
+                            members: members.clone(),
+                            laid,
+                            size: layout.size,
+                            next: 0,
+                        });
+                        None
+                    }
+                    (&TypeInner::Array { .. } | &TypeInner::Struct { .. }, _) => {
+                        return Err(internal(span));
+                    }
+                    (&TypeInner::Scalar(Scalar::BOOL), &Shape::Plain) => {
+                        Some(self.laid_type(ty, TypeInner::Scalar(Scalar::U32)))
+                    }
+                    (
+                        &TypeInner::Vector {
+                            size,
+                            scalar: Scalar::BOOL,
+                        },
+                        &Shape::Plain,
+                    ) => Some(self.laid_type(
+                        ty,
+                        TypeInner::Vector {
+                            size,
+                            scalar: Scalar::U32,
+                        },
+                    )),
+                    (_, &Shape::Plain | &Shape::Matrix { .. }) => Some(ty),
+                    (_, &Shape::Array { .. } | &Shape::Struct(_)) => {
+                        return Err(invalid_member(span));
+                    }
+                };
+                result = laid;
+            }
+            let done = match stack.last_mut() {
+                None => return result.ok_or_else(|| internal(span)),
+                Some(&mut Pending::Array { ty, size, stride }) => {
+                    let base = result.take().ok_or_else(|| internal(span))?;
+                    stack.pop();
+                    self.laid_type(ty, TypeInner::Array { base, size, stride })
+                }
+                Some(&mut Pending::Struct {
+                    ty,
+                    ref mut members,
+                    laid,
+                    size,
+                    ref mut next,
+                }) => {
+                    if let Some(done) = result.take() {
+                        let (Some(member), Some(laid)) = (members.get_mut(*next), laid.get(*next))
+                        else {
+                            return Err(internal(span));
+                        };
+                        member.ty = done;
+                        member.offset = laid.offset;
+                        member.matrix_layout = matrix_layout(&laid.layout);
+                        *next += 1;
+                    }
+                    if let (Some(member), Some(laid)) = (members.get(*next), laid.get(*next)) {
+                        request = Some((member.ty, &laid.layout));
+                        continue;
+                    }
+                    let members = core::mem::take(members);
+                    stack.pop();
+                    self.laid_type(
+                        ty,
+                        TypeInner::Struct {
+                            members,
+                            span: size,
+                        },
+                    )
+                }
+            };
+            result = Some(done);
+        }
+    }
+
+    fn laid_type(&mut self, ty: Handle<Type>, inner: TypeInner) -> Handle<Type> {
+        let name = self.module.types[ty].name.clone();
+        let span = self.module.types.get_span(ty);
+        self.module.types.insert(Type { name, inner }, span)
     }
 
     pub(super) fn array_size(&mut self, size: GlslArraySize, span: Span) -> Result<ArraySize> {
@@ -164,7 +280,7 @@ impl Lowerer<'_> {
         })
     }
 
-    fn plain_type(
+    pub(super) fn plain_type(
         &mut self,
         ty: &GlslType,
         depth: bool,
@@ -204,6 +320,203 @@ impl Lowerer<'_> {
             return result;
         }
         super::function::lowerer_on_heap!(self, |cx| cx.ir_type(ty.clone(), span))
+    }
+
+    pub(super) fn plain_ir_type(&mut self, ty: &GlslType, span: Span) -> Result<Handle<Type>> {
+        self.plain_type(ty, false, false, span)
+            .unwrap_or_else(|| Err(internal(span)))
+    }
+
+    pub(super) fn lowered_type(&mut self, ty: &GlslType, span: Span) -> Result<Handle<Type>> {
+        if let Some(result) = self.plain_type(ty, false, false, span) {
+            return result;
+        }
+        if ty.is_array() && ty.is_opaque() {
+            return Err(unsupported(
+                "arrays of opaque types outside uniform declarations",
+                span,
+            ));
+        }
+        let base = self.lowered_base(ty.kind, span)?;
+        let mut pending = Vec::new();
+        let mut current = ty.clone();
+        let mut handle = base;
+        while let Some(shared) = current.shared_dimensions() {
+            let key = (shared, base);
+            if let Some(&found) = self.array_types.get(&key) {
+                handle = found;
+                break;
+            }
+            let outer = current.outer_size().ok_or_else(|| internal(span))?;
+            current = current.element_type().ok_or_else(|| internal(span))?;
+            pending.push((key, outer));
+        }
+        while let Some((key, outer)) = pending.pop() {
+            let size = self.lowered_array_size(outer, span)?;
+            self.layouter
+                .update(self.module.to_ctx())
+                .map_err(|_| internal(span))?;
+            let stride = self.layouter[handle].to_stride();
+            handle = self.insert_type(TypeInner::Array {
+                base: handle,
+                size,
+                stride,
+            });
+            self.array_types.insert(key, handle);
+        }
+        Ok(handle)
+    }
+
+    pub(super) fn lowerable(&self, ty: &GlslType) -> bool {
+        let sized = |size: GlslArraySize| match size {
+            GlslArraySize::Specialized(size) => {
+                self.lowered_override(size, Span::UNDEFINED).is_ok()
+            }
+            GlslArraySize::Sized(_) | GlslArraySize::Unsized => true,
+        };
+        let base = match ty.kind {
+            TypeKind::Struct(id) => self.structs.contains_key(&id),
+            TypeKind::Reference(block) => self
+                .reference_space(block, Span::UNDEFINED)
+                .is_ok_and(|(_, qualifiers)| self.references.contains_key(&(block, qualifiers))),
+            TypeKind::Spirv(id) => self.spirv_types.contains_key(&id),
+            TypeKind::Error | TypeKind::Void | TypeKind::String | TypeKind::Block(_) => false,
+            TypeKind::Scalar(_)
+            | TypeKind::Vector { .. }
+            | TypeKind::Matrix { .. }
+            | TypeKind::Opaque(_) => true,
+            TypeKind::CooperativeMatrix(matrix) => {
+                sized(matrix.columns) && sized(matrix.rows) && sized(matrix.scope)
+            }
+            TypeKind::LongVector { size, .. }
+            | TypeKind::CooperativeVector { size, .. }
+            | TypeKind::TensorView {
+                dimensions: size, ..
+            }
+            | TypeKind::Tensor { rank: size, .. } => sized(size),
+            TypeKind::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => sized(dimensions) && sized(clamp_mode),
+        };
+        base && ty.dimensions().iter().all(|&size| sized(size))
+    }
+
+    fn lowered_override(&self, size: SpecializedSize, span: Span) -> Result<Handle<Override>> {
+        match size {
+            SpecializedSize::Constant { symbol, .. } => match self.globals.get(&symbol) {
+                Some(&GlobalRef::Override(handle)) => Ok(handle),
+                _ => Err(internal(span)),
+            },
+            SpecializedSize::Expression(node) => self
+                .specialized_sizes
+                .get(&node)
+                .copied()
+                .ok_or_else(|| internal(span)),
+        }
+    }
+
+    fn lowered_array_size(&self, size: GlslArraySize, span: Span) -> Result<ArraySize> {
+        match size {
+            GlslArraySize::Sized(size) => NonZeroU32::new(size)
+                .map(ArraySize::Constant)
+                .ok_or_else(|| internal(span)),
+            GlslArraySize::Unsized => Ok(ArraySize::Dynamic),
+            GlslArraySize::Specialized(size) => {
+                self.lowered_override(size, span).map(ArraySize::Pending)
+            }
+        }
+    }
+
+    fn lowered_cooperative_size(&self, size: GlslArraySize, span: Span) -> Result<CooperativeSize> {
+        match size {
+            GlslArraySize::Sized(size) => NonZeroU32::new(size)
+                .map(CooperativeSize::Constant)
+                .ok_or_else(|| internal(span)),
+            GlslArraySize::Specialized(size) => self
+                .lowered_override(size, span)
+                .map(CooperativeSize::Pending),
+            GlslArraySize::Unsized => Err(internal(span)),
+        }
+    }
+
+    fn lowered_base(&mut self, kind: TypeKind, span: Span) -> Result<Handle<Type>> {
+        let inner = match kind {
+            TypeKind::Struct(id) => {
+                return self.structs.get(&id).copied().ok_or_else(|| internal(span));
+            }
+            TypeKind::Reference(block) => return self.lowered_reference(block, span),
+            TypeKind::Block(_) => return Err(unsupported("blocks used as values", span)),
+            TypeKind::Spirv(id) => {
+                return self
+                    .spirv_types
+                    .get(&id)
+                    .copied()
+                    .ok_or_else(|| internal(span));
+            }
+            TypeKind::Error | TypeKind::Void | TypeKind::String => return Err(internal(span)),
+            TypeKind::Scalar(_)
+            | TypeKind::Vector { .. }
+            | TypeKind::Matrix { .. }
+            | TypeKind::Opaque(_) => {
+                Self::plain_inner(kind, false, false, span).ok_or_else(|| internal(span))??
+            }
+            TypeKind::CooperativeMatrix(matrix) => TypeInner::CooperativeMatrix {
+                columns: self.lowered_cooperative_size(matrix.columns, span)?,
+                rows: self.lowered_cooperative_size(matrix.rows, span)?,
+                scalar: scalar(matrix.scalar),
+                role: cooperative_role(matrix.usage),
+                scope: self.lowered_cooperative_size(matrix.scope, span)?,
+                class: cooperative_class(matrix.usage),
+            },
+            TypeKind::LongVector {
+                scalar: s,
+                size: GlslArraySize::Sized(size),
+            } if (2..=4).contains(&size) => TypeInner::Vector {
+                size: u8::try_from(size)
+                    .ok()
+                    .and_then(vector_size)
+                    .ok_or_else(|| internal(span))?,
+                scalar: scalar(s),
+            },
+            TypeKind::LongVector { scalar: s, size } => TypeInner::LongVector {
+                size: self.lowered_cooperative_size(size, span)?,
+                scalar: scalar(s),
+                class: LongVectorClass::Plain,
+            },
+            TypeKind::CooperativeVector { scalar: s, size } => TypeInner::LongVector {
+                size: self.lowered_cooperative_size(size, span)?,
+                scalar: scalar(s),
+                class: LongVectorClass::CooperativeNv,
+            },
+            TypeKind::TensorLayout {
+                dimensions,
+                clamp_mode,
+            } => TypeInner::TensorLayout {
+                dimensions: self.lowered_cooperative_size(dimensions, span)?,
+                clamp_mode: match clamp_mode {
+                    GlslArraySize::Sized(0) => None,
+                    other => Some(self.lowered_cooperative_size(other, span)?),
+                },
+            },
+            TypeKind::TensorView {
+                dimensions,
+                has_dimensions,
+                permutation,
+            } => {
+                let count = dimensions.nominal().unwrap_or(1).min(5);
+                TypeInner::TensorView {
+                    dimensions: self.lowered_cooperative_size(dimensions, span)?,
+                    has_dimensions,
+                    permutation: tensor_permutation(&permutation, count),
+                }
+            }
+            TypeKind::Tensor { scalar: s, rank } => TypeInner::Tensor {
+                scalar: scalar(s),
+                rank: self.lowered_cooperative_size(rank, span)?,
+            },
+        };
+        Ok(self.insert_type(inner))
     }
 
     fn record_relayout(&mut self, laid: Handle<Type>, plain: Handle<Type>) {
@@ -551,7 +864,7 @@ impl Lowerer<'_> {
     }
 }
 
-impl<'b, 'a> super::function::LowererCx<'b, 'a> {
+impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
     pub(super) async fn ir_type(self, ty: GlslType, span: Span) -> Result<Handle<Type>> {
         let ty = &ty;
         {
@@ -705,21 +1018,12 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     self.nest(frame).await
                 }?,
                 scalar: scalar(matrix.scalar),
-                role: match matrix.usage {
-                    CooperativeUse::A => CooperativeRole::A,
-                    CooperativeUse::B => CooperativeRole::B,
-                    CooperativeUse::Accumulator | CooperativeUse::Nv => CooperativeRole::C,
-                },
+                role: cooperative_role(matrix.usage),
                 scope: {
                     let frame = self.clone().cooperative_size(matrix.scope, span);
                     self.nest(frame).await
                 }?,
-                class: match matrix.usage {
-                    CooperativeUse::Nv => CooperativeMatrixClass::Nv,
-                    CooperativeUse::A | CooperativeUse::B | CooperativeUse::Accumulator => {
-                        CooperativeMatrixClass::Khr
-                    }
-                },
+                class: cooperative_class(matrix.usage),
             },
             TypeKind::LongVector {
                 scalar: s,
@@ -775,11 +1079,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                         self.nest(frame).await
                     }?,
                     has_dimensions,
-                    permutation: permutation
-                        .iter()
-                        .take(usize::try_from(count).unwrap_or(5))
-                        .map(|&index| u32::from(index))
-                        .collect(),
+                    permutation: tensor_permutation(&permutation, count),
                 }
             }
             TypeKind::Tensor { scalar: s, rank } => TypeInner::Tensor {
@@ -794,7 +1094,13 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 self.nest(frame).await
             }?,
         };
-        self.with(|this| this.insert_type(inner))
+        self.with(|this| {
+            let handle = this.insert_type(inner);
+            if let TypeKind::Spirv(id) = kind {
+                this.spirv_types.insert(id, handle);
+            }
+            handle
+        })
     }
 
     pub(super) async fn struct_type(self, id: StructId, span: Span) -> Result<Handle<Type>> {
@@ -828,71 +1134,6 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                 span,
             )
         })?
-    }
-
-    async fn apply_layout_inner(
-        self,
-        ty: Handle<Type>,
-        layout: &'b TypeLayout,
-        span: Span,
-    ) -> Result<Handle<Type>> {
-        let name = self.with(|this| this.module.types[ty].name.clone())?;
-        let ty_span = self.with(|this| this.module.types.get_span(ty))?;
-        let inner = match (
-            &self.with(|this| this.module.types[ty].inner.clone())?,
-            &layout.shape,
-        ) {
-            (
-                &TypeInner::Array { base, size, .. },
-                &Shape::Array {
-                    stride,
-                    ref element,
-                },
-            ) => {
-                let base = {
-                    let frame = self.clone().apply_layout_inner(base, element, span);
-                    self.nest(frame).await
-                }?;
-                TypeInner::Array { base, size, stride }
-            }
-            (&TypeInner::Struct { ref members, .. }, &Shape::Struct(ref laid)) => {
-                if members.len() != laid.len() {
-                    return Err(internal(span));
-                }
-                let mut members = members.clone();
-                for (member, laid) in members.iter_mut().zip(laid) {
-                    member.ty = {
-                        let frame = self
-                            .clone()
-                            .apply_layout_inner(member.ty, &laid.layout, span);
-                        self.nest(frame).await
-                    }?;
-                    member.offset = laid.offset;
-                    member.matrix_layout = matrix_layout(&laid.layout);
-                }
-                TypeInner::Struct {
-                    members,
-                    span: layout.size,
-                }
-            }
-            (&TypeInner::Array { .. } | &TypeInner::Struct { .. }, _) => {
-                return Err(internal(span));
-            }
-            (&TypeInner::Scalar(Scalar::BOOL), &Shape::Plain) => TypeInner::Scalar(Scalar::U32),
-            (
-                &TypeInner::Vector {
-                    size,
-                    scalar: Scalar::BOOL,
-                },
-                &Shape::Plain,
-            ) => TypeInner::Vector {
-                size,
-                scalar: Scalar::U32,
-            },
-            (_, &Shape::Plain | &Shape::Matrix { .. }) => return Ok(ty),
-            (_, &Shape::Array { .. } | &Shape::Struct(_)) => return Err(invalid_member(span)),
-        };
-        self.with(|this| this.module.types.insert(Type { name, inner }, ty_span))
     }
 
     pub(super) async fn block_struct(
@@ -1032,6 +1273,31 @@ impl ArrayLengths for LoweredLengths<'_> {
                 .map_or(1, |&handle| self.pending(handle)),
         })
     }
+}
+
+const fn cooperative_role(usage: CooperativeUse) -> CooperativeRole {
+    match usage {
+        CooperativeUse::A => CooperativeRole::A,
+        CooperativeUse::B => CooperativeRole::B,
+        CooperativeUse::Accumulator | CooperativeUse::Nv => CooperativeRole::C,
+    }
+}
+
+const fn cooperative_class(usage: CooperativeUse) -> CooperativeMatrixClass {
+    match usage {
+        CooperativeUse::Nv => CooperativeMatrixClass::Nv,
+        CooperativeUse::A | CooperativeUse::B | CooperativeUse::Accumulator => {
+            CooperativeMatrixClass::Khr
+        }
+    }
+}
+
+fn tensor_permutation(permutation: &[u8], count: u32) -> Vec<u32> {
+    permutation
+        .iter()
+        .take(usize::try_from(count).unwrap_or(5))
+        .map(|&index| u32::from(index))
+        .collect()
 }
 
 pub(super) fn matrix_layout(layout: &TypeLayout) -> Option<MatrixLayout> {
