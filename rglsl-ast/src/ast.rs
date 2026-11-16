@@ -50,7 +50,6 @@ impl fmt::Display for NodeId {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct Node<K> {
     pub id: NodeId,
     pub span: Span,
@@ -60,12 +59,6 @@ pub struct Node<K> {
 impl<K> Node<K> {
     pub const fn new(id: NodeId, span: Span, kind: K) -> Self {
         Self { id, span, kind }
-    }
-}
-
-impl<K: PartialEq> PartialEq for Node<K> {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
     }
 }
 
@@ -834,6 +827,7 @@ pub struct CompoundStatement {
     pub statements: Vec<Statement>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatementKind {
     Compound(CompoundStatement),
     Declaration(Box<Declaration>),
@@ -976,6 +970,7 @@ impl NumericLiteral {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpressionKind {
     Variable(String),
     Number(NumericLiteral),
