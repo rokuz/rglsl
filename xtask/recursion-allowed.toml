@@ -23,19 +23,6 @@ functions = [
 reason = "AST clone, == and drop walk expressions, type specifiers, initializers and statements with work lists; the call graph closes only through the shells (copies whose expression and type slots are placeholders) and the owned parts moved out before a drop"
 bound = "at most 3 nested work lists (statement, initializer, expression and type specifier)"
 
-[ir-block]
-functions = [
-    "<rglsl::ir::block::Block as ",
-    "rglsl::ir::block::",
-    "rglsl::ir::visit::<impl rglsl::ir::Statement>::",
-    "<rglsl::ir::visit::Parts<O,B,F> as rglsl::ir::visit::VisitorMut>::block",
-    "<rglsl::ir::Statement as core::clone::Clone>::clone",
-    "<rglsl::ir::SwitchCase as core::clone::Clone>::clone",
-    "core::ptr::drop_in_place<",
-]
-reason = "Block drop and clone move or pair the nested blocks into work lists before the statement is dropped or cloned"
-bound = "2"
-
 [ir-arbitrary]
 functions = [
     "arbitrary::Arbitrary",

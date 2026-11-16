@@ -1,5 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
+use rglsl_types::stack::recurse;
 use spirv::{Op, StorageClass, Word};
 
 use super::{Block, Error, Instruction, Writer, WriterFlags};
@@ -179,59 +180,9 @@ impl Writer {
         value: Word,
         to_plain: bool,
     ) -> Result<Word, Error> {
-        let mut frames: Vec<Conversion> = Vec::new();
-        let mut finished = None;
-        match self.start_conversion(block, type_id, value, to_plain)? {
-            Ok(word) => finished = Some(word),
-            Err(frame) => frames.push(frame),
-        }
-        while let Some(top) = frames.last_mut() {
-            if let Some(word) = finished.take() {
-                top.converted.push(word);
-            }
-            let Some(&part) = top.parts.get(top.converted.len()) else {
-                if let Some(frame) = frames.pop() {
-                    block.body.push(Instruction::composite_construct(
-                        frame.to,
-                        frame.id,
-                        &frame.converted,
-                    ));
-                    finished = Some(frame.id);
-                }
-                continue;
-            };
-            let index = u32::try_from(top.converted.len())
-                .map_err(|_| Error::Validation("composite size"))?;
-            let part_from = if to_plain {
-                part
-            } else {
-                self.plain_type_id(part)
-            };
-            let extracted = self.id_gen.next();
-            block.body.push(Instruction::composite_extract(
-                part_from,
-                extracted,
-                top.value,
-                &[index],
-            ));
-            match self.start_conversion(block, part, extracted, to_plain)? {
-                Ok(word) => finished = Some(word),
-                Err(frame) => frames.push(frame),
-            }
-        }
-        finished.ok_or(Error::Internal("a layout conversion did not finish"))
-    }
-
-    fn start_conversion(
-        &mut self,
-        block: &mut Block,
-        type_id: Word,
-        value: Word,
-        to_plain: bool,
-    ) -> Result<Result<Word, Conversion>, Error> {
         let plain = self.plain_type_id(type_id);
         if plain == type_id {
-            return Ok(Ok(value));
+            return Ok(value);
         }
         let to = if to_plain { plain } else { type_id };
         let id = self.id_gen.next();
@@ -241,7 +192,7 @@ impl Writer {
             instruction.set_result(id);
             instruction.add_operand(value);
             block.body.push(instruction);
-            return Ok(Ok(id));
+            return Ok(id);
         }
         let parts: Vec<Word> = match self
             .composite_types
@@ -260,13 +211,29 @@ impl Writer {
                 ));
             }
         };
-        Ok(Err(Conversion {
-            id,
-            to,
-            value,
-            converted: Vec::with_capacity(parts.len()),
-            parts,
-        }))
+        let mut converted = Vec::with_capacity(parts.len());
+        for (index, part) in parts.into_iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| Error::Validation("composite size"))?;
+            let part_from = if to_plain {
+                part
+            } else {
+                self.plain_type_id(part)
+            };
+            let extracted = self.id_gen.next();
+            block.body.push(Instruction::composite_extract(
+                part_from,
+                extracted,
+                value,
+                &[index],
+            ));
+            converted.push(recurse(|| {
+                self.convert_layout(block, part, extracted, to_plain)
+            })?);
+        }
+        block
+            .body
+            .push(Instruction::composite_construct(to, id, &converted));
+        Ok(id)
     }
 
     pub(super) fn plain_constant(
@@ -274,48 +241,24 @@ impl Writer {
         module: &Module,
         expr: Handle<Expression>,
     ) -> Result<Word, Error> {
-        let mut tasks = Vec::from([ConstantTask::Enter(expr)]);
-        let mut results = Vec::new();
-        while let Some(task) = tasks.pop() {
-            match task {
-                ConstantTask::Enter(expr) => match self.enter_plain_constant(module, expr)? {
-                    PlainConstant::Done(id) => results.push(id),
-                    PlainConstant::Constant(init) => tasks.push(ConstantTask::Enter(init)),
-                    PlainConstant::Compose { plain, components } => {
-                        tasks.push(ConstantTask::Exit {
-                            expr,
-                            plain,
-                            count: components.len(),
-                        });
-                        tasks.extend(
-                            components
-                                .iter()
-                                .rev()
-                                .map(|&component| ConstantTask::Enter(component)),
-                        );
-                    }
-                },
-                ConstantTask::Exit { expr, plain, count } => {
-                    let start = results
-                        .len()
-                        .checked_sub(count)
-                        .ok_or(Error::Internal("a plain constant lost its components"))?;
-                    let parts = results.split_off(start);
-                    let id = if self.is_override_dependent(expr) {
-                        self.get_spec_constant_composite(plain, &parts)
-                    } else {
-                        let composite = self.id_gen.next();
-                        Instruction::constant_composite(plain, composite, &parts)
-                            .to_words(&mut self.logical_layout.declarations);
-                        composite
-                    };
-                    results.push(id);
+        match self.enter_plain_constant(module, expr)? {
+            PlainConstant::Done(id) => Ok(id),
+            PlainConstant::Constant(init) => recurse(|| self.plain_constant(module, init)),
+            PlainConstant::Compose { plain, components } => {
+                let parts = components
+                    .iter()
+                    .map(|&component| recurse(|| self.plain_constant(module, component)))
+                    .collect::<Result<Vec<Word>, Error>>()?;
+                if self.is_override_dependent(expr) {
+                    Ok(self.get_spec_constant_composite(plain, &parts))
+                } else {
+                    let composite = self.id_gen.next();
+                    Instruction::constant_composite(plain, composite, &parts)
+                        .to_words(&mut self.logical_layout.declarations);
+                    Ok(composite)
                 }
             }
         }
-        results
-            .pop()
-            .ok_or(Error::Internal("a plain constant did not finish"))
     }
 
     fn enter_plain_constant<'m>(
@@ -349,23 +292,6 @@ impl Writer {
             _ => Ok(PlainConstant::Done(id)),
         }
     }
-}
-
-pub(super) struct Conversion {
-    id: Word,
-    to: Word,
-    value: Word,
-    parts: Vec<Word>,
-    converted: Vec<Word>,
-}
-
-enum ConstantTask {
-    Enter(Handle<Expression>),
-    Exit {
-        expr: Handle<Expression>,
-        plain: Word,
-        count: usize,
-    },
 }
 
 enum PlainConstant<'m> {

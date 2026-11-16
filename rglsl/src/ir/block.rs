@@ -3,6 +3,8 @@
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut, RangeBounds};
 
+use rglsl_types::stack::recurse;
+
 use crate::{Span, Statement};
 
 /// A code block is a vector of statements, with maybe a vector of spans.
@@ -108,31 +110,6 @@ impl Block {
     pub const fn len(&self) -> usize {
         self.body.len()
     }
-
-    pub fn shallow_clone(&self) -> Self {
-        Self {
-            body: self.body.iter().map(Statement::shell).collect(),
-            span_info: self.span_info.clone(),
-        }
-    }
-
-    fn pair_children<'d, 's>(
-        target: &'d mut Self,
-        source: &'s Self,
-        pending: &mut Vec<(&'d mut Self, &'s Self)>,
-        sources: &mut Vec<&'s Self>,
-    ) {
-        for (target, source) in target.body.iter_mut().zip(&source.body) {
-            sources.clear();
-            source.for_each_child_block(|child| sources.push(child));
-            let mut children = sources.iter();
-            target.for_each_child_block_mut(|child| {
-                if let Some(&source) = children.next() {
-                    pending.push((child, source));
-                }
-            });
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -169,120 +146,21 @@ impl core::fmt::Debug for Block {
 
 impl Drop for Block {
     fn drop(&mut self) {
-        if !self.body.iter().any(Statement::has_child_blocks) {
-            return;
-        }
-        let mut pending = Vec::new();
-        for statement in &mut self.body {
-            statement.for_each_child_block_mut(|child| pending.push(core::mem::take(child)));
-        }
-        while let Some(mut block) = pending.pop() {
-            for statement in &mut block.body {
-                statement.for_each_child_block_mut(|child| pending.push(core::mem::take(child)));
-            }
-        }
+        let body = core::mem::take(&mut self.body);
+        recurse(move || drop(body));
     }
 }
 
 impl Clone for Block {
     fn clone(&self) -> Self {
-        let mut root = self.shallow_clone();
-        let mut pending = Vec::new();
-        let mut sources = Vec::new();
-        Self::pair_children(&mut root, self, &mut pending, &mut sources);
-        while let Some((target, source)) = pending.pop() {
-            *target = source.shallow_clone();
-            Self::pair_children(target, source, &mut pending, &mut sources);
-        }
-        drop(pending);
-        root
+        recurse(|| Self {
+            body: self.body.clone(),
+            span_info: self.span_info.clone(),
+        })
     }
 }
 
 impl Statement {
-    pub fn shell(&self) -> Self {
-        match *self {
-            Self::Block(_) => Self::Block(Block::new()),
-            Self::If {
-                condition, control, ..
-            } => Self::If {
-                condition,
-                accept: Block::new(),
-                reject: Block::new(),
-                control,
-            },
-            Self::Switch {
-                selector,
-                ref cases,
-                control,
-            } => Self::Switch {
-                selector,
-                cases: cases
-                    .iter()
-                    .map(|case| crate::SwitchCase {
-                        value: case.value,
-                        body: Block::new(),
-                        fall_through: case.fall_through,
-                    })
-                    .collect(),
-                control,
-            },
-            Self::Loop {
-                break_if, control, ..
-            } => Self::Loop {
-                body: Block::new(),
-                continuing: Block::new(),
-                break_if,
-                control,
-            },
-            Self::Emit(_)
-            | Self::Break
-            | Self::Continue
-            | Self::Return { .. }
-            | Self::Kill
-            | Self::TerminateInvocation
-            | Self::Demote
-            | Self::BeginInvocationInterlock
-            | Self::EndInvocationInterlock
-            | Self::EmitVertex { .. }
-            | Self::EndPrimitive { .. }
-            | Self::ControlBarrier(_)
-            | Self::MemoryBarrier(_)
-            | Self::ScopedBarrier { .. }
-            | Self::SplitBarrier { .. }
-            | Self::Store { .. }
-            | Self::ImageStore { .. }
-            | Self::Atomic { .. }
-            | Self::AtomicLoad { .. }
-            | Self::AtomicStore { .. }
-            | Self::ImageAtomic { .. }
-            | Self::Call { .. }
-            | Self::RayQuery { .. }
-            | Self::RayPipelineFunction(_)
-            | Self::HitObject { .. }
-            | Self::ReorderThread { .. }
-            | Self::MeshFunction(_)
-            | Self::SubgroupBallot { .. }
-            | Self::SubgroupGather { .. }
-            | Self::SubgroupCollectiveOperation { .. }
-            | Self::SubgroupFunction { .. }
-            | Self::CooperativeStore { .. }
-            | Self::DebugPrintf { .. }
-            | Self::Assume { .. }
-            | Self::CooperativeVector(_)
-            | Self::CooperativeMatrix { .. }
-            | Self::Abort { .. }
-            | Self::TensorWrite { .. }
-            | Self::SpirvInstruction { .. } => self.clone(),
-        }
-    }
-
-    fn has_child_blocks(&self) -> bool {
-        let mut found = false;
-        self.for_each_child_block(|_| found = true);
-        found
-    }
-
     pub fn child_blocks(&self) -> Vec<&Block> {
         let mut children = Vec::new();
         self.for_each_child_block(|child| children.push(child));
