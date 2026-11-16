@@ -21,6 +21,12 @@ use crate::{
 
 type TypePairs = Vec<(Handle<crate::Type>, Handle<crate::Type>)>;
 
+enum Folded {
+    Value(Handle<Expression>),
+    Deferred,
+    No,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Place {
     pub pointer: Handle<Expression>,
@@ -860,6 +866,29 @@ impl<'a> FunctionLowerer<'_, 'a> {
             }
         }
         Ok(value)
+    }
+
+    fn folded_now(&mut self, expression: &AstExpression) -> Result<Folded> {
+        let info = self.info(expression)?;
+        if info.is_specialization {
+            return Ok(if !self.specializing && !is_direct(expression) {
+                Folded::Deferred
+            } else {
+                Folded::No
+            });
+        }
+        if !self.is_folded_constant(info) {
+            return Ok(Folded::No);
+        }
+        let Some(ref value) = info.value else {
+            return Ok(Folded::No);
+        };
+        if !Self::is_flat_constant(&info.ty) {
+            return Ok(Folded::Deferred);
+        }
+        let at = self.at(expression.span);
+        self.flat_constant(&info.ty, &value.values, at)
+            .map(Folded::Value)
     }
 
     fn flat_folded_value(
@@ -2132,9 +2161,13 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Option<Handle<Expression>>> {
-        match self.clone().folded_value(expression).await? {
-            Some(value) => Ok(Some(value)),
-            None => self.clone().computed_value(expression).await,
+        match self.with(|this| this.folded_now(expression))?? {
+            Folded::Value(value) => Ok(Some(value)),
+            Folded::Deferred => match self.clone().folded_value(expression).await? {
+                Some(value) => Ok(Some(value)),
+                None => self.clone().computed_value(expression).await,
+            },
+            Folded::No => self.clone().computed_value(expression).await,
         }
     }
 

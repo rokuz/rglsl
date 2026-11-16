@@ -166,6 +166,9 @@ impl<'b, 'l, 'a> Cx<'b, 'l, 'a> {
     }
 
     pub(super) async fn global_ref(self, symbol: SymbolId, at: Span) -> Result<GlobalRef> {
+        if let Some(found) = self.with(|this| this.lw.globals.get(&symbol).copied())? {
+            return Ok(found);
+        }
         let frame = self.lowerer().global_ref(symbol, at);
         self.nest(frame).await
     }
@@ -258,7 +261,11 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
             emitter,
             block,
             variables,
-            unflagged: Vec::with_capacity(8),
+            unflagged: if statement_count > 0 {
+                Vec::with_capacity(8)
+            } else {
+                Vec::new()
+            },
             purity: RefCell::new(FastHashMap::default()),
             specializing: false,
             non_uniform: crate::NonUniformExpressions::default(),
