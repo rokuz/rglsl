@@ -445,27 +445,24 @@ impl<'a> Session<'a> {
         log
     }
 
-    fn validation_log(
-        &self,
-        unit: &Unit,
-        error: &rglsl::WithSpan<rglsl::valid::ValidationError>,
-    ) -> Log {
+    fn validation_log(&self, unit: &Unit, invalid: &rglsl_link::InvalidModule) -> Log {
         let root = self.root_name(unit);
-        let location = error
+        let location = invalid
+            .error
             .spans()
             .next()
-            .filter(|&&(span, _)| span.is_defined())
+            .and_then(|&(span, _)| invalid.module.span_sources.locate(span))
             .map_or_else(
                 || root.to_owned(),
-                |&(span, _)| {
-                    let location = span.location(&unit.text);
-                    self.place(root, location.line_number, Some(location.line_position))
+                |location| match location.file.filter(|_| location.included) {
+                    Some(file) => self.place(file, location.line, None),
+                    None => self.place(root, location.line, Some(location.column)),
                 },
             );
         Log {
             compile: vec![format!(
                 "ERROR: {location}: {}",
-                full_message(error.as_inner())
+                full_message(invalid.error.as_inner())
             )],
             ..Log::default()
         }
@@ -823,7 +820,7 @@ impl<'a> Session<'a> {
                 });
             }
             Err(rglsl_link::CompileError::Invalid(invalid)) => {
-                let mut log = self.validation_log(unit, &invalid.error);
+                let mut log = self.validation_log(unit, &invalid);
                 log.notes = notes;
                 self.report_unit(unit, &log);
                 self.reflect(&[(unit, true)], &[(stage, &invalid.module)])?;

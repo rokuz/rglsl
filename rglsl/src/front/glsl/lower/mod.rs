@@ -484,19 +484,27 @@ fn lower_parsed(
         .borrow_mut()
         .extend(analysis.stage_names.iter().cloned());
     if let Some(ref error) = *failure {
-        let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
-            diagnostic.offset(text) < error.span.start
-                && !matches!(
-                    diagnostic.kind,
-                    rglsl_sema::DiagnosticKind::MissingEntryPoint
-                        | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
-                        | rglsl_sema::DiagnosticKind::MissingVersion
-                )
-                && unit
-                    .external_declarations
-                    .last()
-                    .is_none_or(|last| diagnostic.span.start < external_end(last))
-        });
+        let found = analysis
+            .diagnostics
+            .len()
+            .saturating_sub(analysis.target_limits);
+        let earlier = analysis
+            .diagnostics
+            .iter()
+            .take(found)
+            .filter(|diagnostic| {
+                diagnostic.offset(text) < error.span.start
+                    && !matches!(
+                        diagnostic.kind,
+                        rglsl_sema::DiagnosticKind::MissingEntryPoint
+                            | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
+                            | rglsl_sema::DiagnosticKind::MissingVersion
+                    )
+                    && unit
+                        .external_declarations
+                        .last()
+                        .is_none_or(|last| diagnostic.span.start < external_end(last))
+            });
         let mut errors: Vec<(Error, Option<IncludeLocation>)> = earlier
             .map(|diagnostic| {
                 (
@@ -656,7 +664,8 @@ fn run_lowerer(
             }
         })
         .and_then(|mut object| {
-            object.object.unit.module.span_map = map.span_map();
+            object.object.unit.module.span_sources =
+                crate::SpanSources::new(preprocessed.span_map());
             if debug {
                 let mut info = debug_info(
                     options,
@@ -1202,6 +1211,9 @@ impl<'a> Lowerer<'a> {
                 shader_64bit_indexing: analysis.shader_64bit_indexing,
                 variable_pointers: analysis.variable_pointers,
                 replicated_composites: analysis.replicated_composites,
+                uniform_buffer_unsized_arrays: analysis
+                    .extensions
+                    .contains(Extension::ExtUniformBufferUnsizedArray),
                 legacy_buffer_blocks: !analysis.storage_buffer_class,
                 source_extensions: analysis
                     .requested_extensions

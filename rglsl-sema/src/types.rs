@@ -110,6 +110,10 @@ pub struct Opaque {
 }
 
 impl Opaque {
+    pub const fn image_atomic_value_index(&self) -> usize {
+        if self.multisample { 3 } else { 2 }
+    }
+
     pub const fn plain_sampler(shadow: bool) -> Self {
         Self {
             kind: OpaqueKind::Sampler,

@@ -7,7 +7,7 @@ use rglsl_types::extension::Extension::{self, *};
 use rglsl_types::flavor::{BarycentricFlavor as Bary, FragmentDensityFlavor as Density};
 
 use super::VariableKind::{Input, Output};
-use super::{BuiltinVariable, Redeclaration};
+use super::{BuiltinVariable, Redeclaration, VulkanForbidden};
 use crate::builtins::{
     ALL_STAGES, ANY_HIT, CLOSEST_HIT, COMPUTE, FRAGMENT, GEOMETRY, INTERSECTION, MESH, MISS,
     RAY_GENERATION, TASK, TESS_CONTROL, TESS_EVALUATION, VERTEX,
@@ -28,6 +28,10 @@ const DEVICE_GROUP: ShaderStageMask = VERTEX
     .union(CLOSEST_HIT)
     .union(MISS);
 const MESH_ANY: &[Extension] = &[NvMeshShader, ExtMeshShader];
+const LAYER_IN_TESS_CONTROL: Option<VulkanForbidden> = Some(VulkanForbidden {
+    stages: TESS_CONTROL,
+    reason: "Vulkan forbids BuiltIn Layer and ViewportIndex in tessellation control shaders",
+});
 const VIEWPORT_LAYER: &[Extension] = &[ArbShaderViewportLayerArray, NvViewportArray2];
 const LAYER: rglsl_types::builtin::BuiltIn = Layer {
     viewport_relative: false,
@@ -141,11 +145,13 @@ pub(super) const VARIABLES: &[BuiltinVariable] = variables! {
     "gl_ViewportIndex": Output(ViewportIndex) => int {
         stages: VERTEX.union(TESSELLATION),
         requires_one_of: VIEWPORT_LAYER,
+        vulkan_forbidden: LAYER_IN_TESS_CONTROL,
     }
     "gl_Layer": Output(LAYER) => int {
         stages: VERTEX.union(TESSELLATION),
         requires_one_of: VIEWPORT_LAYER,
         redeclaration: Some(Redeclaration::ViewportRelative),
+        vulkan_forbidden: LAYER_IN_TESS_CONTROL,
     }
     "gl_ViewportMask": Output(ViewportMaskNV) => int[] {
         stages: VERTEX.union(TESS_EVALUATION).union(GEOMETRY),

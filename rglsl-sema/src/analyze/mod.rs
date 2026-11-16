@@ -134,6 +134,7 @@ pub struct Analysis {
     pub extensions: ExtensionSet,
     pub requested_extensions: ExtensionSet,
     pub diagnostics: Vec<Diagnostic>,
+    pub target_limits: usize,
     pub warnings: Vec<Diagnostic>,
     pub vulkan_memory_model: bool,
     pub storage_buffer_class: bool,
@@ -431,6 +432,7 @@ pub(crate) struct Analyzer<'a> {
     pub buffer_packing: Packing,
     pub buffer_row_major: bool,
     pub vulkan_memory_model: bool,
+    tess_control_workgroup_barriers: Vec<(Span, String)>,
     pub storage_buffer_class: bool,
     pub shader_64bit_indexing: bool,
     pub promote_uint32_indices: bool,
@@ -512,6 +514,7 @@ impl<'a> Analyzer<'a> {
             buffer_packing: Packing::Std430,
             buffer_row_major: false,
             vulkan_memory_model: false,
+            tess_control_workgroup_barriers: Vec::new(),
             storage_buffer_class: false,
             shader_64bit_indexing: false,
             promote_uint32_indices: false,
@@ -862,10 +865,12 @@ impl<'a> Analyzer<'a> {
 
     fn finish(mut self) -> Analysis {
         self.finish_index_limitations();
+        self.finish_tess_control_barriers();
         let library = self
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.kind == DiagnosticKind::MissingEntryPoint);
+        let mut target_limits = 0;
         if self
             .diagnostics
             .iter()
@@ -874,6 +879,7 @@ impl<'a> Analyzer<'a> {
             for (diagnostic, trusted) in core::mem::take(&mut self.target_limits) {
                 self.diagnostics.push(diagnostic);
                 self.trust.push(trusted);
+                target_limits += 1;
             }
         }
         Analysis {
@@ -897,6 +903,7 @@ impl<'a> Analyzer<'a> {
             extensions: self.extensions.enabled(),
             requested_extensions: self.extensions.requested(),
             diagnostics: self.diagnostics,
+            target_limits,
             warnings: self.warnings,
             vulkan_memory_model: self.vulkan_memory_model,
             storage_buffer_class: self.storage_buffer_class,

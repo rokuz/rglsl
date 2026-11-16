@@ -469,7 +469,9 @@ impl super::Validator {
             {
                 self.validate_heap_struct_type(members, gctx)?
             }
-            Ti::Struct { ref members, span } => self.validate_struct_type(members, span, gctx)?,
+            Ti::Struct { ref members, span } => {
+                self.validate_struct_type(handle, members, span, gctx)?
+            }
             Ti::Image {
                 dim,
                 arrayed,
@@ -676,7 +678,9 @@ impl super::Validator {
         if !base_info.flags.contains(TypeFlags::SIZED) {
             match space {
                 As::Storage { .. } => {}
-                As::Uniform if matches!(gctx.types[base].inner, Ti::Struct { .. }) => {}
+                As::Uniform
+                    if self.uniform_buffer_unsized_arrays
+                        && matches!(gctx.types[base].inner, Ti::Struct { .. }) => {}
                 _ => {
                     return Err(TypeError::InvalidPointerToUnsized { base, space });
                 }
@@ -890,6 +894,7 @@ impl super::Validator {
 
     fn validate_struct_type(
         &self,
+        handle: Handle<crate::Type>,
         members: &[crate::StructMember],
         span: u32,
         gctx: crate::proc::GlobalCtx,
@@ -987,6 +992,10 @@ impl super::Validator {
                 if !is_array || i + 1 != members.len() {
                     let name = member.name.clone().unwrap_or_default();
                     return Err(TypeError::InvalidDynamicArray(name, member.ty));
+                }
+                if ti.uniform_layout.is_ok() && !self.uniform_buffer_unsized_arrays {
+                    ti.uniform_layout =
+                        Err((handle, Disalignment::UnsizedMember { index: i as u32 }));
                 }
             }
         }

@@ -1035,6 +1035,21 @@ layout(local_size_x = 1) in;
 void main() {
     memoryBarrierAtomicCounter();
 }
+### workgroup barrier in tessellation control without the memory model | tesc | 5:InvalidBuiltinCall
+#extension GL_KHR_memory_scope_semantics : require
+layout(vertices = 3) out;
+void main() {
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsOutput, gl_SemanticsAcquireRelease);
+}
+### workgroup barrier in tessellation control before a memory model use | tesc | ok
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_buffer_reference : require
+layout(vertices = 3) out;
+layout(buffer_reference) buffer R { uint a; };
+void main() {
+    controlBarrier(gl_ScopeWorkgroup, gl_ScopeWorkgroup, gl_StorageSemanticsOutput, gl_SemanticsAcquireRelease);
+}
+uint later(devicecoherent R r) { return r.a; }
 ### memory scope semantics functions | comp | ok
 #extension GL_KHR_memory_scope_semantics : require
 layout(local_size_x = 1) in;
@@ -2104,6 +2119,20 @@ void main() {
 layout(vertices = 3) out;
 void main() {
     gl_TessLevelOuter[4] = 1.0;
+}
+### viewport layer outputs in tessellation control | tesc | 5:NotSupportedInVulkan, 6:NotSupportedInVulkan
+#extension GL_ARB_shader_viewport_layer_array : require
+layout(vertices = 3) out;
+void main() {
+    gl_Layer = 1;
+    gl_ViewportIndex = 1;
+}
+### viewport layer outputs in tessellation evaluation | tese | ok
+#extension GL_ARB_shader_viewport_layer_array : require
+layout(triangles) in;
+void main() {
+    gl_Layer = 1;
+    gl_ViewportIndex = 1;
 }
 ### tessellation evaluation built-ins | tese | ok
 layout(triangles) in;
@@ -3264,6 +3293,10 @@ void main() { float x = imageAtomicAdd(h, ivec2(0), 1.0); }
 layout(local_size_x=1) in;
 layout(binding=7, rgba8i) uniform iimage2D h;
 void main() { int x = imageAtomicAdd(h, ivec2(0), 1); }
+### imageAtomic float wrong format | comp | 4:InvalidBuiltinCall
+layout(local_size_x=1) in;
+layout(binding=7, rgba32f) uniform image2D h;
+void main() { float x = imageAtomicExchange(h, ivec2(0), 1.0); }
 ### imageLoad uint coord | comp | 4:NoMatchingFunction
 layout(local_size_x=1) in;
 layout(binding=7, r32f) uniform image2D h;

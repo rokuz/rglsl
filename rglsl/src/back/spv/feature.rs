@@ -2,7 +2,7 @@ use spirv::{Capability as C, Word};
 
 use super::{Error, Writer, grammar};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Feature {
     pub what: &'static str,
     pub capabilities: &'static [C],
@@ -13,23 +13,20 @@ pub(super) struct Feature {
 }
 
 impl Feature {
-    const NONE: Self = Self {
-        what: "",
-        capabilities: &[],
-        numbered_capabilities: &[],
-        extensions: &[],
-        core_since: None,
-        min_version: None,
-    };
+    const fn new(what: &'static str) -> Self {
+        Self {
+            what,
+            capabilities: &[],
+            numbered_capabilities: &[],
+            extensions: &[],
+            core_since: None,
+            min_version: None,
+        }
+    }
 }
 
 impl Writer {
     pub(super) fn require(&mut self, feature: &Feature) -> Result<(), Error> {
-        if let Some((major, minor)) = feature.min_version
-            && self.lang_version() < (major, minor)
-        {
-            return Err(Error::SpirvVersionTooLow(major, minor));
-        }
         for &capability in feature.capabilities {
             self.require_any(feature.what, &[capability])?;
         }
@@ -46,6 +43,9 @@ impl Writer {
     }
 
     pub(super) fn use_feature(&mut self, feature: &Feature) {
+        if let Some(version) = feature.min_version {
+            self.min_version = self.min_version.max(Some(version));
+        }
         for &capability in feature.capabilities {
             self.capabilities_used.insert(capability);
         }
@@ -61,6 +61,15 @@ impl Writer {
             }
         }
     }
+
+    pub(super) fn check_min_version(&self) -> Result<(), Error> {
+        match self.min_version {
+            Some((major, minor)) if self.lang_version() < (major, minor) => {
+                Err(Error::SpirvVersionTooLow(major, minor))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 pub(super) const AMD_GCN_SHADER_SET: &str = "SPV_AMD_gcn_shader";
@@ -71,31 +80,36 @@ pub(super) const AMD_SHADER_TRINARY_MINMAX_SET: &str = "SPV_AMD_shader_trinary_m
 pub(super) const KHR_STORAGE_BUFFER_STORAGE_CLASS: &str = "SPV_KHR_storage_buffer_storage_class";
 
 macro_rules! features {
-    ($($name:ident { $($field:ident: $value:expr),* $(,)? })*) => {
-        $(pub(super) const $name: Feature = Feature { $($field: $value,)* ..Feature::NONE };)*
+    ($($name:ident { what: $what:expr $(, $field:ident: $value:expr)* $(,)? })*) => {
+        $(pub(super) const $name: Feature = Feature { $($field: $value,)* ..Feature::new($what) };)*
     };
 }
 
 features! {
     VULKAN_MEMORY_MODEL {
+        what: "the Vulkan memory model",
         capabilities: &[C::VulkanMemoryModel],
         extensions: &["SPV_KHR_vulkan_memory_model"],
         core_since: Some((1, 5)),
     }
     PHYSICAL_STORAGE_BUFFER {
+        what: "physical storage buffer pointers",
         capabilities: &[C::PhysicalStorageBufferAddresses],
         extensions: &["SPV_KHR_physical_storage_buffer"],
         core_since: Some((1, 5)),
     }
     STORAGE_BUFFER_STORAGE_CLASS {
+        what: "the StorageBuffer storage class",
         extensions: &[KHR_STORAGE_BUFFER_STORAGE_CLASS],
         core_since: Some((1, 3)),
     }
     STORAGE_16BIT {
+        what: "16-bit storage",
         extensions: &["SPV_KHR_16bit_storage"],
         core_since: Some((1, 3)),
     }
     STORAGE_8BIT {
+        what: "8-bit storage",
         extensions: &["SPV_KHR_8bit_storage"],
         core_since: Some((1, 5)),
     }
@@ -110,30 +124,37 @@ features! {
         extensions: &["SPV_KHR_16bit_storage"],
     }
     BFLOAT16_TYPE {
+        what: "bfloat16 types",
         capabilities: &[C::BFloat16TypeKHR],
         extensions: &["SPV_KHR_bfloat16"],
     }
     FLOAT8_TYPE {
+        what: "8-bit floating-point types",
         capabilities: &[C::Float8EXT],
         extensions: &["SPV_EXT_float8"],
     }
     FLOAT4_TYPE {
+        what: "4-bit floating-point types",
         numbered_capabilities: &[grammar::capability::Float4EXT],
         extensions: &["SPV_EXT_ocp_microscaling_types"],
     }
     FLOAT6_TYPE {
+        what: "6-bit floating-point types",
         numbered_capabilities: &[grammar::capability::Float6EXT],
         extensions: &["SPV_EXT_ocp_microscaling_types"],
     }
     FLOAT8_UNSIGNED_E8M0_TYPE {
+        what: "unsigned E8M0 floating-point types",
         numbered_capabilities: &[grammar::capability::Float8UnsignedE8M0EXT],
         extensions: &["SPV_EXT_ocp_microscaling_types"],
     }
     MXINT8_TYPE {
+        what: "MXINT8 types",
         numbered_capabilities: &[grammar::capability::MXInt8EXT],
         extensions: &["SPV_EXT_ocp_microscaling_types"],
     }
     BITCAST_EXTRACT {
+        what: "bitcast extraction",
         numbered_capabilities: &[grammar::capability::BitcastExtractEXT],
         extensions: &["SPV_EXT_ocp_microscaling_types"],
     }
@@ -153,6 +174,7 @@ features! {
         extensions: &["SPV_EXT_replicated_composites"],
     }
     DESCRIPTOR_INDEXING {
+        what: "descriptor indexing",
         extensions: &["SPV_EXT_descriptor_indexing"],
         core_since: Some((1, 5)),
     }
@@ -172,12 +194,15 @@ features! {
         extensions: &["SPV_NV_push_constant_bank"],
     }
     NON_SEMANTIC_INFO {
+        what: "non-semantic instructions",
         extensions: &["SPV_KHR_non_semantic_info"],
     }
     RELAXED_EXTENDED_INSTRUCTION {
+        what: "extended instructions with forward references",
         extensions: &["SPV_KHR_relaxed_extended_instruction"],
     }
     ABORT {
+        what: "shader abort",
         capabilities: &[C::Int8],
         numbered_capabilities: &[
             grammar::capability::AbortKHR,
@@ -219,9 +244,11 @@ features! {
         core_since: Some((1, 6)),
     }
     AMD_GPU_SHADER_HALF_FLOAT {
+        what: "AMD half-precision functions",
         extensions: &["SPV_AMD_gpu_shader_half_float"],
     }
     AMD_SHADER_EXPLICIT_VERTEX_PARAMETER {
+        what: "explicit vertex parameters",
         extensions: &[AMD_SHADER_EXPLICIT_VERTEX_PARAMETER_SET],
     }
     AMD_FRAGMENT_MASK {
@@ -245,6 +272,7 @@ features! {
         extensions: &["SPV_AMD_shader_image_load_store_lod"],
     }
     AMD_EARLY_AND_LATE_FRAGMENT_TESTS {
+        what: "early and late fragment tests",
         extensions: &["SPV_AMD_shader_early_and_late_fragment_tests"],
     }
 
@@ -315,9 +343,11 @@ features! {
         extensions: &["SPV_KHR_quad_control"],
     }
     SUBGROUP_UNIFORM_CONTROL_FLOW {
+        what: "subgroup uniform control flow",
         extensions: &["SPV_KHR_subgroup_uniform_control_flow"],
     }
     MAXIMAL_RECONVERGENCE {
+        what: "maximal reconvergence",
         extensions: &["SPV_KHR_maximal_reconvergence"],
     }
 
@@ -543,6 +573,7 @@ features! {
         extensions: &["SPV_EXT_opacity_micromap"],
     }
     OPACITY_MICROMAP_EXECUTION_MODE {
+        what: "opacity micromap execution mode",
         numbered_capabilities: &[grammar::capability::RayTracingOpacityMicromapExecutionModeKHR],
         extensions: &["SPV_KHR_opacity_micromap"],
     }
@@ -588,10 +619,12 @@ features! {
         extensions: &["SPV_NV_shader_image_footprint"],
     }
     IMAGE_GATHER_LINEAR_QCOM {
+        what: "linear image gathers",
         numbered_capabilities: &[grammar::capability::ImageGatherLinearQCOM],
         extensions: &["SPV_QCOM_image_processing3"],
     }
     IMAGE_GATHER_EXTENDED_MODES_QCOM {
+        what: "extended image gather modes",
         numbered_capabilities: &[grammar::capability::ImageGatherExtendedModesQCOM],
         extensions: &["SPV_QCOM_image_processing3"],
     }
@@ -637,6 +670,7 @@ features! {
         extensions: &["SPV_ARM_cooperative_matrix_layouts"],
     }
     COOPERATIVE_MATRIX_CONVERSIONS_EXT {
+        what: "cooperative matrix conversions",
         numbered_capabilities: &[grammar::capability::CooperativeMatrixConversionsEXT],
         extensions: &["SPV_EXT_cooperative_matrix_maintenance1"],
     }
@@ -666,6 +700,7 @@ features! {
         extensions: &["SPV_NV_cooperative_matrix2"],
     }
     COOPERATIVE_MATRIX_GET_COORDINATE {
+        what: "cooperative matrix coordinates",
         numbered_capabilities: &[grammar::capability::CooperativeMatrixGetCoordinateEXT],
         extensions: &["SPV_EXT_cooperative_matrix_maintenance1"],
     }
@@ -675,6 +710,7 @@ features! {
         extensions: &["SPV_NV_cooperative_matrix2"],
     }
     COOPERATIVE_MATRIX_DECODE_VECTOR {
+        what: "cooperative matrix decode vectors",
         numbered_capabilities: &[grammar::capability::CooperativeMatrixDecodeVectorNV],
         extensions: &["SPV_NV_cooperative_matrix_decode_vector"],
     }

@@ -14,9 +14,12 @@ name = "rglsl_pp"
 
 [features]
 std = []
+serialize = ["dep:serde"]
+deserialize = ["dep:serde"]
 
 [dependencies]
 arrayvec.workspace = true
+serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 rglsl-types.workspace = true
 
 [[example]]

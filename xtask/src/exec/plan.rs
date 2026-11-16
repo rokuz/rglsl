@@ -706,6 +706,11 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
     if reflection.uses(spirv::Op::TerminateInvocation) {
         needs.extend(requirements::TERMINATE_INVOCATION);
     }
+    if reflection.resources.iter().any(|resource| {
+        matches!(resource.kind, ResourceKind::UniformBuffer(ref layout) if layout.has_runtime_array())
+    }) {
+        needs.extend(requirements::UNIFORM_BUFFER_UNSIZED_ARRAY);
+    }
     Ok(needs)
 }
 

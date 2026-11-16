@@ -3,7 +3,12 @@ use std::path::{Path, PathBuf};
 
 use crate::TestResult;
 
-const SOURCES: [&str; 3] = ["rglsl/src", "rglsl-types/src", "rglsl-link/src/file.rs"];
+const SOURCES: [&str; 4] = [
+    "rglsl/src",
+    "rglsl-types/src",
+    "rglsl-pp/src/source_map.rs",
+    "rglsl-link/src/file.rs",
+];
 
 const ROOTS: [&str; 3] = ["ObjectModule", "File", "Flat"];
 

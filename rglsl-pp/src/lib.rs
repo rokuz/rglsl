@@ -53,5 +53,5 @@ pub use include::{
 };
 pub use options::{Define, Limits, Options};
 pub use preprocessor::{Preprocessed, preprocess};
-pub use source_map::{LineEntry, Locator, PresumedSource, SourceMap, SpanMap};
+pub use source_map::{LineEntry, Locator, PresumedSource, SourceMap, SpanLocation, SpanMap};
 pub use version::{Profile, Version, VersionDirective, find_version, version_check};

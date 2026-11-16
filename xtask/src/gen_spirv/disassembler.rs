@@ -106,6 +106,25 @@ pub struct Sources<'a> {
 }
 
 pub fn generate(sources: &Sources) -> Result<String> {
+    let evaluator = doc_constants(sources)?;
+    let parameterize = cpp::function_body(sources.doc, "void Parameterize()")?;
+    let (instructions, used_kinds) = instructions(sources, &evaluator, parameterize)?;
+    let classes = enum_classes(parameterize)?;
+
+    let mut out = String::new();
+    out.push_str("use super::tables::Class::*;\nuse super::tables::Kind::{self, *};\nuse super::tables::{EnumClass, Instruction, Names, op};\n\n");
+    write_constants(&mut out, sources)?;
+    write_instructions(&mut out, &instructions)?;
+    write_enum_names(&mut out, sources, &evaluator, &classes, &used_kinds)?;
+    write_enum_classes(&mut out, &evaluator, &classes, &used_kinds)?;
+    write_glsl_std_450(&mut out, sources)?;
+    write_amd(&mut out, sources, &evaluator)?;
+    write_nv(&mut out, sources, &evaluator)?;
+    write_shader_debug_info(&mut out, sources, &evaluator)?;
+    Ok(format!("{}\n", out.trim_end()))
+}
+
+fn doc_constants<'a>(sources: &Sources<'a>) -> Result<Evaluator<'a>> {
     let mut evaluator = Evaluator {
         symbols: sources.symbols,
         constants: BTreeMap::new(),
@@ -121,11 +140,18 @@ pub fn generate(sources: &Sources) -> Result<String> {
         let value = evaluator.eval(expression.trim().trim_end_matches(';'))?;
         evaluator.constants.insert(name.trim().to_string(), value);
     }
+    Ok(evaluator)
+}
 
+fn instructions(
+    sources: &Sources,
+    evaluator: &Evaluator,
+    parameterize: &str,
+) -> Result<(BTreeMap<u32, Instruction>, Vec<String>)> {
     let mut instructions: BTreeMap<u32, Instruction> = BTreeMap::new();
     for case in cpp::switch_cases(
         cpp::function_body(sources.doc, "const char* OpcodeString(int")?,
-        &evaluator,
+        evaluator,
     )? {
         if case.name != "Bad" {
             instructions
@@ -134,7 +160,6 @@ pub fn generate(sources: &Sources) -> Result<String> {
                 .name = Some(case.name);
         }
     }
-    let parameterize = cpp::function_body(sources.doc, "void Parameterize()")?;
     let mut used_kinds: Vec<String> = Vec::new();
     for raw in parameterize.lines() {
         let line = cpp::strip_comment(raw).trim();
@@ -169,34 +194,44 @@ pub fn generate(sources: &Sources) -> Result<String> {
         }
     }
     for name in RGLSL_ONLY_INSTRUCTIONS {
-        let grammar = sources
-            .grammar
-            .instruction(name)
-            .with_context(|| format!("SPIRV-Headers has no instruction `{name}`"))?;
-        if instructions.contains_key(&grammar.opcode) {
+        let (opcode, instruction) = rglsl_only_instruction(sources.grammar, name)?;
+        if instructions.contains_key(&opcode) {
             bail!("glslang's disassembler knows `{name}`: remove it from RGLSL_ONLY_INSTRUCTIONS");
         }
-        let mut instruction = Instruction {
-            name: Some((*name).to_string()),
-            result: false,
-            ty: false,
-            operands: Vec::new(),
-        };
-        for operand in &grammar.operands {
-            match (operand.kind.as_str(), operand.quantifier.as_deref()) {
-                ("IdResultType", None) => instruction.ty = true,
-                ("IdResult", None) => instruction.result = true,
-                ("IdRef", None) => instruction.operands.push("Id".to_string()),
-                ("IdRef", Some("*")) => instruction.operands.push("VariableIds".to_string()),
-                (kind, quantifier) => bail!(
-                    "no glslang operand class for the operand {kind}{} of `{name}`",
-                    quantifier.unwrap_or_default()
-                ),
-            }
-        }
-        instructions.insert(grammar.opcode, instruction);
+        instructions.insert(opcode, instruction);
     }
+    if used_kinds.is_empty() {
+        bail!("glslang's Parameterize() names no enumerated operand classes");
+    }
+    Ok((instructions, used_kinds))
+}
 
+fn rglsl_only_instruction(grammar: &Grammar, name: &str) -> Result<(u32, Instruction)> {
+    let described = grammar
+        .instruction(name)
+        .with_context(|| format!("SPIRV-Headers has no instruction `{name}`"))?;
+    let mut instruction = Instruction {
+        name: Some(name.to_string()),
+        result: false,
+        ty: false,
+        operands: Vec::new(),
+    };
+    for operand in &described.operands {
+        match (operand.kind.as_str(), operand.quantifier.as_deref()) {
+            ("IdResultType", None) => instruction.ty = true,
+            ("IdResult", None) => instruction.result = true,
+            ("IdRef", None) => instruction.operands.push("Id".to_string()),
+            ("IdRef", Some("*")) => instruction.operands.push("VariableIds".to_string()),
+            (kind, quantifier) => bail!(
+                "no glslang operand class for the operand {kind}{} of `{name}`",
+                quantifier.unwrap_or_default()
+            ),
+        }
+    }
+    Ok((described.opcode, instruction))
+}
+
+fn enum_classes(parameterize: &str) -> Result<BTreeMap<String, EnumClass>> {
     let mut classes: BTreeMap<String, EnumClass> = BTreeMap::new();
     for raw in parameterize.lines() {
         let line = cpp::strip_comment(raw).trim();
@@ -223,9 +258,10 @@ pub fn generate(sources: &Sources) -> Result<String> {
             },
         );
     }
+    Ok(classes)
+}
 
-    let mut out = String::new();
-    out.push_str("use super::tables::Class::*;\nuse super::tables::Kind::{self, *};\nuse super::tables::{EnumClass, Instruction, Names, op};\n\n");
+fn write_constants(out: &mut String, sources: &Sources) -> Result<()> {
     for (name, symbol) in CONSTANTS {
         writeln!(
             out,
@@ -233,8 +269,15 @@ pub fn generate(sources: &Sources) -> Result<String> {
             sources.symbols.value(symbol)?
         )?;
     }
+    Ok(())
+}
+
+fn write_instructions(out: &mut String, instructions: &BTreeMap<u32, Instruction>) -> Result<()> {
+    if instructions.is_empty() {
+        bail!("glslang's OpcodeString() names no instructions");
+    }
     out.push_str("\npub(super) const INSTRUCTIONS: &[Instruction] = &[\n");
-    for (opcode, instruction) in &instructions {
+    for (opcode, instruction) in instructions {
         let operands: Vec<String> = instruction
             .operands
             .iter()
@@ -256,32 +299,53 @@ pub fn generate(sources: &Sources) -> Result<String> {
         )?;
     }
     out.push_str("];\n\n");
+    Ok(())
+}
 
-    let mut kinds = used_kinds.clone();
-    kinds.extend(NAMED_ENUMS.iter().map(|kind| (*kind).to_string()));
-    for kind in &kinds {
-        let class = classes
-            .get(kind)
-            .with_context(|| format!("glslang has no OperandClassParams for Operand{kind}"))?;
+fn class<'a>(classes: &'a BTreeMap<String, EnumClass>, kind: &str) -> Result<&'a EnumClass> {
+    classes
+        .get(kind)
+        .with_context(|| format!("glslang has no OperandClassParams for Operand{kind}"))
+}
+
+fn write_enum_names(
+    out: &mut String,
+    sources: &Sources,
+    evaluator: &Evaluator,
+    classes: &BTreeMap<String, EnumClass>,
+    used_kinds: &[String],
+) -> Result<()> {
+    let kinds = used_kinds
+        .iter()
+        .map(String::as_str)
+        .chain(NAMED_ENUMS.iter().copied());
+    for kind in kinds {
+        let class = class(classes, kind)?;
         let body = cpp::function_body(sources.doc, &format!("const char* {}(int", class.function))?;
         let mut names: BTreeMap<u32, String> = BTreeMap::new();
-        for case in cpp::switch_cases(body, &evaluator)? {
+        for case in cpp::switch_cases(body, evaluator)? {
             if case.name != "Bad" {
                 names.insert(case.value, case.name);
             }
         }
         write_names(
-            &mut out,
+            out,
             &screaming(kind),
             names.iter().map(|(v, n)| (*v, n.as_str())),
         )?;
     }
+    Ok(())
+}
 
+fn write_enum_classes(
+    out: &mut String,
+    evaluator: &Evaluator,
+    classes: &BTreeMap<String, EnumClass>,
+    used_kinds: &[String],
+) -> Result<()> {
     out.push_str("pub(super) const fn enum_class(kind: Kind) -> EnumClass {\n    match kind {\n");
-    for kind in &used_kinds {
-        let class = classes
-            .get(kind)
-            .with_context(|| format!("glslang has no OperandClassParams for Operand{kind}"))?;
+    for kind in used_kinds {
+        let class = class(classes, kind)?;
         writeln!(
             out,
             "        {kind} => EnumClass {{ ceiling: {}, names: {}, bitmask: {} }},",
@@ -291,7 +355,10 @@ pub fn generate(sources: &Sources) -> Result<String> {
         )?;
     }
     out.push_str("    }\n}\n\n");
+    Ok(())
+}
 
+fn write_glsl_std_450(out: &mut String, sources: &Sources) -> Result<()> {
     let glsl_body =
         cpp::function_body(sources.disassemble, "static void GLSLstd450GetDebugNames(")?;
     let count = sources.symbols.value("GLSLstd450Count")?;
@@ -319,18 +386,24 @@ pub fn generate(sources: &Sources) -> Result<String> {
             .with_context(|| format!("GLSL.std.450 entry {index} is out of range"))?;
         *slot = name;
     }
+    if glsl.iter().all(|&name| name == "Unknown") {
+        bail!("glslang's GLSLstd450GetDebugNames() names no instructions");
+    }
     writeln!(out, "pub(super) const GLSL_STD_450: [&str; {count}] = [")?;
     for name in glsl {
         writeln!(out, "    {name:?},")?;
     }
     out.push_str("];\n\n");
+    Ok(())
+}
 
+fn write_amd(out: &mut String, sources: &Sources, evaluator: &Evaluator) -> Result<()> {
     let amd = cpp::switch_cases(
         cpp::function_body(
             sources.disassemble,
             "static const char* GLSLextAMDGetDebugNames(const char* name",
         )?,
-        &evaluator,
+        evaluator,
     )?;
     let mut sets: Vec<(String, Vec<(u32, String)>)> = Vec::new();
     for case in amd {
@@ -342,9 +415,15 @@ pub fn generate(sources: &Sources) -> Result<String> {
             None => sets.push((set.clone(), vec![(case.value, case.name)])),
         }
     }
+    if sets.is_empty() {
+        bail!("glslang's GLSLextAMDGetDebugNames() names no instruction sets");
+    }
     out.push_str("pub(super) const AMD: &[(&[u8], Names)] = &[\n");
     for (set, mut names) in sets {
         names.retain(|(_, name)| name != "Bad");
+        if names.is_empty() {
+            bail!("glslang names no instructions of {set}");
+        }
         names.sort();
         writeln!(out, "    (b{set:?}, &[")?;
         for (value, name) in names {
@@ -353,41 +432,82 @@ pub fn generate(sources: &Sources) -> Result<String> {
         out.push_str("    ]),\n");
     }
     out.push_str("];\n\n");
+    Ok(())
+}
 
+fn write_nv(out: &mut String, sources: &Sources, evaluator: &Evaluator) -> Result<()> {
+    write_sets(
+        out,
+        "NV_IMPORT_SETS",
+        &nv_import_sets(sources.disassemble, sources.symbols)?,
+    )?;
     let nv = cpp::switch_cases(
         cpp::function_body(
             sources.disassemble,
             "static const char* GLSLextNVGetDebugNames(const char* name",
         )?,
-        &evaluator,
+        evaluator,
     )?;
     let nv_sets = nv.first().map(|case| case.sets.clone()).unwrap_or_default();
     if nv.iter().any(|case| case.sets != nv_sets) {
         bail!("the NV ext-inst names are not one table");
     }
-    out.push_str("pub(super) const NV_SETS: &[&[u8]] = &[\n");
-    for set in &nv_sets {
-        writeln!(out, "    b{set:?},")?;
-    }
-    out.push_str("];\n\n");
+    write_sets(out, "NV_SETS", &nv_sets)?;
     let mut nv_names: Vec<(u32, String)> = nv
         .into_iter()
         .filter(|case| case.name != "Bad")
         .map(|case| (case.value, case.name))
         .collect();
     nv_names.sort();
-    write_names(
-        &mut out,
-        "NV",
-        nv_names.iter().map(|(v, n)| (*v, n.as_str())),
-    )?;
+    write_names(out, "NV", nv_names.iter().map(|(v, n)| (*v, n.as_str())))
+}
 
+fn nv_import_sets(disassemble: &str, symbols: &Symbols) -> Result<Vec<String>> {
+    let marker = "extInstSet = GLSLextNVInst;";
+    let end = disassemble
+        .find(marker)
+        .with_context(|| format!("glslang's disassembler has no `{marker}`"))?;
+    let head = disassemble.get(..end).unwrap_or_default();
+    let start = head
+        .rfind("else if (")
+        .with_context(|| format!("no condition before `{marker}`"))?;
+    let condition = head.get(start..).unwrap_or_default();
+    let mut sets = Vec::new();
+    for (index, _) in condition.match_indices("spv::") {
+        let symbol: String = condition
+            .get(index + "spv::".len()..)
+            .unwrap_or_default()
+            .chars()
+            .take_while(|&c| c.is_ascii_alphanumeric() || c == '_')
+            .collect();
+        sets.push(symbols.string(&symbol)?.to_string());
+    }
+    Ok(sets)
+}
+
+fn write_sets(out: &mut String, table: &str, sets: &[String]) -> Result<()> {
+    if sets.is_empty() {
+        bail!("the generated table {table} is empty");
+    }
+    writeln!(out, "pub(super) const {table}: &[&[u8]] = &[")?;
+    for set in sets {
+        writeln!(out, "    b{set:?},")?;
+    }
+    out.push_str("];\n\n");
+    Ok(())
+}
+
+fn write_shader_debug_info(
+    out: &mut String,
+    sources: &Sources,
+    evaluator: &Evaluator,
+) -> Result<()> {
     let debug = cpp::switch_cases(
         cpp::function_body(
             sources.disassemble,
             "static const char* NonSemanticShaderDebugInfoGetDebugNames(unsigned",
         )?,
-        &evaluator,
+        evaluator,
     )?;
     let mut debug_names: Vec<(u32, String)> = debug
         .into_iter()
@@ -396,11 +516,10 @@ pub fn generate(sources: &Sources) -> Result<String> {
         .collect();
     debug_names.sort();
     write_names(
-        &mut out,
+        out,
         "SHADER_DEBUG_INFO",
         debug_names.iter().map(|(v, n)| (*v, n.as_str())),
-    )?;
-    Ok(format!("{}\n", out.trim_end()))
+    )
 }
 
 fn write_names<'a>(
@@ -408,6 +527,10 @@ fn write_names<'a>(
     table: &str,
     names: impl Iterator<Item = (u32, &'a str)>,
 ) -> Result<()> {
+    let mut names = names.peekable();
+    if names.peek().is_none() {
+        bail!("the generated table {table} is empty");
+    }
     writeln!(out, "pub(super) const {table}: Names = &[")?;
     for (value, name) in names {
         writeln!(out, "    ({value}, {name:?}),")?;

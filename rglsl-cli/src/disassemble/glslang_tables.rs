@@ -1496,6 +1496,15 @@ pub(super) const AMD: &[(&[u8], Names)] = &[
     ]),
 ];
 
+pub(super) const NV_IMPORT_SETS: &[&[u8]] = &[
+    b"SPV_NV_sample_mask_override_coverage",
+    b"SPV_NV_geometry_shader_passthrough",
+    b"SPV_NV_viewport_array2",
+    b"SPV_NVX_multiview_per_view_attributes",
+    b"SPV_NV_fragment_shader_barycentric",
+    b"SPV_NV_mesh_shader",
+];
+
 pub(super) const NV_SETS: &[&[u8]] = &[
     b"SPV_NV_sample_mask_override_coverage",
     b"SPV_NV_geometry_shader_passthrough",

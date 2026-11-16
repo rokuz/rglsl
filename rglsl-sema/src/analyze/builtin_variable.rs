@@ -23,18 +23,17 @@ impl Analyzer<'_> {
         let passed = self.require_stage_extensions(span, name, |stage| {
             variables::requirement(&rows, version, stage)
         });
-        let own = self.builtins.variable(id);
-        if matches!(
-            own.and_then(BuiltinVariable::builtin),
-            Some(BuiltIn::Layer { .. } | BuiltIn::ViewportIndex)
-        ) && self.stage_check(span, |stage| {
-            (stage == ShaderStage::TessControl).then(|| DiagnosticKind::NotSupportedInVulkan {
-                subject: alloc::format!("`{name}` in a tessellation control shader"),
-                reason: "Vulkan forbids BuiltIn Layer and ViewportIndex in tessellation control shaders",
+        if self.stage_check(span, |stage| {
+            variables::vulkan_forbidden(&rows, version, stage).map(|reason| {
+                DiagnosticKind::NotSupportedInVulkan {
+                    subject: alloc::format!("`{name}` in a {} shader", stage.name()),
+                    reason,
+                }
             })
         }) {
             return false;
         }
+        let own = self.builtins.variable(id);
         if let Some(primitive) = own
             .and_then(BuiltinVariable::builtin)
             .and_then(output_primitive)

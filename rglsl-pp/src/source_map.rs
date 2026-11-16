@@ -42,9 +42,28 @@ pub struct SourceMap {
 }
 
 #[derive(Clone, Default)]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
+#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serialize", serde(into = "SpanParts"))]
+#[cfg_attr(feature = "deserialize", serde(from = "SpanParts"))]
 pub struct SpanMap {
+    shared: Option<Arc<SpanTable>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpanTable {
     root: FileId,
-    segments: Option<Arc<Vec<Segment>>>,
+    length: u32,
+    files: BTreeMap<FileId, String>,
+    segments: Arc<Vec<Segment>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpanLocation<'a> {
+    pub file: Option<&'a str>,
+    pub included: bool,
+    pub line: u32,
+    pub column: u32,
 }
 
 impl core::fmt::Debug for SpanMap {
@@ -54,14 +73,107 @@ impl core::fmt::Debug for SpanMap {
 }
 
 impl SpanMap {
-    pub fn locate_root(&self, offset: usize) -> Option<u32> {
-        let segments = self.segments.as_deref()?;
-        let location = located(self.root, segment_in(segments.as_slice(), offset), offset);
-        (location.file == self.root).then_some(location.offset)
+    pub fn locate(&self, offset: usize) -> Option<SpanLocation<'_>> {
+        let table = self.shared.as_deref()?;
+        let segment = segment_in(table.segments.as_slice(), offset)?;
+        let delta = u32::try_from(offset)
+            .unwrap_or(u32::MAX)
+            .saturating_sub(segment.start);
+        let inside = if delta < segment.exact { delta } else { 0 };
+        Some(SpanLocation {
+            file: table.files.get(&segment.cur_file).map(String::as_str),
+            included: segment.cur_file != table.root,
+            line: segment.line,
+            column: segment.column.saturating_add(inside).saturating_add(1),
+        })
+    }
+
+    pub fn length(&self) -> u32 {
+        self.shared.as_deref().map_or(0, |table| table.length)
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.segments.is_none()
+        self.shared.is_none()
+    }
+}
+
+#[cfg(any(feature = "serialize", feature = "deserialize"))]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SpanParts {
+    root: u32,
+    length: u32,
+    files: Vec<(u32, String)>,
+    segments: Vec<[u32; 5]>,
+}
+
+#[cfg(feature = "serialize")]
+impl From<SpanMap> for SpanParts {
+    fn from(map: SpanMap) -> Self {
+        let Some(table) = map.shared else {
+            return Self {
+                root: 0,
+                length: 0,
+                files: Vec::new(),
+                segments: Vec::new(),
+            };
+        };
+        Self {
+            root: table.root.0,
+            length: table.length,
+            files: table
+                .files
+                .iter()
+                .map(|(file, name)| (file.0, name.clone()))
+                .collect(),
+            segments: table
+                .segments
+                .iter()
+                .map(|segment| {
+                    [
+                        segment.start,
+                        segment.exact,
+                        segment.cur_file.0,
+                        segment.line,
+                        segment.column,
+                    ]
+                })
+                .collect(),
+        }
+    }
+}
+
+#[cfg(feature = "deserialize")]
+impl From<SpanParts> for SpanMap {
+    fn from(parts: SpanParts) -> Self {
+        if parts.segments.is_empty() {
+            return Self::default();
+        }
+        let segments = parts
+            .segments
+            .into_iter()
+            .map(|[start, exact, file, line, column]| Segment {
+                start,
+                file: FileId(file),
+                offset: 0,
+                exact,
+                cur_file: FileId(file),
+                line,
+                column,
+                source: 0,
+            })
+            .collect();
+        Self {
+            shared: Some(Arc::new(SpanTable {
+                root: FileId(parts.root),
+                length: parts.length,
+                files: parts
+                    .files
+                    .into_iter()
+                    .map(|(file, name)| (FileId(file), name))
+                    .collect(),
+                segments: Arc::new(segments),
+            })),
+        }
     }
 }
 
@@ -169,14 +281,21 @@ fn located(root: FileId, segment: Option<&Segment>, offset: usize) -> Location {
     }
 }
 
-impl SourceMap {
+impl crate::Preprocessed {
     pub fn span_map(&self) -> SpanMap {
+        let map = &self.source_map;
         SpanMap {
-            root: self.root,
-            segments: Some(Arc::clone(&self.segments)),
+            shared: Some(Arc::new(SpanTable {
+                root: map.root,
+                length: u32::try_from(self.text.len()).unwrap_or(u32::MAX),
+                files: map.files.clone(),
+                segments: Arc::clone(&map.segments),
+            })),
         }
     }
+}
 
+impl SourceMap {
     fn segment(&self, offset: usize) -> Option<&Segment> {
         segment_in(&self.segments, offset)
     }

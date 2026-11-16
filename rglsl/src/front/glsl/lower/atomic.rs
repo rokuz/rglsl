@@ -136,61 +136,6 @@ impl FunctionLowerer<'_, '_> {
         })
     }
 
-    fn image_storage_format(&self, image: Handle<Expression>) -> Option<crate::StorageFormat> {
-        let ty = match self.expressions[image] {
-            Expression::GlobalVariable(handle) => Some(self.lw.module.global_variables[handle].ty),
-            Expression::FunctionArgument(index) => usize::try_from(index)
-                .ok()
-                .and_then(|index| self.argument_types.get(index).copied()),
-            Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Load { .. } => {
-                let mut current = match self.expressions[image] {
-                    Expression::Load { pointer } => pointer,
-                    _ => image,
-                };
-                let mut steps = alloc::vec::Vec::new();
-                let global = loop {
-                    match self.expressions[current] {
-                        Expression::HeapOffset { pointer, .. } => current = pointer,
-                        Expression::Access { base, .. } => {
-                            steps.push(None);
-                            current = base;
-                        }
-                        Expression::AccessIndex { base, index } => {
-                            steps.push(Some(index));
-                            current = base;
-                        }
-                        Expression::GlobalVariable(handle) => break handle,
-                        _ => return None,
-                    }
-                };
-                let mut ty = self.lw.module.global_variables[global].ty;
-                while let Some(step) = steps.pop() {
-                    ty = match (step, &self.lw.module.types[ty].inner) {
-                        (
-                            _,
-                            &TypeInner::Array { base, .. } | &TypeInner::BindingArray { base, .. },
-                        ) => base,
-                        (Some(index), &TypeInner::Struct { ref members, .. }) => {
-                            members.get(usize::try_from(index).ok()?)?.ty
-                        }
-                        _ => return None,
-                    };
-                }
-                Some(ty)
-            }
-            _ => None,
-        }?;
-        match self.lw.module.types[ty].inner {
-            TypeInner::Image {
-                class: crate::ImageClass::Storage { format, .. },
-                ..
-            } => Some(format),
-            _ => None,
-        }
-    }
-
     pub(super) fn push_with_result(
         &mut self,
         result: Expression,
@@ -529,15 +474,6 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 TypeInner::Scalar(scalar(element))
             }
         };
-        if value_inner == TypeInner::Scalar(crate::Scalar::F32)
-            && self.with(|this| this.image_storage_format(image))?
-                != Some(crate::StorageFormat::R32Float)
-        {
-            return Err(unsupported(
-                "32-bit floating-point image atomic on an image whose format is not `r32f`",
-                at,
-            ));
-        }
         let ty = self.with(|this| this.lw.insert_type(value_inner))?;
         let result = Expression::AtomicResult {
             ty,

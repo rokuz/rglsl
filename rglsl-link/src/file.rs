@@ -12,6 +12,14 @@ pub enum FileError {
     Version { found: u32, expected: u32 },
     #[error("invalid object module: {0}")]
     Invalid(String),
+    #[error(
+        "invalid object module: {message}{at}",
+        at = crate::error::position_suffix(.at.as_ref())
+    )]
+    Validation {
+        message: String,
+        at: Option<crate::SourcePosition>,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -48,11 +56,7 @@ enum Open {
 pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
     let mut object = object.clone();
     let modules = modules(&mut object);
-    let spans = if modules.iter().any(|module| module.debug_info.is_some()) {
-        modules.into_iter().map(rglsl::collect_spans).collect()
-    } else {
-        Vec::new()
-    };
+    let spans = modules.into_iter().map(rglsl::collect_spans).collect();
     let bodies = body_slots(&mut object)
         .into_iter()
         .map(|body| flatten(&core::mem::take(body)))
@@ -131,7 +135,10 @@ fn validate(object: &ObjectModule) -> Result<(), FileError> {
         validator.mode(ValidationMode::Object);
         validator
             .validate(module)
-            .map_err(|error| FileError::Invalid(crate::message(error.as_inner())))?;
+            .map_err(|error| FileError::Validation {
+                message: crate::message(error.as_inner()),
+                at: crate::SourcePosition::of_error(module, &error, object.name.as_deref()),
+            })?;
         if unit
             .functions
             .iter()
@@ -212,14 +219,7 @@ fn units(object: &mut ObjectModule) -> Vec<&mut CompiledUnit> {
 }
 
 fn modules(object: &mut ObjectModule) -> Vec<&mut rglsl::Module> {
-    units(object)
-        .into_iter()
-        .map(|unit| &mut unit.module)
-        .collect()
-}
-
-fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {
-    let mut slots = Vec::new();
+    let mut modules = Vec::new();
     for unit in units(object) {
         let mut next = Some(unit);
         while let Some(unit) = next {
@@ -228,20 +228,27 @@ fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {
                 ref mut specialized,
                 ..
             } = *unit;
-            slots.extend(
-                module
-                    .functions
-                    .iter_mut()
-                    .map(|(_, function)| &mut function.body),
-            );
-            slots.extend(
-                module
-                    .entry_points
-                    .iter_mut()
-                    .map(|entry| &mut entry.function.body),
-            );
+            modules.push(module);
             next = specialized.as_deref_mut();
         }
+    }
+    modules
+}
+
+fn body_slots(object: &mut ObjectModule) -> Vec<&mut Block> {
+    let mut slots = Vec::new();
+    for module in modules(object) {
+        let rglsl::Module {
+            ref mut functions,
+            ref mut entry_points,
+            ..
+        } = *module;
+        slots.extend(functions.iter_mut().map(|(_, function)| &mut function.body));
+        slots.extend(
+            entry_points
+                .iter_mut()
+                .map(|entry| &mut entry.function.body),
+        );
     }
     slots
 }

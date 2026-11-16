@@ -180,7 +180,7 @@ impl Analyzer<'_> {
         if opaque.sampled != crate::types::SampledType::Float {
             return;
         }
-        let value_index = if opaque.multisample { 3 } else { 2 };
+        let value_index = opaque.image_atomic_value_index();
         let half_vector = !matches!(operation, AtomicOperation::Load)
             && operands.get(value_index).is_some_and(|operand| {
                 operand.ty.is_vector() && operand.ty.base_scalar() == Some(Scalar::Float16)
@@ -444,21 +444,19 @@ impl Analyzer<'_> {
         ) {
             let execution = value(0);
             let memory = value(1);
-            let vulkan_memory_model = self.vulkan_memory_model;
+            if memory == SCOPE_WORKGROUP {
+                self.tess_control_workgroup_barriers
+                    .push((span, String::from(name)));
+            }
             let reason = |stage: ShaderStage| {
                 if matches!(
                     stage,
-                    ShaderStage::Compute | ShaderStage::Task | ShaderStage::Mesh
+                    ShaderStage::Compute
+                        | ShaderStage::Task
+                        | ShaderStage::Mesh
+                        | ShaderStage::TessControl
                 ) {
                     None
-                } else if stage == ShaderStage::TessControl {
-                    if memory == SCOPE_WORKGROUP && !vulkan_memory_model {
-                        Some(
-                            "the memory scope must not be gl_ScopeWorkgroup in tessellation control shaders without the Vulkan memory model",
-                        )
-                    } else {
-                        None
-                    }
                 } else if execution != SCOPE_SUBGROUP {
                     Some(
                         "the execution scope must be gl_ScopeSubgroup outside compute, mesh, task and tessellation control shaders",
@@ -481,5 +479,20 @@ impl Analyzer<'_> {
             }
         }
         !failed
+    }
+
+    pub(super) fn finish_tess_control_barriers(&mut self) {
+        let barriers = core::mem::take(&mut self.tess_control_workgroup_barriers);
+        if self.vulkan_memory_model {
+            return;
+        }
+        for (span, name) in barriers {
+            self.stage_check(span, |stage| {
+                (stage == ShaderStage::TessControl).then(|| DiagnosticKind::InvalidBuiltinCall {
+                    name: name.clone(),
+                    reason: "the memory scope must not be gl_ScopeWorkgroup in tessellation control shaders without the Vulkan memory model",
+                })
+            });
+        }
     }
 }

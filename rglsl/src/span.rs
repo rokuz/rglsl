@@ -240,17 +240,6 @@ impl<E> WithSpan<E> {
         res
     }
 
-    pub(crate) fn map_spans(mut self, mut map: impl FnMut(Span) -> Span) -> Self {
-        let spans = core::mem::take(&mut self.spans);
-        for (span, description) in spans {
-            let mapped = map(span);
-            if mapped.is_defined() {
-                self.spans.push((mapped, description));
-            }
-        }
-        self
-    }
-
     /// Return a [`SourceLocation`] for our first span, if we have one.
     pub fn location(&self, source: &str) -> Option<SourceLocation> {
         if source.is_empty() {

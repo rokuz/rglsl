@@ -1,4 +1,4 @@
-FORMAT_VERSION 31
+FORMAT_VERSION 33
 AddressSpace ce4f71ddbc8bbd9e
 AmdBarycentric 2aa576db245bdf18
 Arena 283cda9d7570b2b9
@@ -106,7 +106,7 @@ MeshOutputLayout 3a855b7808db3ecf
 MeshOutputTopology 761e235109a9275b
 MeshShaderInfo 8c77766328b43f32
 MicroTriangleVertexValue a44f088bad914637
-Module 6357597f521e3663
+Module 7ab4ec8374153ec4
 ModuleSpans 01cf410f8f5b67b9
 NamedExpressions ef68b8e46f50368c
 NonMaxU32 199642326e90593c
@@ -143,6 +143,10 @@ ShaderBallot 7f62a3d3a6b03638
 ShaderCore abe6373ac2c686f4
 ShaderStage dbddeb7644ff6040
 ShaderStageMask f4ee0f42e2edd812
+SpanMap 600830c2d044dbdc
+SpanParts 0919ffef7cf82cbb
+SpanSources 17a2ed3c5272def8
+SpanUnit c24496e2ddb3bf5d
 SpecialTypes cf63a43020a6baca
 SpirvDecoration 95c6d531f069c581
 SpirvDecorationOperands bb484e6f32e2c120

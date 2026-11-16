@@ -139,6 +139,8 @@ pub struct Validator {
     /// constant expressions as errors.
     overrides_resolved: bool,
 
+    uniform_buffer_unsized_arrays: bool,
+
     /// A checklist of expressions that must be visited by a specific kind of
     /// statement.
     ///
@@ -350,6 +352,7 @@ impl Validator {
             valid_expression_list: Vec::new(),
             valid_expression_set: HandleSet::new(),
             overrides_resolved: false,
+            uniform_buffer_unsized_arrays: false,
             needs_visit: HandleSet::new(),
         }
     }
@@ -466,7 +469,6 @@ impl Validator {
     ) -> Result<ModuleInfo, WithSpan<ValidationError>> {
         self.overrides_resolved = false;
         self.validate_impl(module)
-            .map_err(|error| error.map_spans(|span| module.resolve_span(span)))
     }
 
     /// Check the given module to be valid, requiring overrides to be resolved.
@@ -482,7 +484,6 @@ impl Validator {
     ) -> Result<ModuleInfo, WithSpan<ValidationError>> {
         self.overrides_resolved = true;
         self.validate_impl(module)
-            .map_err(|error| error.map_spans(|span| module.resolve_span(span)))
     }
 
     fn validate_impl(
@@ -491,6 +492,7 @@ impl Validator {
     ) -> Result<ModuleInfo, WithSpan<ValidationError>> {
         self.reset();
         self.reset_types(module.types.len());
+        self.uniform_buffer_unsized_arrays = module.uniform_buffer_unsized_arrays;
 
         Self::validate_module_handles(module).map_err(|e| e.with_span())?;
 
@@ -630,44 +632,30 @@ impl Validator {
                     .with_span_handle(var_handle, &module.global_variables)
                 })?;
         }
-        if self.mode == ValidationMode::Executable {
-            let shared_block_count = module
-                .global_variables
-                .iter()
-                .filter(|&(_, var)| {
-                    var.space == crate::AddressSpace::WorkGroup
-                        && var.block == Some(crate::BlockDeclaration::Shared)
-                })
-                .count();
-            if shared_block_count > 0
-                && let Some((var_handle, var)) = module.global_variables.iter().find(|&(_, var)| {
-                    var.space == crate::AddressSpace::WorkGroup && var.block.is_none()
-                })
-            {
-                return Err(ValidationError::GlobalVariable {
-                    handle: var_handle,
-                    name: var.name.clone().unwrap_or_default(),
-                    source: GlobalVariableError::MixedWorkGroupLayout,
-                }
-                .with_span_handle(var_handle, &module.global_variables));
+        if self.mode == ValidationMode::Executable
+            && let Some((var_handle, conflict)) = crate::proc::SharedBlocks::of(
+                &module.global_variables,
+                !module.entry_points.is_empty(),
+            )
+            .conflicts()
+            .next()
+        {
+            return Err(ValidationError::GlobalVariable {
+                handle: var_handle,
+                name: module.global_variables[var_handle]
+                    .name
+                    .clone()
+                    .unwrap_or_default(),
+                source: match conflict {
+                    crate::proc::SharedBlockConflict::Mixed => {
+                        GlobalVariableError::MixedWorkGroupLayout
+                    }
+                    crate::proc::SharedBlockConflict::RestrictAliased => {
+                        GlobalVariableError::RestrictOnAliasedWorkGroupBlock
+                    }
+                },
             }
-            if shared_block_count > 1
-                && !module.entry_points.is_empty()
-                && let Some((var_handle, var)) = module.global_variables.iter().find(|&(_, var)| {
-                    var.space == crate::AddressSpace::WorkGroup
-                        && var.block == Some(crate::BlockDeclaration::Shared)
-                        && var
-                            .memory_decorations
-                            .contains(crate::MemoryDecorations::RESTRICT)
-                })
-            {
-                return Err(ValidationError::GlobalVariable {
-                    handle: var_handle,
-                    name: var.name.clone().unwrap_or_default(),
-                    source: GlobalVariableError::RestrictOnAliasedWorkGroupBlock,
-                }
-                .with_span_handle(var_handle, &module.global_variables));
-            }
+            .with_span_handle(var_handle, &module.global_variables));
         }
 
         for (handle, fun) in module.functions.iter() {

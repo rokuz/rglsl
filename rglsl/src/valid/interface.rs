@@ -1307,8 +1307,7 @@ impl super::Validator {
             && var.io == Some(crate::Binding::BuiltIn(crate::BuiltIn::RayTCurrentMax));
         let volatile_input = var.space == crate::AddressSpace::Input
             && var.memory_decorations == crate::MemoryDecorations::VOLATILE;
-        let workgroup_block_memory = var.space == crate::AddressSpace::WorkGroup
-            && var.block == Some(crate::BlockDeclaration::Shared)
+        let workgroup_block_memory = var.is_shared_block()
             && !var.memory_decorations.intersects(
                 crate::MemoryDecorations::NON_WRITABLE | crate::MemoryDecorations::NON_READABLE,
             );
@@ -1506,10 +1505,11 @@ impl super::Validator {
         if !matches!(
             ep.stage,
             crate::ShaderStage::Compute | crate::ShaderStage::Mesh | crate::ShaderStage::Task
-        ) && module.global_variables.iter().any(|(_, var)| {
-            var.space == crate::AddressSpace::WorkGroup
-                && var.block == Some(crate::BlockDeclaration::Shared)
-        }) {
+        ) && module
+            .global_variables
+            .iter()
+            .any(|(_, var)| var.is_shared_block())
+        {
             return Err(EntryPointError::ForbiddenStageOperations.with_span());
         }
 

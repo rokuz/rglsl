@@ -163,6 +163,13 @@ pub struct BuiltinVariable {
     pub(crate) precision: Option<PrecisionQualifier>,
     pub(crate) stages: ShaderStageMask,
     pub(crate) since: u32,
+    pub vulkan_forbidden: Option<VulkanForbidden>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VulkanForbidden {
+    pub stages: ShaderStageMask,
+    pub reason: &'static str,
 }
 
 const RAY_VOLATILE_STAGES: ShaderStageMask = super::RAY_GENERATION
@@ -186,6 +193,7 @@ impl BuiltinVariable {
         precision: None,
         stages: super::ALL_STAGES,
         since: 450,
+        vulkan_forbidden: None,
     };
 
     pub const fn builtin(&self) -> Option<BuiltIn> {
@@ -357,6 +365,18 @@ pub fn requirement<'a>(
         .find(|row| row.declared_in(version, stage))
         .map(|row| row.requires_one_of)
         .filter(|requires| !requires.is_empty())
+}
+
+pub fn vulkan_forbidden(
+    rows: &[&BuiltinVariable],
+    version: u32,
+    stage: ShaderStage,
+) -> Option<&'static str> {
+    rows.iter()
+        .find(|row| row.declared_in(version, stage))
+        .and_then(|row| row.vulkan_forbidden)
+        .filter(|forbidden| forbidden.stages.has(stage))
+        .map(|forbidden| forbidden.reason)
 }
 
 pub fn blocks_named(name: &str) -> impl Iterator<Item = &'static BuiltinBlock> + '_ {

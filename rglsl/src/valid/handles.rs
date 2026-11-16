@@ -46,12 +46,13 @@ impl super::Validator {
             shader_64bit_indexing: _,
             variable_pointers: _,
             replicated_composites: _,
+            uniform_buffer_unsized_arrays: _,
             legacy_buffer_blocks: _,
             ray_tracing: _,
             spirv_requirements: _,
             source_extensions: _,
             debug_info: _,
-            span_map: _,
+            span_sources: _,
         } = module;
 
         // Because types can refer to global expressions and vice versa, to
