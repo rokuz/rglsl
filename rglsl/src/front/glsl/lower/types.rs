@@ -133,7 +133,38 @@ impl Lowerer<'_> {
         ))
     }
 
-    fn try_fast_ir_type(
+    fn plain_inner(
+        kind: TypeKind,
+        depth: bool,
+        comparison: bool,
+        span: Span,
+    ) -> Option<Result<TypeInner>> {
+        Some(match kind {
+            TypeKind::Scalar(s) => Ok(TypeInner::Scalar(scalar(s))),
+            TypeKind::Vector { scalar: s, size } => vector_size(size)
+                .map(|size| TypeInner::Vector {
+                    size,
+                    scalar: scalar(s),
+                })
+                .ok_or_else(|| internal(span)),
+            TypeKind::Matrix {
+                scalar: s,
+                columns,
+                rows,
+            } => match (vector_size(columns), vector_size(rows)) {
+                (Some(columns), Some(rows)) => Ok(TypeInner::Matrix {
+                    columns,
+                    rows,
+                    scalar: scalar(s),
+                }),
+                _ => Err(internal(span)),
+            },
+            TypeKind::Opaque(opaque) => Self::opaque_inner(opaque, depth, comparison, span),
+            _ => return None,
+        })
+    }
+
+    fn plain_type(
         &mut self,
         ty: &GlslType,
         depth: bool,
@@ -143,41 +174,11 @@ impl Lowerer<'_> {
         if ty.is_array() {
             return None;
         }
-        let inner = match ty.kind {
-            TypeKind::Scalar(s) => TypeInner::Scalar(scalar(s)),
-            TypeKind::Vector { scalar: s, size } => {
-                let Some(size) = vector_size(size) else {
-                    return Some(Err(internal(span)));
-                };
-                TypeInner::Vector {
-                    size,
-                    scalar: scalar(s),
-                }
-            }
-            TypeKind::Matrix {
-                scalar: s,
-                columns,
-                rows,
-            } => {
-                let (Some(columns), Some(rows)) = (vector_size(columns), vector_size(rows)) else {
-                    return Some(Err(internal(span)));
-                };
-                TypeInner::Matrix {
-                    columns,
-                    rows,
-                    scalar: scalar(s),
-                }
-            }
-            TypeKind::Opaque(opaque) => match Self::opaque_inner(opaque, depth, comparison, span) {
-                Ok(inner) => inner,
-                Err(error) => return Some(Err(error)),
-            },
-            TypeKind::Struct(id) => {
-                return self.structs.get(&id).copied().map(Ok);
-            }
-            _ => return None,
-        };
-        Some(Ok(self.insert_type(inner)))
+        if let TypeKind::Struct(id) = ty.kind {
+            return self.structs.get(&id).copied().map(Ok);
+        }
+        let inner = Self::plain_inner(ty.kind, depth, comparison, span)?;
+        Some(inner.map(|inner| self.insert_type(inner)))
     }
 
     pub(super) fn ir_type_with(
@@ -187,7 +188,7 @@ impl Lowerer<'_> {
         comparison: bool,
         span: Span,
     ) -> Result<Handle<Type>> {
-        if let Some(result) = self.try_fast_ir_type(ty, depth, comparison, span) {
+        if let Some(result) = self.plain_type(ty, depth, comparison, span) {
             return result;
         }
         super::function::lowerer_on_heap!(self, |cx| cx.ir_type_with(
@@ -199,7 +200,7 @@ impl Lowerer<'_> {
     }
 
     pub(super) fn ir_type(&mut self, ty: &GlslType, span: Span) -> Result<Handle<Type>> {
-        if let Some(result) = self.try_fast_ir_type(ty, false, false, span) {
+        if let Some(result) = self.plain_type(ty, false, false, span) {
             return result;
         }
         super::function::lowerer_on_heap!(self, |cx| cx.ir_type(ty.clone(), span))
@@ -674,20 +675,11 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     ) -> Result<Handle<Type>> {
         let inner = match kind {
             TypeKind::Error | TypeKind::Void | TypeKind::String => return Err(internal(span)),
-            TypeKind::Scalar(s) => TypeInner::Scalar(scalar(s)),
-            TypeKind::Vector { scalar: s, size } => TypeInner::Vector {
-                size: vector_size(size).ok_or_else(|| internal(span))?,
-                scalar: scalar(s),
-            },
-            TypeKind::Matrix {
-                scalar: s,
-                columns,
-                rows,
-            } => TypeInner::Matrix {
-                columns: vector_size(columns).ok_or_else(|| internal(span))?,
-                rows: vector_size(rows).ok_or_else(|| internal(span))?,
-                scalar: scalar(s),
-            },
+            TypeKind::Scalar(_)
+            | TypeKind::Vector { .. }
+            | TypeKind::Matrix { .. }
+            | TypeKind::Opaque(_) => Lowerer::plain_inner(kind, depth, comparison, span)
+                .ok_or_else(|| internal(span))??,
             TypeKind::Struct(id) => {
                 return {
                     let frame = self.clone().struct_type(id, span);
@@ -703,7 +695,6 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
                     self.nest(frame).await
                 };
             }
-            TypeKind::Opaque(opaque) => Lowerer::opaque_inner(opaque, depth, comparison, span)?,
             TypeKind::CooperativeMatrix(matrix) => TypeInner::CooperativeMatrix {
                 columns: {
                     let frame = self.clone().cooperative_size(matrix.columns, span);

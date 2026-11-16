@@ -113,20 +113,20 @@ pub(super) fn shape(
 }
 
 impl Lowerer<'_> {
+    fn global_literal(&mut self, value: Value, span: Span) -> Handle<Expression> {
+        self.module
+            .global_expressions
+            .append(Expression::Literal(literal(value)), span)
+    }
+
     pub(super) fn global_constant(
         &mut self,
         ty: &GlslType,
         values: &[Value],
         span: Span,
     ) -> Result<Handle<Expression>> {
-        if !ty.is_array()
-            && let TypeKind::Scalar(_) = ty.kind
-        {
-            let value = values.first().copied().ok_or_else(|| internal(span))?;
-            return Ok(self
-                .module
-                .global_expressions
-                .append(Expression::Literal(literal(value)), span));
+        if let Some(Shape::Literal(value)) = shape(ty, values, &self.analysis.types) {
+            return Ok(self.global_literal(value, span));
         }
         super::function::lowerer_on_heap!(self, |cx| cx.global_constant(
             ty.clone(),
@@ -143,16 +143,6 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         values: ConstantValues,
         span: Span,
     ) -> Result<Handle<Expression>> {
-        if !ty.is_array()
-            && let TypeKind::Scalar(_) = ty.kind
-        {
-            let value = values.first().copied().ok_or_else(|| internal(span))?;
-            return self.with(|this| {
-                this.module
-                    .global_expressions
-                    .append(Expression::Literal(literal(value)), span)
-            });
-        }
         let end = values.len();
         let values: alloc::rc::Rc<[Value]> = alloc::rc::Rc::from(values.as_slice());
         self.nest(self.clone().global_constant_part(ty, values, 0..end, span))
@@ -171,11 +161,7 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
         let ty = &ty;
         let analysis = self.with(|this| this.analysis)?;
         match shape(ty, values, &analysis.types).ok_or_else(|| internal(span))? {
-            Shape::Literal(value) => Ok(self.with(|this| {
-                this.module
-                    .global_expressions
-                    .append(Expression::Literal(literal(value)), span)
-            })?),
+            Shape::Literal(value) => self.with(|this| this.global_literal(value, span)),
             Shape::Compose(parts) => {
                 let mut components = Vec::with_capacity(parts.len());
                 for (part, start, size) in parts {

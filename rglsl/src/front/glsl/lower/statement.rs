@@ -64,12 +64,14 @@ impl FunctionLowerer<'_, '_> {
     }
 
     fn unreachable_declaration(&mut self, statement: &Statement) -> Result<()> {
-        match statement.kind {
-            StatementKind::Declaration(ref declaration) => {
-                self.local_declaration(declaration, false)
-            }
-            _ => Ok(()),
+        let StatementKind::Declaration(ref declaration) = statement.kind else {
+            return Ok(());
+        };
+        self.check_local_declaration(declaration)?;
+        for declarator in declarators(declaration) {
+            self.prepare_local_declarator(declarator, false)?;
         }
+        Ok(())
     }
 
     fn jump(&mut self, jump: &JumpStatement, at: crate::Span) -> Result<()> {
@@ -360,7 +362,7 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 
-    fn validate_non_declarator(&self, declaration: &Declaration) -> Result<()> {
+    fn check_local_declaration(&self, declaration: &Declaration) -> Result<()> {
         let at = self.at(declaration.span);
         match declaration.kind {
             DeclarationKind::InitDeclaratorList(_)
@@ -382,61 +384,35 @@ impl FunctionLowerer<'_, '_> {
             }
         }
     }
+}
 
-    fn local_declaration(&mut self, declaration: &Declaration, reachable: bool) -> Result<()> {
-        if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
-            for declarator in &list.declarators {
-                if let Some(prepared) = self.prepare_local_declarator(declarator, reachable)? {
-                    let value = self.initializer(prepared.initializer, &prepared.ty)?;
-                    self.store_local_initializer(prepared.local, prepared.ir, value, prepared.at)?;
-                }
-            }
-            return Ok(());
-        }
-        self.validate_non_declarator(declaration)
+fn declarators(
+    declaration: &Declaration,
+) -> &[rglsl_ast::ast::Node<rglsl_ast::ast::InitDeclarator>] {
+    match declaration.kind {
+        DeclarationKind::InitDeclaratorList(ref list) => &list.declarators,
+        _ => &[],
     }
 }
 
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
     async fn local_declaration(self, declaration: &'b Declaration) -> Result<()> {
-        if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
-            for declarator in &list.declarators {
-                let deferred = self.with(|this| -> Result<_> {
-                    let Some(prepared) = this.prepare_local_declarator(declarator, true)? else {
-                        return Ok(None);
-                    };
-                    if let Some(result) =
-                        this.try_fast_initializer(prepared.initializer, &prepared.ty)
-                    {
-                        let value = result?;
-                        this.store_local_initializer(
-                            prepared.local,
-                            prepared.ir,
-                            value,
-                            prepared.at,
-                        )?;
-                        return Ok(None);
-                    }
-                    Ok(Some(prepared))
-                })??;
-                if let Some(prepared) = deferred {
-                    let value = self
-                        .clone()
-                        .initializer(prepared.initializer, prepared.ty)
-                        .await?;
-                    self.with(|this| {
-                        this.store_local_initializer(
-                            prepared.local,
-                            prepared.ir,
-                            value,
-                            prepared.at,
-                        )
-                    })??;
-                }
-            }
-            return Ok(());
+        self.with(|this| this.check_local_declaration(declaration))??;
+        for declarator in declarators(declaration) {
+            let Some(prepared) =
+                self.with(|this| this.prepare_local_declarator(declarator, true))??
+            else {
+                continue;
+            };
+            let value = self
+                .clone()
+                .initializer(prepared.initializer, prepared.ty)
+                .await?;
+            self.with(|this| {
+                this.store_local_initializer(prepared.local, prepared.ir, value, prepared.at)
+            })??;
         }
-        self.with(|this| this.validate_non_declarator(declaration))?
+        Ok(())
     }
 
     pub(super) async fn statements(self, statements: &'b [Statement]) -> Result<()> {

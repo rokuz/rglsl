@@ -7,6 +7,7 @@ use rglsl_ast::ast::{
 use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType, TypeKind};
 use rglsl_sema::{Callee, ExpressionInfo};
+use rglsl_types::stack::InlineDepth;
 
 use super::constant::{Shape, literal, shape};
 use super::function::{FunctionLowerer, Local};
@@ -98,194 +99,182 @@ pub(super) const fn compound(operator: AssignmentOperator) -> Option<AstBinary> 
 }
 
 impl<'a> FunctionLowerer<'_, 'a> {
-    pub(super) fn try_fast_place(&mut self, expression: &AstExpression) -> Option<Result<Place>> {
-        let ExpressionKind::Variable(_) = expression.kind else {
-            return None;
+    pub(super) fn local_chain(&mut self, local: Local, at: Span) -> Option<Result<Chain>> {
+        let (expression, place) = match local {
+            Local::Variable(handle) => (Expression::LocalVariable(handle), true),
+            Local::Pointer(index) => (Expression::FunctionArgument(index), true),
+            Local::Value(index) => (Expression::FunctionArgument(index), false),
+            Local::Constant => return None,
         };
-        let at = self.at(expression.span);
-        let symbol = *self.lw.analysis.references.get(&expression.id)?;
-        let local = self.variables.get(&symbol).copied()?;
-        let head = match local {
-            Local::Variable(handle) => match self.add(Expression::LocalVariable(handle), at) {
-                Ok(pointer) => Chain::Place(Place::pointer(pointer, false)),
-                Err(error) => return Some(Err(error)),
-            },
-            Local::Pointer(index) => match self.add(Expression::FunctionArgument(index), at) {
-                Ok(pointer) => Chain::Place(Place::pointer(pointer, false)),
-                Err(error) => return Some(Err(error)),
-            },
-            Local::Value(_) | Local::Constant => return None,
-        };
-        Some(match self.chain_marked(expression, head) {
-            Ok(Chain::Place(place)) => Ok(place),
-            Ok(Chain::Value(_)) => Err(semantic("the expression is not an l-value", at)),
-            Err(error) => Err(error),
-        })
+        Some(self.add(expression, at).map(|handle| {
+            if place {
+                Chain::Place(Place::pointer(handle, false))
+            } else {
+                Chain::Value(handle)
+            }
+        }))
     }
 
-    fn can_fast_typed(&self, expression: &AstExpression, depth: u8) -> bool {
-        let Some(info) = self.lw.analysis.expression(expression.id) else {
+    fn flat_local(&self, expression: &AstExpression) -> Option<Local> {
+        let symbol = self.lw.analysis.references.get(&expression.id)?;
+        self.variables
+            .get(symbol)
+            .copied()
+            .filter(|local| !matches!(local, Local::Constant))
+    }
+
+    fn is_flat(&self, expression: &AstExpression, depth: InlineDepth) -> bool {
+        let Ok(info) = self.info(expression) else {
             return false;
         };
         if info.is_specialization {
             return false;
         }
-        if info.is_constant
-            && info.value.is_some()
-            && !info.ty.contains_reference(&self.lw.analysis.types)
-        {
+        if self.folds(expression).is_ok_and(|folds| folds) {
             return true;
         }
         if let ExpressionKind::Variable(_) = expression.kind {
-            return self
-                .lw
-                .analysis
-                .references
-                .get(&expression.id)
-                .and_then(|symbol| self.variables.get(symbol))
-                .is_some_and(|local| !matches!(local, Local::Constant));
+            return self.flat_local(expression).is_some();
         }
-        if depth == 0 {
+        let Some(nested) = depth.nested() else {
             return false;
-        }
-        let next = depth - 1;
+        };
         match expression.kind {
             ExpressionKind::Parenthesized(ref inner) => {
-                self.lw
-                    .analysis
-                    .expression(inner.id)
-                    .is_some_and(|inner_info| {
-                        !inner_info.ty.is_void() && !inner_info.ty.is_string()
-                    })
-                    && self.can_fast_typed(inner, next)
+                self.info(inner)
+                    .is_ok_and(|inner| !inner.ty.is_void() && !inner.ty.is_string())
+                    && self.is_flat(inner, nested)
             }
             ExpressionKind::Binary {
                 operator,
                 ref left,
                 ref right,
             } if !matches!(operator, AstBinary::LogicalAnd | AstBinary::LogicalOr) => {
-                self.can_fast_typed(left, next) && self.can_fast_typed(right, next)
+                self.is_flat(left, nested) && self.is_flat(right, nested)
             }
             _ => false,
         }
     }
 
-    fn eval_fast_typed(
-        &mut self,
-        expression: &AstExpression,
-    ) -> Result<(Handle<Expression>, GlslType)> {
+    fn flat_typed(&mut self, expression: &AstExpression) -> Result<(Handle<Expression>, GlslType)> {
+        self.stepped = None;
+        let value = match self.folded_value(expression)? {
+            Some(value) => value,
+            None => self.flat_value(expression)?,
+        };
+        self.passed_on(expression, Some(value))
+    }
+
+    fn flat_value(&mut self, expression: &AstExpression) -> Result<Handle<Expression>> {
         let at = self.at(expression.span);
-        let info = self.info(expression)?;
-        if info.is_constant
-            && !info.ty.contains_reference(&self.lw.analysis.types)
-            && let Some(ref value) = info.value
-        {
-            self.stepped = None;
-            let lowered = self.constant(&info.ty, &value.values, at)?;
-            let flagged = self.flagged(expression, Some(lowered))?;
-            return self.typed_value(expression, flagged);
-        }
         match expression.kind {
             ExpressionKind::Variable(_) => {
-                let symbol = *self
-                    .lw
-                    .analysis
-                    .references
-                    .get(&expression.id)
-                    .ok_or_else(|| internal(at))?;
-                let local = self
-                    .variables
-                    .get(&symbol)
-                    .copied()
-                    .ok_or_else(|| internal(at))?;
-                self.stepped = None;
-                let head = match local {
-                    Local::Variable(handle) => {
-                        let pointer = self.add(Expression::LocalVariable(handle), at)?;
-                        Chain::Place(Place::pointer(pointer, false))
-                    }
-                    Local::Pointer(index) => {
-                        let pointer = self.add(Expression::FunctionArgument(index), at)?;
-                        Chain::Place(Place::pointer(pointer, false))
-                    }
-                    Local::Value(index) => {
-                        let value = self.add(Expression::FunctionArgument(index), at)?;
-                        Chain::Value(value)
-                    }
-                    Local::Constant => return Err(internal(at)),
-                };
-                let marked = self.chain_marked(expression, head)?;
-                let loaded = self.chain_loaded(expression, marked, at)?;
-                let flagged = self.flagged(expression, Some(loaded))?;
-                self.typed_value(expression, flagged)
+                let local = self.flat_local(expression).ok_or_else(|| internal(at))?;
+                let head = self.local_chain(local, at).ok_or_else(|| internal(at))??;
+                let chain = self.chain_marked(expression, head)?;
+                self.chain_loaded(expression, chain, at)
             }
             ExpressionKind::Parenthesized(ref inner) => {
-                let (value, _) = self.eval_fast_typed(inner)?;
-                let flagged = self.flagged(expression, Some(value))?;
-                self.typed_value(expression, flagged)
+                self.flat_typed(inner).map(|(value, _)| value)
             }
             ExpressionKind::Binary {
                 operator,
                 ref left,
                 ref right,
             } => {
-                let left = self.eval_fast_typed(left)?;
-                let right = self.eval_fast_typed(right)?;
-                let value = self.binary_typed(operator, left, right, at)?;
-                if self.info(expression)?.non_uniform {
-                    self.mark_operation(value);
-                }
-                let flagged = self.flagged(expression, Some(value))?;
-                self.typed_value(expression, flagged)
+                let left = self.flat_typed(left)?;
+                let right = self.flat_typed(right)?;
+                self.binary_node(expression, operator, left, right, at)
             }
             _ => Err(internal(at)),
         }
     }
 
-    pub(super) fn try_fast_typed(
+    pub(super) fn flat_typed_expression(
         &mut self,
         expression: &AstExpression,
     ) -> Option<Result<(Handle<Expression>, GlslType)>> {
-        if !self.can_fast_typed(expression, 5) {
+        if !self.lw.flat_expressions || !self.is_flat(expression, InlineDepth::MAX) {
             return None;
         }
-        Some(self.eval_fast_typed(expression))
+        Some(self.flat_typed(expression))
     }
 
-    pub(super) fn try_fast_initializer(
-        &mut self,
-        initializer: &Spanned<Initializer>,
-        ty: &GlslType,
-    ) -> Option<Result<Handle<Expression>>> {
-        let Initializer::Expression(ref expression) = initializer.node else {
+    pub(super) fn flat_place(&mut self, expression: &AstExpression) -> Option<Result<Place>> {
+        if !self.lw.flat_expressions || !matches!(expression.kind, ExpressionKind::Variable(_)) {
             return None;
-        };
-        let result = self.try_fast_typed(expression)?;
-        let at = self.at(initializer.span);
-        Some(result.and_then(|(value, from)| {
-            if from.dimensions().len() == ty.dimensions().len() && from.kind == ty.kind {
-                Ok(value)
-            } else {
-                self.convert(value, &from, ty, at)
-            }
-        }))
+        }
+        let local = self.flat_local(expression)?;
+        let at = self.at(expression.span);
+        let head = self.local_chain(local, at)?;
+        Some(
+            head.and_then(|head| match self.chain_marked(expression, head)? {
+                Chain::Place(place) => Ok(place),
+                Chain::Value(_) => Err(semantic("the expression is not an l-value", at)),
+            }),
+        )
+    }
+
+    pub(super) fn binary_node(
+        &mut self,
+        node: &AstExpression,
+        operator: AstBinary,
+        left: (Handle<Expression>, GlslType),
+        right: (Handle<Expression>, GlslType),
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let value = self.binary_typed(operator, left, right, at)?;
+        self.marked_operation(node, value)
+    }
+
+    pub(super) fn marked_operation(
+        &mut self,
+        node: &AstExpression,
+        value: Handle<Expression>,
+    ) -> Result<Handle<Expression>> {
+        if self.info(node)?.non_uniform {
+            self.mark_operation(value);
+        }
+        Ok(value)
     }
 
     pub(super) fn typed(
         &mut self,
         expression: &AstExpression,
     ) -> Result<(Handle<Expression>, GlslType)> {
-        if let Some(result) = self.try_fast_typed(expression) {
+        if let Some(result) = self.flat_typed_expression(expression) {
             return result;
         }
-        super::function::on_heap!(self, |cx| cx.typed(expression))
+        super::function::on_heap!(self, |cx| cx.nested_typed(expression))
     }
 
     pub(super) fn rvalue(&mut self, expression: &AstExpression) -> Result<Handle<Expression>> {
-        if let Some(result) = self.try_fast_typed(expression) {
-            return result.map(|(value, _)| value);
+        self.typed(expression).map(|(value, _)| value)
+    }
+
+    fn initialized(
+        &mut self,
+        (value, from): (Handle<Expression>, GlslType),
+        ty: &GlslType,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        if from.dimensions().len() == ty.dimensions().len() && from.kind == ty.kind {
+            return Ok(value);
         }
-        super::function::on_heap!(self, |cx| cx.rvalue(expression))
+        self.convert(value, &from, ty, at)
+    }
+
+    pub(super) fn initializer(
+        &mut self,
+        initializer: &Spanned<Initializer>,
+        ty: &GlslType,
+    ) -> Result<Handle<Expression>> {
+        if let Initializer::Expression(ref expression) = initializer.node {
+            let typed = self.typed(expression)?;
+            let at = self.at(initializer.span);
+            return self.initialized(typed, ty, at);
+        }
+        super::function::on_heap!(self, |cx| cx.initializer(initializer, ty.clone()))
     }
 
     fn relayout(
@@ -296,24 +285,6 @@ impl<'a> FunctionLowerer<'_, 'a> {
         at: Span,
     ) -> Result<Handle<Expression>> {
         super::function::on_heap!(self, |cx| cx.relayout(value, from, to, at))
-    }
-
-    pub(super) fn initializer(
-        &mut self,
-        initializer: &Spanned<Initializer>,
-        ty: &GlslType,
-    ) -> Result<Handle<Expression>> {
-        if let Initializer::Expression(ref expression) = initializer.node
-            && let Some(result) = self.try_fast_typed(expression)
-        {
-            let (value, from) = result?;
-            if from.dimensions().len() == ty.dimensions().len() && from.kind == ty.kind {
-                return Ok(value);
-            }
-            let at = self.at(initializer.span);
-            return self.convert(value, &from, ty, at);
-        }
-        super::function::on_heap!(self, |cx| cx.initializer(initializer, ty.clone()))
     }
 
     fn equality(
@@ -1759,28 +1730,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<(Handle<Expression>, GlslType)> {
-        if let Some(result) = self.with(|this| this.try_fast_typed(expression))? {
+        if let Some(result) = self.with(|this| this.flat_typed_expression(expression))? {
             return result;
         }
-        let frame = self.clone().typed(expression);
+        let frame = self.clone().nested_typed(expression);
         self.nest(frame).await
     }
 
-    pub(super) async fn rvalue_child(
-        self,
-        expression: &'b AstExpression,
-    ) -> Result<Handle<Expression>> {
-        self.clone()
-            .typed_child(expression)
-            .await
-            .map(|(value, _)| value)
-    }
-
     pub(super) async fn place_child(self, expression: &'b AstExpression) -> Result<Place> {
-        if let Some(result) = self.with(|this| this.try_fast_place(expression))? {
+        if let Some(result) = self.with(|this| this.flat_place(expression))? {
             return result;
         }
-        let frame = self.clone().place(expression);
+        let frame = self.clone().nested_place(expression);
         self.nest(frame).await
     }
 
@@ -1788,18 +1749,23 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<(Handle<Expression>, GlslType)> {
-        if let Some(result) = self.with(|this| this.try_fast_typed(expression))? {
+        if let Some(result) = self.with(|this| this.flat_typed_expression(expression))? {
             return result;
         }
+        self.clone().nested_typed(expression).await
+    }
+
+    pub(super) async fn nested_typed(
+        self,
+        expression: &'b AstExpression,
+    ) -> Result<(Handle<Expression>, GlslType)> {
         let value = self.clone().value(expression).await?;
         self.with(|this| this.typed_value(expression, value))?
     }
 
     pub(super) async fn rvalue(self, expression: &'b AstExpression) -> Result<Handle<Expression>> {
-        if let Some(result) = self.with(|this| this.try_fast_typed(expression))? {
-            return result.map(|(value, _)| value);
-        }
-        self.nest(self.clone().typed(expression))
+        self.clone()
+            .typed_child(expression)
             .await
             .map(|(value, _)| value)
     }
@@ -1979,13 +1945,17 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             };
         }
-        self.clone().rvalue_child(expression).await.map(Some)
+        self.clone().rvalue(expression).await.map(Some)
     }
 
     pub(super) async fn place(self, expression: &'b AstExpression) -> Result<Place> {
-        if let Some(result) = self.with(|this| this.try_fast_place(expression))? {
+        if let Some(result) = self.with(|this| this.flat_place(expression))? {
             return result;
         }
+        self.clone().nested_place(expression).await
+    }
+
+    async fn nested_place(self, expression: &'b AstExpression) -> Result<Place> {
         let maybe_swizzle = matches!(
             super::prepass::strip(expression).kind,
             ExpressionKind::Subscript { .. }
@@ -2111,30 +2081,16 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             .get(&expression.id)
             .ok_or_else(|| internal(at))?;
         if let Some(local) = self.with(|this| this.variables.get(&symbol).copied())? {
-            return Ok(match local {
-                Local::Variable(handle) => Chain::Place(Place::pointer(
-                    self.with(|this| this.add(Expression::LocalVariable(handle), at))??,
-                    false,
-                )),
-                Local::Pointer(index) => Chain::Place(Place::pointer(
-                    self.with(|this| this.add(Expression::FunctionArgument(index), at))??,
-                    false,
-                )),
-                Local::Value(index) => Chain::Value(
-                    self.with(|this| this.add(Expression::FunctionArgument(index), at))??,
-                ),
-                Local::Constant => {
-                    let variable =
-                        self.with(|this| this.lw.variable(symbol).ok_or_else(|| internal(at)))??;
-                    let value = variable.value.as_ref().ok_or_else(|| internal(at))?;
-                    Chain::Value({
-                        let frame = self
-                            .clone()
-                            .constant(variable.ty.clone(), &value.values, at);
-                        self.nest(frame).await
-                    }?)
-                }
-            });
+            if let Some(chain) = self.with(|this| this.local_chain(local, at))? {
+                return chain;
+            }
+            let variable =
+                self.with(|this| this.lw.variable(symbol).ok_or_else(|| internal(at)))??;
+            let value = variable.value.as_ref().ok_or_else(|| internal(at))?;
+            let frame = self
+                .clone()
+                .constant(variable.ty.clone(), &value.values, at);
+            return Ok(Chain::Value(self.nest(frame).await?));
         }
         if let Some(&rglsl_sema::scope::SymbolKind::BlockMember { instance, index }) =
             self.with(|this| this.lw.symbol(symbol).map(|symbol| &symbol.kind))?
@@ -2766,11 +2722,8 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         let at = self.with(|this| this.at(initializer.span))?;
         match initializer.node {
             Initializer::Expression(ref expression) => {
-                let (value, from) = self.clone().typed(expression).await?;
-                if from.dimensions().len() == ty.dimensions().len() && from.kind == ty.kind {
-                    return Ok(value);
-                }
-                self.with(|this| this.convert(value, &from, ty, at))?
+                let typed = self.clone().typed(expression).await?;
+                self.with(|this| this.initialized(typed, ty, at))?
             }
             Initializer::List(ref items) if items.is_empty() => {
                 let ty = self.with(|this| this.lw.ir_type(ty, at))??;

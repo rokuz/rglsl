@@ -25,6 +25,9 @@ mod tensor;
 mod types;
 mod xfb;
 
+#[cfg(test)]
+mod tests;
+
 use alloc::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -1159,6 +1162,22 @@ pub(super) struct Lowerer<'a> {
     pub(super) automatic_bindings: Vec<(Handle<GlobalVariable>, Option<u32>)>,
     pub(super) declared_local_size: [Option<u32>; 3],
     pub(super) debug: Option<DebugCollector>,
+    pub(super) flat_expressions: bool,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static FLAT_EXPRESSIONS: core::cell::Cell<bool> = const { core::cell::Cell::new(true) };
+}
+
+#[cfg(test)]
+fn flat_expressions() -> bool {
+    FLAT_EXPRESSIONS.with(core::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+const fn flat_expressions() -> bool {
+    true
 }
 
 impl<'a> Lowerer<'a> {
@@ -1173,6 +1192,7 @@ impl<'a> Lowerer<'a> {
     ) -> Self {
         Self {
             source_map,
+            flat_expressions: flat_expressions(),
             unit,
             analysis,
             options,
