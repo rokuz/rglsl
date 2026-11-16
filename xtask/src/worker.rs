@@ -109,7 +109,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     if let Some(unknown) = extra.iter().find(|option| {
         !matches!(
             option.as_str(),
-            "--invert-y" | "--nan-clamp" | "--discard-is-terminate"
+            "--invert-y" | "--nan-clamp" | "--discard-is-terminate" | "--auto-sampled-textures"
         )
     }) {
         diagnostic("options", None, &format!("unknown option `{unknown}`"));
@@ -119,6 +119,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         invert_y: has("--invert-y"),
         nan_clamp: has("--nan-clamp"),
         discard_is_terminate: has("--discard-is-terminate"),
+        auto_sampled_textures: has("--auto-sampled-textures"),
         auto_map_bindings: auto_map,
         auto_map_locations: auto_map,
         spirv_version: Some(lang_version),

@@ -411,7 +411,7 @@ fn once(
         Some(reused) => reused,
         None => {
             let preprocessed = preprocess(options, Some(first), source, root, includer);
-            let (unit, failure) = rglsl_ast::parse_prefix(preprocessed.text.as_str());
+            let (unit, failure) = super::parse_unit(options, preprocessed.text.as_str());
             (preprocessed, unit, failure.is_some())
         }
     };

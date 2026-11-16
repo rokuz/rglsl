@@ -533,3 +533,30 @@ fn validate_io_rejects_inputs_without_outputs() -> TestResult {
     assert!(text.contains("statically used input: tint"), "{text}");
     Ok(())
 }
+
+#[test]
+fn auto_sampled_textures_option() -> TestResult {
+    let compiler = compiler()?;
+    let fragment = options(c"separate.frag", RGLSL_STAGE_FRAGMENT)?;
+    let code =
+        unsafe { rglsl_c::rglsl_compile_options_set_auto_sampled_textures(fragment.pointer, true) };
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let source = c"#version 450
+layout(binding = 0) uniform texture2D image;
+layout(binding = 1) uniform sampler linear;
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+void main() {
+    color = texture(sampler2D(image, linear), uv);
+}
+";
+    let program_options = program_options()?;
+    let (code, program, _) = build(&compiler, &[source], &[&fragment], &program_options);
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let program = Owned::new(program, rglsl_c::rglsl_program_destroy)?;
+    let text = disassembly(&spirv(&program, 0)?)?;
+    assert!(text.contains("TypeSampledImage"), "{text}");
+    assert!(!text.contains("TypeSampler"), "{text}");
+    assert!(!text.contains("linear"), "{text}");
+    Ok(())
+}

@@ -108,6 +108,7 @@ pub struct CompileOptions {
     pub discard_is_terminate: bool,
     pub no_storage_format: bool,
     pub enhanced_messages: bool,
+    pub auto_sampled_textures: bool,
 }
 
 impl CompileOptions {
@@ -145,6 +146,7 @@ impl CompileOptions {
             discard_is_terminate: false,
             no_storage_format: false,
             enhanced_messages: false,
+            auto_sampled_textures: false,
         }
     }
 
@@ -271,6 +273,7 @@ impl CompileOptions {
             invert_y: self.invert_y,
             nan_clamp: self.nan_clamp,
             discard_is_terminate: self.discard_is_terminate,
+            auto_sampled_textures: self.auto_sampled_textures,
             ..glsl::Options::from(self.stage.unwrap_or(ShaderStage::Compute))
         }
     }

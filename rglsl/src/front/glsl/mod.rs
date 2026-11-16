@@ -74,6 +74,7 @@ pub struct Options {
     pub invert_y: bool,
     pub nan_clamp: bool,
     pub discard_is_terminate: bool,
+    pub auto_sampled_textures: bool,
     pub builtin_tables: Arc<dyn BuiltinTables + Send + Sync>,
 }
 
@@ -98,6 +99,7 @@ impl From<ShaderStage> for Options {
             invert_y: false,
             nan_clamp: false,
             discard_is_terminate: false,
+            auto_sampled_textures: false,
             builtin_tables: Arc::new(FreshTables),
         }
     }

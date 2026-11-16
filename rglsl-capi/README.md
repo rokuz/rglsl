@@ -62,6 +62,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_compile_options_set_keep_uncalled`, `_set_hlsl_offsets`, `_set_export_functions`, `_set_suppress_warnings`, `_set_limits` | `--ku`, `--hlsl-offsets`, `--no-link`, `-w`, `.conf` |
 | `rglsl_compile_options_set_invert_y`, `_set_nan_clamp`, `_set_discard_is_terminate`, `_set_no_storage_format` | `--invert-y`, `--nan-clamp`, `--discard-is-terminate`, `--nsf` |
 | `rglsl_compile_options_set_enhanced_messages` | `--enhanced-msgs`: only the first error of a compilation |
+| `rglsl_compile_options_set_auto_sampled_textures` | `--auto-sampled-textures`: textures become combined samplers, sampler variables are removed |
 | `rglsl_compile_options_set_includer(options, callback, user_data)` | the include callback, `NULL` to remove it |
 | `rglsl_include_result_set(result, name, source)` | called by the callback to resolve the include |
 | `rglsl_compile(source, options, &object, &diagnostics)` | GLSL text to an object |

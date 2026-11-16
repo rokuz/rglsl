@@ -1105,6 +1105,55 @@ fn deep_debug_info_compiles_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn auto_sampled_textures_on_a_small_stack(depth: usize) -> TestResult {
+    let globals = "layout(binding = 0) uniform texture2D tx;\n\
+                   layout(binding = 1) uniform sampler sm;\n\
+                   vec4 g(texture2D x, sampler y, vec4 a) { return a + texture(sampler2D(x, y), vec2(0.5)); }\n";
+    let sample = "texture(sampler2D(tx, sm), vec2(0.5))";
+    let sources = [
+        (
+            "statements",
+            shader(
+                globals,
+                &format!(
+                    "{}v += {sample};{}",
+                    "if (t) { ".repeat(depth),
+                    " }".repeat(depth)
+                ),
+            ),
+        ),
+        (
+            "expressions",
+            shader(
+                globals,
+                &format!("v = {}{sample}{};", "(".repeat(depth), ")".repeat(depth)),
+            ),
+        ),
+        (
+            "calls",
+            shader(
+                globals,
+                &format!("v = {}v{};", "g(tx, sm, ".repeat(depth), ")".repeat(depth)),
+            ),
+        ),
+    ];
+    for (name, source) in sources {
+        let outcome = on_small_stack(move || {
+            let options = Options {
+                auto_sampled_textures: true,
+                ..Options::from(ShaderStage::Fragment)
+            };
+            direct(&options, &source, Includes::None)
+        })?;
+        assert_eq!(
+            outcome,
+            Outcome::Compiled,
+            "auto-sampled textures, {name} at {depth}"
+        );
+    }
+    Ok(())
+}
+
 type Group = (fn(usize) -> TestResult, usize);
 
 fn every_kind(depth: usize) -> Vec<Group> {
@@ -1125,6 +1174,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
         ),
         (deep_object_files_link_on_a_small_stack, depth),
         (deep_debug_info_compiles_on_a_small_stack, depth),
+        (auto_sampled_textures_on_a_small_stack, depth),
     ])
 }
 

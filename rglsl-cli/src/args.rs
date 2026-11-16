@@ -54,6 +54,7 @@ pub struct Options {
     pub no_storage_format: bool,
     pub enhanced_messages: bool,
     pub validate_io: bool,
+    pub auto_sampled_textures: bool,
     pub shifts: Vec<Shift>,
     pub resource_sets: Vec<ResourceSet>,
     pub quiet: bool,
@@ -390,12 +391,7 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         }
         "invert-y" | "iy" => options.invert_y = true,
         "nan-clamp" => options.nan_clamp = true,
-        "auto-sampled-textures" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "converting textures to sampled textures",
-            ));
-        }
+        "auto-sampled-textures" => options.auto_sampled_textures = true,
         "no-storage-format" | "nsf" => options.no_storage_format = true,
         "discard-is-terminate" => options.discard_is_terminate = true,
         "enhanced-msgs" => options.enhanced_messages = true,

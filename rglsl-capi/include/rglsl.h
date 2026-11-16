@@ -305,6 +305,9 @@ rglsl_result rglsl_program_options_set_suppress_warnings(rglsl_program_options *
 rglsl_result rglsl_compile_options_set_enhanced_messages(rglsl_compile_options *options,
                                                          bool enabled);
 
+rglsl_result rglsl_compile_options_set_auto_sampled_textures(rglsl_compile_options *options,
+                                                             bool enabled);
+
 rglsl_result rglsl_compile_options_set_invert_y(rglsl_compile_options *options, bool enabled);
 
 rglsl_result rglsl_compile_options_set_nan_clamp(rglsl_compile_options *options, bool enabled);

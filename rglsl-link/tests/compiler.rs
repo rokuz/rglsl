@@ -416,3 +416,42 @@ fn validate_io_needs_an_output_for_every_input_read() {
         "ERROR: tinted.frag:6: Linking fragment and vertex stages: Preceding stage has no matching declaration for statically used input: tint"
     );
 }
+
+#[test]
+fn auto_sampled_textures_combine_textures_and_drop_samplers() -> TestResult {
+    let source = "#version 450
+layout(set = 0, binding = 0) uniform texture2D textures[2];
+layout(set = 0, binding = 1) uniform sampler samplers[2];
+layout(set = 0, binding = 2) uniform sampler single;
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+vec4 fetch(texture2D t, sampler s, vec2 p) { return texture(sampler2D(t, s), p); }
+void main() {
+    color = fetch(textures[0], samplers[1], uv) + texture(sampler2D(textures[1], single), uv);
+}
+";
+    let mut options = CompileOptions::new("separate.frag", ShaderStage::Fragment);
+    options.auto_sampled_textures = true;
+    let object = compile(source, &options)?;
+    let module = &object.unit.module;
+    let samplers = module
+        .global_variables
+        .iter()
+        .filter(|&(_, global)| {
+            let mut ty = global.ty;
+            while let rglsl::TypeInner::Array { base, .. } = module.types[ty].inner {
+                ty = base;
+            }
+            matches!(module.types[ty].inner, rglsl::TypeInner::Sampler { .. })
+        })
+        .count();
+    assert_eq!(samplers, 0);
+    let combined = module
+        .types
+        .iter()
+        .any(|(_, ty)| matches!(ty.inner, rglsl::TypeInner::SampledImage { .. }));
+    assert!(combined);
+    let program = link_spirv(&[object], &ProgramOptions::default())?;
+    assert_eq!(program.stages.len(), 1);
+    Ok(())
+}

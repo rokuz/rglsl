@@ -69,6 +69,8 @@ Options:
                                     explicit bindings
   --auto-map-locations | --aml      automatically locate input/output lacking
                                     'location'
+  --auto-sampled-textures           removes sampler variables and converts
+                                    existing textures to sampled textures
   --client vulkan100                see -V
   --depfile <file>                  writes depfile for build systems
   --discard-is-terminate            map GLSL discard to OpTerminateInvocation
