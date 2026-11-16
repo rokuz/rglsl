@@ -200,6 +200,72 @@ fn corrupted_object_files_are_rejected_when_decoded() -> TestResult {
 }
 
 #[test]
+fn malformed_object_files_are_rejected_with_a_position() -> TestResult {
+    let text = encode(&object(ShaderStage::Fragment, MAIN)?)?;
+    let version = format!("(format_version:{},", rglsl::object::FORMAT_VERSION);
+    let cases = [
+        (
+            version.clone(),
+            format!("{version}color:1,"),
+            "unknown field `color` of `File`",
+        ),
+        (
+            version.clone(),
+            format!("{version}format_version:1,"),
+            "duplicate field `format_version` of `File`",
+        ),
+        (
+            String::from("early_fragment_tests:false"),
+            String::from("early_fragment_tests:0"),
+            "expected `true` or `false`, found `0`",
+        ),
+        (
+            String::from("target:Stage(Fragment)"),
+            String::from("target:Stage(Fragmentation)"),
+            "unknown variant `Fragmentation` of `ShaderStage`",
+        ),
+        (
+            String::from(",name:\"helper\""),
+            String::from(",name:helper"),
+            "expected `\"`, found `h`",
+        ),
+        (
+            String::from(",signature:"),
+            String::from(",signatures:"),
+            "unknown field `signatures` of `FunctionSymbol`",
+        ),
+        (
+            String::from("target:Stage(Fragment),"),
+            String::new(),
+            "missing field `target` of `ObjectModule`",
+        ),
+    ];
+    for (from, to, expected) in cases {
+        assert!(text.contains(&from), "{from}");
+        let malformed = text.replacen(&from, &to, 1);
+        match decode(&malformed) {
+            Err(rglsl_link::FileError::Decode(message)) => {
+                assert!(message.contains(expected), "{message}");
+                assert!(message.contains(" at line 1, column "), "{message}");
+            }
+            other => panic!("{to}: {other:?}"),
+        }
+    }
+    for (end, _) in text.char_indices().step_by(97) {
+        let prefix = text.get(..end).unwrap_or_default();
+        assert!(
+            matches!(decode(prefix), Err(rglsl_link::FileError::Decode(_))),
+            "a prefix of {end} bytes"
+        );
+    }
+    assert!(matches!(
+        decode(&format!("{text})")),
+        Err(rglsl_link::FileError::Decode(message)) if message.contains("expected the end of the input")
+    ));
+    Ok(())
+}
+
+#[test]
 fn reports_every_missing_reachable_definition() -> TestResult {
     let main = object(
         ShaderStage::Fragment,

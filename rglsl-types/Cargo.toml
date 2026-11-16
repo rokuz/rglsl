@@ -26,8 +26,10 @@ std = []
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 arrayvec.workspace = true
 bitflags.workspace = true
+half.workspace = true
 hashbrown.workspace = true
 indexmap.workspace = true
+rglsl-derive.workspace = true
 rustc-hash.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"], optional = true }
 thiserror.workspace = true

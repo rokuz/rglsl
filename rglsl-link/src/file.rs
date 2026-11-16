@@ -1,10 +1,9 @@
 use rglsl::object::{CompiledUnit, FORMAT_VERSION, ObjectModule, ObjectTarget};
 use rglsl::valid::{ValidationFlags, ValidationMode, Validator};
+use rglsl_types::rglo::{self, Rglo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FileError {
-    #[error("cannot write the object module: {0}")]
-    Encode(String),
     #[error("not an rglsl object module: {0}")]
     Decode(String),
     #[error("object module format version {found} is not supported (expected {expected})")]
@@ -21,15 +20,14 @@ pub enum FileError {
     },
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Rglo)]
 struct File {
     format_version: u32,
     object: ObjectModule,
     specialized: Vec<Option<CompiledUnit>>,
     modules: Vec<rglsl::Module>,
     functions: Vec<rglsl::Function>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[rglo(skip_if = Vec::is_empty)]
     spans: Vec<rglsl::ModuleSpans>,
 }
 
@@ -59,7 +57,7 @@ pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
         functions,
         spans,
     };
-    ron::ser::to_string(&file).map_err(|error| FileError::Encode(error.to_string()))
+    Ok(rglo::to_string(&file))
 }
 
 pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
@@ -70,7 +68,7 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
         modules,
         functions,
         spans,
-    } = ron::de::from_str(text).map_err(|error| undecodable(text, &error))?;
+    } = rglo::from_str(text).map_err(|error| undecodable(text, &error))?;
     if format_version != FORMAT_VERSION {
         return Err(FileError::Version {
             found: format_version,
@@ -115,7 +113,7 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     Ok(object)
 }
 
-fn undecodable(text: &str, error: &ron::error::SpannedError) -> FileError {
+fn undecodable(text: &str, error: &rglo::Error) -> FileError {
     match format_version(text) {
         Some(found) if found != FORMAT_VERSION => FileError::Version {
             found,

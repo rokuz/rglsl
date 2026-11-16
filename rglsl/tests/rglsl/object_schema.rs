@@ -189,7 +189,7 @@ fn render(tokens: &[Token]) -> String {
                 .is_some_and(|token| token.is_punct('['));
         if attribute && let Some(end) = closing(tokens, index + 1) {
             let group = tokens.get(index..=end).unwrap_or_default();
-            if is_serde(group) {
+            if is_rglo(group) {
                 rendered.extend(group.iter().map(Token::render));
             }
             index = end + 1;
@@ -201,10 +201,10 @@ fn render(tokens: &[Token]) -> String {
     rendered.join(" ")
 }
 
-fn is_serde(tokens: &[Token]) -> bool {
-    tokens.iter().any(|token| {
-        token.is_word("Serialize") || token.is_word("Deserialize") || token.is_word("serde")
-    })
+fn is_rglo(tokens: &[Token]) -> bool {
+    tokens
+        .iter()
+        .any(|token| token.is_word("Rglo") || token.is_word("rglo"))
 }
 
 fn derived_items(tokens: &[Token], items: &mut BTreeMap<String, Vec<String>>) -> TestResult {
@@ -236,7 +236,7 @@ fn derived_items(tokens: &[Token], items: &mut BTreeMap<String, Vec<String>>) ->
         let kind = tokens
             .get(index)
             .is_some_and(|token| token.is_word("struct") || token.is_word("enum"));
-        if !kind || !is_serde(attributes) {
+        if !kind || !is_rglo(attributes) {
             continue;
         }
         let Some(Token::Word(name)) = tokens.get(index + 1) else {
@@ -302,7 +302,7 @@ fn manual_impls(tokens: &[Token], items: &mut BTreeMap<String, Vec<String>>) -> 
             continue;
         };
         let trait_part = header.get(..after_for).ok_or("impl trait")?;
-        if !is_serde(trait_part) || !tokens.get(open).is_some_and(|token| token.is_punct('{')) {
+        if !is_rglo(trait_part) || !tokens.get(open).is_some_and(|token| token.is_punct('{')) {
             continue;
         }
         let name = header
@@ -347,31 +347,6 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-fn has_named_fields(name: &str, text: &str) -> bool {
-    if text.contains(&format!("enum {name} ")) {
-        return true;
-    }
-    let Some(at) = text.find(&format!("struct {name} ")) else {
-        return false;
-    };
-    let rest = text.get(at..).unwrap_or_default();
-    let brace = rest.find('{');
-    let parenthesis = rest.find('(');
-    let semicolon = rest.find(';');
-    brace.is_some_and(|brace| {
-        parenthesis.is_none_or(|parenthesis| brace < parenthesis)
-            && semicolon.is_none_or(|semicolon| brace < semicolon)
-    })
-}
-
-fn admits_unknown_fields(name: &str, text: &str) -> bool {
-    text.starts_with('#')
-        && text.contains("Deserialize")
-        && !text.contains("transparent")
-        && !text.contains("deny_unknown_fields")
-        && has_named_fields(name, text)
-}
-
 fn schema() -> TestResult<BTreeMap<String, u64>> {
     let root = workspace();
     let mut items: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -387,7 +362,7 @@ fn schema() -> TestResult<BTreeMap<String, u64>> {
     let mut pending: Vec<String> = ROOTS.iter().map(|&root| String::from(root)).collect();
     while let Some(name) = pending.pop() {
         let Some(texts) = items.get(&name) else {
-            return Err(format!("no serialized type {name} in {SOURCES:?}").into());
+            return Err(format!("no type of the object format named {name} in {SOURCES:?}").into());
         };
         if !reachable.insert(name) {
             continue;
@@ -399,19 +374,6 @@ fn schema() -> TestResult<BTreeMap<String, u64>> {
                 }
             }
         }
-    }
-    let lenient: Vec<&String> = reachable
-        .iter()
-        .filter(|name| {
-            items
-                .get(*name)
-                .is_some_and(|texts| texts.iter().any(|text| admits_unknown_fields(name, text)))
-        })
-        .collect();
-    if !lenient.is_empty() {
-        return Err(
-            format!("serialized types without #[serde(deny_unknown_fields)]: {lenient:?}").into(),
-        );
     }
     Ok(reachable
         .into_iter()

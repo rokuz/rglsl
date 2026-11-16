@@ -7,6 +7,8 @@
 
 use core::{cmp::Ordering, fmt, hash, marker::PhantomData};
 
+use rglsl_types::rglo;
+
 /// An unique index in the arena array that a handle points to.
 /// The "non-max" part ensures that an `Option<Handle<T>>` has
 /// the same size and representation as `Handle<T>`.
@@ -45,6 +47,18 @@ pub struct Handle<T> {
     index: Index,
     #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
     marker: PhantomData<T>,
+}
+
+impl<T> rglo::Encode for Handle<T> {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.unsigned(u64::from(self.index.get()));
+    }
+}
+
+impl<T: 'static> rglo::Decode for Handle<T> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        Index::read(input).map(|index| rglo::Decoded::Value(Self::new(index)))
+    }
 }
 
 impl<T> Clone for Handle<T> {

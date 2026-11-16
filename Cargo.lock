@@ -408,6 +408,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rglsl-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "rglsl-dis"
 version = "0.1.0"
 
@@ -442,8 +451,6 @@ dependencies = [
  "rglsl-pp",
  "rglsl-sema",
  "rglsl-types",
- "ron",
- "serde",
  "thiserror",
 ]
 
@@ -490,8 +497,10 @@ dependencies = [
  "arbitrary",
  "arrayvec",
  "bitflags",
+ "half",
  "hashbrown",
  "indexmap",
+ "rglsl-derive",
  "rustc-hash",
  "serde",
  "thiserror",

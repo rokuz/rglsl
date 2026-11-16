@@ -34,6 +34,8 @@ pub use unique_arena::UniqueArena;
 use alloc::vec::Vec;
 use core::{fmt, ops};
 
+use rglsl_types::rglo;
+
 use crate::Span;
 
 use handle::Index;
@@ -297,6 +299,21 @@ impl<T> Arena<T> {
 
         self.span_info.truncate(retained);
         result
+    }
+}
+
+impl<T: rglo::Encode> rglo::Encode for Arena<T> {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.sequence("[", "]", &self.data);
+    }
+}
+
+impl<T: rglo::Decode> rglo::Decode for Arena<T> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        rglo::sequence(input, |data: Vec<T>, _| {
+            let span_info = core::iter::repeat_n(Span::default(), data.len()).collect();
+            Ok(Self { data, span_info })
+        })
     }
 }
 

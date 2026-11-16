@@ -1,5 +1,7 @@
 use alloc::vec::Vec;
 
+use rglsl_types::rglo;
+
 use crate::{Block, Statement};
 
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
@@ -8,6 +10,108 @@ use crate::{Block, Statement};
 enum Entry<S> {
     Block(u32),
     Statement(S),
+}
+
+const ENTRIES: [&str; 2] = ["Block", "Statement"];
+
+impl rglo::Encode for Block {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.token("[");
+        let mut first = true;
+        let mut pending = Vec::from([(self, 0, false)]);
+        while let Some(&mut (block, ref mut next, ref mut started)) = pending.last_mut() {
+            if !*started {
+                *started = true;
+                out.token(if first { "Block(" } else { ",Block(" });
+                first = false;
+                out.unsigned(block.len() as u64);
+                out.token(")");
+            }
+            let Some(statement) = block.get(*next) else {
+                pending.pop();
+                continue;
+            };
+            *next += 1;
+            out.token(",Statement(");
+            out.value(statement);
+            out.token(")");
+            pending.extend(
+                statement
+                    .child_blocks()
+                    .into_iter()
+                    .rev()
+                    .map(|child| (child, 0, false)),
+            );
+        }
+        out.token("]");
+    }
+}
+
+struct Entries {
+    unflatten: Unflatten,
+    more: bool,
+}
+
+impl Entries {
+    fn add(&mut self, entry: Entry<Statement>, input: &rglo::Input<'_>) -> Result<(), rglo::Error> {
+        self.unflatten
+            .entry(entry)
+            .map_err(|message| input.error(message))
+    }
+}
+
+impl rglo::Record for Entries {
+    type Value = Block;
+
+    fn step(&mut self, input: &mut rglo::Input<'_>) -> Result<rglo::Step, rglo::Error> {
+        while input.next_element(&mut self.more, b']')? {
+            let name = input.identifier()?;
+            input.expect(b'(')?;
+            match name {
+                "Block" => {
+                    let length = input.unsigned("u32")?;
+                    input.expect(b')')?;
+                    self.add(Entry::Block(length), input)?;
+                }
+                "Statement" => match <Statement as rglo::Decode>::decode(input)? {
+                    rglo::Decoded::Value(statement) => {
+                        input.expect(b')')?;
+                        self.add(Entry::Statement(statement), input)?;
+                    }
+                    rglo::Decoded::Frame(frame) => return Ok(rglo::Step::Push(frame)),
+                },
+                _ => return Err(input.unknown_variant("Entry", name, &ENTRIES)),
+            }
+        }
+        Ok(rglo::Step::Done)
+    }
+
+    fn accept(
+        &mut self,
+        child: rglo::Child,
+        input: &mut rglo::Input<'_>,
+    ) -> Result<(), rglo::Error> {
+        let statement = rglo::built::<Statement>(child, input)?;
+        input.expect(b')')?;
+        self.add(Entry::Statement(statement), input)
+    }
+
+    fn value(self, input: &mut rglo::Input<'_>) -> Result<Block, rglo::Error> {
+        self.unflatten
+            .root
+            .ok_or_else(|| input.error("a block is incomplete"))
+    }
+}
+
+impl rglo::Decode for Block {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        input.expect(b'[')?;
+        let entries = Entries {
+            unflatten: Unflatten::default(),
+            more: false,
+        };
+        rglo::start(entries, input)
+    }
 }
 
 #[cfg(feature = "serialize")]
@@ -42,7 +146,6 @@ impl serde::Serialize for Block {
     }
 }
 
-#[cfg(feature = "deserialize")]
 enum Open {
     Block {
         block: Block,
@@ -54,14 +157,12 @@ enum Open {
     },
 }
 
-#[cfg(feature = "deserialize")]
 #[derive(Default)]
 struct Unflatten {
     open: Vec<Open>,
     root: Option<Block>,
 }
 
-#[cfg(feature = "deserialize")]
 impl Unflatten {
     fn entry(&mut self, entry: Entry<Statement>) -> Result<(), &'static str> {
         if self.root.is_some() {

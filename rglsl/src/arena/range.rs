@@ -7,6 +7,8 @@
 
 use core::{fmt, marker::PhantomData, ops};
 
+use rglsl_types::rglo;
+
 use super::{
     Arena,
     handle::{Handle, Index},
@@ -25,6 +27,47 @@ pub struct Range<T> {
     pub(super) inner: ops::Range<u32>,
     #[cfg_attr(any(feature = "serialize", feature = "deserialize"), serde(skip))]
     marker: PhantomData<T>,
+}
+
+impl<T> rglo::Encode for Range<T> {
+    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+        out.token("(start:");
+        out.unsigned(u64::from(self.inner.start));
+        out.token(",end:");
+        out.unsigned(u64::from(self.inner.end));
+        out.token(")");
+    }
+}
+
+impl<T: 'static> rglo::Decode for Range<T> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+        const FIELDS: [&str; 2] = ["start", "end"];
+        input.expect(b'(')?;
+        let mut bounds = [None, None];
+        let mut more = false;
+        while input.next_element(&mut more, b')')? {
+            let name = input.field_name()?;
+            let Some(slot) = FIELDS
+                .iter()
+                .position(|&field| field == name)
+                .and_then(|index| bounds.get_mut(index))
+            else {
+                return Err(input.unknown_field("Range", name, &FIELDS));
+            };
+            if slot.is_some() {
+                return Err(input.duplicate_field("Range", name));
+            }
+            *slot = Some(input.unsigned("u32")?);
+        }
+        match bounds {
+            [Some(start), Some(end)] => Ok(rglo::Decoded::Value(Self {
+                inner: start..end,
+                marker: PhantomData,
+            })),
+            [None, _] => Err(input.missing_field("Range", "start")),
+            [_, None] => Err(input.missing_field("Range", "end")),
+        }
+    }
 }
 
 impl<T> Range<T> {
