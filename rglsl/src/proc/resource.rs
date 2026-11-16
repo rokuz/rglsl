@@ -9,19 +9,19 @@ pub enum ResourceClass {
     Image,
     UniformBuffer,
     StorageBuffer,
-    UnorderedAccess,
     CombinedSampler,
     AccelerationStructure,
 }
 
 impl ResourceClass {
-    pub const ALL: [Self; 8] = [
+    pub const COUNT: usize = 7;
+
+    pub const ALL: [Self; Self::COUNT] = [
         Self::Sampler,
         Self::Texture,
         Self::Image,
         Self::UniformBuffer,
         Self::StorageBuffer,
-        Self::UnorderedAccess,
         Self::CombinedSampler,
         Self::AccelerationStructure,
     ];
@@ -33,9 +33,8 @@ impl ResourceClass {
             Self::Image => 2,
             Self::UniformBuffer => 3,
             Self::StorageBuffer => 4,
-            Self::UnorderedAccess => 5,
-            Self::CombinedSampler => 6,
-            Self::AccelerationStructure => 7,
+            Self::CombinedSampler => 5,
+            Self::AccelerationStructure => 6,
         }
     }
 
@@ -72,8 +71,8 @@ impl ResourceClass {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BindingShifts {
-    pub base: [u32; 8],
-    pub per_set: [BTreeMap<u32, u32>; 8],
+    pub base: [u32; ResourceClass::COUNT],
+    pub per_set: [BTreeMap<u32, u32>; ResourceClass::COUNT],
 }
 
 impl BindingShifts {

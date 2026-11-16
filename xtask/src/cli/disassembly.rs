@@ -106,11 +106,17 @@ struct Tally {
     failures: Vec<(String, String)>,
 }
 
-fn command(tool: &Path, case: &corpus::Case, test_dir: &Path, module: &Path) -> Command {
+fn command(
+    tool: &Path,
+    args: Vec<String>,
+    case: &corpus::Case,
+    test_dir: &Path,
+    module: &Path,
+) -> Command {
     let mut command = Command::new(tool);
     command
         .current_dir(test_dir)
-        .args(case.target.glslang_args())
+        .args(args)
         .arg("-H")
         .arg("-o")
         .arg(module);
@@ -147,7 +153,13 @@ fn sweep_one(env: &Environment, case: &corpus::Case, work: &Path) -> Result<Outc
         }
     }
     let output = process::run(
-        command(&env.glslang.path, case, &env.test_dir, &reference),
+        command(
+            &env.glslang.path,
+            case.target.glslang_args(),
+            case,
+            &env.test_dir,
+            &reference,
+        ),
         env.timeout,
     )?;
     let Some(words) = spirv_words(&reference).filter(|_| matches!(output.exit, Exit::Code(0)))
@@ -155,7 +167,16 @@ fn sweep_one(env: &Environment, case: &corpus::Case, work: &Path) -> Result<Outc
         return Ok(Outcome::GlslangRejected);
     };
     let mismatch = compare(&output.stdout, &[disassemble(&words)]);
-    let output = process::run(command(&env.rglsl, case, &env.test_dir, &ours), env.timeout)?;
+    let output = process::run(
+        command(
+            &env.rglsl,
+            case.target.rglsl_args(),
+            case,
+            &env.test_dir,
+            &ours,
+        ),
+        env.timeout,
+    )?;
     let rglsl = match (output.exit, spirv_words(&ours)) {
         (Exit::Code(0), Some(words)) => Some(round_trip(&words, &output.stdout)),
         (Exit::Code(0), None) => Some(Err(String::from("rglsl wrote no SPIR-V module"))),

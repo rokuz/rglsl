@@ -62,7 +62,6 @@ const fn resource_name(class: ResourceClass) -> &'static str {
         ResourceClass::Image => "shift-image-binding",
         ResourceClass::UniformBuffer => "shift-ubo-binding",
         ResourceClass::StorageBuffer => "shift-ssbo-binding",
-        ResourceClass::UnorderedAccess => "shift-uav-binding",
         ResourceClass::CombinedSampler => "shift-combined-sampler-binding",
         ResourceClass::AccelerationStructure => "shift-as-binding",
     }
@@ -94,7 +93,6 @@ impl Unit {
 #[derive(Debug, Default)]
 struct Log {
     compile: Vec<String>,
-    notes: Vec<String>,
     link: Vec<String>,
 }
 
@@ -376,20 +374,11 @@ impl<'a> Session<'a> {
         }
         let (major, minor) = options.vulkan_version();
         processes.push(format!("target-env vulkan{major}.{minor}"));
-        if options.relaxed_errors {
-            processes.push(String::from("relaxed-errors"));
-        }
         if options.suppress_warnings {
             processes.push(String::from("suppress-warnings"));
         }
         if options.keep_uncalled {
             processes.push(String::from("keep-uncalled"));
-        }
-        if options.relax_set_binding_limits {
-            processes.push(String::from("relax-set-binding-limits"));
-        }
-        if let Some(ref name) = options.source_entry_point {
-            processes.push(format!("source-entrypoint {name}"));
         }
         if options.hlsl_offsets {
             processes.push(String::from("hlsl-offsets"));
@@ -470,10 +459,6 @@ impl<'a> Session<'a> {
 
     fn infolog(log: &Log) -> String {
         let mut text = String::new();
-        for line in &log.notes {
-            text.push_str(line);
-            text.push('\n');
-        }
         for line in &log.compile {
             text.push_str(line);
             text.push('\n');
@@ -512,23 +497,6 @@ impl<'a> Session<'a> {
         output::err!("{text}");
     }
 
-    fn source_entry_point_notes(&self) -> Vec<String> {
-        match self.options.source_entry_point {
-            Some(ref name) if name != "main" => {
-                vec![String::from("ERROR: Source entry point must be \"main\"")]
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    fn warn_source_entry_point(&self) {
-        if self.options.source_entry_point.is_some() && self.options.entry_point.is_none() {
-            output::out!(
-                "Warning: Changing source entry point name without setting an entry-point name.\nUse '-e <name>'."
-            );
-        }
-    }
-
     fn includer(&self) -> rglsl_pp::FileSystemIncluder {
         rglsl_pp::FileSystemIncluder::new(&self.options.include_dirs)
     }
@@ -546,10 +514,7 @@ impl<'a> Session<'a> {
     }
 
     fn compile_object(&mut self, unit: &Unit) -> Compiled {
-        let mut log = Log {
-            notes: self.source_entry_point_notes(),
-            ..Log::default()
-        };
+        let mut log = Log::default();
         if unit.class == Class::Object {
             return match rglsl_link::decode(&unit.text) {
                 Ok(object) => Compiled {
@@ -719,7 +684,6 @@ impl<'a> Session<'a> {
         if self.options.preprocess {
             return Ok(self.preprocess(&units));
         }
-        self.warn_source_entry_point();
         let code = match units.as_slice() {
             [unit] if matches!(unit.class, Class::Stage(_)) => self.program(unit)?,
             [unit] if unit.class == Class::Library => {
@@ -738,7 +702,6 @@ impl<'a> Session<'a> {
 
     fn compile_only(&mut self) -> Result<i32, Exit> {
         let units = self.load_all()?;
-        self.warn_source_entry_point();
         let mut compiled = Vec::with_capacity(units.len());
         let mut failed = false;
         for unit in &units {
@@ -793,12 +756,10 @@ impl<'a> Session<'a> {
         let root = includer.add_root(&unit.name);
         let compiled = rglsl_link::compile_program(&options, &unit.text, root, &mut includer);
         self.remember_includes(&includer, root);
-        let notes = self.source_entry_point_notes();
         let mut linked = match compiled {
             Ok(linked) => linked,
             Err(rglsl_link::CompileError::Frontend(errors)) => {
-                let mut log = self.parse_log(unit, &errors);
-                log.notes = notes;
+                let log = self.parse_log(unit, &errors);
                 self.report_unit(unit, &log);
                 let link: Vec<String> = log
                     .link
@@ -820,8 +781,7 @@ impl<'a> Session<'a> {
                 });
             }
             Err(rglsl_link::CompileError::Invalid(invalid)) => {
-                let mut log = self.validation_log(unit, &invalid);
-                log.notes = notes;
+                let log = self.validation_log(unit, &invalid);
                 self.report_unit(unit, &log);
                 self.reflect(&[(unit, true)], &[(stage, &invalid.module)])?;
                 self.not_generated();
@@ -830,13 +790,7 @@ impl<'a> Session<'a> {
             Err(
                 rglsl_link::CompileError::Object(errors) | rglsl_link::CompileError::Link(errors),
             ) => {
-                self.report_unit(
-                    unit,
-                    &Log {
-                        notes,
-                        ..Log::default()
-                    },
-                );
+                self.report_unit(unit, &Log::default());
                 let lines: Vec<String> = errors
                     .iter()
                     .map(|error| link_line(Some(stage), error))
@@ -847,13 +801,7 @@ impl<'a> Session<'a> {
                 return Ok(EXIT_LINK);
             }
         };
-        self.report_unit(
-            unit,
-            &Log {
-                notes,
-                ..Log::default()
-            },
-        );
+        self.report_unit(unit, &Log::default());
         self.rename_entry_point(&mut linked.module);
         self.reflect(&[(unit, true)], &[(stage, &linked.module)])?;
         if self.options.spirv {

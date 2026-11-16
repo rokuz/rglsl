@@ -102,14 +102,18 @@ struct Item {
     group: Group,
     dir: PathBuf,
     options: Vec<String>,
+    glslang_options: Vec<String>,
     inputs: Vec<String>,
     output: Output,
     copy_from: Option<PathBuf>,
 }
 
 impl Item {
-    fn arguments(&self, output: &Path) -> Vec<OsString> {
+    fn arguments(&self, compiler: Compiler, output: &Path) -> Vec<OsString> {
         let mut arguments: Vec<OsString> = self.options.iter().map(OsString::from).collect();
+        if let Compiler::Glslang = compiler {
+            arguments.extend(self.glslang_options.iter().map(OsString::from));
+        }
         if self.output == Output::File {
             arguments.push("-o".into());
             arguments.push(output.into());
@@ -169,7 +173,7 @@ impl Tools {
         let mut command = Command::new(self.program(compiler));
         command
             .current_dir(&item.dir)
-            .args(item.arguments(&self.output(compiler)));
+            .args(item.arguments(compiler, &self.output(compiler)));
         command
     }
 
@@ -181,7 +185,7 @@ impl Tools {
                     .current_dir(&item.dir)
                     .arg(time.flag)
                     .arg(self.program(compiler))
-                    .args(item.arguments(&self.output(compiler)));
+                    .args(item.arguments(compiler, &self.output(compiler)));
                 command
             }
             None => self.command(compiler, item),
@@ -452,6 +456,7 @@ fn collect(
             group: Group::GlslangLink,
             dir: work.join("link").join(case.name.replace(['/', '+'], "_")),
             options,
+            glslang_options: Vec::new(),
             inputs: files.clone(),
             output: Output::WorkingDirectory,
             copy_from: Some(test_dir.clone()),
@@ -475,7 +480,7 @@ fn collect(
             .filter_map(|file| groups::stage_of(file))
             .collect();
         let mut options = vec!["-V".to_string()];
-        options.extend(case.target.glslang_args());
+        options.extend(case.target.rglsl_args());
         if let (Some(stage), 1) = (stages.first(), stages.len()) {
             options.push("-S".into());
             options.push((*stage).into());
@@ -487,6 +492,7 @@ fn collect(
             group: Group::OwnLink,
             dir: dir.clone(),
             options,
+            glslang_options: Vec::new(),
             inputs: files.clone(),
             output: Output::File,
             copy_from: None,
@@ -503,6 +509,7 @@ fn collect(
             group: Group::Synthetic,
             dir: synthetic_dir.clone(),
             options,
+            glslang_options: Vec::new(),
             inputs: vec![name],
             output: Output::File,
             copy_from: None,
@@ -517,7 +524,7 @@ fn corpus_item(case: &Case, test_dir: &Path, debug_info: Option<DebugInfo>) -> I
         target.debug = Some(debug.mode());
     }
     let mut options = vec!["-V".to_string()];
-    options.extend(target.glslang_args());
+    options.extend(target.rglsl_args());
     let runtests = corpus::runtests_options(&case.name);
     for directory in runtests.include_dirs {
         options.push(format!("-I{directory}"));
@@ -537,6 +544,7 @@ fn corpus_item(case: &Case, test_dir: &Path, debug_info: Option<DebugInfo>) -> I
         },
         dir: test_dir.to_path_buf(),
         options,
+        glslang_options: target.glslang_only_args(),
         inputs: vec![case.name.clone()],
         output: Output::File,
         copy_from: None,
@@ -1003,13 +1011,14 @@ mod tests {
             group: Group::Vulkan,
             dir: PathBuf::from("."),
             options: vec!["-V".into(), "-gVS".into()],
+            glslang_options: Vec::new(),
             inputs: vec!["x.frag".into()],
             output: Output::File,
             copy_from: None,
         };
         assert_eq!(item.command_line(), "-V -gVS -o OUT.spv x.frag");
         assert_eq!(
-            item.arguments(Path::new("o.spv")),
+            item.arguments(Compiler::Glslang, Path::new("o.spv")),
             ["-V", "-gVS", "-o", "o.spv", "x.frag"].map(OsString::from)
         );
     }

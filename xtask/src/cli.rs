@@ -79,12 +79,6 @@ impl Case {
         self
     }
 
-    fn ignore_messages(mut self, why: &'static str) -> Self {
-        self.ignore_stdout = Some(why);
-        self.ignore_stderr = true;
-        self
-    }
-
     fn exact_stdout(mut self) -> Self {
         self.exact_stdout = true;
         self
@@ -130,6 +124,13 @@ impl Case {
 }
 
 const TARGET_SHADER: &str = "spv.targetVulkan.vert";
+
+fn removed(name: &'static str, options: &[&'static str], why: &'static str) -> Case {
+    let mut args = vec!["-V"];
+    args.extend_from_slice(options);
+    args.push(TARGET_SHADER);
+    Case::new(name, &args, &[TARGET_SHADER]).rejected(why)
+}
 const DEBUG_SHADER: &str = "spv.debuginfo.glsl.frag";
 const REGISTERS: &str = "spv.glsl.register.autoassign.frag";
 
@@ -258,38 +259,12 @@ fn cases() -> Vec<Case> {
         ),
         Case::new(
             "entry-point-rename",
-            &[
-                "-H",
-                "-e",
-                "foo",
-                "--source-entrypoint",
-                "main",
-                "glsl.entryPointRename.vert",
-            ],
-            &["glsl.entryPointRename.vert"],
-        ),
-        Case::new(
-            "entry-point-rename-bad-source",
-            &[
-                "-H",
-                "-e",
-                "foo",
-                "--source-entrypoint",
-                "bar",
-                "glsl.entryPointRename.vert",
-            ],
+            &["-H", "-e", "foo", "glsl.entryPointRename.vert"],
             &["glsl.entryPointRename.vert"],
         ),
         Case::new(
             "entry-point-rename-no-main",
-            &[
-                "-H",
-                "-e",
-                "foo",
-                "--source-entrypoint",
-                "main",
-                "glsl.entryPointRename2.vert",
-            ],
+            &["-H", "-e", "foo", "glsl.entryPointRename2.vert"],
             &["glsl.entryPointRename2.vert"],
         ),
         Case::new(
@@ -299,7 +274,7 @@ fn cases() -> Vec<Case> {
         ),
         Case::new(
             "no-location",
-            &["-V", "-C", "spv.noLocation.vert"],
+            &["-V", "spv.noLocation.vert"],
             &["spv.noLocation.vert"],
         ),
         Case::new(
@@ -524,20 +499,10 @@ fn cases() -> Vec<Case> {
         )
         .dir("inc2"),
         Case::new(
-            "optimization-flags",
-            &["-V", "-Od", "-o", "out.spv", TARGET_SHADER],
-            &[TARGET_SHADER],
-        ),
-        Case::new(
-            "compatibility-flags",
+            "suppress-warnings",
             &[
                 "-V",
-                "-C",
-                "-t",
-                "-r",
                 "-w",
-                "--spirv-val",
-                "--relax-set-binding-limits",
                 "--suppress-warnings",
                 "-o",
                 "out.spv",
@@ -545,12 +510,6 @@ fn cases() -> Vec<Case> {
             ],
             &[TARGET_SHADER],
         ),
-        Case::new(
-            "i",
-            &["-i", "-V", "-o", "out.spv", TARGET_SHADER],
-            &[TARGET_SHADER],
-        )
-        .ignore_messages("rglsl prints no AST"),
         Case::new(
             "auto-map",
             &["-V", "--amb", "--aml", "-o", "out.spv", REGISTERS],
@@ -579,8 +538,6 @@ fn cases() -> Vec<Case> {
                 "20",
                 "--shift-ssbo-bindings",
                 "30",
-                "--shift-uav-binding",
-                "7",
                 "--shift-combined-sampler-binding",
                 "40",
                 "-o",
@@ -797,7 +754,6 @@ fn cases() -> Vec<Case> {
             "P-runtests",
             &[
                 "-P#define TEST1",
-                "-i",
                 "-l",
                 "--preamble-text",
                 "#define TEST2",
@@ -806,8 +762,7 @@ fn cases() -> Vec<Case> {
                 "glsl.-P.frag",
             ],
             &["glsl.-P.frag"],
-        )
-        .ignore_messages("rglsl prints no AST"),
+        ),
         Case::new(
             "P-V",
             &[
@@ -904,6 +859,52 @@ fn cases() -> Vec<Case> {
             "no-link-validate",
             &["--no-link", "spv.exportFunctions.comp"],
             &["spv.exportFunctions.comp"],
+        ),
+        Case::new("link-option", &["--link", TARGET_SHADER], &[TARGET_SHADER]),
+        removed("O", &["-O"], "rglsl does not optimize yet"),
+        removed("Os", &["-Os"], "rglsl does not optimize yet"),
+        removed("Od", &["-Od"], "rglsl does not optimize yet"),
+        removed("C", &["-C"], "rglsl always reports every error"),
+        removed("t", &["-t"], "rglsl has no threading option"),
+        removed("d", &["-d"], "desktop #version 110 is out of scope"),
+        removed("i", &["-i"], "rglsl prints no AST"),
+        removed("r", &["-r"], "rglsl does not relax errors"),
+        removed(
+            "relaxed-errors",
+            &["--relaxed-errors"],
+            "rglsl does not relax errors",
+        ),
+        removed(
+            "spirv-val",
+            &["--spirv-val"],
+            "rglsl does not run SPIRV-Tools' validator",
+        ),
+        removed(
+            "relax-set-binding-limits",
+            &["--relax-set-binding-limits"],
+            "rglsl has no set and binding limits to relax",
+        ),
+        removed(
+            "source-entrypoint",
+            &["--source-entrypoint", "main"],
+            "the source entry point is always main",
+        ),
+        removed("sep", &["--sep", "main"], "the source entry point is always main"),
+        removed(
+            "shift-uav-binding",
+            &["--shift-uav-binding", "7"],
+            "UAVs are an HLSL concept",
+        ),
+        removed("suavb", &["--suavb", "7"], "UAVs are an HLSL concept"),
+        removed(
+            "shift-cbuffer-binding",
+            &["--shift-cbuffer-binding", "7"],
+            "cbuffers are an HLSL concept; --sub shifts uniform buffers",
+        ),
+        removed(
+            "scb",
+            &["--scb", "7"],
+            "cbuffers are an HLSL concept; --sub shifts uniform buffers",
         ),
         Case::new(
             "hlsl-iomap",

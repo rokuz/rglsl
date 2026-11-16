@@ -170,6 +170,55 @@ fn usage_errors_exit_with_one() -> TestResult {
 }
 
 #[test]
+fn options_without_effect_are_unrecognized() -> TestResult {
+    let directory = work_dir("removed")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    for option in [
+        "--link",
+        "-d",
+        "-C",
+        "-t",
+        "-i",
+        "-r",
+        "--relaxed-errors",
+        "--spirv-val",
+        "--relax-set-binding-limits",
+        "-O",
+        "-Os",
+        "-Od",
+    ] {
+        let run = rglsl(&directory, &["-V", option, "shader.frag"])?;
+        assert_eq!(run.code, Some(1), "{option}");
+        assert!(
+            run.stderr.contains(&format!(
+                "Error: {option}: unrecognized command-line option"
+            )),
+            "{option}: {}",
+            run.stderr
+        );
+    }
+    for arguments in [
+        &["--sep", "main"][..],
+        &["--source-entrypoint", "main"],
+        &["--suavb", "1"],
+        &["--shift-uav-binding", "1"],
+        &["--scb", "1"],
+        &["--shift-cbuffer-bindings", "1"],
+    ] {
+        let mut command = vec!["-V"];
+        command.extend_from_slice(arguments);
+        command.push("shader.frag");
+        let run = rglsl(&directory, &command)?;
+        assert_eq!(run.code, Some(1), "{arguments:?}");
+        assert!(
+            run.stderr.contains("unrecognized command-line option"),
+            "{arguments:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn hexadecimal_output_and_variable_names() -> TestResult {
     let directory = work_dir("hex")?;
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
@@ -293,7 +342,7 @@ fn links_libraries_and_object_modules() -> TestResult {
     let run = rglsl(&directory, &["--object", "lighting.glsl"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(directory.join("lighting.rglo").is_file());
-    let run = rglsl(&directory, &["--link", "main.frag", "lighting.rglo"])?;
+    let run = rglsl(&directory, &["-V", "main.frag", "lighting.rglo"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(directory.join("frag.spv").is_file());
     let run = rglsl(&directory, &["-V", "main.frag"])?;

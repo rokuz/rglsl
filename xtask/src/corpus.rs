@@ -77,6 +77,20 @@ impl Target {
 
     /// Command-line options that make glslangValidator compile like the gtest does.
     pub fn glslang_args(&self) -> Vec<String> {
+        let mut args = self.rglsl_args();
+        args.extend(self.glslang_only_args());
+        args
+    }
+
+    pub fn glslang_only_args(&self) -> Vec<String> {
+        if self.relax_set_binding_limits {
+            vec!["--relax-set-binding-limits".into()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn rglsl_args(&self) -> Vec<String> {
         let mut args: Vec<String> = match (self.semantics, self.ast_only) {
             (Semantics::OpenGL, true) => Vec::new(),
             (Semantics::OpenGL, false) => vec!["-G".into()],
@@ -93,9 +107,6 @@ impl Target {
         if self.automap {
             args.push("--auto-map-locations".into());
             args.push("--auto-map-bindings".into());
-        }
-        if self.relax_set_binding_limits {
-            args.push("--relax-set-binding-limits".into());
         }
         if let Some(debug) = self.debug {
             args.push(format!("-{debug}"));
