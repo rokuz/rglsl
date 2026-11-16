@@ -454,6 +454,16 @@ fn cases() -> Vec<Case> {
             &[TARGET_SHADER],
         ),
         Case::new(
+            "gN",
+            &["-V", "-gN", "-o", "out.spv", TARGET_SHADER],
+            &[TARGET_SHADER],
+        ),
+        Case::new(
+            "gN-H",
+            &["-H", "-gN", "spv.debuginfo.glsl.frag"],
+            &["spv.debuginfo.glsl.frag"],
+        ),
+        Case::new(
             "g0",
             &["-V", "-g0", "-o", "out.spv", TARGET_SHADER],
             &[TARGET_SHADER],

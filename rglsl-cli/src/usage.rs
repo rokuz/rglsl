@@ -49,6 +49,7 @@ Options:
               specify <name> as the entry-point function name
   -g          generate debug information
   -g0         strip debug information
+  -gN         generate debug information for the source file name only
   -gV         generate nonsemantic shader debug information
   -gVS        generate nonsemantic shader debug information with source
   -h | --help print this usage message

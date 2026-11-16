@@ -123,6 +123,8 @@ typedef uint32_t rglsl_disassembly;
 
 #define RGLSL_DEBUG_INFO_NON_SEMANTIC_SOURCE 4
 
+#define RGLSL_DEBUG_INFO_FILE_NAME 5
+
 #define RGLSL_RESOURCE_SAMPLER 0
 
 #define RGLSL_RESOURCE_TEXTURE 1

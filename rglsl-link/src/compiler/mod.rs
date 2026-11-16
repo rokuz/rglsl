@@ -226,14 +226,13 @@ fn stage_binary(stage: &Linked, options: &ProgramOptions) -> Result<StageBinary,
             &LinkError::MissingEntryPoint,
         ));
     };
-    let words =
-        write_spirv(&stage.module, &stage.info, &stage.processes, options).map_err(|error| {
-            Diagnostic::linking(
-                Severity::Error,
-                Origin::Stage(stage.stage),
-                format!("cannot generate SPIR-V: {}", message(&error)),
-            )
-        })?;
+    let words = write_spirv(&Emission::linked(stage, None), options).map_err(|error| {
+        Diagnostic::linking(
+            Severity::Error,
+            Origin::Stage(stage.stage),
+            format!("cannot generate SPIR-V: {}", message(&error)),
+        )
+    })?;
     Ok(StageBinary {
         stage: stage.stage,
         entry_point: entry_point.name.clone(),
@@ -262,13 +261,32 @@ pub(crate) fn link_diagnostic(stage: Option<ShaderStage>, error: &LinkError) -> 
     }
 }
 
+pub(crate) struct Emission<'m> {
+    pub(crate) module: &'m rglsl::Module,
+    pub(crate) info: &'m rglsl::valid::ModuleInfo,
+    pub(crate) processes: &'m [String],
+    pub(crate) source_file: Option<(&'m str, u32)>,
+}
+
+impl<'m> Emission<'m> {
+    pub(crate) fn linked(linked: &'m Linked, name: Option<&'m str>) -> Self {
+        Self {
+            module: &linked.module,
+            info: &linked.info,
+            processes: &linked.processes,
+            source_file: name
+                .or(linked.source_name.as_deref())
+                .map(|name| (name, linked.glsl_version)),
+        }
+    }
+}
+
 pub(crate) fn write_spirv(
-    module: &rglsl::Module,
-    info: &rglsl::valid::ModuleInfo,
-    processes: &[String],
+    emission: &Emission<'_>,
     options: &ProgramOptions,
 ) -> Result<Vec<u32>, spv::Error> {
     let level = match options.debug_info {
+        DebugInfo::FileName => Some((spv::DebugLevel::FileName, false)),
         DebugInfo::Lines => Some((spv::DebugLevel::Lines, true)),
         DebugInfo::NonSemantic => Some((spv::DebugLevel::NonSemantic, false)),
         DebugInfo::NonSemanticWithSource => Some((spv::DebugLevel::NonSemantic, true)),
@@ -277,7 +295,8 @@ pub(crate) fn write_spirv(
     let debug_info = level.map(|(level, source_text)| spv::DebugInfo {
         level,
         source_text,
-        processes,
+        processes: emission.processes,
+        source_file: emission.source_file,
         entry_point: options
             .command_line
             .as_deref()
@@ -301,7 +320,7 @@ pub(crate) fn write_spirv(
         flags,
         ..spv::Options::default()
     };
-    spv::write_vec(module, info, &spv_options, None)
+    spv::write_vec(emission.module, emission.info, &spv_options, None)
 }
 
 pub fn depfile(targets: &[String], dependencies: &[String]) -> String {

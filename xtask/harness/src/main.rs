@@ -112,6 +112,7 @@ impl Job {
             },
             source_text: true,
             processes: &[],
+            source_file: None,
             entry_point: Some(spv::DebugEntryPoint {
                 signature: "rglsl",
                 arguments: "",

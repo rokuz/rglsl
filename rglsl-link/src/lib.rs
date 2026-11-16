@@ -74,6 +74,8 @@ pub struct Linked {
     pub info: ModuleInfo,
     pub warnings: Vec<String>,
     pub processes: Vec<String>,
+    pub source_name: Option<String>,
+    pub glsl_version: u32,
 }
 
 #[derive(Debug)]
@@ -84,6 +86,8 @@ pub(crate) struct Merged {
     pub warnings: Vec<String>,
     pub processes: Vec<String>,
     pub entry_point: Option<String>,
+    pub source_name: Option<String>,
+    pub glsl_version: u32,
 }
 
 pub fn link(objects: &[ObjectModule], options: &Options) -> Result<Linked, LinkErrors> {
@@ -238,9 +242,16 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
     {
         check_geometry_inputs(&specialized, primitive, &mut geometry_errors);
     }
-    let (processes, entry_point) = specialized
+    let (processes, entry_point, source_name, glsl_version) = specialized
         .get(main)
-        .map(|object| (object.processes.clone(), object.entry_point.clone()))
+        .map(|object| {
+            (
+                object.processes.clone(),
+                object.entry_point.clone(),
+                object.name.clone(),
+                object.unit.glsl_version,
+            )
+        })
         .unwrap_or_default();
     let unused = merge::unused_on_use_globals(&specialized, &order, main);
     let mut builder = Builder::new(specialized, unused);
@@ -312,6 +323,8 @@ pub(crate) fn merge(objects: Vec<ObjectModule>, options: &Options) -> Result<Mer
         warnings,
         processes,
         entry_point,
+        source_name,
+        glsl_version,
     })
 }
 
@@ -478,6 +491,8 @@ pub(crate) fn finish(merged: Merged) -> Result<Linked, LinkErrors> {
         warnings,
         processes,
         entry_point,
+        source_name,
+        glsl_version,
     } = merged;
     let info = finish_module(&mut module, None)?;
     rename_entry_point(&mut module, entry_point.as_deref());
@@ -487,6 +502,8 @@ pub(crate) fn finish(merged: Merged) -> Result<Linked, LinkErrors> {
         info,
         warnings,
         processes,
+        source_name,
+        glsl_version,
     })
 }
 

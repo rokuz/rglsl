@@ -20,6 +20,7 @@ const MAX_STRING_BYTES: usize = 4 * (0xFFFF - 4) - 1;
 pub enum DebugLevel {
     #[default]
     None,
+    FileName,
     Lines,
     NonSemantic,
 }
@@ -30,6 +31,7 @@ pub struct DebugInfo<'a> {
     pub source_text: bool,
     pub processes: &'a [String],
     pub entry_point: Option<DebugEntryPoint<'a>>,
+    pub source_file: Option<(&'a str, u32)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +47,7 @@ pub(super) struct DebugState {
     pub(super) source_text: bool,
     pub(super) processes: Vec<String>,
     entry_point: Option<(String, String, Option<String>)>,
+    source_file: Option<(String, u32)>,
     active: bool,
     set: Word,
     strings: FastHashMap<String, Word>,
@@ -114,6 +117,9 @@ impl DebugState {
                     entry.directory.map(String::from),
                 )
             }),
+            source_file: options
+                .source_file
+                .map(|(name, version)| (String::from(name), version)),
             ..Self::default()
         })
     }
@@ -123,11 +129,13 @@ impl DebugState {
         let source_text = self.source_text;
         let processes = core::mem::take(&mut self.processes);
         let entry_point = self.entry_point.take();
+        let source_file = self.source_file.take();
         *self = Self {
             level,
             source_text,
             processes,
             entry_point,
+            source_file,
             ..Self::default()
         };
     }
@@ -292,7 +300,10 @@ fn parameter_copies(function: &crate::Function) -> FastHashMap<u32, Handle<crate
 impl Writer {
     pub(super) fn debug_begin(&mut self, ir_module: &crate::Module) {
         self.debug.reset();
-        self.debug.active = self.debug.level != DebugLevel::None && ir_module.debug_info.is_some();
+        self.debug.active = matches!(
+            self.debug.level,
+            DebugLevel::Lines | DebugLevel::NonSemantic
+        ) && ir_module.debug_info.is_some();
         if !self.debug.active {
             return;
         }
@@ -470,7 +481,7 @@ impl Writer {
             return Ok(());
         };
         match self.debug.level {
-            DebugLevel::None => Ok(()),
+            DebugLevel::None | DebugLevel::FileName => Ok(()),
             DebugLevel::Lines => {
                 self.debug_line_sources(info);
                 Ok(())
@@ -1720,7 +1731,7 @@ impl Writer {
         emitted_line: &mut Option<(u32, u32)>,
     ) {
         match self.debug.level {
-            DebugLevel::None => {}
+            DebugLevel::None | DebugLevel::FileName => {}
             DebugLevel::Lines => {
                 if *emitted_line != Some((location.source, location.line)) {
                     let file = self.debug_file(location.source);
@@ -1764,6 +1775,20 @@ impl Writer {
     }
 
     pub(super) fn debug_end_sources(&mut self) {
+        if self.debug.level == DebugLevel::FileName
+            && let Some((ref name, version)) = self.debug.source_file
+        {
+            let file = self.id_gen.next();
+            let mut string = Instruction::new(spirv::Op::String);
+            string.set_result(file);
+            string.add_operands(helpers::string_to_words(name));
+            string.to_words(&mut self.logical_layout.debugs);
+            let mut source = Instruction::new(spirv::Op::Source);
+            source.add_operand(spirv::SourceLanguage::GLSL as u32);
+            source.add_operand(version);
+            source.add_operand(file);
+            source.to_words(&mut self.logical_layout.debugs);
+        }
         if !self.debug.active {
             return;
         }

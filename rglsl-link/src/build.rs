@@ -86,6 +86,7 @@ pub fn finish_program(object: ObjectModule, info: ModuleInfo) -> Result<Linked, 
     let stage = object
         .stage()
         .ok_or_else(|| LinkError::Internal(String::from("a program without a stage")))?;
+    let glsl_version = object.unit.glsl_version;
     let mut module = object.unit.module;
     let info = finish_module(&mut module, Some(info))?;
     rename_entry_point(&mut module, object.entry_point.as_deref());
@@ -95,5 +96,7 @@ pub fn finish_program(object: ObjectModule, info: ModuleInfo) -> Result<Linked, 
         info,
         warnings: Vec::new(),
         processes: object.processes,
+        source_name: object.name,
+        glsl_version,
     })
 }

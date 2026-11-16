@@ -106,6 +106,7 @@ pub const RGLSL_DEBUG_INFO_STRIPPED: DebugInfo = DebugInfo(1);
 pub const RGLSL_DEBUG_INFO_LINES: DebugInfo = DebugInfo(2);
 pub const RGLSL_DEBUG_INFO_NON_SEMANTIC: DebugInfo = DebugInfo(3);
 pub const RGLSL_DEBUG_INFO_NON_SEMANTIC_SOURCE: DebugInfo = DebugInfo(4);
+pub const RGLSL_DEBUG_INFO_FILE_NAME: DebugInfo = DebugInfo(5);
 
 impl DebugInfo {
     pub const fn from_raw(value: u32) -> Self {
@@ -119,6 +120,7 @@ impl DebugInfo {
             RGLSL_DEBUG_INFO_LINES => rglsl_link::DebugInfo::Lines,
             RGLSL_DEBUG_INFO_NON_SEMANTIC => rglsl_link::DebugInfo::NonSemantic,
             RGLSL_DEBUG_INFO_NON_SEMANTIC_SOURCE => rglsl_link::DebugInfo::NonSemanticWithSource,
+            RGLSL_DEBUG_INFO_FILE_NAME => rglsl_link::DebugInfo::FileName,
             _ => {
                 return Err(Failure::argument(format!(
                     "{} is not a debug information level",

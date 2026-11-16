@@ -846,3 +846,20 @@ fn code_generation_options_change_the_spirv() -> TestResult {
     assert!(killed.stdout.contains("Kill"), "{}", killed.stdout);
     Ok(())
 }
+
+#[test]
+fn g_n_records_only_the_source_file_name() -> TestResult {
+    let directory = work_dir("debug_file_name")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-H", "-gN", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stdout.contains("String  \"shader.frag\""),
+        "{}",
+        run.stdout
+    );
+    assert!(run.stdout.contains("Source GLSL 450 "), "{}", run.stdout);
+    assert!(!run.stdout.contains(" Line "), "{}", run.stdout);
+    assert!(!run.stdout.contains("ModuleProcessed"), "{}", run.stdout);
+    Ok(())
+}

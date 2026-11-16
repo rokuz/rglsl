@@ -46,6 +46,7 @@ pub enum DebugInfo {
     #[default]
     Names,
     Stripped,
+    FileName,
     Lines,
     NonSemantic,
     NonSemanticWithSource,

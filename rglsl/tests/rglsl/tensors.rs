@@ -80,6 +80,7 @@ fn compile_with(
         level: spv::DebugLevel::NonSemantic,
         source_text: true,
         processes: &[],
+        source_file: None,
         entry_point: Some(spv::DebugEntryPoint {
             signature: "rglsl",
             arguments: "",

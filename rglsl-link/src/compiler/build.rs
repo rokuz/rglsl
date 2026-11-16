@@ -9,8 +9,9 @@ use rglsl::{Module, ShaderStage};
 
 use super::include::{Includes, Resolve};
 use super::{
-    CompileOptions, Compiler, Diagnostic, Diagnostics, Origin, ProgramOptions, STAGE_ORDER,
-    Severity, glslang_stage_name, link_diagnostic, link_stages, link_warnings, write_spirv,
+    CompileOptions, Compiler, Diagnostic, Diagnostics, Emission, Origin, ProgramOptions,
+    STAGE_ORDER, Severity, glslang_stage_name, link_diagnostic, link_stages, link_warnings,
+    write_spirv,
 };
 use crate::{CompileError, InvalidModule, message, reflect, rename_entry_point};
 
@@ -325,9 +326,7 @@ impl Compiler {
             build.stages.push(stage_output(
                 stage,
                 &compile_options.name,
-                &linked.module,
-                &linked.info,
-                &linked.processes,
+                &Emission::linked(&linked, Some(&compile_options.name)),
                 options,
             ));
         }
@@ -380,12 +379,14 @@ impl Compiler {
             .map(|unit| unit.name.clone())
             .unwrap_or_default();
         for stage in &linked {
+            let source = units
+                .iter()
+                .find(|unit| unit.options.stage == Some(stage.stage))
+                .map(|unit| unit.name.as_str());
             build.stages.push(stage_output(
                 stage.stage,
                 &name,
-                &stage.module,
-                &stage.info,
-                &stage.processes,
+                &Emission::linked(stage, source),
                 options,
             ));
         }
@@ -498,34 +499,34 @@ fn unlinked(units: Vec<Unit<'_>>, options: &ProgramOptions, build: &mut Build) {
             }
         };
         rename_entry_point(&mut object.unit.module, object.entry_point.as_deref());
-        build.stages.push(stage_output(
-            stage,
-            &unit.name,
-            &object.unit.module,
-            &info,
-            &object.processes,
-            options,
-        ));
+        let emission = Emission {
+            module: &object.unit.module,
+            info: &info,
+            processes: &object.processes,
+            source_file: Some((&unit.name, object.unit.glsl_version)),
+        };
+        build
+            .stages
+            .push(stage_output(stage, &unit.name, &emission, options));
     }
 }
 
 fn stage_output(
     stage: ShaderStage,
     name: &str,
-    module: &Module,
-    info: &ModuleInfo,
-    processes: &[String],
+    emission: &Emission<'_>,
     options: &ProgramOptions,
 ) -> StageOutput {
     StageOutput {
         stage,
         name: name.to_owned(),
-        entry_point: module
+        entry_point: emission
+            .module
             .entry_points
             .first()
             .map(|entry| entry.name.clone())
             .unwrap_or_default(),
-        result: write_spirv(module, info, processes, options).map_err(|error| {
+        result: write_spirv(emission, options).map_err(|error| {
             Diagnostic::source(
                 name,
                 format!(

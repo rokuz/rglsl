@@ -60,6 +60,7 @@ fn debug_options(debug: Option<&str>) -> Option<spv::DebugInfo<'static>> {
         level,
         source_text,
         processes: &[],
+        source_file: None,
         entry_point: Some(spv::DebugEntryPoint {
             signature: "rglsl",
             arguments: "",

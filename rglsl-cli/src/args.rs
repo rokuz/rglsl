@@ -490,12 +490,7 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
         'g' => {
             options.debug = match rest.chars().next() {
                 Some('0') => DebugInfo::Stripped,
-                Some('N') => {
-                    return Err(Exit::unsupported(
-                        &argument,
-                        "debug information with the source file name only",
-                    ));
-                }
+                Some('N') => DebugInfo::FileName,
                 Some('V') if rest.chars().nth(1) == Some('S') => DebugInfo::NonSemanticWithSource,
                 Some('V') => DebugInfo::NonSemantic,
                 _ => DebugInfo::Lines,

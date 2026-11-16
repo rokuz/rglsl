@@ -98,6 +98,7 @@ impl Debug {
             level,
             source_text,
             processes: &[],
+            source_file: None,
             entry_point: Some(spv::DebugEntryPoint {
                 signature: "rglsl",
                 arguments: "",
