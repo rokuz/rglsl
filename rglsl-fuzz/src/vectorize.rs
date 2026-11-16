@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rglsl_ast::ast::{
@@ -121,7 +120,7 @@ pub fn component_data(name: &str) -> Option<Vec<MergedComponent>> {
     rest.is_empty().then_some(components)
 }
 
-fn block_entries(statements: &[Statement], analysis: &Analysis) -> Result<Vec<Entry>, Stalled> {
+fn block_entries(statements: &[Statement], analysis: &Analysis) -> Vec<Entry> {
     let mut entries = Vec::new();
     for (index, statement) in statements.iter().enumerate() {
         let StatementKind::Declaration(declaration) = &statement.kind else {
@@ -139,7 +138,7 @@ fn block_entries(statements: &[Statement], analysis: &Analysis) -> Result<Vec<En
         if basic::is_matrix(ty) || basic::is_boolean(ty) {
             continue;
         }
-        let excluded: BTreeSet<NodeId> = statement_expression_ids(statement)?.into_iter().collect();
+        let excluded: BTreeSet<NodeId> = statement_expression_ids(statement).into_iter().collect();
         for declarator in &list.declarators {
             if declarator.kind.array.is_some() {
                 continue;
@@ -157,7 +156,7 @@ fn block_entries(statements: &[Statement], analysis: &Analysis) -> Result<Vec<En
         }
     }
     entries.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(entries)
+    entries
 }
 
 fn declared_names(statements: &[Statement]) -> BTreeSet<String> {
@@ -196,16 +195,13 @@ fn blocks(unit: &TranslationUnit) -> Vec<(BlockId, &[Statement])> {
     result
 }
 
-pub fn apply(
-    input: &PassInput<'_>,
-    random: &mut Random,
-) -> Result<Option<TranslationUnit>, Stalled> {
+pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
     let mut opportunities = Vec::new();
     let mut existing: BTreeMap<BlockId, BTreeSet<String>> = BTreeMap::new();
     for (block, statements) in blocks(input.unit) {
         existing.insert(block, declared_names(statements));
         let mut sets: Vec<MergeSet> = Vec::new();
-        for entry in block_entries(statements, input.analysis)? {
+        for entry in block_entries(statements, input.analysis) {
             let with_space: Vec<usize> = sets
                 .iter()
                 .enumerate()
@@ -236,7 +232,7 @@ pub fn apply(
         random,
     );
     if chosen.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut builder = Builder::new(input.unit.next_id());
     let mut edits = Vec::new();
@@ -278,7 +274,7 @@ pub fn apply(
         }
     }
     if edits.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut result = input.unit.clone();
     rewrite_expressions(&mut result, &mut |expression| {
@@ -290,10 +286,10 @@ pub fn apply(
         }
         let base = builder.variable(merged);
         *expression = builder.field(base, swizzle);
-    })?;
-    apply_edits(&mut result, edits, &mut builder)?;
-    Ok(Some(TranslationUnit::new(
+    });
+    apply_edits(&mut result, edits, &mut builder);
+    Some(TranslationUnit::new(
         result.external_declarations,
         builder.next_id(),
-    )))
+    ))
 }

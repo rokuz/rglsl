@@ -447,7 +447,6 @@ impl<'b, 'l, 'a> super::function::LowererCx<'b, 'l, 'a> {
                 if self.with(|this| this.size_expressions.is_empty())? {
                     self.with(|this| {
                         this.size_expressions = rglsl_ast::expressions(this.unit)
-                            .map_err(|_| super::stalled(span))?
                             .into_iter()
                             .map(|expression| (expression.id, expression))
                             .collect();

@@ -115,7 +115,7 @@ fn every_loose_uniform_gets_its_own_block_and_binding() -> TestResult {
     bindings.sort_unstable();
     assert_eq!(bindings, [0, 1, 2, 3, 4]);
     let unit = parse_shader(&text)?;
-    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None)?;
+    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None);
     assert!(
         analysis.diagnostics.is_empty(),
         "{:?}",
@@ -139,7 +139,7 @@ fn surplus_uniforms_become_initialised_globals() -> TestResult {
     assert!(text.contains("vec2 offset = vec2(0.0, 0.0);"), "{text}");
     assert!(text.contains("uniform buf"), "{text}");
     let unit = parse_shader(&text)?;
-    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None)?;
+    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None);
     assert!(
         analysis.diagnostics.is_empty(),
         "{:?}",

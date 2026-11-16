@@ -46,7 +46,7 @@ fn accepted(stage: ShaderStage, body: &str) -> TestResult<Checked> {
 
 impl Checked {
     fn expression(&self, text: &str) -> TestResult<&Expression> {
-        rglsl_ast::expressions(&self.unit)?
+        rglsl_ast::expressions(&self.unit)
             .into_iter()
             .find(|expression| expression.span.text(&self.source) == Some(text))
             .ok_or_else(|| format!("no expression `{text}`").into())

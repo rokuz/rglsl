@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use std::collections::BTreeMap;
 
 use rglsl_ast::ast::{BasicType, Statement, TranslationUnit};
@@ -55,23 +54,19 @@ fn choose_output(
         .map(|(name, ty)| (name.clone(), *ty))
 }
 
-pub fn apply(
-    input: &PassInput<'_>,
-    random: &mut Random,
-    live: bool,
-) -> Result<Option<TranslationUnit>, Stalled> {
+pub fn apply(input: &PassInput<'_>, random: &mut Random, live: bool) -> Option<TranslationUnit> {
     let probability = if live {
         input.probabilities.add_live_frag_color_writes
     } else {
         input.probabilities.add_dead_frag_color_writes
     };
-    let points: Vec<_> = injection_points(input.unit, input.analysis)?
+    let points: Vec<_> = injection_points(input.unit, input.analysis)
         .into_iter()
         .filter(|point| !output_variables(point, input).is_empty())
         .collect();
     let points = choose(points, probability, random);
     if points.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut context = Context::new(input.unit, input.analysis, input.params);
     let mut edits = Vec::new();
@@ -88,8 +83,8 @@ pub fn apply(
         edits.push((point.location, Edit::Inject(statement)));
     }
     let mut result = input.unit.clone();
-    apply_edits(&mut result, edits, &mut context.builder)?;
-    Ok(Some(result))
+    apply_edits(&mut result, edits, &mut context.builder);
+    Some(result)
 }
 
 fn fuzzed(

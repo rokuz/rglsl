@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rglsl_ast::TranslationUnit;
@@ -84,21 +83,21 @@ pub fn analyze_shader(
     stage: ShaderStage,
     relaxed_uniforms: bool,
     builtins: Option<&Arc<Builtins>>,
-) -> Result<Analysis, Stalled> {
-    let expanded = expand_macros(unit)?;
+) -> Analysis {
+    let expanded = expand_macros(unit);
     let mut options = Options::new(stage);
     options.relaxed_uniforms = relaxed_uniforms;
     if let Some(builtins) = builtins {
-        return Ok(analyze_with_builtins(&expanded, &options, builtins));
+        return analyze_with_builtins(&expanded, &options, builtins);
     }
-    Ok(match cached_builtins(&expanded, stage) {
+    match cached_builtins(&expanded, stage) {
         Some(builtins) => analyze_with_builtins(&expanded, &options, &builtins),
         None => {
             let analysis = analyze(&expanded, &options);
             remember_builtins(&analysis.builtins);
             analysis
         }
-    })
+    }
 }
 
 fn shader_large_enough(
@@ -125,7 +124,7 @@ fn apply_transformation(
     donors: &[Donor],
     random: &mut Random,
 ) -> Result<bool, Error> {
-    let analysis = analyze_shader(unit, stage, true, builtins.as_ref())?;
+    let analysis = analyze_shader(unit, stage, true, builtins.as_ref());
     if builtins.is_none() {
         *builtins = Some(Arc::clone(&analysis.builtins));
     }
@@ -136,13 +135,13 @@ fn apply_transformation(
         params,
         donors,
     };
-    let Some(transformed) = transformation::apply(transformation, &input, random)? else {
+    let Some(transformed) = transformation::apply(transformation, &input, random) else {
         return Ok(false);
     };
     let Ok(mut reparsed) = parse_unit("variant", &emit(&transformed)?) else {
         return Ok(false);
     };
-    if let Some(stripped) = strip_unused(&reparsed)? {
+    if let Some(stripped) = strip_unused(&reparsed) {
         match parse_unit("variant", &emit(&stripped)?) {
             Ok(stripped) => reparsed = stripped,
             Err(_) => return Ok(false),

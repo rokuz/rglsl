@@ -6,18 +6,12 @@ pub enum Error {
     Parse { shader: String, message: String },
     Unsupported(String),
     Generation(String),
-    Stalled,
-}
-
-impl From<rglsl_ast::Stalled> for Error {
-    fn from(_: rglsl_ast::Stalled) -> Self {
-        Self::Stalled
-    }
+    Print,
 }
 
 impl From<fmt::Error> for Error {
     fn from(_: fmt::Error) -> Self {
-        Self::Stalled
+        Self::Print
     }
 }
 
@@ -28,7 +22,7 @@ impl fmt::Display for Error {
             Self::Parse { shader, message } => write!(formatter, "{shader}: {message}"),
             Self::Unsupported(message) => write!(formatter, "unsupported: {message}"),
             Self::Generation(message) => write!(formatter, "generation failed: {message}"),
-            Self::Stalled => formatter.write_str("a syntax tree walk stopped before it finished"),
+            Self::Print => formatter.write_str("printing the syntax tree failed"),
         }
     }
 }

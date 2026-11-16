@@ -131,7 +131,7 @@ fn check_in_shader(
         )
     };
     let unit = parse_shader(&source).map_err(|error| format!("{error}\n{source}"))?;
-    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None)?;
+    let analysis = analyze_shader(&unit, ShaderStage::Fragment, false, None);
     assert!(
         analysis.diagnostics.is_empty(),
         "{:?}\n{source}",

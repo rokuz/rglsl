@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use rglsl_ast::ast::{BinaryOperator, PostfixOperator, Statement, StatementKind, TranslationUnit};
 
 use crate::basic::{self, BOOL, INT};
@@ -37,11 +36,8 @@ enum Wrapper {
     DoWhile(rglsl_ast::ast::Expression),
 }
 
-pub fn apply(
-    input: &PassInput<'_>,
-    random: &mut Random,
-) -> Result<Option<TranslationUnit>, Stalled> {
-    let points: Vec<_> = injection_points(input.unit, input.analysis)?
+pub fn apply(input: &PassInput<'_>, random: &mut Random) -> Option<TranslationUnit> {
+    let points: Vec<_> = injection_points(input.unit, input.analysis)
         .into_iter()
         .filter(suitable)
         .collect();
@@ -51,7 +47,7 @@ pub fn apply(
         random,
     );
     if points.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut context = Context::new(input.unit, input.analysis, input.params);
     let mut edits = Vec::new();
@@ -63,7 +59,7 @@ pub fn apply(
                 StatementKind::Compound(_) => statement,
                 _ => builder.block(vec![statement]),
             };
-            Ok(match wrapper {
+            match wrapper {
                 Wrapper::IfTrue(condition) => {
                     let empty = builder.block(Vec::new());
                     builder.if_statement(condition, body, Some(empty))
@@ -78,13 +74,13 @@ pub fn apply(
                     increment,
                 } => builder.for_statement(init, Some(condition), Some(increment), body),
                 Wrapper::DoWhile(condition) => builder.do_while(body, condition),
-            })
+            }
         };
         edits.push((point.location, Edit::Replace(Box::new(replace))));
     }
     let mut result = input.unit.clone();
-    apply_edits(&mut result, edits, &mut context.builder)?;
-    Ok(Some(result))
+    apply_edits(&mut result, edits, &mut context.builder);
+    Some(result)
 }
 
 fn make_wrapper(

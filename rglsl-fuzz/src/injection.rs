@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -8,13 +7,12 @@ use rglsl_ast::ast::{
 };
 use rglsl_sema::Analysis;
 
-use rglsl_types::stack::{Stalled, run};
+use rglsl_types::stack::recurse;
 
 use crate::basic;
 use crate::build::Builder;
 use crate::random::Random;
 use crate::scope::{Variable, declared_variable};
-use crate::stack::{Cx, take_statement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BlockId {
@@ -50,7 +48,7 @@ pub struct InjectionPoint<'a> {
 pub fn injection_points<'a>(
     unit: &'a TranslationUnit,
     analysis: &Analysis,
-) -> Result<Vec<InjectionPoint<'a>>, Stalled> {
+) -> Vec<InjectionPoint<'a>> {
     let mut walker = Walker {
         analysis,
         scopes: vec![Vec::new()],
@@ -71,15 +69,10 @@ pub fn injection_points<'a>(
                         walker.add(variable);
                     }
                 }
-                let state = RefCell::new(walker);
-                run(|stack| {
-                    Cx::new(&state, stack).block(
-                        BlockId::Function(index),
-                        &definition.kind.body.node.statements,
-                    )
-                })
-                .ok_or(Stalled)?;
-                walker = state.into_inner();
+                walker.block(
+                    BlockId::Function(index),
+                    &definition.kind.body.node.statements,
+                );
                 walker.pop();
                 walker.function = None;
             }
@@ -87,7 +80,7 @@ pub fn injection_points<'a>(
             ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
         }
     }
-    Ok(walker.points)
+    walker.points
 }
 
 pub fn choose<T>(items: Vec<T>, probability: u32, random: &mut Random) -> Vec<T> {
@@ -163,160 +156,118 @@ impl<'u> Walker<'_, 'u> {
     }
 }
 
-impl<'b, 'a: 'b, 'u: 'b> Cx<'b, Walker<'a, 'u>> {
-    async fn block(self, block: BlockId, statements: &'u [Statement]) {
-        self.with(|state| state.push());
+impl<'u> Walker<'_, 'u> {
+    fn block(&mut self, block: BlockId, statements: &'u [Statement]) {
+        self.push();
         for (index, statement) in statements.iter().enumerate() {
             let label = matches!(statement.kind, StatementKind::CaseLabel(_));
             if !(index == 0 && label) {
-                self.with(|state| {
-                    let in_loop = state.loops > 0;
-                    state.point(Location::Block { block, index }, Some(statement), in_loop);
-                });
+                let in_loop = self.loops > 0;
+                self.point(Location::Block { block, index }, Some(statement), in_loop);
             }
-            self.call(self.clone().statement(statement)).await;
+            self.statement(statement);
         }
-        self.with(|state| {
-            let in_loop = state.loops > 0;
-            state.point(
-                Location::Block {
-                    block,
-                    index: statements.len(),
-                },
-                None,
-                in_loop,
-            );
-            state.pop();
-        });
+        let in_loop = self.loops > 0;
+        self.point(
+            Location::Block {
+                block,
+                index: statements.len(),
+            },
+            None,
+            in_loop,
+        );
+        self.pop();
     }
 
-    async fn nested(self, statement: &'u Statement) {
-        self.with(|state| state.push());
-        self.call(self.clone().statement(statement)).await;
-        self.with(|state| state.pop());
+    fn nested(&mut self, statement: &'u Statement) {
+        self.push();
+        self.statement(statement);
+        self.pop();
     }
 
-    async fn statement(self, statement: &'u Statement) {
-        match &statement.kind {
+    fn declared_condition(&mut self, condition: &Condition) {
+        if let Condition::Declaration(declaration) = condition {
+            let variable =
+                declared_variable(self.analysis, declaration.id, &declaration.kind.name.node);
+            self.add(variable);
+        }
+    }
+
+    fn statement(&mut self, statement: &'u Statement) {
+        recurse(|| match &statement.kind {
             StatementKind::Compound(compound) => {
-                self.call(
-                    self.clone()
-                        .block(BlockId::Statement(statement.id), &compound.statements),
-                )
-                .await;
+                self.block(BlockId::Statement(statement.id), &compound.statements);
             }
-            StatementKind::Declaration(declaration) => {
-                self.with(|state| state.declaration(declaration));
-            }
+            StatementKind::Declaration(declaration) => self.declaration(declaration),
             StatementKind::Selection {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                {
-                    self.with(|state| {
-                        let in_loop = state.loops > 0;
-                        if !matches!(then_branch.kind, StatementKind::Compound(_)) {
-                            state.point(
-                                Location::Branch {
-                                    statement: statement.id,
-                                    else_branch: false,
-                                },
-                                Some(then_branch),
-                                in_loop,
-                            );
-                        }
-                        if let Some(else_branch) = else_branch
-                            && !matches!(else_branch.kind, StatementKind::Compound(_))
-                        {
-                            state.point(
-                                Location::Branch {
-                                    statement: statement.id,
-                                    else_branch: true,
-                                },
-                                Some(else_branch),
-                                in_loop,
-                            );
-                        }
-                    });
+                let in_loop = self.loops > 0;
+                if !matches!(then_branch.kind, StatementKind::Compound(_)) {
+                    self.point(
+                        Location::Branch {
+                            statement: statement.id,
+                            else_branch: false,
+                        },
+                        Some(then_branch),
+                        in_loop,
+                    );
                 }
-                self.clone().nested(then_branch).await;
+                if let Some(else_branch) = else_branch
+                    && !matches!(else_branch.kind, StatementKind::Compound(_))
+                {
+                    self.point(
+                        Location::Branch {
+                            statement: statement.id,
+                            else_branch: true,
+                        },
+                        Some(else_branch),
+                        in_loop,
+                    );
+                }
+                self.nested(then_branch);
                 if let Some(else_branch) = else_branch {
-                    self.clone().nested(else_branch).await;
+                    self.nested(else_branch);
                 }
             }
             StatementKind::Switch { statements, .. } => {
-                self.with(|state| state.switches += 1);
-                self.call(
-                    self.clone()
-                        .block(BlockId::Statement(statement.id), statements),
-                )
-                .await;
-                self.with(|state| state.switches -= 1);
+                self.switches += 1;
+                self.block(BlockId::Statement(statement.id), statements);
+                self.switches -= 1;
             }
             StatementKind::While { condition, body } => {
-                {
-                    self.with(|state| {
-                        state.loop_body(statement.id, body);
-                        state.loops += 1;
-                        state.push();
-                        if let Condition::Declaration(declaration) = condition {
-                            let variable = declared_variable(
-                                state.analysis,
-                                declaration.id,
-                                &declaration.kind.name.node,
-                            );
-                            state.add(variable);
-                        }
-                    });
-                }
-                self.call(self.clone().statement(body)).await;
-                self.with(|state| {
-                    state.pop();
-                    state.loops -= 1;
-                });
+                self.loop_body(statement.id, body);
+                self.loops += 1;
+                self.push();
+                self.declared_condition(condition);
+                self.statement(body);
+                self.pop();
+                self.loops -= 1;
             }
             StatementKind::DoWhile { body, .. } => {
-                {
-                    self.with(|state| {
-                        state.loop_body(statement.id, body);
-                        state.loops += 1;
-                    });
-                }
-                self.clone().nested(body).await;
-                self.with(|state| state.loops -= 1);
+                self.loop_body(statement.id, body);
+                self.loops += 1;
+                self.nested(body);
+                self.loops -= 1;
             }
             StatementKind::For(for_statement) => {
-                {
-                    self.with(|state| {
-                        state.loop_body(statement.id, &for_statement.body);
-                        state.loops += 1;
-                        state.push();
-                    });
+                self.loop_body(statement.id, &for_statement.body);
+                self.loops += 1;
+                self.push();
+                self.statement(&for_statement.init);
+                if let Some(condition) = &for_statement.condition {
+                    self.declared_condition(condition);
                 }
-                self.call(self.clone().statement(&for_statement.init)).await;
-                if let Some(Condition::Declaration(declaration)) = &for_statement.condition {
-                    self.with(|state| {
-                        let variable = declared_variable(
-                            state.analysis,
-                            declaration.id,
-                            &declaration.kind.name.node,
-                        );
-                        state.add(variable);
-                    });
-                }
-                self.call(self.clone().statement(&for_statement.body)).await;
-                self.with(|state| {
-                    state.pop();
-                    state.loops -= 1;
-                });
+                self.statement(&for_statement.body);
+                self.pop();
+                self.loops -= 1;
             }
-            StatementKind::Attributed { statement, .. } => {
-                self.call(self.clone().statement(statement)).await;
-            }
+            StatementKind::Attributed { statement, .. } => self.statement(statement),
             StatementKind::Expression(_) | StatementKind::CaseLabel(_) | StatementKind::Jump(_) => {
             }
-        }
+        });
     }
 }
 
@@ -427,7 +378,7 @@ pub fn contains_case_label(statement: &Statement) -> bool {
     )
 }
 
-pub type Replacement = Box<dyn FnOnce(Statement) -> Result<Statement, Stalled>>;
+pub type Replacement = Box<dyn FnOnce(Statement) -> Statement>;
 
 pub enum Edit {
     Inject(Statement),
@@ -453,7 +404,7 @@ pub fn apply_edits(
     unit: &mut TranslationUnit,
     edits: Vec<(Location, Edit)>,
     builder: &mut Builder,
-) -> Result<(), Stalled> {
+) {
     let mut grouped = Edits::default();
     for (location, edit) in edits {
         match location {
@@ -469,44 +420,34 @@ pub fn apply_edits(
             }
         }
     }
-    let state = RefCell::new(Applier {
+    let mut applier = Applier {
         edits: grouped,
         builder,
-        stalled: false,
-    });
+    };
     for (index, external) in unit.external_declarations.iter_mut().enumerate() {
         if let ExternalDeclaration::FunctionDefinition(definition) = external {
-            let statements = &mut definition.kind.body.node.statements;
-            run(|stack| Cx::new(&state, stack).block(BlockId::Function(index), statements))
-                .ok_or(Stalled)?;
+            applier.block(
+                BlockId::Function(index),
+                &mut definition.kind.body.node.statements,
+            );
         }
     }
-    if state.into_inner().stalled {
-        return Err(Stalled);
-    }
-    Ok(())
 }
 
-fn apply_at(
-    statements: &mut Vec<Statement>,
-    current: Option<Statement>,
-    edits: Vec<Edit>,
-) -> Result<(), Stalled> {
+fn apply_at(statements: &mut Vec<Statement>, current: Option<Statement>, edits: Vec<Edit>) {
     let mut current = current;
     for edit in edits {
         match edit {
             Edit::Inject(statement) => statements.push(statement),
-            Edit::Replace(replace) => current = current.map(replace).transpose()?,
+            Edit::Replace(replace) => current = current.map(replace),
         }
     }
     statements.extend(current);
-    Ok(())
 }
 
 struct Applier<'b> {
     edits: Edits,
     builder: &'b mut Builder,
-    stalled: bool,
 }
 
 impl Applier<'_> {
@@ -520,7 +461,7 @@ impl Applier<'_> {
         for index in 0..=length {
             let current = old.next();
             let at = edits.remove(&index).unwrap_or_default();
-            self.stalled |= apply_at(statements, current, at).is_err();
+            apply_at(statements, current, at);
         }
     }
 
@@ -531,80 +472,66 @@ impl Applier<'_> {
         let placeholder = self.builder.block(Vec::new());
         let original = core::mem::replace(slot, placeholder);
         let mut statements = Vec::new();
-        self.stalled |= apply_at(&mut statements, Some(original), edits).is_err();
+        apply_at(&mut statements, Some(original), edits);
         *slot = self.builder.block(statements);
     }
 }
 
-impl<'b, 'c: 'b> Cx<'b, Applier<'c>> {
-    async fn block(self, block: BlockId, statements: &mut Vec<Statement>) {
+impl Applier<'_> {
+    fn block(&mut self, block: BlockId, statements: &mut Vec<Statement>) {
         for statement in statements.iter_mut() {
-            self.statement_in(statement).await;
+            self.statement(statement);
         }
-        self.with(|state| state.finish_block(block, statements));
+        self.finish_block(block, statements);
     }
 
-    async fn statement_in(&self, slot: &mut Statement) {
-        let statement = take_statement(slot);
-        *slot = self.call(self.clone().statement(statement)).await;
-    }
-
-    async fn statement(self, mut statement: Statement) -> Statement {
+    fn statement(&mut self, statement: &mut Statement) {
         let id = statement.id;
-        match &mut statement.kind {
+        recurse(|| match &mut statement.kind {
             StatementKind::Compound(compound) => {
-                self.clone()
-                    .block(BlockId::Statement(id), &mut compound.statements)
-                    .await;
+                self.block(BlockId::Statement(id), &mut compound.statements);
             }
             StatementKind::Selection {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                self.statement_in(then_branch).await;
-                self.with(|state| {
-                    state.branch(
+                self.statement(then_branch);
+                self.branch(
+                    Location::Branch {
+                        statement: id,
+                        else_branch: false,
+                    },
+                    then_branch,
+                );
+                if let Some(else_branch) = else_branch {
+                    self.statement(else_branch);
+                    self.branch(
                         Location::Branch {
                             statement: id,
-                            else_branch: false,
+                            else_branch: true,
                         },
-                        then_branch,
+                        else_branch,
                     );
-                });
-                if let Some(else_branch) = else_branch {
-                    self.statement_in(else_branch).await;
-                    self.with(|state| {
-                        state.branch(
-                            Location::Branch {
-                                statement: id,
-                                else_branch: true,
-                            },
-                            else_branch,
-                        );
-                    });
                 }
             }
             StatementKind::Switch { statements, .. } => {
-                self.clone().block(BlockId::Statement(id), statements).await;
+                self.block(BlockId::Statement(id), statements);
             }
             StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } => {
-                self.statement_in(body).await;
-                self.with(|state| state.branch(Location::Body { statement: id }, body));
+                self.statement(body);
+                self.branch(Location::Body { statement: id }, body);
             }
             StatementKind::For(for_statement) => {
-                self.statement_in(&mut for_statement.body).await;
-                self.with(|state| {
-                    state.branch(Location::Body { statement: id }, &mut for_statement.body);
-                });
+                self.statement(&mut for_statement.body);
+                self.branch(Location::Body { statement: id }, &mut for_statement.body);
             }
-            StatementKind::Attributed { statement, .. } => self.statement_in(statement).await,
+            StatementKind::Attributed { statement, .. } => self.statement(statement),
             StatementKind::Declaration(_)
             | StatementKind::Expression(_)
             | StatementKind::CaseLabel(_)
             | StatementKind::Jump(_) => {}
-        }
-        statement
+        });
     }
 }
 

@@ -104,8 +104,8 @@ impl Reducer<'_, '_> {
                 break;
             };
             let stage = entry.stage();
-            let analysis = analyze_shader(&entry.unit, stage, true, None)?;
-            let opportunities = finders::find(pass, &entry.unit, &analysis)?;
+            let analysis = analyze_shader(&entry.unit, stage, true, None);
+            let opportunities = finders::find(pass, &entry.unit, &analysis);
             if opportunities.is_empty() {
                 break;
             }
@@ -120,7 +120,7 @@ impl Reducer<'_, '_> {
             }
             let end = (index + granularity).min(opportunities.len());
             let chunk = opportunities.get(index..end).unwrap_or_default();
-            let candidate = change::apply(&entry.unit, chunk)?;
+            let candidate = change::apply(&entry.unit, chunk);
             if self.try_candidate(current, shader, candidate)? {
                 progress = true;
             } else {
@@ -219,7 +219,7 @@ pub fn add_guards_to_job(job: &ShaderJob, bound: u32) -> Result<Option<ShaderJob
 pub fn finalise(job: &ShaderJob) -> Result<ShaderJob, Error> {
     let mut result = job.clone();
     for shader in &mut result.shaders {
-        let expanded = expand_macros(&shader.unit)?;
+        let expanded = expand_macros(&shader.unit);
         if let Some(unit) = renumbered(&expanded)? {
             shader.unit = unit;
         }

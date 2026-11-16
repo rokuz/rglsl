@@ -271,10 +271,7 @@ impl Analyzer<'_> {
         if !self.mesh_ext() || !self.stage_is(ShaderStage::Mesh) {
             return;
         }
-        let Ok(expressions) = rglsl_ast::expressions(unit) else {
-            self.stalled(());
-            return;
-        };
+        let expressions = rglsl_ast::expressions(unit);
         let mut written: BTreeSet<NodeId> = BTreeSet::new();
         for expression in &expressions {
             match &expression.kind {

@@ -1,4 +1,3 @@
-use rglsl_ast::Stalled;
 use std::collections::BTreeSet;
 
 use std::cell::RefCell;
@@ -10,15 +9,15 @@ use rglsl_ast::ast::{
 use crate::constants::{STRUCTIFICATION_STRUCT_PREFIX, is_donated_name};
 use crate::rename::{NameKind, rename_all};
 
-pub fn referenced_names(external: &ExternalDeclaration) -> Result<BTreeSet<String>, Stalled> {
+pub fn referenced_names(external: &ExternalDeclaration) -> BTreeSet<String> {
     let names = RefCell::new(BTreeSet::new());
     let mut unit = TranslationUnit::new(vec![external.clone()], 0);
     let record = |_: NameKind, name: &str| {
         names.borrow_mut().insert(name.to_owned());
         None
     };
-    rename_all(&mut unit, &record)?;
-    Ok(names.into_inner())
+    rename_all(&mut unit, &record);
+    names.into_inner()
 }
 
 fn defined_function(external: &ExternalDeclaration) -> Option<&str> {
@@ -84,10 +83,8 @@ fn donated_struct(external: &ExternalDeclaration) -> Option<String> {
         .then(|| name.node.clone())
 }
 
-pub fn strip_unused(unit: &TranslationUnit) -> Result<Option<TranslationUnit>, Stalled> {
-    let Some(removed) = strip_unused_generated(unit)? else {
-        return Ok(None);
-    };
+pub fn strip_unused(unit: &TranslationUnit) -> Option<TranslationUnit> {
+    let removed = strip_unused_generated(unit)?;
     let removed: BTreeSet<usize> = removed.into_iter().collect();
     let external_declarations = unit
         .external_declarations
@@ -96,18 +93,15 @@ pub fn strip_unused(unit: &TranslationUnit) -> Result<Option<TranslationUnit>, S
         .filter(|(index, _)| !removed.contains(index))
         .map(|(_, external)| external.clone())
         .collect();
-    Ok(Some(TranslationUnit::new(
-        external_declarations,
-        unit.next_id(),
-    )))
+    Some(TranslationUnit::new(external_declarations, unit.next_id()))
 }
 
-pub fn strip_unused_generated(unit: &TranslationUnit) -> Result<Option<Vec<usize>>, Stalled> {
+pub fn strip_unused_generated(unit: &TranslationUnit) -> Option<Vec<usize>> {
     let externals = &unit.external_declarations;
     let references = externals
         .iter()
         .map(referenced_names)
-        .collect::<Result<Vec<BTreeSet<String>>, Stalled>>()?;
+        .collect::<Vec<BTreeSet<String>>>();
     let mut kept = vec![false; externals.len()];
     let mut live: BTreeSet<String> = BTreeSet::new();
     live.insert(String::from("main"));
@@ -144,5 +138,5 @@ pub fn strip_unused_generated(unit: &TranslationUnit) -> Result<Option<Vec<usize
         .filter(|(_, keep)| !**keep)
         .map(|(index, _)| index)
         .collect();
-    Ok((!removed.is_empty()).then_some(removed))
+    (!removed.is_empty()).then_some(removed)
 }
