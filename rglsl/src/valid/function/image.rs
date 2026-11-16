@@ -5,21 +5,20 @@ use crate::arena::Handle;
 use crate::span::{AddSpan as _, WithSpan};
 
 impl super::super::Validator {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the fields of Statement::ImageStore"
-    )]
     pub(super) fn validate_image_store(
         &self,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
         value: Handle<crate::Expression>,
         span: crate::Span,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         use crate::{Expression as E, TypeInner as Ti};
         let global_ty;
         let image_ty;
@@ -56,65 +55,7 @@ impl super::super::Validator {
 
                 image_ty = base;
             }
-            E::Literal(_)
-            | E::Constant(_)
-            | E::Override(_)
-            | E::ZeroValue(_)
-            | E::Compose { .. }
-            | E::Splat { .. }
-            | E::Swizzle { .. }
-            | E::LocalVariable(_)
-            | E::Load { .. }
-            | E::ImageSample { .. }
-            | E::ImageLoad { .. }
-            | E::ImageQuery { .. }
-            | E::Unary { .. }
-            | E::Binary { .. }
-            | E::Select { .. }
-            | E::Derivative { .. }
-            | E::Relational { .. }
-            | E::Math { .. }
-            | E::As { .. }
-            | E::CallResult(_)
-            | E::AtomicResult { .. }
-            | E::ArrayLength(_)
-            | E::WideArrayLength(_)
-            | E::PhysicalPointer { .. }
-            | E::PhysicalAddress { .. }
-            | E::BufferPointer { .. }
-            | E::HeapOffset { .. }
-            | E::RayQueryProceedResult
-            | E::RayQueryGet { .. }
-            | E::ReportIntersectionResult
-            | E::AccelerationStructureFromAddress { .. }
-            | E::HitObjectGet { .. }
-            | E::FetchMicroTriangleVertex { .. }
-            | E::SubgroupBallotResult
-            | E::SubgroupOperationResult { .. }
-            | E::SpirvInstructionResult { .. }
-            | E::CooperativeLoad { .. }
-            | E::CooperativeMultiplyAdd { .. }
-            | E::CooperativeMatrixLength { .. }
-            | E::Replicate { .. }
-            | E::Expect { .. }
-            | E::ImageSparseResident { .. }
-            | E::IsHelperInvocation
-            | E::ReadClock { .. }
-            | E::InterpolateAt { .. }
-            | E::FragmentFetch { .. }
-            | E::ImageFootprint { .. }
-            | E::AttachmentRead { .. }
-            | E::CooperativeVectorLoad { .. }
-            | E::CooperativeVectorMatMul { .. }
-            | E::Convert { .. }
-            | E::CooperativeMatrixResult { .. }
-            | E::TensorCreate { .. }
-            | E::ImageProcessing { .. }
-            | E::ArrayConversion { .. }
-            | E::Bitcast { .. }
-            | E::TensorSet { .. }
-            | E::TensorRead { .. }
-            | E::TensorQuerySize { .. } => {
+            _ => {
                 let Some((global, ty)) = context.heap_image(image) else {
                     return Err(FunctionError::InvalidImageStore(
                         ExpressionError::ExpectedGlobalVariable,

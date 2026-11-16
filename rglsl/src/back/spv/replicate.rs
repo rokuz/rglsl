@@ -5,7 +5,6 @@ use spirv::{Op, Word};
 use crate::FastHashMap;
 
 const fn replicated(op: Op) -> Option<Op> {
-    #[expect(clippy::wildcard_enum_match_arm)]
     match op {
         Op::ConstantComposite => Some(Op::ConstantCompositeReplicateEXT),
         Op::SpecConstantComposite => Some(Op::SpecConstantCompositeReplicateEXT),

@@ -273,128 +273,13 @@ impl GlobalOrArgument {
                         E::GlobalVariable(var) => {
                             break GlobalOrArgument::Global(var);
                         }
-                        E::Literal(_)
-                        | E::Constant(_)
-                        | E::Override(_)
-                        | E::ZeroValue(_)
-                        | E::Compose { .. }
-                        | E::Splat { .. }
-                        | E::Swizzle { .. }
-                        | E::FunctionArgument(_)
-                        | E::LocalVariable(_)
-                        | E::Load { .. }
-                        | E::ImageSample { .. }
-                        | E::ImageLoad { .. }
-                        | E::ImageQuery { .. }
-                        | E::Unary { .. }
-                        | E::Binary { .. }
-                        | E::Select { .. }
-                        | E::Derivative { .. }
-                        | E::Relational { .. }
-                        | E::Math { .. }
-                        | E::As { .. }
-                        | E::CallResult(_)
-                        | E::AtomicResult { .. }
-                        | E::ArrayLength(_)
-                        | E::WideArrayLength(_)
-                        | E::PhysicalPointer { .. }
-                        | E::PhysicalAddress { .. }
-                        | E::BufferPointer { .. }
-                        | E::RayQueryProceedResult
-                        | E::RayQueryGet { .. }
-                        | E::ReportIntersectionResult
-                        | E::AccelerationStructureFromAddress { .. }
-                        | E::HitObjectGet { .. }
-                        | E::FetchMicroTriangleVertex { .. }
-                        | E::SubgroupBallotResult
-                        | E::SubgroupOperationResult { .. }
-                        | E::SpirvInstructionResult { .. }
-                        | E::CooperativeLoad { .. }
-                        | E::CooperativeMultiplyAdd { .. }
-                        | E::CooperativeMatrixLength { .. }
-                        | E::Replicate { .. }
-                        | E::Expect { .. }
-                        | E::ImageSparseResident { .. }
-                        | E::IsHelperInvocation
-                        | E::ReadClock { .. }
-                        | E::InterpolateAt { .. }
-                        | E::FragmentFetch { .. }
-                        | E::ImageFootprint { .. }
-                        | E::AttachmentRead { .. }
-                        | E::CooperativeVectorLoad { .. }
-                        | E::CooperativeVectorMatMul { .. }
-                        | E::Convert { .. }
-                        | E::CooperativeMatrixResult { .. }
-                        | E::TensorCreate { .. }
-                        | E::ImageProcessing { .. }
-                        | E::ArrayConversion { .. }
-                        | E::Bitcast { .. }
-                        | E::TensorSet { .. }
-                        | E::TensorRead { .. }
-                        | E::TensorQuerySize { .. } => {
+                        _ => {
                             return Err(ExpressionError::ExpectedGlobalOrArgument);
                         }
                     }
                 }
             }
-            E::Literal(_)
-            | E::Constant(_)
-            | E::Override(_)
-            | E::ZeroValue(_)
-            | E::Compose { .. }
-            | E::Splat { .. }
-            | E::Swizzle { .. }
-            | E::LocalVariable(_)
-            | E::ImageSample { .. }
-            | E::ImageLoad { .. }
-            | E::ImageQuery { .. }
-            | E::Unary { .. }
-            | E::Binary { .. }
-            | E::Select { .. }
-            | E::Derivative { .. }
-            | E::Relational { .. }
-            | E::Math { .. }
-            | E::As { .. }
-            | E::CallResult(_)
-            | E::AtomicResult { .. }
-            | E::ArrayLength(_)
-            | E::WideArrayLength(_)
-            | E::PhysicalPointer { .. }
-            | E::PhysicalAddress { .. }
-            | E::BufferPointer { .. }
-            | E::HeapOffset { .. }
-            | E::RayQueryProceedResult
-            | E::RayQueryGet { .. }
-            | E::ReportIntersectionResult
-            | E::AccelerationStructureFromAddress { .. }
-            | E::HitObjectGet { .. }
-            | E::FetchMicroTriangleVertex { .. }
-            | E::SubgroupBallotResult
-            | E::SubgroupOperationResult { .. }
-            | E::SpirvInstructionResult { .. }
-            | E::CooperativeLoad { .. }
-            | E::CooperativeMultiplyAdd { .. }
-            | E::CooperativeMatrixLength { .. }
-            | E::Replicate { .. }
-            | E::Expect { .. }
-            | E::ImageSparseResident { .. }
-            | E::IsHelperInvocation
-            | E::ReadClock { .. }
-            | E::InterpolateAt { .. }
-            | E::FragmentFetch { .. }
-            | E::ImageFootprint { .. }
-            | E::AttachmentRead { .. }
-            | E::CooperativeVectorLoad { .. }
-            | E::CooperativeVectorMatMul { .. }
-            | E::Convert { .. }
-            | E::CooperativeMatrixResult { .. }
-            | E::TensorCreate { .. }
-            | E::ImageProcessing { .. }
-            | E::ArrayConversion { .. }
-            | E::Bitcast { .. }
-            | E::TensorSet { .. }
-            | E::TensorRead { .. }
-            | E::TensorQuerySize { .. } => {
+            _ => {
                 return Err(ExpressionError::ExpectedGlobalOrArgument);
             }
         })
@@ -753,43 +638,19 @@ impl FunctionInfo {
             E::Access { base, index } => {
                 let base_ty = self[base].ty.inner_with(resolve_context.types);
 
-                if let crate::TypeInner::BindingArray { base: element, .. } = *base_ty {
-                    match resolve_context.types[element].inner {
-                        crate::TypeInner::Image { .. }
-                        | crate::TypeInner::Sampler { .. }
-                        | crate::TypeInner::SampledImage { .. }
-                        | crate::TypeInner::AccelerationStructure
-                        | crate::TypeInner::Tensor { .. } => {}
-                        crate::TypeInner::Scalar(_)
-                        | crate::TypeInner::Vector { .. }
-                        | crate::TypeInner::Matrix { .. }
-                        | crate::TypeInner::CooperativeMatrix { .. }
-                        | crate::TypeInner::LongVector { .. }
-                        | crate::TypeInner::TensorLayout { .. }
-                        | crate::TypeInner::TensorView { .. }
-                        | crate::TypeInner::Atomic(_)
-                        | crate::TypeInner::Pointer { .. }
-                        | crate::TypeInner::ValuePointer { .. }
-                        | crate::TypeInner::Array { .. }
-                        | crate::TypeInner::Struct { .. }
-                        | crate::TypeInner::RayQuery
-                        | crate::TypeInner::HitObject { .. }
-                        | crate::TypeInner::BindingArray { .. }
-                        | crate::TypeInner::BufferDescriptor { .. }
-                        | crate::TypeInner::Spirv { .. } => {
-                            if !matches!(
-                                expression_arena[base],
-                                E::GlobalVariable(global)
-                                    if matches!(
-                                        resolve_context.global_vars[global].space,
-                                        crate::AddressSpace::Uniform
-                                            | crate::AddressSpace::Storage { .. }
-                                    )
-                            ) {
-                                return Err(ExpressionError::InvalidBaseType(base));
-                            }
-                        }
-                    }
+                if let crate::TypeInner::BindingArray { base: element, .. } = *base_ty
+                    && !resolve_context.types[element].inner.is_handle()
+                    && !matches!(
+                        expression_arena[base],
+                        E::GlobalVariable(global)
+                            if matches!(
+                                resolve_context.global_vars[global].space,
+                                crate::AddressSpace::Uniform
+                                    | crate::AddressSpace::Storage { .. }
+                            )
+                    )
+                {
+                    return Err(ExpressionError::InvalidBaseType(base));
                 }
 
                 Uniformity {
@@ -866,14 +727,6 @@ impl FunctionInfo {
                 let var = &resolve_context.global_vars[gh];
                 let uniform = match var.space {
                     // local data is non-uniform
-                    As::Function
-                    | As::Private
-                    | As::RayPayload
-                    | As::IncomingRayPayload
-                    | As::HitAttribute
-                    | As::CallableData
-                    | As::IncomingCallableData
-                    | As::HitObjectAttribute { .. } => false,
                     As::ShaderRecord => true,
                     // stage inputs and outputs differ between invocations
                     As::Input | As::Output => false,
@@ -885,6 +738,7 @@ impl FunctionInfo {
                     // storage data is only uniform when read-only
                     As::Storage { access } => !access.contains(crate::StorageAccess::STORE),
                     As::Handle | As::PhysicalStorage { .. } | As::DescriptorHeap(_) => false,
+                    _ => false,
                 };
                 Uniformity {
                     non_uniform_result: if uniform { None } else { Some(handle) },
@@ -1196,7 +1050,7 @@ impl FunctionInfo {
                         disruptor,
                         combined,
                     });
-                    returned = self.process_statement_kind(
+                    returned = self.process_statement(
                         statement,
                         other_functions,
                         disruptor,
@@ -1287,7 +1141,7 @@ impl FunctionInfo {
         returned.ok_or_else(|| WithSpan::new(FunctionError::Unfinished))
     }
 
-    fn process_statement_kind<'a>(
+    fn process_statement<'a>(
         &mut self,
         statement: &'a crate::Statement,
         other_functions: &[FunctionInfo],
@@ -1296,8 +1150,11 @@ impl FunctionInfo {
         frames: &mut Vec<Flow<'a>>,
     ) -> Result<Option<FunctionUniformity>, WithSpan<FunctionError>> {
         use crate::Statement as S;
-        match *statement {
-            S::Block(ref b) => frames.push(Flow::block(b, disruptor)),
+        let uniformity = match *statement {
+            S::Block(ref b) => {
+                frames.push(Flow::block(b, disruptor));
+                return Ok(None);
+            }
             S::If {
                 condition,
                 ref accept,
@@ -1313,6 +1170,7 @@ impl FunctionInfo {
                     accept: None,
                 });
                 frames.push(Flow::block(accept, branch_disruptor));
+                return Ok(None);
             }
             S::Switch {
                 selector,
@@ -1329,6 +1187,7 @@ impl FunctionInfo {
                     case_disruptor: branch_disruptor,
                     uniformity: FunctionUniformity::new(),
                 });
+                return Ok(None);
             }
             S::Loop {
                 ref body,
@@ -1343,63 +1202,8 @@ impl FunctionInfo {
                     body: None,
                 });
                 frames.push(Flow::block(body, disruptor));
+                return Ok(None);
             }
-            S::Emit(_)
-            | S::Break
-            | S::Continue
-            | S::Return { .. }
-            | S::Kill
-            | S::TerminateInvocation
-            | S::Demote
-            | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock
-            | S::EmitVertex { .. }
-            | S::EndPrimitive { .. }
-            | S::ControlBarrier(_)
-            | S::MemoryBarrier(_)
-            | S::ScopedBarrier { .. }
-            | S::SplitBarrier { .. }
-            | S::Store { .. }
-            | S::ImageStore { .. }
-            | S::Atomic { .. }
-            | S::AtomicLoad { .. }
-            | S::AtomicStore { .. }
-            | S::ImageAtomic { .. }
-            | S::Call { .. }
-            | S::RayQuery { .. }
-            | S::RayPipelineFunction(_)
-            | S::HitObject { .. }
-            | S::ReorderThread { .. }
-            | S::MeshFunction(_)
-            | S::SubgroupBallot { .. }
-            | S::SubgroupGather { .. }
-            | S::SubgroupCollectiveOperation { .. }
-            | S::SubgroupFunction { .. }
-            | S::CooperativeStore { .. }
-            | S::DebugPrintf { .. }
-            | S::Assume { .. }
-            | S::CooperativeVector(_)
-            | S::CooperativeMatrix { .. }
-            | S::Abort { .. }
-            | S::TensorWrite { .. }
-            | S::SpirvInstruction { .. } => {
-                return self
-                    .process_statement(statement, other_functions, disruptor, expression_arena)
-                    .map(Some);
-            }
-        }
-        Ok(None)
-    }
-
-    fn process_statement(
-        &mut self,
-        statement: &crate::Statement,
-        other_functions: &[FunctionInfo],
-        disruptor: Option<UniformityDisruptor>,
-        expression_arena: &Arena<crate::Expression>,
-    ) -> Result<FunctionUniformity, WithSpan<FunctionError>> {
-        use crate::Statement as S;
-        Ok(match *statement {
             S::Emit(ref range) => {
                 let mut requirements = UniformityRequirements::empty();
                 for expr in range.clone() {
@@ -1646,12 +1450,7 @@ impl FunctionInfo {
                     crate::HitObjectFunction::ExecuteShader { payload }
                     | crate::HitObjectFunction::ReorderExecute { payload, .. } => Some(payload),
                     crate::HitObjectFunction::GetAttributes { attributes } => Some(attributes),
-                    crate::HitObjectFunction::RecordHit { .. }
-                    | crate::HitObjectFunction::RecordMiss { .. }
-                    | crate::HitObjectFunction::RecordEmpty
-                    | crate::HitObjectFunction::RecordFromQuery { .. }
-                    | crate::HitObjectFunction::SetShaderBindingTableRecordIndex { .. }
-                    | crate::HitObjectFunction::ReorderThread { .. } => None,
+                    _ => None,
                 };
                 fun.for_each_operand(|operand| {
                     let usage = if Some(operand) == written {
@@ -1672,9 +1471,7 @@ impl FunctionInfo {
                 let data = match *fun {
                     crate::RayPipelineFunction::TraceRay { payload, .. } => payload.pointer(),
                     crate::RayPipelineFunction::ExecuteCallable { data, .. } => data.pointer(),
-                    crate::RayPipelineFunction::ReportIntersection { .. }
-                    | crate::RayPipelineFunction::IgnoreIntersection { .. }
-                    | crate::RayPipelineFunction::TerminateRay { .. } => None,
+                    _ => None,
                 };
                 fun.for_each_operand(|operand| {
                     let usage = if Some(operand) == data {
@@ -1700,11 +1497,7 @@ impl FunctionInfo {
                 let mut non_uniform_result = None;
                 let written = match *function {
                     crate::CooperativeMatrixFunction::StoreTensor { pointer, .. } => Some(pointer),
-                    crate::CooperativeMatrixFunction::Transpose { .. }
-                    | crate::CooperativeMatrixFunction::Reduce { .. }
-                    | crate::CooperativeMatrixFunction::PerElement { .. }
-                    | crate::CooperativeMatrixFunction::GetCoordinate { .. }
-                    | crate::CooperativeMatrixFunction::LoadTensor { .. } => None,
+                    _ => None,
                 };
                 function.for_each_operand(|operand| {
                     let reference = if Some(operand) == written {
@@ -1797,10 +1590,8 @@ impl FunctionInfo {
                     },
                 }
             }
-            S::Block(_) | S::If { .. } | S::Switch { .. } | S::Loop { .. } => {
-                FunctionUniformity::new()
-            }
-        })
+        };
+        Ok(Some(uniformity))
     }
 }
 

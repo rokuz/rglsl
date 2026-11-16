@@ -77,18 +77,7 @@ const fn float_sint_uint_ext(
         Some(Sk::Float) => Ok(float_op),
         Some(Sk::Sint) => Ok(sint_op),
         Some(Sk::Uint) => Ok(uint_op),
-        Some(
-            Sk::Bool
-            | Sk::BFloat
-            | Sk::FloatE4M3
-            | Sk::FloatE5M2
-            | Sk::FloatE2M1
-            | Sk::FloatE3M2
-            | Sk::FloatE2M3
-            | Sk::FloatUE8M0
-            | Sk::FloatMXINT8,
-        )
-        | None => Err(Error::Validation(message)),
+        _ => Err(Error::Validation(message)),
     }
 }
 
@@ -154,18 +143,7 @@ impl BlockContext<'_> {
                     id,
                     arg0_id,
                 )),
-                Some(
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8,
-                )
-                | None => return Err(Error::Validation("abs of a non-numeric value")),
+                _ => return Err(Error::Validation("abs of a non-numeric value")),
             },
             Mf::Min => MathOp::Ext(float_sint_uint_ext(
                 arg_scalar_kind,
@@ -257,19 +235,7 @@ impl BlockContext<'_> {
             Mf::Sign => MathOp::Ext(match arg_scalar_kind {
                 Some(Sk::Float) => spirv::GlslStd450Op::FSign,
                 Some(Sk::Sint) => spirv::GlslStd450Op::SSign,
-                Some(
-                    Sk::Uint
-                    | Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8,
-                )
-                | None => return Err(Error::Validation("sign of a non-signed value")),
+                _ => return Err(Error::Validation("sign of a non-signed value")),
             }),
             Mf::Fma => MathOp::Ext(spirv::GlslStd450Op::Fma),
             Mf::Mix => self.write_mix(arg, arg2, &ids, block)?,
@@ -460,19 +426,7 @@ impl BlockContext<'_> {
                 let op = match arg_scalar_kind {
                     Some(Sk::Uint) => spirv::Op::BitFieldUExtract,
                     Some(Sk::Sint) => spirv::Op::BitFieldSExtract,
-                    Some(
-                        Sk::Float
-                        | Sk::Bool
-                        | Sk::BFloat
-                        | Sk::FloatE4M3
-                        | Sk::FloatE5M2
-                        | Sk::FloatE2M1
-                        | Sk::FloatE3M2
-                        | Sk::FloatE2M3
-                        | Sk::FloatUE8M0
-                        | Sk::FloatMXINT8,
-                    )
-                    | None => {
+                    _ => {
                         return Err(Error::Validation("bitfieldExtract of a non-integer value"));
                     }
                 };
@@ -526,109 +480,9 @@ impl BlockContext<'_> {
             Mf::FirstLeadingBit => match arg_scalar_kind {
                 Some(Sk::Uint) => MathOp::Ext(spirv::GlslStd450Op::FindUMsb),
                 Some(Sk::Sint) => MathOp::Ext(spirv::GlslStd450Op::FindSMsb),
-                Some(
-                    Sk::Float
-                    | Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8,
-                )
-                | None => return Err(Error::Validation("firstLeadingBit argument")),
+                _ => return Err(Error::Validation("firstLeadingBit argument")),
             },
-            Mf::Abs
-            | Mf::Min
-            | Mf::Max
-            | Mf::Clamp
-            | Mf::IntelCountLeadingZeros
-            | Mf::IntelCountTrailingZeros
-            | Mf::AbsoluteDifference
-            | Mf::AddSaturate
-            | Mf::SubtractSaturate
-            | Mf::Average
-            | Mf::AverageRounded
-            | Mf::Multiply32x16
-            | Mf::CubeFaceIndex
-            | Mf::CubeFaceCoord
-            | Mf::Min3
-            | Mf::Max3
-            | Mf::Mid3
-            | Mf::Sin
-            | Mf::Sinh
-            | Mf::Asin
-            | Mf::Cos
-            | Mf::Cosh
-            | Mf::Acos
-            | Mf::Tan
-            | Mf::Tanh
-            | Mf::Atan
-            | Mf::Atan2
-            | Mf::Asinh
-            | Mf::Acosh
-            | Mf::Atanh
-            | Mf::Radians
-            | Mf::Degrees
-            | Mf::Ceil
-            | Mf::Round
-            | Mf::RoundEven
-            | Mf::Floor
-            | Mf::Fract
-            | Mf::Trunc
-            | Mf::Modf
-            | Mf::Frexp
-            | Mf::Ldexp
-            | Mf::Dot
-            | Mf::IntegerDot
-            | Mf::IntegerDotAccSat
-            | Mf::PackedIntegerDot4x8
-            | Mf::PackedIntegerDot4x8AccSat
-            | Mf::Dot4I8Packed
-            | Mf::Dot4U8Packed
-            | Mf::Outer
-            | Mf::Cross
-            | Mf::Distance
-            | Mf::Length
-            | Mf::Normalize
-            | Mf::FaceForward
-            | Mf::Reflect
-            | Mf::Refract
-            | Mf::Exp
-            | Mf::Exp2
-            | Mf::Log
-            | Mf::Log2
-            | Mf::Pow
-            | Mf::Sign
-            | Mf::Fma
-            | Mf::Mix
-            | Mf::Step
-            | Mf::SmoothStep
-            | Mf::Sqrt
-            | Mf::InverseSqrt
-            | Mf::Inverse
-            | Mf::Transpose
-            | Mf::Determinant
-            | Mf::Pack4x8unorm
-            | Mf::Pack4x8snorm
-            | Mf::Pack2x16float
-            | Mf::Pack2x16unorm
-            | Mf::Pack2x16snorm
-            | Mf::PackDouble2x32
-            | Mf::Pack4xI8
-            | Mf::Pack4xU8
-            | Mf::Pack4xI8Clamp
-            | Mf::Pack4xU8Clamp
-            | Mf::Unpack4x8unorm
-            | Mf::Unpack4x8snorm
-            | Mf::Unpack2x16float
-            | Mf::Unpack2x16unorm
-            | Mf::Unpack2x16snorm
-            | Mf::UnpackDouble2x32
-            | Mf::Unpack4xI8
-            | Mf::Unpack4xU8 => return Err(Error::Validation("unexpected math function")),
+            _ => return Err(Error::Validation("unexpected math function")),
         })
     }
 
@@ -650,21 +504,11 @@ impl BlockContext<'_> {
                         ids.arg1_id,
                     )))
                 }
-                crate::ScalarKind::Sint
-                | crate::ScalarKind::Uint
-                | crate::ScalarKind::Bool
-                | crate::ScalarKind::FloatE4M3
-                | crate::ScalarKind::FloatE5M2
-                | crate::ScalarKind::FloatE2M1
-                | crate::ScalarKind::FloatE3M2
-                | crate::ScalarKind::FloatE2M3
-                | crate::ScalarKind::FloatUE8M0
-                | crate::ScalarKind::FloatMXINT8 => {
+                _ => {
                     self.write_dot_product(
                         ids.id,
                         result_type_id,
-                        ids.arg0_id,
-                        ids.arg1_id,
+                        [ids.arg0_id, ids.arg1_id],
                         size as u32,
                         block,
                         |result_id, composite_id, index| {
@@ -692,28 +536,7 @@ impl BlockContext<'_> {
                     Err(Error::Validation("dot product of an invalid operand type"))
                 }
             }
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => {
-                Err(Error::Validation("dot product of an invalid operand type"))
-            }
+            _ => Err(Error::Validation("dot product of an invalid operand type")),
         }
     }
 
@@ -828,8 +651,7 @@ impl BlockContext<'_> {
         self.write_dot_product(
             ids.id,
             result_type_id,
-            arg0_id,
-            arg1_id,
+            [arg0_id, arg1_id],
             VEC_LENGTH as Word,
             block,
             |result_id, composite_id, index| {
@@ -905,26 +727,7 @@ impl BlockContext<'_> {
             crate::TypeInner::Scalar(scalar) => self
                 .writer
                 .get_constant_scalar_with(scalar.width * 8, scalar)?,
-            crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => {
+            _ => {
                 return Err(Error::Validation(
                     "countTrailingZeros of a non-integer value",
                 ));
@@ -979,26 +782,7 @@ impl BlockContext<'_> {
                         .get_constant_scalar_with(scalar.width * 8 - 1, scalar)?,
                     scalar.width,
                 ),
-                crate::TypeInner::Matrix { .. }
-                | crate::TypeInner::CooperativeMatrix { .. }
-                | crate::TypeInner::LongVector { .. }
-                | crate::TypeInner::TensorLayout { .. }
-                | crate::TypeInner::TensorView { .. }
-                | crate::TypeInner::Tensor { .. }
-                | crate::TypeInner::Atomic(_)
-                | crate::TypeInner::Pointer { .. }
-                | crate::TypeInner::ValuePointer { .. }
-                | crate::TypeInner::Array { .. }
-                | crate::TypeInner::Struct { .. }
-                | crate::TypeInner::Image { .. }
-                | crate::TypeInner::Sampler { .. }
-                | crate::TypeInner::SampledImage { .. }
-                | crate::TypeInner::AccelerationStructure
-                | crate::TypeInner::RayQuery
-                | crate::TypeInner::HitObject { .. }
-                | crate::TypeInner::BindingArray { .. }
-                | crate::TypeInner::BufferDescriptor { .. }
-                | crate::TypeInner::Spirv { .. } => {
+                _ => {
                     return Err(Error::Validation(
                         "countLeadingZeros of a non-integer value",
                     ));
@@ -1029,13 +813,11 @@ impl BlockContext<'_> {
         )))
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn write_dot_product(
         &mut self,
         result_id: Word,
         result_type_id: Word,
-        arg0_id: Word,
-        arg1_id: Word,
+        [arg0_id, arg1_id]: [Word; 2],
         size: u32,
         block: &mut Block,
         extractor: impl Fn(Word, Word, Word) -> Instruction,

@@ -169,13 +169,7 @@ impl Module {
                     children.push((element, float, width));
                     false
                 }
-                Some(
-                    &(TypeInfo::None
-                    | TypeInfo::Pointer(..)
-                    | TypeInfo::EncodedFloat(_)
-                    | TypeInfo::Other),
-                )
-                | None => false,
+                _ => false,
             },
         )
     }
@@ -185,11 +179,7 @@ impl Module {
             match *self.info(id)? {
                 TypeInfo::Element(element) | TypeInfo::Pointer(_, element) => id = element,
                 TypeInfo::None => return None,
-                ref other @ (TypeInfo::Int(_)
-                | TypeInfo::Float(_)
-                | TypeInfo::EncodedFloat(_)
-                | TypeInfo::Struct(_)
-                | TypeInfo::Other) => return Some(other),
+                ref other => return Some(other),
             }
         }
         None
@@ -498,12 +488,7 @@ pub(super) fn usage(
         module.types.iter().any(|info| match *info {
             TypeInfo::Int(found) => !float && found == width,
             TypeInfo::Float(found) => float && found == width,
-            TypeInfo::None
-            | TypeInfo::EncodedFloat(_)
-            | TypeInfo::Struct(_)
-            | TypeInfo::Element(_)
-            | TypeInfo::Pointer(..)
-            | TypeInfo::Other => false,
+            _ => false,
         })
     };
     let covered = |capabilities: &FastIndexSet<Capability>, candidates: &[Capability]| {

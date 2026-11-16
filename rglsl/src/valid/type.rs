@@ -1,6 +1,6 @@
 use alloc::{string::String, vec::Vec};
 
-use crate::{arena::Handle, ir, proc::Alignment};
+use crate::{TypeInner as Ti, arena::Handle, ir, proc::Alignment};
 
 bitflags::bitflags! {
     /// Flags associated with [`Type`]s by [`Validator`].
@@ -211,16 +211,7 @@ const fn ptr_space_argument_flag(space: crate::AddressSpace) -> TypeFlags {
         | As::IncomingCallableData
         | As::HitObjectAttribute { .. }
         | As::PhysicalStorage { .. } => TypeFlags::ARGUMENT,
-        As::Uniform
-        | As::Storage { .. }
-        | As::Handle
-        | As::Immediate
-        | As::WorkGroup
-        | As::TaskPayload
-        | As::Input
-        | As::Output
-        | As::ShaderRecord
-        | As::DescriptorHeap(_) => TypeFlags::empty(),
+        _ => TypeFlags::empty(),
     }
 }
 
@@ -272,17 +263,12 @@ impl super::Validator {
         let good = match scalar.kind {
             crate::ScalarKind::Bool => scalar.width == crate::BOOL_WIDTH,
             crate::ScalarKind::BFloat => scalar.width == 2,
-            crate::ScalarKind::FloatE4M3
-            | crate::ScalarKind::FloatE5M2
-            | crate::ScalarKind::FloatE2M1
-            | crate::ScalarKind::FloatE3M2
-            | crate::ScalarKind::FloatE2M3
-            | crate::ScalarKind::FloatUE8M0
-            | crate::ScalarKind::FloatMXINT8 => scalar.width == 1,
+
             crate::ScalarKind::Float => matches!(scalar.width, 2 | 4 | 8),
             crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
                 matches!(scalar.width, 1 | 2 | 4 | 8)
             }
+            _ => scalar.width == 1,
         };
         if good {
             Ok(Ok(()))
@@ -302,48 +288,9 @@ impl super::Validator {
         handle: Handle<crate::Type>,
         gctx: crate::proc::GlobalCtx,
     ) -> Result<TypeInfo, TypeError> {
-        use crate::TypeInner as Ti;
         Ok(match gctx.types[handle].inner {
-            Ti::Scalar(scalar) => {
-                let immediates_compatibility = Self::check_width(scalar)?;
-                let shareable = if scalar.kind.is_numeric() {
-                    TypeFlags::IO_SHAREABLE | TypeFlags::HOST_SHAREABLE
-                } else {
-                    TypeFlags::empty()
-                };
-                let mut type_info = TypeInfo::new(
-                    TypeFlags::DATA
-                        | TypeFlags::SIZED
-                        | TypeFlags::COPY
-                        | TypeFlags::ARGUMENT
-                        | TypeFlags::CONSTRUCTIBLE
-                        | TypeFlags::CREATION_RESOLVED
-                        | shareable,
-                    scalar_alignment(scalar)?,
-                );
-                type_info.immediates_compatibility = immediates_compatibility;
-                type_info
-            }
-            Ti::Vector { size, scalar } => {
-                let immediates_compatibility = Self::check_width(scalar)?;
-                let shareable = if scalar.kind.is_numeric() {
-                    TypeFlags::IO_SHAREABLE | TypeFlags::HOST_SHAREABLE
-                } else {
-                    TypeFlags::empty()
-                };
-                let mut type_info = TypeInfo::new(
-                    TypeFlags::DATA
-                        | TypeFlags::SIZED
-                        | TypeFlags::COPY
-                        | TypeFlags::ARGUMENT
-                        | TypeFlags::CONSTRUCTIBLE
-                        | TypeFlags::CREATION_RESOLVED
-                        | shareable,
-                    vector_alignment(size, scalar)?,
-                );
-                type_info.immediates_compatibility = immediates_compatibility;
-                type_info
-            }
+            Ti::Scalar(scalar) => Self::validate_numeric_type(scalar, None)?,
+            Ti::Vector { size, scalar } => Self::validate_numeric_type(scalar, Some(size))?,
             Ti::Matrix {
                 columns: _,
                 rows,
@@ -472,68 +419,7 @@ impl super::Validator {
                     Alignment::ONE,
                 )
             }
-            Ti::Pointer { base, space } => {
-                use crate::AddressSpace as As;
-
-                let base_info = &self.types[base.index()];
-                if !base_info.flags.contains(TypeFlags::DATA) {
-                    return Err(TypeError::InvalidPointerBase(base));
-                }
-
-                // Runtime-sized values can only live in the `Storage` address
-                // space, so it's useless to have a pointer to such a type in
-                // any other space.
-                //
-                // Detecting this problem here prevents the definition of
-                // functions like:
-                //
-                //     fn f(p: ptr<workgroup, UnsizedType>) -> ... { ... }
-                //
-                // which would otherwise be permitted, but uncallable. (They
-                // may also present difficulties in code generation).
-                if !base_info.flags.contains(TypeFlags::SIZED) {
-                    match space {
-                        As::Storage { .. } => {}
-                        As::Uniform if matches!(gctx.types[base].inner, Ti::Struct { .. }) => {}
-                        As::Function
-                        | As::Private
-                        | As::WorkGroup
-                        | As::Uniform
-                        | As::Handle
-                        | As::Immediate
-                        | As::TaskPayload
-                        | As::RayPayload
-                        | As::IncomingRayPayload
-                        | As::HitAttribute
-                        | As::CallableData
-                        | As::IncomingCallableData
-                        | As::ShaderRecord
-                        | As::HitObjectAttribute { .. }
-                        | As::Input
-                        | As::Output
-                        | As::PhysicalStorage { .. }
-                        | As::DescriptorHeap(_) => {
-                            return Err(TypeError::InvalidPointerToUnsized { base, space });
-                        }
-                    }
-                }
-
-                // `Validator::validate_function` actually checks the address
-                // space of pointer arguments explicitly before checking the
-                // `ARGUMENT` flag, to give better error messages. But it seems
-                // best to set `ARGUMENT` accurately anyway.
-                let argument_flag = ptr_space_argument_flag(space);
-
-                // Pointers cannot be stored in variables, structure members, or
-                // array elements, so we do not mark them as `DATA`.
-                TypeInfo::new(
-                    argument_flag
-                        | TypeFlags::SIZED
-                        | TypeFlags::COPY
-                        | TypeFlags::CREATION_RESOLVED,
-                    Alignment::ONE,
-                )
-            }
+            Ti::Pointer { base, space } => self.validate_pointer_type(base, space, gctx)?,
             Ti::ValuePointer {
                 size: _,
                 scalar,
@@ -569,97 +455,10 @@ impl super::Validator {
                     .flags
                     .contains(TypeFlags::HEAP_LAYOUT) =>
             {
-                let base_info = &self.types[base.index()];
-                if !base_info
-                    .flags
-                    .contains(TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED)
-                {
-                    return Err(TypeError::InvalidArrayBaseType(base));
-                }
-                let sized = match size {
-                    crate::ArraySize::Constant(_) | crate::ArraySize::Pending(_) => {
-                        TypeFlags::SIZED
-                    }
-                    crate::ArraySize::Dynamic => TypeFlags::empty(),
-                };
-                TypeInfo::new(
-                    TypeFlags::HEAP_LAYOUT | TypeFlags::CREATION_RESOLVED | sized,
-                    Alignment::ONE,
-                )
+                self.validate_heap_array_type(base, size)?
             }
             Ti::Array { base, size, stride } => {
-                let base_info = &self.types[base.index()];
-                if !base_info
-                    .flags
-                    .contains(TypeFlags::DATA | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED)
-                {
-                    return Err(TypeError::InvalidArrayBaseType(base));
-                }
-
-                if self.overrides_resolved {
-                    // This check only makes sense for override-sized arrays.
-                    // `ArraySize::Constant` holds a `NonZeroU32`.
-                    if let crate::ArraySize::Pending(_) = size {
-                        size.resolve(gctx)
-                            .map_err(|_| TypeError::InvalidArraySize(handle))?;
-                    }
-                }
-
-                let base_layout = self.layouter[base];
-                // Elements must not overlap. Whether the stride also meets
-                // the alignment rules of a buffer depends on its block
-                // layout; see `LayoutCompatibility`.
-                let matrix_element = matches!(gctx.types[base].inner, Ti::Matrix { .. });
-                if stride < base_layout.size && !matrix_element {
-                    return Err(TypeError::InvalidArrayStride {
-                        stride,
-                        expected: base_layout.size,
-                    });
-                }
-                let general_alignment = base_layout.alignment;
-                let uniform_layout = base_info
-                    .uniform_layout
-                    .map(|base_alignment| base_alignment.max(general_alignment));
-                let storage_layout = base_info
-                    .storage_layout
-                    .map(|base_alignment| base_alignment.max(general_alignment));
-
-                let type_info_mask = match size {
-                    crate::ArraySize::Constant(_) => {
-                        TypeFlags::DATA
-                            | TypeFlags::SIZED
-                            | TypeFlags::COPY
-                            | TypeFlags::HOST_SHAREABLE
-                            | TypeFlags::ARGUMENT
-                            | TypeFlags::CONSTRUCTIBLE
-                            | TypeFlags::CREATION_RESOLVED
-                    }
-                    crate::ArraySize::Pending(_) => {
-                        TypeFlags::DATA
-                            | TypeFlags::SIZED
-                            | TypeFlags::COPY
-                            | TypeFlags::HOST_SHAREABLE
-                            | TypeFlags::ARGUMENT
-                            | TypeFlags::CONSTRUCTIBLE
-                            | TypeFlags::CREATION_RESOLVED
-                    }
-                    crate::ArraySize::Dynamic => {
-                        // Non-SIZED types may only appear as the last element of a structure.
-                        // This is enforced by checks for SIZED-ness for all compound types,
-                        // and a special case for structs.
-                        TypeFlags::DATA
-                            | TypeFlags::COPY
-                            | TypeFlags::HOST_SHAREABLE
-                            | TypeFlags::CREATION_RESOLVED
-                    }
-                };
-
-                TypeInfo {
-                    flags: base_info.flags & type_info_mask,
-                    uniform_layout,
-                    storage_layout,
-                    immediates_compatibility: base_info.immediates_compatibility.clone(),
-                }
+                self.validate_array_type(handle, base, size, stride, gctx)?
             }
             Ti::Struct { ref members, .. }
                 if members.iter().any(|member| {
@@ -668,193 +467,9 @@ impl super::Validator {
                         .contains(TypeFlags::HEAP_LAYOUT)
                 }) =>
             {
-                let mut flags =
-                    TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED;
-                for (i, member) in members.iter().enumerate() {
-                    let info = &self.types[member.ty.index()];
-                    let valid = info.flags.contains(TypeFlags::HEAP_LAYOUT)
-                        || info
-                            .flags
-                            .contains(TypeFlags::DATA | TypeFlags::CREATION_RESOLVED);
-                    if !valid {
-                        return Err(TypeError::InvalidData(member.ty));
-                    }
-                    if !info.flags.contains(TypeFlags::SIZED) {
-                        let is_array = matches!(gctx.types[member.ty].inner, Ti::Array { .. });
-                        if !is_array || i + 1 != members.len() {
-                            let name = member.name.clone().unwrap_or_default();
-                            return Err(TypeError::InvalidDynamicArray(name, member.ty));
-                        }
-                        flags.remove(TypeFlags::SIZED);
-                    }
-                }
-                TypeInfo::new(flags, Alignment::ONE)
+                self.validate_heap_struct_type(members, gctx)?
             }
-            Ti::Struct { ref members, span } => {
-                let mut blend_src_types = [None, None];
-                let mut non_blend_src_location = None;
-
-                let mut ti = TypeInfo::new(
-                    TypeFlags::DATA
-                        | TypeFlags::SIZED
-                        | TypeFlags::COPY
-                        | TypeFlags::HOST_SHAREABLE
-                        | TypeFlags::ARGUMENT
-                        | TypeFlags::CONSTRUCTIBLE
-                        | TypeFlags::CREATION_RESOLVED,
-                    Alignment::ONE,
-                );
-                ti.uniform_layout = Ok(Alignment::MIN_UNIFORM);
-
-                let mut extents = Vec::with_capacity(members.len());
-
-                for (i, member) in members.iter().enumerate() {
-                    let base_info = &self.types[member.ty.index()];
-                    if !base_info
-                        .flags
-                        .contains(TypeFlags::DATA | TypeFlags::CREATION_RESOLVED)
-                    {
-                        return Err(TypeError::InvalidData(member.ty));
-                    }
-                    if !base_info.flags.contains(TypeFlags::HOST_SHAREABLE) {
-                        if ti.uniform_layout.is_ok() {
-                            ti.uniform_layout = Err((member.ty, Disalignment::NonHostShareable));
-                        }
-                        if ti.storage_layout.is_ok() {
-                            ti.storage_layout = Err((member.ty, Disalignment::NonHostShareable));
-                        }
-                    }
-                    ti.flags &= base_info.flags;
-
-                    match member.binding {
-                        Some(ir::Binding::Location {
-                            location,
-                            blend_src: Some(blend_src),
-                            ..
-                        }) => {
-                            // `blend_src` is only valid if dual source blending was explicitly enabled,
-                            // see https://www.w3.org/TR/WGSL/#extension-dual_source_blending
-                            if !(location == 0 && (blend_src == 0 || blend_src == 1)) {
-                                return Err(TypeError::InvalidBlendSrc(
-                                    super::VaryingError::InvalidBlendSrcIndex {
-                                        location,
-                                        blend_src,
-                                    },
-                                ));
-                            }
-                            if blend_src_types[blend_src as usize]
-                                .replace(member.ty)
-                                .is_some()
-                            {
-                                // @blend_src(i) appeared multiple times
-                                return Err(TypeError::InvalidBlendSrc(
-                                    super::VaryingError::BindingCollisionBlendSrc { blend_src },
-                                ));
-                            }
-                        }
-                        Some(ir::Binding::Location {
-                            location,
-                            blend_src: None,
-                            ..
-                        }) => non_blend_src_location = Some(location),
-                        _ => {}
-                    }
-
-                    let base_size = member_extent(member, &gctx.types[member.ty].inner, gctx)
-                        .ok_or(TypeError::TooLarge(member.ty))?;
-                    extents.push((member.offset, base_size, i as u32));
-                    if member.offset.saturating_add(base_size) > span {
-                        return Err(TypeError::MemberOutOfBounds {
-                            index: i as u32,
-                            offset: member.offset,
-                            size: base_size,
-                            span,
-                        });
-                    }
-
-                    check_member_layout(&mut ti.uniform_layout, base_info.uniform_layout);
-                    check_member_layout(&mut ti.storage_layout, base_info.storage_layout);
-                    if base_info.immediates_compatibility.is_err() {
-                        ti.immediates_compatibility = base_info.immediates_compatibility.clone();
-                    }
-
-                    if !base_info.flags.contains(TypeFlags::SIZED) {
-                        let is_array =
-                            matches!(gctx.types[member.ty].inner, crate::TypeInner::Array { .. });
-                        if !is_array || i + 1 != members.len() {
-                            let name = member.name.clone().unwrap_or_default();
-                            return Err(TypeError::InvalidDynamicArray(name, member.ty));
-                        }
-                    }
-                }
-
-                if let Some((index, offset)) = first_overlap(&mut extents) {
-                    // HACK: this could be nicer. We want to allow some structures
-                    // to not bother with offsets/alignments if they are never
-                    // used for host sharing.
-                    if members.iter().all(|member| member.offset == 0) {
-                        ti.flags.set(TypeFlags::HOST_SHAREABLE, false);
-                    } else {
-                        return Err(TypeError::MemberOverlap { index, offset });
-                    }
-                }
-
-                match blend_src_types {
-                    [None, None] => {}
-                    [Some(ty0), Some(ty1)] => {
-                        if let Some(location) = non_blend_src_location {
-                            // If `@blend_src` members are present, then `@location`
-                            // may only be used for those members.
-                            return Err(TypeError::InvalidBlendSrc(
-                                super::VaryingError::InvalidBlendSrcWithOtherBindings { location },
-                            ));
-                        }
-                        let ty0_inner = &gctx.types[ty0].inner;
-                        let ty1_inner = &gctx.types[ty1].inner;
-                        // The two blend sources must have the same type...
-                        if !ty0_inner.non_struct_equivalent(ty1_inner, gctx.types) {
-                            return Err(TypeError::InvalidBlendSrc(
-                                super::VaryingError::BlendSrcOutputTypeMismatch {
-                                    blend_src_0_type: ty0,
-                                    blend_src_1_type: ty1,
-                                },
-                            ));
-                        }
-                        // ... and that type must be I/O-shareable.
-                        if !self.types[ty0.index()]
-                            .flags
-                            .contains(TypeFlags::IO_SHAREABLE)
-                        {
-                            return Err(TypeError::InvalidBlendSrc(
-                                super::VaryingError::NotIOShareableType(ty0),
-                            ));
-                        }
-
-                        // `@blend_src` is the only case where we classify a struct as
-                        // I/O-shareable. (In the case of a struct with `@location` bindings, we
-                        // process the members individually in interface validation, and do not
-                        // classify the struct as I/O-shareable.)
-                        ti.flags |= TypeFlags::IO_SHAREABLE;
-                    }
-                    // Only one of the blend sources was specified.
-                    [Some(_), None] => {
-                        return Err(TypeError::InvalidBlendSrc(
-                            super::VaryingError::IncompleteBlendSrcUsage {
-                                present_blend_src: 0,
-                            },
-                        ));
-                    }
-                    [None, Some(_)] => {
-                        return Err(TypeError::InvalidBlendSrc(
-                            super::VaryingError::IncompleteBlendSrcUsage {
-                                present_blend_src: 1,
-                            },
-                        ));
-                    }
-                }
-
-                ti
-            }
+            Ti::Struct { ref members, span } => self.validate_struct_type(members, span, gctx)?,
             Ti::Image {
                 dim,
                 arrayed,
@@ -864,80 +479,7 @@ impl super::Validator {
                 dim,
                 arrayed,
                 class,
-            } => {
-                if matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
-                    && matches!(class, crate::ImageClass::Storage { .. })
-                {
-                    return Err(TypeError::UnsupportedImageType {
-                        dim,
-                        arrayed,
-                        class,
-                    });
-                }
-                if dim == crate::ImageDimension::Buffer
-                    && (arrayed
-                        || class.is_multisampled()
-                        || matches!(class, crate::ImageClass::Depth { .. }))
-                {
-                    return Err(TypeError::UnsupportedImageType {
-                        dim,
-                        arrayed,
-                        class,
-                    });
-                }
-                if matches!(
-                    dim,
-                    crate::ImageDimension::Subpass | crate::ImageDimension::TileImageData
-                ) && (arrayed
-                    || matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
-                    || !matches!(class, crate::ImageClass::Sampled { .. }))
-                {
-                    return Err(TypeError::UnsupportedImageType {
-                        dim,
-                        arrayed,
-                        class,
-                    });
-                }
-                if let crate::ImageClass::Storage {
-                    format: crate::StorageFormat::Unknown(scalar),
-                    ..
-                } = class
-                    && !matches!(
-                        scalar,
-                        crate::Scalar {
-                            kind: crate::ScalarKind::Float
-                                | crate::ScalarKind::Sint
-                                | crate::ScalarKind::Uint,
-                            width: 4,
-                        } | crate::Scalar {
-                            kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
-                            width: 8,
-                        }
-                    )
-                {
-                    return Err(TypeError::UnsupportedImageType {
-                        dim,
-                        arrayed,
-                        class,
-                    });
-                }
-                if arrayed && matches!(dim, crate::ImageDimension::D3) {
-                    return Err(TypeError::UnsupportedImageType {
-                        dim,
-                        arrayed,
-                        class,
-                    });
-                }
-                let heap = if matches!(gctx.types[handle].inner, Ti::Image { .. }) {
-                    TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED
-                } else {
-                    TypeFlags::empty()
-                };
-                TypeInfo::new(
-                    TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED | heap,
-                    Alignment::ONE,
-                )
-            }
+            } => Self::validate_image_type(handle, dim, arrayed, class, gctx)?,
             Ti::Sampler { .. } => TypeInfo::new(
                 TypeFlags::ARGUMENT
                     | TypeFlags::CREATION_RESOLVED
@@ -980,84 +522,541 @@ impl super::Validator {
                 Alignment::ONE,
             ),
             Ti::BindingArray { base, size } => {
-                let type_info_mask = match size {
-                    crate::ArraySize::Constant(_) => {
-                        TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
-                    }
-                    crate::ArraySize::Pending(_) => {
-                        TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
-                    }
-                    crate::ArraySize::Dynamic => {
-                        // Final type is non-sized
-                        TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
-                    }
-                };
-                let base_info = &self.types[base.index()];
-
-                if base_info.flags.contains(TypeFlags::DATA) {
-                    match gctx.types[base].inner {
-                        crate::TypeInner::Struct { .. } => {}
-                        crate::TypeInner::Scalar(_)
-                        | crate::TypeInner::Vector { .. }
-                        | crate::TypeInner::Matrix { .. }
-                        | crate::TypeInner::CooperativeMatrix { .. }
-                        | crate::TypeInner::LongVector { .. }
-                        | crate::TypeInner::TensorLayout { .. }
-                        | crate::TypeInner::TensorView { .. }
-                        | crate::TypeInner::Tensor { .. }
-                        | crate::TypeInner::Atomic(_)
-                        | crate::TypeInner::Pointer { .. }
-                        | crate::TypeInner::ValuePointer { .. }
-                        | crate::TypeInner::Array { .. }
-                        | crate::TypeInner::Image { .. }
-                        | crate::TypeInner::Sampler { .. }
-                        | crate::TypeInner::SampledImage { .. }
-                        | crate::TypeInner::AccelerationStructure
-                        | crate::TypeInner::RayQuery
-                        | crate::TypeInner::HitObject { .. }
-                        | crate::TypeInner::BindingArray { .. }
-                        | crate::TypeInner::BufferDescriptor { .. }
-                        | crate::TypeInner::Spirv { .. } => {
-                            return Err(TypeError::BindingArrayBaseTypeNotStruct(base));
-                        }
-                    };
-                }
-
-                if !base_info.flags.contains(TypeFlags::CREATION_RESOLVED) {
-                    return Err(TypeError::InvalidData(base));
-                }
-
-                let argument = match (size, &gctx.types[base].inner) {
-                    (crate::ArraySize::Constant(_), &crate::TypeInner::Tensor { .. }) => {
-                        TypeFlags::ARGUMENT
-                    }
-                    _ => TypeFlags::empty(),
-                };
-                TypeInfo::new(
-                    (base_info.flags & type_info_mask) | argument,
-                    Alignment::ONE,
-                )
+                self.validate_binding_array_type(base, size, gctx)?
             }
             Ti::BufferDescriptor { base, space } => {
-                let base_info = &self.types[base.index()];
-                let buffer = matches!(
-                    space,
-                    crate::AddressSpace::Uniform | crate::AddressSpace::Storage { .. }
-                );
-                if !buffer
-                    || !matches!(gctx.types[base].inner, Ti::Struct { .. })
-                    || !base_info
-                        .flags
-                        .contains(TypeFlags::DATA | TypeFlags::HOST_SHAREABLE)
-                {
-                    return Err(TypeError::InvalidBufferDescriptor(base));
-                }
-                TypeInfo::new(
-                    TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED,
-                    Alignment::ONE,
-                )
+                self.validate_buffer_descriptor_type(base, space, gctx)?
             }
         })
+    }
+
+    fn validate_buffer_descriptor_type(
+        &self,
+        base: Handle<crate::Type>,
+        space: crate::AddressSpace,
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        let base_info = &self.types[base.index()];
+        let buffer = matches!(
+            space,
+            crate::AddressSpace::Uniform | crate::AddressSpace::Storage { .. }
+        );
+        if !buffer
+            || !matches!(gctx.types[base].inner, Ti::Struct { .. })
+            || !base_info
+                .flags
+                .contains(TypeFlags::DATA | TypeFlags::HOST_SHAREABLE)
+        {
+            return Err(TypeError::InvalidBufferDescriptor(base));
+        }
+        Ok(TypeInfo::new(
+            TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED,
+            Alignment::ONE,
+        ))
+    }
+
+    fn validate_heap_struct_type(
+        &self,
+        members: &[crate::StructMember],
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        let mut flags = TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED;
+        for (i, member) in members.iter().enumerate() {
+            let info = &self.types[member.ty.index()];
+            let valid = info.flags.contains(TypeFlags::HEAP_LAYOUT)
+                || info
+                    .flags
+                    .contains(TypeFlags::DATA | TypeFlags::CREATION_RESOLVED);
+            if !valid {
+                return Err(TypeError::InvalidData(member.ty));
+            }
+            if !info.flags.contains(TypeFlags::SIZED) {
+                let is_array = matches!(gctx.types[member.ty].inner, Ti::Array { .. });
+                if !is_array || i + 1 != members.len() {
+                    let name = member.name.clone().unwrap_or_default();
+                    return Err(TypeError::InvalidDynamicArray(name, member.ty));
+                }
+                flags.remove(TypeFlags::SIZED);
+            }
+        }
+        Ok(TypeInfo::new(flags, Alignment::ONE))
+    }
+
+    fn validate_heap_array_type(
+        &self,
+        base: Handle<crate::Type>,
+        size: crate::ArraySize,
+    ) -> Result<TypeInfo, TypeError> {
+        let base_info = &self.types[base.index()];
+        if !base_info
+            .flags
+            .contains(TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED)
+        {
+            return Err(TypeError::InvalidArrayBaseType(base));
+        }
+        let sized = match size {
+            crate::ArraySize::Constant(_) | crate::ArraySize::Pending(_) => TypeFlags::SIZED,
+            crate::ArraySize::Dynamic => TypeFlags::empty(),
+        };
+        Ok(TypeInfo::new(
+            TypeFlags::HEAP_LAYOUT | TypeFlags::CREATION_RESOLVED | sized,
+            Alignment::ONE,
+        ))
+    }
+
+    fn validate_binding_array_type(
+        &self,
+        base: Handle<crate::Type>,
+        size: crate::ArraySize,
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        let type_info_mask = match size {
+            crate::ArraySize::Constant(_) => {
+                TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
+            }
+            crate::ArraySize::Pending(_) => {
+                TypeFlags::SIZED | TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
+            }
+            crate::ArraySize::Dynamic => {
+                // Final type is non-sized
+                TypeFlags::HOST_SHAREABLE | TypeFlags::CREATION_RESOLVED
+            }
+        };
+        let base_info = &self.types[base.index()];
+
+        if base_info.flags.contains(TypeFlags::DATA) {
+            match gctx.types[base].inner {
+                crate::TypeInner::Struct { .. } => {}
+                _ => {
+                    return Err(TypeError::BindingArrayBaseTypeNotStruct(base));
+                }
+            };
+        }
+
+        if !base_info.flags.contains(TypeFlags::CREATION_RESOLVED) {
+            return Err(TypeError::InvalidData(base));
+        }
+
+        let argument = match (size, &gctx.types[base].inner) {
+            (crate::ArraySize::Constant(_), &crate::TypeInner::Tensor { .. }) => {
+                TypeFlags::ARGUMENT
+            }
+            _ => TypeFlags::empty(),
+        };
+        Ok(TypeInfo::new(
+            (base_info.flags & type_info_mask) | argument,
+            Alignment::ONE,
+        ))
+    }
+
+    fn validate_pointer_type(
+        &self,
+        base: Handle<crate::Type>,
+        space: crate::AddressSpace,
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        use crate::AddressSpace as As;
+
+        let base_info = &self.types[base.index()];
+        if !base_info.flags.contains(TypeFlags::DATA) {
+            return Err(TypeError::InvalidPointerBase(base));
+        }
+
+        // Runtime-sized values can only live in the `Storage` address
+        // space, so it's useless to have a pointer to such a type in
+        // any other space.
+        //
+        // Detecting this problem here prevents the definition of
+        // functions like:
+        //
+        //     fn f(p: ptr<workgroup, UnsizedType>) -> ... { ... }
+        //
+        // which would otherwise be permitted, but uncallable. (They
+        // may also present difficulties in code generation).
+        if !base_info.flags.contains(TypeFlags::SIZED) {
+            match space {
+                As::Storage { .. } => {}
+                As::Uniform if matches!(gctx.types[base].inner, Ti::Struct { .. }) => {}
+                _ => {
+                    return Err(TypeError::InvalidPointerToUnsized { base, space });
+                }
+            }
+        }
+
+        // `Validator::validate_function` actually checks the address
+        // space of pointer arguments explicitly before checking the
+        // `ARGUMENT` flag, to give better error messages. But it seems
+        // best to set `ARGUMENT` accurately anyway.
+        let argument_flag = ptr_space_argument_flag(space);
+
+        // Pointers cannot be stored in variables, structure members, or
+        // array elements, so we do not mark them as `DATA`.
+        Ok(TypeInfo::new(
+            argument_flag | TypeFlags::SIZED | TypeFlags::COPY | TypeFlags::CREATION_RESOLVED,
+            Alignment::ONE,
+        ))
+    }
+
+    fn validate_array_type(
+        &self,
+        handle: Handle<crate::Type>,
+        base: Handle<crate::Type>,
+        size: crate::ArraySize,
+        stride: u32,
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        let base_info = &self.types[base.index()];
+        if !base_info
+            .flags
+            .contains(TypeFlags::DATA | TypeFlags::SIZED | TypeFlags::CREATION_RESOLVED)
+        {
+            return Err(TypeError::InvalidArrayBaseType(base));
+        }
+
+        if self.overrides_resolved {
+            // This check only makes sense for override-sized arrays.
+            // `ArraySize::Constant` holds a `NonZeroU32`.
+            if let crate::ArraySize::Pending(_) = size {
+                size.resolve(gctx)
+                    .map_err(|_| TypeError::InvalidArraySize(handle))?;
+            }
+        }
+
+        let base_layout = self.layouter[base];
+        // Elements must not overlap. Whether the stride also meets
+        // the alignment rules of a buffer depends on its block
+        // layout; see `LayoutCompatibility`.
+        let matrix_element = matches!(gctx.types[base].inner, Ti::Matrix { .. });
+        if stride < base_layout.size && !matrix_element {
+            return Err(TypeError::InvalidArrayStride {
+                stride,
+                expected: base_layout.size,
+            });
+        }
+        let general_alignment = base_layout.alignment;
+        let uniform_layout = base_info
+            .uniform_layout
+            .map(|base_alignment| base_alignment.max(general_alignment));
+        let storage_layout = base_info
+            .storage_layout
+            .map(|base_alignment| base_alignment.max(general_alignment));
+
+        let type_info_mask = match size {
+            crate::ArraySize::Constant(_) => {
+                TypeFlags::DATA
+                    | TypeFlags::SIZED
+                    | TypeFlags::COPY
+                    | TypeFlags::HOST_SHAREABLE
+                    | TypeFlags::ARGUMENT
+                    | TypeFlags::CONSTRUCTIBLE
+                    | TypeFlags::CREATION_RESOLVED
+            }
+            crate::ArraySize::Pending(_) => {
+                TypeFlags::DATA
+                    | TypeFlags::SIZED
+                    | TypeFlags::COPY
+                    | TypeFlags::HOST_SHAREABLE
+                    | TypeFlags::ARGUMENT
+                    | TypeFlags::CONSTRUCTIBLE
+                    | TypeFlags::CREATION_RESOLVED
+            }
+            crate::ArraySize::Dynamic => {
+                // Non-SIZED types may only appear as the last element of a structure.
+                // This is enforced by checks for SIZED-ness for all compound types,
+                // and a special case for structs.
+                TypeFlags::DATA
+                    | TypeFlags::COPY
+                    | TypeFlags::HOST_SHAREABLE
+                    | TypeFlags::CREATION_RESOLVED
+            }
+        };
+
+        Ok(TypeInfo {
+            flags: base_info.flags & type_info_mask,
+            uniform_layout,
+            storage_layout,
+            immediates_compatibility: base_info.immediates_compatibility.clone(),
+        })
+    }
+
+    fn validate_numeric_type(
+        scalar: crate::Scalar,
+        size: Option<crate::VectorSize>,
+    ) -> Result<TypeInfo, TypeError> {
+        let immediates_compatibility = Self::check_width(scalar)?;
+        let shareable = if scalar.kind.is_numeric() {
+            TypeFlags::IO_SHAREABLE | TypeFlags::HOST_SHAREABLE
+        } else {
+            TypeFlags::empty()
+        };
+        let alignment = match size {
+            Some(size) => vector_alignment(size, scalar)?,
+            None => scalar_alignment(scalar)?,
+        };
+        let mut type_info = TypeInfo::new(
+            TypeFlags::DATA
+                | TypeFlags::SIZED
+                | TypeFlags::COPY
+                | TypeFlags::ARGUMENT
+                | TypeFlags::CONSTRUCTIBLE
+                | TypeFlags::CREATION_RESOLVED
+                | shareable,
+            alignment,
+        );
+        type_info.immediates_compatibility = immediates_compatibility;
+        Ok(type_info)
+    }
+
+    fn validate_image_type(
+        handle: Handle<crate::Type>,
+        dim: crate::ImageDimension,
+        arrayed: bool,
+        class: crate::ImageClass,
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        if matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
+            && matches!(class, crate::ImageClass::Storage { .. })
+        {
+            return Err(TypeError::UnsupportedImageType {
+                dim,
+                arrayed,
+                class,
+            });
+        }
+        if dim == crate::ImageDimension::Buffer
+            && (arrayed
+                || class.is_multisampled()
+                || matches!(class, crate::ImageClass::Depth { .. }))
+        {
+            return Err(TypeError::UnsupportedImageType {
+                dim,
+                arrayed,
+                class,
+            });
+        }
+        if matches!(
+            dim,
+            crate::ImageDimension::Subpass | crate::ImageDimension::TileImageData
+        ) && (arrayed
+            || matches!(gctx.types[handle].inner, Ti::SampledImage { .. })
+            || !matches!(class, crate::ImageClass::Sampled { .. }))
+        {
+            return Err(TypeError::UnsupportedImageType {
+                dim,
+                arrayed,
+                class,
+            });
+        }
+        if let crate::ImageClass::Storage {
+            format: crate::StorageFormat::Unknown(scalar),
+            ..
+        } = class
+            && !matches!(
+                scalar,
+                crate::Scalar {
+                    kind: crate::ScalarKind::Float
+                        | crate::ScalarKind::Sint
+                        | crate::ScalarKind::Uint,
+                    width: 4,
+                } | crate::Scalar {
+                    kind: crate::ScalarKind::Sint | crate::ScalarKind::Uint,
+                    width: 8,
+                }
+            )
+        {
+            return Err(TypeError::UnsupportedImageType {
+                dim,
+                arrayed,
+                class,
+            });
+        }
+        if arrayed && matches!(dim, crate::ImageDimension::D3) {
+            return Err(TypeError::UnsupportedImageType {
+                dim,
+                arrayed,
+                class,
+            });
+        }
+        let heap = if matches!(gctx.types[handle].inner, Ti::Image { .. }) {
+            TypeFlags::HEAP_LAYOUT | TypeFlags::SIZED
+        } else {
+            TypeFlags::empty()
+        };
+        Ok(TypeInfo::new(
+            TypeFlags::ARGUMENT | TypeFlags::CREATION_RESOLVED | heap,
+            Alignment::ONE,
+        ))
+    }
+
+    fn validate_struct_type(
+        &self,
+        members: &[crate::StructMember],
+        span: u32,
+        gctx: crate::proc::GlobalCtx,
+    ) -> Result<TypeInfo, TypeError> {
+        let mut blend_src_types = [None, None];
+        let mut non_blend_src_location = None;
+
+        let mut ti = TypeInfo::new(
+            TypeFlags::DATA
+                | TypeFlags::SIZED
+                | TypeFlags::COPY
+                | TypeFlags::HOST_SHAREABLE
+                | TypeFlags::ARGUMENT
+                | TypeFlags::CONSTRUCTIBLE
+                | TypeFlags::CREATION_RESOLVED,
+            Alignment::ONE,
+        );
+        ti.uniform_layout = Ok(Alignment::MIN_UNIFORM);
+
+        let mut extents = Vec::with_capacity(members.len());
+
+        for (i, member) in members.iter().enumerate() {
+            let base_info = &self.types[member.ty.index()];
+            if !base_info
+                .flags
+                .contains(TypeFlags::DATA | TypeFlags::CREATION_RESOLVED)
+            {
+                return Err(TypeError::InvalidData(member.ty));
+            }
+            if !base_info.flags.contains(TypeFlags::HOST_SHAREABLE) {
+                if ti.uniform_layout.is_ok() {
+                    ti.uniform_layout = Err((member.ty, Disalignment::NonHostShareable));
+                }
+                if ti.storage_layout.is_ok() {
+                    ti.storage_layout = Err((member.ty, Disalignment::NonHostShareable));
+                }
+            }
+            ti.flags &= base_info.flags;
+
+            match member.binding {
+                Some(ir::Binding::Location {
+                    location,
+                    blend_src: Some(blend_src),
+                    ..
+                }) => {
+                    // `blend_src` is only valid if dual source blending was explicitly enabled,
+                    // see https://www.w3.org/TR/WGSL/#extension-dual_source_blending
+                    if !(location == 0 && (blend_src == 0 || blend_src == 1)) {
+                        return Err(TypeError::InvalidBlendSrc(
+                            super::VaryingError::InvalidBlendSrcIndex {
+                                location,
+                                blend_src,
+                            },
+                        ));
+                    }
+                    if blend_src_types[blend_src as usize]
+                        .replace(member.ty)
+                        .is_some()
+                    {
+                        // @blend_src(i) appeared multiple times
+                        return Err(TypeError::InvalidBlendSrc(
+                            super::VaryingError::BindingCollisionBlendSrc { blend_src },
+                        ));
+                    }
+                }
+                Some(ir::Binding::Location {
+                    location,
+                    blend_src: None,
+                    ..
+                }) => non_blend_src_location = Some(location),
+                _ => {}
+            }
+
+            let base_size = member_extent(member, &gctx.types[member.ty].inner, gctx)
+                .ok_or(TypeError::TooLarge(member.ty))?;
+            extents.push((member.offset, base_size, i as u32));
+            if member.offset.saturating_add(base_size) > span {
+                return Err(TypeError::MemberOutOfBounds {
+                    index: i as u32,
+                    offset: member.offset,
+                    size: base_size,
+                    span,
+                });
+            }
+
+            check_member_layout(&mut ti.uniform_layout, base_info.uniform_layout);
+            check_member_layout(&mut ti.storage_layout, base_info.storage_layout);
+            if base_info.immediates_compatibility.is_err() {
+                ti.immediates_compatibility = base_info.immediates_compatibility.clone();
+            }
+
+            if !base_info.flags.contains(TypeFlags::SIZED) {
+                let is_array =
+                    matches!(gctx.types[member.ty].inner, crate::TypeInner::Array { .. });
+                if !is_array || i + 1 != members.len() {
+                    let name = member.name.clone().unwrap_or_default();
+                    return Err(TypeError::InvalidDynamicArray(name, member.ty));
+                }
+            }
+        }
+
+        if let Some((index, offset)) = first_overlap(&mut extents) {
+            // HACK: this could be nicer. We want to allow some structures
+            // to not bother with offsets/alignments if they are never
+            // used for host sharing.
+            if members.iter().all(|member| member.offset == 0) {
+                ti.flags.set(TypeFlags::HOST_SHAREABLE, false);
+            } else {
+                return Err(TypeError::MemberOverlap { index, offset });
+            }
+        }
+
+        match blend_src_types {
+            [None, None] => {}
+            [Some(ty0), Some(ty1)] => {
+                if let Some(location) = non_blend_src_location {
+                    // If `@blend_src` members are present, then `@location`
+                    // may only be used for those members.
+                    return Err(TypeError::InvalidBlendSrc(
+                        super::VaryingError::InvalidBlendSrcWithOtherBindings { location },
+                    ));
+                }
+                let ty0_inner = &gctx.types[ty0].inner;
+                let ty1_inner = &gctx.types[ty1].inner;
+                // The two blend sources must have the same type...
+                if !ty0_inner.non_struct_equivalent(ty1_inner, gctx.types) {
+                    return Err(TypeError::InvalidBlendSrc(
+                        super::VaryingError::BlendSrcOutputTypeMismatch {
+                            blend_src_0_type: ty0,
+                            blend_src_1_type: ty1,
+                        },
+                    ));
+                }
+                // ... and that type must be I/O-shareable.
+                if !self.types[ty0.index()]
+                    .flags
+                    .contains(TypeFlags::IO_SHAREABLE)
+                {
+                    return Err(TypeError::InvalidBlendSrc(
+                        super::VaryingError::NotIOShareableType(ty0),
+                    ));
+                }
+
+                // `@blend_src` is the only case where we classify a struct as
+                // I/O-shareable. (In the case of a struct with `@location` bindings, we
+                // process the members individually in interface validation, and do not
+                // classify the struct as I/O-shareable.)
+                ti.flags |= TypeFlags::IO_SHAREABLE;
+            }
+            // Only one of the blend sources was specified.
+            [Some(_), None] => {
+                return Err(TypeError::InvalidBlendSrc(
+                    super::VaryingError::IncompleteBlendSrcUsage {
+                        present_blend_src: 0,
+                    },
+                ));
+            }
+            [None, Some(_)] => {
+                return Err(TypeError::InvalidBlendSrc(
+                    super::VaryingError::IncompleteBlendSrcUsage {
+                        present_blend_src: 1,
+                    },
+                ));
+            }
+        }
+
+        Ok(ti)
     }
 }
 

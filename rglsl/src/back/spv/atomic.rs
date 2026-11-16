@@ -31,47 +31,7 @@ pub(super) fn texel_numeric_type(format: crate::StorageFormat) -> NumericType {
             size: crate::VectorSize::Quad,
             scalar: crate::Scalar::F16,
         },
-        crate::StorageFormat::R8Unorm
-        | crate::StorageFormat::R8Snorm
-        | crate::StorageFormat::R8Uint
-        | crate::StorageFormat::R8Sint
-        | crate::StorageFormat::R16Uint
-        | crate::StorageFormat::R16Sint
-        | crate::StorageFormat::R16Float
-        | crate::StorageFormat::Rg8Unorm
-        | crate::StorageFormat::Rg8Snorm
-        | crate::StorageFormat::Rg8Uint
-        | crate::StorageFormat::Rg8Sint
-        | crate::StorageFormat::Rg16Uint
-        | crate::StorageFormat::Rg16Sint
-        | crate::StorageFormat::Rgba8Unorm
-        | crate::StorageFormat::Rgba8Snorm
-        | crate::StorageFormat::Rgba8Uint
-        | crate::StorageFormat::Rgba8Sint
-        | crate::StorageFormat::Bgra8Unorm
-        | crate::StorageFormat::Rgb10a2Uint
-        | crate::StorageFormat::Rgb10a2Unorm
-        | crate::StorageFormat::Rg11b10Ufloat
-        | crate::StorageFormat::R32Uint
-        | crate::StorageFormat::R32Sint
-        | crate::StorageFormat::R32Float
-        | crate::StorageFormat::Rg32Uint
-        | crate::StorageFormat::Rg32Sint
-        | crate::StorageFormat::Rg32Float
-        | crate::StorageFormat::Rgba16Uint
-        | crate::StorageFormat::Rgba16Sint
-        | crate::StorageFormat::Rgba32Uint
-        | crate::StorageFormat::Rgba32Sint
-        | crate::StorageFormat::Rgba32Float
-        | crate::StorageFormat::R64Uint
-        | crate::StorageFormat::R64Sint
-        | crate::StorageFormat::R16Unorm
-        | crate::StorageFormat::R16Snorm
-        | crate::StorageFormat::Rg16Unorm
-        | crate::StorageFormat::Rg16Snorm
-        | crate::StorageFormat::Rgba16Unorm
-        | crate::StorageFormat::Rgba16Snorm
-        | crate::StorageFormat::Unknown(_) => NumericType::Scalar(format.into()),
+        _ => NumericType::Scalar(format.into()),
     }
 }
 
@@ -95,46 +55,7 @@ pub(super) fn collect_texel_images(block: &crate::Block, images: &mut HandleSet<
                     images.insert(image);
                 }
             }
-            Statement::Emit(_)
-            | Statement::Block(_)
-            | Statement::If { .. }
-            | Statement::Switch { .. }
-            | Statement::Loop { .. }
-            | Statement::Break
-            | Statement::Continue
-            | Statement::Return { .. }
-            | Statement::Kill
-            | Statement::TerminateInvocation
-            | Statement::Demote
-            | Statement::BeginInvocationInterlock
-            | Statement::EndInvocationInterlock
-            | Statement::EmitVertex { .. }
-            | Statement::EndPrimitive { .. }
-            | Statement::ControlBarrier(_)
-            | Statement::MemoryBarrier(_)
-            | Statement::ScopedBarrier { .. }
-            | Statement::SplitBarrier { .. }
-            | Statement::Store { .. }
-            | Statement::ImageStore { .. }
-            | Statement::Atomic { .. }
-            | Statement::Call { .. }
-            | Statement::RayQuery { .. }
-            | Statement::RayPipelineFunction(_)
-            | Statement::HitObject { .. }
-            | Statement::ReorderThread { .. }
-            | Statement::MeshFunction(_)
-            | Statement::SubgroupBallot { .. }
-            | Statement::SubgroupGather { .. }
-            | Statement::SubgroupCollectiveOperation { .. }
-            | Statement::SubgroupFunction { .. }
-            | Statement::CooperativeStore { .. }
-            | Statement::DebugPrintf { .. }
-            | Statement::Assume { .. }
-            | Statement::CooperativeVector(_)
-            | Statement::CooperativeMatrix { .. }
-            | Statement::Abort { .. }
-            | Statement::TensorWrite { .. }
-            | Statement::SpirvInstruction { .. } => {}
+            _ => {}
         }
     }
 }
@@ -148,11 +69,7 @@ impl super::Writer {
             MemoryScope::Device => {
                 self.device_scope_used = true;
             }
-            MemoryScope::CrossDevice
-            | MemoryScope::Workgroup
-            | MemoryScope::Subgroup
-            | MemoryScope::Invocation
-            | MemoryScope::ShaderCall => {}
+            _ => {}
         }
         self.get_constant_scalar(crate::Literal::I32(spirv_scope(scope) as i32))
     }
@@ -181,12 +98,7 @@ impl super::Writer {
         let op = match fun {
             crate::AtomicFunction::Min => spirv::Op::AtomicFMinEXT,
             crate::AtomicFunction::Max => spirv::Op::AtomicFMaxEXT,
-            crate::AtomicFunction::Add
-            | crate::AtomicFunction::Subtract
-            | crate::AtomicFunction::And
-            | crate::AtomicFunction::ExclusiveOr
-            | crate::AtomicFunction::InclusiveOr
-            | crate::AtomicFunction::Exchange { .. } => spirv::Op::AtomicFAddEXT,
+            _ => spirv::Op::AtomicFAddEXT,
         };
         if vector {
             return Ok(op);
@@ -267,67 +179,7 @@ impl BlockContext<'_> {
                     spirv::StorageClass::UniformConstant,
                 ),
             ),
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::ZeroValue(_)
-            | Expression::Compose { .. }
-            | Expression::Splat { .. }
-            | Expression::Swizzle { .. }
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => {
-                Err(Error::Validation("Unexpected image expression"))
-            }
+            _ => Err(Error::Validation("Unexpected image expression")),
         }
     }
 
@@ -397,26 +249,7 @@ impl BlockContext<'_> {
                             crate::TypeInner::Scalar(scalar) | crate::TypeInner::Atomic(scalar) => {
                                 scalar
                             }
-                            crate::TypeInner::Vector { .. }
-                            | crate::TypeInner::Matrix { .. }
-                            | crate::TypeInner::CooperativeMatrix { .. }
-                            | crate::TypeInner::LongVector { .. }
-                            | crate::TypeInner::TensorLayout { .. }
-                            | crate::TypeInner::TensorView { .. }
-                            | crate::TypeInner::Tensor { .. }
-                            | crate::TypeInner::Pointer { .. }
-                            | crate::TypeInner::ValuePointer { .. }
-                            | crate::TypeInner::Array { .. }
-                            | crate::TypeInner::Struct { .. }
-                            | crate::TypeInner::Image { .. }
-                            | crate::TypeInner::Sampler { .. }
-                            | crate::TypeInner::SampledImage { .. }
-                            | crate::TypeInner::AccelerationStructure
-                            | crate::TypeInner::RayQuery
-                            | crate::TypeInner::HitObject { .. }
-                            | crate::TypeInner::BindingArray { .. }
-                            | crate::TypeInner::BufferDescriptor { .. }
-                            | crate::TypeInner::Spirv { .. } => {
+                            _ => {
                                 return Err(Error::Validation("Invalid atomic pointer"));
                             }
                         }
@@ -424,27 +257,7 @@ impl BlockContext<'_> {
                     crate::TypeInner::ValuePointer {
                         size: None, scalar, ..
                     } => scalar,
-                    crate::TypeInner::Scalar(_)
-                    | crate::TypeInner::Vector { .. }
-                    | crate::TypeInner::Matrix { .. }
-                    | crate::TypeInner::CooperativeMatrix { .. }
-                    | crate::TypeInner::LongVector { .. }
-                    | crate::TypeInner::TensorLayout { .. }
-                    | crate::TypeInner::TensorView { .. }
-                    | crate::TypeInner::Tensor { .. }
-                    | crate::TypeInner::Atomic(_)
-                    | crate::TypeInner::ValuePointer { size: Some(_), .. }
-                    | crate::TypeInner::Array { .. }
-                    | crate::TypeInner::Struct { .. }
-                    | crate::TypeInner::Image { .. }
-                    | crate::TypeInner::Sampler { .. }
-                    | crate::TypeInner::SampledImage { .. }
-                    | crate::TypeInner::AccelerationStructure
-                    | crate::TypeInner::RayQuery
-                    | crate::TypeInner::HitObject { .. }
-                    | crate::TypeInner::BindingArray { .. }
-                    | crate::TypeInner::BufferDescriptor { .. }
-                    | crate::TypeInner::Spirv { .. } => {
+                    _ => {
                         return Err(Error::Validation("Invalid atomic pointer"));
                     }
                 };

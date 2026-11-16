@@ -3,17 +3,15 @@
 // the item type, the capacity, and the iterator type, which can easily bloat
 // the compiled executable (by ~260 KiB, when it was removed).
 
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec,
-    vec::Vec,
-};
+use alloc::{format, string::String, vec, vec::Vec};
 use core::iter;
 
 use arrayvec::ArrayVec;
 use half::f16;
 use num_traits::{One, Zero, real::Real};
+
+mod binary;
+mod cast;
 
 use crate::{
     ArraySize, BinaryOperator, Constant, Expression, Literal, Override, RelationalFunction,
@@ -880,50 +878,7 @@ impl ExpressionKindTracker {
                 expr.for_each_operand(|operand| kind = kind.max(self.type_of(operand)));
                 kind
             }
-            Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Derivative { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => ExpressionKind::Runtime,
+            _ => ExpressionKind::Runtime,
         }
     }
 }
@@ -1296,8 +1251,7 @@ impl<'a> ConstantEvaluator<'a> {
             | Behavior::Glsl(GlslRestrictions::Runtime(ref function_local_data)) => {
                 Some(function_local_data)
             }
-            Behavior::Wgsl(WgslRestrictions::Const(None) | WgslRestrictions::Override)
-            | Behavior::Glsl(GlslRestrictions::Const) => None,
+            _ => None,
         }
     }
 
@@ -1530,67 +1484,7 @@ impl<'a> ConstantEvaluator<'a> {
                 let expr = Expression::ZeroValue(res_ty);
                 self.register_evaluated_expr(expr, span)
             }
-            Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::Compose { .. }
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Splat { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => Err(ConstantEvaluatorError::SplatScalarOnly),
+            _ => Err(ConstantEvaluatorError::SplatScalarOnly),
         }
     }
 
@@ -1652,66 +1546,7 @@ impl<'a> ConstantEvaluator<'a> {
                 };
                 self.register_evaluated_expr(expr, span)
             }
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => Err(ConstantEvaluatorError::SwizzleVectorOnly),
+            _ => Err(ConstantEvaluatorError::SwizzleVectorOnly),
         }
     }
 
@@ -1802,89 +1637,7 @@ impl<'a> ConstantEvaluator<'a> {
                     Err(_) => return None,
                 }
             }
-            Mf::Abs
-            | Mf::Min
-            | Mf::Max
-            | Mf::Min3
-            | Mf::Max3
-            | Mf::Mid3
-            | Mf::CubeFaceIndex
-            | Mf::CubeFaceCoord
-            | Mf::IntelCountLeadingZeros
-            | Mf::IntelCountTrailingZeros
-            | Mf::AbsoluteDifference
-            | Mf::AddSaturate
-            | Mf::SubtractSaturate
-            | Mf::Average
-            | Mf::AverageRounded
-            | Mf::Multiply32x16
-            | Mf::Cos
-            | Mf::Sin
-            | Mf::Tan
-            | Mf::Tanh
-            | Mf::Atan
-            | Mf::Atan2
-            | Mf::Asinh
-            | Mf::Radians
-            | Mf::Ceil
-            | Mf::Floor
-            | Mf::Round
-            | Mf::RoundEven
-            | Mf::Fract
-            | Mf::Trunc
-            | Mf::Modf
-            | Mf::Frexp
-            | Mf::Ldexp
-            | Mf::Dot4I8Packed
-            | Mf::Dot4U8Packed
-            | Mf::IntegerDot
-            | Mf::IntegerDotAccSat
-            | Mf::PackedIntegerDot4x8
-            | Mf::PackedIntegerDot4x8AccSat
-            | Mf::Outer
-            | Mf::Cross
-            | Mf::Distance
-            | Mf::FaceForward
-            | Mf::Reflect
-            | Mf::Refract
-            | Mf::Sign
-            | Mf::Fma
-            | Mf::Mix
-            | Mf::Step
-            | Mf::SmoothStep
-            | Mf::InverseSqrt
-            | Mf::Inverse
-            | Mf::Transpose
-            | Mf::Determinant
-            | Mf::CountTrailingZeros
-            | Mf::CountLeadingZeros
-            | Mf::CountOneBits
-            | Mf::ReverseBits
-            | Mf::ExtractBits
-            | Mf::InsertBits
-            | Mf::FirstTrailingBit
-            | Mf::FirstLeadingBit
-            | Mf::AddCarry
-            | Mf::SubBorrow
-            | Mf::MulExtended
-            | Mf::Pack4x8snorm
-            | Mf::Pack4x8unorm
-            | Mf::Pack2x16snorm
-            | Mf::Pack2x16unorm
-            | Mf::Pack2x16float
-            | Mf::Pack4xI8
-            | Mf::Pack4xU8
-            | Mf::Pack4xI8Clamp
-            | Mf::Pack4xU8Clamp
-            | Mf::PackDouble2x32
-            | Mf::Unpack4x8snorm
-            | Mf::Unpack4x8unorm
-            | Mf::Unpack2x16snorm
-            | Mf::Unpack2x16unorm
-            | Mf::Unpack2x16float
-            | Mf::Unpack4xI8
-            | Mf::Unpack4xU8
-            | Mf::UnpackDouble2x32 => return None,
+            _ => return None,
         })
     }
 
@@ -1909,11 +1662,6 @@ impl<'a> ConstantEvaluator<'a> {
                 fun, expected, given,
             ));
         }
-        let required = |arg: Option<Handle<Expression>>| {
-            arg.ok_or(ConstantEvaluatorError::InvalidMathArgCount(
-                fun, expected, given,
-            ))
-        };
 
         if matches!(self.behavior, Behavior::Glsl(_))
             && let Some(result) = self.glsl_math(arg, arg1, arg2, fun, span)
@@ -1921,7 +1669,84 @@ impl<'a> ConstantEvaluator<'a> {
             return result;
         }
 
+        let args = MathArgs {
+            fun,
+            arg,
+            arg1,
+            arg2,
+            expected,
+            given,
+        };
+        use crate::MathFunction as Mf;
         // NOTE: We try to match the declaration order of `MathFunction` here.
+        match fun {
+            Mf::Abs
+            | Mf::Min
+            | Mf::Max
+            | Mf::Clamp
+            | Mf::Sign
+            | Mf::Fma
+            | Mf::Step
+            | Mf::Sqrt
+            | Mf::InverseSqrt => self.math_arithmetic(args, span),
+            Mf::Cos
+            | Mf::Cosh
+            | Mf::Sin
+            | Mf::Sinh
+            | Mf::Tan
+            | Mf::Tanh
+            | Mf::Acos
+            | Mf::Asin
+            | Mf::Atan
+            | Mf::Atan2
+            | Mf::Asinh
+            | Mf::Acosh
+            | Mf::Atanh
+            | Mf::Radians
+            | Mf::Degrees => self.math_trigonometry(args, span),
+            Mf::Ceil
+            | Mf::Floor
+            | Mf::RoundEven
+            | Mf::Fract
+            | Mf::Trunc
+            | Mf::Exp
+            | Mf::Exp2
+            | Mf::Log
+            | Mf::Log2
+            | Mf::Pow => self.math_exponential(args, span),
+            Mf::CountTrailingZeros
+            | Mf::CountLeadingZeros
+            | Mf::CountOneBits
+            | Mf::ReverseBits
+            | Mf::FirstTrailingBit
+            | Mf::FirstLeadingBit => self.math_bits(args, span),
+            Mf::Dot4I8Packed
+            | Mf::Dot4U8Packed
+            | Mf::Cross
+            | Mf::Dot
+            | Mf::Length
+            | Mf::Distance
+            | Mf::Normalize => self.math_vector(args, span),
+            // unimplemented
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
+
+    fn math_arithmetic(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs {
+            fun,
+            arg,
+            arg1,
+            arg2,
+            ..
+        } = args;
+        let required = |arg| args.required(arg);
         match fun {
             // comparison
             crate::MathFunction::Abs => {
@@ -1959,6 +1784,63 @@ impl<'a> ConstantEvaluator<'a> {
                 )
             }
 
+            // computational
+            crate::MathFunction::Sign => {
+                component_wise_signed!(self, span, [arg], |e| {
+                    Ok([if e.is_zero() {
+                        Zero::zero()
+                    } else {
+                        e.signum()
+                    }])
+                })
+            }
+            crate::MathFunction::Fma => {
+                component_wise_float!(
+                    self,
+                    span,
+                    [arg, required(arg1)?, required(arg2)?],
+                    |e1, e2, e3| { Ok([e1.mul_add(e2, e3)]) }
+                )
+            }
+            crate::MathFunction::Step => {
+                component_wise_float(self, span, [arg, required(arg1)?], |x| match x {
+                    Float::F32([edge, x]) => Ok(Float::F32([if edge <= x { 1.0 } else { 0.0 }])),
+                    Float::F16([edge, x]) => Ok(Float::F16([if edge <= x {
+                        f16::one()
+                    } else {
+                        f16::zero()
+                    }])),
+                })
+            }
+            crate::MathFunction::Sqrt => {
+                component_wise_float!(self, span, [arg], |e| {
+                    if e >= Zero::zero() {
+                        Ok([e.sqrt()])
+                    } else {
+                        Err(ConstantEvaluatorError::InvalidMathArgValue("sqrt".into()))
+                    }
+                })
+            }
+            crate::MathFunction::InverseSqrt => {
+                component_wise_float(self, span, [arg], |e| match e {
+                    Float::F32([e]) => Ok(Float::F32([1. / e.sqrt()])),
+                    Float::F16([e]) => Ok(Float::F16([f16::from_f32(1. / f32::from(e).sqrt())])),
+                })
+            }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
+
+    fn math_trigonometry(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, arg1, .. } = args;
+        let required = |arg| args.required(arg);
+        match fun {
             // trigonometry
             crate::MathFunction::Cos => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.cos()]) })
@@ -2051,7 +1933,20 @@ impl<'a> ConstantEvaluator<'a> {
                     }
                 })
             }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
 
+    fn math_exponential(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, arg1, .. } = args;
+        let required = |arg| args.required(arg);
+        match fun {
             // decomposition
             crate::MathFunction::Ceil => {
                 component_wise_float!(self, span, [arg], |e| { Ok([e.ceil()]) })
@@ -2070,21 +1965,6 @@ impl<'a> ConstantEvaluator<'a> {
                         // <https://github.com/rust-lang/rust/issues/96710>.
                         //
                         // [polyfill source]: https://github.com/imeka/ndarray-ndimage/blob/8b14b4d6ecfbc96a8a052f802e342a7049c68d8f/src/lib.rs#L98
-                        fn round_ties_even(x: f64) -> f64 {
-                            let i = x as i64;
-                            let f = (x - i as f64).abs();
-                            if f == 0.5 {
-                                if i & 1 == 1 {
-                                    // -1.5, 1.5, 3.5, ...
-                                    (x.abs() + 0.5).copysign(x)
-                                } else {
-                                    (x.abs() - 0.5).copysign(x)
-                                }
-                            } else {
-                                x.round()
-                            }
-                        }
-
                         Ok(Float::F16([(f16::from_f64(round_ties_even(f64::from(e))))]))
                     }
                 })
@@ -2159,51 +2039,19 @@ impl<'a> ConstantEvaluator<'a> {
                     }
                 })
             }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
 
-            // computational
-            crate::MathFunction::Sign => {
-                component_wise_signed!(self, span, [arg], |e| {
-                    Ok([if e.is_zero() {
-                        Zero::zero()
-                    } else {
-                        e.signum()
-                    }])
-                })
-            }
-            crate::MathFunction::Fma => {
-                component_wise_float!(
-                    self,
-                    span,
-                    [arg, required(arg1)?, required(arg2)?],
-                    |e1, e2, e3| { Ok([e1.mul_add(e2, e3)]) }
-                )
-            }
-            crate::MathFunction::Step => {
-                component_wise_float(self, span, [arg, required(arg1)?], |x| match x {
-                    Float::F32([edge, x]) => Ok(Float::F32([if edge <= x { 1.0 } else { 0.0 }])),
-                    Float::F16([edge, x]) => Ok(Float::F16([if edge <= x {
-                        f16::one()
-                    } else {
-                        f16::zero()
-                    }])),
-                })
-            }
-            crate::MathFunction::Sqrt => {
-                component_wise_float!(self, span, [arg], |e| {
-                    if e >= Zero::zero() {
-                        Ok([e.sqrt()])
-                    } else {
-                        Err(ConstantEvaluatorError::InvalidMathArgValue("sqrt".into()))
-                    }
-                })
-            }
-            crate::MathFunction::InverseSqrt => {
-                component_wise_float(self, span, [arg], |e| match e {
-                    Float::F32([e]) => Ok(Float::F32([1. / e.sqrt()])),
-                    Float::F16([e]) => Ok(Float::F16([f16::from_f32(1. / f32::from(e).sqrt())])),
-                })
-            }
-
+    fn math_bits(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, .. } = args;
+        match fun {
             // bits
             crate::MathFunction::CountTrailingZeros => {
                 component_wise_concrete_int!(self, span, [arg], |e| {
@@ -2238,7 +2086,20 @@ impl<'a> ConstantEvaluator<'a> {
             crate::MathFunction::FirstLeadingBit => {
                 component_wise_concrete_int(self, span, [arg], |ci| Ok(first_leading_bit(ci)))
             }
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
+        }
+    }
 
+    fn math_vector(
+        &mut self,
+        args: MathArgs,
+        span: Span,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        let MathArgs { fun, arg, arg1, .. } = args;
+        let required = |arg| args.required(arg);
+        match fun {
             // vector
             crate::MathFunction::Dot4I8Packed => {
                 self.packed_dot_product(arg, required(arg1)?, span, true)
@@ -2253,32 +2114,6 @@ impl<'a> ConstantEvaluator<'a> {
                 let e2 = self.extract_vec(required(arg1)?, false)?;
                 if e1.len() != e2.len() {
                     return Err(ConstantEvaluatorError::InvalidMathArg);
-                }
-
-                fn float_dot_checked<P>(a: &[P], b: &[P]) -> Result<P, ConstantEvaluatorError>
-                where
-                    P: num_traits::Float,
-                {
-                    let result = a
-                        .iter()
-                        .zip(b.iter())
-                        .map(|(&aa, &bb)| aa * bb)
-                        .fold(P::zero(), |acc, x| acc + x);
-                    if result.is_finite() {
-                        Ok(result)
-                    } else {
-                        Err(ConstantEvaluatorError::Overflow("in dot built-in".into()))
-                    }
-                }
-
-                fn int_dot_wrapping<P>(a: &[P], b: &[P]) -> P
-                where
-                    P: num_traits::PrimInt + num_traits::WrappingAdd + num_traits::WrappingMul,
-                {
-                    a.iter()
-                        .zip(b.iter())
-                        .map(|(&aa, bb)| aa.wrapping_mul(bb))
-                        .fold(P::zero(), |acc, x| acc.wrapping_add(&x))
                 }
 
                 let result = match_literal_vector!(match (e1, e2) => Literal {
@@ -2307,23 +2142,6 @@ impl<'a> ConstantEvaluator<'a> {
                     return Err(ConstantEvaluatorError::InvalidMathArg);
                 }
 
-                fn float_distance<F>(a: &[F], b: &[F]) -> F
-                where
-                    F: core::ops::Mul<F>,
-                    F: num_traits::Float + iter::Sum + core::ops::Sub,
-                {
-                    if a.len() == 1 {
-                        // Avoids possible overflow in squaring
-                        (a[0] - b[0]).abs()
-                    } else {
-                        a.iter()
-                            .zip(b.iter())
-                            .map(|(&aa, &bb)| aa - bb)
-                            .map(|ei| ei * ei)
-                            .sum::<F>()
-                            .sqrt()
-                    }
-                }
                 let result = match_literal_vector!(match (e1, e2) => Literal {
                     Float => |e1, e2| { float_distance(e1, e2) },
                 })?;
@@ -2333,90 +2151,14 @@ impl<'a> ConstantEvaluator<'a> {
                 // https://www.w3.org/TR/WGSL/#normalize-builtin
                 let e1 = self.extract_vec(arg, true)?;
 
-                fn float_normalize<F>(
-                    e: &[F],
-                ) -> Result<ArrayVec<F, { crate::VectorSize::MAX }>, ConstantEvaluatorError>
-                where
-                    F: core::ops::Mul<F>,
-                    F: num_traits::Float + iter::Sum,
-                {
-                    let len = match float_length(e) {
-                        Some(len) if !len.is_zero() => Ok(len),
-                        Some(_) => Err(ConstantEvaluatorError::InvalidMathArgValue(
-                            "normalize".into(),
-                        )),
-                        None => Err(ConstantEvaluatorError::Overflow("normalize".into())),
-                    }?;
-
-                    let mut out = ArrayVec::new();
-                    for &ei in e {
-                        out.push(ei / len);
-                    }
-                    Ok(out)
-                }
-
                 let result = match_literal_vector!(match e1 => LiteralVector {
                     Float => |e1| { float_normalize(e1)? },
                 })?;
                 result.register_as_evaluated_expr(self, span)
             }
-
-            // unimplemented
-            crate::MathFunction::Min3
-            | crate::MathFunction::Max3
-            | crate::MathFunction::Mid3
-            | crate::MathFunction::CubeFaceIndex
-            | crate::MathFunction::CubeFaceCoord
-            | crate::MathFunction::IntelCountLeadingZeros
-            | crate::MathFunction::IntelCountTrailingZeros
-            | crate::MathFunction::AbsoluteDifference
-            | crate::MathFunction::AddSaturate
-            | crate::MathFunction::SubtractSaturate
-            | crate::MathFunction::Average
-            | crate::MathFunction::AverageRounded
-            | crate::MathFunction::Multiply32x16
-            | crate::MathFunction::Round
-            | crate::MathFunction::Modf
-            | crate::MathFunction::Frexp
-            | crate::MathFunction::AddCarry
-            | crate::MathFunction::SubBorrow
-            | crate::MathFunction::MulExtended
-            | crate::MathFunction::Ldexp
-            | crate::MathFunction::Outer
-            | crate::MathFunction::FaceForward
-            | crate::MathFunction::Reflect
-            | crate::MathFunction::Refract
-            | crate::MathFunction::Mix
-            | crate::MathFunction::SmoothStep
-            | crate::MathFunction::Inverse
-            | crate::MathFunction::Transpose
-            | crate::MathFunction::Determinant
-            | crate::MathFunction::ExtractBits
-            | crate::MathFunction::InsertBits
-            | crate::MathFunction::Pack4x8snorm
-            | crate::MathFunction::Pack4x8unorm
-            | crate::MathFunction::Pack2x16snorm
-            | crate::MathFunction::Pack2x16unorm
-            | crate::MathFunction::Pack2x16float
-            | crate::MathFunction::Pack4xI8
-            | crate::MathFunction::Pack4xU8
-            | crate::MathFunction::Pack4xI8Clamp
-            | crate::MathFunction::IntegerDot
-            | crate::MathFunction::IntegerDotAccSat
-            | crate::MathFunction::PackedIntegerDot4x8
-            | crate::MathFunction::PackedIntegerDot4x8AccSat
-            | crate::MathFunction::Pack4xU8Clamp
-            | crate::MathFunction::Unpack4x8snorm
-            | crate::MathFunction::Unpack4x8unorm
-            | crate::MathFunction::Unpack2x16snorm
-            | crate::MathFunction::Unpack2x16unorm
-            | crate::MathFunction::Unpack2x16float
-            | crate::MathFunction::Unpack4xI8
-            | crate::MathFunction::Unpack4xU8
-            | crate::MathFunction::PackDouble2x32
-            | crate::MathFunction::UnpackDouble2x32 => Err(ConstantEvaluatorError::NotImplemented(
-                format!("{fun:?} built-in function"),
-            )),
+            _ => Err(ConstantEvaluatorError::NotImplemented(format!(
+                "{fun:?} built-in function"
+            ))),
         }
     }
 
@@ -2557,68 +2299,7 @@ impl<'a> ConstantEvaluator<'a> {
                 }
                 LiteralVector::from_literal_vec(components_out)
             }
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::ZeroValue(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Splat { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => Err(ConstantEvaluatorError::InvalidMathArg),
+            _ => Err(ConstantEvaluatorError::InvalidMathArg),
         }
     }
 
@@ -2689,66 +2370,7 @@ impl<'a> ConstantEvaluator<'a> {
                     .nth(index)
                     .ok_or(ConstantEvaluatorError::InvalidAccessIndex)
             }
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => Err(ConstantEvaluatorError::InvalidAccessBase),
+            _ => Err(ConstantEvaluatorError::InvalidAccessBase),
         }
     }
 
@@ -2907,27 +2529,7 @@ impl<'a> ConstantEvaluator<'a> {
                                 .map(|member| ZeroTask::Enter(member.ty)),
                         );
                     }
-                    TypeInner::Array {
-                        size: ArraySize::Pending(_) | ArraySize::Dynamic,
-                        ..
-                    }
-                    | TypeInner::CooperativeMatrix { .. }
-                    | TypeInner::LongVector { .. }
-                    | TypeInner::TensorLayout { .. }
-                    | TypeInner::TensorView { .. }
-                    | TypeInner::Tensor { .. }
-                    | TypeInner::Atomic(_)
-                    | TypeInner::Pointer { .. }
-                    | TypeInner::ValuePointer { .. }
-                    | TypeInner::Image { .. }
-                    | TypeInner::Sampler { .. }
-                    | TypeInner::SampledImage { .. }
-                    | TypeInner::AccelerationStructure
-                    | TypeInner::RayQuery
-                    | TypeInner::HitObject { .. }
-                    | TypeInner::BindingArray { .. }
-                    | TypeInner::BufferDescriptor { .. }
-                    | TypeInner::Spirv { .. } => {
+                    _ => {
                         return Err(ConstantEvaluatorError::TypeNotConstructible);
                     }
                 },
@@ -2958,8 +2560,6 @@ impl<'a> ConstantEvaluator<'a> {
         target: crate::Scalar,
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
-        use crate::Scalar as Sc;
-
         let expr = self.eval_zero_value(expr, span)?;
 
         let make_error = || -> Result<_, ConstantEvaluatorError> {
@@ -2970,359 +2570,11 @@ impl<'a> ConstantEvaluator<'a> {
             Err(ConstantEvaluatorError::InvalidCastArg { from, to })
         };
 
-        use crate::proc::type_methods::IntFloatLimits;
-
         let expr = match self.expressions[expr] {
-            Expression::Literal(literal) => {
-                let literal = match literal {
-                    Literal::BF16(v) => Literal::F64(crate::proc::small_float::bf16_to_f64(v)),
-                    Literal::FE4M3(v) => Literal::F64(crate::proc::small_float::fe4m3_to_f64(v)),
-                    Literal::FE5M2(v) => Literal::F64(crate::proc::small_float::fe5m2_to_f64(v)),
-                    Literal::FE2M1(_)
-                    | Literal::FE3M2(_)
-                    | Literal::FE2M3(_)
-                    | Literal::FUE8M0(_)
-                    | Literal::FMXINT8(_) => {
-                        literal.encoded_float_value().map_or(literal, Literal::F64)
-                    }
-                    Literal::F64(_)
-                    | Literal::F32(_)
-                    | Literal::F16(_)
-                    | Literal::U8(_)
-                    | Literal::I8(_)
-                    | Literal::U16(_)
-                    | Literal::I16(_)
-                    | Literal::U32(_)
-                    | Literal::I32(_)
-                    | Literal::U64(_)
-                    | Literal::I64(_)
-                    | Literal::Bool(_) => literal,
-                };
-                let wide = |literal: Literal| -> Option<f64> {
-                    Some(match literal {
-                        Literal::F64(v) => v,
-                        Literal::F32(v) => f64::from(v),
-                        Literal::F16(v) => f16::to_f64(v),
-                        Literal::U8(v) => f64::from(v),
-                        Literal::I8(v) => f64::from(v),
-                        Literal::U16(v) => f64::from(v),
-                        Literal::I16(v) => f64::from(v),
-                        Literal::U32(v) => f64::from(v),
-                        Literal::I32(v) => f64::from(v),
-                        Literal::U64(v) => v as f64,
-                        Literal::I64(v) => v as f64,
-                        Literal::Bool(_)
-                        | Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return None,
-                    })
-                };
-                let literal = match target {
-                    Sc::BF16 => match wide(literal) {
-                        Some(value) => {
-                            Literal::BF16(crate::proc::small_float::bf16_from_f64(value))
-                        }
-                        None => return make_error(),
-                    },
-                    Sc::FE4M3 => match wide(literal) {
-                        Some(value) => {
-                            Literal::FE4M3(crate::proc::small_float::fe4m3_from_f64(value))
-                        }
-                        None => return make_error(),
-                    },
-                    Sc::FE5M2 => match wide(literal) {
-                        Some(value) => {
-                            Literal::FE5M2(crate::proc::small_float::fe5m2_from_f64(value))
-                        }
-                        None => return make_error(),
-                    },
-                    Sc::FE2M1 | Sc::FE3M2 | Sc::FE2M3 | Sc::FUE8M0 | Sc::FMXINT8 => {
-                        match wide(literal).and_then(|value| Literal::encoded_float(target, value))
-                        {
-                            Some(literal) => literal,
-                            None => return make_error(),
-                        }
-                    }
-                    Sc::I8 => Literal::I8(match literal {
-                        Literal::I8(v) => v,
-                        Literal::U8(v) => v as i8,
-                        Literal::I16(v) => v as i8,
-                        Literal::U16(v) => v as i8,
-                        Literal::I32(v) => v as i8,
-                        Literal::U32(v) => v as i8,
-                        Literal::I64(v) => v as i8,
-                        Literal::U64(v) => v as i8,
-                        Literal::F32(v) => v as i8,
-                        Literal::F64(v) => v as i8,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                        Literal::F16(v) => f16::to_f32(v) as i8,
-                        Literal::Bool(v) => i8::from(v),
-                    }),
-                    Sc::U8 => Literal::U8(match literal {
-                        Literal::I8(v) => v as u8,
-                        Literal::U8(v) => v,
-                        Literal::I16(v) => v as u8,
-                        Literal::U16(v) => v as u8,
-                        Literal::I32(v) => v as u8,
-                        Literal::U32(v) => v as u8,
-                        Literal::I64(v) => v as u8,
-                        Literal::U64(v) => v as u8,
-                        Literal::F32(v) => v as u8,
-                        Literal::F64(v) => v as u8,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                        Literal::F16(v) => f16::to_f32(v) as u8,
-                        Literal::Bool(v) => u8::from(v),
-                    }),
-                    Sc::I16 => Literal::I16(match literal {
-                        Literal::U8(v) => v as i16,
-                        Literal::I8(v) => v as i16,
-                        Literal::I16(v) => v,
-                        Literal::U16(v) => v as i16,
-                        Literal::I32(v) => v as i16,
-                        Literal::U32(v) => v as i16,
-                        Literal::F32(v) => v.clamp(i16::MIN as f32, i16::MAX as f32) as i16,
-                        Literal::F16(v) => {
-                            f16::to_f32(v).clamp(i16::MIN as f32, i16::MAX as f32) as i16
-                        }
-                        Literal::Bool(v) => v as i16,
-                        Literal::F64(v) => v.clamp(i16::MIN as f64, i16::MAX as f64) as i16,
-                        Literal::I64(v) => v as i16,
-                        Literal::U64(v) => v as i16,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::U16 => Literal::U16(match literal {
-                        Literal::U8(v) => v as u16,
-                        Literal::I8(v) => v as u16,
-                        Literal::I16(v) => v as u16,
-                        Literal::U16(v) => v,
-                        Literal::I32(v) => v as u16,
-                        Literal::U32(v) => v as u16,
-                        Literal::F32(v) => v.clamp(u16::MIN as f32, u16::MAX as f32) as u16,
-                        Literal::F16(v) => f16::to_f32(v) as u16,
-                        Literal::Bool(v) => v as u16,
-                        Literal::F64(v) => v.clamp(u16::MIN as f64, u16::MAX as f64) as u16,
-                        Literal::I64(v) => v as u16,
-                        Literal::U64(v) => v as u16,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::I32 => Literal::I32(match literal {
-                        Literal::U8(v) => v as i32,
-                        Literal::I8(v) => v as i32,
-                        Literal::I16(v) => v as i32,
-                        Literal::U16(v) => v as i32,
-                        Literal::I32(v) => v,
-                        Literal::U32(v) => v as i32,
-                        Literal::F32(v) => v.clamp(i32::min_float(), i32::max_float()) as i32,
-                        Literal::F16(v) => f16::to_f32(v) as i32,
-                        Literal::Bool(v) => v as i32,
-                        Literal::F64(v) => v as i32,
-                        Literal::I64(v) => v as i32,
-                        Literal::U64(v) => v as i32,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::U32 => Literal::U32(match literal {
-                        Literal::U8(v) => v as u32,
-                        Literal::I8(v) => v as u32,
-                        Literal::I16(v) => v as u32,
-                        Literal::U16(v) => v as u32,
-                        Literal::I32(v) => v as u32,
-                        Literal::U32(v) => v,
-                        Literal::F32(v) => v.clamp(u32::min_float(), u32::max_float()) as u32,
-                        // max(0) avoids None due to negative, therefore only None on NaN or Inf
-                        Literal::F16(v) => f16::to_f32(v) as u32,
-                        Literal::Bool(v) => v as u32,
-                        Literal::F64(v) => v as u32,
-                        Literal::I64(v) => v as u32,
-                        Literal::U64(v) => v as u32,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::I64 => Literal::I64(match literal {
-                        Literal::U8(v) => v as i64,
-                        Literal::I8(v) => v as i64,
-                        Literal::I16(v) => v as i64,
-                        Literal::U16(v) => v as i64,
-                        Literal::I32(v) => v as i64,
-                        Literal::U32(v) => v as i64,
-                        Literal::F32(v) => v.clamp(i64::min_float(), i64::max_float()) as i64,
-                        Literal::Bool(v) => v as i64,
-                        Literal::F64(v) => v.clamp(i64::min_float(), i64::max_float()) as i64,
-                        Literal::I64(v) => v,
-                        Literal::U64(v) => v as i64,
-                        Literal::F16(v) => f16::to_f32(v) as i64,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::U64 => Literal::U64(match literal {
-                        Literal::U8(v) => v as u64,
-                        Literal::I8(v) => v as u64,
-                        Literal::I16(v) => v as u64,
-                        Literal::U16(v) => v as u64,
-                        Literal::I32(v) => v as u64,
-                        Literal::U32(v) => v as u64,
-                        Literal::F32(v) => v.clamp(u64::min_float(), u64::max_float()) as u64,
-                        Literal::Bool(v) => v as u64,
-                        Literal::F64(v) => v.clamp(u64::min_float(), u64::max_float()) as u64,
-                        Literal::I64(v) => v as u64,
-                        Literal::U64(v) => v,
-                        // max(0) avoids None due to negative, therefore only None on NaN or Inf
-                        Literal::F16(v) => f16::to_f32(v) as u64,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::F16 => Literal::F16(match literal {
-                        Literal::U8(v) => f16::from_f32(f32::from(v)),
-                        Literal::I8(v) => f16::from_f32(f32::from(v)),
-                        Literal::F16(v) => v,
-                        Literal::F32(v) => f16::from_f32(v),
-                        Literal::F64(v) => f16::from_f64(v),
-                        Literal::Bool(v) => f16::from_f32(f32::from(u8::from(v))),
-                        Literal::I16(v) => f16::from_f32(v as f32),
-                        Literal::U16(v) => f16::from_f32(v as f32),
-                        Literal::I64(v) => f16::from_f64(v as f64),
-                        Literal::U64(v) => f16::from_f64(v as f64),
-                        Literal::I32(v) => f16::from_f64(f64::from(v)),
-                        Literal::U32(v) => f16::from_f64(f64::from(v)),
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::F32 => Literal::F32(match literal {
-                        Literal::U8(v) => v as f32,
-                        Literal::I8(v) => v as f32,
-                        Literal::I16(v) => v as f32,
-                        Literal::U16(v) => v as f32,
-                        Literal::I32(v) => v as f32,
-                        Literal::U32(v) => v as f32,
-                        Literal::F32(v) => v,
-                        Literal::Bool(v) => v as u32 as f32,
-                        Literal::F64(v) => v as f32,
-                        Literal::I64(v) => v as f32,
-                        Literal::U64(v) => v as f32,
-                        Literal::F16(v) => f16::to_f32(v),
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::F64 => Literal::F64(match literal {
-                        Literal::U8(v) => v as f64,
-                        Literal::I8(v) => v as f64,
-                        Literal::I16(v) => v as f64,
-                        Literal::U16(v) => v as f64,
-                        Literal::I32(v) => v as f64,
-                        Literal::U32(v) => v as f64,
-                        Literal::F16(v) => f16::to_f64(v),
-                        Literal::F32(v) => v as f64,
-                        Literal::F64(v) => v,
-                        Literal::Bool(v) => v as u32 as f64,
-                        Literal::I64(v) => v as f64,
-                        Literal::U64(v) => v as f64,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                    }),
-                    Sc::BOOL => Literal::Bool(match literal {
-                        Literal::U8(v) => v != 0,
-                        Literal::I8(v) => v != 0,
-                        Literal::I16(v) => v != 0,
-                        Literal::U16(v) => v != 0,
-                        Literal::I32(v) => v != 0,
-                        Literal::U32(v) => v != 0,
-                        Literal::F32(v) => v != 0.0,
-                        Literal::F16(v) => v != f16::zero(),
-                        Literal::Bool(v) => v,
-                        Literal::BF16(_)
-                        | Literal::FE4M3(_)
-                        | Literal::FE5M2(_)
-                        | Literal::FE2M1(_)
-                        | Literal::FE3M2(_)
-                        | Literal::FE2M3(_)
-                        | Literal::FUE8M0(_)
-                        | Literal::FMXINT8(_) => return make_error(),
-                        Literal::F64(v) => v != 0.0,
-                        Literal::I64(v) => v != 0,
-                        Literal::U64(v) => v != 0,
-                    }),
-                    _ => {
-                        log::debug!("Constant evaluator refused to convert value to {target:?}");
-                        return make_error();
-                    }
-                };
-                Expression::Literal(literal)
-            }
+            Expression::Literal(literal) => match cast::cast_literal(literal, target) {
+                Some(literal) => Expression::Literal(literal),
+                None => return make_error(),
+            },
             Expression::Compose {
                 ty,
                 components: ref src_components,
@@ -3342,25 +2594,7 @@ impl<'a> ConstantEvaluator<'a> {
                         scalar: target,
                         class,
                     },
-                    TypeInner::Scalar(_)
-                    | TypeInner::CooperativeMatrix { .. }
-                    | TypeInner::TensorLayout { .. }
-                    | TypeInner::TensorView { .. }
-                    | TypeInner::Tensor { .. }
-                    | TypeInner::Atomic(_)
-                    | TypeInner::Pointer { .. }
-                    | TypeInner::ValuePointer { .. }
-                    | TypeInner::Array { .. }
-                    | TypeInner::Struct { .. }
-                    | TypeInner::Image { .. }
-                    | TypeInner::Sampler { .. }
-                    | TypeInner::SampledImage { .. }
-                    | TypeInner::AccelerationStructure
-                    | TypeInner::RayQuery
-                    | TypeInner::HitObject { .. }
-                    | TypeInner::BindingArray { .. }
-                    | TypeInner::BufferDescriptor { .. }
-                    | TypeInner::Spirv { .. } => return make_error(),
+                    _ => return make_error(),
                 };
 
                 let mut components = src_components.clone();
@@ -3408,91 +2642,14 @@ impl<'a> ConstantEvaluator<'a> {
                         scope,
                         class,
                     },
-                    TypeInner::Scalar(_)
-                    | TypeInner::Vector { .. }
-                    | TypeInner::Matrix { .. }
-                    | TypeInner::TensorLayout { .. }
-                    | TypeInner::TensorView { .. }
-                    | TypeInner::Tensor { .. }
-                    | TypeInner::Atomic(_)
-                    | TypeInner::Pointer { .. }
-                    | TypeInner::ValuePointer { .. }
-                    | TypeInner::Array { .. }
-                    | TypeInner::Struct { .. }
-                    | TypeInner::Image { .. }
-                    | TypeInner::Sampler { .. }
-                    | TypeInner::SampledImage { .. }
-                    | TypeInner::AccelerationStructure
-                    | TypeInner::RayQuery
-                    | TypeInner::HitObject { .. }
-                    | TypeInner::BindingArray { .. }
-                    | TypeInner::BufferDescriptor { .. }
-                    | TypeInner::Spirv { .. } => return make_error(),
+                    _ => return make_error(),
                 };
                 let value_span = self.expressions.get_span(value);
                 let value = self.cast(value, target, value_span)?;
                 let ty = self.types.insert(Type { name: None, inner }, span);
                 Expression::Replicate { ty, value }
             }
-            Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::ZeroValue(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => return make_error(),
+            _ => return make_error(),
         };
 
         self.register_evaluated_expr(expr, span)
@@ -3580,11 +2737,7 @@ impl<'a> ConstantEvaluator<'a> {
                 crate::proc::LayoutErrorInner::TooLarge => {
                     ConstantEvaluatorError::TypeTooLarge(err.ty)
                 }
-                crate::proc::LayoutErrorInner::InvalidArrayElementType(_)
-                | crate::proc::LayoutErrorInner::InvalidStructMemberType(_, _)
-                | crate::proc::LayoutErrorInner::NonPowerOfTwoWidth => {
-                    ConstantEvaluatorError::Layout(err)
-                }
+                _ => ConstantEvaluatorError::Layout(err),
             })?;
         *self.layouter = layouter;
 
@@ -3626,19 +2779,7 @@ impl<'a> ConstantEvaluator<'a> {
                     Literal::F32(v) => Literal::F32(-v),
                     Literal::F16(v) => Literal::F16(-v),
                     Literal::F64(v) => Literal::F64(-v),
-                    Literal::U8(_)
-                    | Literal::U16(_)
-                    | Literal::U32(_)
-                    | Literal::U64(_)
-                    | Literal::Bool(_)
-                    | Literal::BF16(_)
-                    | Literal::FE4M3(_)
-                    | Literal::FE5M2(_)
-                    | Literal::FE2M1(_)
-                    | Literal::FE3M2(_)
-                    | Literal::FE2M3(_)
-                    | Literal::FUE8M0(_)
-                    | Literal::FMXINT8(_) => {
+                    _ => {
                         return Err(ConstantEvaluatorError::InvalidUnaryOpArg);
                     }
                 },
@@ -3657,18 +2798,7 @@ impl<'a> ConstantEvaluator<'a> {
                     Literal::U16(v) => Literal::U16(!v),
                     Literal::U32(v) => Literal::U32(!v),
                     Literal::U64(v) => Literal::U64(!v),
-                    Literal::F64(_)
-                    | Literal::F32(_)
-                    | Literal::F16(_)
-                    | Literal::Bool(_)
-                    | Literal::BF16(_)
-                    | Literal::FE4M3(_)
-                    | Literal::FE5M2(_)
-                    | Literal::FE2M1(_)
-                    | Literal::FE3M2(_)
-                    | Literal::FE2M3(_)
-                    | Literal::FUE8M0(_)
-                    | Literal::FMXINT8(_) => {
+                    _ => {
                         return Err(ConstantEvaluatorError::InvalidUnaryOpArg);
                     }
                 },
@@ -3679,26 +2809,7 @@ impl<'a> ConstantEvaluator<'a> {
             } => {
                 match self.types[ty].inner {
                     TypeInner::Vector { .. } | TypeInner::Matrix { .. } => (),
-                    TypeInner::Scalar(_)
-                    | TypeInner::CooperativeMatrix { .. }
-                    | TypeInner::LongVector { .. }
-                    | TypeInner::TensorLayout { .. }
-                    | TypeInner::TensorView { .. }
-                    | TypeInner::Tensor { .. }
-                    | TypeInner::Atomic(_)
-                    | TypeInner::Pointer { .. }
-                    | TypeInner::ValuePointer { .. }
-                    | TypeInner::Array { .. }
-                    | TypeInner::Struct { .. }
-                    | TypeInner::Image { .. }
-                    | TypeInner::Sampler { .. }
-                    | TypeInner::SampledImage { .. }
-                    | TypeInner::AccelerationStructure
-                    | TypeInner::RayQuery
-                    | TypeInner::HitObject { .. }
-                    | TypeInner::BindingArray { .. }
-                    | TypeInner::BufferDescriptor { .. }
-                    | TypeInner::Spirv { .. } => {
+                    _ => {
                         return Err(ConstantEvaluatorError::InvalidUnaryOpArg);
                     }
                 }
@@ -3710,67 +2821,7 @@ impl<'a> ConstantEvaluator<'a> {
 
                 Expression::Compose { ty, components }
             }
-            Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::ZeroValue(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Splat { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => {
+            _ => {
                 return Err(ConstantEvaluatorError::InvalidUnaryOpArg);
             }
         };
@@ -3795,480 +2846,12 @@ impl<'a> ConstantEvaluator<'a> {
 
         let expr = match (&self.expressions[left], &self.expressions[right]) {
             (&Expression::Literal(left_value), &Expression::Literal(right_value)) => {
-                if !matches!(op, BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight)
-                    && core::mem::discriminant(&left_value) != core::mem::discriminant(&right_value)
-                {
-                    return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                }
-
-                if matches!(
-                    (left_value, op),
-                    (
-                        Literal::Bool(_),
-                        BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                    )
-                ) {
-                    return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                }
-
-                let literal = match op {
-                    BinaryOperator::Equal => Literal::Bool(left_value == right_value),
-                    BinaryOperator::NotEqual => Literal::Bool(left_value != right_value),
-                    BinaryOperator::Less => Literal::Bool(left_value < right_value),
-                    BinaryOperator::LessEqual => Literal::Bool(left_value <= right_value),
-                    BinaryOperator::Greater => Literal::Bool(left_value > right_value),
-                    BinaryOperator::GreaterEqual => Literal::Bool(left_value >= right_value),
-
-                    BinaryOperator::Add
-                    | BinaryOperator::Subtract
-                    | BinaryOperator::Multiply
-                    | BinaryOperator::Divide
-                    | BinaryOperator::Modulo
-                    | BinaryOperator::And
-                    | BinaryOperator::ExclusiveOr
-                    | BinaryOperator::InclusiveOr
-                    | BinaryOperator::LogicalAnd
-                    | BinaryOperator::LogicalOr
-                    | BinaryOperator::ShiftLeft
-                    | BinaryOperator::ShiftRight => match (left_value, right_value) {
-                        (Literal::I8(a), Literal::I8(b)) => Literal::I8(match op {
-                            BinaryOperator::Add => a.wrapping_add(b),
-                            BinaryOperator::Subtract => a.wrapping_sub(b),
-                            BinaryOperator::Multiply => a.wrapping_mul(b),
-                            BinaryOperator::Divide => a.checked_div(b).ok_or_else(|| {
-                                if b == 0 {
-                                    ConstantEvaluatorError::DivisionByZero
-                                } else {
-                                    ConstantEvaluatorError::Overflow("division".into())
-                                }
-                            })?,
-                            BinaryOperator::Modulo => a.checked_rem(b).ok_or_else(|| {
-                                if b == 0 {
-                                    ConstantEvaluatorError::RemainderByZero
-                                } else {
-                                    ConstantEvaluatorError::Overflow("remainder".into())
-                                }
-                            })?,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::ExclusiveOr => a ^ b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::I8(a), Literal::U32(b)) => Literal::I8(match op {
-                            BinaryOperator::ShiftLeft => {
-                                if (if a.is_negative() { !a } else { a }).leading_zeros() <= b {
-                                    return Err(ConstantEvaluatorError::Overflow("<<".to_string()));
-                                }
-                                a.checked_shl(b)
-                                    .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?
-                            }
-                            BinaryOperator::ShiftRight => a
-                                .checked_shr(b)
-                                .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                            BinaryOperator::Add
-                            | BinaryOperator::Subtract
-                            | BinaryOperator::Multiply
-                            | BinaryOperator::Divide
-                            | BinaryOperator::Modulo
-                            | BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::And
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::InclusiveOr
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::U8(a), Literal::U8(b)) => Literal::U8(match op {
-                            BinaryOperator::Add => a.wrapping_add(b),
-                            BinaryOperator::Subtract => a.wrapping_sub(b),
-                            BinaryOperator::Multiply => a.wrapping_mul(b),
-                            BinaryOperator::Divide => a
-                                .checked_div(b)
-                                .ok_or(ConstantEvaluatorError::DivisionByZero)?,
-                            BinaryOperator::Modulo => a
-                                .checked_rem(b)
-                                .ok_or(ConstantEvaluatorError::RemainderByZero)?,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::ExclusiveOr => a ^ b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::U8(a), Literal::U32(b)) => Literal::U8(match op {
-                            BinaryOperator::ShiftLeft => a
-                                .checked_mul(
-                                    1u8.checked_shl(b)
-                                        .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                                )
-                                .ok_or(ConstantEvaluatorError::Overflow("<<".to_string()))?,
-                            BinaryOperator::ShiftRight => a
-                                .checked_shr(b)
-                                .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                            BinaryOperator::Add
-                            | BinaryOperator::Subtract
-                            | BinaryOperator::Multiply
-                            | BinaryOperator::Divide
-                            | BinaryOperator::Modulo
-                            | BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::And
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::InclusiveOr
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::I16(a), Literal::I16(b)) => Literal::I16(match op {
-                            BinaryOperator::Add => a.wrapping_add(b),
-                            BinaryOperator::Subtract => a.wrapping_sub(b),
-                            BinaryOperator::Multiply => a.wrapping_mul(b),
-                            BinaryOperator::Divide => a.checked_div(b).ok_or_else(|| {
-                                if b == 0 {
-                                    ConstantEvaluatorError::DivisionByZero
-                                } else {
-                                    ConstantEvaluatorError::Overflow("division".into())
-                                }
-                            })?,
-                            BinaryOperator::Modulo => a.checked_rem(b).ok_or_else(|| {
-                                if b == 0 {
-                                    ConstantEvaluatorError::RemainderByZero
-                                } else {
-                                    ConstantEvaluatorError::Overflow("remainder".into())
-                                }
-                            })?,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::ExclusiveOr => a ^ b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::I16(a), Literal::U32(b)) => Literal::I16(match op {
-                            BinaryOperator::ShiftLeft => {
-                                if (if a.is_negative() { !a } else { a }).leading_zeros() <= b {
-                                    return Err(ConstantEvaluatorError::Overflow("<<".to_string()));
-                                }
-                                a.checked_shl(b)
-                                    .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?
-                            }
-                            BinaryOperator::ShiftRight => a
-                                .checked_shr(b)
-                                .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                            BinaryOperator::Add
-                            | BinaryOperator::Subtract
-                            | BinaryOperator::Multiply
-                            | BinaryOperator::Divide
-                            | BinaryOperator::Modulo
-                            | BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::And
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::InclusiveOr
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::U16(a), Literal::U16(b)) => Literal::U16(match op {
-                            BinaryOperator::Add => a.wrapping_add(b),
-                            BinaryOperator::Subtract => a.wrapping_sub(b),
-                            BinaryOperator::Multiply => a.wrapping_mul(b),
-                            BinaryOperator::Divide => a
-                                .checked_div(b)
-                                .ok_or(ConstantEvaluatorError::DivisionByZero)?,
-                            BinaryOperator::Modulo => a
-                                .checked_rem(b)
-                                .ok_or(ConstantEvaluatorError::RemainderByZero)?,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::ExclusiveOr => a ^ b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::U16(a), Literal::U32(b)) => Literal::U16(match op {
-                            BinaryOperator::ShiftLeft => a
-                                .checked_mul(
-                                    1u16.checked_shl(b)
-                                        .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                                )
-                                .ok_or(ConstantEvaluatorError::Overflow("<<".to_string()))?,
-                            BinaryOperator::ShiftRight => a
-                                .checked_shr(b)
-                                .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                            BinaryOperator::Add
-                            | BinaryOperator::Subtract
-                            | BinaryOperator::Multiply
-                            | BinaryOperator::Divide
-                            | BinaryOperator::Modulo
-                            | BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::And
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::InclusiveOr
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::I32(a), Literal::I32(b)) => Literal::I32(match op {
-                            BinaryOperator::Add => a.wrapping_add(b),
-                            BinaryOperator::Subtract => a.wrapping_sub(b),
-                            BinaryOperator::Multiply => a.wrapping_mul(b),
-                            BinaryOperator::Divide if glsl => {
-                                if b == 0 {
-                                    i32::MAX
-                                } else {
-                                    a.wrapping_div(b)
-                                }
-                            }
-                            BinaryOperator::Modulo if glsl => {
-                                if b == 0 {
-                                    a
-                                } else {
-                                    a.wrapping_rem(b)
-                                }
-                            }
-                            BinaryOperator::Divide => a.checked_div(b).ok_or_else(|| {
-                                if b == 0 {
-                                    ConstantEvaluatorError::DivisionByZero
-                                } else {
-                                    ConstantEvaluatorError::Overflow("division".into())
-                                }
-                            })?,
-                            BinaryOperator::Modulo => a.checked_rem(b).ok_or_else(|| {
-                                if b == 0 {
-                                    ConstantEvaluatorError::RemainderByZero
-                                } else {
-                                    ConstantEvaluatorError::Overflow("remainder".into())
-                                }
-                            })?,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::ExclusiveOr => a ^ b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::I32(a), Literal::U32(b)) => Literal::I32(match op {
-                            BinaryOperator::ShiftLeft if glsl => a.wrapping_shl(b),
-                            BinaryOperator::ShiftRight if glsl => a.wrapping_shr(b),
-                            BinaryOperator::ShiftLeft => {
-                                if (if a.is_negative() { !a } else { a }).leading_zeros() <= b {
-                                    return Err(ConstantEvaluatorError::Overflow("<<".to_string()));
-                                }
-                                a.checked_shl(b)
-                                    .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?
-                            }
-                            BinaryOperator::ShiftRight => a
-                                .checked_shr(b)
-                                .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                            BinaryOperator::Add
-                            | BinaryOperator::Subtract
-                            | BinaryOperator::Multiply
-                            | BinaryOperator::Divide
-                            | BinaryOperator::Modulo
-                            | BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::And
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::InclusiveOr
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::U32(a), Literal::U32(b)) => Literal::U32(match op {
-                            BinaryOperator::Add => a.wrapping_add(b),
-                            BinaryOperator::Subtract => a.wrapping_sub(b),
-                            BinaryOperator::Multiply => a.wrapping_mul(b),
-                            BinaryOperator::Divide if glsl => a.checked_div(b).unwrap_or(u32::MAX),
-                            BinaryOperator::Modulo if glsl => a.checked_rem(b).unwrap_or(a),
-                            BinaryOperator::ShiftLeft if glsl => a.wrapping_shl(b),
-                            BinaryOperator::ShiftRight if glsl => a.wrapping_shr(b),
-                            BinaryOperator::Divide => a
-                                .checked_div(b)
-                                .ok_or(ConstantEvaluatorError::DivisionByZero)?,
-                            BinaryOperator::Modulo => a
-                                .checked_rem(b)
-                                .ok_or(ConstantEvaluatorError::RemainderByZero)?,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::ExclusiveOr => a ^ b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::ShiftLeft => a
-                                .checked_mul(
-                                    1u32.checked_shl(b)
-                                        .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                                )
-                                .ok_or(ConstantEvaluatorError::Overflow("<<".to_string()))?,
-                            BinaryOperator::ShiftRight => a
-                                .checked_shr(b)
-                                .ok_or(ConstantEvaluatorError::ShiftedMoreThan32Bits)?,
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::F32(a), Literal::F32(b)) => Literal::F32(match op {
-                            BinaryOperator::Add => a + b,
-                            BinaryOperator::Subtract => a - b,
-                            BinaryOperator::Multiply => a * b,
-                            BinaryOperator::Divide => a / b,
-                            BinaryOperator::Modulo => {
-                                floored_modulo(f64::from(a), f64::from(b)) as f32
-                            }
-                            BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::And
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::InclusiveOr
-                            | BinaryOperator::LogicalAnd
-                            | BinaryOperator::LogicalOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        (Literal::F16(a), Literal::F16(b)) => {
-                            let result = match op {
-                                BinaryOperator::Add => a + b,
-                                BinaryOperator::Subtract => a - b,
-                                BinaryOperator::Multiply => a * b,
-                                BinaryOperator::Divide => a / b,
-                                BinaryOperator::Modulo => {
-                                    f16::from_f64(floored_modulo(a.to_f64(), b.to_f64()))
-                                }
-                                BinaryOperator::Equal
-                                | BinaryOperator::NotEqual
-                                | BinaryOperator::Less
-                                | BinaryOperator::LessEqual
-                                | BinaryOperator::Greater
-                                | BinaryOperator::GreaterEqual
-                                | BinaryOperator::And
-                                | BinaryOperator::ExclusiveOr
-                                | BinaryOperator::InclusiveOr
-                                | BinaryOperator::LogicalAnd
-                                | BinaryOperator::LogicalOr
-                                | BinaryOperator::ShiftLeft
-                                | BinaryOperator::ShiftRight => {
-                                    return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                                }
-                            };
-                            if !result.is_finite() {
-                                return Err(ConstantEvaluatorError::Overflow(format!("{op:?}")));
-                            }
-                            Literal::F16(result)
-                        }
-                        (Literal::Bool(a), Literal::Bool(b)) => Literal::Bool(match op {
-                            BinaryOperator::LogicalAnd => a && b,
-                            BinaryOperator::LogicalOr => a || b,
-                            BinaryOperator::And => a & b,
-                            BinaryOperator::InclusiveOr => a | b,
-                            BinaryOperator::Add
-                            | BinaryOperator::Subtract
-                            | BinaryOperator::Multiply
-                            | BinaryOperator::Divide
-                            | BinaryOperator::Modulo
-                            | BinaryOperator::Equal
-                            | BinaryOperator::NotEqual
-                            | BinaryOperator::Less
-                            | BinaryOperator::LessEqual
-                            | BinaryOperator::Greater
-                            | BinaryOperator::GreaterEqual
-                            | BinaryOperator::ExclusiveOr
-                            | BinaryOperator::ShiftLeft
-                            | BinaryOperator::ShiftRight => {
-                                return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
-                            }
-                        }),
-                        _ => return Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
-                    },
-                };
-                Expression::Literal(literal)
+                Expression::Literal(binary::literal_binary_op(
+                    op,
+                    left_value,
+                    right_value,
+                    glsl,
+                )?)
             }
             (
                 &Expression::Compose {
@@ -4450,24 +3033,7 @@ impl<'a> ConstantEvaluator<'a> {
                         scalar,
                         span,
                     ),
-                BinaryOperator::Add
-                | BinaryOperator::Subtract
-                | BinaryOperator::Multiply
-                | BinaryOperator::Divide
-                | BinaryOperator::Modulo
-                | BinaryOperator::Equal
-                | BinaryOperator::NotEqual
-                | BinaryOperator::Less
-                | BinaryOperator::LessEqual
-                | BinaryOperator::Greater
-                | BinaryOperator::GreaterEqual
-                | BinaryOperator::And
-                | BinaryOperator::ExclusiveOr
-                | BinaryOperator::InclusiveOr
-                | BinaryOperator::LogicalAnd
-                | BinaryOperator::LogicalOr
-                | BinaryOperator::ShiftLeft
-                | BinaryOperator::ShiftRight => Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
+                _ => Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
             },
             _ => Err(ConstantEvaluatorError::InvalidBinaryOpArgs),
         }
@@ -4502,21 +3068,11 @@ impl<'a> ConstantEvaluator<'a> {
 
             // Other operators produce the same type as their left
             // operand.
-            BinaryOperator::Add
-            | BinaryOperator::Subtract
-            | BinaryOperator::Multiply
-            | BinaryOperator::Divide
-            | BinaryOperator::Modulo
-            | BinaryOperator::And
-            | BinaryOperator::ExclusiveOr
-            | BinaryOperator::InclusiveOr
-            | BinaryOperator::ShiftLeft
-            | BinaryOperator::ShiftRight => left_ty,
-
             BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => {
                 // Not supported on vectors
                 return Err(ConstantEvaluatorError::InvalidBinaryOpArgs);
             }
+            _ => left_ty,
         };
 
         let components = left_components
@@ -4716,71 +3272,7 @@ impl<'a> ConstantEvaluator<'a> {
                     };
                     self.register_evaluated_expr(Expression::Literal(Literal::Bool(result)), span)
                 }
-                Expression::Literal(_)
-                | Expression::Constant(_)
-                | Expression::Override(_)
-                | Expression::ZeroValue(_)
-                | Expression::Compose { .. }
-                | Expression::Access { .. }
-                | Expression::AccessIndex { .. }
-                | Expression::Splat { .. }
-                | Expression::Swizzle { .. }
-                | Expression::FunctionArgument(_)
-                | Expression::GlobalVariable(_)
-                | Expression::LocalVariable(_)
-                | Expression::Load { .. }
-                | Expression::ImageSample { .. }
-                | Expression::ImageLoad { .. }
-                | Expression::ImageQuery { .. }
-                | Expression::Unary { .. }
-                | Expression::Binary { .. }
-                | Expression::Select { .. }
-                | Expression::Derivative { .. }
-                | Expression::Relational { .. }
-                | Expression::Math { .. }
-                | Expression::As { .. }
-                | Expression::CallResult(_)
-                | Expression::AtomicResult { .. }
-                | Expression::ArrayLength(_)
-                | Expression::WideArrayLength(_)
-                | Expression::PhysicalPointer { .. }
-                | Expression::PhysicalAddress { .. }
-                | Expression::BufferPointer { .. }
-                | Expression::HeapOffset { .. }
-                | Expression::RayQueryProceedResult
-                | Expression::RayQueryGet { .. }
-                | Expression::ReportIntersectionResult
-                | Expression::AccelerationStructureFromAddress { .. }
-                | Expression::HitObjectGet { .. }
-                | Expression::FetchMicroTriangleVertex { .. }
-                | Expression::SubgroupBallotResult
-                | Expression::SubgroupOperationResult { .. }
-                | Expression::SpirvInstructionResult { .. }
-                | Expression::CooperativeLoad { .. }
-                | Expression::CooperativeMultiplyAdd { .. }
-                | Expression::CooperativeMatrixLength { .. }
-                | Expression::Replicate { .. }
-                | Expression::Expect { .. }
-                | Expression::ImageSparseResident { .. }
-                | Expression::IsHelperInvocation
-                | Expression::ReadClock { .. }
-                | Expression::InterpolateAt { .. }
-                | Expression::FragmentFetch { .. }
-                | Expression::ImageFootprint { .. }
-                | Expression::AttachmentRead { .. }
-                | Expression::CooperativeVectorLoad { .. }
-                | Expression::CooperativeVectorMatMul { .. }
-                | Expression::Convert { .. }
-                | Expression::CooperativeMatrixResult { .. }
-                | Expression::TensorCreate { .. }
-                | Expression::ImageProcessing { .. }
-                | Expression::ArrayConversion { .. }
-                | Expression::Bitcast { .. }
-                | Expression::TensorSet { .. }
-                | Expression::TensorRead { .. }
-                | Expression::TensorQuerySize { .. } => {
-                    Err(ConstantEvaluatorError::InvalidRelationalArg(fun))
-                }
+                _ => Err(ConstantEvaluatorError::InvalidRelationalArg(fun)),
             },
             RelationalFunction::IsNan | RelationalFunction::IsInf => Err(
                 ConstantEvaluatorError::NotImplemented(format!("{fun:?} built-in function")),
@@ -4829,64 +3321,7 @@ impl<'a> ConstantEvaluator<'a> {
                             tasks.push(CopyTask::Splat { size, span });
                             tasks.push(CopyTask::Enter(value));
                         }
-                        Expression::Override(_)
-                        | Expression::Access { .. }
-                        | Expression::AccessIndex { .. }
-                        | Expression::Swizzle { .. }
-                        | Expression::FunctionArgument(_)
-                        | Expression::GlobalVariable(_)
-                        | Expression::LocalVariable(_)
-                        | Expression::Load { .. }
-                        | Expression::ImageSample { .. }
-                        | Expression::ImageLoad { .. }
-                        | Expression::ImageQuery { .. }
-                        | Expression::Unary { .. }
-                        | Expression::Binary { .. }
-                        | Expression::Select { .. }
-                        | Expression::Derivative { .. }
-                        | Expression::Relational { .. }
-                        | Expression::Math { .. }
-                        | Expression::As { .. }
-                        | Expression::CallResult(_)
-                        | Expression::AtomicResult { .. }
-                        | Expression::ArrayLength(_)
-                        | Expression::WideArrayLength(_)
-                        | Expression::PhysicalPointer { .. }
-                        | Expression::PhysicalAddress { .. }
-                        | Expression::BufferPointer { .. }
-                        | Expression::HeapOffset { .. }
-                        | Expression::RayQueryProceedResult
-                        | Expression::RayQueryGet { .. }
-                        | Expression::ReportIntersectionResult
-                        | Expression::AccelerationStructureFromAddress { .. }
-                        | Expression::HitObjectGet { .. }
-                        | Expression::FetchMicroTriangleVertex { .. }
-                        | Expression::SubgroupBallotResult
-                        | Expression::SubgroupOperationResult { .. }
-                        | Expression::SpirvInstructionResult { .. }
-                        | Expression::CooperativeLoad { .. }
-                        | Expression::CooperativeMultiplyAdd { .. }
-                        | Expression::CooperativeMatrixLength { .. }
-                        | Expression::Replicate { .. }
-                        | Expression::Expect { .. }
-                        | Expression::ImageSparseResident { .. }
-                        | Expression::IsHelperInvocation
-                        | Expression::ReadClock { .. }
-                        | Expression::InterpolateAt { .. }
-                        | Expression::FragmentFetch { .. }
-                        | Expression::ImageFootprint { .. }
-                        | Expression::AttachmentRead { .. }
-                        | Expression::CooperativeVectorLoad { .. }
-                        | Expression::CooperativeVectorMatMul { .. }
-                        | Expression::Convert { .. }
-                        | Expression::CooperativeMatrixResult { .. }
-                        | Expression::TensorCreate { .. }
-                        | Expression::ImageProcessing { .. }
-                        | Expression::ArrayConversion { .. }
-                        | Expression::Bitcast { .. }
-                        | Expression::TensorSet { .. }
-                        | Expression::TensorRead { .. }
-                        | Expression::TensorQuerySize { .. } => {
+                        _ => {
                             log::debug!("copy_from: SubexpressionsAreNotConstant");
                             return Err(ConstantEvaluatorError::SubexpressionsAreNotConstant);
                         }
@@ -4919,26 +3354,7 @@ impl<'a> ConstantEvaluator<'a> {
                 let size = match *self.resolve_type(*c)?.inner_with(self.types) {
                     TypeInner::Scalar(_) => 1,
                     TypeInner::Vector { size, .. } => size as usize,
-                    TypeInner::Matrix { .. }
-                    | TypeInner::CooperativeMatrix { .. }
-                    | TypeInner::LongVector { .. }
-                    | TypeInner::TensorLayout { .. }
-                    | TypeInner::TensorView { .. }
-                    | TypeInner::Tensor { .. }
-                    | TypeInner::Atomic(_)
-                    | TypeInner::Pointer { .. }
-                    | TypeInner::ValuePointer { .. }
-                    | TypeInner::Array { .. }
-                    | TypeInner::Struct { .. }
-                    | TypeInner::Image { .. }
-                    | TypeInner::Sampler { .. }
-                    | TypeInner::SampledImage { .. }
-                    | TypeInner::AccelerationStructure
-                    | TypeInner::RayQuery
-                    | TypeInner::HitObject { .. }
-                    | TypeInner::BindingArray { .. }
-                    | TypeInner::BufferDescriptor { .. }
-                    | TypeInner::Spirv { .. } => {
+                    _ => {
                         return Err(ConstantEvaluatorError::InvalidVectorComposeComponent);
                     }
                 };
@@ -5005,8 +3421,7 @@ impl<'a> ConstantEvaluator<'a> {
                     self.expressions.append(expr, span)
                 }
             }
-            Behavior::Wgsl(WgslRestrictions::Const(None) | WgslRestrictions::Override)
-            | Behavior::Glsl(GlslRestrictions::Const) => self.expressions.append(expr, span),
+            _ => self.expressions.append(expr, span),
         };
         self.expression_kind_tracker.insert(h, expr_type);
         h
@@ -5028,64 +3443,7 @@ impl<'a> ConstantEvaluator<'a> {
                 };
                 Tr::Value(TypeInner::Vector { scalar, size })
             }
-            Ex::Override(_)
-            | Ex::Access { .. }
-            | Ex::AccessIndex { .. }
-            | Ex::Swizzle { .. }
-            | Ex::FunctionArgument(_)
-            | Ex::GlobalVariable(_)
-            | Ex::LocalVariable(_)
-            | Ex::Load { .. }
-            | Ex::ImageSample { .. }
-            | Ex::ImageLoad { .. }
-            | Ex::ImageQuery { .. }
-            | Ex::Unary { .. }
-            | Ex::Binary { .. }
-            | Ex::Select { .. }
-            | Ex::Derivative { .. }
-            | Ex::Relational { .. }
-            | Ex::Math { .. }
-            | Ex::As { .. }
-            | Ex::CallResult(_)
-            | Ex::AtomicResult { .. }
-            | Ex::ArrayLength(_)
-            | Ex::WideArrayLength(_)
-            | Ex::PhysicalPointer { .. }
-            | Ex::PhysicalAddress { .. }
-            | Ex::BufferPointer { .. }
-            | Ex::HeapOffset { .. }
-            | Ex::RayQueryProceedResult
-            | Ex::RayQueryGet { .. }
-            | Ex::ReportIntersectionResult
-            | Ex::AccelerationStructureFromAddress { .. }
-            | Ex::HitObjectGet { .. }
-            | Ex::FetchMicroTriangleVertex { .. }
-            | Ex::SubgroupBallotResult
-            | Ex::SubgroupOperationResult { .. }
-            | Ex::SpirvInstructionResult { .. }
-            | Ex::CooperativeLoad { .. }
-            | Ex::CooperativeMultiplyAdd { .. }
-            | Ex::CooperativeMatrixLength { .. }
-            | Ex::Replicate { .. }
-            | Ex::Expect { .. }
-            | Ex::ImageSparseResident { .. }
-            | Ex::IsHelperInvocation
-            | Ex::ReadClock { .. }
-            | Ex::InterpolateAt { .. }
-            | Ex::FragmentFetch { .. }
-            | Ex::ImageFootprint { .. }
-            | Ex::AttachmentRead { .. }
-            | Ex::CooperativeVectorLoad { .. }
-            | Ex::CooperativeVectorMatMul { .. }
-            | Ex::Convert { .. }
-            | Ex::CooperativeMatrixResult { .. }
-            | Ex::TensorCreate { .. }
-            | Ex::ImageProcessing { .. }
-            | Ex::ArrayConversion { .. }
-            | Ex::Bitcast { .. }
-            | Ex::TensorSet { .. }
-            | Ex::TensorRead { .. }
-            | Ex::TensorQuerySize { .. } => {
+            _ => {
                 log::debug!("resolve_type: SubexpressionsAreNotConstant");
                 return Err(ConstantEvaluatorError::SubexpressionsAreNotConstant);
             }
@@ -5180,68 +3538,7 @@ impl<'a> ConstantEvaluator<'a> {
                             .collect::<Result<_, _>>()?
                     }
 
-                    Expression::Literal(_)
-                    | Expression::Constant(_)
-                    | Expression::Override(_)
-                    | Expression::ZeroValue(_)
-                    | Expression::Access { .. }
-                    | Expression::AccessIndex { .. }
-                    | Expression::Splat { .. }
-                    | Expression::Swizzle { .. }
-                    | Expression::FunctionArgument(_)
-                    | Expression::GlobalVariable(_)
-                    | Expression::LocalVariable(_)
-                    | Expression::Load { .. }
-                    | Expression::ImageSample { .. }
-                    | Expression::ImageLoad { .. }
-                    | Expression::ImageQuery { .. }
-                    | Expression::Unary { .. }
-                    | Expression::Binary { .. }
-                    | Expression::Select { .. }
-                    | Expression::Derivative { .. }
-                    | Expression::Relational { .. }
-                    | Expression::Math { .. }
-                    | Expression::As { .. }
-                    | Expression::CallResult(_)
-                    | Expression::AtomicResult { .. }
-                    | Expression::ArrayLength(_)
-                    | Expression::WideArrayLength(_)
-                    | Expression::PhysicalPointer { .. }
-                    | Expression::PhysicalAddress { .. }
-                    | Expression::BufferPointer { .. }
-                    | Expression::HeapOffset { .. }
-                    | Expression::RayQueryProceedResult
-                    | Expression::RayQueryGet { .. }
-                    | Expression::ReportIntersectionResult
-                    | Expression::AccelerationStructureFromAddress { .. }
-                    | Expression::HitObjectGet { .. }
-                    | Expression::FetchMicroTriangleVertex { .. }
-                    | Expression::SubgroupBallotResult
-                    | Expression::SubgroupOperationResult { .. }
-                    | Expression::SpirvInstructionResult { .. }
-                    | Expression::CooperativeLoad { .. }
-                    | Expression::CooperativeMultiplyAdd { .. }
-                    | Expression::CooperativeMatrixLength { .. }
-                    | Expression::Replicate { .. }
-                    | Expression::Expect { .. }
-                    | Expression::ImageSparseResident { .. }
-                    | Expression::IsHelperInvocation
-                    | Expression::ReadClock { .. }
-                    | Expression::InterpolateAt { .. }
-                    | Expression::FragmentFetch { .. }
-                    | Expression::ImageFootprint { .. }
-                    | Expression::AttachmentRead { .. }
-                    | Expression::CooperativeVectorLoad { .. }
-                    | Expression::CooperativeVectorMatMul { .. }
-                    | Expression::Convert { .. }
-                    | Expression::CooperativeMatrixResult { .. }
-                    | Expression::TensorCreate { .. }
-                    | Expression::ImageProcessing { .. }
-                    | Expression::ArrayConversion { .. }
-                    | Expression::Bitcast { .. }
-                    | Expression::TensorSet { .. }
-                    | Expression::TensorRead { .. }
-                    | Expression::TensorQuerySize { .. } => {
+                    _ => {
                         return Err(ConstantEvaluatorError::SelectConditionNotAVecBool);
                     }
                 };
@@ -5446,6 +3743,113 @@ where
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+fn round_ties_even(x: f64) -> f64 {
+    let i = x as i64;
+    let f = (x - i as f64).abs();
+    if f == 0.5 {
+        if i & 1 == 1 {
+            // -1.5, 1.5, 3.5, ...
+            (x.abs() + 0.5).copysign(x)
+        } else {
+            (x.abs() - 0.5).copysign(x)
+        }
+    } else {
+        x.round()
+    }
+}
+
+fn float_dot_checked<P>(a: &[P], b: &[P]) -> Result<P, ConstantEvaluatorError>
+where
+    P: num_traits::Float,
+{
+    let result = a
+        .iter()
+        .zip(b.iter())
+        .map(|(&aa, &bb)| aa * bb)
+        .fold(P::zero(), |acc, x| acc + x);
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(ConstantEvaluatorError::Overflow("in dot built-in".into()))
+    }
+}
+
+fn int_dot_wrapping<P>(a: &[P], b: &[P]) -> P
+where
+    P: num_traits::PrimInt + num_traits::WrappingAdd + num_traits::WrappingMul,
+{
+    a.iter()
+        .zip(b.iter())
+        .map(|(&aa, bb)| aa.wrapping_mul(bb))
+        .fold(P::zero(), |acc, x| acc.wrapping_add(&x))
+}
+
+fn float_distance<F>(a: &[F], b: &[F]) -> F
+where
+    F: core::ops::Mul<F>,
+    F: num_traits::Float + iter::Sum + core::ops::Sub,
+{
+    if a.len() == 1 {
+        // Avoids possible overflow in squaring
+        (a[0] - b[0]).abs()
+    } else {
+        a.iter()
+            .zip(b.iter())
+            .map(|(&aa, &bb)| aa - bb)
+            .map(|ei| ei * ei)
+            .sum::<F>()
+            .sqrt()
+    }
+}
+
+fn float_normalize<F>(
+    e: &[F],
+) -> Result<ArrayVec<F, { crate::VectorSize::MAX }>, ConstantEvaluatorError>
+where
+    F: core::ops::Mul<F>,
+    F: num_traits::Float + iter::Sum,
+{
+    let len = match float_length(e) {
+        Some(len) if !len.is_zero() => Ok(len),
+        Some(_) => Err(ConstantEvaluatorError::InvalidMathArgValue(
+            "normalize".into(),
+        )),
+        None => Err(ConstantEvaluatorError::Overflow("normalize".into())),
+    }?;
+
+    let mut out = ArrayVec::new();
+    for &ei in e {
+        out.push(ei / len);
+    }
+    Ok(out)
+}
+
+#[derive(Clone, Copy)]
+struct MathArgs {
+    fun: crate::MathFunction,
+    arg: Handle<Expression>,
+    arg1: Option<Handle<Expression>>,
+    arg2: Option<Handle<Expression>>,
+    expected: usize,
+    given: usize,
+}
+
+impl MathArgs {
+    const fn required(
+        &self,
+        arg: Option<Handle<Expression>>,
+    ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
+        match arg {
+            Some(arg) => Ok(arg),
+            None => Err(ConstantEvaluatorError::InvalidMathArgCount(
+                self.fun,
+                self.expected,
+                self.given,
+            )),
+        }
+    }
 }
 
 fn floored_modulo(left: f64, right: f64) -> f64 {

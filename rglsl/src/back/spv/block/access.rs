@@ -16,67 +16,7 @@ impl BlockContext<'_> {
         let (base, index) = match self.ir_function.expressions[expr_handle] {
             crate::Expression::Access { base, .. } => (base, None),
             crate::Expression::AccessIndex { base, index } => (base, Some(index)),
-            crate::Expression::Literal(_)
-            | crate::Expression::Constant(_)
-            | crate::Expression::Override(_)
-            | crate::Expression::ZeroValue(_)
-            | crate::Expression::Compose { .. }
-            | crate::Expression::Splat { .. }
-            | crate::Expression::Swizzle { .. }
-            | crate::Expression::FunctionArgument(_)
-            | crate::Expression::GlobalVariable(_)
-            | crate::Expression::LocalVariable(_)
-            | crate::Expression::Load { .. }
-            | crate::Expression::ImageSample { .. }
-            | crate::Expression::ImageLoad { .. }
-            | crate::Expression::ImageQuery { .. }
-            | crate::Expression::Unary { .. }
-            | crate::Expression::Binary { .. }
-            | crate::Expression::Select { .. }
-            | crate::Expression::Derivative { .. }
-            | crate::Expression::Relational { .. }
-            | crate::Expression::Math { .. }
-            | crate::Expression::As { .. }
-            | crate::Expression::CallResult(_)
-            | crate::Expression::AtomicResult { .. }
-            | crate::Expression::ArrayLength(_)
-            | crate::Expression::WideArrayLength(_)
-            | crate::Expression::PhysicalPointer { .. }
-            | crate::Expression::PhysicalAddress { .. }
-            | crate::Expression::BufferPointer { .. }
-            | crate::Expression::HeapOffset { .. }
-            | crate::Expression::RayQueryProceedResult
-            | crate::Expression::RayQueryGet { .. }
-            | crate::Expression::ReportIntersectionResult
-            | crate::Expression::AccelerationStructureFromAddress { .. }
-            | crate::Expression::HitObjectGet { .. }
-            | crate::Expression::FetchMicroTriangleVertex { .. }
-            | crate::Expression::SubgroupBallotResult
-            | crate::Expression::SubgroupOperationResult { .. }
-            | crate::Expression::SpirvInstructionResult { .. }
-            | crate::Expression::CooperativeLoad { .. }
-            | crate::Expression::CooperativeMultiplyAdd { .. }
-            | crate::Expression::CooperativeMatrixLength { .. }
-            | crate::Expression::Replicate { .. }
-            | crate::Expression::Expect { .. }
-            | crate::Expression::ImageSparseResident { .. }
-            | crate::Expression::IsHelperInvocation
-            | crate::Expression::ReadClock { .. }
-            | crate::Expression::InterpolateAt { .. }
-            | crate::Expression::FragmentFetch { .. }
-            | crate::Expression::ImageFootprint { .. }
-            | crate::Expression::AttachmentRead { .. }
-            | crate::Expression::CooperativeVectorLoad { .. }
-            | crate::Expression::CooperativeVectorMatMul { .. }
-            | crate::Expression::Convert { .. }
-            | crate::Expression::CooperativeMatrixResult { .. }
-            | crate::Expression::TensorCreate { .. }
-            | crate::Expression::ImageProcessing { .. }
-            | crate::Expression::ArrayConversion { .. }
-            | crate::Expression::Bitcast { .. }
-            | crate::Expression::TensorSet { .. }
-            | crate::Expression::TensorRead { .. }
-            | crate::Expression::TensorQuerySize { .. } => return Ok(None),
+            _ => return Ok(None),
         };
         let returned = matches!(
             self.ir_function.expressions[base],
@@ -184,20 +124,7 @@ impl BlockContext<'_> {
 
                 Ok(load_id)
             }
-            ref other @ (crate::TypeInner::Scalar(_)
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. }) => {
+            ref other => {
                 log::error!(
                     "Unable to access base {:?} of type {:?}",
                     self.ir_function.expressions[base],
@@ -268,19 +195,7 @@ impl BlockContext<'_> {
 
                 Ok(load_id)
             }
-            ref other @ (crate::TypeInner::Scalar(_)
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. }) => {
+            ref other => {
                 log::error!("Unable to access index of {other:?}");
                 Err(Error::FeatureNotImplemented("access index for type"))
             }
@@ -350,26 +265,7 @@ impl BlockContext<'_> {
                     element
                 }
             }
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => return Ok(()),
+            _ => return Ok(()),
         };
         let (dynamic, nonuniform) = match self.ir_module.types[element].inner {
             crate::TypeInner::Image { dim, class, .. } => match (dim, class) {
@@ -396,14 +292,7 @@ impl BlockContext<'_> {
                     | crate::ImageDimension::TileImageData,
                     crate::ImageClass::Storage { .. },
                 ) => (None, Cap::StorageImageArrayNonUniformIndexing),
-                (
-                    crate::ImageDimension::D1
-                    | crate::ImageDimension::D2
-                    | crate::ImageDimension::D3
-                    | crate::ImageDimension::Cube
-                    | crate::ImageDimension::TileImageData,
-                    crate::ImageClass::Sampled { .. } | crate::ImageClass::Depth { .. },
-                ) => (None, Cap::SampledImageArrayNonUniformIndexing),
+                _ => (None, Cap::SampledImageArrayNonUniformIndexing),
             },
             crate::TypeInner::SampledImage { dim, .. } => {
                 if dim == crate::ImageDimension::Buffer {
@@ -422,46 +311,9 @@ impl BlockContext<'_> {
                 Some(crate::AddressSpace::Uniform) => {
                     (None, Cap::UniformBufferArrayNonUniformIndexing)
                 }
-                Some(
-                    crate::AddressSpace::Function
-                    | crate::AddressSpace::Private
-                    | crate::AddressSpace::WorkGroup
-                    | crate::AddressSpace::Handle
-                    | crate::AddressSpace::Immediate
-                    | crate::AddressSpace::TaskPayload
-                    | crate::AddressSpace::RayPayload
-                    | crate::AddressSpace::IncomingRayPayload
-                    | crate::AddressSpace::HitAttribute
-                    | crate::AddressSpace::CallableData
-                    | crate::AddressSpace::IncomingCallableData
-                    | crate::AddressSpace::ShaderRecord
-                    | crate::AddressSpace::HitObjectAttribute { .. }
-                    | crate::AddressSpace::Input
-                    | crate::AddressSpace::Output
-                    | crate::AddressSpace::PhysicalStorage { .. }
-                    | crate::AddressSpace::DescriptorHeap(_),
-                )
-                | None => return Ok(()),
+                _ => return Ok(()),
             },
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => return Ok(()),
+            _ => return Ok(()),
         };
         if non_uniform {
             self.writer
@@ -573,62 +425,7 @@ impl BlockContext<'_> {
                 crate::Expression::FunctionArgument(index) => {
                     break self.function.parameter_id(index)?;
                 }
-                crate::Expression::Literal(_)
-                | crate::Expression::Constant(_)
-                | crate::Expression::Override(_)
-                | crate::Expression::ZeroValue(_)
-                | crate::Expression::Compose { .. }
-                | crate::Expression::Splat { .. }
-                | crate::Expression::Swizzle { .. }
-                | crate::Expression::Load { .. }
-                | crate::Expression::ImageSample { .. }
-                | crate::Expression::ImageLoad { .. }
-                | crate::Expression::ImageQuery { .. }
-                | crate::Expression::Unary { .. }
-                | crate::Expression::Binary { .. }
-                | crate::Expression::Select { .. }
-                | crate::Expression::Derivative { .. }
-                | crate::Expression::Relational { .. }
-                | crate::Expression::Math { .. }
-                | crate::Expression::As { .. }
-                | crate::Expression::CallResult(_)
-                | crate::Expression::AtomicResult { .. }
-                | crate::Expression::ArrayLength(_)
-                | crate::Expression::WideArrayLength(_)
-                | crate::Expression::PhysicalPointer { .. }
-                | crate::Expression::PhysicalAddress { .. }
-                | crate::Expression::RayQueryProceedResult
-                | crate::Expression::RayQueryGet { .. }
-                | crate::Expression::ReportIntersectionResult
-                | crate::Expression::AccelerationStructureFromAddress { .. }
-                | crate::Expression::HitObjectGet { .. }
-                | crate::Expression::FetchMicroTriangleVertex { .. }
-                | crate::Expression::SubgroupBallotResult
-                | crate::Expression::SubgroupOperationResult { .. }
-                | crate::Expression::SpirvInstructionResult { .. }
-                | crate::Expression::CooperativeLoad { .. }
-                | crate::Expression::CooperativeMultiplyAdd { .. }
-                | crate::Expression::CooperativeMatrixLength { .. }
-                | crate::Expression::Replicate { .. }
-                | crate::Expression::Expect { .. }
-                | crate::Expression::ImageSparseResident { .. }
-                | crate::Expression::IsHelperInvocation
-                | crate::Expression::ReadClock { .. }
-                | crate::Expression::InterpolateAt { .. }
-                | crate::Expression::FragmentFetch { .. }
-                | crate::Expression::ImageFootprint { .. }
-                | crate::Expression::AttachmentRead { .. }
-                | crate::Expression::CooperativeVectorLoad { .. }
-                | crate::Expression::CooperativeVectorMatMul { .. }
-                | crate::Expression::Convert { .. }
-                | crate::Expression::CooperativeMatrixResult { .. }
-                | crate::Expression::TensorCreate { .. }
-                | crate::Expression::ImageProcessing { .. }
-                | crate::Expression::ArrayConversion { .. }
-                | crate::Expression::Bitcast { .. }
-                | crate::Expression::TensorSet { .. }
-                | crate::Expression::TensorRead { .. }
-                | crate::Expression::TensorQuerySize { .. } => {
+                _ => {
                     if matches!(
                         *self.fun_info[expr_handle]
                             .ty
@@ -796,26 +593,7 @@ impl BlockContext<'_> {
             | crate::TypeInner::ValuePointer { space, .. } => {
                 Some(self.writer.storage_class(space))
             }
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => None,
+            _ => None,
         }
     }
 

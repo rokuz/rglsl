@@ -25,25 +25,7 @@ pub(super) const fn replicate_shape(inner: &TypeInner) -> Result<ReplicateShape,
             ..
         } => ReplicateShape::Copies(size.get()),
         TypeInner::LongVector { .. } => ReplicateShape::Replicated,
-        TypeInner::Scalar(_)
-        | TypeInner::Matrix { .. }
-        | TypeInner::TensorLayout { .. }
-        | TypeInner::TensorView { .. }
-        | TypeInner::Tensor { .. }
-        | TypeInner::Atomic(_)
-        | TypeInner::Pointer { .. }
-        | TypeInner::ValuePointer { .. }
-        | TypeInner::Array { .. }
-        | TypeInner::Struct { .. }
-        | TypeInner::Image { .. }
-        | TypeInner::Sampler { .. }
-        | TypeInner::SampledImage { .. }
-        | TypeInner::AccelerationStructure
-        | TypeInner::RayQuery
-        | TypeInner::HitObject { .. }
-        | TypeInner::BindingArray { .. }
-        | TypeInner::BufferDescriptor { .. }
-        | TypeInner::Spirv { .. } => {
+        _ => {
             return Err(Error::Validation("replicating into a non-composite type"));
         }
     })
@@ -167,24 +149,7 @@ impl BlockContext<'_> {
         let value = match literal {
             crate::Literal::I32(value) => i64::from(value),
             crate::Literal::U32(value) => i64::from(value),
-            crate::Literal::F64(_)
-            | crate::Literal::F32(_)
-            | crate::Literal::F16(_)
-            | crate::Literal::U8(_)
-            | crate::Literal::I8(_)
-            | crate::Literal::U16(_)
-            | crate::Literal::I16(_)
-            | crate::Literal::U64(_)
-            | crate::Literal::I64(_)
-            | crate::Literal::Bool(_)
-            | crate::Literal::BF16(_)
-            | crate::Literal::FE4M3(_)
-            | crate::Literal::FE5M2(_)
-            | crate::Literal::FE2M1(_)
-            | crate::Literal::FE3M2(_)
-            | crate::Literal::FE2M3(_)
-            | crate::Literal::FUE8M0(_)
-            | crate::Literal::FMXINT8(_) => return Ok(()),
+            _ => return Ok(()),
         };
         let blocked_interleaved = [
             spirv::CooperativeMatrixLayout::RowBlockedInterleavedARM,
@@ -529,26 +494,7 @@ impl BlockContext<'_> {
                 scalar,
                 class,
             },
-            TypeInner::Scalar(_)
-            | TypeInner::Vector { .. }
-            | TypeInner::Matrix { .. }
-            | TypeInner::TensorLayout { .. }
-            | TypeInner::TensorView { .. }
-            | TypeInner::Tensor { .. }
-            | TypeInner::Atomic(_)
-            | TypeInner::Pointer { .. }
-            | TypeInner::ValuePointer { .. }
-            | TypeInner::Array { .. }
-            | TypeInner::Struct { .. }
-            | TypeInner::Image { .. }
-            | TypeInner::Sampler { .. }
-            | TypeInner::SampledImage { .. }
-            | TypeInner::AccelerationStructure
-            | TypeInner::RayQuery
-            | TypeInner::HitObject { .. }
-            | TypeInner::BindingArray { .. }
-            | TypeInner::BufferDescriptor { .. }
-            | TypeInner::Spirv { .. } => inner.clone(),
+            _ => inner.clone(),
         }
     }
 
@@ -795,26 +741,7 @@ impl BlockContext<'_> {
         let op = match self.ir_module.types[ty].inner {
             TypeInner::TensorLayout { .. } => Op::CreateTensorLayoutNV,
             TypeInner::TensorView { .. } => Op::CreateTensorViewNV,
-            TypeInner::Scalar(_)
-            | TypeInner::Vector { .. }
-            | TypeInner::Matrix { .. }
-            | TypeInner::CooperativeMatrix { .. }
-            | TypeInner::LongVector { .. }
-            | TypeInner::Tensor { .. }
-            | TypeInner::Atomic(_)
-            | TypeInner::Pointer { .. }
-            | TypeInner::ValuePointer { .. }
-            | TypeInner::Array { .. }
-            | TypeInner::Struct { .. }
-            | TypeInner::Image { .. }
-            | TypeInner::Sampler { .. }
-            | TypeInner::SampledImage { .. }
-            | TypeInner::AccelerationStructure
-            | TypeInner::RayQuery
-            | TypeInner::HitObject { .. }
-            | TypeInner::BindingArray { .. }
-            | TypeInner::BufferDescriptor { .. }
-            | TypeInner::Spirv { .. } => {
+            _ => {
                 return Err(Error::Validation("creating a non-tensor type"));
             }
         };
@@ -911,7 +838,7 @@ impl BlockContext<'_> {
         };
         let same_use = source_role == role;
         let matrix_id = self.cached.get(matrix)?;
-        let integer = |kind: ScalarKind| matches!(kind, ScalarKind::Sint | ScalarKind::Uint);
+        let integer = |kind: ScalarKind| kind.is_integer();
         let float = |kind: ScalarKind| kind.is_any_float();
         let op = match (source.kind, target.kind) {
             (from, to) if float(from) && float(to) && source != target => Op::FConvert,

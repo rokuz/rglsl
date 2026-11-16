@@ -62,6 +62,13 @@ If `AGENTS.local.md` exists, read it too: it has the maintainers' local workflow
 - The compiler is called **rglsl** everywhere (crates, binary, docs); "naga" only names
   the upstream project it was forked from.
 - Keep the IR's style: arenas, typed handles, exhaustive `match`, `Result` errors.
+- **Exhaustive `match` only where every variant needs its own handling**: the dispatchers
+  over `Expression` and `Statement`, operand visitors (`ir::visit`, `ir::block`, `compact`,
+  `valid::handles`, which keep `clippy::wildcard_enum_match_arm`), SPIR-V writing of an IR
+  node. A predicate or a check that cares about a few variants uses `matches!`, `if let` or a
+  method on the enum (`TypeInner::is_handle`, `ScalarKind::is_integer`,
+  `Statement::is_terminator`, ...) with `_` for the rest, never a list of every other variant;
+  a question asked in more than one place becomes such a method.
 - SPIR-V is the only output for now. Do not add other backends yet. IR features must be
   expressible in SPIR-V; keep SPIR-V encodings (opcodes, decorations, capabilities, raw words)
   in `back/spv`, not in the IR, when that costs nothing. What an instruction needs (SPIR-V

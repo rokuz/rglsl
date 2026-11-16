@@ -187,6 +187,28 @@ impl Access for Store {
     fn result_type(&self) {}
 }
 
+pub(super) struct ImageSampleParams {
+    pub(super) image: Handle<crate::Expression>,
+    pub(super) sampler: Option<Handle<crate::Expression>>,
+    pub(super) gather: Option<(crate::SwizzleComponent, crate::ImageGatherPattern)>,
+    pub(super) coordinate: Handle<crate::Expression>,
+    pub(super) array_index: Option<Handle<crate::Expression>>,
+    pub(super) offset: Option<Handle<crate::Expression>>,
+    pub(super) level: crate::SampleLevel,
+    pub(super) depth_ref: Option<Handle<crate::Expression>>,
+    pub(super) min_lod: Option<Handle<crate::Expression>>,
+    pub(super) sparse: bool,
+}
+
+pub(super) struct ImageFootprintParams {
+    pub(super) image: Handle<crate::Expression>,
+    pub(super) coordinate: Handle<crate::Expression>,
+    pub(super) granularity: Handle<crate::Expression>,
+    pub(super) coarse: Handle<crate::Expression>,
+    pub(super) level: crate::SampleLevel,
+    pub(super) min_lod: Option<Handle<crate::Expression>>,
+}
+
 impl BlockContext<'_> {
     /// Extend image coordinates with an array index, if necessary.
     ///
@@ -230,26 +252,7 @@ impl BlockContext<'_> {
         let Some(array_index) = array_index else {
             return match *inner_ty {
                 Ti::Scalar { .. } | Ti::Vector { .. } => Ok(coordinates_id),
-                Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => Err(Error::Validation("coordinate type")),
+                _ => Err(Error::Validation("coordinate type")),
             };
         };
 
@@ -273,26 +276,7 @@ impl BlockContext<'_> {
                 }
                 (scalar, next_size)
             }
-            Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::Image { .. }
-            | Ti::Sampler { .. }
-            | Ti::SampledImage { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {
+            _ => {
                 log::error!("wrong coordinate type {inner_ty:?}");
                 return Err(Error::Validation("coordinate type"));
             }
@@ -397,62 +381,7 @@ impl BlockContext<'_> {
             | crate::Expression::AccelerationStructureFromAddress { .. } => {
                 self.cached.get(expr_handle)?
             }
-            crate::Expression::Literal(_)
-            | crate::Expression::Constant(_)
-            | crate::Expression::Override(_)
-            | crate::Expression::ZeroValue(_)
-            | crate::Expression::Compose { .. }
-            | crate::Expression::Splat { .. }
-            | crate::Expression::Swizzle { .. }
-            | crate::Expression::LocalVariable(_)
-            | crate::Expression::ImageSample { .. }
-            | crate::Expression::ImageLoad { .. }
-            | crate::Expression::ImageQuery { .. }
-            | crate::Expression::Unary { .. }
-            | crate::Expression::Binary { .. }
-            | crate::Expression::Select { .. }
-            | crate::Expression::Derivative { .. }
-            | crate::Expression::Relational { .. }
-            | crate::Expression::Math { .. }
-            | crate::Expression::As { .. }
-            | crate::Expression::AtomicResult { .. }
-            | crate::Expression::ArrayLength(_)
-            | crate::Expression::WideArrayLength(_)
-            | crate::Expression::PhysicalPointer { .. }
-            | crate::Expression::PhysicalAddress { .. }
-            | crate::Expression::BufferPointer { .. }
-            | crate::Expression::HeapOffset { .. }
-            | crate::Expression::RayQueryProceedResult
-            | crate::Expression::RayQueryGet { .. }
-            | crate::Expression::ReportIntersectionResult
-            | crate::Expression::HitObjectGet { .. }
-            | crate::Expression::FetchMicroTriangleVertex { .. }
-            | crate::Expression::SubgroupBallotResult
-            | crate::Expression::SubgroupOperationResult { .. }
-            | crate::Expression::SpirvInstructionResult { .. }
-            | crate::Expression::CooperativeLoad { .. }
-            | crate::Expression::CooperativeMultiplyAdd { .. }
-            | crate::Expression::CooperativeMatrixLength { .. }
-            | crate::Expression::Replicate { .. }
-            | crate::Expression::Expect { .. }
-            | crate::Expression::ImageSparseResident { .. }
-            | crate::Expression::IsHelperInvocation
-            | crate::Expression::ReadClock { .. }
-            | crate::Expression::InterpolateAt { .. }
-            | crate::Expression::FragmentFetch { .. }
-            | crate::Expression::ImageFootprint { .. }
-            | crate::Expression::AttachmentRead { .. }
-            | crate::Expression::CooperativeVectorLoad { .. }
-            | crate::Expression::CooperativeVectorMatMul { .. }
-            | crate::Expression::Convert { .. }
-            | crate::Expression::CooperativeMatrixResult { .. }
-            | crate::Expression::TensorCreate { .. }
-            | crate::Expression::ImageProcessing { .. }
-            | crate::Expression::ArrayConversion { .. }
-            | crate::Expression::Bitcast { .. }
-            | crate::Expression::TensorSet { .. }
-            | crate::Expression::TensorRead { .. }
-            | crate::Expression::TensorQuerySize { .. } => {
+            _ => {
                 return Err(Error::Validation("unexpected opaque handle expression"));
             }
         };
@@ -501,21 +430,20 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageLoad` expression.
     ///
     /// The arguments are the components of an `Expression::ImageLoad` variant.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_load(
         &mut self,
         result_type_id: Word,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
         sparse: bool,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         let image_id = self.get_image_id(image, block)?;
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
         let (crate::TypeInner::Image {
@@ -604,26 +532,25 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageSample` expression.
     ///
     /// The arguments are the components of an `Expression::ImageSample` variant.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_sample(
         &mut self,
         sample_expression: Handle<crate::Expression>,
         result_type_id: Word,
-        image: Handle<crate::Expression>,
-        sampler: Option<Handle<crate::Expression>>,
-        gather: Option<(crate::SwizzleComponent, crate::ImageGatherPattern)>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        offset: Option<Handle<crate::Expression>>,
-        level: crate::SampleLevel,
-        depth_ref: Option<Handle<crate::Expression>>,
-        min_lod: Option<Handle<crate::Expression>>,
-        sparse: bool,
+        params: ImageSampleParams,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let ImageSampleParams {
+            image,
+            sampler,
+            gather,
+            coordinate,
+            array_index,
+            offset,
+            level,
+            depth_ref,
+            min_lod,
+            sparse,
+        } = params;
         use super::instructions::SampleLod;
         let handle_id = self.get_non_uniform_handle_id(image, block)?;
         let (crate::TypeInner::Image {
@@ -777,9 +704,7 @@ impl BlockContext<'_> {
                         mask |= spirv::ImageOperands::BIAS;
                         Some(self.cached.get(handle)?)
                     }
-                    crate::SampleLevel::Auto
-                    | crate::SampleLevel::Zero
-                    | crate::SampleLevel::Gradient { .. } => None,
+                    _ => None,
                 };
                 if level_id.is_some() {
                     self.writer.require(&feature::AMD_TEXTURE_GATHER_BIAS_LOD)?;
@@ -874,16 +799,7 @@ impl BlockContext<'_> {
                     match scalar.kind {
                         crate::ScalarKind::Uint => Some(spirv::Op::ConvertUToF),
                         crate::ScalarKind::Sint => Some(spirv::Op::ConvertSToF),
-                        crate::ScalarKind::Float
-                        | crate::ScalarKind::Bool
-                        | crate::ScalarKind::BFloat
-                        | crate::ScalarKind::FloatE4M3
-                        | crate::ScalarKind::FloatE5M2
-                        | crate::ScalarKind::FloatE2M1
-                        | crate::ScalarKind::FloatE3M2
-                        | crate::ScalarKind::FloatE2M3
-                        | crate::ScalarKind::FloatUE8M0
-                        | crate::ScalarKind::FloatMXINT8 => None,
+                        _ => None,
                     }
                 } else {
                     None
@@ -1222,20 +1138,19 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_store(
         &mut self,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
         value: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         let image_id = self.get_non_uniform_handle_id(image, block)?;
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let value_id = self.cached.get(value)?;
@@ -1281,21 +1196,20 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_footprint(
         &mut self,
         result_type_id: Word,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        granularity: Handle<crate::Expression>,
-        coarse: Handle<crate::Expression>,
-        level: crate::SampleLevel,
-        min_lod: Option<Handle<crate::Expression>>,
+        params: ImageFootprintParams,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let ImageFootprintParams {
+            image,
+            coordinate,
+            granularity,
+            coarse,
+            level,
+            min_lod,
+        } = params;
         self.writer.require(&feature::IMAGE_FOOTPRINT)?;
         let image_id = self.get_handle_id(image)?;
         let id = self.gen_id();

@@ -303,15 +303,7 @@ impl LocationShape {
             let (float, non_interpolable) = match scalar.kind {
                 Sk::Float => (true, scalar.width == 8),
                 Sk::Sint | Sk::Uint => (false, true),
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8 => return None,
+                _ => return None,
             };
             // A double takes two components, so a `dvec3` or `dvec4` spills
             // into a second location.
@@ -342,30 +334,7 @@ impl LocationShape {
                     Ti::Struct { ref members, .. } => {
                         children.extend(members.iter().map(|member| member.ty));
                     }
-                    Ti::Scalar(_)
-                    | Ti::Vector { .. }
-                    | Ti::Matrix { .. }
-                    | Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array {
-                        size: crate::ArraySize::Dynamic,
-                        ..
-                    }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => {}
+                    _ => {}
                 }
                 true
             },
@@ -419,27 +388,7 @@ impl LocationShape {
                         }
                         total.filter(|total| total.locations > 0)
                     }
-                    Ti::CooperativeMatrix { .. }
-                    | Ti::LongVector { .. }
-                    | Ti::TensorLayout { .. }
-                    | Ti::TensorView { .. }
-                    | Ti::Tensor { .. }
-                    | Ti::Atomic(_)
-                    | Ti::Pointer { .. }
-                    | Ti::ValuePointer { .. }
-                    | Ti::Array {
-                        size: crate::ArraySize::Dynamic,
-                        ..
-                    }
-                    | Ti::Image { .. }
-                    | Ti::Sampler { .. }
-                    | Ti::SampledImage { .. }
-                    | Ti::AccelerationStructure
-                    | Ti::RayQuery
-                    | Ti::HitObject { .. }
-                    | Ti::BindingArray { .. }
-                    | Ti::BufferDescriptor { .. }
-                    | Ti::Spirv { .. } => None,
+                    _ => None,
                 };
                 shapes.insert(ty, shape);
                 Ok::<(), core::convert::Infallible>(())
@@ -791,15 +740,9 @@ impl VaryingContext<'_> {
                     | crate::ShaderStage::TessEvaluation
                     | crate::ShaderStage::Geometry => self.output,
                     crate::ShaderStage::Fragment => !self.output && !per_primitive,
-                    crate::ShaderStage::Compute
-                    | crate::ShaderStage::Task
-                    | crate::ShaderStage::RayGeneration
-                    | crate::ShaderStage::AnyHit
-                    | crate::ShaderStage::ClosestHit
-                    | crate::ShaderStage::Miss
-                    | crate::ShaderStage::Intersection
-                    | crate::ShaderStage::Callable => false,
+
                     crate::ShaderStage::Mesh => self.output,
+                    _ => false,
                 };
 
                 // It doesn't make sense to specify a sampling when `interpolation` is `Flat`, but
@@ -1125,42 +1068,11 @@ impl super::Validator {
                         crate::TypeInner::RayQuery => {
                             return Err(GlobalVariableError::InvalidType(var.space));
                         }
-                        crate::TypeInner::Scalar(_)
-                        | crate::TypeInner::Vector { .. }
-                        | crate::TypeInner::Matrix { .. }
-                        | crate::TypeInner::CooperativeMatrix { .. }
-                        | crate::TypeInner::LongVector { .. }
-                        | crate::TypeInner::TensorLayout { .. }
-                        | crate::TypeInner::TensorView { .. }
-                        | crate::TypeInner::Tensor { .. }
-                        | crate::TypeInner::Atomic(_)
-                        | crate::TypeInner::Pointer { .. }
-                        | crate::TypeInner::ValuePointer { .. }
-                        | crate::TypeInner::Array { .. }
-                        | crate::TypeInner::Struct { .. }
-                        | crate::TypeInner::HitObject { .. }
-                        | crate::TypeInner::BindingArray { .. }
-                        | crate::TypeInner::BufferDescriptor { .. }
-                        | crate::TypeInner::Spirv { .. } => {}
+                        _ => {}
                     }
                     base
                 }
-                crate::AddressSpace::Function
-                | crate::AddressSpace::Private
-                | crate::AddressSpace::WorkGroup
-                | crate::AddressSpace::Immediate
-                | crate::AddressSpace::TaskPayload
-                | crate::AddressSpace::RayPayload
-                | crate::AddressSpace::IncomingRayPayload
-                | crate::AddressSpace::HitAttribute
-                | crate::AddressSpace::CallableData
-                | crate::AddressSpace::IncomingCallableData
-                | crate::AddressSpace::ShaderRecord
-                | crate::AddressSpace::HitObjectAttribute { .. }
-                | crate::AddressSpace::Input
-                | crate::AddressSpace::Output
-                | crate::AddressSpace::PhysicalStorage { .. }
-                | crate::AddressSpace::DescriptorHeap(_) => {
+                _ => {
                     return Err(GlobalVariableError::InvalidUsage(var.space));
                 }
             }
@@ -1260,21 +1172,7 @@ impl super::Validator {
                     | crate::TypeInner::Tensor { .. }
                     | crate::TypeInner::Spirv { .. }
                     | crate::TypeInner::RayQuery => {}
-                    crate::TypeInner::Scalar(_)
-                    | crate::TypeInner::Vector { .. }
-                    | crate::TypeInner::Matrix { .. }
-                    | crate::TypeInner::CooperativeMatrix { .. }
-                    | crate::TypeInner::LongVector { .. }
-                    | crate::TypeInner::TensorLayout { .. }
-                    | crate::TypeInner::TensorView { .. }
-                    | crate::TypeInner::Atomic(_)
-                    | crate::TypeInner::Pointer { .. }
-                    | crate::TypeInner::ValuePointer { .. }
-                    | crate::TypeInner::Array { .. }
-                    | crate::TypeInner::Struct { .. }
-                    | crate::TypeInner::HitObject { .. }
-                    | crate::TypeInner::BindingArray { .. }
-                    | crate::TypeInner::BufferDescriptor { .. } => {
+                    _ => {
                         return Err(GlobalVariableError::InvalidType(var.space));
                     }
                 }
@@ -1437,23 +1335,7 @@ impl super::Validator {
                             gctx.global_expressions[init],
                             crate::Expression::ZeroValue(_)
                         ) => {}
-                crate::AddressSpace::WorkGroup
-                | crate::AddressSpace::Uniform
-                | crate::AddressSpace::Storage { .. }
-                | crate::AddressSpace::Handle
-                | crate::AddressSpace::Immediate
-                | crate::AddressSpace::TaskPayload
-                | crate::AddressSpace::RayPayload
-                | crate::AddressSpace::IncomingRayPayload
-                | crate::AddressSpace::HitAttribute
-                | crate::AddressSpace::CallableData
-                | crate::AddressSpace::IncomingCallableData
-                | crate::AddressSpace::ShaderRecord
-                | crate::AddressSpace::HitObjectAttribute { .. }
-                | crate::AddressSpace::Input
-                | crate::AddressSpace::Output
-                | crate::AddressSpace::PhysicalStorage { .. }
-                | crate::AddressSpace::DescriptorHeap(_) => {
+                _ => {
                     return Err(GlobalVariableError::InitializerNotAllowed(var.space));
                 }
             }
@@ -1610,18 +1492,7 @@ impl super::Validator {
                 }
             }
 
-            crate::ShaderStage::Vertex
-            | crate::ShaderStage::TessControl
-            | crate::ShaderStage::TessEvaluation
-            | crate::ShaderStage::Geometry
-            | crate::ShaderStage::Fragment
-            | crate::ShaderStage::Compute
-            | crate::ShaderStage::RayGeneration
-            | crate::ShaderStage::Intersection
-            | crate::ShaderStage::AnyHit
-            | crate::ShaderStage::ClosestHit
-            | crate::ShaderStage::Miss
-            | crate::ShaderStage::Callable => {
+            _ => {
                 if let Some(handle) = ep.task_payload {
                     return Err(EntryPointError::UnexpectedTaskPayload
                         .with_span_handle(handle, &module.global_variables));
@@ -1717,23 +1588,7 @@ impl super::Validator {
                 let output = match var.space {
                     crate::AddressSpace::Input => false,
                     crate::AddressSpace::Output => true,
-                    crate::AddressSpace::Function
-                    | crate::AddressSpace::Private
-                    | crate::AddressSpace::WorkGroup
-                    | crate::AddressSpace::Uniform
-                    | crate::AddressSpace::Storage { .. }
-                    | crate::AddressSpace::Handle
-                    | crate::AddressSpace::Immediate
-                    | crate::AddressSpace::TaskPayload
-                    | crate::AddressSpace::RayPayload
-                    | crate::AddressSpace::IncomingRayPayload
-                    | crate::AddressSpace::HitAttribute
-                    | crate::AddressSpace::CallableData
-                    | crate::AddressSpace::IncomingCallableData
-                    | crate::AddressSpace::ShaderRecord
-                    | crate::AddressSpace::HitObjectAttribute { .. }
-                    | crate::AddressSpace::PhysicalStorage { .. }
-                    | crate::AddressSpace::DescriptorHeap(_) => {
+                    _ => {
                         return Err(EntryPointError::InterfaceNotInputOrOutput(handle)
                             .with_span_handle(handle, &module.global_variables));
                     }
@@ -1861,26 +1716,7 @@ impl super::Validator {
                         crate::TypeInner::Tensor { .. } => {
                             GlobalUse::READ | GlobalUse::QUERY | GlobalUse::WRITE
                         }
-                        crate::TypeInner::Scalar(_)
-                        | crate::TypeInner::Vector { .. }
-                        | crate::TypeInner::Matrix { .. }
-                        | crate::TypeInner::CooperativeMatrix { .. }
-                        | crate::TypeInner::LongVector { .. }
-                        | crate::TypeInner::TensorLayout { .. }
-                        | crate::TypeInner::TensorView { .. }
-                        | crate::TypeInner::Atomic(_)
-                        | crate::TypeInner::Pointer { .. }
-                        | crate::TypeInner::ValuePointer { .. }
-                        | crate::TypeInner::Array { .. }
-                        | crate::TypeInner::Struct { .. }
-                        | crate::TypeInner::Sampler { .. }
-                        | crate::TypeInner::SampledImage { .. }
-                        | crate::TypeInner::AccelerationStructure
-                        | crate::TypeInner::RayQuery
-                        | crate::TypeInner::HitObject { .. }
-                        | crate::TypeInner::BindingArray { .. }
-                        | crate::TypeInner::BufferDescriptor { .. }
-                        | crate::TypeInner::Spirv { .. } => GlobalUse::READ | GlobalUse::QUERY,
+                        _ => GlobalUse::READ | GlobalUse::QUERY,
                     }
                 }
                 crate::AddressSpace::Private | crate::AddressSpace::WorkGroup => {
@@ -1936,17 +1772,7 @@ impl super::Validator {
                     let writable = match ep.stage {
                         crate::ShaderStage::Intersection => true,
                         crate::ShaderStage::AnyHit | crate::ShaderStage::ClosestHit => false,
-                        stage @ (crate::ShaderStage::Vertex
-                        | crate::ShaderStage::TessControl
-                        | crate::ShaderStage::TessEvaluation
-                        | crate::ShaderStage::Geometry
-                        | crate::ShaderStage::Fragment
-                        | crate::ShaderStage::Compute
-                        | crate::ShaderStage::Task
-                        | crate::ShaderStage::Mesh
-                        | crate::ShaderStage::RayGeneration
-                        | crate::ShaderStage::Miss
-                        | crate::ShaderStage::Callable) => {
+                        stage => {
                             return Err(EntryPointError::RayDataInInvalidStage(var.space, stage)
                                 .with_span_handle(var_handle, &module.global_variables));
                         }

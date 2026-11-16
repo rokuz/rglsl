@@ -85,6 +85,62 @@ impl Function {
     }
 }
 
+impl BlockContext<'_> {
+    fn write_local_variable(
+        &mut self,
+        handle: Handle<crate::LocalVariable>,
+        variable: &crate::LocalVariable,
+        prelude: &mut Block,
+    ) -> Result<(), Error> {
+        let id = self.gen_id();
+        self.writer
+            .decorate_pointer_variable(&self.ir_module.types, variable.ty, id);
+        if variable.relaxed_precision {
+            self.writer
+                .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
+
+        if self.writer.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = variable.name
+        {
+            self.writer.debugs.push(Instruction::name(id, name));
+        }
+
+        let type_id = self.get_handle_type_id(variable.ty)?;
+        let converted = self
+            .writer
+            .needs_layout_conversion(type_id, spirv::StorageClass::Function);
+        let init_word = match variable.init {
+            Some(constant) if converted => {
+                let value = self.writer.convert_layout(
+                    prelude,
+                    type_id,
+                    self.cached.get(constant)?,
+                    true,
+                )?;
+                prelude.body.push(Instruction::store(id, value, None));
+                None
+            }
+            Some(constant) => Some(self.cached.get(constant)?),
+            None => None,
+        };
+        let pointer_type_id = self
+            .writer
+            .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function)?;
+        let instruction = Instruction::variable(
+            pointer_type_id,
+            id,
+            spirv::StorageClass::Function,
+            init_word,
+        );
+
+        self.function
+            .variables
+            .insert(handle, LocalVariable { id, instruction });
+        Ok(())
+    }
+}
+
 impl Writer {
     pub fn new(options: &Options) -> Result<Self, Error> {
         let (major, minor) = options.lang_version;
@@ -207,23 +263,7 @@ impl Writer {
                 crate::AddressSpace::ShaderRecord => {
                     global.block == Some(crate::BlockDeclaration::Buffer)
                 }
-                crate::AddressSpace::Function
-                | crate::AddressSpace::Private
-                | crate::AddressSpace::WorkGroup
-                | crate::AddressSpace::Uniform
-                | crate::AddressSpace::Handle
-                | crate::AddressSpace::Immediate
-                | crate::AddressSpace::TaskPayload
-                | crate::AddressSpace::RayPayload
-                | crate::AddressSpace::IncomingRayPayload
-                | crate::AddressSpace::HitAttribute
-                | crate::AddressSpace::CallableData
-                | crate::AddressSpace::IncomingCallableData
-                | crate::AddressSpace::HitObjectAttribute { .. }
-                | crate::AddressSpace::Input
-                | crate::AddressSpace::Output
-                | crate::AddressSpace::PhysicalStorage { .. }
-                | crate::AddressSpace::DescriptorHeap(_) => false,
+                _ => false,
             };
         if !self.buffer_blocks.insert(id) {
             if legacy != self.legacy_storage_blocks.contains(&id) {
@@ -425,7 +465,7 @@ impl Writer {
     pub(super) fn require_mesh_shading(&mut self) -> Result<(), Error> {
         self.require(match self.mesh_flavor {
             Some(crate::MeshFlavor::Nv) => &feature::MESH_SHADING_NV,
-            Some(crate::MeshFlavor::Ext) | None => &feature::MESH_SHADING_EXT,
+            _ => &feature::MESH_SHADING_EXT,
         })
     }
 
@@ -672,6 +712,233 @@ impl Writer {
         }
     }
 
+    fn write_global_access(
+        &mut self,
+        ir_module: &crate::Module,
+        handle: Handle<crate::GlobalVariable>,
+        var: &crate::GlobalVariable,
+        prelude: &mut Block,
+    ) -> Result<(), Error> {
+        let mut gv = self.global_variables[handle].clone();
+
+        if matches!(
+            ir_module.types[var.ty].inner,
+            crate::TypeInner::BindingArray { .. }
+        ) {
+            gv.access_id = gv.var_id;
+        } else if var.space == crate::AddressSpace::Handle {
+            let var_type_id = self.get_handle_type_id(var.ty)?;
+            let id = self.id_gen.next();
+            prelude
+                .body
+                .push(Instruction::load(var_type_id, id, gv.var_id, None));
+            if var.relaxed_precision {
+                self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+            }
+            gv.access_id = gv.var_id;
+            gv.handle_id = id;
+        } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
+            let class = self.storage_class(var.space);
+            let pointer_type_id = if var.space == crate::AddressSpace::WorkGroup
+                && var.block == Some(crate::BlockDeclaration::Shared)
+            {
+                let base = self.get_handle_type_id(var.ty)?;
+                self.get_localtype_id(LocalType::Pointer { base, class })
+            } else {
+                self.get_handle_pointer_type_id(var.ty, class)?
+            };
+            let index_id = self.get_index_constant(0);
+            let id = self.id_gen.next();
+            prelude.body.push(Instruction::access_chain(
+                pointer_type_id,
+                id,
+                gv.var_id,
+                &[index_id],
+            ));
+            gv.access_id = id;
+        } else {
+            gv.access_id = gv.var_id;
+        }
+
+        // work around borrow checking in the presence of `self.xxx()` calls
+        self.global_variables[handle] = gv;
+        Ok(())
+    }
+
+    fn write_function_parameter(
+        &mut self,
+        ir_module: &crate::Module,
+        argument: &crate::FunctionArgument,
+        argument_type_id: Word,
+        handle_ty: bool,
+        prelude: &mut Block,
+    ) -> Result<FunctionArgument, Error> {
+        let argument_id = self.id_gen.next();
+        self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
+        if argument.relaxed_precision {
+            self.decorate(argument_id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
+        self.decorate_parameter_memory(argument_id, argument.memory_decorations);
+        let instruction = Instruction::function_parameter(argument_type_id, argument_id);
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = argument.name
+        {
+            self.debugs.push(Instruction::name(argument_id, name));
+        }
+        let handle_id = if handle_ty {
+            let id = self.id_gen.next();
+            prelude.body.push(Instruction::load(
+                self.get_handle_type_id(argument.ty)?,
+                id,
+                argument_id,
+                None,
+            ));
+            id
+        } else {
+            0
+        };
+        Ok(FunctionArgument {
+            instruction,
+            handle_id,
+        })
+    }
+
+    fn write_entry_point_argument(
+        &mut self,
+        ir_module: &crate::Module,
+        argument: &crate::FunctionArgument,
+        argument_type_id: Word,
+        iface: &mut FunctionInterface,
+        prelude: &mut Block,
+    ) -> Result<Word, Error> {
+        let class = spirv::StorageClass::Input;
+        Ok(if let Some(ref binding) = argument.binding {
+            let name = argument.name.as_deref();
+
+            let varying_id =
+                self.write_varying(ir_module, iface.stage, class, name, argument.ty, binding)?;
+            iface.varying_ids.push(varying_id);
+            self.load_varying(&mut prelude.body, varying_id, argument_type_id)
+        } else if let crate::TypeInner::Struct { ref members, .. } =
+            ir_module.types[argument.ty].inner
+        {
+            let struct_id = self.id_gen.next();
+            let mut constituent_ids = Vec::with_capacity(members.len());
+            for member in members {
+                let type_id = self.get_handle_type_id(member.ty)?;
+                let name = member.name.as_deref();
+                let Some(binding) = member.binding.as_ref() else {
+                    return Err(Error::Validation(
+                        "entry point argument member has no binding",
+                    ));
+                };
+                let varying_id =
+                    self.write_varying(ir_module, iface.stage, class, name, member.ty, binding)?;
+                iface.varying_ids.push(varying_id);
+                let id = self.load_varying(&mut prelude.body, varying_id, type_id);
+                constituent_ids.push(id);
+            }
+            prelude.body.push(Instruction::composite_construct(
+                argument_type_id,
+                struct_id,
+                &constituent_ids,
+            ));
+            struct_id
+        } else {
+            return Err(Error::Validation("entry point argument has no binding"));
+        })
+    }
+
+    fn write_entry_point_result(
+        &mut self,
+        ir_module: &crate::Module,
+        result: &crate::FunctionResult,
+        iface: &mut FunctionInterface,
+        results: &mut Vec<ResultMember>,
+        prelude: &mut Block,
+    ) -> Result<(), Error> {
+        let mut has_point_size = false;
+        let class = spirv::StorageClass::Output;
+        if let Some(ref binding) = result.binding {
+            has_point_size |= *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
+            let type_id = self.get_handle_type_id(result.ty)?;
+            let varying_id = if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
+                0
+            } else {
+                let varying_id =
+                    self.write_varying(ir_module, iface.stage, class, None, result.ty, binding)?;
+                iface.varying_ids.push(varying_id);
+                varying_id
+            };
+            results.push(ResultMember {
+                id: varying_id,
+                type_id,
+                built_in: binding.to_built_in(),
+            });
+        } else if let crate::TypeInner::Struct { ref members, .. } =
+            ir_module.types[result.ty].inner
+        {
+            for member in members {
+                let type_id = self.get_handle_type_id(member.ty)?;
+                let name = member.name.as_deref();
+                let Some(binding) = member.binding.as_ref() else {
+                    return Err(Error::Validation(
+                        "entry point result member has no binding",
+                    ));
+                };
+                has_point_size |= *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
+                // This isn't an actual builtin in SPIR-V. It can only appear as the
+                // output of a task shader and the output is used when writing the
+                // entry point return, in which case the id is ignored anyway.
+                let varying_id =
+                    if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
+                        0
+                    } else {
+                        let varying_id = self.write_varying(
+                            ir_module,
+                            iface.stage,
+                            class,
+                            name,
+                            member.ty,
+                            binding,
+                        )?;
+                        iface.varying_ids.push(varying_id);
+                        varying_id
+                    };
+                results.push(ResultMember {
+                    id: varying_id,
+                    type_id,
+                    built_in: binding.to_built_in(),
+                });
+            }
+        } else {
+            return Err(Error::Validation("entry point result has no binding"));
+        }
+
+        if self.flags.contains(WriterFlags::FORCE_POINT_SIZE)
+            && iface.stage == crate::ShaderStage::Vertex
+            && !has_point_size
+        {
+            // add point size artificially
+            let varying_id = self.id_gen.next();
+            let pointer_type_id = self.get_f32_pointer_type_id(class);
+            Instruction::variable(pointer_type_id, varying_id, class, None)
+                .to_words(&mut self.logical_layout.declarations);
+            self.decorate(
+                varying_id,
+                spirv::Decoration::BuiltIn,
+                &[spirv::BuiltIn::PointSize as u32],
+            );
+            iface.varying_ids.push(varying_id);
+
+            let default_value_id = self.get_constant_scalar(crate::Literal::F32(1.0));
+            prelude
+                .body
+                .push(Instruction::store(varying_id, default_value_id, None));
+        }
+        Ok(())
+    }
+
     fn write_function(
         &mut self,
         ir_function: &crate::Function,
@@ -693,7 +960,6 @@ impl Writer {
         let mut parameter_type_ids = Vec::with_capacity(ir_function.arguments.len());
 
         for argument in ir_function.arguments.iter() {
-            let class = spirv::StorageClass::Input;
             let handle_ty = ir_module.types[argument.ty].inner.is_handle();
             let binding_array = matches!(
                 ir_module.types[argument.ty].inner,
@@ -706,82 +972,23 @@ impl Writer {
             };
 
             if let Some(ref mut iface) = interface {
-                let id = if let Some(ref binding) = argument.binding {
-                    let name = argument.name.as_deref();
-
-                    let varying_id = self.write_varying(
-                        ir_module,
-                        iface.stage,
-                        class,
-                        name,
-                        argument.ty,
-                        binding,
-                    )?;
-                    iface.varying_ids.push(varying_id);
-                    self.load_varying(&mut prelude.body, varying_id, argument_type_id)
-                } else if let crate::TypeInner::Struct { ref members, .. } =
-                    ir_module.types[argument.ty].inner
-                {
-                    let struct_id = self.id_gen.next();
-                    let mut constituent_ids = Vec::with_capacity(members.len());
-                    for member in members {
-                        let type_id = self.get_handle_type_id(member.ty)?;
-                        let name = member.name.as_deref();
-                        let Some(binding) = member.binding.as_ref() else {
-                            return Err(Error::Validation(
-                                "entry point argument member has no binding",
-                            ));
-                        };
-                        let varying_id = self.write_varying(
-                            ir_module,
-                            iface.stage,
-                            class,
-                            name,
-                            member.ty,
-                            binding,
-                        )?;
-                        iface.varying_ids.push(varying_id);
-                        let id = self.load_varying(&mut prelude.body, varying_id, type_id);
-                        constituent_ids.push(id);
-                    }
-                    prelude.body.push(Instruction::composite_construct(
-                        argument_type_id,
-                        struct_id,
-                        &constituent_ids,
-                    ));
-                    struct_id
-                } else {
-                    return Err(Error::Validation("entry point argument has no binding"));
-                };
+                let id = self.write_entry_point_argument(
+                    ir_module,
+                    argument,
+                    argument_type_id,
+                    iface,
+                    &mut prelude,
+                )?;
                 ep_context.argument_ids.push(id);
             } else {
-                let argument_id = self.id_gen.next();
-                self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
-                if argument.relaxed_precision {
-                    self.decorate(argument_id, spirv::Decoration::RelaxedPrecision, &[]);
-                }
-                self.decorate_parameter_memory(argument_id, argument.memory_decorations);
-                let instruction = Instruction::function_parameter(argument_type_id, argument_id);
-                if self.flags.contains(WriterFlags::DEBUG)
-                    && let Some(ref name) = argument.name
-                {
-                    self.debugs.push(Instruction::name(argument_id, name));
-                }
-                function.parameters.push(FunctionArgument {
-                    instruction,
-                    handle_id: if handle_ty {
-                        let id = self.id_gen.next();
-                        prelude.body.push(Instruction::load(
-                            self.get_handle_type_id(argument.ty)?,
-                            id,
-                            argument_id,
-                            None,
-                        ));
-                        id
-                    } else {
-                        0
-                    },
-                });
+                let parameter = self.write_function_parameter(
+                    ir_module,
+                    argument,
+                    argument_type_id,
+                    handle_ty,
+                    &mut prelude,
+                )?;
+                function.parameters.push(parameter);
                 parameter_type_ids.push(argument_type_id);
             };
         }
@@ -789,95 +996,13 @@ impl Writer {
         let return_type_id = match ir_function.result {
             Some(ref result) => {
                 if let Some(ref mut iface) = interface {
-                    let mut has_point_size = false;
-                    let class = spirv::StorageClass::Output;
-                    if let Some(ref binding) = result.binding {
-                        has_point_size |=
-                            *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
-                        let type_id = self.get_handle_type_id(result.ty)?;
-                        let varying_id =
-                            if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
-                                0
-                            } else {
-                                let varying_id = self.write_varying(
-                                    ir_module,
-                                    iface.stage,
-                                    class,
-                                    None,
-                                    result.ty,
-                                    binding,
-                                )?;
-                                iface.varying_ids.push(varying_id);
-                                varying_id
-                            };
-                        ep_context.results.push(ResultMember {
-                            id: varying_id,
-                            type_id,
-                            built_in: binding.to_built_in(),
-                        });
-                    } else if let crate::TypeInner::Struct { ref members, .. } =
-                        ir_module.types[result.ty].inner
-                    {
-                        for member in members {
-                            let type_id = self.get_handle_type_id(member.ty)?;
-                            let name = member.name.as_deref();
-                            let Some(binding) = member.binding.as_ref() else {
-                                return Err(Error::Validation(
-                                    "entry point result member has no binding",
-                                ));
-                            };
-                            has_point_size |=
-                                *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
-                            // This isn't an actual builtin in SPIR-V. It can only appear as the
-                            // output of a task shader and the output is used when writing the
-                            // entry point return, in which case the id is ignored anyway.
-                            let varying_id = if *binding
-                                == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize)
-                            {
-                                0
-                            } else {
-                                let varying_id = self.write_varying(
-                                    ir_module,
-                                    iface.stage,
-                                    class,
-                                    name,
-                                    member.ty,
-                                    binding,
-                                )?;
-                                iface.varying_ids.push(varying_id);
-                                varying_id
-                            };
-                            ep_context.results.push(ResultMember {
-                                id: varying_id,
-                                type_id,
-                                built_in: binding.to_built_in(),
-                            });
-                        }
-                    } else {
-                        return Err(Error::Validation("entry point result has no binding"));
-                    }
-
-                    if self.flags.contains(WriterFlags::FORCE_POINT_SIZE)
-                        && iface.stage == crate::ShaderStage::Vertex
-                        && !has_point_size
-                    {
-                        // add point size artificially
-                        let varying_id = self.id_gen.next();
-                        let pointer_type_id = self.get_f32_pointer_type_id(class);
-                        Instruction::variable(pointer_type_id, varying_id, class, None)
-                            .to_words(&mut self.logical_layout.declarations);
-                        self.decorate(
-                            varying_id,
-                            spirv::Decoration::BuiltIn,
-                            &[spirv::BuiltIn::PointSize as u32],
-                        );
-                        iface.varying_ids.push(varying_id);
-
-                        let default_value_id = self.get_constant_scalar(crate::Literal::F32(1.0));
-                        prelude
-                            .body
-                            .push(Instruction::store(varying_id, default_value_id, None));
-                    }
+                    self.write_entry_point_result(
+                        ir_module,
+                        result,
+                        iface,
+                        &mut ep_context.results,
+                        &mut prelude,
+                    )?;
                     self.void_type
                 } else {
                     self.get_handle_type_id(result.ty)?
@@ -955,55 +1080,13 @@ impl Writer {
                 continue;
             }
 
-            let mut gv = self.global_variables[handle].clone();
             if let Some(ref mut iface) = interface {
                 // Have to include global variables in the interface
                 if self.physical_layout.version >= 0x10400 {
-                    iface.varying_ids.push(gv.var_id);
+                    iface.varying_ids.push(self.global_variables[handle].var_id);
                 }
             }
-
-            if matches!(
-                ir_module.types[var.ty].inner,
-                crate::TypeInner::BindingArray { .. }
-            ) {
-                gv.access_id = gv.var_id;
-            } else if var.space == crate::AddressSpace::Handle {
-                let var_type_id = self.get_handle_type_id(var.ty)?;
-                let id = self.id_gen.next();
-                prelude
-                    .body
-                    .push(Instruction::load(var_type_id, id, gv.var_id, None));
-                if var.relaxed_precision {
-                    self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
-                }
-                gv.access_id = gv.var_id;
-                gv.handle_id = id;
-            } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
-                let class = self.storage_class(var.space);
-                let pointer_type_id = if var.space == crate::AddressSpace::WorkGroup
-                    && var.block == Some(crate::BlockDeclaration::Shared)
-                {
-                    let base = self.get_handle_type_id(var.ty)?;
-                    self.get_localtype_id(LocalType::Pointer { base, class })
-                } else {
-                    self.get_handle_pointer_type_id(var.ty, class)?
-                };
-                let index_id = self.get_index_constant(0);
-                let id = self.id_gen.next();
-                prelude.body.push(Instruction::access_chain(
-                    pointer_type_id,
-                    id,
-                    gv.var_id,
-                    &[index_id],
-                ));
-                gv.access_id = id;
-            } else {
-                gv.access_id = gv.var_id;
-            }
-
-            // work around borrow checking in the presence of `self.xxx()` calls
-            self.global_variables[handle] = gv;
+            self.write_global_access(ir_module, handle, var, &mut prelude)?;
         }
 
         // Create a `BlockContext` for generating SPIR-V for the function's
@@ -1037,54 +1120,7 @@ impl Writer {
         }
 
         for (handle, variable) in ir_function.local_variables.iter() {
-            let id = context.gen_id();
-            context
-                .writer
-                .decorate_pointer_variable(&ir_module.types, variable.ty, id);
-            if variable.relaxed_precision {
-                context
-                    .writer
-                    .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
-            }
-
-            if context.writer.flags.contains(WriterFlags::DEBUG)
-                && let Some(ref name) = variable.name
-            {
-                context.writer.debugs.push(Instruction::name(id, name));
-            }
-
-            let type_id = context.get_handle_type_id(variable.ty)?;
-            let converted = context
-                .writer
-                .needs_layout_conversion(type_id, spirv::StorageClass::Function);
-            let init_word = match variable.init {
-                Some(constant) if converted => {
-                    let value = context.writer.convert_layout(
-                        &mut prelude,
-                        type_id,
-                        context.cached.get(constant)?,
-                        true,
-                    )?;
-                    prelude.body.push(Instruction::store(id, value, None));
-                    None
-                }
-                Some(constant) => Some(context.cached.get(constant)?),
-                None => None,
-            };
-            let pointer_type_id = context
-                .writer
-                .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function)?;
-            let instruction = Instruction::variable(
-                pointer_type_id,
-                id,
-                spirv::StorageClass::Function,
-                init_word,
-            );
-
-            context
-                .function
-                .variables
-                .insert(handle, LocalVariable { id, instruction });
+            context.write_local_variable(handle, variable, &mut prelude)?;
         }
 
         super::atomic::collect_texel_images(&ir_function.body, &mut context.function.texel_images);
@@ -1097,66 +1133,7 @@ impl Writer {
                 | crate::Expression::AccessIndex { base, .. } => {
                     *context.function.access_uses.entry(base).or_insert(0) += 1;
                 }
-                crate::Expression::Literal(_)
-                | crate::Expression::Constant(_)
-                | crate::Expression::Override(_)
-                | crate::Expression::ZeroValue(_)
-                | crate::Expression::Compose { .. }
-                | crate::Expression::Splat { .. }
-                | crate::Expression::Swizzle { .. }
-                | crate::Expression::FunctionArgument(_)
-                | crate::Expression::GlobalVariable(_)
-                | crate::Expression::Load { .. }
-                | crate::Expression::ImageSample { .. }
-                | crate::Expression::ImageLoad { .. }
-                | crate::Expression::ImageQuery { .. }
-                | crate::Expression::Unary { .. }
-                | crate::Expression::Binary { .. }
-                | crate::Expression::Select { .. }
-                | crate::Expression::Derivative { .. }
-                | crate::Expression::Relational { .. }
-                | crate::Expression::Math { .. }
-                | crate::Expression::As { .. }
-                | crate::Expression::CallResult(_)
-                | crate::Expression::AtomicResult { .. }
-                | crate::Expression::ArrayLength(_)
-                | crate::Expression::WideArrayLength(_)
-                | crate::Expression::PhysicalPointer { .. }
-                | crate::Expression::PhysicalAddress { .. }
-                | crate::Expression::BufferPointer { .. }
-                | crate::Expression::HeapOffset { .. }
-                | crate::Expression::RayQueryProceedResult
-                | crate::Expression::RayQueryGet { .. }
-                | crate::Expression::ReportIntersectionResult
-                | crate::Expression::AccelerationStructureFromAddress { .. }
-                | crate::Expression::HitObjectGet { .. }
-                | crate::Expression::FetchMicroTriangleVertex { .. }
-                | crate::Expression::SubgroupBallotResult
-                | crate::Expression::SubgroupOperationResult { .. }
-                | crate::Expression::SpirvInstructionResult { .. }
-                | crate::Expression::CooperativeLoad { .. }
-                | crate::Expression::CooperativeMultiplyAdd { .. }
-                | crate::Expression::CooperativeMatrixLength { .. }
-                | crate::Expression::Expect { .. }
-                | crate::Expression::ImageSparseResident { .. }
-                | crate::Expression::IsHelperInvocation
-                | crate::Expression::ReadClock { .. }
-                | crate::Expression::InterpolateAt { .. }
-                | crate::Expression::FragmentFetch { .. }
-                | crate::Expression::ImageFootprint { .. }
-                | crate::Expression::AttachmentRead { .. }
-                | crate::Expression::Replicate { .. }
-                | crate::Expression::CooperativeVectorLoad { .. }
-                | crate::Expression::CooperativeVectorMatMul { .. }
-                | crate::Expression::Convert { .. }
-                | crate::Expression::CooperativeMatrixResult { .. }
-                | crate::Expression::TensorCreate { .. }
-                | crate::Expression::ImageProcessing { .. }
-                | crate::Expression::ArrayConversion { .. }
-                | crate::Expression::Bitcast { .. }
-                | crate::Expression::TensorSet { .. }
-                | crate::Expression::TensorRead { .. }
-                | crate::Expression::TensorQuerySize { .. } => {}
+                _ => {}
             }
         }
 
@@ -1591,9 +1568,7 @@ impl Writer {
                 self.use_feature(&feature::FLOAT8_TYPE);
                 encoded_float_type(id, bits, spirv::FPEncoding::Float8E5M2EXT)
             }
-            Sk::FloatE2M1 | Sk::FloatE3M2 | Sk::FloatE2M3 | Sk::FloatUE8M0 | Sk::FloatMXINT8 => {
-                self.microscaling_type(id, scalar)
-            }
+            _ => self.microscaling_type(id, scalar),
         }
     }
 
@@ -1613,15 +1588,7 @@ impl Writer {
                     "float8 cooperative matrices",
                     &[spirv::Capability::Float8CooperativeMatrixEXT],
                 )?,
-                crate::ScalarKind::Sint
-                | crate::ScalarKind::Uint
-                | crate::ScalarKind::Float
-                | crate::ScalarKind::Bool
-                | crate::ScalarKind::FloatE2M1
-                | crate::ScalarKind::FloatE3M2
-                | crate::ScalarKind::FloatE2M3
-                | crate::ScalarKind::FloatUE8M0
-                | crate::ScalarKind::FloatMXINT8 => {}
+                _ => {}
             }
         }
         match *inner {
@@ -1694,9 +1661,7 @@ impl Writer {
                             )?;
                         }
                     }
-                    crate::ImageDimension::D2
-                    | crate::ImageDimension::D3
-                    | crate::ImageDimension::Cube => {}
+                    _ => {}
                 }
             }
             crate::TypeInner::AccelerationStructure => {
@@ -1735,12 +1700,7 @@ impl Writer {
                 {
                     if scalar == crate::Scalar::F16 {
                         self.require(&feature::FLOAT16_WITH_STORAGE)?;
-                    } else if scalar.width == 2
-                        && matches!(
-                            scalar.kind,
-                            crate::ScalarKind::Sint | crate::ScalarKind::Uint
-                        )
-                    {
+                    } else if scalar.width == 2 && scalar.kind.is_integer() {
                         self.require(&feature::INT16_WITH_STORAGE)?;
                     }
                 }
@@ -1753,17 +1713,7 @@ impl Writer {
                 crate::LongVectorClass::Plain => &feature::LONG_VECTOR,
                 crate::LongVectorClass::CooperativeNv => &feature::COOPERATIVE_VECTOR,
             })?,
-            crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => {}
+            _ => {}
         }
         Ok(())
     }
@@ -1973,23 +1923,7 @@ impl Writer {
             } => [Some(columns), Some(rows), Some(scope)],
             crate::TypeInner::LongVector { size, .. }
             | crate::TypeInner::Tensor { rank: size, .. } => [Some(size), None, None],
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Array { .. }
-            | crate::TypeInner::Struct { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BindingArray { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => [None, None, None],
+            _ => [None, None, None],
         };
         for size in pending.into_iter().flatten() {
             if let crate::CooperativeSize::Pending(handle) = size {
@@ -2214,21 +2148,7 @@ impl Writer {
 
                 // These all have TypeLocal representations, so they should have been
                 // handled by `write_type_declaration_local` above.
-                crate::TypeInner::Scalar(_)
-                | crate::TypeInner::Atomic(_)
-                | crate::TypeInner::Vector { .. }
-                | crate::TypeInner::Matrix { .. }
-                | crate::TypeInner::CooperativeMatrix { .. }
-                | crate::TypeInner::LongVector { .. }
-                | crate::TypeInner::Pointer { .. }
-                | crate::TypeInner::ValuePointer { .. }
-                | crate::TypeInner::Image { .. }
-                | crate::TypeInner::SampledImage { .. }
-                | crate::TypeInner::Sampler { .. }
-                | crate::TypeInner::AccelerationStructure
-                | crate::TypeInner::RayQuery
-                | crate::TypeInner::HitObject { .. }
-                | crate::TypeInner::BufferDescriptor { .. } => {
+                _ => {
                     return Err(Error::Validation("a non-aggregate type has no local type"));
                 }
             };
@@ -2268,35 +2188,6 @@ impl Writer {
     ) -> Result<(), Error> {
         use spirv::ImageFormat as If;
         match format {
-            If::Rg32f
-            | If::Rg16f
-            | If::R11fG11fB10f
-            | If::R16f
-            | If::Rgba16
-            | If::Rgb10A2
-            | If::Rg16
-            | If::Rg8
-            | If::R16
-            | If::R8
-            | If::Rgba16Snorm
-            | If::Rg16Snorm
-            | If::Rg8Snorm
-            | If::R16Snorm
-            | If::R8Snorm
-            | If::Rg32i
-            | If::Rg16i
-            | If::Rg8i
-            | If::R16i
-            | If::R8i
-            | If::Rgb10a2ui
-            | If::Rg32ui
-            | If::Rg16ui
-            | If::Rg8ui
-            | If::R16ui
-            | If::R8ui => self.require_any(
-                "storage image format",
-                &[spirv::Capability::StorageImageExtendedFormats],
-            ),
             If::R64ui | If::R64i => self.require(&feature::IMAGE_INT64),
             If::Unknown
             | If::Rgba32f
@@ -2312,6 +2203,10 @@ impl Writer {
             | If::Rgba16ui
             | If::Rgba8ui
             | If::R32ui => Ok(()),
+            _ => self.require_any(
+                "storage image format",
+                &[spirv::Capability::StorageImageExtendedFormats],
+            ),
         }
     }
 
@@ -3102,15 +2997,7 @@ impl Writer {
             ))?;
             if let Some(block) = crate::proc::interface_block(&ir_module.types, global_variable.ty)
             {
-                self.write_interface_block(
-                    ir_module,
-                    handle,
-                    global_variable,
-                    block,
-                    stage,
-                    class,
-                    id,
-                )?;
+                self.write_interface_block(ir_module, handle, block, stage, class, id)?;
             } else if global_variable.io.is_none()
                 && crate::proc::has_spirv_built_in(global_variable)
             {
@@ -3328,26 +3215,7 @@ impl Writer {
                     matches!(ir_module.types[base].inner, crate::TypeInner::Struct { .. })
                         .then_some(base)
                 }
-                crate::TypeInner::Scalar(_)
-                | crate::TypeInner::Vector { .. }
-                | crate::TypeInner::Matrix { .. }
-                | crate::TypeInner::CooperativeMatrix { .. }
-                | crate::TypeInner::LongVector { .. }
-                | crate::TypeInner::TensorLayout { .. }
-                | crate::TypeInner::TensorView { .. }
-                | crate::TypeInner::Tensor { .. }
-                | crate::TypeInner::Atomic(_)
-                | crate::TypeInner::Pointer { .. }
-                | crate::TypeInner::ValuePointer { .. }
-                | crate::TypeInner::Array { .. }
-                | crate::TypeInner::Image { .. }
-                | crate::TypeInner::Sampler { .. }
-                | crate::TypeInner::SampledImage { .. }
-                | crate::TypeInner::AccelerationStructure
-                | crate::TypeInner::RayQuery
-                | crate::TypeInner::HitObject { .. }
-                | crate::TypeInner::BufferDescriptor { .. }
-                | crate::TypeInner::Spirv { .. } => None,
+                _ => None,
             };
             if let (Some(structure), Some(crate::BlockDeclaration::RayTracing)) =
                 (block_struct, global_variable.block)
@@ -3400,20 +3268,16 @@ impl Writer {
         Ok(id)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     fn write_interface_block(
         &mut self,
         ir_module: &crate::Module,
         handle: Handle<crate::GlobalVariable>,
-        global_variable: &crate::GlobalVariable,
         block: crate::proc::InterfaceBlock,
         stage: crate::ShaderStage,
         class: spirv::StorageClass,
         id: Word,
     ) -> Result<(), Error> {
+        let global_variable = &ir_module.global_variables[handle];
         if let Some(ref binding) = global_variable.io {
             let decorations =
                 self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;
@@ -3479,99 +3343,7 @@ impl Writer {
                     crate::BuiltIn::ViewportMaskPerViewNV => {
                         Some(spirv::BuiltIn::ViewportMaskPerViewNV)
                     }
-                    crate::BuiltIn::PrimitiveIndex
-                    | crate::BuiltIn::Position { .. }
-                    | crate::BuiltIn::ViewIndex
-                    | crate::BuiltIn::BaseInstance
-                    | crate::BuiltIn::BaseVertex
-                    | crate::BuiltIn::InstanceIndex
-                    | crate::BuiltIn::VertexIndex
-                    | crate::BuiltIn::DrawIndex
-                    | crate::BuiltIn::InvocationId
-                    | crate::BuiltIn::PatchVertices
-                    | crate::BuiltIn::TessCoord
-                    | crate::BuiltIn::TessLevelOuter
-                    | crate::BuiltIn::TessLevelInner
-                    | crate::BuiltIn::Layer { .. }
-                    | crate::BuiltIn::ViewportIndex
-                    | crate::BuiltIn::FragDepth
-                    | crate::BuiltIn::PointCoord
-                    | crate::BuiltIn::FrontFacing
-                    | crate::BuiltIn::Barycentric { .. }
-                    | crate::BuiltIn::AmdBarycentric(_)
-                    | crate::BuiltIn::SampleIndex
-                    | crate::BuiltIn::SampleMask { .. }
-                    | crate::BuiltIn::SamplePosition
-                    | crate::BuiltIn::HelperInvocation
-                    | crate::BuiltIn::DeviceIndex
-                    | crate::BuiltIn::ShadingRate
-                    | crate::BuiltIn::FragSize(_)
-                    | crate::BuiltIn::FragInvocationCount(_)
-                    | crate::BuiltIn::FullyCovered
-                    | crate::BuiltIn::FragStencilRef
-                    | crate::BuiltIn::GlobalInvocationId
-                    | crate::BuiltIn::LocalInvocationId
-                    | crate::BuiltIn::LocalInvocationIndex
-                    | crate::BuiltIn::WorkGroupId
-                    | crate::BuiltIn::WorkGroupSize
-                    | crate::BuiltIn::NumWorkGroups
-                    | crate::BuiltIn::NumSubgroups
-                    | crate::BuiltIn::SubgroupId
-                    | crate::BuiltIn::SubgroupSize
-                    | crate::BuiltIn::SubgroupInvocationId
-                    | crate::BuiltIn::SubgroupMask(_)
-                    | crate::BuiltIn::ShaderBallot(_)
-                    | crate::BuiltIn::TileOffset
-                    | crate::BuiltIn::TileDimension
-                    | crate::BuiltIn::TileApronSize
-                    | crate::BuiltIn::ShaderCore(_)
-                    | crate::BuiltIn::MeshTaskSize
-                    | crate::BuiltIn::CullPrimitive
-                    | crate::BuiltIn::PointIndex
-                    | crate::BuiltIn::LineIndices
-                    | crate::BuiltIn::TriangleIndices
-                    | crate::BuiltIn::VertexCount
-                    | crate::BuiltIn::Vertices
-                    | crate::BuiltIn::PrimitiveCount
-                    | crate::BuiltIn::Primitives
-                    | crate::BuiltIn::PrimitiveShadingRate
-                    | crate::BuiltIn::TaskCountNV
-                    | crate::BuiltIn::PrimitiveCountNV
-                    | crate::BuiltIn::PrimitiveIndicesNV
-                    | crate::BuiltIn::MeshViewCountNV
-                    | crate::BuiltIn::MeshViewIndicesNV
-                    | crate::BuiltIn::ClipDistancePerViewNV
-                    | crate::BuiltIn::CullDistancePerViewNV
-                    | crate::BuiltIn::LayerPerViewNV
-                    | crate::BuiltIn::RayInvocationId
-                    | crate::BuiltIn::NumRayInvocations
-                    | crate::BuiltIn::InstanceCustomData
-                    | crate::BuiltIn::GeometryIndex
-                    | crate::BuiltIn::WorldRayOrigin
-                    | crate::BuiltIn::WorldRayDirection
-                    | crate::BuiltIn::ObjectRayOrigin
-                    | crate::BuiltIn::ObjectRayDirection
-                    | crate::BuiltIn::RayTmin
-                    | crate::BuiltIn::RayTCurrentMax
-                    | crate::BuiltIn::ObjectToWorld
-                    | crate::BuiltIn::WorldToObject
-                    | crate::BuiltIn::HitKind
-                    | crate::BuiltIn::InstanceId
-                    | crate::BuiltIn::IncomingRayFlags
-                    | crate::BuiltIn::CullMask
-                    | crate::BuiltIn::HitTriangleVertexPositions
-                    | crate::BuiltIn::CurrentRayTime
-                    | crate::BuiltIn::ClusterId
-                    | crate::BuiltIn::HitMicroTriangleVertexPositions
-                    | crate::BuiltIn::HitMicroTriangleVertexBarycentrics
-                    | crate::BuiltIn::HitKindFrontFacingMicroTriangle
-                    | crate::BuiltIn::HitKindBackFacingMicroTriangle
-                    | crate::BuiltIn::HitIsSphere
-                    | crate::BuiltIn::HitIsLss
-                    | crate::BuiltIn::HitSpherePosition
-                    | crate::BuiltIn::HitSphereRadius
-                    | crate::BuiltIn::HitLssPositions
-                    | crate::BuiltIn::HitLssRadii => None,
+                    _ => None,
                 },
                 crate::Binding::Location { .. } => None,
             }
@@ -3620,9 +3392,7 @@ impl Writer {
                         ));
                     }
                 }
-                BindingDecorations::BuiltIn(..)
-                | BindingDecorations::Location { .. }
-                | BindingDecorations::None => {
+                _ => {
                     self.write_binding_struct_member(struct_id, index, decorations);
                 }
             }
@@ -3664,105 +3434,7 @@ impl Writer {
                         decorations.push((spirv::Decoration::OverrideCoverageNV, ArrayVec::new()));
                     }
                 }
-                crate::BuiltIn::PrimitiveIndex
-                | crate::BuiltIn::Position { .. }
-                | crate::BuiltIn::ViewIndex
-                | crate::BuiltIn::BaseInstance
-                | crate::BuiltIn::BaseVertex
-                | crate::BuiltIn::ClipDistances
-                | crate::BuiltIn::CullDistance
-                | crate::BuiltIn::InstanceIndex
-                | crate::BuiltIn::PointSize
-                | crate::BuiltIn::VertexIndex
-                | crate::BuiltIn::DrawIndex
-                | crate::BuiltIn::InvocationId
-                | crate::BuiltIn::PatchVertices
-                | crate::BuiltIn::TessCoord
-                | crate::BuiltIn::TessLevelOuter
-                | crate::BuiltIn::TessLevelInner
-                | crate::BuiltIn::ViewportIndex
-                | crate::BuiltIn::ViewportMaskNV
-                | crate::BuiltIn::SecondaryPositionNV
-                | crate::BuiltIn::SecondaryViewportMaskNV
-                | crate::BuiltIn::PositionPerViewNV
-                | crate::BuiltIn::ViewportMaskPerViewNV
-                | crate::BuiltIn::FragDepth
-                | crate::BuiltIn::PointCoord
-                | crate::BuiltIn::FrontFacing
-                | crate::BuiltIn::Barycentric { .. }
-                | crate::BuiltIn::AmdBarycentric(_)
-                | crate::BuiltIn::SampleIndex
-                | crate::BuiltIn::SamplePosition
-                | crate::BuiltIn::HelperInvocation
-                | crate::BuiltIn::DeviceIndex
-                | crate::BuiltIn::ShadingRate
-                | crate::BuiltIn::FragSize(_)
-                | crate::BuiltIn::FragInvocationCount(_)
-                | crate::BuiltIn::FullyCovered
-                | crate::BuiltIn::FragStencilRef
-                | crate::BuiltIn::GlobalInvocationId
-                | crate::BuiltIn::LocalInvocationId
-                | crate::BuiltIn::LocalInvocationIndex
-                | crate::BuiltIn::WorkGroupId
-                | crate::BuiltIn::WorkGroupSize
-                | crate::BuiltIn::NumWorkGroups
-                | crate::BuiltIn::NumSubgroups
-                | crate::BuiltIn::SubgroupId
-                | crate::BuiltIn::SubgroupSize
-                | crate::BuiltIn::SubgroupInvocationId
-                | crate::BuiltIn::SubgroupMask(_)
-                | crate::BuiltIn::ShaderBallot(_)
-                | crate::BuiltIn::TileOffset
-                | crate::BuiltIn::TileDimension
-                | crate::BuiltIn::TileApronSize
-                | crate::BuiltIn::ShaderCore(_)
-                | crate::BuiltIn::MeshTaskSize
-                | crate::BuiltIn::CullPrimitive
-                | crate::BuiltIn::PointIndex
-                | crate::BuiltIn::LineIndices
-                | crate::BuiltIn::TriangleIndices
-                | crate::BuiltIn::VertexCount
-                | crate::BuiltIn::Vertices
-                | crate::BuiltIn::PrimitiveCount
-                | crate::BuiltIn::Primitives
-                | crate::BuiltIn::PrimitiveShadingRate
-                | crate::BuiltIn::TaskCountNV
-                | crate::BuiltIn::PrimitiveCountNV
-                | crate::BuiltIn::PrimitiveIndicesNV
-                | crate::BuiltIn::MeshViewCountNV
-                | crate::BuiltIn::MeshViewIndicesNV
-                | crate::BuiltIn::ClipDistancePerViewNV
-                | crate::BuiltIn::CullDistancePerViewNV
-                | crate::BuiltIn::LayerPerViewNV
-                | crate::BuiltIn::RayInvocationId
-                | crate::BuiltIn::NumRayInvocations
-                | crate::BuiltIn::InstanceCustomData
-                | crate::BuiltIn::GeometryIndex
-                | crate::BuiltIn::WorldRayOrigin
-                | crate::BuiltIn::WorldRayDirection
-                | crate::BuiltIn::ObjectRayOrigin
-                | crate::BuiltIn::ObjectRayDirection
-                | crate::BuiltIn::RayTmin
-                | crate::BuiltIn::RayTCurrentMax
-                | crate::BuiltIn::ObjectToWorld
-                | crate::BuiltIn::WorldToObject
-                | crate::BuiltIn::HitKind
-                | crate::BuiltIn::InstanceId
-                | crate::BuiltIn::IncomingRayFlags
-                | crate::BuiltIn::CullMask
-                | crate::BuiltIn::HitTriangleVertexPositions
-                | crate::BuiltIn::CurrentRayTime
-                | crate::BuiltIn::ClusterId
-                | crate::BuiltIn::HitMicroTriangleVertexPositions
-                | crate::BuiltIn::HitMicroTriangleVertexBarycentrics
-                | crate::BuiltIn::HitKindFrontFacingMicroTriangle
-                | crate::BuiltIn::HitKindBackFacingMicroTriangle
-                | crate::BuiltIn::HitIsSphere
-                | crate::BuiltIn::HitIsLss
-                | crate::BuiltIn::HitSpherePosition
-                | crate::BuiltIn::HitSphereRadius
-                | crate::BuiltIn::HitLssPositions
-                | crate::BuiltIn::HitLssRadii => {}
+                _ => {}
             },
             crate::Binding::Location { .. } => {}
         }
@@ -4468,25 +4140,7 @@ pub(super) fn mark_laid_out(
             crate::TypeInner::Struct { ref members, .. } => {
                 pending.extend(members.iter().map(|member| member.ty));
             }
-            crate::TypeInner::Scalar(_)
-            | crate::TypeInner::Vector { .. }
-            | crate::TypeInner::Matrix { .. }
-            | crate::TypeInner::CooperativeMatrix { .. }
-            | crate::TypeInner::LongVector { .. }
-            | crate::TypeInner::TensorLayout { .. }
-            | crate::TypeInner::TensorView { .. }
-            | crate::TypeInner::Tensor { .. }
-            | crate::TypeInner::Atomic(_)
-            | crate::TypeInner::Pointer { .. }
-            | crate::TypeInner::ValuePointer { .. }
-            | crate::TypeInner::Image { .. }
-            | crate::TypeInner::Sampler { .. }
-            | crate::TypeInner::SampledImage { .. }
-            | crate::TypeInner::AccelerationStructure
-            | crate::TypeInner::RayQuery
-            | crate::TypeInner::HitObject { .. }
-            | crate::TypeInner::BufferDescriptor { .. }
-            | crate::TypeInner::Spirv { .. } => {}
+            _ => {}
         }
     }
 }
@@ -4537,66 +4191,7 @@ fn interface_member_used(
                         return true;
                     }
                 }
-                crate::Expression::Literal(_)
-                | crate::Expression::Constant(_)
-                | crate::Expression::Override(_)
-                | crate::Expression::ZeroValue(_)
-                | crate::Expression::Compose { .. }
-                | crate::Expression::Splat { .. }
-                | crate::Expression::Swizzle { .. }
-                | crate::Expression::FunctionArgument(_)
-                | crate::Expression::GlobalVariable(_)
-                | crate::Expression::LocalVariable(_)
-                | crate::Expression::ImageSample { .. }
-                | crate::Expression::ImageLoad { .. }
-                | crate::Expression::ImageQuery { .. }
-                | crate::Expression::Unary { .. }
-                | crate::Expression::Binary { .. }
-                | crate::Expression::Select { .. }
-                | crate::Expression::Derivative { .. }
-                | crate::Expression::Relational { .. }
-                | crate::Expression::Math { .. }
-                | crate::Expression::As { .. }
-                | crate::Expression::CallResult(_)
-                | crate::Expression::AtomicResult { .. }
-                | crate::Expression::ArrayLength(_)
-                | crate::Expression::WideArrayLength(_)
-                | crate::Expression::PhysicalPointer { .. }
-                | crate::Expression::PhysicalAddress { .. }
-                | crate::Expression::BufferPointer { .. }
-                | crate::Expression::HeapOffset { .. }
-                | crate::Expression::RayQueryProceedResult
-                | crate::Expression::RayQueryGet { .. }
-                | crate::Expression::ReportIntersectionResult
-                | crate::Expression::AccelerationStructureFromAddress { .. }
-                | crate::Expression::HitObjectGet { .. }
-                | crate::Expression::FetchMicroTriangleVertex { .. }
-                | crate::Expression::SubgroupBallotResult
-                | crate::Expression::SubgroupOperationResult { .. }
-                | crate::Expression::SpirvInstructionResult { .. }
-                | crate::Expression::CooperativeLoad { .. }
-                | crate::Expression::CooperativeMultiplyAdd { .. }
-                | crate::Expression::CooperativeMatrixLength { .. }
-                | crate::Expression::Expect { .. }
-                | crate::Expression::ImageSparseResident { .. }
-                | crate::Expression::IsHelperInvocation
-                | crate::Expression::ReadClock { .. }
-                | crate::Expression::InterpolateAt { .. }
-                | crate::Expression::FragmentFetch { .. }
-                | crate::Expression::ImageFootprint { .. }
-                | crate::Expression::AttachmentRead { .. }
-                | crate::Expression::Replicate { .. }
-                | crate::Expression::CooperativeVectorLoad { .. }
-                | crate::Expression::CooperativeVectorMatMul { .. }
-                | crate::Expression::Convert { .. }
-                | crate::Expression::CooperativeMatrixResult { .. }
-                | crate::Expression::TensorCreate { .. }
-                | crate::Expression::ImageProcessing { .. }
-                | crate::Expression::ArrayConversion { .. }
-                | crate::Expression::Bitcast { .. }
-                | crate::Expression::TensorSet { .. }
-                | crate::Expression::TensorRead { .. }
-                | crate::Expression::TensorQuerySize { .. } => {}
+                _ => {}
             }
         }
     }

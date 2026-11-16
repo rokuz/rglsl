@@ -32,15 +32,7 @@ impl Writer {
                     self.require(&feature::SHADER_VIEWPORT_INDEX_LAYER)
                 }
             }
-            ShaderStage::Mesh
-            | ShaderStage::Task
-            | ShaderStage::Compute
-            | ShaderStage::RayGeneration
-            | ShaderStage::AnyHit
-            | ShaderStage::ClosestHit
-            | ShaderStage::Miss
-            | ShaderStage::Intersection
-            | ShaderStage::Callable => Ok(()),
+            _ => Ok(()),
         }
     }
 

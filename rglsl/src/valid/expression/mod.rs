@@ -217,26 +217,7 @@ pub(super) fn tensor_shape(
             };
             Some((scalar, TensorData::Array(length)))
         }
-        Ti::Vector { .. }
-        | Ti::Matrix { .. }
-        | Ti::CooperativeMatrix { .. }
-        | Ti::LongVector { .. }
-        | Ti::TensorLayout { .. }
-        | Ti::TensorView { .. }
-        | Ti::Tensor { .. }
-        | Ti::Atomic(_)
-        | Ti::Pointer { .. }
-        | Ti::ValuePointer { .. }
-        | Ti::Struct { .. }
-        | Ti::Image { .. }
-        | Ti::Sampler { .. }
-        | Ti::SampledImage { .. }
-        | Ti::AccelerationStructure
-        | Ti::RayQuery
-        | Ti::HitObject { .. }
-        | Ti::BindingArray { .. }
-        | Ti::BufferDescriptor { .. }
-        | Ti::Spirv { .. } => None,
+        _ => None,
     }
 }
 
@@ -313,25 +294,7 @@ impl super::Validator {
                 Ti::LongVector { size, class, .. } => Some((Some(size), Some(class), None)),
                 Ti::Vector { size, .. } => Some((None, None, Some(size))),
                 Ti::Scalar(_) => None,
-                Ti::CooperativeMatrix { .. }
-                | Ti::Matrix { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Tensor { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BindingArray { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => Some((None, None, None)),
+                _ => Some((None, None, None)),
             })
         };
         let operands: arrayvec::ArrayVec<Handle<crate::Expression>, 4> = match *expression {
@@ -351,62 +314,7 @@ impl super::Validator {
                 .into_iter()
                 .flatten()
                 .collect(),
-            E::Literal(_)
-            | E::Constant(_)
-            | E::Override(_)
-            | E::ZeroValue(_)
-            | E::Compose { .. }
-            | E::Access { .. }
-            | E::AccessIndex { .. }
-            | E::Splat { .. }
-            | E::Swizzle { .. }
-            | E::FunctionArgument(_)
-            | E::GlobalVariable(_)
-            | E::LocalVariable(_)
-            | E::Load { .. }
-            | E::ImageSample { .. }
-            | E::ImageLoad { .. }
-            | E::ImageQuery { .. }
-            | E::CallResult(_)
-            | E::AtomicResult { .. }
-            | E::ArrayLength(_)
-            | E::WideArrayLength(_)
-            | E::PhysicalPointer { .. }
-            | E::PhysicalAddress { .. }
-            | E::BufferPointer { .. }
-            | E::HeapOffset { .. }
-            | E::RayQueryProceedResult
-            | E::RayQueryGet { .. }
-            | E::ReportIntersectionResult
-            | E::AccelerationStructureFromAddress { .. }
-            | E::HitObjectGet { .. }
-            | E::FetchMicroTriangleVertex { .. }
-            | E::SubgroupBallotResult
-            | E::SubgroupOperationResult { .. }
-            | E::SpirvInstructionResult { .. }
-            | E::CooperativeLoad { .. }
-            | E::CooperativeMultiplyAdd { .. }
-            | E::CooperativeMatrixLength { .. }
-            | E::Replicate { .. }
-            | E::Expect { .. }
-            | E::ImageSparseResident { .. }
-            | E::IsHelperInvocation
-            | E::ReadClock { .. }
-            | E::InterpolateAt { .. }
-            | E::FragmentFetch { .. }
-            | E::ImageFootprint { .. }
-            | E::AttachmentRead { .. }
-            | E::CooperativeVectorLoad { .. }
-            | E::CooperativeVectorMatMul { .. }
-            | E::Convert { .. }
-            | E::CooperativeMatrixResult { .. }
-            | E::TensorCreate { .. }
-            | E::ImageProcessing { .. }
-            | E::ArrayConversion { .. }
-            | E::Bitcast { .. }
-            | E::TensorSet { .. }
-            | E::TensorRead { .. }
-            | E::TensorQuerySize { .. } => return Ok(None),
+            _ => return Ok(None),
         };
         let mut any_long = false;
         for &operand in &operands {
@@ -472,64 +380,7 @@ impl super::Validator {
                     return Err(ConstExpressionError::InvalidSplatType(value));
                 };
             }
-            E::Override(_)
-            | E::Access { .. }
-            | E::AccessIndex { .. }
-            | E::Swizzle { .. }
-            | E::FunctionArgument(_)
-            | E::GlobalVariable(_)
-            | E::LocalVariable(_)
-            | E::Load { .. }
-            | E::ImageSample { .. }
-            | E::ImageLoad { .. }
-            | E::ImageQuery { .. }
-            | E::Unary { .. }
-            | E::Binary { .. }
-            | E::Select { .. }
-            | E::Derivative { .. }
-            | E::Relational { .. }
-            | E::Math { .. }
-            | E::As { .. }
-            | E::CallResult(_)
-            | E::AtomicResult { .. }
-            | E::ArrayLength(_)
-            | E::WideArrayLength(_)
-            | E::PhysicalPointer { .. }
-            | E::PhysicalAddress { .. }
-            | E::BufferPointer { .. }
-            | E::HeapOffset { .. }
-            | E::RayQueryProceedResult
-            | E::RayQueryGet { .. }
-            | E::ReportIntersectionResult
-            | E::AccelerationStructureFromAddress { .. }
-            | E::HitObjectGet { .. }
-            | E::FetchMicroTriangleVertex { .. }
-            | E::SubgroupBallotResult
-            | E::SubgroupOperationResult { .. }
-            | E::SpirvInstructionResult { .. }
-            | E::CooperativeLoad { .. }
-            | E::CooperativeMultiplyAdd { .. }
-            | E::CooperativeMatrixLength { .. }
-            | E::Replicate { .. }
-            | E::Expect { .. }
-            | E::ImageSparseResident { .. }
-            | E::IsHelperInvocation
-            | E::ReadClock { .. }
-            | E::InterpolateAt { .. }
-            | E::FragmentFetch { .. }
-            | E::ImageFootprint { .. }
-            | E::AttachmentRead { .. }
-            | E::CooperativeVectorLoad { .. }
-            | E::CooperativeVectorMatMul { .. }
-            | E::Convert { .. }
-            | E::CooperativeMatrixResult { .. }
-            | E::TensorCreate { .. }
-            | E::ImageProcessing { .. }
-            | E::ArrayConversion { .. }
-            | E::Bitcast { .. }
-            | E::TensorSet { .. }
-            | E::TensorRead { .. }
-            | E::TensorQuerySize { .. } => {
+            _ => {
                 if global_expr_kind.is_const(handle) || self.overrides_resolved {
                     return Err(ConstExpressionError::NonFullyEvaluatedConst);
                 }
@@ -639,10 +490,12 @@ impl super::Validator {
                 level,
                 sparse,
             } => Self::validate_image_load(
-                image,
-                coordinate,
-                array_index,
-                sample,
+                crate::Texel {
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                },
                 level,
                 sparse,
                 function,
@@ -737,13 +590,15 @@ impl super::Validator {
                 min_lod,
                 ty,
             } => Self::validate_image_footprint(
-                image,
-                coordinate,
-                granularity,
-                coarse,
-                level,
-                min_lod,
-                ty,
+                image::ImageFootprintParams {
+                    image,
+                    coordinate,
+                    granularity,
+                    coarse,
+                    level,
+                    min_lod,
+                    ty,
+                },
                 module,
                 &resolver,
             )?,
@@ -843,24 +698,7 @@ pub const fn check_literal_value(literal: crate::Literal) -> Result<(), LiteralE
     let is_nan = match literal {
         L::F64(v) => v.is_nan(),
         L::F32(v) => v.is_nan(),
-        L::F16(_)
-        | L::U8(_)
-        | L::I8(_)
-        | L::U16(_)
-        | L::I16(_)
-        | L::U32(_)
-        | L::I32(_)
-        | L::U64(_)
-        | L::I64(_)
-        | L::Bool(_)
-        | L::BF16(_)
-        | L::FE4M3(_)
-        | L::FE5M2(_)
-        | L::FE2M1(_)
-        | L::FE3M2(_)
-        | L::FE2M3(_)
-        | L::FUE8M0(_)
-        | L::FMXINT8(_) => false,
+        _ => false,
     };
     if is_nan {
         return Err(LiteralError::NaN);
@@ -869,24 +707,7 @@ pub const fn check_literal_value(literal: crate::Literal) -> Result<(), LiteralE
     let is_infinite = match literal {
         L::F64(v) => v.is_infinite(),
         L::F32(v) => v.is_infinite(),
-        L::F16(_)
-        | L::U8(_)
-        | L::I8(_)
-        | L::U16(_)
-        | L::I16(_)
-        | L::U32(_)
-        | L::I32(_)
-        | L::U64(_)
-        | L::I64(_)
-        | L::Bool(_)
-        | L::BF16(_)
-        | L::FE4M3(_)
-        | L::FE5M2(_)
-        | L::FE2M1(_)
-        | L::FE3M2(_)
-        | L::FE2M3(_)
-        | L::FUE8M0(_)
-        | L::FMXINT8(_) => false,
+        _ => false,
     };
     if is_infinite {
         return Err(LiteralError::Infinity);

@@ -63,41 +63,9 @@ impl ResourceClass {
                 TypeInner::SampledImage { .. } => Some(Self::CombinedSampler),
                 TypeInner::Sampler { .. } => Some(Self::Sampler),
                 TypeInner::AccelerationStructure => Some(Self::AccelerationStructure),
-                TypeInner::Scalar(_)
-                | TypeInner::Vector { .. }
-                | TypeInner::Matrix { .. }
-                | TypeInner::CooperativeMatrix { .. }
-                | TypeInner::LongVector { .. }
-                | TypeInner::TensorLayout { .. }
-                | TypeInner::TensorView { .. }
-                | TypeInner::Tensor { .. }
-                | TypeInner::Atomic(_)
-                | TypeInner::Pointer { .. }
-                | TypeInner::ValuePointer { .. }
-                | TypeInner::Array { .. }
-                | TypeInner::Struct { .. }
-                | TypeInner::RayQuery
-                | TypeInner::HitObject { .. }
-                | TypeInner::BindingArray { .. }
-                | TypeInner::BufferDescriptor { .. }
-                | TypeInner::Spirv { .. } => None,
+                _ => None,
             },
-            AddressSpace::Function
-            | AddressSpace::Private
-            | AddressSpace::WorkGroup
-            | AddressSpace::Immediate
-            | AddressSpace::TaskPayload
-            | AddressSpace::RayPayload
-            | AddressSpace::IncomingRayPayload
-            | AddressSpace::HitAttribute
-            | AddressSpace::CallableData
-            | AddressSpace::IncomingCallableData
-            | AddressSpace::ShaderRecord
-            | AddressSpace::HitObjectAttribute { .. }
-            | AddressSpace::Input
-            | AddressSpace::Output
-            | AddressSpace::PhysicalStorage { .. }
-            | AddressSpace::DescriptorHeap(_) => None,
+            _ => None,
         }
     }
 }

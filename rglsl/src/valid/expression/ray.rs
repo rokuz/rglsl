@@ -56,25 +56,7 @@ impl super::super::Validator {
             | Hv::IsSphereHit
             | Hv::IsLssHit => Some(crate::HitObjectFlavor::Nv),
             Hv::RayFlags | Hv::TriangleVertexPositions => Some(crate::HitObjectFlavor::Ext),
-            Hv::IsEmpty
-            | Hv::IsHit
-            | Hv::IsMiss
-            | Hv::RayTMin
-            | Hv::RayTMax
-            | Hv::WorldRayOrigin
-            | Hv::WorldRayDirection
-            | Hv::ObjectRayOrigin
-            | Hv::ObjectRayDirection
-            | Hv::ObjectToWorld
-            | Hv::WorldToObject
-            | Hv::InstanceCustomIndex
-            | Hv::InstanceId
-            | Hv::GeometryIndex
-            | Hv::PrimitiveIndex
-            | Hv::HitKind
-            | Hv::CurrentTime
-            | Hv::ShaderBindingTableRecordIndex
-            | Hv::ShaderRecordBufferHandle => None,
+            _ => None,
         };
         if required.is_some_and(|required| required != flavor) {
             return Err(ExpressionError::InvalidHitObjectType(object));

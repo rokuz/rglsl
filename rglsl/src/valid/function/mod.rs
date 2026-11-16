@@ -350,65 +350,7 @@ impl<'a> BlockContext<'a> {
                 | E::AccessIndex { base, .. }
                 | E::HeapOffset { pointer: base, .. } => current = base,
                 E::GlobalVariable(global) => break global,
-                E::Literal(_)
-                | E::Constant(_)
-                | E::Override(_)
-                | E::ZeroValue(_)
-                | E::Compose { .. }
-                | E::Splat { .. }
-                | E::Swizzle { .. }
-                | E::FunctionArgument(_)
-                | E::LocalVariable(_)
-                | E::Load { .. }
-                | E::ImageSample { .. }
-                | E::ImageLoad { .. }
-                | E::ImageQuery { .. }
-                | E::Unary { .. }
-                | E::Binary { .. }
-                | E::Select { .. }
-                | E::Derivative { .. }
-                | E::Relational { .. }
-                | E::Math { .. }
-                | E::As { .. }
-                | E::CallResult(_)
-                | E::AtomicResult { .. }
-                | E::ArrayLength(_)
-                | E::WideArrayLength(_)
-                | E::PhysicalPointer { .. }
-                | E::PhysicalAddress { .. }
-                | E::BufferPointer { .. }
-                | E::RayQueryProceedResult
-                | E::RayQueryGet { .. }
-                | E::ReportIntersectionResult
-                | E::AccelerationStructureFromAddress { .. }
-                | E::HitObjectGet { .. }
-                | E::FetchMicroTriangleVertex { .. }
-                | E::SubgroupBallotResult
-                | E::SubgroupOperationResult { .. }
-                | E::SpirvInstructionResult { .. }
-                | E::CooperativeLoad { .. }
-                | E::CooperativeMultiplyAdd { .. }
-                | E::CooperativeMatrixLength { .. }
-                | E::Replicate { .. }
-                | E::Expect { .. }
-                | E::ImageSparseResident { .. }
-                | E::IsHelperInvocation
-                | E::ReadClock { .. }
-                | E::InterpolateAt { .. }
-                | E::FragmentFetch { .. }
-                | E::ImageFootprint { .. }
-                | E::AttachmentRead { .. }
-                | E::CooperativeVectorLoad { .. }
-                | E::CooperativeVectorMatMul { .. }
-                | E::Convert { .. }
-                | E::CooperativeMatrixResult { .. }
-                | E::TensorCreate { .. }
-                | E::ImageProcessing { .. }
-                | E::ArrayConversion { .. }
-                | E::Bitcast { .. }
-                | E::TensorSet { .. }
-                | E::TensorRead { .. }
-                | E::TensorQuerySize { .. } => return None,
+                _ => return None,
             }
         };
         if let crate::TypeInner::Pointer {
@@ -585,61 +527,6 @@ impl super::Validator {
         use crate::Expression as Ex;
         for handle in range.clone() {
             match context.expressions[handle] {
-                Ex::Literal(_)
-                | Ex::Constant(_)
-                | Ex::Override(_)
-                | Ex::ZeroValue(_)
-                | Ex::Compose { .. }
-                | Ex::Access { .. }
-                | Ex::AccessIndex { .. }
-                | Ex::Splat { .. }
-                | Ex::Swizzle { .. }
-                | Ex::FunctionArgument(_)
-                | Ex::GlobalVariable(_)
-                | Ex::LocalVariable(_)
-                | Ex::Load { .. }
-                | Ex::ImageSample { .. }
-                | Ex::ImageProcessing { .. }
-                | Ex::ArrayConversion { .. }
-                | Ex::Bitcast { .. }
-                | Ex::ImageLoad { .. }
-                | Ex::ImageQuery { .. }
-                | Ex::ImageSparseResident { .. }
-                | Ex::Unary { .. }
-                | Ex::Binary { .. }
-                | Ex::Select { .. }
-                | Ex::Derivative { .. }
-                | Ex::Relational { .. }
-                | Ex::Math { .. }
-                | Ex::As { .. }
-                | Ex::ArrayLength(_)
-                | Ex::WideArrayLength(_)
-                | Ex::PhysicalPointer { .. }
-                | Ex::PhysicalAddress { .. }
-                | Ex::BufferPointer { .. }
-                | Ex::HeapOffset { .. }
-                | Ex::RayQueryGet { .. }
-                | Ex::AccelerationStructureFromAddress { .. }
-                | Ex::HitObjectGet { .. }
-                | Ex::FetchMicroTriangleVertex { .. }
-                | Ex::CooperativeLoad { .. }
-                | Ex::CooperativeMultiplyAdd { .. }
-                | Ex::CooperativeMatrixLength { .. }
-                | Ex::Replicate { .. }
-                | Ex::Expect { .. }
-                | Ex::Convert { .. }
-                | Ex::TensorCreate { .. }
-                | Ex::TensorSet { .. }
-                | Ex::CooperativeVectorLoad { .. }
-                | Ex::CooperativeVectorMatMul { .. }
-                | Ex::TensorRead { .. }
-                | Ex::TensorQuerySize { .. }
-                | Ex::IsHelperInvocation
-                | Ex::ReadClock { .. }
-                | Ex::AttachmentRead { .. }
-                | Ex::InterpolateAt { .. }
-                | Ex::FragmentFetch { .. }
-                | Ex::ImageFootprint { .. } => self.emit_expression(handle, context)?,
                 Ex::CallResult(_)
                 | Ex::AtomicResult { .. }
                 | Ex::RayQueryProceedResult
@@ -651,6 +538,7 @@ impl super::Validator {
                     return Err(FunctionError::EmitResult(handle)
                         .with_span_handle(handle, context.expressions));
                 }
+                _ => self.emit_expression(handle, context)?,
             }
         }
         Ok(())
@@ -715,63 +603,7 @@ impl super::Validator {
                 | E::GlobalVariable(_)
                 | E::FunctionArgument(_)
                 | E::BufferPointer { .. } => break,
-                E::Literal(_)
-                | E::Constant(_)
-                | E::Override(_)
-                | E::ZeroValue(_)
-                | E::Compose { .. }
-                | E::Splat { .. }
-                | E::Swizzle { .. }
-                | E::Load { .. }
-                | E::ImageSample { .. }
-                | E::ImageLoad { .. }
-                | E::ImageQuery { .. }
-                | E::Unary { .. }
-                | E::Binary { .. }
-                | E::Select { .. }
-                | E::Derivative { .. }
-                | E::Relational { .. }
-                | E::Math { .. }
-                | E::As { .. }
-                | E::CallResult(_)
-                | E::AtomicResult { .. }
-                | E::ArrayLength(_)
-                | E::WideArrayLength(_)
-                | E::PhysicalPointer { .. }
-                | E::PhysicalAddress { .. }
-                | E::HeapOffset { .. }
-                | E::RayQueryProceedResult
-                | E::RayQueryGet { .. }
-                | E::ReportIntersectionResult
-                | E::AccelerationStructureFromAddress { .. }
-                | E::HitObjectGet { .. }
-                | E::FetchMicroTriangleVertex { .. }
-                | E::SubgroupBallotResult
-                | E::SubgroupOperationResult { .. }
-                | E::SpirvInstructionResult { .. }
-                | E::CooperativeLoad { .. }
-                | E::CooperativeMultiplyAdd { .. }
-                | E::CooperativeMatrixLength { .. }
-                | E::Replicate { .. }
-                | E::Expect { .. }
-                | E::ImageSparseResident { .. }
-                | E::IsHelperInvocation
-                | E::ReadClock { .. }
-                | E::InterpolateAt { .. }
-                | E::FragmentFetch { .. }
-                | E::ImageFootprint { .. }
-                | E::AttachmentRead { .. }
-                | E::CooperativeVectorLoad { .. }
-                | E::CooperativeVectorMatMul { .. }
-                | E::Convert { .. }
-                | E::CooperativeMatrixResult { .. }
-                | E::TensorCreate { .. }
-                | E::ImageProcessing { .. }
-                | E::ArrayConversion { .. }
-                | E::Bitcast { .. }
-                | E::TensorSet { .. }
-                | E::TensorRead { .. }
-                | E::TensorQuerySize { .. } => {
+                _ => {
                     if matches!(
                         context.resolve_pointer_type(current).pointer_space(),
                         Some(AddressSpace::PhysicalStorage { .. })
@@ -798,25 +630,7 @@ impl super::Validator {
                 ))
                 .with_span(span, "expects a texture argument"));
             }
-            Ti::Scalar(_)
-            | Ti::Vector { .. }
-            | Ti::Matrix { .. }
-            | Ti::CooperativeMatrix { .. }
-            | Ti::LongVector { .. }
-            | Ti::TensorLayout { .. }
-            | Ti::TensorView { .. }
-            | Ti::Tensor { .. }
-            | Ti::Atomic(_)
-            | Ti::Pointer { .. }
-            | Ti::ValuePointer { .. }
-            | Ti::Array { .. }
-            | Ti::Struct { .. }
-            | Ti::AccelerationStructure
-            | Ti::RayQuery
-            | Ti::HitObject { .. }
-            | Ti::BindingArray { .. }
-            | Ti::BufferDescriptor { .. }
-            | Ti::Spirv { .. } => {}
+            _ => {}
         }
 
         let pointer_ty = context.resolve_pointer_type(pointer);
@@ -1054,185 +868,6 @@ impl super::Validator {
         Ok(())
     }
 
-    fn validate_statement(
-        &mut self,
-        statement: &crate::Statement,
-        span: crate::Span,
-        context: &BlockContext,
-    ) -> Result<super::ShaderStages, WithSpan<FunctionError>> {
-        use crate::Statement as S;
-        let mut stages = super::ShaderStages::all();
-        match *statement {
-            S::Emit(ref range) => self.validate_emit(range, context)?,
-            S::Block(_) | S::If { .. } | S::Switch { .. } | S::Loop { .. } => {}
-            S::Break => {
-                if !context.abilities.contains(ControlFlowAbility::BREAK) {
-                    return Err(FunctionError::BreakOutsideOfLoopOrSwitch
-                        .with_span_static(span, "invalid break"));
-                }
-            }
-            S::Continue => {
-                if !context.abilities.contains(ControlFlowAbility::CONTINUE) {
-                    return Err(FunctionError::ContinueOutsideOfLoop
-                        .with_span_static(span, "invalid continue"));
-                }
-            }
-            S::Return { value } => self.validate_return(value, span, context)?,
-            S::Kill
-            | S::TerminateInvocation
-            | S::Demote
-            | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock => {
-                stages &= super::ShaderStages::FRAGMENT;
-            }
-            S::SplitBarrier { .. } | S::ScopedBarrier { .. } => {}
-            S::EmitVertex { .. } | S::EndPrimitive { .. } => {
-                stages &= super::ShaderStages::GEOMETRY;
-            }
-            S::CooperativeMatrix {
-                ref function,
-                result,
-            } => self.validate_cooperative_matrix_statement(function, result, context)?,
-            S::CooperativeVector(ref function) => {
-                self.validate_cooperative_vector_statement(function, context)?;
-            }
-            S::SpirvInstruction {
-                ref operands,
-                result,
-                ..
-            } => self.validate_spirv_instruction(operands, result, context)?,
-            S::Assume { condition } => self.validate_condition(condition, context)?,
-            S::MeshFunction(ref function) => {
-                stages &= self.validate_mesh_function(function, context)?;
-            }
-            S::DebugPrintf { ref arguments, .. } => {
-                for argument in arguments {
-                    if let crate::DebugPrintfArgument::Value(value) = *argument {
-                        context.resolve_type_inner(value, &self.valid_expression_set)?;
-                    }
-                }
-            }
-            S::Abort {
-                ref message,
-                ty,
-                ref arguments,
-            } => self.validate_abort(message, ty, arguments, span, context)?,
-            S::TensorWrite {
-                tensor,
-                coordinates,
-                value,
-                ..
-            } => self.validate_tensor_write(tensor, coordinates, value, context)?,
-            S::ControlBarrier(_) | S::MemoryBarrier(_) => {
-                stages &= super::ShaderStages::COMPUTE_LIKE;
-            }
-            S::Store { pointer, value } => self.validate_store(pointer, value, span, context)?,
-            S::ImageStore {
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                value,
-            } => self.validate_image_store(
-                image,
-                coordinate,
-                array_index,
-                sample,
-                level,
-                value,
-                span,
-                context,
-            )?,
-            S::Call {
-                function,
-                ref arguments,
-                result,
-            } => match self.validate_call(function, arguments, result, context) {
-                Ok(callee_stages) => stages &= callee_stages,
-                Err(error) => {
-                    return Err(error.and_then(|error| {
-                        FunctionError::InvalidCall { function, error }
-                            .with_span_static(span, "invalid function call")
-                    }));
-                }
-            },
-            S::Atomic {
-                pointer,
-                ref fun,
-                value,
-                result,
-                order: _,
-            } => self.validate_atomic(pointer, *fun, value, result, span, context)?,
-            S::ImageAtomic {
-                image,
-                coordinate,
-                array_index,
-                fun,
-                value,
-                sample,
-                result,
-                order: _,
-            } => self.validate_image_atomic(
-                image,
-                coordinate,
-                array_index,
-                fun,
-                value,
-                sample,
-                result,
-                context,
-            )?,
-            S::AtomicLoad {
-                ref location,
-                order: _,
-                result,
-            } => self.validate_atomic_load(location, result, context)?,
-            S::AtomicStore {
-                ref location,
-                value,
-                order: _,
-            } => self.validate_atomic_store(location, value, context)?,
-            S::RayQuery { query, ref fun } => {
-                self.validate_ray_query(query, fun, span, context)?;
-            }
-            S::SubgroupBallot { result, predicate } => {
-                self.validate_subgroup_ballot(result, predicate, context)?;
-            }
-            S::SubgroupCollectiveOperation {
-                op,
-                collective_op,
-                argument,
-                result,
-            } => self.validate_subgroup_operation(op, collective_op, argument, result, context)?,
-            S::SubgroupGather {
-                ref mode,
-                argument,
-                result,
-            } => self.validate_subgroup_gather(mode, argument, result, context)?,
-            S::SubgroupFunction { ref fun, result } => {
-                self.validate_subgroup_function(fun, result, context)?;
-            }
-            S::CooperativeStore { target, ref data } => {
-                self.validate_cooperative_store(target, data, context)?;
-            }
-            S::HitObject { object, ref fun } => {
-                stages &= self.validate_hit_object(object, fun, span, context)?;
-            }
-            S::ReorderThread {
-                flavor: _,
-                hint,
-                bits,
-            } => {
-                stages &= self.validate_reorder_thread(hint, bits, context)?;
-            }
-            S::RayPipelineFunction(ref fun) => {
-                stages &= self.validate_ray_pipeline_function(fun, span, context)?;
-            }
-        }
-        Ok(stages)
-    }
-
     fn validate_block(
         &mut self,
         statements: &crate::Block,
@@ -1264,7 +899,7 @@ impl super::Validator {
                     );
                 }
                 Validation::Statement(statement, span, context) => {
-                    stages &= self.validate_statement_kind(statement, span, context, &mut tasks)?;
+                    stages &= self.validate_statement(statement, span, context, &mut tasks)?;
                 }
                 Validation::Scope(base) => self.forget_expressions(base),
                 Validation::BreakIf {
@@ -1288,7 +923,7 @@ impl super::Validator {
         }
     }
 
-    fn validate_statement_kind<'a>(
+    fn validate_statement<'a>(
         &mut self,
         statement: &'a crate::Statement,
         span: crate::Span,
@@ -1301,6 +936,7 @@ impl super::Validator {
             context,
             scoped,
         };
+        let mut stages = super::ShaderStages::all();
         match *statement {
             S::Block(ref inner) => tasks.push(block(inner, context, true)),
             S::If {
@@ -1357,49 +993,177 @@ impl super::Validator {
                     false,
                 ));
             }
-            S::Emit(_)
-            | S::Break
-            | S::Continue
-            | S::Return { .. }
-            | S::Kill
+            S::Emit(ref range) => self.validate_emit(range, &context)?,
+            S::Break => {
+                if !context.abilities.contains(ControlFlowAbility::BREAK) {
+                    return Err(FunctionError::BreakOutsideOfLoopOrSwitch
+                        .with_span_static(span, "invalid break"));
+                }
+            }
+            S::Continue => {
+                if !context.abilities.contains(ControlFlowAbility::CONTINUE) {
+                    return Err(FunctionError::ContinueOutsideOfLoop
+                        .with_span_static(span, "invalid continue"));
+                }
+            }
+            S::Return { value } => self.validate_return(value, span, &context)?,
+            S::Kill
             | S::TerminateInvocation
             | S::Demote
             | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock
-            | S::EmitVertex { .. }
-            | S::EndPrimitive { .. }
-            | S::ControlBarrier(_)
-            | S::MemoryBarrier(_)
-            | S::ScopedBarrier { .. }
-            | S::SplitBarrier { .. }
-            | S::Store { .. }
-            | S::ImageStore { .. }
-            | S::Atomic { .. }
-            | S::AtomicLoad { .. }
-            | S::AtomicStore { .. }
-            | S::ImageAtomic { .. }
-            | S::Call { .. }
-            | S::RayQuery { .. }
-            | S::RayPipelineFunction(_)
-            | S::HitObject { .. }
-            | S::ReorderThread { .. }
-            | S::MeshFunction(_)
-            | S::SubgroupBallot { .. }
-            | S::SubgroupGather { .. }
-            | S::SubgroupCollectiveOperation { .. }
-            | S::SubgroupFunction { .. }
-            | S::CooperativeStore { .. }
-            | S::DebugPrintf { .. }
-            | S::Assume { .. }
-            | S::CooperativeVector(_)
-            | S::CooperativeMatrix { .. }
-            | S::Abort { .. }
-            | S::TensorWrite { .. }
-            | S::SpirvInstruction { .. } => {
-                return self.validate_statement(statement, span, &context);
+            | S::EndInvocationInterlock => {
+                stages &= super::ShaderStages::FRAGMENT;
+            }
+            S::SplitBarrier { .. } | S::ScopedBarrier { .. } => {}
+            S::EmitVertex { .. } | S::EndPrimitive { .. } => {
+                stages &= super::ShaderStages::GEOMETRY;
+            }
+            S::CooperativeMatrix {
+                ref function,
+                result,
+            } => self.validate_cooperative_matrix_statement(function, result, &context)?,
+            S::CooperativeVector(ref function) => {
+                self.validate_cooperative_vector_statement(function, &context)?;
+            }
+            S::SpirvInstruction {
+                ref operands,
+                result,
+                ..
+            } => self.validate_spirv_instruction(operands, result, &context)?,
+            S::Assume { condition } => self.validate_condition(condition, &context)?,
+            S::MeshFunction(ref function) => {
+                stages &= self.validate_mesh_function(function, &context)?;
+            }
+            S::DebugPrintf { ref arguments, .. } => {
+                for argument in arguments {
+                    if let crate::DebugPrintfArgument::Value(value) = *argument {
+                        context.resolve_type_inner(value, &self.valid_expression_set)?;
+                    }
+                }
+            }
+            S::Abort {
+                ref message,
+                ty,
+                ref arguments,
+            } => self.validate_abort(message, ty, arguments, span, &context)?,
+            S::TensorWrite {
+                tensor,
+                coordinates,
+                value,
+                ..
+            } => self.validate_tensor_write(tensor, coordinates, value, &context)?,
+            S::ControlBarrier(_) | S::MemoryBarrier(_) => {
+                stages &= super::ShaderStages::COMPUTE_LIKE;
+            }
+            S::Store { pointer, value } => self.validate_store(pointer, value, span, &context)?,
+            S::ImageStore {
+                image,
+                coordinate,
+                array_index,
+                sample,
+                level,
+                value,
+            } => self.validate_image_store(
+                crate::Texel {
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                },
+                level,
+                value,
+                span,
+                &context,
+            )?,
+            S::Call {
+                function,
+                ref arguments,
+                result,
+            } => match self.validate_call(function, arguments, result, &context) {
+                Ok(callee_stages) => stages &= callee_stages,
+                Err(error) => {
+                    return Err(error.and_then(|error| {
+                        FunctionError::InvalidCall { function, error }
+                            .with_span_static(span, "invalid function call")
+                    }));
+                }
+            },
+            S::Atomic {
+                pointer,
+                ref fun,
+                value,
+                result,
+                order: _,
+            } => self.validate_atomic(pointer, *fun, value, result, span, &context)?,
+            S::ImageAtomic {
+                image,
+                coordinate,
+                array_index,
+                fun,
+                value,
+                sample,
+                result,
+                order: _,
+            } => self.validate_image_atomic(
+                crate::Texel {
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                },
+                fun,
+                value,
+                result,
+                &context,
+            )?,
+            S::AtomicLoad {
+                ref location,
+                order: _,
+                result,
+            } => self.validate_atomic_load(location, result, &context)?,
+            S::AtomicStore {
+                ref location,
+                value,
+                order: _,
+            } => self.validate_atomic_store(location, value, &context)?,
+            S::RayQuery { query, ref fun } => {
+                self.validate_ray_query(query, fun, span, &context)?;
+            }
+            S::SubgroupBallot { result, predicate } => {
+                self.validate_subgroup_ballot(result, predicate, &context)?;
+            }
+            S::SubgroupCollectiveOperation {
+                op,
+                collective_op,
+                argument,
+                result,
+            } => self.validate_subgroup_operation(op, collective_op, argument, result, &context)?,
+            S::SubgroupGather {
+                ref mode,
+                argument,
+                result,
+            } => self.validate_subgroup_gather(mode, argument, result, &context)?,
+            S::SubgroupFunction { ref fun, result } => {
+                self.validate_subgroup_function(fun, result, &context)?;
+            }
+            S::CooperativeStore { target, ref data } => {
+                self.validate_cooperative_store(target, data, &context)?;
+            }
+            S::HitObject { object, ref fun } => {
+                stages &= self.validate_hit_object(object, fun, span, &context)?;
+            }
+            S::ReorderThread {
+                flavor: _,
+                hint,
+                bits,
+            } => {
+                stages &= self.validate_reorder_thread(hint, bits, &context)?;
+            }
+            S::RayPipelineFunction(ref fun) => {
+                stages &= self.validate_ray_pipeline_function(fun, span, &context)?;
             }
         }
-        Ok(super::ShaderStages::all())
+        Ok(stages)
     }
 
     fn validate_local_var(
@@ -1499,30 +1263,7 @@ impl super::Validator {
                     base,
                     size: crate::ArraySize::Constant(_),
                 } => matches!(module.types[base].inner, Ti::Tensor { .. }),
-                Ti::BindingArray {
-                    size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
-                    ..
-                }
-                | Ti::Scalar(_)
-                | Ti::Vector { .. }
-                | Ti::Matrix { .. }
-                | Ti::CooperativeMatrix { .. }
-                | Ti::LongVector { .. }
-                | Ti::TensorLayout { .. }
-                | Ti::TensorView { .. }
-                | Ti::Atomic(_)
-                | Ti::Pointer { .. }
-                | Ti::ValuePointer { .. }
-                | Ti::Array { .. }
-                | Ti::Struct { .. }
-                | Ti::Image { .. }
-                | Ti::Sampler { .. }
-                | Ti::SampledImage { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
-                | Ti::HitObject { .. }
-                | Ti::BufferDescriptor { .. }
-                | Ti::Spirv { .. } => false,
+                _ => false,
             };
             if !tensor
                 && !self.types[result.ty.index()]
