@@ -1,13 +1,12 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::mem;
 
 use rglsl_types::small_vec::SmallVec;
-use rglsl_types::stack::InlineDepth;
+use rglsl_types::stack::recurse;
 
 use crate::ast::{Expression, ExpressionKind, FunctionCall, FunctionIdentifier, NodeId};
-use crate::deep::{
-    Composite, Part, PartMut, clone_composite, drop_owned, empty_type, eq_composite,
-};
+use crate::deep::{Composite, Part, PartMut, clone_composite, empty_type, eq_composite};
 use crate::span::Span;
 
 pub type SpineLinks<'a> = SmallVec<&'a Expression, 16>;
@@ -355,32 +354,6 @@ impl ExpressionKind {
             _ => false,
         }
     }
-    pub(crate) fn exceeds_inline_depth(&self) -> bool {
-        self.exceeds(InlineDepth::MAX)
-    }
-
-    fn exceeds(&self, depth: InlineDepth) -> bool {
-        if self.is_leaf() {
-            return false;
-        }
-        let Some(nested) = depth.nested() else {
-            return true;
-        };
-        if let Self::FunctionCall(call) = self
-            && let FunctionIdentifier::Constructor(ty) | FunctionIdentifier::Cast(ty) =
-                &call.function.node
-            && !ty.is_leaf_type()
-        {
-            return true;
-        }
-        let mut deep = false;
-        self.for_each_child(|child| {
-            if !deep && child.kind.exceeds(nested) {
-                deep = true;
-            }
-        });
-        deep
-    }
 }
 
 impl Composite for ExpressionKind {
@@ -415,12 +388,12 @@ impl Composite for ExpressionKind {
 
 impl Drop for ExpressionKind {
     fn drop(&mut self) {
-        if !self.exceeds_inline_depth() {
+        if self.is_leaf() {
             return;
         }
-        let mut pending = Vec::new();
-        self.take_owned(&mut pending);
-        drop_owned(pending);
+        recurse(|| {
+            self.for_each_child_mut(|child| drop(mem::replace(child, placeholder())));
+        });
     }
 }
 

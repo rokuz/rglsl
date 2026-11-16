@@ -1,6 +1,5 @@
 [inline-depth]
 functions = [
-    "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::exceeds",
     "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::for_each_child",
     "rglsl_sema::analyze::expression::<impl rglsl_sema::analyze::Analyzer>::is_flat",
     "rglsl_sema::analyze::expression::<impl rglsl_sema::analyze::Analyzer>::flat_operand",

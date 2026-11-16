@@ -94,6 +94,7 @@ rustc-hash = { version = "1.1", default-features = false }
 serde_json = "1.0.143"
 serde = { version = "1.0.225", default-features = false }
 spirv = "0.4"
+stacker = "0.1.25"
 syn = "2.0.104"
 toml = "1.0.0"
 thiserror = { version = "2.0.12", default-features = false }

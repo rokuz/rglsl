@@ -8,7 +8,8 @@ use anyhow::{Context, Result, bail};
 use hashbrown::{HashMap, HashSet};
 
 const ALLOWLIST: &str = "xtask/recursion-allowed.toml";
-const SANCTIONED: [&str; 2] = [
+const SANCTIONED: [&str; 3] = [
+    "rglsl_types::stack::recurse",
     "rglsl_types::stack::Stack::call",
     "rglsl_types::stack::Stack::spawn",
 ];
@@ -141,7 +142,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         println!("\n{failures} problem(s)");
         return Ok(1);
     }
-    println!("\nno recursion outside Stack::call and the allowlist");
+    println!("\nno recursion outside stack::recurse, Stack::call and the allowlist");
     Ok(0)
 }
 

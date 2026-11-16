@@ -110,7 +110,6 @@ pub(crate) fn deep_eq<K: Nested>(left: &K, right: &K) -> bool {
 }
 
 pub(crate) enum Owned {
-    Expression(Expression),
     Type(TypeSpecifier),
     Initializer(Initializer),
     Statement(Statement),
@@ -132,12 +131,6 @@ pub(crate) fn empty_statement() -> Statement {
     )
 }
 
-fn take_expression(expression: &mut Expression, into: &mut Vec<Owned>) {
-    if expression.kind.exceeds_inline_depth() {
-        into.push(Owned::Expression(mem::replace(expression, placeholder())));
-    }
-}
-
 fn take_type(specifier: &mut TypeSpecifier, into: &mut Vec<Owned>) {
     if !specifier.is_leaf_type() {
         into.push(Owned::Type(mem::replace(specifier, empty_type())));
@@ -157,43 +150,31 @@ impl TypeSpecifier {
     }
 
     pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        take_parts(self, into);
+        self.parts_mut(&mut |part| {
+            if let PartMut::Type(specifier) = part {
+                take_type(specifier, into);
+            }
+        });
     }
 }
 
 impl Initializer {
+    const fn is_nonempty_list(&self) -> bool {
+        matches!(self, Self::List(items) if !items.is_empty())
+    }
+
     pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        match self {
-            Self::Expression(expression) => take_expression(expression, into),
-            Self::List(items) => {
-                for item in items {
-                    let leaf = match &item.node {
-                        Self::Expression(expression) => expression.kind.is_leaf(),
-                        Self::List(items) => items.is_empty(),
-                    };
-                    if !leaf {
-                        into.push(Owned::Initializer(mem::replace(
-                            &mut item.node,
-                            Self::List(Vec::new()),
-                        )));
-                    }
+        if let Self::List(items) = self {
+            for item in items {
+                if item.node.is_nonempty_list() {
+                    into.push(Owned::Initializer(mem::replace(
+                        &mut item.node,
+                        Self::List(Vec::new()),
+                    )));
                 }
             }
         }
     }
-}
-
-impl ExpressionKind {
-    pub(crate) fn take_owned(&mut self, into: &mut Vec<Owned>) {
-        take_parts(self, into);
-    }
-}
-
-fn take_parts<C: Composite>(composite: &mut C, into: &mut Vec<Owned>) {
-    composite.parts_mut(&mut |part| match part {
-        PartMut::Expression(expression) => take_expression(expression, into),
-        PartMut::Type(specifier) => take_type(specifier, into),
-    });
 }
 
 impl StatementKind {
@@ -224,7 +205,6 @@ impl StatementKind {
 impl Owned {
     fn take_owned(&mut self, into: &mut Vec<Self>) {
         match self {
-            Self::Expression(expression) => expression.kind.take_owned(into),
             Self::Type(specifier) => specifier.take_owned(into),
             Self::Initializer(initializer) => initializer.take_owned(into),
             Self::Statement(statement) => statement.kind.take_owned(into),
@@ -262,11 +242,7 @@ impl Drop for TypeSpecifier {
 
 impl Drop for Initializer {
     fn drop(&mut self) {
-        let leaf = match self {
-            Self::Expression(expression) => expression.kind.is_leaf(),
-            Self::List(items) => items.is_empty(),
-        };
-        if leaf {
+        if !self.is_nonempty_list() {
             return;
         }
         let mut pending = Vec::new();
