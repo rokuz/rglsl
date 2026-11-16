@@ -2,10 +2,11 @@
 
 use crate::proc::overloads::OverloadSet;
 use crate::proc::overloads::any_overload_set::AnyOverloadSet;
-use crate::proc::overloads::list::List;
+use crate::proc::overloads::list::{List, MathType, StaticRule};
 use crate::proc::overloads::regular::regular;
-use crate::proc::overloads::utils::{float_scalars, list, pairs, rule, scalar_or_vecn, triples};
-use crate::proc::type_methods::{concrete_int_scalars, vector_sizes};
+use crate::proc::overloads::utils::{
+    CONCRETE_INT_SCALARS, FLOAT_SCALARS, VECTOR_SIZES, rule, scalar_or_vecn,
+};
 
 use crate::ir;
 
@@ -131,42 +132,33 @@ impl ir::MathFunction {
     }
 }
 
-fn ldexp() -> List {
-    /// Construct the exponent scalar given the mantissa's inner.
-    const fn exponents_from_mantissa(mantissa: ir::Scalar) -> &'static [ir::Scalar] {
-        match mantissa.kind {
-            ir::ScalarKind::Float => &[ir::Scalar::I32, ir::Scalar::I16],
-            ir::ScalarKind::Sint
-            | ir::ScalarKind::Uint
-            | ir::ScalarKind::Bool
-            | ir::ScalarKind::BFloat
-            | ir::ScalarKind::FloatE4M3
-            | ir::ScalarKind::FloatE5M2
-            | ir::ScalarKind::FloatE2M1
-            | ir::ScalarKind::FloatE3M2
-            | ir::ScalarKind::FloatE2M3
-            | ir::ScalarKind::FloatUE8M0
-            | ir::ScalarKind::FloatMXINT8 => &[],
+const fn build_ldexp() -> [StaticRule; 24] {
+    const EXPONENTS: [ir::Scalar; 2] = [ir::Scalar::I32, ir::Scalar::I16];
+    let mut rules = [StaticRule::EMPTY; 24];
+    let mut idx = 0;
+    let mut m = 0;
+    while m < FLOAT_SCALARS.len() {
+        let mantissa_scalar = FLOAT_SCALARS[m];
+        let mantissas = scalar_or_vecn(mantissa_scalar);
+        let mut e = 0;
+        while e < EXPONENTS.len() {
+            let exponents = scalar_or_vecn(EXPONENTS[e]);
+            let mut k = 0;
+            while k < 4 {
+                rules[idx] = rule([mantissas[k], exponents[k]], mantissas[k]);
+                idx += 1;
+                k += 1;
+            }
+            e += 1;
         }
+        m += 1;
     }
+    rules
+}
 
-    list(
-        // The ldexp mantissa argument can be any floating-point type.
-        float_scalars().flat_map(|mantissa_scalar| {
-            // The exponent type is the integer counterpart of the mantissa type.
-            exponents_from_mantissa(mantissa_scalar)
-                .iter()
-                .flat_map(move |&exponent_scalar| {
-                    // There are scalar and vector component-wise overloads.
-                    scalar_or_vecn(mantissa_scalar)
-                        .zip(scalar_or_vecn(exponent_scalar))
-                        .map(|(mantissa, exponent)| {
-                            let result = mantissa.clone();
-                            rule([mantissa, exponent], result)
-                        })
-                })
-        }),
-    )
+const fn ldexp() -> List {
+    static RULES: [StaticRule; 24] = build_ldexp();
+    List::from_static(&RULES)
 }
 
 const fn integer_dot_result(left: ir::Scalar, right: ir::Scalar) -> ir::Scalar {
@@ -181,22 +173,26 @@ const fn integer_dot_result(left: ir::Scalar, right: ir::Scalar) -> ir::Scalar {
     ir::Scalar { kind, width }
 }
 
-fn integer_dot_rule(
-    left: ir::TypeInner,
-    right: ir::TypeInner,
+const fn integer_dot_rule(
+    left: MathType,
+    right: MathType,
     result: ir::Scalar,
     accumulate: bool,
-) -> crate::proc::overloads::rule::Rule {
-    let result = ir::TypeInner::Scalar(result);
+) -> StaticRule {
+    let result = MathType::Scalar(result);
     if accumulate {
-        rule([left, right, result.clone()], result)
+        rule([left, right, result], result)
     } else {
         rule([left, right], result)
     }
 }
 
-fn integer_dot(accumulate: bool) -> List {
-    list(concrete_int_scalars().flat_map(move |left| {
+const fn build_integer_dot(accumulate: bool) -> [StaticRule; 48] {
+    let mut rules = [StaticRule::EMPTY; 48];
+    let mut idx = 0;
+    let mut l = 0;
+    while l < CONCRETE_INT_SCALARS.len() {
+        let left = CONCRETE_INT_SCALARS[l];
         let other = ir::Scalar {
             kind: match left.kind {
                 ir::ScalarKind::Uint => ir::ScalarKind::Sint,
@@ -214,121 +210,252 @@ fn integer_dot(accumulate: bool) -> List {
             },
             width: left.width,
         };
-        [left, other].into_iter().flat_map(move |right| {
-            vector_sizes().map(move |size| {
-                integer_dot_rule(
-                    ir::TypeInner::Vector { size, scalar: left },
-                    ir::TypeInner::Vector {
+        let rights = [left, other];
+        let mut r = 0;
+        while r < rights.len() {
+            let right = rights[r];
+            let mut s = 0;
+            while s < VECTOR_SIZES.len() {
+                let size = VECTOR_SIZES[s];
+                rules[idx] = integer_dot_rule(
+                    MathType::Vector { size, scalar: left },
+                    MathType::Vector {
                         size,
                         scalar: right,
                     },
                     integer_dot_result(left, right),
                     accumulate,
-                )
-            })
-        })
-    }))
+                );
+                idx += 1;
+                s += 1;
+            }
+            r += 1;
+        }
+        l += 1;
+    }
+    rules
 }
 
-fn packed_integer_dot(accumulate: bool) -> List {
-    let packed = [ir::Scalar::I32, ir::Scalar::U32];
-    list(packed.into_iter().flat_map(move |left| {
-        packed.into_iter().map(move |right| {
-            integer_dot_rule(
-                ir::TypeInner::Scalar(left),
-                ir::TypeInner::Scalar(right),
+const fn integer_dot(accumulate: bool) -> List {
+    static RULES: [StaticRule; 48] = build_integer_dot(false);
+    static ACC_RULES: [StaticRule; 48] = build_integer_dot(true);
+    if accumulate {
+        List::from_static(&ACC_RULES)
+    } else {
+        List::from_static(&RULES)
+    }
+}
+
+const fn build_packed_integer_dot(accumulate: bool) -> [StaticRule; 4] {
+    const PACKED: [ir::Scalar; 2] = [ir::Scalar::I32, ir::Scalar::U32];
+    let mut rules = [StaticRule::EMPTY; 4];
+    let mut idx = 0;
+    let mut l = 0;
+    while l < PACKED.len() {
+        let left = PACKED[l];
+        let mut r = 0;
+        while r < PACKED.len() {
+            let right = PACKED[r];
+            rules[idx] = integer_dot_rule(
+                MathType::Scalar(left),
+                MathType::Scalar(right),
                 integer_dot_result(left, right),
                 accumulate,
-            )
-        })
-    }))
+            );
+            idx += 1;
+            r += 1;
+        }
+        l += 1;
+    }
+    rules
 }
 
-fn outer() -> List {
-    list(
-        triples(vector_sizes(), vector_sizes(), float_scalars()).map(|(cols, rows, scalar)| {
-            // `outer(c, r)` is the linear-algebra product `c * r^T`: the left
-            // operand is a column (one component per row of the result) and
-            // the right operand has one component per column. This is what
-            // GLSL `outerProduct` and SPIR-V `OpOuterProduct` specify.
-            let left = ir::TypeInner::Vector { size: rows, scalar };
-            let right = ir::TypeInner::Vector { size: cols, scalar };
-            let result = ir::TypeInner::Matrix {
-                columns: cols,
-                rows,
-                scalar,
-            };
-            rule([left, right], result)
-        }),
-    )
+const fn packed_integer_dot(accumulate: bool) -> List {
+    static RULES: [StaticRule; 4] = build_packed_integer_dot(false);
+    static ACC_RULES: [StaticRule; 4] = build_packed_integer_dot(true);
+    if accumulate {
+        List::from_static(&ACC_RULES)
+    } else {
+        List::from_static(&RULES)
+    }
 }
 
-fn refract() -> List {
-    list(
-        pairs(vector_sizes(), float_scalars())
-            .map(|(size, scalar)| {
-                let incident = ir::TypeInner::Vector { size, scalar };
-                let normal = incident.clone();
-                let ratio = ir::TypeInner::Scalar(scalar);
-                let result = incident.clone();
-                rule([incident, normal, ratio], result)
-            })
-            .chain(float_scalars().map(|scalar| {
-                let scalar = ir::TypeInner::Scalar(scalar);
-                rule([scalar.clone(), scalar.clone(), scalar.clone()], scalar)
-            })),
-    )
+const fn build_outer() -> [StaticRule; 27] {
+    let mut rules = [StaticRule::EMPTY; 27];
+    let mut idx = 0;
+    let mut c = 0;
+    while c < VECTOR_SIZES.len() {
+        let cols = VECTOR_SIZES[c];
+        let mut r = 0;
+        while r < VECTOR_SIZES.len() {
+            let rows = VECTOR_SIZES[r];
+            let mut s = 0;
+            while s < FLOAT_SCALARS.len() {
+                let scalar = FLOAT_SCALARS[s];
+                let left = MathType::Vector { size: rows, scalar };
+                let right = MathType::Vector { size: cols, scalar };
+                let result = MathType::Matrix {
+                    columns: cols,
+                    rows,
+                    scalar,
+                };
+                rules[idx] = rule([left, right], result);
+                idx += 1;
+                s += 1;
+            }
+            r += 1;
+        }
+        c += 1;
+    }
+    rules
 }
 
-fn transpose() -> List {
-    list(
-        triples(vector_sizes(), vector_sizes(), float_scalars()).map(|(a, b, scalar)| {
-            let input = ir::TypeInner::Matrix {
-                columns: a,
-                rows: b,
-                scalar,
-            };
-            let output = ir::TypeInner::Matrix {
-                columns: b,
-                rows: a,
-                scalar,
-            };
-            rule([input], output)
-        }),
-    )
+const fn outer() -> List {
+    static RULES: [StaticRule; 27] = build_outer();
+    List::from_static(&RULES)
 }
 
-fn extract_bits() -> List {
-    list(concrete_int_scalars().flat_map(|scalar| {
-        scalar_or_vecn(scalar).map(|input| {
-            let offset = ir::TypeInner::Scalar(ir::Scalar::U32);
-            let count = ir::TypeInner::Scalar(ir::Scalar::U32);
-            let output = input.clone();
-            rule([input, offset, count], output)
-        })
-    }))
+const fn build_refract() -> [StaticRule; 12] {
+    let mut rules = [StaticRule::EMPTY; 12];
+    let mut idx = 0;
+    let mut v = 0;
+    while v < VECTOR_SIZES.len() {
+        let size = VECTOR_SIZES[v];
+        let mut s = 0;
+        while s < FLOAT_SCALARS.len() {
+            let scalar = FLOAT_SCALARS[s];
+            let incident = MathType::Vector { size, scalar };
+            let ratio = MathType::Scalar(scalar);
+            rules[idx] = rule([incident, incident, ratio], incident);
+            idx += 1;
+            s += 1;
+        }
+        v += 1;
+    }
+    let mut s = 0;
+    while s < FLOAT_SCALARS.len() {
+        let scalar = MathType::Scalar(FLOAT_SCALARS[s]);
+        rules[idx] = rule([scalar, scalar, scalar], scalar);
+        idx += 1;
+        s += 1;
+    }
+    rules
 }
 
-fn insert_bits() -> List {
-    list(concrete_int_scalars().flat_map(|scalar| {
-        scalar_or_vecn(scalar).map(|input| {
-            let newbits = input.clone();
-            let offset = ir::TypeInner::Scalar(ir::Scalar::U32);
-            let count = ir::TypeInner::Scalar(ir::Scalar::U32);
-            let output = input.clone();
-            rule([input, newbits, offset, count], output)
-        })
-    }))
+const fn refract() -> List {
+    static RULES: [StaticRule; 12] = build_refract();
+    List::from_static(&RULES)
 }
 
-fn mix() -> List {
-    list(float_scalars().flat_map(|scalar| {
-        scalar_or_vecn(scalar).flat_map(move |input| {
-            let scalar_ratio = ir::TypeInner::Scalar(scalar);
-            [
-                rule([input.clone(), input.clone(), input.clone()], input.clone()),
-                rule([input.clone(), input.clone(), scalar_ratio], input),
-            ]
-        })
-    }))
+const fn build_transpose() -> [StaticRule; 27] {
+    let mut rules = [StaticRule::EMPTY; 27];
+    let mut idx = 0;
+    let mut a_idx = 0;
+    while a_idx < VECTOR_SIZES.len() {
+        let a = VECTOR_SIZES[a_idx];
+        let mut b_idx = 0;
+        while b_idx < VECTOR_SIZES.len() {
+            let b = VECTOR_SIZES[b_idx];
+            let mut s = 0;
+            while s < FLOAT_SCALARS.len() {
+                let scalar = FLOAT_SCALARS[s];
+                let input = MathType::Matrix {
+                    columns: a,
+                    rows: b,
+                    scalar,
+                };
+                let output = MathType::Matrix {
+                    columns: b,
+                    rows: a,
+                    scalar,
+                };
+                rules[idx] = rule([input], output);
+                idx += 1;
+                s += 1;
+            }
+            b_idx += 1;
+        }
+        a_idx += 1;
+    }
+    rules
+}
+
+const fn transpose() -> List {
+    static RULES: [StaticRule; 27] = build_transpose();
+    List::from_static(&RULES)
+}
+
+const fn build_extract_bits() -> [StaticRule; 32] {
+    let mut rules = [StaticRule::EMPTY; 32];
+    let mut idx = 0;
+    let u32_scalar = MathType::Scalar(ir::Scalar::U32);
+    let mut s = 0;
+    while s < CONCRETE_INT_SCALARS.len() {
+        let inputs = scalar_or_vecn(CONCRETE_INT_SCALARS[s]);
+        let mut k = 0;
+        while k < 4 {
+            let input = inputs[k];
+            rules[idx] = rule([input, u32_scalar, u32_scalar], input);
+            idx += 1;
+            k += 1;
+        }
+        s += 1;
+    }
+    rules
+}
+
+const fn extract_bits() -> List {
+    static RULES: [StaticRule; 32] = build_extract_bits();
+    List::from_static(&RULES)
+}
+
+const fn build_insert_bits() -> [StaticRule; 32] {
+    let mut rules = [StaticRule::EMPTY; 32];
+    let mut idx = 0;
+    let u32_scalar = MathType::Scalar(ir::Scalar::U32);
+    let mut s = 0;
+    while s < CONCRETE_INT_SCALARS.len() {
+        let inputs = scalar_or_vecn(CONCRETE_INT_SCALARS[s]);
+        let mut k = 0;
+        while k < 4 {
+            let input = inputs[k];
+            rules[idx] = rule([input, input, u32_scalar, u32_scalar], input);
+            idx += 1;
+            k += 1;
+        }
+        s += 1;
+    }
+    rules
+}
+
+const fn insert_bits() -> List {
+    static RULES: [StaticRule; 32] = build_insert_bits();
+    List::from_static(&RULES)
+}
+
+const fn build_mix() -> [StaticRule; 24] {
+    let mut rules = [StaticRule::EMPTY; 24];
+    let mut idx = 0;
+    let mut s = 0;
+    while s < FLOAT_SCALARS.len() {
+        let scalar = FLOAT_SCALARS[s];
+        let scalar_ratio = MathType::Scalar(scalar);
+        let inputs = scalar_or_vecn(scalar);
+        let mut k = 0;
+        while k < 4 {
+            let input = inputs[k];
+            rules[idx] = rule([input, input, input], input);
+            idx += 1;
+            rules[idx] = rule([input, input, scalar_ratio], input);
+            idx += 1;
+            k += 1;
+        }
+        s += 1;
+    }
+    rules
+}
+
+const fn mix() -> List {
+    static RULES: [StaticRule; 24] = build_mix();
+    List::from_static(&RULES)
 }

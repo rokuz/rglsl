@@ -3,72 +3,45 @@
 //! [`List`]: crate::proc::overloads::list::List
 
 use crate::ir;
-use crate::proc::TypeResolution;
-use crate::proc::overloads::list::List;
-use crate::proc::overloads::rule::{Conclusion, Rule};
+use crate::proc::overloads::list::{MathType, StaticRule};
 
-use alloc::vec::Vec;
+pub const FLOAT_SCALARS: [ir::Scalar; 3] = [ir::Scalar::F32, ir::Scalar::F16, ir::Scalar::F64];
 
-/// Produce all the floating-point [`ir::Scalar`]s.
-///
-/// Note that `F32` must appear before other sizes; this is how we
-/// represent conversion rank.
-pub fn float_scalars() -> impl Iterator<Item = ir::Scalar> + Clone {
-    [ir::Scalar::F32, ir::Scalar::F16, ir::Scalar::F64].into_iter()
-}
+pub const CONCRETE_INT_SCALARS: [ir::Scalar; 8] = [
+    ir::Scalar::I32,
+    ir::Scalar::U32,
+    ir::Scalar::I16,
+    ir::Scalar::U16,
+    ir::Scalar::I64,
+    ir::Scalar::U64,
+    ir::Scalar::I8,
+    ir::Scalar::U8,
+];
 
-pub fn scalar_or_vecn(scalar: ir::Scalar) -> impl Iterator<Item = ir::TypeInner> {
+pub const VECTOR_SIZES: [ir::VectorSize; 3] = [
+    ir::VectorSize::Bi,
+    ir::VectorSize::Tri,
+    ir::VectorSize::Quad,
+];
+
+pub const fn scalar_or_vecn(scalar: ir::Scalar) -> [MathType; 4] {
     [
-        ir::TypeInner::Scalar(scalar),
-        ir::TypeInner::Vector {
+        MathType::Scalar(scalar),
+        MathType::Vector {
             size: ir::VectorSize::Bi,
             scalar,
         },
-        ir::TypeInner::Vector {
+        MathType::Vector {
             size: ir::VectorSize::Tri,
             scalar,
         },
-        ir::TypeInner::Vector {
+        MathType::Vector {
             size: ir::VectorSize::Quad,
             scalar,
         },
     ]
-    .into_iter()
 }
 
-/// Construct a [`Rule`] for an operation with the given
-/// argument types and return type.
-pub fn rule<const N: usize>(args: [ir::TypeInner; N], ret: ir::TypeInner) -> Rule {
-    Rule {
-        arguments: Vec::from_iter(args.into_iter().map(TypeResolution::Value)),
-        conclusion: Conclusion::Value(ret),
-    }
-}
-
-/// Construct a [`List`] from the given rules.
-pub fn list(rules: impl Iterator<Item = Rule>) -> List {
-    List::from_rules(rules.collect())
-}
-
-/// Return the cartesian product of two iterators.
-pub fn pairs<T: Clone, U>(
-    left: impl Iterator<Item = T>,
-    right: impl Iterator<Item = U> + Clone,
-) -> impl Iterator<Item = (T, U)> {
-    left.flat_map(move |t| right.clone().map(move |u| (t.clone(), u)))
-}
-
-/// Return the cartesian product of three iterators.
-pub fn triples<T: Clone, U: Clone, V>(
-    left: impl Iterator<Item = T>,
-    middle: impl Iterator<Item = U> + Clone,
-    right: impl Iterator<Item = V> + Clone,
-) -> impl Iterator<Item = (T, U, V)> {
-    left.flat_map(move |t| {
-        let right = right.clone();
-        middle.clone().flat_map(move |u| {
-            let t = t.clone();
-            right.clone().map(move |v| (t.clone(), u.clone(), v))
-        })
-    })
+pub const fn rule<const N: usize>(args: [MathType; N], ret: MathType) -> StaticRule {
+    StaticRule::new(args, ret)
 }

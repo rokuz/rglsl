@@ -76,6 +76,13 @@ impl<T> Arena<T> {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Arena {
+            data: Vec::with_capacity(capacity),
+            span_info: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Extracts the inner vector.
     pub fn into_inner(self) -> Vec<T> {
         self.data

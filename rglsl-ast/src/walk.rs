@@ -1,8 +1,7 @@
 use alloc::vec::Vec;
-use core::cell::RefCell;
-use core::future::Future;
+use core::convert::Infallible;
 
-use rglsl_types::stack::{Call, Stack, Stalled, run};
+use rglsl_types::stack::Stalled;
 
 use crate::ast::{
     ArrayDimension, ArraySpecifier, CaseLabel, Condition, Declaration, DeclarationKind, Expression,
@@ -12,345 +11,322 @@ use crate::ast::{
     TranslationUnit, TypeQualifier, TypeSpecifier, TypeSpecifierNonArray,
 };
 
-pub fn expressions(unit: &TranslationUnit) -> Result<Vec<&Expression>, Stalled> {
-    let walker = Walker {
-        found: RefCell::new(Vec::new()),
-    };
-    let finished = run(|stack| {
-        Cx {
-            walker: &walker,
-            stack,
+enum Step<'a> {
+    Expression(&'a Expression),
+    Statement(&'a Statement),
+    Declaration(&'a Declaration),
+    Initializer(&'a Initializer),
+    Condition(&'a Condition),
+    Prototype(&'a FunctionPrototype),
+    FullySpecified(&'a Spanned<FullySpecifiedType>),
+    Specifier(&'a TypeSpecifier),
+    Members(&'a [Spanned<StructDeclaration>]),
+    Array(&'a Spanned<ArraySpecifier>),
+    Qualifier(&'a Spanned<TypeQualifier>),
+}
+
+fn push_array<'a>(work: &mut Vec<Step<'a>>, specifier: Option<&'a Spanned<ArraySpecifier>>) {
+    if let Some(specifier) = specifier {
+        work.push(Step::Array(specifier));
+    }
+}
+
+fn drain<'a, E>(
+    work: &mut Vec<Step<'a>>,
+    mut visit: impl FnMut(&'a Expression) -> Result<(), E>,
+) -> Result<(), E> {
+    while let Some(step) = work.pop() {
+        match step {
+            Step::Expression(expression) => {
+                visit(expression)?;
+                if expression.kind.is_leaf() {
+                    continue;
+                }
+                let mark = work.len();
+                expression
+                    .kind
+                    .for_each_child(|child| work.push(Step::Expression(child)));
+                if let Some(added) = work.get_mut(mark..) {
+                    added.reverse();
+                }
+                if let ExpressionKind::FunctionCall(call) = &expression.kind
+                    && let FunctionIdentifier::Constructor(specifier)
+                    | FunctionIdentifier::Cast(specifier) = &call.function.node
+                {
+                    work.push(Step::Specifier(specifier));
+                }
+            }
+            Step::Statement(statement) => match &statement.kind {
+                StatementKind::Compound(compound) => {
+                    for child in compound.statements.iter().rev() {
+                        work.push(Step::Statement(child));
+                    }
+                }
+                StatementKind::Declaration(declaration) => {
+                    work.push(Step::Declaration(declaration));
+                }
+                StatementKind::Expression(expression) => {
+                    if let Some(expression) = expression {
+                        work.push(Step::Expression(expression));
+                    }
+                }
+                StatementKind::Selection {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    if let Some(else_branch) = else_branch {
+                        work.push(Step::Statement(else_branch));
+                    }
+                    work.push(Step::Statement(then_branch));
+                    work.push(Step::Expression(condition));
+                }
+                StatementKind::Switch {
+                    selector,
+                    statements,
+                } => {
+                    for child in statements.iter().rev() {
+                        work.push(Step::Statement(child));
+                    }
+                    work.push(Step::Expression(selector));
+                }
+                StatementKind::CaseLabel(CaseLabel::Case(label)) => {
+                    work.push(Step::Expression(label));
+                }
+                StatementKind::Jump(JumpStatement::Return(Some(value))) => {
+                    work.push(Step::Expression(value));
+                }
+                StatementKind::CaseLabel(CaseLabel::Default) | StatementKind::Jump(_) => {}
+                StatementKind::While { condition, body } => {
+                    work.push(Step::Statement(body));
+                    work.push(Step::Condition(condition));
+                }
+                StatementKind::DoWhile { body, condition } => {
+                    work.push(Step::Expression(condition));
+                    work.push(Step::Statement(body));
+                }
+                StatementKind::For(statement) => {
+                    work.push(Step::Statement(&statement.body));
+                    if let Some(increment) = &statement.increment {
+                        work.push(Step::Expression(increment));
+                    }
+                    if let Some(condition) = &statement.condition {
+                        work.push(Step::Condition(condition));
+                    }
+                    work.push(Step::Statement(&statement.init));
+                }
+                StatementKind::Attributed {
+                    attributes,
+                    statement,
+                } => {
+                    work.push(Step::Statement(statement));
+                    for argument in attributes
+                        .iter()
+                        .rev()
+                        .filter_map(|attribute| attribute.argument.as_ref())
+                    {
+                        work.push(Step::Expression(argument));
+                    }
+                }
+            },
+            Step::Declaration(declaration) => match &declaration.kind {
+                DeclarationKind::FunctionPrototype(prototype)
+                | DeclarationKind::SpirvInstruction { prototype, .. } => {
+                    work.push(Step::Prototype(&prototype.node));
+                }
+                DeclarationKind::InitDeclaratorList(list) => {
+                    for declarator in list.declarators.iter().rev() {
+                        if let Some(initializer) = &declarator.kind.initializer {
+                            work.push(Step::Initializer(&initializer.node));
+                        }
+                        push_array(work, declarator.kind.array.as_ref());
+                    }
+                    work.push(Step::FullySpecified(&list.ty));
+                }
+                DeclarationKind::Precision { .. } => {}
+                DeclarationKind::Block {
+                    structure,
+                    instance,
+                } => {
+                    if let Some(instance) = instance {
+                        push_array(work, instance.node.array.as_ref());
+                    }
+                    work.push(Step::Members(&structure.members));
+                    work.push(Step::Qualifier(&structure.qualifier));
+                }
+                DeclarationKind::Qualifier(qualifier)
+                | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => {
+                    work.push(Step::Qualifier(qualifier));
+                }
+                DeclarationKind::SpirvExecutionMode(mode) => {
+                    if mode.node.kind == SpirvExecutionModeKind::Id {
+                        for operand in mode.node.operands.iter().rev() {
+                            work.push(Step::Expression(operand));
+                        }
+                    }
+                }
+            },
+            Step::Initializer(initializer) => match initializer {
+                Initializer::Expression(expression) => {
+                    work.push(Step::Expression(expression));
+                }
+                Initializer::List(items) => {
+                    for item in items.iter().rev() {
+                        work.push(Step::Initializer(&item.node));
+                    }
+                }
+            },
+            Step::Condition(condition) => match condition {
+                Condition::Expression(expression) => {
+                    work.push(Step::Expression(expression));
+                }
+                Condition::Declaration(declaration) => {
+                    work.push(Step::Initializer(&declaration.kind.initializer.node));
+                    work.push(Step::FullySpecified(&declaration.kind.ty));
+                }
+            },
+            Step::Prototype(prototype) => {
+                for attribute in prototype
+                    .trailing_attributes
+                    .iter()
+                    .rev()
+                    .chain(prototype.attributes.iter().rev())
+                {
+                    if let Some(argument) = &attribute.argument {
+                        work.push(Step::Expression(argument));
+                    }
+                }
+                for parameter in prototype.parameters.iter().rev() {
+                    push_array(work, parameter.kind.array.as_ref());
+                    work.push(Step::FullySpecified(&parameter.kind.ty));
+                }
+                work.push(Step::FullySpecified(&prototype.return_type));
+            }
+            Step::FullySpecified(ty) => {
+                work.push(Step::Specifier(&ty.node.specifier.node));
+                if let Some(qualifier) = &ty.node.qualifier {
+                    work.push(Step::Qualifier(qualifier));
+                }
+            }
+            Step::Specifier(specifier) => {
+                push_array(work, specifier.array.as_ref());
+                if let Some(parameters) = &specifier.parameters {
+                    for value in parameters.node.values.iter().rev() {
+                        work.push(Step::Expression(value));
+                    }
+                    if let Some(element) = &parameters.node.element {
+                        work.push(Step::Specifier(&element.node));
+                    }
+                }
+                match &specifier.non_array {
+                    TypeSpecifierNonArray::Struct(structure) => {
+                        work.push(Step::Members(&structure.declarations));
+                    }
+                    TypeSpecifierNonArray::InlineBlock(declarations) => {
+                        work.push(Step::Members(declarations));
+                    }
+                    TypeSpecifierNonArray::Spirv(spirv) => {
+                        for parameter in spirv.parameters.iter().rev() {
+                            match parameter {
+                                SpirvTypeParameter::Constant(value) => {
+                                    work.push(Step::Expression(value));
+                                }
+                                SpirvTypeParameter::Type(ty) => {
+                                    work.push(Step::Specifier(&ty.node));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Step::Members(members) => {
+                for member in members.iter().rev() {
+                    for declarator in member.node.declarators.iter().rev() {
+                        push_array(work, declarator.node.array.as_ref());
+                    }
+                    work.push(Step::FullySpecified(&member.node.ty));
+                }
+            }
+            Step::Array(specifier) => {
+                for dimension in specifier.node.dimensions.iter().rev() {
+                    if let ArrayDimension::Sized(size) = &dimension.node {
+                        work.push(Step::Expression(size));
+                    }
+                }
+            }
+            Step::Qualifier(qualifier) => {
+                for single in qualifier.node.qualifiers.iter().rev() {
+                    match &single.node {
+                        SingleTypeQualifier::Layout(layout) => {
+                            for id in layout.ids.iter().rev() {
+                                if let Some(value) = &id.node.value {
+                                    work.push(Step::Expression(value));
+                                }
+                            }
+                        }
+                        SingleTypeQualifier::SpirvDecorate(decorate)
+                            if decorate.kind == SpirvDecorateKind::Id =>
+                        {
+                            for operand in decorate.operands.iter().rev() {
+                                work.push(Step::Expression(operand));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
-        .unit(unit)
+    }
+    Ok(())
+}
+
+pub fn try_visit_expressions<'a, E>(
+    unit: &'a TranslationUnit,
+    mut visit: impl FnMut(&'a Expression) -> Result<(), E>,
+) -> Result<(), E> {
+    let mut work = Vec::with_capacity(64);
+    for declaration in &unit.external_declarations {
+        match declaration {
+            ExternalDeclaration::FunctionDefinition(definition) => {
+                work.push(Step::Prototype(&definition.kind.prototype.node));
+                drain(&mut work, &mut visit)?;
+                for statement in &definition.kind.body.node.statements {
+                    work.push(Step::Statement(statement));
+                    drain(&mut work, &mut visit)?;
+                }
+            }
+            ExternalDeclaration::Declaration(declaration) => {
+                work.push(Step::Declaration(declaration));
+                drain(&mut work, &mut visit)?;
+            }
+            ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn visit_expressions<'a>(unit: &'a TranslationUnit, mut visit: impl FnMut(&'a Expression)) {
+    let _: Result<(), Infallible> = try_visit_expressions(unit, |expression| {
+        visit(expression);
+        Ok(())
     });
-    finished.ok_or(Stalled)?;
-    Ok(walker.found.into_inner())
+}
+
+pub fn expressions(unit: &TranslationUnit) -> Result<Vec<&Expression>, Stalled> {
+    let capacity = usize::try_from(unit.next_id()).unwrap_or(0);
+    let mut found = Vec::with_capacity(capacity);
+    visit_expressions(unit, |expression| found.push(expression));
+    Ok(found)
 }
 
 pub fn statement_expressions(statement: &Statement) -> Result<Vec<&Expression>, Stalled> {
-    let walker = Walker {
-        found: RefCell::new(Vec::new()),
-    };
-    let finished = run(|stack| {
-        Cx {
-            walker: &walker,
-            stack,
-        }
-        .statement(statement)
+    let mut found = Vec::new();
+    let mut work = Vec::with_capacity(32);
+    work.push(Step::Statement(statement));
+    let _: Result<(), Infallible> = drain(&mut work, |expression| {
+        found.push(expression);
+        Ok(())
     });
-    finished.ok_or(Stalled)?;
-    Ok(walker.found.into_inner())
-}
-
-struct Walker<'a> {
-    found: RefCell<Vec<&'a Expression>>,
-}
-
-#[derive(Clone)]
-struct Cx<'b, 'a> {
-    walker: &'b Walker<'a>,
-    stack: Stack<'b>,
-}
-
-impl<'b> Cx<'b, '_> {
-    fn call<T: 'b>(&self, frame: impl Future<Output = T> + 'b) -> Call<'b, T> {
-        self.stack.call(frame)
-    }
-}
-
-impl<'b, 'a: 'b> Cx<'b, 'a> {
-    async fn unit(self, unit: &'a TranslationUnit) {
-        for declaration in &unit.external_declarations {
-            match declaration {
-                ExternalDeclaration::FunctionDefinition(definition) => {
-                    self.call(self.clone().prototype(&definition.kind.prototype.node))
-                        .await;
-                    for statement in &definition.kind.body.node.statements {
-                        self.call(self.clone().statement(statement)).await;
-                    }
-                }
-                ExternalDeclaration::Declaration(declaration) => {
-                    self.call(self.clone().declaration(declaration)).await;
-                }
-                ExternalDeclaration::Directive(_) | ExternalDeclaration::Semicolon(_) => {}
-            }
-        }
-    }
-
-    async fn qualifier(self, qualifier: &'a Spanned<TypeQualifier>) {
-        for single in &qualifier.node.qualifiers {
-            match &single.node {
-                SingleTypeQualifier::Layout(layout) => {
-                    for id in &layout.ids {
-                        if let Some(value) = &id.node.value {
-                            self.call(self.clone().expression(value)).await;
-                        }
-                    }
-                }
-                SingleTypeQualifier::SpirvDecorate(decorate)
-                    if decorate.kind == SpirvDecorateKind::Id =>
-                {
-                    for operand in &decorate.operands {
-                        self.call(self.clone().expression(operand)).await;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    async fn array(self, specifier: Option<&'a Spanned<ArraySpecifier>>) {
-        let Some(specifier) = specifier else {
-            return;
-        };
-        for dimension in &specifier.node.dimensions {
-            if let ArrayDimension::Sized(size) = &dimension.node {
-                self.call(self.clone().expression(size)).await;
-            }
-        }
-    }
-
-    async fn members(self, members: &'a [Spanned<StructDeclaration>]) {
-        for member in members {
-            self.call(self.clone().fully_specified(&member.node.ty))
-                .await;
-            for declarator in &member.node.declarators {
-                self.call(self.clone().array(declarator.node.array.as_ref()))
-                    .await;
-            }
-        }
-    }
-
-    async fn specifier(self, specifier: &'a TypeSpecifier) {
-        match &specifier.non_array {
-            TypeSpecifierNonArray::Struct(structure) => {
-                self.call(self.clone().members(&structure.declarations))
-                    .await;
-            }
-            TypeSpecifierNonArray::InlineBlock(declarations) => {
-                self.call(self.clone().members(declarations)).await;
-            }
-            TypeSpecifierNonArray::Spirv(spirv) => {
-                for parameter in &spirv.parameters {
-                    match parameter {
-                        SpirvTypeParameter::Constant(value) => {
-                            self.call(self.clone().expression(value)).await;
-                        }
-                        SpirvTypeParameter::Type(ty) => {
-                            self.call(self.clone().specifier(&ty.node)).await;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-        if let Some(parameters) = &specifier.parameters {
-            if let Some(element) = &parameters.node.element {
-                self.call(self.clone().specifier(&element.node)).await;
-            }
-            for value in &parameters.node.values {
-                self.call(self.clone().expression(value)).await;
-            }
-        }
-        self.call(self.clone().array(specifier.array.as_ref()))
-            .await;
-    }
-
-    async fn fully_specified(self, ty: &'a Spanned<FullySpecifiedType>) {
-        if let Some(qualifier) = &ty.node.qualifier {
-            self.call(self.clone().qualifier(qualifier)).await;
-        }
-        self.call(self.clone().specifier(&ty.node.specifier.node))
-            .await;
-    }
-
-    async fn prototype(self, prototype: &'a FunctionPrototype) {
-        self.call(self.clone().fully_specified(&prototype.return_type))
-            .await;
-        for parameter in &prototype.parameters {
-            self.call(self.clone().fully_specified(&parameter.kind.ty))
-                .await;
-            self.call(self.clone().array(parameter.kind.array.as_ref()))
-                .await;
-        }
-        for attribute in prototype
-            .attributes
-            .iter()
-            .chain(&prototype.trailing_attributes)
-        {
-            if let Some(argument) = &attribute.argument {
-                self.call(self.clone().expression(argument)).await;
-            }
-        }
-    }
-
-    async fn initializer(self, initializer: &'a Initializer) {
-        match initializer {
-            Initializer::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await;
-            }
-            Initializer::List(items) => {
-                for item in items {
-                    self.call(self.clone().initializer(&item.node)).await;
-                }
-            }
-        }
-    }
-
-    async fn declaration(self, declaration: &'a Declaration) {
-        match &declaration.kind {
-            DeclarationKind::FunctionPrototype(prototype) => {
-                self.call(self.clone().prototype(&prototype.node)).await;
-            }
-            DeclarationKind::InitDeclaratorList(list) => {
-                self.call(self.clone().fully_specified(&list.ty)).await;
-                for declarator in &list.declarators {
-                    self.call(self.clone().array(declarator.kind.array.as_ref()))
-                        .await;
-                    if let Some(initializer) = &declarator.kind.initializer {
-                        self.call(self.clone().initializer(&initializer.node)).await;
-                    }
-                }
-            }
-            DeclarationKind::Precision { .. } => {}
-            DeclarationKind::Block {
-                structure,
-                instance,
-            } => {
-                self.call(self.clone().qualifier(&structure.qualifier))
-                    .await;
-                self.call(self.clone().members(&structure.members)).await;
-                if let Some(instance) = instance {
-                    self.call(self.clone().array(instance.node.array.as_ref()))
-                        .await;
-                }
-            }
-            DeclarationKind::Qualifier(qualifier)
-            | DeclarationKind::QualifiedIdentifiers { qualifier, .. } => {
-                self.call(self.clone().qualifier(qualifier)).await;
-            }
-            DeclarationKind::SpirvInstruction { prototype, .. } => {
-                self.call(self.clone().prototype(&prototype.node)).await;
-            }
-            DeclarationKind::SpirvExecutionMode(mode) => {
-                if mode.node.kind == SpirvExecutionModeKind::Id {
-                    for operand in &mode.node.operands {
-                        self.call(self.clone().expression(operand)).await;
-                    }
-                }
-            }
-        }
-    }
-
-    async fn condition(self, condition: &'a Condition) {
-        match condition {
-            Condition::Expression(expression) => {
-                self.call(self.clone().expression(expression)).await;
-            }
-            Condition::Declaration(declaration) => {
-                self.call(self.clone().fully_specified(&declaration.kind.ty))
-                    .await;
-                self.call(self.clone().initializer(&declaration.kind.initializer.node))
-                    .await;
-            }
-        }
-    }
-
-    async fn statement(self, statement: &'a Statement) {
-        match &statement.kind {
-            StatementKind::Compound(compound) => {
-                for statement in &compound.statements {
-                    self.call(self.clone().statement(statement)).await;
-                }
-            }
-            StatementKind::Declaration(declaration) => {
-                self.call(self.clone().declaration(declaration)).await;
-            }
-            StatementKind::Expression(expression) => {
-                if let Some(expression) = expression {
-                    self.call(self.clone().expression(expression)).await;
-                }
-            }
-            StatementKind::Selection {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.call(self.clone().expression(condition)).await;
-                self.call(self.clone().statement(then_branch)).await;
-                if let Some(else_branch) = else_branch {
-                    self.call(self.clone().statement(else_branch)).await;
-                }
-            }
-            StatementKind::Switch {
-                selector,
-                statements,
-            } => {
-                self.call(self.clone().expression(selector)).await;
-                for statement in statements {
-                    self.call(self.clone().statement(statement)).await;
-                }
-            }
-            StatementKind::CaseLabel(CaseLabel::Case(label)) => {
-                self.call(self.clone().expression(label)).await;
-            }
-            StatementKind::CaseLabel(CaseLabel::Default) => {}
-            StatementKind::While { condition, body } => {
-                self.call(self.clone().condition(condition)).await;
-                self.call(self.clone().statement(body)).await;
-            }
-            StatementKind::DoWhile { body, condition } => {
-                self.call(self.clone().statement(body)).await;
-                self.call(self.clone().expression(condition)).await;
-            }
-            StatementKind::For(statement) => {
-                self.call(self.clone().statement(&statement.init)).await;
-                if let Some(condition) = &statement.condition {
-                    self.call(self.clone().condition(condition)).await;
-                }
-                if let Some(increment) = &statement.increment {
-                    self.call(self.clone().expression(increment)).await;
-                }
-                self.call(self.clone().statement(&statement.body)).await;
-            }
-            StatementKind::Jump(JumpStatement::Return(Some(value))) => {
-                self.call(self.clone().expression(value)).await;
-            }
-            StatementKind::Jump(_) => {}
-            StatementKind::Attributed {
-                attributes,
-                statement,
-            } => {
-                for argument in attributes
-                    .iter()
-                    .filter_map(|attribute| attribute.argument.as_ref())
-                {
-                    self.call(self.clone().expression(argument)).await;
-                }
-                self.call(self.clone().statement(statement)).await;
-            }
-        }
-    }
-
-    async fn expression(self, expression: &'a Expression) {
-        if expression.kind.is_leaf() {
-            self.walker.found.borrow_mut().push(expression);
-            return;
-        }
-        let mut pending = Vec::from([expression]);
-        while let Some(expression) = pending.pop() {
-            self.walker.found.borrow_mut().push(expression);
-            if let ExpressionKind::FunctionCall(call) = &expression.kind
-                && let FunctionIdentifier::Constructor(specifier)
-                | FunctionIdentifier::Cast(specifier) = &call.function.node
-            {
-                self.call(self.clone().specifier(specifier)).await;
-            }
-            let mark = pending.len();
-            expression.kind.for_each_child(|child| pending.push(child));
-            if let Some(added) = pending.get_mut(mark..) {
-                added.reverse();
-            }
-        }
-    }
+    Ok(found)
 }

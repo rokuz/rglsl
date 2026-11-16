@@ -195,21 +195,54 @@ impl FileInput {
         if self.ended {
             return None;
         }
+        let byte = *self.text.as_bytes().get(self.pos)?;
+        if byte.is_ascii() {
+            return Some(byte as char);
+        }
         self.text
             .get(self.pos..)
             .and_then(|rest| rest.chars().next())
     }
 
     fn raw_get(&mut self) -> Option<char> {
-        let character = self.raw_peek()?;
+        if self.ended {
+            return None;
+        }
+        let byte = *self.text.as_bytes().get(self.pos)?;
+        if byte.is_ascii() {
+            self.char_start = self.pos;
+            self.pos += 1;
+            if byte == b'\n' {
+                self.line += 1;
+                self.physical = self.physical.saturating_add(1);
+                self.line_start = self.pos;
+            }
+            return Some(byte as char);
+        }
+        let character = self
+            .text
+            .get(self.pos..)
+            .and_then(|rest| rest.chars().next())?;
         self.char_start = self.pos;
         self.pos += character.len_utf8();
-        if character == '\n' {
-            self.line += 1;
-            self.physical = self.physical.saturating_add(1);
-            self.line_start = self.pos;
-        }
         Some(character)
+    }
+
+    fn skip_ascii_blanks(&mut self) -> bool {
+        if self.ended {
+            return false;
+        }
+        let bytes = self.text.as_bytes();
+        let start = self.pos;
+        while let Some(&(b' ' | b'\t')) = bytes.get(self.pos) {
+            self.pos += 1;
+        }
+        if self.pos > start {
+            self.char_start = self.pos - 1;
+            true
+        } else {
+            false
+        }
     }
 
     fn report(&mut self, events: &mut Events, kind: DiagnosticKind, at: At) {
@@ -288,12 +321,14 @@ impl FileInput {
         context: &ScanContext,
         events: &mut Events,
     ) -> Option<char> {
+        self.skip_ascii_blanks();
         loop {
             let (character, mark) = self.next(context, events);
             if !matches!(character, Some(' ' | '\t')) {
                 self.reset(mark);
                 return character;
             }
+            self.skip_ascii_blanks();
         }
     }
 
@@ -323,11 +358,12 @@ impl FileInput {
     }
 
     pub(crate) fn scan(&mut self, context: &ScanContext, events: &mut Events) -> Token {
-        let mut space = false;
+        let mut space = self.skip_ascii_blanks();
         let (mut character, mut mark) = self.next(context, events);
         loop {
             while matches!(character, Some(' ' | '\t')) {
                 space = true;
+                self.skip_ascii_blanks();
                 (character, mark) = self.next(context, events);
             }
             let start = self.char_start;
@@ -339,6 +375,17 @@ impl FileInput {
             };
             let mut token = match current {
                 '\n' => Token::new(Kind::Newline, at),
+                ';' => Token::new(Kind::Op(";"), at),
+                '(' => Token::new(Kind::Op("("), at),
+                ')' => Token::new(Kind::Op(")"), at),
+                ',' => Token::new(Kind::Op(","), at),
+                '{' => Token::new(Kind::Op("{"), at),
+                '}' => Token::new(Kind::Op("}"), at),
+                '[' => Token::new(Kind::Op("["), at),
+                ']' => Token::new(Kind::Op("]"), at),
+                '?' => Token::new(Kind::Op("?"), at),
+                '~' => Token::new(Kind::Op("~"), at),
+                '#' => Token::new(Kind::Op("#"), at),
                 '/' => {
                     let (next, next_mark) = self.next(context, events);
                     match next {
@@ -357,6 +404,7 @@ impl FileInput {
                         Some('*') => {
                             if self.block_comment(context, events, at) {
                                 space = true;
+                                self.skip_ascii_blanks();
                                 (character, mark) = self.next(context, events);
                                 continue;
                             }
@@ -383,12 +431,16 @@ impl FileInput {
                 }
                 '"' => self.string(context, events, at),
                 '\'' => Token::new(Kind::Quote, at),
-                _ if is_identifier_start(current) => self.identifier(current, context, events, at),
+                _ if is_identifier_start(current) => {
+                    self.identifier(current, start, context, events, at)
+                }
                 _ => self.operator(current, context, events, at),
             };
             token.space = space;
-            let end = self.pos;
-            token.at.exact = self.exact_length(&token, start, end);
+            if token.at.exact == 0 {
+                let end = self.pos;
+                token.at.exact = self.exact_length(&token, start, end);
+            }
             return token;
         }
     }
@@ -447,10 +499,34 @@ impl FileInput {
     fn identifier(
         &mut self,
         first: char,
+        start: usize,
         context: &ScanContext,
         events: &mut Events,
         at: At,
     ) -> Token {
+        if !self.ended && first.is_ascii() {
+            let bytes = self.text.as_bytes();
+            if self.pos == start.saturating_add(1) && bytes.get(start) == Some(&(first as u8)) {
+                let mut end = self.pos;
+                while let Some(&byte) = bytes.get(end) {
+                    if byte.is_ascii_alphanumeric() || byte == b'_' {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if bytes.get(end) != Some(&b'\\')
+                    && end - start <= MAX_TOKEN_LENGTH
+                    && let Some(slice) = self.text.get(start..end)
+                {
+                    self.char_start = end - 1;
+                    self.pos = end;
+                    let mut token = Token::with_text(Kind::Identifier, slice, at);
+                    token.at.exact = offset_u32(end - start);
+                    return token;
+                }
+            }
+        }
         let mut name = Name::new();
         let mut character = Some(first);
         let mut mark = self.mark();

@@ -840,7 +840,7 @@ fn matrix_comp_mult_folds() -> TestResult {
                 .analysis
                 .expression(expression.id)
                 .and_then(|info| info.value.as_ref())
-                .map(|constant| constant.values.clone())
+                .map(|constant| constant.values.to_vec())
                 .unwrap_or_default()
         })
         .collect();

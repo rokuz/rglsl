@@ -421,10 +421,9 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }
             Some(&Callee::Function(id)) => {
-                let frame = self
-                    .clone()
-                    .user_function_call(expression, id, arguments, at);
-                self.nest(frame).await
+                self.clone()
+                    .user_function_call(expression, id, arguments, at)
+                    .await
             }
             Some(&Callee::NonUniform) => {
                 let frame = self.clone().non_uniform_value(arguments, at);
@@ -442,14 +441,12 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             }
             .map(|()| None),
             Some(&Callee::Builtin(id)) => {
-                let frame = self
-                    .clone()
-                    .builtin_function_call(expression, id, arguments, at);
-                self.nest(frame).await
+                self.clone()
+                    .builtin_function_call(expression, id, arguments, at)
+                    .await
             }
             Some(&Callee::Constructor(ref ty)) => {
-                let frame = self.clone().constructor_call(ty, arguments, at);
-                self.nest(frame).await
+                self.clone().constructor_call(ty, arguments, at).await
             }
             Some(&Callee::Cooperative(kind)) => {
                 let frame = self.clone().cooperative_call(kind, arguments, at);

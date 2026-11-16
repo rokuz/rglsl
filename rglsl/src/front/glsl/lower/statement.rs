@@ -50,6 +50,14 @@ fn selection_control(attributes: &[Attribute]) -> SelectionControl {
     }
 }
 
+struct PreparedDeclarator<'d> {
+    local: crate::Handle<crate::LocalVariable>,
+    ir: crate::Handle<crate::Type>,
+    ty: GlslType,
+    initializer: &'d rglsl_ast::ast::Spanned<rglsl_ast::ast::Initializer>,
+    at: crate::Span,
+}
+
 impl FunctionLowerer<'_, '_> {
     pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<()> {
         super::function::on_heap!(self, |cx| cx.statements(statements))
@@ -264,81 +272,99 @@ impl FunctionLowerer<'_, '_> {
         }
     }
 
-    fn local_declaration(&mut self, declaration: &Declaration, reachable: bool) -> Result<()> {
+    fn prepare_local_declarator<'d>(
+        &mut self,
+        declarator: &'d rglsl_ast::ast::Node<rglsl_ast::ast::InitDeclarator>,
+        reachable: bool,
+    ) -> Result<Option<PreparedDeclarator<'d>>> {
+        let at = self.at(declarator.span);
+        let Some(&symbol) = self.lw.analysis.declarations.get(&declarator.id) else {
+            return Ok(None);
+        };
+        let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
+        if variable
+            .qualifiers
+            .flags
+            .contains(QualifierFlags::SPECIALIZATION)
+            && let Some(initializer) = declarator.kind.initializer.as_ref()
+        {
+            let name = Some(declarator.kind.name.node.clone());
+            let ty = variable.ty.clone();
+            let handle = self
+                .lw
+                .specialized_initializer(initializer, &ty, name, at)?;
+            self.lw.globals.insert(symbol, GlobalRef::Override(handle));
+            return Ok(None);
+        }
+        if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
+            && variable.value.as_ref().is_some_and(|value| {
+                shape(&variable.ty, &value.values, &self.lw.analysis.types).is_some()
+            })
+        {
+            self.bind_variable(symbol, Local::Constant);
+            if self.lw.debug.is_some()
+                && let Some(ref value) = variable.value
+            {
+                let ir = self.lw.ir_type(&variable.ty, at)?;
+                let init = self.lw.global_constant(&variable.ty, &value.values, at)?;
+                self.lw.module.constants.append(
+                    crate::Constant {
+                        name: Some(declarator.kind.name.node.clone()),
+                        ty: ir,
+                        init,
+                    },
+                    at,
+                );
+            }
+            return Ok(None);
+        }
+        let ty = variable.ty.clone();
+        if ty
+            .as_opaque()
+            .is_some_and(rglsl_sema::types::Opaque::is_private_object)
+            || ty
+                .element_type()
+                .and_then(|element| element.as_opaque())
+                .is_some_and(rglsl_sema::types::Opaque::is_private_object)
+        {
+            self.lw
+                .deferred_private
+                .insert(symbol, (declarator.kind.name.node.clone(), at));
+            return Ok(None);
+        }
+        let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
+        let local = self.local_typed(ir, Some(declarator.kind.name.node.clone()), at);
+        self.bind_variable(symbol, Local::Variable(local));
+        let Some(initializer) = declarator.kind.initializer.as_ref().filter(|_| reachable) else {
+            return Ok(None);
+        };
+        Ok(Some(PreparedDeclarator {
+            local,
+            ir,
+            ty,
+            initializer,
+            at,
+        }))
+    }
+
+    fn store_local_initializer(
+        &mut self,
+        local: crate::Handle<crate::LocalVariable>,
+        ir: crate::Handle<crate::Type>,
+        value: crate::Handle<Expression>,
+        at: crate::Span,
+    ) -> Result<()> {
+        let value = self.requalify_to(value, ir, at)?;
+        let pointer = self.local_pointer(local, at)?;
+        self.push(IrStatement::Store { pointer, value }, at);
+        Ok(())
+    }
+
+    fn validate_non_declarator(&self, declaration: &Declaration) -> Result<()> {
         let at = self.at(declaration.span);
         match declaration.kind {
-            DeclarationKind::InitDeclaratorList(ref list) => {
-                for declarator in &list.declarators {
-                    let at = self.at(declarator.span);
-                    let Some(&symbol) = self.lw.analysis.declarations.get(&declarator.id) else {
-                        continue;
-                    };
-                    let variable = self.lw.variable(symbol).ok_or_else(|| internal(at))?;
-                    if variable
-                        .qualifiers
-                        .flags
-                        .contains(QualifierFlags::SPECIALIZATION)
-                        && let Some(initializer) = declarator.kind.initializer.as_ref()
-                    {
-                        let name = Some(declarator.kind.name.node.clone());
-                        let ty = variable.ty.clone();
-                        let handle = self
-                            .lw
-                            .specialized_initializer(initializer, &ty, name, at)?;
-                        self.lw.globals.insert(symbol, GlobalRef::Override(handle));
-                        continue;
-                    }
-                    if variable.qualifiers.flags.contains(QualifierFlags::CONSTANT)
-                        && variable.value.as_ref().is_some_and(|value| {
-                            shape(&variable.ty, &value.values, &self.lw.analysis.types).is_some()
-                        })
-                    {
-                        self.bind_variable(symbol, Local::Constant);
-                        if self.lw.debug.is_some()
-                            && let Some(ref value) = variable.value
-                        {
-                            let ir = self.lw.ir_type(&variable.ty, at)?;
-                            let init = self.lw.global_constant(&variable.ty, &value.values, at)?;
-                            self.lw.module.constants.append(
-                                crate::Constant {
-                                    name: Some(declarator.kind.name.node.clone()),
-                                    ty: ir,
-                                    init,
-                                },
-                                at,
-                            );
-                        }
-                        continue;
-                    }
-                    let ty = variable.ty.clone();
-                    if ty
-                        .as_opaque()
-                        .is_some_and(rglsl_sema::types::Opaque::is_private_object)
-                        || ty
-                            .element_type()
-                            .and_then(|element| element.as_opaque())
-                            .is_some_and(rglsl_sema::types::Opaque::is_private_object)
-                    {
-                        self.lw
-                            .deferred_private
-                            .insert(symbol, (declarator.kind.name.node.clone(), at));
-                        continue;
-                    }
-                    let ir = self.lw.variable_ir_type(&ty, &variable.qualifiers, at)?;
-                    let local = self.local_typed(ir, Some(declarator.kind.name.node.clone()), at);
-                    self.bind_variable(symbol, Local::Variable(local));
-                    if let Some(initializer) =
-                        declarator.kind.initializer.as_ref().filter(|_| reachable)
-                    {
-                        let value = self.initializer(initializer, &ty)?;
-                        let value = self.requalify_to(value, ir, at)?;
-                        let pointer = self.local_pointer(local, at)?;
-                        self.push(IrStatement::Store { pointer, value }, at);
-                    }
-                }
-                Ok(())
-            }
-            DeclarationKind::Precision { .. }
+            DeclarationKind::InitDeclaratorList(_)
+            | DeclarationKind::Precision { .. }
             | DeclarationKind::FunctionPrototype(_)
             | DeclarationKind::SpirvInstruction { .. }
             | DeclarationKind::SpirvExecutionMode(_) => Ok(()),
@@ -356,9 +382,63 @@ impl FunctionLowerer<'_, '_> {
             }
         }
     }
+
+    fn local_declaration(&mut self, declaration: &Declaration, reachable: bool) -> Result<()> {
+        if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
+            for declarator in &list.declarators {
+                if let Some(prepared) = self.prepare_local_declarator(declarator, reachable)? {
+                    let value = self.initializer(prepared.initializer, &prepared.ty)?;
+                    self.store_local_initializer(prepared.local, prepared.ir, value, prepared.at)?;
+                }
+            }
+            return Ok(());
+        }
+        self.validate_non_declarator(declaration)
+    }
 }
 
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    async fn local_declaration(self, declaration: &'b Declaration) -> Result<()> {
+        if let DeclarationKind::InitDeclaratorList(ref list) = declaration.kind {
+            for declarator in &list.declarators {
+                let deferred = self.with(|this| -> Result<_> {
+                    let Some(prepared) = this.prepare_local_declarator(declarator, true)? else {
+                        return Ok(None);
+                    };
+                    if let Some(result) =
+                        this.try_fast_initializer(prepared.initializer, &prepared.ty)
+                    {
+                        let value = result?;
+                        this.store_local_initializer(
+                            prepared.local,
+                            prepared.ir,
+                            value,
+                            prepared.at,
+                        )?;
+                        return Ok(None);
+                    }
+                    Ok(Some(prepared))
+                })??;
+                if let Some(prepared) = deferred {
+                    let value = self
+                        .clone()
+                        .initializer(prepared.initializer, prepared.ty)
+                        .await?;
+                    self.with(|this| {
+                        this.store_local_initializer(
+                            prepared.local,
+                            prepared.ir,
+                            value,
+                            prepared.at,
+                        )
+                    })??;
+                }
+            }
+            return Ok(());
+        }
+        self.with(|this| this.validate_non_declarator(declaration))?
+    }
+
     pub(super) async fn statements(self, statements: &'b [Statement]) -> Result<()> {
         for statement in statements {
             if self.with(|this| this.terminated())? {
@@ -387,7 +467,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }
             StatementKind::Declaration(ref declaration) => {
-                self.with(|this| this.local_declaration(declaration, true))?
+                self.clone().local_declaration(declaration).await
             }
             StatementKind::Expression(Some(ref expression)) => {
                 self.clone().effect(expression).await

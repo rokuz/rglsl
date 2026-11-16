@@ -3,6 +3,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
+use arrayvec::ArrayVec;
 use rglsl_types::extension::Extension;
 use rglsl_types::stack::run;
 
@@ -10,7 +11,7 @@ use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, Identifier,
     NumericKind, NumericLiteral, UnaryOperator,
 };
-use rglsl_ast::{Chain, Span, Spine};
+use rglsl_ast::{Chain, Span, Spine, SpineLinks};
 
 use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
@@ -22,19 +23,141 @@ use crate::types::CooperativeUse;
 use crate::types::{ArraySize, BlockStorage, NumericFeatures, Scalar, Type, TypeKind};
 use rglsl_types::ShaderStage;
 
+impl Analyzer<'_> {
+    fn can_eval_simple(expression: &Expression) -> bool {
+        match &expression.kind {
+            ExpressionKind::Variable(_)
+            | ExpressionKind::Number(_)
+            | ExpressionKind::Bool(_)
+            | ExpressionKind::String(_) => true,
+            ExpressionKind::FunctionCall(call) => {
+                matches!(
+                    &call.function.node,
+                    FunctionIdentifier::Constructor(specifier)
+                        if Self::is_simple_type_specifier(specifier)
+                ) && call.arguments.len() <= 4
+                    && call
+                        .arguments
+                        .iter()
+                        .all(|argument| argument.kind.is_leaf())
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn try_simple_expression(&mut self, expression: &Expression) -> Option<Operand> {
+        let span = expression.span;
+        let uses = self.specialization_uses;
+        let operand = match &expression.kind {
+            ExpressionKind::Variable(name) => self.variable(expression, name),
+            ExpressionKind::Number(number) => self.number(span, number),
+            ExpressionKind::Bool(value) => {
+                Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
+            }
+            ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
+            ExpressionKind::FunctionCall(call) if Self::can_eval_simple(expression) => {
+                let FunctionIdentifier::Constructor(specifier) = &call.function.node else {
+                    return None;
+                };
+                let close = Span::new(span.end.saturating_sub(1), span.end);
+                let ty = self.try_simple_type_specifier(specifier, close)?;
+                let mut operands = ArrayVec::<Operand, 4>::new();
+                for argument in &call.arguments {
+                    operands.push(self.try_simple_expression(argument)?);
+                }
+                self.constructor_with(expression, close, &call.arguments, ty, &operands)
+            }
+            _ => return None,
+        };
+        Some(self.recorded(expression, uses, operand))
+    }
+
+    fn can_eval_flat(expression: &Expression, depth: u8) -> bool {
+        if Self::can_eval_simple(expression) {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        let next = depth - 1;
+        match &expression.kind {
+            ExpressionKind::Parenthesized(inner) => Self::can_eval_flat(inner, next),
+            ExpressionKind::Unary { operator, operand }
+                if !matches!(
+                    operator,
+                    UnaryOperator::Increment | UnaryOperator::Decrement
+                ) =>
+            {
+                Self::can_eval_flat(operand, next)
+            }
+            ExpressionKind::Binary { left, right, .. } => {
+                Self::can_eval_flat(left, next) && Self::can_eval_flat(right, next)
+            }
+            _ => false,
+        }
+    }
+
+    fn eval_flat(&mut self, expression: &Expression) -> Option<Operand> {
+        if let Some(operand) = self.try_simple_expression(expression) {
+            return Some(operand);
+        }
+        let uses = self.specialization_uses;
+        let operand = match &expression.kind {
+            ExpressionKind::Parenthesized(inner) => self.eval_flat(inner)?,
+            ExpressionKind::Unary { operator, operand } => {
+                let inner = self.eval_flat(operand)?;
+                self.unary_checked(expression.span, *operator, inner)
+            }
+            ExpressionKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                let left_operand = self.eval_flat(left)?;
+                let right_operand = self.eval_flat(right)?;
+                let span = Span::new(left.span.end, right.span.start);
+                self.binary_checked(*operator, left, right, span, left_operand, right_operand)
+            }
+            _ => return None,
+        };
+        Some(self.recorded(expression, uses, operand))
+    }
+
+    pub(crate) fn try_flat_expression(&mut self, expression: &Expression) -> Option<Operand> {
+        if let Some(operand) = self.try_simple_expression(expression) {
+            return Some(operand);
+        }
+        if !Self::can_eval_flat(expression, 5) {
+            return None;
+        }
+        self.eval_flat(expression)
+    }
+}
+
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn value_expression(self, expression: &'b Expression) -> Operand {
         self.clone().expression(expression).await
     }
 
+    pub(crate) async fn child_expression(self, expression: &'b Expression) -> Operand {
+        if let Some(operand) = self.with(|analyzer| analyzer.try_flat_expression(expression)) {
+            return operand;
+        }
+        self.call(self.clone().expression(expression)).await
+    }
+
     pub(crate) async fn expression(self, expression: &'b Expression) -> Operand {
+        if let Some(operand) = self.with(|analyzer| analyzer.try_flat_expression(expression)) {
+            return operand;
+        }
+        if matches!(expression.kind, ExpressionKind::Parenthesized(_)) {
+            return self.clone().binary_chain(expression).await;
+        }
         match expression.kind.chain() {
-            Some(Chain::Binary) => self.call(self.clone().binary_chain(expression)).await,
-            Some(Chain::Unary | Chain::Postfix) => {
-                self.call(self.clone().operand_chain(expression)).await
-            }
+            Some(Chain::Binary) => self.clone().binary_chain(expression).await,
+            Some(Chain::Unary | Chain::Postfix) => self.clone().operand_chain(expression).await,
             Some(Chain::Assignment | Chain::Conditional) => {
-                self.call(self.clone().right_chain(expression)).await
+                self.clone().right_chain(expression).await
             }
             None => {
                 let uses = self.with(|analyzer| analyzer.specialization_uses);
@@ -46,9 +169,23 @@ impl<'b> Cx<'b, Analyzer<'_>> {
 
     async fn binary_chain(self, expression: &'b Expression) -> Operand {
         let uses = self.with(|analyzer| analyzer.specialization_uses);
-        let spine = Spine::of(expression);
-        let mut operand = self.clone().value_expression(spine.head).await;
-        for node in spine.links.into_iter().rev() {
+        let mut links = SpineLinks::new();
+        let mut head = expression;
+        loop {
+            match &head.kind {
+                ExpressionKind::Binary { left, .. } => {
+                    links.push(head);
+                    head = left;
+                }
+                ExpressionKind::Parenthesized(inner) => {
+                    links.push(head);
+                    head = inner;
+                }
+                _ => break,
+            }
+        }
+        let mut operand = self.clone().child_expression(head).await;
+        for node in links.into_iter().rev() {
             if let ExpressionKind::Binary {
                 operator,
                 left,
@@ -56,7 +193,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             } = &node.kind
             {
                 let span = Span::new(left.span.end, right.span.start);
-                let right_operand = self.clone().value_expression(right).await;
+                let right_operand = self.clone().child_expression(right).await;
                 operand = self.with(|analyzer| {
                     analyzer.binary_checked(*operator, left, right, span, operand, right_operand)
                 });
@@ -69,7 +206,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
     async fn operand_chain(self, expression: &'b Expression) -> Operand {
         let uses = self.with(|analyzer| analyzer.specialization_uses);
         let spine = Spine::of(expression);
-        let mut operand = self.clone().expression(spine.head).await;
+        let mut operand = self.clone().child_expression(spine.head).await;
         for node in spine.links.into_iter().rev() {
             operand = self.clone().operand_link(node, operand).await;
             operand = self.with(|analyzer| analyzer.recorded(node, uses, operand));
@@ -91,7 +228,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             }
             ExpressionKind::Subscript { base, index } => {
                 let span = Span::new(base.span.end, index.span.start);
-                let index_operand = self.clone().value_expression(index).await;
+                let index_operand = self.clone().child_expression(index).await;
                 self.with(|analyzer| {
                     analyzer.subscript_checked(base, index, span, operand, index_operand)
                 })
@@ -120,14 +257,16 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         for node in spine.links {
             let uses = self.with(|analyzer| analyzer.specialization_uses);
             let first = match &node.kind {
-                ExpressionKind::Assignment { target, .. } => self.clone().expression(target).await,
+                ExpressionKind::Assignment { target, .. } => {
+                    self.clone().child_expression(target).await
+                }
                 ExpressionKind::Conditional {
                     condition,
                     then_expression,
                     ..
                 } => {
-                    let condition_operand = self.clone().value_expression(condition).await;
-                    let then_operand = self.clone().expression(then_expression).await;
+                    let condition_operand = self.clone().child_expression(condition).await;
+                    let then_operand = self.clone().child_expression(then_expression).await;
                     pending.push((node, uses, condition_operand));
                     then_operand
                 }
@@ -135,7 +274,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
             };
             pending.push((node, uses, first));
         }
-        let mut operand = self.clone().expression(spine.head).await;
+        let mut operand = self.clone().child_expression(spine.head).await;
         while let Some((node, uses, first)) = pending.pop() {
             operand = match &node.kind {
                 ExpressionKind::Assignment {
@@ -186,10 +325,9 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
             }
             ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
-            ExpressionKind::Parenthesized(inner) => self.call(self.clone().expression(inner)).await,
+            ExpressionKind::Parenthesized(inner) => self.clone().child_expression(inner).await,
             ExpressionKind::FunctionCall(call) => {
-                self.call(self.clone().call_expression(expression, call))
-                    .await
+                self.clone().call_expression(expression, call).await
             }
             ExpressionKind::Sequence(expressions) => {
                 self.call(self.clone().sequence(expressions)).await
@@ -555,6 +693,9 @@ impl Analyzer<'_> {
     }
 
     pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
+        if let Some(operand) = self.try_flat_expression(expression) {
+            return operand;
+        }
         let finished = {
             let analyzer = RefCell::new(&mut *self);
             run(|stack| Cx::new(&analyzer, stack).expression(expression))
@@ -800,6 +941,31 @@ impl Analyzer<'_> {
                 return Operand::error();
             }
         };
+        if let Some(SymbolKind::Variable(variable)) = self.symbol(id).map(|symbol| &symbol.kind)
+            && variable.origin == Origin::Local
+            && variable.qualifiers.flags.is_empty()
+            && variable.qualifiers.storage == Storage::None
+            && !variable.ty.is_error()
+            && !variable.ty.is_opaque()
+            && !variable.ty.is_reference()
+            && !matches!(variable.ty.kind, TypeKind::Block(_))
+        {
+            let ty = variable.ty.clone();
+            self.references.insert(expression.id, id);
+            return Operand {
+                ty,
+                constant: false,
+                value: None,
+                place: Place::Writable,
+                root: Some(id),
+                storage: Storage::None,
+                specialization: false,
+                writeonly: false,
+                non_uniform: false,
+                through_reference: false,
+                image_format: None,
+            };
+        }
         if self.is_library() && self.is_builtin_symbol(id) {
             self.builtin_variable_stages(expression.span, name, true);
         }
@@ -1173,7 +1339,7 @@ impl Analyzer<'_> {
             indices
                 .iter()
                 .map(|index| constant.values.get(*index).copied())
-                .collect::<Option<Vec<Value>>>()
+                .collect::<Option<crate::constant::ConstantValues>>()
                 .map(Constant::new)
         });
         let count = u8::try_from(indices.len()).unwrap_or(1);

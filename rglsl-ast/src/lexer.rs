@@ -126,10 +126,10 @@ pub(crate) fn tokenize(source: &str) -> Result<Tokens<'_>, ParseError> {
         bytes: source.as_bytes(),
         offset: 0,
         at_line_start: true,
-        tokens: Vec::new(),
+        tokens: Vec::with_capacity(source.len() / 4),
         directives: Vec::new(),
         strings: Vec::new(),
-        classes: FastHashMap::default(),
+        classes: FastHashMap::with_capacity_and_hasher(64, Default::default()),
     };
     lexer.run()?;
     let end = Token {
@@ -174,7 +174,15 @@ impl<'a> Lexer<'a> {
                     self.offset += 1;
                     self.at_line_start = true;
                 }
-                b' ' | b'\t' | b'\r' | 0x0b | 0x0c => self.offset += 1,
+                b' ' | b'\t' | b'\r' | 0x0b | 0x0c => {
+                    self.offset += 1;
+                    while matches!(
+                        self.byte_at(self.offset),
+                        Some(b' ' | b'\t' | b'\r' | 0x0b | 0x0c)
+                    ) {
+                        self.offset += 1;
+                    }
+                }
                 b'/' if next == Some(b'/') => self.skip_line_comment(),
                 b'/' if next == Some(b'*') => self.skip_block_comment()?,
                 b'#' if self.at_line_start => self.directive()?,

@@ -85,11 +85,21 @@ fn symbol_precision(analysis: &Analysis, symbol: SymbolId) -> Precision {
 }
 
 fn relaxes_symbols(analysis: &Analysis) -> bool {
+    if analysis.symbols.modified_or_added().any(|symbol| {
+        symbol
+            .variable()
+            .is_some_and(|variable| Precision::of(variable.qualifiers.precision).relaxed())
+    }) {
+        return true;
+    }
+    let builtin_limit = u32::try_from(analysis.builtins.symbols().len()).unwrap_or(u32::MAX);
     analysis
         .references
         .values()
         .chain(analysis.declarations.values())
-        .any(|&symbol| symbol_precision(analysis, symbol).relaxed())
+        .any(|&symbol| {
+            symbol.index() < builtin_limit && symbol_precision(analysis, symbol).relaxed()
+        })
 }
 
 fn relaxes_members(analysis: &Analysis) -> bool {

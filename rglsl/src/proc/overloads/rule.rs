@@ -18,14 +18,12 @@ use crate::ir;
 use crate::proc::TypeResolution;
 use crate::proc::overloads::constructor_set::ConstructorSize;
 
-use alloc::vec::Vec;
 use core::fmt;
 use core::result::Result;
 
-/// A single type rule.
 #[derive(Clone, Debug)]
 pub struct Rule {
-    pub arguments: Vec<TypeResolution>,
+    pub arguments: arrayvec::ArrayVec<TypeResolution, 4>,
     pub conclusion: Conclusion,
 }
 

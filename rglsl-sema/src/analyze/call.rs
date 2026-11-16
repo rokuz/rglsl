@@ -2,6 +2,8 @@ use crate::scope::QualifierFlags;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::ops::Deref;
+use core::slice;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
@@ -16,7 +18,7 @@ use crate::builtins::kind::{
     Pure, Relation, Sample, Subgroup, SubgroupFunction, Texture, TextureGather, TextureLevel,
 };
 use crate::builtins::{BuiltinFlags, BuiltinFunctionId};
-use crate::constant::{Constant, Value, fold_builtin};
+use crate::constant::{Constant, ConstantValues, Value, fold_builtin};
 use crate::diagnostic::DiagnosticKind;
 use crate::layout_id::LayoutId;
 use crate::scope::{Function, Lookup, Parameter, Storage, SymbolKind};
@@ -189,11 +191,57 @@ const fn offset_index(kind: BuiltinKind) -> Option<usize> {
 const DEBUG_PRINTF: &str = "debugPrintfEXT";
 const ABORT: &str = "abortEXT";
 
+enum SmallOperands {
+    Empty,
+    Single(Operand),
+    Heap(Vec<Operand>),
+}
+
+impl SmallOperands {
+    const fn new() -> Self {
+        Self::Empty
+    }
+
+    fn push(&mut self, operand: Operand) {
+        match self {
+            Self::Empty => *self = Self::Single(operand),
+            Self::Single(first) => {
+                let first = core::mem::replace(first, Operand::error());
+                let mut heap = Vec::with_capacity(4);
+                heap.push(first);
+                heap.push(operand);
+                *self = Self::Heap(heap);
+            }
+            Self::Heap(heap) => heap.push(operand),
+        }
+    }
+}
+
+impl Deref for SmallOperands {
+    type Target = [Operand];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Empty => &[],
+            Self::Single(single) => slice::from_ref(single),
+            Self::Heap(heap) => heap.as_slice(),
+        }
+    }
+}
+
 impl<'b> Cx<'b, Analyzer<'_>> {
     pub(crate) async fn operands(self, arguments: &'b [Expression]) -> Vec<Operand> {
         let mut operands = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            operands.push(self.call(self.clone().expression(argument)).await);
+            operands.push(self.clone().child_expression(argument).await);
+        }
+        operands
+    }
+
+    async fn small_operands(self, arguments: &'b [Expression]) -> SmallOperands {
+        let mut operands = SmallOperands::new();
+        for argument in arguments {
+            operands.push(self.clone().child_expression(argument).await);
         }
         operands
     }
@@ -207,18 +255,14 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         let close = Span::new(end.saturating_sub(1), end);
         match &call.function.node {
             FunctionIdentifier::Function(name) => {
-                self.call(
-                    self.clone()
-                        .function_call(expression, close, name, &call.arguments),
-                )
-                .await
+                self.clone()
+                    .function_call(expression, close, name, &call.arguments)
+                    .await
             }
             FunctionIdentifier::Constructor(specifier) => {
-                self.call(
-                    self.clone()
-                        .constructor(expression, close, specifier, &call.arguments),
-                )
-                .await
+                self.clone()
+                    .constructor(expression, close, specifier, &call.arguments)
+                    .await
             }
             FunctionIdentifier::Cast(specifier) => {
                 let castable = self
@@ -333,7 +377,7 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                     .await;
             }
         }
-        let operands = self.call(self.clone().operands(arguments)).await;
+        let operands = self.clone().small_operands(arguments).await;
         self.with(|analyzer| {
             analyzer.function_call_with(expression, span, name, arguments, &operands)
         })
@@ -346,10 +390,14 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         specifier: &'b TypeSpecifier,
         arguments: &'b [Expression],
     ) -> Operand {
-        let ty = self
-            .call(self.clone().bare_type_specifier(specifier, span))
-            .await;
-        let operands = self.call(self.clone().operands(arguments)).await;
+        let ty = match self.with(|analyzer| analyzer.try_simple_type_specifier(specifier, span)) {
+            Some(ty) => ty,
+            None => {
+                self.call(self.clone().bare_type_specifier(specifier, span))
+                    .await
+            }
+        };
+        let operands = self.clone().small_operands(arguments).await;
         self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, &operands))
     }
 }
@@ -1550,7 +1598,7 @@ impl Analyzer<'_> {
         }
     }
 
-    fn constructor_with(
+    pub(crate) fn constructor_with(
         &mut self,
         expression: &Expression,
         span: Span,
@@ -1779,20 +1827,21 @@ impl Analyzer<'_> {
                 self.record_conversion(argument, &operand.ty, element);
             }
             let value = if constant {
-                operands
-                    .iter()
-                    .zip(&element_types)
-                    .map(|(operand, element)| {
-                        operand
-                            .value
-                            .as_ref()
-                            .map(|value| match element.base_scalar() {
-                                Some(scalar) => value.convert(scalar).values,
-                                None => value.values.clone(),
-                            })
-                    })
-                    .collect::<Option<Vec<Vec<Value>>>>()
-                    .map(|values| Constant::new(values.concat()))
+                let mut combined = crate::constant::ConstantValues::new();
+                let mut all_present = true;
+                for (operand, element) in operands.iter().zip(&element_types) {
+                    let Some(value) = operand.value.as_ref() else {
+                        all_present = false;
+                        break;
+                    };
+                    match element.base_scalar() {
+                        Some(scalar) => {
+                            combined.extend(value.values.iter().map(|item| item.convert(scalar)));
+                        }
+                        None => combined.extend(value.values.iter().copied()),
+                    }
+                }
+                all_present.then(|| Constant::new(combined))
             } else {
                 None
             };
@@ -1881,9 +1930,11 @@ impl Analyzer<'_> {
         operands: &[Operand],
     ) -> Option<Constant> {
         let needed = usize::try_from(needed).ok()?;
-        let mut values: Vec<Value> = Vec::new();
+        let mut values = ConstantValues::new();
         for operand in operands {
-            values.extend(operand.value.as_ref()?.convert(scalar).values);
+            for value in &operand.value.as_ref()?.convert(scalar).values {
+                values.push(*value);
+            }
         }
         if let (TypeKind::Matrix { columns, rows, .. }, [single]) = (ty.kind, operands) {
             let columns = usize::from(columns);
@@ -1895,7 +1946,7 @@ impl Analyzer<'_> {
             };
             if source_columns != usize::MAX {
                 let diagonal = values.first().copied();
-                let mut result = Vec::with_capacity(needed);
+                let mut result = ConstantValues::with_capacity(needed);
                 for column in 0..columns {
                     for row in 0..rows {
                         let value = if column < source_columns && row < source_rows {
@@ -1917,7 +1968,7 @@ impl Analyzer<'_> {
         }
         if values.len() == 1 && needed > 1 {
             let value = values.first().copied()?;
-            return Some(Constant::new(alloc::vec![value; needed]));
+            return Some(Constant::splat(value, needed));
         }
         values.truncate(needed);
         (values.len() == needed).then(|| Constant::new(values))

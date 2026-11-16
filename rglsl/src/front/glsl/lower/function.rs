@@ -13,8 +13,9 @@ use rglsl_sema::{FunctionId, SymbolId};
 use super::{GlobalRef, Lowerer, Result, internal, unsupported};
 use crate::front::glsl::Error;
 use crate::{
-    AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, Function, FunctionArgument,
-    FunctionResult, Handle, LocalVariable, NonUniform, Span, Statement, TypeInner,
+    AddressSpace, Arena, Block, EarlyDepthTest, EntryPoint, Expression, FastHashMap, Function,
+    FunctionArgument, FunctionResult, Handle, LocalVariable, NonUniform, Span, Statement,
+    TypeInner,
     proc::{ConstantEvaluator, Emitter, ExpressionKind, ExpressionKindTracker},
 };
 
@@ -33,9 +34,9 @@ pub(super) struct FunctionLowerer<'l, 'a> {
     pub(super) tracker: ExpressionKindTracker,
     pub(super) emitter: Emitter,
     pub(super) block: Block,
-    pub(super) variables: BTreeMap<SymbolId, Local>,
+    pub(super) variables: FastHashMap<SymbolId, Local>,
     unflagged: Vec<SymbolId>,
-    pub(super) purity: RefCell<BTreeMap<rglsl_ast::ast::NodeId, bool>>,
+    pub(super) purity: RefCell<FastHashMap<rglsl_ast::ast::NodeId, bool>>,
     pub(super) specializing: bool,
     pub(super) non_uniform: crate::NonUniformExpressions,
     pub(super) precision: crate::PrecisionExpressions,
@@ -221,19 +222,48 @@ fn ensure_returns(block: &mut Block) {
 
 impl<'l, 'a> FunctionLowerer<'l, 'a> {
     pub(super) fn new(lw: &'l mut Lowerer<'a>) -> Self {
-        let expressions = Arena::new();
+        Self::with_statements(lw, 0)
+    }
+
+    pub(super) fn with_statements(lw: &'l mut Lowerer<'a>, statement_count: usize) -> Self {
+        let expr_cap = statement_count.saturating_mul(8);
+        let expressions = if expr_cap > 0 {
+            Arena::with_capacity(expr_cap)
+        } else {
+            Arena::new()
+        };
+        let locals = if statement_count > 0 {
+            Arena::with_capacity(statement_count)
+        } else {
+            Arena::new()
+        };
+        let tracker = if expr_cap > 0 {
+            ExpressionKindTracker::with_capacity(expr_cap)
+        } else {
+            ExpressionKindTracker::new()
+        };
+        let block = if statement_count > 0 {
+            Block::with_capacity(statement_count.saturating_mul(2))
+        } else {
+            Block::new()
+        };
+        let variables = if statement_count > 0 {
+            FastHashMap::with_capacity_and_hasher(statement_count, Default::default())
+        } else {
+            FastHashMap::default()
+        };
         let mut emitter = Emitter::default();
         emitter.start(&expressions);
         Self {
             lw,
             expressions,
-            locals: Arena::new(),
-            tracker: ExpressionKindTracker::new(),
+            locals,
+            tracker,
             emitter,
-            block: Block::new(),
-            variables: BTreeMap::new(),
-            unflagged: Vec::new(),
-            purity: RefCell::new(BTreeMap::new()),
+            block,
+            variables,
+            unflagged: Vec::with_capacity(8),
+            purity: RefCell::new(FastHashMap::default()),
             specializing: false,
             non_uniform: crate::NonUniformExpressions::default(),
             precision: crate::PrecisionExpressions::default(),
@@ -316,6 +346,52 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     }
 
     pub(super) fn add(&mut self, expression: Expression, span: Span) -> Result<Handle<Expression>> {
+        let fast_kind = match expression {
+            Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => {
+                Some(ExpressionKind::Const)
+            }
+            Expression::LocalVariable(_)
+            | Expression::GlobalVariable(_)
+            | Expression::FunctionArgument(_)
+            | Expression::Load { .. } => Some(ExpressionKind::Runtime),
+            Expression::Binary { left, right, .. }
+                if !self.tracker.is_const_or_override(left)
+                    || !self.tracker.is_const_or_override(right) =>
+            {
+                Some(ExpressionKind::Runtime)
+            }
+            Expression::Unary { expr, .. } | Expression::As { expr, .. }
+                if !self.tracker.is_const_or_override(expr) =>
+            {
+                Some(ExpressionKind::Runtime)
+            }
+            Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. }
+                if !self.tracker.is_const_or_override(base) =>
+            {
+                Some(ExpressionKind::Runtime)
+            }
+            Expression::Access { base, index }
+                if !self.tracker.is_const_or_override(base)
+                    || !self.tracker.is_const_or_override(index) =>
+            {
+                Some(ExpressionKind::Runtime)
+            }
+            _ => None,
+        };
+        if let Some(kind) = fast_kind {
+            let is_running = self.emitter.is_running();
+            let needs_pre_emit = expression.needs_pre_emit();
+            let handle = if is_running && needs_pre_emit {
+                self.block.extend(self.emitter.finish(&self.expressions));
+                let handle = self.expressions.append(expression, span);
+                self.emitter.start(&self.expressions);
+                handle
+            } else {
+                self.expressions.append(expression, span)
+            };
+            self.tracker.insert(handle, kind);
+            return Ok(handle);
+        }
         let mut evaluator = ConstantEvaluator::for_glsl_function(
             &mut self.lw.module,
             &mut self.expressions,
@@ -335,18 +411,23 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
     pub(super) fn flush(&mut self) {
         let emitted = self.emitter.finish(&self.expressions);
         self.block.extend(emitted);
-        let analysis = self.lw.analysis;
-        for symbol in core::mem::take(&mut self.unflagged) {
-            let Some(&Local::Variable(handle)) = self.variables.get(&symbol) else {
-                continue;
-            };
-            let relaxed_symbol = analysis
-                .symbol(symbol)
-                .and_then(|symbol| symbol.variable())
-                .is_some_and(|variable| super::relaxed(&variable.qualifiers));
-            if relaxed_symbol {
-                self.locals[handle].relaxed_precision = true;
+        if !self.unflagged.is_empty() {
+            let analysis = self.lw.analysis;
+            let mut unflagged = core::mem::take(&mut self.unflagged);
+            for &symbol in &unflagged {
+                let Some(&Local::Variable(handle)) = self.variables.get(&symbol) else {
+                    continue;
+                };
+                let relaxed_symbol = analysis
+                    .symbol(symbol)
+                    .and_then(|symbol| symbol.variable())
+                    .is_some_and(|variable| super::relaxed(&variable.qualifiers));
+                if relaxed_symbol {
+                    self.locals[handle].relaxed_precision = true;
+                }
             }
+            unflagged.clear();
+            self.unflagged = unflagged;
         }
         self.emitter.start(&self.expressions);
     }
@@ -679,7 +760,8 @@ impl<'a> Lowerer<'a> {
         } else {
             Vec::new()
         };
-        let mut lowerer = FunctionLowerer::new(self);
+        let mut lowerer =
+            FunctionLowerer::with_statements(self, definition.kind.body.node.statements.len());
         lowerer.argument_types = arguments.iter().map(|argument| argument.ty).collect();
         for (((parameter, local), symbol), index) in function
             .parameters

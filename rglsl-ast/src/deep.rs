@@ -131,7 +131,7 @@ pub(crate) fn empty_statement() -> Statement {
 }
 
 fn take_expression(expression: &mut Expression, into: &mut Vec<Owned>) {
-    if !expression.kind.is_leaf() {
+    if expression.kind.exceeds_depth(6) {
         into.push(Owned::Expression(mem::replace(expression, placeholder())));
     }
 }
@@ -188,7 +188,7 @@ fn take_members(members: &mut [Spanned<StructDeclaration>], into: &mut Vec<Owned
 }
 
 impl TypeSpecifier {
-    const fn is_leaf_type(&self) -> bool {
+    pub(crate) const fn is_leaf_type(&self) -> bool {
         self.parameters.is_none()
             && self.array.is_none()
             && !matches!(

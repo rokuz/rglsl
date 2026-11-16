@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use rglsl_sema::constant::Value;
+use rglsl_sema::constant::{ConstantValues, Value};
 use rglsl_sema::types::{ArraySize, Type as GlslType, TypeKind};
 
 use super::{Lowerer, Result, internal};
@@ -119,9 +119,18 @@ impl Lowerer<'_> {
         values: &[Value],
         span: Span,
     ) -> Result<Handle<Expression>> {
+        if !ty.is_array()
+            && let TypeKind::Scalar(_) = ty.kind
+        {
+            let value = values.first().copied().ok_or_else(|| internal(span))?;
+            return Ok(self
+                .module
+                .global_expressions
+                .append(Expression::Literal(literal(value)), span));
+        }
         super::function::lowerer_on_heap!(self, |cx| cx.global_constant(
             ty.clone(),
-            values.to_vec(),
+            ConstantValues::from(values),
             span
         ))
     }
@@ -131,11 +140,21 @@ impl<'b, 'a> super::function::LowererCx<'b, 'a> {
     pub(super) async fn global_constant(
         self,
         ty: GlslType,
-        values: Vec<Value>,
+        values: ConstantValues,
         span: Span,
     ) -> Result<Handle<Expression>> {
+        if !ty.is_array()
+            && let TypeKind::Scalar(_) = ty.kind
+        {
+            let value = values.first().copied().ok_or_else(|| internal(span))?;
+            return self.with(|this| {
+                this.module
+                    .global_expressions
+                    .append(Expression::Literal(literal(value)), span)
+            });
+        }
         let end = values.len();
-        let values: alloc::rc::Rc<[Value]> = values.into();
+        let values: alloc::rc::Rc<[Value]> = alloc::rc::Rc::from(values.as_slice());
         self.nest(self.clone().global_constant_part(ty, values, 0..end, span))
             .await
     }

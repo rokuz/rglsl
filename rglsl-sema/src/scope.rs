@@ -2,6 +2,9 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::ops::{Deref, DerefMut};
+
+use arrayvec::ArrayVec;
 use rglsl_types::{FastHashMap, FastHashSet};
 
 use rglsl_ast::Span;
@@ -370,10 +373,16 @@ pub enum Lookup<'a> {
     Function(&'a [FunctionId]),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundEntry {
+    Symbol(SymbolId),
+    Function,
+}
+
 #[derive(Debug, Clone, Default)]
 struct Level {
-    symbols: FastHashMap<String, SymbolId>,
-    functions: FastHashMap<String, Vec<FunctionId>>,
+    names: Vec<Arc<str>>,
+    functions: FastHashMap<Arc<str>, Vec<FunctionId>>,
     precisions: BTreeMap<PrecisionKey, PrecisionQualifier>,
 }
 
@@ -430,6 +439,10 @@ impl Symbols {
             overrides: FastHashMap::default(),
             added: Vec::new(),
         }
+    }
+
+    pub fn reserve(&mut self, additional: usize) {
+        self.added.reserve(additional);
     }
 
     fn base_len(&self) -> usize {
@@ -504,12 +517,71 @@ impl PartialEq for Symbols {
 
 impl Eq for Symbols {}
 
+#[derive(Debug, Clone)]
+enum ScopeLevels {
+    Inline(ArrayVec<(usize, BoundEntry), 2>),
+    Heap(Vec<(usize, BoundEntry)>),
+}
+
+impl ScopeLevels {
+    fn from_single(item: (usize, BoundEntry)) -> Self {
+        let mut inline = ArrayVec::new();
+        inline.push(item);
+        Self::Inline(inline)
+    }
+
+    fn push(&mut self, item: (usize, BoundEntry)) {
+        match self {
+            Self::Inline(inline) => {
+                if let Err(overflow) = inline.try_push(item) {
+                    let mut heap = Vec::with_capacity(4);
+                    heap.extend_from_slice(inline);
+                    heap.push(overflow.element());
+                    *self = Self::Heap(heap);
+                }
+            }
+            Self::Heap(heap) => heap.push(item),
+        }
+    }
+
+    fn remove(&mut self, position: usize) {
+        match self {
+            Self::Inline(inline) => {
+                inline.remove(position);
+            }
+            Self::Heap(heap) => {
+                heap.remove(position);
+            }
+        }
+    }
+}
+
+impl Deref for ScopeLevels {
+    type Target = [(usize, BoundEntry)];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Inline(inline) => inline.as_slice(),
+            Self::Heap(heap) => heap.as_slice(),
+        }
+    }
+}
+
+impl DerefMut for ScopeLevels {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Inline(inline) => inline.as_mut_slice(),
+            Self::Heap(heap) => heap.as_mut_slice(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Scopes {
     builtins: Option<Arc<Builtins>>,
     removed_builtins: FastHashSet<String>,
     levels: Vec<Level>,
-    bound: FastHashMap<String, Vec<usize>>,
+    bound: FastHashMap<Arc<str>, ScopeLevels>,
     precise_levels: Vec<usize>,
 }
 
@@ -534,6 +606,10 @@ impl Scopes {
         }
     }
 
+    pub fn reserve(&mut self, additional: usize) {
+        self.bound.reserve(additional);
+    }
+
     fn builtin_symbol(&self, name: &str) -> Option<SymbolId> {
         if self.levels.is_empty() || self.removed_builtins.contains(name) {
             return None;
@@ -554,49 +630,46 @@ impl Scopes {
             self.builtins = None;
             self.removed_builtins.clear();
         }
-        for name in level.symbols.keys().chain(
-            level
-                .functions
-                .keys()
-                .filter(|name| !level.symbols.contains_key(*name)),
-        ) {
-            self.unbind(name, index);
+        for name in level.names {
+            self.unbind(&name, index);
         }
         if self.precise_levels.last() == Some(&index) {
             self.precise_levels.pop();
         }
     }
 
-    fn bind(&mut self, name: &str, index: usize) {
+    fn bind(&mut self, name: &str, index: usize, entry: BoundEntry) -> Option<Arc<str>> {
         match self.bound.get_mut(name) {
             Some(levels) => {
-                if levels.last() != Some(&index) {
-                    levels.push(index);
+                if let Some((last_index, last_entry)) = levels.last_mut()
+                    && *last_index == index
+                {
+                    *last_entry = entry;
+                    return None;
                 }
+                levels.push((index, entry));
+                Some(Arc::from(name))
             }
             None => {
-                self.bound.insert(String::from(name), Vec::from([index]));
+                let shared: Arc<str> = Arc::from(name);
+                self.bound.insert(
+                    Arc::clone(&shared),
+                    ScopeLevels::from_single((index, entry)),
+                );
+                Some(shared)
             }
         }
     }
 
     fn unbind(&mut self, name: &str, index: usize) {
         if let Some(levels) = self.bound.get_mut(name) {
-            if let Some(position) = levels.iter().rposition(|level| *level == index) {
+            if let Some(position) = levels.iter().rposition(|&(level, _)| level == index) {
                 levels.remove(position);
             }
             if levels.is_empty() {
                 self.bound.remove(name);
             }
         }
-    }
-
-    fn binding_levels(&self, name: &str) -> impl Iterator<Item = (usize, &Level)> {
-        self.bound
-            .get(name)
-            .into_iter()
-            .flat_map(|levels| levels.iter().rev())
-            .filter_map(|&index| self.levels.get(index).map(|level| (index, level)))
     }
 
     pub const fn depth(&self) -> usize {
@@ -627,34 +700,41 @@ impl Scopes {
     }
 
     pub fn declare(&mut self, name: &str, id: SymbolId) -> Result<(), DeclareError> {
-        let builtin_conflict = self.levels.len() == 1 && self.builtin_symbol(name).is_some();
-        let Some(level) = self.levels.last_mut() else {
+        let Some(index) = self.levels.len().checked_sub(1) else {
             return Ok(());
         };
-        if builtin_conflict
-            || level.symbols.contains_key(name)
-            || level.functions.contains_key(name)
+        if index == 0 && self.builtin_symbol(name).is_some() {
+            return Err(DeclareError::Redeclaration);
+        }
+        if self
+            .bound
+            .get(name)
+            .and_then(|levels| levels.last())
+            .is_some_and(|&(level, _)| level == index)
         {
             return Err(DeclareError::Redeclaration);
         }
-        level.symbols.insert(String::from(name), id);
-        let index = self.levels.len().saturating_sub(1);
-        self.bind(name, index);
+        if let Some(shared) = self.bind(name, index, BoundEntry::Symbol(id))
+            && let Some(level) = self.levels.last_mut()
+        {
+            level.names.push(shared);
+        }
         Ok(())
     }
 
     pub fn replace_in_current(&mut self, name: &str, id: SymbolId) {
         if self.levels.len() == 1 && self.builtin_symbol(name).is_some() {
-            if let Some(level) = self.levels.first_mut() {
-                level.symbols.insert(String::from(name), id);
+            if let Some(shared) = self.bind(name, 0, BoundEntry::Symbol(id))
+                && let Some(level) = self.levels.first_mut()
+            {
+                level.names.push(shared);
             }
-            self.bind(name, 0);
             return;
         }
-        if let Some(slot) = self
-            .levels
-            .last_mut()
-            .and_then(|level| level.symbols.get_mut(name))
+        let current = self.levels.len().saturating_sub(1);
+        if let Some(levels) = self.bound.get_mut(name)
+            && let Some((level, BoundEntry::Symbol(slot))) = levels.last_mut()
+            && *level == current
         {
             *slot = id;
         }
@@ -668,55 +748,87 @@ impl Scopes {
         {
             self.removed_builtins.insert(String::from(name));
         }
-        let unbound = match self.levels.first_mut() {
-            Some(level) => {
-                level.symbols.remove(name).is_some() && !level.functions.contains_key(name)
+        if let Some(levels) = self.bound.get_mut(name) {
+            if let Some(position) = levels
+                .iter()
+                .rposition(|&(level, entry)| level == 0 && matches!(entry, BoundEntry::Symbol(_)))
+            {
+                levels.remove(position);
             }
-            None => false,
-        };
-        if unbound {
-            self.unbind(name, 0);
+            if levels.is_empty() {
+                self.bound.remove(name);
+            }
         }
     }
 
     pub fn declare_function(&mut self, name: &str, id: FunctionId) -> Result<(), DeclareError> {
-        let builtin_conflict = self.levels.len() == 1 && self.builtin_symbol(name).is_some();
-        let Some(level) = self.levels.last_mut() else {
+        let Some(index) = self.levels.len().checked_sub(1) else {
             return Ok(());
         };
-        if builtin_conflict || level.symbols.contains_key(name) {
+        if index == 0 && self.builtin_symbol(name).is_some() {
             return Err(DeclareError::Redeclaration);
         }
-        match level.functions.get_mut(name) {
-            Some(functions) => functions.push(id),
-            None => {
-                level.functions.insert(String::from(name), Vec::from([id]));
+        if self
+            .bound
+            .get(name)
+            .and_then(|levels| levels.last())
+            .is_some_and(|&(level, entry)| level == index && matches!(entry, BoundEntry::Symbol(_)))
+        {
+            return Err(DeclareError::Redeclaration);
+        }
+        let added = self.bind(name, index, BoundEntry::Function);
+        if let Some(level) = self.levels.last_mut() {
+            match level.functions.get_mut(name) {
+                Some(functions) => functions.push(id),
+                None => {
+                    let key = added.clone().unwrap_or_else(|| Arc::from(name));
+                    level.functions.insert(key, Vec::from([id]));
+                }
+            }
+            if let Some(shared) = added {
+                level.names.push(shared);
             }
         }
-        let index = self.levels.len().saturating_sub(1);
-        self.bind(name, index);
         Ok(())
     }
 
     pub fn lookup(&self, name: &str) -> Option<Lookup<'_>> {
-        for (_, level) in self.binding_levels(name) {
-            if let Some(id) = level.symbols.get(name) {
-                return Some(Lookup::Symbol(*id));
-            }
-            if let Some(functions) = level.functions.get(name) {
-                return Some(Lookup::Function(functions));
+        if let Some(levels) = self.bound.get(name) {
+            for &(index, entry) in levels.iter().rev() {
+                match entry {
+                    BoundEntry::Symbol(id) => return Some(Lookup::Symbol(id)),
+                    BoundEntry::Function => {
+                        if let Some(functions) = self
+                            .levels
+                            .get(index)
+                            .and_then(|level| level.functions.get(name))
+                        {
+                            return Some(Lookup::Function(functions));
+                        }
+                    }
+                }
             }
         }
         self.builtin_symbol(name).map(Lookup::Symbol)
     }
 
     pub fn lookup_in_current(&self, name: &str) -> Option<Lookup<'_>> {
-        let level = self.levels.last()?;
-        if let Some(id) = level.symbols.get(name) {
-            return Some(Lookup::Symbol(*id));
-        }
-        if let Some(functions) = level.functions.get(name) {
-            return Some(Lookup::Function(functions));
+        let index = self.levels.len().checked_sub(1)?;
+        if let Some(&(level, entry)) = self.bound.get(name).and_then(|levels| levels.last())
+            && level == index
+        {
+            match entry {
+                BoundEntry::Symbol(id) => return Some(Lookup::Symbol(id)),
+                BoundEntry::Function => {
+                    if let Some(functions) = self
+                        .levels
+                        .get(index)
+                        .and_then(|current| current.functions.get(name))
+                    {
+                        return Some(Lookup::Function(functions));
+                    }
+                }
+            }
         }
         (self.levels.len() == 1)
             .then(|| self.builtin_symbol(name).map(Lookup::Symbol))
@@ -724,12 +836,20 @@ impl Scopes {
     }
 
     pub fn lookup_level(&self, name: &str) -> Option<(usize, Lookup<'_>)> {
-        for (index, level) in self.binding_levels(name) {
-            if let Some(id) = level.symbols.get(name) {
-                return Some((index, Lookup::Symbol(*id)));
-            }
-            if let Some(functions) = level.functions.get(name) {
-                return Some((index, Lookup::Function(functions)));
+        if let Some(levels) = self.bound.get(name) {
+            for &(index, entry) in levels.iter().rev() {
+                match entry {
+                    BoundEntry::Symbol(id) => return Some((index, Lookup::Symbol(id))),
+                    BoundEntry::Function => {
+                        if let Some(functions) = self
+                            .levels
+                            .get(index)
+                            .and_then(|level| level.functions.get(name))
+                        {
+                            return Some((index, Lookup::Function(functions)));
+                        }
+                    }
+                }
             }
         }
         self.builtin_symbol(name).map(|id| (0, Lookup::Symbol(id)))
@@ -737,14 +857,20 @@ impl Scopes {
 
     pub fn function_levels(&self, name: &str) -> Vec<&[FunctionId]> {
         let mut found = Vec::new();
-        for (index, level) in self.binding_levels(name) {
-            if level.symbols.contains_key(name)
-                || (index == 0 && self.builtin_symbol(name).is_some())
-            {
-                break;
-            }
-            if let Some(functions) = level.functions.get(name) {
-                found.push(functions.as_slice());
+        if let Some(levels) = self.bound.get(name) {
+            for &(index, entry) in levels.iter().rev() {
+                if matches!(entry, BoundEntry::Symbol(_))
+                    || (index == 0 && self.builtin_symbol(name).is_some())
+                {
+                    break;
+                }
+                if let Some(functions) = self
+                    .levels
+                    .get(index)
+                    .and_then(|level| level.functions.get(name))
+                {
+                    found.push(functions.as_slice());
+                }
             }
         }
         found

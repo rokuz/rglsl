@@ -1,10 +1,10 @@
 use alloc::vec::Vec;
 
-use rglsl_ast::Spine;
 use rglsl_ast::ast::{
     BinaryOperator as AstBinary, Expression as AstExpression, ExpressionKind,
     UnaryOperator as AstUnary,
 };
+use rglsl_ast::{Spine, SpineLinks};
 use rglsl_sema::types::Type as GlslType;
 
 use super::expression::{Chain, Place};
@@ -50,6 +50,35 @@ impl FunctionLowerer<'_, '_> {
             info.is_constant
                 && info.value.is_some()
                 && !info.ty.contains_reference(&self.lw.analysis.types)
+        })
+    }
+
+    fn lowered_binary_spine<'e>(&self, expression: &'e AstExpression) -> Result<Spine<'e>> {
+        let mut links = SpineLinks::new();
+        let mut current = expression;
+        loop {
+            if !links.is_empty() && self.folds(current)? {
+                break;
+            }
+            match current.kind {
+                ExpressionKind::Binary { ref left, .. } => {
+                    links.push(current);
+                    current = left;
+                }
+                ExpressionKind::Parenthesized(ref inner) => {
+                    let info = self.info(inner)?;
+                    if info.ty.is_void() || info.ty.is_string() {
+                        break;
+                    }
+                    links.push(current);
+                    current = inner;
+                }
+                _ => break,
+            }
+        }
+        Ok(Spine {
+            links,
+            head: current,
         })
     }
 
@@ -121,7 +150,7 @@ impl FunctionLowerer<'_, '_> {
     }
 
     fn conditional_spine<'e>(&self, expression: &'e AstExpression) -> Result<Spine<'e>> {
-        let mut links = Vec::new();
+        let mut links = SpineLinks::new();
         let mut head = expression;
         while let ExpressionKind::Conditional {
             ref else_expression,
@@ -341,7 +370,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         Ok(())
     }
     pub(super) async fn access_chain(self, expression: &'b AstExpression) -> Result<Chain> {
-        let mut links = Vec::new();
+        let mut links = SpineLinks::new();
         let mut current = expression;
         while let ExpressionKind::Subscript { ref base, .. }
         | ExpressionKind::FieldSelection { ref base, .. } = current.kind
@@ -376,11 +405,14 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         self,
         expression: &'b AstExpression,
     ) -> Result<Handle<Expression>> {
-        let spine = self.with(|this| this.lowered_spine(expression))??;
-        let mut left = self.clone().typed(spine.head).await?;
+        let spine = self.with(|this| this.lowered_binary_spine(expression))??;
+        let mut left = self.clone().typed_child(spine.head).await?;
         let mut links = spine.links.into_iter().rev().peekable();
         while let Some(node) = links.next() {
-            let value = self.clone().binary_link(node, left).await?;
+            let value = match node.kind {
+                ExpressionKind::Parenthesized(_) => left.0,
+                _ => self.clone().binary_link(node, left).await?,
+            };
             if links.peek().is_none() {
                 return Ok(value);
             }
@@ -408,9 +440,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             if constant == (operator == AstBinary::LogicalOr) {
                 return Ok(left.0);
             }
-            let frame = self.clone().rvalue(right);
-            let result = self.nest(frame).await;
-            return result;
+            return self.clone().rvalue_child(right).await;
         }
         let value = if logical && !self.with(|this| this.pure(right))? {
             {
@@ -418,7 +448,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
                 self.nest(frame).await
             }?
         } else {
-            let right = self.clone().typed(right).await?;
+            let right = self.clone().typed_child(right).await?;
             self.with(|this| this.binary_typed(operator, left, right, at))??
         };
         if self.with(|this| this.info(node))??.non_uniform {
@@ -470,7 +500,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
         }
         let (value, ty) = match operand {
             Some(typed) => typed,
-            None => self.clone().typed(inner).await?,
+            None => self.clone().typed_child(inner).await?,
         };
         let value = self.with(|this| this.unary_typed(operator, at, value, ty))??;
         if self.with(|this| this.info(node))??.non_uniform {
@@ -495,10 +525,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             else {
                 return Err(internal(at));
             };
-            let place = {
-                let frame = self.clone().place(target);
-                self.nest(frame).await
-            }?;
+            let place = self.clone().place_child(target).await?;
             let old = match super::expression::compound(operator) {
                 Some(_) => Some(self.with(|this| this.compound_old(target, &place, at))??),
                 None => None,
@@ -518,10 +545,7 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             };
             let typed = match inner.take() {
                 Some(result) => self.with(|this| this.passed_on(value, Some(result)))??,
-                None => {
-                    let frame = self.clone().typed(value);
-                    self.nest(frame).await
-                }?,
+                None => self.clone().typed_child(value).await?,
             };
             let result = match (super::expression::compound(operator), old) {
                 (None, _) => typed.0,
