@@ -96,14 +96,14 @@ impl core::fmt::Display for NonMaxU32 {
 }
 
 impl rglo::Encode for NonMaxU32 {
-    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+    fn encode(&self, out: &mut rglo::Encoder) {
         out.unsigned(u64::from(self.get()));
     }
 }
 
 impl rglo::Decode for NonMaxU32 {
-    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
-        Self::read(input).map(rglo::Decoded::Value)
+    fn decode(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
+        Self::read(input)
     }
 }
 

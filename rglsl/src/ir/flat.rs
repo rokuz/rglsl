@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use rglsl_types::rglo;
+use rglsl_types::{rglo, stack};
 
 use crate::{Block, Statement};
 
@@ -15,102 +15,48 @@ enum Entry<S> {
 const ENTRIES: [&str; 2] = ["Block", "Statement"];
 
 impl rglo::Encode for Block {
-    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+    fn encode(&self, out: &mut rglo::Encoder) {
         out.token("[");
-        let mut first = true;
-        let mut pending = Vec::from([(self, 0, false)]);
-        while let Some(&mut (block, ref mut next, ref mut started)) = pending.last_mut() {
-            if !*started {
-                *started = true;
-                out.token(if first { "Block(" } else { ",Block(" });
-                first = false;
-                out.unsigned(block.len() as u64);
-                out.token(")");
-            }
-            let Some(statement) = block.get(*next) else {
-                pending.pop();
-                continue;
-            };
-            *next += 1;
-            out.token(",Statement(");
-            out.value(statement);
-            out.token(")");
-            pending.extend(
-                statement
-                    .child_blocks()
-                    .into_iter()
-                    .rev()
-                    .map(|child| (child, 0, false)),
-            );
-        }
+        encode_entries(self, out, "Block(");
         out.token("]");
     }
 }
 
-struct Entries {
-    unflatten: Unflatten,
-    more: bool,
-}
-
-impl Entries {
-    fn add(&mut self, entry: Entry<Statement>, input: &rglo::Input<'_>) -> Result<(), rglo::Error> {
-        self.unflatten
-            .entry(entry)
-            .map_err(|message| input.error(message))
-    }
-}
-
-impl rglo::Record for Entries {
-    type Value = Block;
-
-    fn step(&mut self, input: &mut rglo::Input<'_>) -> Result<rglo::Step, rglo::Error> {
-        while input.next_element(&mut self.more, b']')? {
-            let name = input.identifier()?;
-            input.expect(b'(')?;
-            match name {
-                "Block" => {
-                    let length = input.unsigned("u32")?;
-                    input.expect(b')')?;
-                    self.add(Entry::Block(length), input)?;
-                }
-                "Statement" => match <Statement as rglo::Decode>::decode(input)? {
-                    rglo::Decoded::Value(statement) => {
-                        input.expect(b')')?;
-                        self.add(Entry::Statement(statement), input)?;
-                    }
-                    rglo::Decoded::Frame(frame) => return Ok(rglo::Step::Push(frame)),
-                },
-                _ => return Err(input.unknown_variant("Entry", name, &ENTRIES)),
-            }
+fn encode_entries(block: &Block, out: &mut rglo::Encoder, open: &str) {
+    out.token(open);
+    out.unsigned(block.len() as u64);
+    out.token(")");
+    for statement in block.iter() {
+        out.token(",Statement(");
+        rglo::Encode::encode(statement, out);
+        out.token(")");
+        for child in statement.child_blocks() {
+            stack::recurse(|| encode_entries(child, out, ",Block("));
         }
-        Ok(rglo::Step::Done)
-    }
-
-    fn accept(
-        &mut self,
-        child: rglo::Child,
-        input: &mut rglo::Input<'_>,
-    ) -> Result<(), rglo::Error> {
-        let statement = rglo::built::<Statement>(child, input)?;
-        input.expect(b')')?;
-        self.add(Entry::Statement(statement), input)
-    }
-
-    fn value(self, input: &mut rglo::Input<'_>) -> Result<Block, rglo::Error> {
-        self.unflatten
-            .root
-            .ok_or_else(|| input.error("a block is incomplete"))
     }
 }
 
 impl rglo::Decode for Block {
-    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
         input.expect(b'[')?;
-        let entries = Entries {
-            unflatten: Unflatten::default(),
-            more: false,
-        };
-        rglo::start(entries, input)
+        let mut unflatten = Unflatten::default();
+        let mut more = false;
+        while input.next_element(&mut more, b']')? {
+            let name = input.identifier()?;
+            input.expect(b'(')?;
+            let entry = match name {
+                "Block" => Entry::Block(input.unsigned("u32")?),
+                "Statement" => Entry::Statement(rglo::Decode::decode(input)?),
+                _ => return Err(input.unknown_variant("Entry", name, &ENTRIES)),
+            };
+            input.expect(b')')?;
+            unflatten
+                .entry(entry)
+                .map_err(|message| input.error(message))?;
+        }
+        unflatten
+            .root
+            .ok_or_else(|| input.error("a block is incomplete"))
     }
 }
 

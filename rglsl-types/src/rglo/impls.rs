@@ -5,21 +5,21 @@ use alloc::vec::Vec;
 use core::hash::{BuildHasher, Hash};
 use core::num::NonZeroU32;
 
-use super::decode::{Child, Decode, Decoded, Error, Input, Record, Step, built, start, wrap};
-use super::encode::{Encode, Encoder, write_string};
+use super::decode::{Decode, Error, Input, element, no_more_elements};
+use super::encode::{Encode, Encoder};
 
 macro_rules! unsigned {
     ($($type:ty),+) => {
         $(
             impl Encode for $type {
-                fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+                fn encode(&self, out: &mut Encoder) {
                     out.unsigned(u64::from(*self));
                 }
             }
 
             impl Decode for $type {
-                fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-                    input.unsigned(stringify!($type)).map(Decoded::Value)
+                fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+                    input.unsigned(stringify!($type))
                 }
             }
         )+
@@ -30,14 +30,14 @@ macro_rules! signed {
     ($($type:ty),+) => {
         $(
             impl Encode for $type {
-                fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+                fn encode(&self, out: &mut Encoder) {
                     out.signed(i64::from(*self));
                 }
             }
 
             impl Decode for $type {
-                fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-                    input.signed(stringify!($type)).map(Decoded::Value)
+                fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+                    input.signed(stringify!($type))
                 }
             }
         )+
@@ -48,31 +48,31 @@ unsigned!(u8, u16, u32, u64);
 signed!(i8, i16, i32, i64);
 
 impl Encode for f32 {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.float32(*self);
     }
 }
 
 impl Decode for f32 {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        input.float("f32").map(Decoded::Value)
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        input.float("f32")
     }
 }
 
 impl Encode for f64 {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.float64(*self);
     }
 }
 
 impl Decode for f64 {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        input.float("f64").map(Decoded::Value)
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        input.float("f64")
     }
 }
 
 impl Encode for half::f16 {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.token("(");
         out.unsigned(u64::from(self.to_bits()));
         out.token(")");
@@ -80,61 +80,59 @@ impl Encode for half::f16 {
 }
 
 impl Decode for half::f16 {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
         input.expect(b'(')?;
         let bits = input.unsigned("f16")?;
         input.expect(b')')?;
-        Ok(Decoded::Value(Self::from_bits(bits)))
+        Ok(Self::from_bits(bits))
     }
 }
 
 impl Encode for NonZeroU32 {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.unsigned(u64::from(self.get()));
     }
 }
 
 impl Decode for NonZeroU32 {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
         let start = input.clone();
         let value: u32 = input.unsigned("NonZeroU32")?;
-        Self::new(value)
-            .map(Decoded::Value)
-            .ok_or_else(|| start.expected("a nonzero integer of type `NonZeroU32`"))
+        Self::new(value).ok_or_else(|| start.expected("a nonzero integer of type `NonZeroU32`"))
     }
 }
 
 impl Encode for bool {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.boolean(*self);
     }
 }
 
 impl Decode for bool {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        input.boolean().map(Decoded::Value)
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        input.boolean()
     }
 }
 
 impl Encode for String {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.string(self);
     }
 }
 
 impl Decode for String {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        input.string().map(Decoded::Value)
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        input.string()
     }
 }
 
 impl<T: Encode> Encode for Option<T> {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         match *self {
             None => out.token("None"),
             Some(ref value) => {
                 out.token("Some(");
-                out.value(value);
+                value.encode(out);
                 out.token(")");
             }
         }
@@ -142,12 +140,14 @@ impl<T: Encode> Encode for Option<T> {
 }
 
 impl<T: Decode> Decode for Option<T> {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
         match input.identifier()? {
-            "None" => Ok(Decoded::Value(None)),
+            "None" => Ok(None),
             "Some" => {
                 input.expect(b'(')?;
-                wrap(input, Some, true)
+                let value = T::decode(input)?;
+                input.expect(b')')?;
+                Ok(Some(value))
             }
             other => Err(input.unknown_variant("Option", other, &["None", "Some"])),
         }
@@ -155,250 +155,102 @@ impl<T: Decode> Decode for Option<T> {
 }
 
 impl<T: Encode> Encode for Box<T> {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
-        out.value(&**self);
+    fn encode(&self, out: &mut Encoder) {
+        (**self).encode(out);
     }
 }
 
 impl<T: Decode> Decode for Box<T> {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        wrap(input, Box::new, false)
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        T::decode(input).map(Box::new)
     }
 }
 
-struct Sequence<T, V> {
-    items: Vec<T>,
-    more: bool,
-    close: u8,
-    finish: fn(Vec<T>, &Input<'_>) -> Result<V, Error>,
-}
-
-impl<T: Decode, V: 'static> Record for Sequence<T, V> {
-    type Value = V;
-
-    fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error> {
-        while input.next_element(&mut self.more, self.close)? {
-            match T::decode(input)? {
-                Decoded::Value(value) => self.items.push(value),
-                Decoded::Frame(frame) => return Ok(Step::Push(frame)),
-            }
-        }
-        Ok(Step::Done)
-    }
-
-    fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error> {
-        self.items.push(built::<T>(child, input)?);
-        Ok(())
-    }
-
-    fn value(self, input: &mut Input<'_>) -> Result<V, Error> {
-        (self.finish)(self.items, input)
-    }
-}
-
-pub fn sequence<T: Decode, V: 'static>(
+fn elements<T: Decode>(
     input: &mut Input<'_>,
-    finish: fn(Vec<T>, &Input<'_>) -> Result<V, Error>,
-) -> Result<Decoded<V>, Error> {
-    input.expect(b'[')?;
-    let record = Sequence {
-        items: Vec::new(),
-        more: false,
-        close: b']',
-        finish,
-    };
-    start(record, input)
+    open: u8,
+    close: u8,
+    mut items: Vec<T>,
+) -> Result<Vec<T>, Error> {
+    input.expect(open)?;
+    let mut more = false;
+    while input.next_element(&mut more, close)? {
+        items.push(T::decode(input)?);
+    }
+    Ok(items)
 }
 
 impl<T: Encode> Encode for Vec<T> {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.sequence("[", "]", self);
     }
 }
 
 impl<T: Decode> Decode for Vec<T> {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        sequence(input, |items, _| Ok(items))
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        elements(input, b'[', b']', Vec::new())
     }
 }
 
 impl<T: Encode, const N: usize> Encode for [T; N] {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.sequence("(", ")", self);
     }
 }
 
 impl<T: Decode, const N: usize> Decode for [T; N] {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
-        input.expect(b'(')?;
-        let record = Sequence {
-            items: Vec::with_capacity(N),
-            more: false,
-            close: b')',
-            finish: |items: Vec<T>, input: &Input<'_>| {
-                <[T; N]>::try_from(items).map_err(|_| input.length("array", N))
-            },
-        };
-        start(record, input)
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
+        let items = elements(input, b'(', b')', Vec::with_capacity(N))?;
+        <[T; N]>::try_from(items).map_err(|_| input.length("array", N))
     }
 }
 
 macro_rules! tuple {
-    ($record:ident, $count:literal; $first:ident $first_index:tt $(, $name:ident $index:tt)*) => {
+    ($count:literal; $first:ident $first_index:tt $(, $name:ident $index:tt)*) => {
         impl<$first: Encode $(, $name: Encode)*> Encode for ($first, $($name,)*) {
-            fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+            fn encode(&self, out: &mut Encoder) {
                 out.token("(");
-                out.value(&self.$first_index);
+                self.$first_index.encode(out);
                 $(
                     out.token(",");
-                    out.value(&self.$index);
+                    self.$index.encode(out);
                 )*
                 out.token(")");
             }
         }
 
-        struct $record<$first $(, $name)*> {
-            next: usize,
-            more: bool,
-            slots: (Option<$first>, $(Option<$name>,)*),
-        }
-
-        impl<$first: Decode $(, $name: Decode)*> Record for $record<$first $(, $name)*> {
-            type Value = ($first, $($name,)*);
-
-            fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error> {
-                while input.next_element(&mut self.more, b')')? {
-                    let index = self.next;
-                    self.next += 1;
-                    match index {
-                        $first_index => match $first::decode(input)? {
-                            Decoded::Value(value) => self.slots.$first_index = Some(value),
-                            Decoded::Frame(frame) => return Ok(Step::Push(frame)),
-                        },
-                        $(
-                            $index => match $name::decode(input)? {
-                                Decoded::Value(value) => self.slots.$index = Some(value),
-                                Decoded::Frame(frame) => return Ok(Step::Push(frame)),
-                            },
-                        )*
-                        _ => return Err(input.length("tuple", $count)),
-                    }
-                }
-                Ok(Step::Done)
-            }
-
-            fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error> {
-                match self.next.checked_sub(1) {
-                    Some($first_index) => self.slots.$first_index = Some(built(child, input)?),
-                    $(
-                        Some($index) => self.slots.$index = Some(built(child, input)?),
-                    )*
-                    _ => return Err(input.length("tuple", $count)),
-                }
-                Ok(())
-            }
-
-            fn value(self, input: &mut Input<'_>) -> Result<Self::Value, Error> {
-                let missing = || input.length("tuple", $count);
-                Ok((
-                    self.slots.$first_index.ok_or_else(missing)?,
-                    $(self.slots.$index.ok_or_else(missing)?,)*
-                ))
-            }
-        }
-
         impl<$first: Decode $(, $name: Decode)*> Decode for ($first, $($name,)*) {
-            fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
+            fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
                 input.expect(b'(')?;
-                let record = $record {
-                    next: 0,
-                    more: false,
-                    slots: (None, $(None::<$name>,)*),
-                };
-                start(record, input)
+                let mut more = false;
+                let value = (
+                    element::<$first>(input, &mut more, "tuple", $count)?,
+                    $(element::<$name>(input, &mut more, "tuple", $count)?,)*
+                );
+                no_more_elements(input, &mut more, "tuple", $count)?;
+                Ok(value)
             }
         }
     };
 }
 
-tuple!(Tuple2, 2; A 0, B 1);
-tuple!(Tuple3, 3; A 0, B 1, C 2);
-tuple!(Tuple4, 4; A 0, B 1, C 2, D 3);
-tuple!(Tuple5, 5; A 0, B 1, C 2, D 3, E 4);
+tuple!(2; A 0, B 1);
+tuple!(3; A 0, B 1, C 2);
+tuple!(4; A 0, B 1, C 2, D 3);
+tuple!(5; A 0, B 1, C 2, D 3, E 4);
 
 impl<K: Encode, V: Encode, S> Encode for indexmap::IndexMap<K, V, S> {
-    fn encode<'a>(&'a self, out: &mut Encoder<'a>) {
+    fn encode(&self, out: &mut Encoder) {
         out.token("{");
-        let mut first = true;
-        for (key, value) in self {
-            if !first {
+        for (index, (key, value)) in self.iter().enumerate() {
+            if index > 0 {
                 out.token(",");
             }
-            first = false;
-            out.value(key);
+            key.encode(out);
             out.token(":");
-            out.value(value);
+            value.encode(out);
         }
         out.token("}");
-    }
-}
-
-struct Map<K, V, S> {
-    map: indexmap::IndexMap<K, V, S>,
-    key: Option<K>,
-    more: bool,
-}
-
-impl<K, V, S> Record for Map<K, V, S>
-where
-    K: Decode + Hash + Eq,
-    V: Decode,
-    S: BuildHasher + 'static,
-{
-    type Value = indexmap::IndexMap<K, V, S>;
-
-    fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error> {
-        loop {
-            if self.key.is_none() {
-                if !input.next_element(&mut self.more, b'}')? {
-                    return Ok(Step::Done);
-                }
-                match K::decode(input)? {
-                    Decoded::Value(key) => self.key = Some(key),
-                    Decoded::Frame(frame) => return Ok(Step::Push(frame)),
-                }
-            }
-            input.expect(b':')?;
-            match V::decode(input)? {
-                Decoded::Value(value) => self.insert(value, input)?,
-                Decoded::Frame(frame) => return Ok(Step::Push(frame)),
-            }
-        }
-    }
-
-    fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error> {
-        if self.key.is_none() {
-            self.key = Some(built(child, input)?);
-            return Ok(());
-        }
-        let value = built(child, input)?;
-        self.insert(value, input)
-    }
-
-    fn value(self, _input: &mut Input<'_>) -> Result<Self::Value, Error> {
-        Ok(self.map)
-    }
-}
-
-impl<K: Hash + Eq, V, S: BuildHasher> Map<K, V, S> {
-    fn insert(&mut self, value: V, input: &Input<'_>) -> Result<(), Error> {
-        let Some(key) = self.key.take() else {
-            return Err(input.error("a map value without a key"));
-        };
-        match self.map.insert(key, value) {
-            None => Ok(()),
-            Some(_) => Err(input.error("duplicate key in a map")),
-        }
     }
 }
 
@@ -406,35 +258,39 @@ impl<K, V, S> Decode for indexmap::IndexMap<K, V, S>
 where
     K: Decode + Hash + Eq,
     V: Decode,
-    S: BuildHasher + Default + 'static,
+    S: BuildHasher + Default,
 {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error> {
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error> {
         input.expect(b'{')?;
-        let record = Map {
-            map: indexmap::IndexMap::with_hasher(S::default()),
-            key: None,
-            more: false,
-        };
-        start(record, input)
+        let mut map = Self::with_hasher(S::default());
+        let mut more = false;
+        while input.next_element(&mut more, b'}')? {
+            let key = K::decode(input)?;
+            input.expect(b':')?;
+            let value = V::decode(input)?;
+            if map.insert(key, value).is_some() {
+                return Err(input.error("duplicate key in a map"));
+            }
+        }
+        Ok(map)
     }
 }
 
-pub fn encode_flags<'a, B>(flags: &B, out: &mut Encoder<'a>)
+pub fn encode_flags<B>(flags: &B, out: &mut Encoder)
 where
     B: bitflags::Flags,
     B::Bits: bitflags::parser::WriteHex,
 {
     let mut names = String::new();
     let _ = bitflags::parser::to_writer(flags, &mut names);
-    let mut text = String::from("(");
-    write_string(&mut text, &names);
-    text.push(')');
-    out.text(text);
+    out.token("(");
+    out.string(&names);
+    out.token(")");
 }
 
-pub fn decode_flags<B>(input: &mut Input<'_>, owner: &str) -> Result<Decoded<B>, Error>
+pub fn decode_flags<B>(input: &mut Input<'_>, owner: &str) -> Result<B, Error>
 where
-    B: bitflags::Flags + 'static,
+    B: bitflags::Flags,
     B::Bits: bitflags::parser::ParseHex,
 {
     input.expect(b'(')?;
@@ -442,5 +298,5 @@ where
     let flags = bitflags::parser::from_str::<B>(&names)
         .map_err(|error| input.error(format!("invalid flags of `{owner}`: {error}")))?;
     input.expect(b')')?;
-    Ok(Decoded::Value(flags))
+    Ok(flags)
 }

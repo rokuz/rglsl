@@ -101,14 +101,14 @@ impl SpanMap {
 }
 
 impl rglo::Encode for SpanMap {
-    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
-        out.text(rglo::to_string(&SpanParts::from(self.clone())));
+    fn encode(&self, out: &mut rglo::Encoder) {
+        rglo::Encode::encode(&SpanParts::from(self.clone()), out);
     }
 }
 
 impl rglo::Decode for SpanMap {
-    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
-        rglo::wrap::<SpanParts, Self>(input, Self::from, false)
+    fn decode(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
+        <SpanParts as rglo::Decode>::decode(input).map(Self::from)
     }
 }
 

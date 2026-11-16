@@ -303,17 +303,16 @@ impl<T> Arena<T> {
 }
 
 impl<T: rglo::Encode> rglo::Encode for Arena<T> {
-    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+    fn encode(&self, out: &mut rglo::Encoder) {
         out.sequence("[", "]", &self.data);
     }
 }
 
 impl<T: rglo::Decode> rglo::Decode for Arena<T> {
-    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
-        rglo::sequence(input, |data: Vec<T>, _| {
-            let span_info = core::iter::repeat_n(Span::default(), data.len()).collect();
-            Ok(Self { data, span_info })
-        })
+    fn decode(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
+        let data: Vec<T> = rglo::Decode::decode(input)?;
+        let span_info = core::iter::repeat_n(Span::default(), data.len()).collect();
+        Ok(Self { data, span_info })
     }
 }
 

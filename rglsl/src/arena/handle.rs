@@ -50,14 +50,14 @@ pub struct Handle<T> {
 }
 
 impl<T> rglo::Encode for Handle<T> {
-    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+    fn encode(&self, out: &mut rglo::Encoder) {
         out.unsigned(u64::from(self.index.get()));
     }
 }
 
-impl<T: 'static> rglo::Decode for Handle<T> {
-    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
-        Index::read(input).map(|index| rglo::Decoded::Value(Self::new(index)))
+impl<T> rglo::Decode for Handle<T> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
+        Index::read(input).map(Self::new)
     }
 }
 
