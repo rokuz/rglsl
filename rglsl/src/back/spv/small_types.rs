@@ -169,13 +169,7 @@ impl Module {
                     children.push((element, float, width));
                     false
                 }
-                Some(
-                    &(TypeInfo::None
-                    | TypeInfo::Pointer(..)
-                    | TypeInfo::EncodedFloat(_)
-                    | TypeInfo::Other),
-                )
-                | None => false,
+                _ => false,
             },
         )
     }

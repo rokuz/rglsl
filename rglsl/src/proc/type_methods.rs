@@ -550,28 +550,7 @@ impl crate::TypeInner {
                 ..
             } => len.get(),
             Self::Struct { ref members, .. } => members.len() as u32,
-            Self::Array {
-                size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
-                ..
-            }
-            | Self::Scalar(_)
-            | Self::CooperativeMatrix { .. }
-            | Self::LongVector { .. }
-            | Self::TensorLayout { .. }
-            | Self::TensorView { .. }
-            | Self::Tensor { .. }
-            | Self::Atomic(_)
-            | Self::Pointer { .. }
-            | Self::ValuePointer { .. }
-            | Self::Image { .. }
-            | Self::Sampler { .. }
-            | Self::SampledImage { .. }
-            | Self::AccelerationStructure
-            | Self::RayQuery
-            | Self::HitObject { .. }
-            | Self::BindingArray { .. }
-            | Self::BufferDescriptor { .. }
-            | Self::Spirv { .. } => return None,
+            _ => return None,
         })
     }
 
@@ -587,28 +566,7 @@ impl crate::TypeInner {
                 ..
             } => TypeResolution::Handle(base),
             Self::Struct { ref members, .. } => TypeResolution::Handle(members.get(index)?.ty),
-            Self::Array {
-                size: crate::ArraySize::Pending(_) | crate::ArraySize::Dynamic,
-                ..
-            }
-            | Self::Scalar(_)
-            | Self::CooperativeMatrix { .. }
-            | Self::LongVector { .. }
-            | Self::TensorLayout { .. }
-            | Self::TensorView { .. }
-            | Self::Tensor { .. }
-            | Self::Atomic(_)
-            | Self::Pointer { .. }
-            | Self::ValuePointer { .. }
-            | Self::Image { .. }
-            | Self::Sampler { .. }
-            | Self::SampledImage { .. }
-            | Self::AccelerationStructure
-            | Self::RayQuery
-            | Self::HitObject { .. }
-            | Self::BindingArray { .. }
-            | Self::BufferDescriptor { .. }
-            | Self::Spirv { .. } => return None,
+            _ => return None,
         })
     }
 

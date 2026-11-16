@@ -51,53 +51,8 @@ fn ensure_returns_at_end<'a>(
 const fn needs_return(last: Option<&crate::Statement>) -> bool {
     use crate::Statement as S;
     match last {
-        Some(&(S::Block(_) | S::If { .. } | S::Switch { .. })) => false,
-        Some(
-            &(S::Break
-            | S::Continue
-            | S::Return { .. }
-            | S::Kill
-            | S::TerminateInvocation
-            | S::Abort { .. }),
-        ) => false,
-        Some(&S::MeshFunction(ref function)) if function.is_terminator() => false,
-        Some(&S::RayPipelineFunction(ref function)) if function.is_terminator() => false,
-        Some(
-            &(S::Emit(_)
-            | S::Loop { .. }
-            | S::Store { .. }
-            | S::ImageStore { .. }
-            | S::TensorWrite { .. }
-            | S::SpirvInstruction { .. }
-            | S::Call { .. }
-            | S::RayQuery { .. }
-            | S::Atomic { .. }
-            | S::ImageAtomic { .. }
-            | S::AtomicLoad { .. }
-            | S::AtomicStore { .. }
-            | S::ScopedBarrier { .. }
-            | S::SplitBarrier { .. }
-            | S::Demote
-            | S::BeginInvocationInterlock
-            | S::EndInvocationInterlock
-            | S::SubgroupBallot { .. }
-            | S::SubgroupCollectiveOperation { .. }
-            | S::SubgroupGather { .. }
-            | S::SubgroupFunction { .. }
-            | S::ControlBarrier(_)
-            | S::MemoryBarrier(_)
-            | S::CooperativeStore { .. }
-            | S::RayPipelineFunction(_)
-            | S::HitObject { .. }
-            | S::ReorderThread { .. }
-            | S::DebugPrintf { .. }
-            | S::Assume { .. }
-            | S::CooperativeVector(_)
-            | S::CooperativeMatrix { .. }
-            | S::EmitVertex { .. }
-            | S::EndPrimitive { .. }
-            | S::MeshFunction(_)),
-        )
-        | None => true,
+        Some(&(S::Block(_) | S::If { .. } | S::Switch { .. } | S::Break | S::Continue)) => false,
+        Some(statement) => !statement.is_terminator(),
+        None => true,
     }
 }

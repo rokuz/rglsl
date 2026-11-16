@@ -880,50 +880,7 @@ impl ExpressionKindTracker {
                 expr.for_each_operand(|operand| kind = kind.max(self.type_of(operand)));
                 kind
             }
-            Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Derivative { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => ExpressionKind::Runtime,
+            _ => ExpressionKind::Runtime,
         }
     }
 }
@@ -1591,66 +1548,7 @@ impl<'a> ConstantEvaluator<'a> {
                 };
                 self.register_evaluated_expr(expr, span)
             }
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => Err(ConstantEvaluatorError::SwizzleVectorOnly),
+            _ => Err(ConstantEvaluatorError::SwizzleVectorOnly),
         }
     }
 
@@ -2433,66 +2331,7 @@ impl<'a> ConstantEvaluator<'a> {
                     .nth(index)
                     .ok_or(ConstantEvaluatorError::InvalidAccessIndex)
             }
-            Expression::Literal(_)
-            | Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Replicate { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => Err(ConstantEvaluatorError::InvalidAccessBase),
+            _ => Err(ConstantEvaluatorError::InvalidAccessBase),
         }
     }
 
@@ -3110,65 +2949,7 @@ impl<'a> ConstantEvaluator<'a> {
                 let ty = self.types.insert(Type { name: None, inner }, span);
                 Expression::Replicate { ty, value }
             }
-            Expression::Constant(_)
-            | Expression::Override(_)
-            | Expression::ZeroValue(_)
-            | Expression::Access { .. }
-            | Expression::AccessIndex { .. }
-            | Expression::Swizzle { .. }
-            | Expression::FunctionArgument(_)
-            | Expression::GlobalVariable(_)
-            | Expression::LocalVariable(_)
-            | Expression::Load { .. }
-            | Expression::ImageSample { .. }
-            | Expression::ImageLoad { .. }
-            | Expression::ImageQuery { .. }
-            | Expression::Unary { .. }
-            | Expression::Binary { .. }
-            | Expression::Select { .. }
-            | Expression::Derivative { .. }
-            | Expression::Relational { .. }
-            | Expression::Math { .. }
-            | Expression::As { .. }
-            | Expression::CallResult(_)
-            | Expression::AtomicResult { .. }
-            | Expression::ArrayLength(_)
-            | Expression::WideArrayLength(_)
-            | Expression::PhysicalPointer { .. }
-            | Expression::PhysicalAddress { .. }
-            | Expression::BufferPointer { .. }
-            | Expression::HeapOffset { .. }
-            | Expression::RayQueryProceedResult
-            | Expression::RayQueryGet { .. }
-            | Expression::ReportIntersectionResult
-            | Expression::AccelerationStructureFromAddress { .. }
-            | Expression::HitObjectGet { .. }
-            | Expression::FetchMicroTriangleVertex { .. }
-            | Expression::SubgroupBallotResult
-            | Expression::SubgroupOperationResult { .. }
-            | Expression::SpirvInstructionResult { .. }
-            | Expression::CooperativeLoad { .. }
-            | Expression::CooperativeMultiplyAdd { .. }
-            | Expression::CooperativeMatrixLength { .. }
-            | Expression::Expect { .. }
-            | Expression::ImageSparseResident { .. }
-            | Expression::IsHelperInvocation
-            | Expression::ReadClock { .. }
-            | Expression::InterpolateAt { .. }
-            | Expression::FragmentFetch { .. }
-            | Expression::ImageFootprint { .. }
-            | Expression::AttachmentRead { .. }
-            | Expression::CooperativeVectorLoad { .. }
-            | Expression::CooperativeVectorMatMul { .. }
-            | Expression::Convert { .. }
-            | Expression::CooperativeMatrixResult { .. }
-            | Expression::TensorCreate { .. }
-            | Expression::ImageProcessing { .. }
-            | Expression::ArrayConversion { .. }
-            | Expression::Bitcast { .. }
-            | Expression::TensorSet { .. }
-            | Expression::TensorRead { .. }
-            | Expression::TensorQuerySize { .. } => return make_error(),
+            _ => return make_error(),
         };
 
         self.register_evaluated_expr(expr, span)
@@ -4149,64 +3930,7 @@ impl<'a> ConstantEvaluator<'a> {
                             tasks.push(CopyTask::Splat { size, span });
                             tasks.push(CopyTask::Enter(value));
                         }
-                        Expression::Override(_)
-                        | Expression::Access { .. }
-                        | Expression::AccessIndex { .. }
-                        | Expression::Swizzle { .. }
-                        | Expression::FunctionArgument(_)
-                        | Expression::GlobalVariable(_)
-                        | Expression::LocalVariable(_)
-                        | Expression::Load { .. }
-                        | Expression::ImageSample { .. }
-                        | Expression::ImageLoad { .. }
-                        | Expression::ImageQuery { .. }
-                        | Expression::Unary { .. }
-                        | Expression::Binary { .. }
-                        | Expression::Select { .. }
-                        | Expression::Derivative { .. }
-                        | Expression::Relational { .. }
-                        | Expression::Math { .. }
-                        | Expression::As { .. }
-                        | Expression::CallResult(_)
-                        | Expression::AtomicResult { .. }
-                        | Expression::ArrayLength(_)
-                        | Expression::WideArrayLength(_)
-                        | Expression::PhysicalPointer { .. }
-                        | Expression::PhysicalAddress { .. }
-                        | Expression::BufferPointer { .. }
-                        | Expression::HeapOffset { .. }
-                        | Expression::RayQueryProceedResult
-                        | Expression::RayQueryGet { .. }
-                        | Expression::ReportIntersectionResult
-                        | Expression::AccelerationStructureFromAddress { .. }
-                        | Expression::HitObjectGet { .. }
-                        | Expression::FetchMicroTriangleVertex { .. }
-                        | Expression::SubgroupBallotResult
-                        | Expression::SubgroupOperationResult { .. }
-                        | Expression::SpirvInstructionResult { .. }
-                        | Expression::CooperativeLoad { .. }
-                        | Expression::CooperativeMultiplyAdd { .. }
-                        | Expression::CooperativeMatrixLength { .. }
-                        | Expression::Replicate { .. }
-                        | Expression::Expect { .. }
-                        | Expression::ImageSparseResident { .. }
-                        | Expression::IsHelperInvocation
-                        | Expression::ReadClock { .. }
-                        | Expression::InterpolateAt { .. }
-                        | Expression::FragmentFetch { .. }
-                        | Expression::ImageFootprint { .. }
-                        | Expression::AttachmentRead { .. }
-                        | Expression::CooperativeVectorLoad { .. }
-                        | Expression::CooperativeVectorMatMul { .. }
-                        | Expression::Convert { .. }
-                        | Expression::CooperativeMatrixResult { .. }
-                        | Expression::TensorCreate { .. }
-                        | Expression::ImageProcessing { .. }
-                        | Expression::ArrayConversion { .. }
-                        | Expression::Bitcast { .. }
-                        | Expression::TensorSet { .. }
-                        | Expression::TensorRead { .. }
-                        | Expression::TensorQuerySize { .. } => {
+                        _ => {
                             log::debug!("copy_from: SubexpressionsAreNotConstant");
                             return Err(ConstantEvaluatorError::SubexpressionsAreNotConstant);
                         }
@@ -4328,64 +4052,7 @@ impl<'a> ConstantEvaluator<'a> {
                 };
                 Tr::Value(TypeInner::Vector { scalar, size })
             }
-            Ex::Override(_)
-            | Ex::Access { .. }
-            | Ex::AccessIndex { .. }
-            | Ex::Swizzle { .. }
-            | Ex::FunctionArgument(_)
-            | Ex::GlobalVariable(_)
-            | Ex::LocalVariable(_)
-            | Ex::Load { .. }
-            | Ex::ImageSample { .. }
-            | Ex::ImageLoad { .. }
-            | Ex::ImageQuery { .. }
-            | Ex::Unary { .. }
-            | Ex::Binary { .. }
-            | Ex::Select { .. }
-            | Ex::Derivative { .. }
-            | Ex::Relational { .. }
-            | Ex::Math { .. }
-            | Ex::As { .. }
-            | Ex::CallResult(_)
-            | Ex::AtomicResult { .. }
-            | Ex::ArrayLength(_)
-            | Ex::WideArrayLength(_)
-            | Ex::PhysicalPointer { .. }
-            | Ex::PhysicalAddress { .. }
-            | Ex::BufferPointer { .. }
-            | Ex::HeapOffset { .. }
-            | Ex::RayQueryProceedResult
-            | Ex::RayQueryGet { .. }
-            | Ex::ReportIntersectionResult
-            | Ex::AccelerationStructureFromAddress { .. }
-            | Ex::HitObjectGet { .. }
-            | Ex::FetchMicroTriangleVertex { .. }
-            | Ex::SubgroupBallotResult
-            | Ex::SubgroupOperationResult { .. }
-            | Ex::SpirvInstructionResult { .. }
-            | Ex::CooperativeLoad { .. }
-            | Ex::CooperativeMultiplyAdd { .. }
-            | Ex::CooperativeMatrixLength { .. }
-            | Ex::Replicate { .. }
-            | Ex::Expect { .. }
-            | Ex::ImageSparseResident { .. }
-            | Ex::IsHelperInvocation
-            | Ex::ReadClock { .. }
-            | Ex::InterpolateAt { .. }
-            | Ex::FragmentFetch { .. }
-            | Ex::ImageFootprint { .. }
-            | Ex::AttachmentRead { .. }
-            | Ex::CooperativeVectorLoad { .. }
-            | Ex::CooperativeVectorMatMul { .. }
-            | Ex::Convert { .. }
-            | Ex::CooperativeMatrixResult { .. }
-            | Ex::TensorCreate { .. }
-            | Ex::ImageProcessing { .. }
-            | Ex::ArrayConversion { .. }
-            | Ex::Bitcast { .. }
-            | Ex::TensorSet { .. }
-            | Ex::TensorRead { .. }
-            | Ex::TensorQuerySize { .. } => {
+            _ => {
                 log::debug!("resolve_type: SubexpressionsAreNotConstant");
                 return Err(ConstantEvaluatorError::SubexpressionsAreNotConstant);
             }

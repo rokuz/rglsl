@@ -77,18 +77,7 @@ const fn float_sint_uint_ext(
         Some(Sk::Float) => Ok(float_op),
         Some(Sk::Sint) => Ok(sint_op),
         Some(Sk::Uint) => Ok(uint_op),
-        Some(
-            Sk::Bool
-            | Sk::BFloat
-            | Sk::FloatE4M3
-            | Sk::FloatE5M2
-            | Sk::FloatE2M1
-            | Sk::FloatE3M2
-            | Sk::FloatE2M3
-            | Sk::FloatUE8M0
-            | Sk::FloatMXINT8,
-        )
-        | None => Err(Error::Validation(message)),
+        _ => Err(Error::Validation(message)),
     }
 }
 
@@ -154,18 +143,7 @@ impl BlockContext<'_> {
                     id,
                     arg0_id,
                 )),
-                Some(
-                    Sk::Bool
-                    | Sk::BFloat
-                    | Sk::FloatE4M3
-                    | Sk::FloatE5M2
-                    | Sk::FloatE2M1
-                    | Sk::FloatE3M2
-                    | Sk::FloatE2M3
-                    | Sk::FloatUE8M0
-                    | Sk::FloatMXINT8,
-                )
-                | None => return Err(Error::Validation("abs of a non-numeric value")),
+                _ => return Err(Error::Validation("abs of a non-numeric value")),
             },
             Mf::Min => MathOp::Ext(float_sint_uint_ext(
                 arg_scalar_kind,

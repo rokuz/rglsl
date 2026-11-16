@@ -492,66 +492,7 @@ impl crate::Function {
                 crate::Expression::Access { base, .. } => base,
                 crate::Expression::AccessIndex { base, .. } => base,
                 crate::Expression::GlobalVariable(handle) => return Some(handle),
-                crate::Expression::Literal(_)
-                | crate::Expression::Constant(_)
-                | crate::Expression::Override(_)
-                | crate::Expression::ZeroValue(_)
-                | crate::Expression::Compose { .. }
-                | crate::Expression::Splat { .. }
-                | crate::Expression::Swizzle { .. }
-                | crate::Expression::FunctionArgument(_)
-                | crate::Expression::LocalVariable(_)
-                | crate::Expression::Load { .. }
-                | crate::Expression::ImageSample { .. }
-                | crate::Expression::ImageLoad { .. }
-                | crate::Expression::ImageQuery { .. }
-                | crate::Expression::Unary { .. }
-                | crate::Expression::Binary { .. }
-                | crate::Expression::Select { .. }
-                | crate::Expression::Derivative { .. }
-                | crate::Expression::Relational { .. }
-                | crate::Expression::Math { .. }
-                | crate::Expression::As { .. }
-                | crate::Expression::CallResult(_)
-                | crate::Expression::AtomicResult { .. }
-                | crate::Expression::ArrayLength(_)
-                | crate::Expression::WideArrayLength(_)
-                | crate::Expression::PhysicalPointer { .. }
-                | crate::Expression::PhysicalAddress { .. }
-                | crate::Expression::BufferPointer { .. }
-                | crate::Expression::HeapOffset { .. }
-                | crate::Expression::RayQueryProceedResult
-                | crate::Expression::RayQueryGet { .. }
-                | crate::Expression::ReportIntersectionResult
-                | crate::Expression::AccelerationStructureFromAddress { .. }
-                | crate::Expression::HitObjectGet { .. }
-                | crate::Expression::FetchMicroTriangleVertex { .. }
-                | crate::Expression::SubgroupBallotResult
-                | crate::Expression::SubgroupOperationResult { .. }
-                | crate::Expression::SpirvInstructionResult { .. }
-                | crate::Expression::CooperativeLoad { .. }
-                | crate::Expression::CooperativeMultiplyAdd { .. }
-                | crate::Expression::CooperativeMatrixLength { .. }
-                | crate::Expression::Replicate { .. }
-                | crate::Expression::Expect { .. }
-                | crate::Expression::ImageSparseResident { .. }
-                | crate::Expression::IsHelperInvocation
-                | crate::Expression::ReadClock { .. }
-                | crate::Expression::InterpolateAt { .. }
-                | crate::Expression::FragmentFetch { .. }
-                | crate::Expression::ImageFootprint { .. }
-                | crate::Expression::AttachmentRead { .. }
-                | crate::Expression::CooperativeVectorLoad { .. }
-                | crate::Expression::CooperativeVectorMatMul { .. }
-                | crate::Expression::Convert { .. }
-                | crate::Expression::CooperativeMatrixResult { .. }
-                | crate::Expression::TensorCreate { .. }
-                | crate::Expression::ImageProcessing { .. }
-                | crate::Expression::ArrayConversion { .. }
-                | crate::Expression::Bitcast { .. }
-                | crate::Expression::TensorSet { .. }
-                | crate::Expression::TensorRead { .. }
-                | crate::Expression::TensorQuerySize { .. } => return None,
+                _ => return None,
             }
         }
     }
@@ -1197,6 +1138,55 @@ pub fn long_math_result(
             span,
         },
     })
+}
+
+impl crate::Statement {
+    pub const fn is_terminator(&self) -> bool {
+        match *self {
+            Self::Return { .. } | Self::Kill | Self::TerminateInvocation | Self::Abort { .. } => {
+                true
+            }
+            Self::MeshFunction(ref function) => function.is_terminator(),
+            Self::RayPipelineFunction(ref function) => function.is_terminator(),
+            Self::Emit(_)
+            | Self::Block(_)
+            | Self::If { .. }
+            | Self::Switch { .. }
+            | Self::Loop { .. }
+            | Self::Break
+            | Self::Continue
+            | Self::Store { .. }
+            | Self::ImageStore { .. }
+            | Self::TensorWrite { .. }
+            | Self::SpirvInstruction { .. }
+            | Self::Call { .. }
+            | Self::RayQuery { .. }
+            | Self::Atomic { .. }
+            | Self::ImageAtomic { .. }
+            | Self::AtomicLoad { .. }
+            | Self::AtomicStore { .. }
+            | Self::ScopedBarrier { .. }
+            | Self::SplitBarrier { .. }
+            | Self::Demote
+            | Self::BeginInvocationInterlock
+            | Self::EndInvocationInterlock
+            | Self::SubgroupBallot { .. }
+            | Self::SubgroupCollectiveOperation { .. }
+            | Self::SubgroupGather { .. }
+            | Self::SubgroupFunction { .. }
+            | Self::ControlBarrier(_)
+            | Self::MemoryBarrier(_)
+            | Self::CooperativeStore { .. }
+            | Self::HitObject { .. }
+            | Self::ReorderThread { .. }
+            | Self::DebugPrintf { .. }
+            | Self::Assume { .. }
+            | Self::CooperativeVector(_)
+            | Self::CooperativeMatrix { .. }
+            | Self::EmitVertex { .. }
+            | Self::EndPrimitive { .. } => false,
+        }
+    }
 }
 
 impl crate::MeshFunction {

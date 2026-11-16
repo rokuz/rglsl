@@ -183,45 +183,7 @@ impl BlockContext<'_> {
                     self.writer.debug_mark(block, span);
                 }
             }
-            Statement::Emit(_)
-            | Statement::Loop { .. }
-            | Statement::Break
-            | Statement::Continue
-            | Statement::Kill
-            | Statement::TerminateInvocation
-            | Statement::Demote
-            | Statement::BeginInvocationInterlock
-            | Statement::EndInvocationInterlock
-            | Statement::EmitVertex { .. }
-            | Statement::EndPrimitive { .. }
-            | Statement::ControlBarrier(_)
-            | Statement::MemoryBarrier(_)
-            | Statement::ScopedBarrier { .. }
-            | Statement::SplitBarrier { .. }
-            | Statement::Store { .. }
-            | Statement::ImageStore { .. }
-            | Statement::Atomic { .. }
-            | Statement::AtomicLoad { .. }
-            | Statement::AtomicStore { .. }
-            | Statement::ImageAtomic { .. }
-            | Statement::Call { .. }
-            | Statement::RayQuery { .. }
-            | Statement::RayPipelineFunction(_)
-            | Statement::HitObject { .. }
-            | Statement::ReorderThread { .. }
-            | Statement::MeshFunction(_)
-            | Statement::SubgroupBallot { .. }
-            | Statement::SubgroupGather { .. }
-            | Statement::SubgroupCollectiveOperation { .. }
-            | Statement::SubgroupFunction { .. }
-            | Statement::CooperativeStore { .. }
-            | Statement::DebugPrintf { .. }
-            | Statement::Assume { .. }
-            | Statement::CooperativeVector(_)
-            | Statement::CooperativeMatrix { .. }
-            | Statement::Abort { .. }
-            | Statement::TensorWrite { .. }
-            | Statement::SpirvInstruction { .. } => self.writer.debug_mark(block, span),
+            _ => self.writer.debug_mark(block, span),
         }
     }
 

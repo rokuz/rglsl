@@ -359,62 +359,7 @@ impl BlockContext<'_> {
             | crate::Expression::AccelerationStructureFromAddress { .. } => {
                 self.cached.get(expr_handle)?
             }
-            crate::Expression::Literal(_)
-            | crate::Expression::Constant(_)
-            | crate::Expression::Override(_)
-            | crate::Expression::ZeroValue(_)
-            | crate::Expression::Compose { .. }
-            | crate::Expression::Splat { .. }
-            | crate::Expression::Swizzle { .. }
-            | crate::Expression::LocalVariable(_)
-            | crate::Expression::ImageSample { .. }
-            | crate::Expression::ImageLoad { .. }
-            | crate::Expression::ImageQuery { .. }
-            | crate::Expression::Unary { .. }
-            | crate::Expression::Binary { .. }
-            | crate::Expression::Select { .. }
-            | crate::Expression::Derivative { .. }
-            | crate::Expression::Relational { .. }
-            | crate::Expression::Math { .. }
-            | crate::Expression::As { .. }
-            | crate::Expression::AtomicResult { .. }
-            | crate::Expression::ArrayLength(_)
-            | crate::Expression::WideArrayLength(_)
-            | crate::Expression::PhysicalPointer { .. }
-            | crate::Expression::PhysicalAddress { .. }
-            | crate::Expression::BufferPointer { .. }
-            | crate::Expression::HeapOffset { .. }
-            | crate::Expression::RayQueryProceedResult
-            | crate::Expression::RayQueryGet { .. }
-            | crate::Expression::ReportIntersectionResult
-            | crate::Expression::HitObjectGet { .. }
-            | crate::Expression::FetchMicroTriangleVertex { .. }
-            | crate::Expression::SubgroupBallotResult
-            | crate::Expression::SubgroupOperationResult { .. }
-            | crate::Expression::SpirvInstructionResult { .. }
-            | crate::Expression::CooperativeLoad { .. }
-            | crate::Expression::CooperativeMultiplyAdd { .. }
-            | crate::Expression::CooperativeMatrixLength { .. }
-            | crate::Expression::Replicate { .. }
-            | crate::Expression::Expect { .. }
-            | crate::Expression::ImageSparseResident { .. }
-            | crate::Expression::IsHelperInvocation
-            | crate::Expression::ReadClock { .. }
-            | crate::Expression::InterpolateAt { .. }
-            | crate::Expression::FragmentFetch { .. }
-            | crate::Expression::ImageFootprint { .. }
-            | crate::Expression::AttachmentRead { .. }
-            | crate::Expression::CooperativeVectorLoad { .. }
-            | crate::Expression::CooperativeVectorMatMul { .. }
-            | crate::Expression::Convert { .. }
-            | crate::Expression::CooperativeMatrixResult { .. }
-            | crate::Expression::TensorCreate { .. }
-            | crate::Expression::ImageProcessing { .. }
-            | crate::Expression::ArrayConversion { .. }
-            | crate::Expression::Bitcast { .. }
-            | crate::Expression::TensorSet { .. }
-            | crate::Expression::TensorRead { .. }
-            | crate::Expression::TensorQuerySize { .. } => {
+            _ => {
                 return Err(Error::Validation("unexpected opaque handle expression"));
             }
         };

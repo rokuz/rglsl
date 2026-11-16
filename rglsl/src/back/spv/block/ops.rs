@@ -35,135 +35,49 @@ const fn binary_scalar_op(
             Some(Sk::Sint) => spirv::Op::SDiv,
             Some(Sk::Uint) => spirv::Op::UDiv,
             Some(Sk::Float) => spirv::Op::FDiv,
-            Some(
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::Modulo => match kind {
             Some(Sk::Float) => spirv::Op::FMod,
             Some(Sk::Sint) => spirv::Op::SMod,
             Some(Sk::Uint) => spirv::Op::UMod,
-            Some(
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::Equal => match kind {
             Some(Sk::Sint | Sk::Uint) => spirv::Op::IEqual,
             Some(Sk::Float) => spirv::Op::FOrdEqual,
             Some(Sk::Bool) => spirv::Op::LogicalEqual,
-            Some(
-                Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::NotEqual => match kind {
             Some(Sk::Sint | Sk::Uint) => spirv::Op::INotEqual,
             Some(Sk::Float) => spirv::Op::FUnordNotEqual,
             Some(Sk::Bool) => spirv::Op::LogicalNotEqual,
-            Some(
-                Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::Less => match kind {
             Some(Sk::Sint) => spirv::Op::SLessThan,
             Some(Sk::Uint) => spirv::Op::ULessThan,
             Some(Sk::Float) => spirv::Op::FOrdLessThan,
-            Some(
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::LessEqual => match kind {
             Some(Sk::Sint) => spirv::Op::SLessThanEqual,
             Some(Sk::Uint) => spirv::Op::ULessThanEqual,
             Some(Sk::Float) => spirv::Op::FOrdLessThanEqual,
-            Some(
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::Greater => match kind {
             Some(Sk::Sint) => spirv::Op::SGreaterThan,
             Some(Sk::Uint) => spirv::Op::UGreaterThan,
             Some(Sk::Float) => spirv::Op::FOrdGreaterThan,
-            Some(
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::GreaterEqual => match kind {
             Some(Sk::Sint) => spirv::Op::SGreaterThanEqual,
             Some(Sk::Uint) => spirv::Op::UGreaterThanEqual,
             Some(Sk::Float) => spirv::Op::FOrdGreaterThanEqual,
-            Some(
-                Sk::Bool
-                | Sk::BFloat
-                | Sk::FloatE4M3
-                | Sk::FloatE5M2
-                | Sk::FloatE2M1
-                | Sk::FloatE3M2
-                | Sk::FloatE2M3
-                | Sk::FloatUE8M0
-                | Sk::FloatMXINT8,
-            )
-            | None => return invalid,
+            _ => return invalid,
         },
         Bo::And => match kind {
             Some(Sk::Bool) => spirv::Op::LogicalAnd,

@@ -273,46 +273,7 @@ fn enter(statement: &Statement) -> Entry<'_> {
         }),
         Statement::Break => Entry::Jump(Jump::Break),
         Statement::Continue => Entry::Jump(Jump::Continue),
-        Statement::Return { .. }
-        | Statement::Kill
-        | Statement::TerminateInvocation
-        | Statement::Abort { .. } => Entry::Terminator,
-        Statement::MeshFunction(ref function) if function.is_terminator() => Entry::Terminator,
-        Statement::RayPipelineFunction(ref function) if function.is_terminator() => {
-            Entry::Terminator
-        }
-        Statement::Emit(_)
-        | Statement::Store { .. }
-        | Statement::ImageStore { .. }
-        | Statement::TensorWrite { .. }
-        | Statement::SpirvInstruction { .. }
-        | Statement::Call { .. }
-        | Statement::RayQuery { .. }
-        | Statement::Atomic { .. }
-        | Statement::ImageAtomic { .. }
-        | Statement::AtomicLoad { .. }
-        | Statement::AtomicStore { .. }
-        | Statement::ScopedBarrier { .. }
-        | Statement::SplitBarrier { .. }
-        | Statement::Demote
-        | Statement::BeginInvocationInterlock
-        | Statement::EndInvocationInterlock
-        | Statement::SubgroupBallot { .. }
-        | Statement::SubgroupCollectiveOperation { .. }
-        | Statement::SubgroupGather { .. }
-        | Statement::SubgroupFunction { .. }
-        | Statement::ControlBarrier(_)
-        | Statement::MemoryBarrier(_)
-        | Statement::CooperativeStore { .. }
-        | Statement::RayPipelineFunction(_)
-        | Statement::HitObject { .. }
-        | Statement::ReorderThread { .. }
-        | Statement::DebugPrintf { .. }
-        | Statement::Assume { .. }
-        | Statement::CooperativeVector(_)
-        | Statement::CooperativeMatrix { .. }
-        | Statement::EmitVertex { .. }
-        | Statement::EndPrimitive { .. }
-        | Statement::MeshFunction(_) => Entry::Simple,
+        _ if statement.is_terminator() => Entry::Terminator,
+        _ => Entry::Simple,
     }
 }

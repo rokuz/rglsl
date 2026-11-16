@@ -763,64 +763,7 @@ impl super::super::Validator {
                 };
                 Ok(base)
             }
-            Ex::Literal(_)
-            | Ex::Constant(_)
-            | Ex::Override(_)
-            | Ex::ZeroValue(_)
-            | Ex::Compose { .. }
-            | Ex::Splat { .. }
-            | Ex::Swizzle { .. }
-            | Ex::LocalVariable(_)
-            | Ex::ImageSample { .. }
-            | Ex::ImageLoad { .. }
-            | Ex::ImageQuery { .. }
-            | Ex::Unary { .. }
-            | Ex::Binary { .. }
-            | Ex::Select { .. }
-            | Ex::Derivative { .. }
-            | Ex::Relational { .. }
-            | Ex::Math { .. }
-            | Ex::As { .. }
-            | Ex::CallResult(_)
-            | Ex::AtomicResult { .. }
-            | Ex::ArrayLength(_)
-            | Ex::WideArrayLength(_)
-            | Ex::PhysicalPointer { .. }
-            | Ex::PhysicalAddress { .. }
-            | Ex::BufferPointer { .. }
-            | Ex::HeapOffset { .. }
-            | Ex::RayQueryProceedResult
-            | Ex::RayQueryGet { .. }
-            | Ex::ReportIntersectionResult
-            | Ex::AccelerationStructureFromAddress { .. }
-            | Ex::HitObjectGet { .. }
-            | Ex::FetchMicroTriangleVertex { .. }
-            | Ex::SubgroupBallotResult
-            | Ex::SubgroupOperationResult { .. }
-            | Ex::SpirvInstructionResult { .. }
-            | Ex::CooperativeLoad { .. }
-            | Ex::CooperativeMultiplyAdd { .. }
-            | Ex::CooperativeMatrixLength { .. }
-            | Ex::Replicate { .. }
-            | Ex::Expect { .. }
-            | Ex::ImageSparseResident { .. }
-            | Ex::IsHelperInvocation
-            | Ex::ReadClock { .. }
-            | Ex::InterpolateAt { .. }
-            | Ex::FragmentFetch { .. }
-            | Ex::ImageFootprint { .. }
-            | Ex::AttachmentRead { .. }
-            | Ex::CooperativeVectorLoad { .. }
-            | Ex::CooperativeVectorMatMul { .. }
-            | Ex::Convert { .. }
-            | Ex::CooperativeMatrixResult { .. }
-            | Ex::TensorCreate { .. }
-            | Ex::ImageProcessing { .. }
-            | Ex::ArrayConversion { .. }
-            | Ex::Bitcast { .. }
-            | Ex::TensorSet { .. }
-            | Ex::TensorRead { .. }
-            | Ex::TensorQuerySize { .. } => Err(ExpressionError::ExpectedGlobalVariable),
+            _ => Err(ExpressionError::ExpectedGlobalVariable),
         }
     }
 }
