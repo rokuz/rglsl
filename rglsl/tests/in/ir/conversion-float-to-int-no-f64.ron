@@ -292,9 +292,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -323,13 +324,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -358,13 +360,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -393,13 +396,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -428,13 +432,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -463,13 +468,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -498,13 +504,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -533,13 +540,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -568,13 +576,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -603,13 +612,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -638,13 +648,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -673,13 +684,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -708,13 +720,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -743,13 +756,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -778,13 +792,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -813,13 +828,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -848,13 +864,14 @@
                 0: "f",
             },
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
     ],
@@ -970,194 +987,197 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(34),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [
                             0,
                         ],
                         result: Some(1),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [
                             2,
                         ],
                         result: Some(3),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 3,
                         arguments: [
                             4,
                         ],
                         result: Some(5),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 4,
                         arguments: [
                             6,
                         ],
                         result: Some(7),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 5,
                         arguments: [
                             8,
                         ],
                         result: Some(9),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 6,
                         arguments: [
                             10,
                         ],
                         result: Some(11),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 7,
                         arguments: [
                             12,
                         ],
                         result: Some(13),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 8,
                         arguments: [
                             14,
                         ],
                         result: Some(15),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 18,
                         end: 19,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 9,
                         arguments: [
                             18,
                         ],
                         result: Some(19),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 22,
                         end: 23,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 10,
                         arguments: [
                             22,
                         ],
                         result: Some(23),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 27,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 11,
                         arguments: [
                             26,
                         ],
                         result: Some(27),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 30,
                         end: 31,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 12,
                         arguments: [
                             30,
                         ],
                         result: Some(31),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 34,
                         end: 35,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 13,
                         arguments: [
                             34,
                         ],
                         result: Some(35),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 38,
                         end: 39,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 14,
                         arguments: [
                             38,
                         ],
                         result: Some(39),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 42,
                         end: 43,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 15,
                         arguments: [
                             42,
                         ],
                         result: Some(43),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 46,
                         end: 47,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 16,
                         arguments: [
                             46,
                         ],
                         result: Some(47),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

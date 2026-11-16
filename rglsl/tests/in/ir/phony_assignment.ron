@@ -42,6 +42,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -59,9 +61,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
     ],
@@ -111,35 +114,38 @@
                     9: "phony",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(6),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(7),
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

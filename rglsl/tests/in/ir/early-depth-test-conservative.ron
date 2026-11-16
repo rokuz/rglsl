@@ -69,21 +69,24 @@
                     0: "pos",
                 },
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(3),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

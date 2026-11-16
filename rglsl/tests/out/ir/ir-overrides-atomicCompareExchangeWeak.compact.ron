@@ -113,21 +113,22 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 0,
                         fun: Exchange(
                             compare: Some(2),
                         ),
                         value: 3,
                         result: Some(4),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,

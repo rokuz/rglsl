@@ -23,6 +23,7 @@ pub struct SpanSources {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 struct SpanUnit {
     base: u32,
     name: Option<String>,

@@ -34,14 +34,15 @@
             ],
             named_expressions: {},
             body: [
-                Loop(
-                    body: [],
-                    continuing: [],
+                Block(2),
+                Statement(Loop(
                     break_if: Some(0),
-                ),
-                Return(
+                )),
+                Block(0),
+                Block(0),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -91,31 +92,31 @@
                 0: "a",
             },
             body: [
-                Loop(
-                    body: [],
-                    continuing: [
-                        Store(
-                            pointer: 1,
-                            value: 0,
-                        ),
-                        Emit((
-                            start: 2,
-                            end: 4,
-                        )),
-                        Store(
-                            pointer: 4,
-                            value: 3,
-                        ),
-                        Emit((
-                            start: 5,
-                            end: 7,
-                        )),
-                    ],
+                Block(2),
+                Statement(Loop(
                     break_if: Some(6),
-                ),
-                Return(
+                )),
+                Block(0),
+                Block(4),
+                Statement(Store(
+                    pointer: 1,
+                    value: 0,
+                )),
+                Statement(Emit((
+                    start: 2,
+                    end: 4,
+                ))),
+                Statement(Store(
+                    pointer: 4,
+                    value: 3,
+                )),
+                Statement(Emit((
+                    start: 5,
+                    end: 7,
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -165,32 +166,31 @@
                 0: "a",
             },
             body: [
-                Loop(
-                    body: [
-                        Store(
-                            pointer: 1,
-                            value: 0,
-                        ),
-                        Emit((
-                            start: 2,
-                            end: 4,
-                        )),
-                        Store(
-                            pointer: 4,
-                            value: 3,
-                        ),
-                    ],
-                    continuing: [
-                        Emit((
-                            start: 5,
-                            end: 7,
-                        )),
-                    ],
+                Block(2),
+                Statement(Loop(
                     break_if: Some(6),
-                ),
-                Return(
+                )),
+                Block(3),
+                Statement(Store(
+                    pointer: 1,
+                    value: 0,
+                )),
+                Statement(Emit((
+                    start: 2,
+                    end: 4,
+                ))),
+                Statement(Store(
+                    pointer: 4,
+                    value: 3,
+                )),
+                Block(1),
+                Statement(Emit((
+                    start: 5,
+                    end: 7,
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -228,36 +228,35 @@
             ],
             named_expressions: {},
             body: [
-                Loop(
-                    body: [
-                        Emit((
-                            start: 2,
-                            end: 3,
-                        )),
-                        Emit((
-                            start: 4,
-                            end: 5,
-                        )),
-                        Store(
-                            pointer: 1,
-                            value: 4,
-                        ),
-                    ],
-                    continuing: [
-                        Emit((
-                            start: 5,
-                            end: 6,
-                        )),
-                        Emit((
-                            start: 7,
-                            end: 8,
-                        )),
-                    ],
+                Block(2),
+                Statement(Loop(
                     break_if: Some(7),
-                ),
-                Return(
+                )),
+                Block(3),
+                Statement(Emit((
+                    start: 2,
+                    end: 3,
+                ))),
+                Statement(Emit((
+                    start: 4,
+                    end: 5,
+                ))),
+                Statement(Store(
+                    pointer: 1,
+                    value: 4,
+                )),
+                Block(2),
+                Statement(Emit((
+                    start: 5,
+                    end: 6,
+                ))),
+                Statement(Emit((
+                    start: 7,
+                    end: 8,
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -279,37 +278,40 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(5),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [
                             0,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [
                             1,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 3,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

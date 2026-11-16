@@ -10,7 +10,7 @@ const SOURCES: [&str; 4] = [
     "rglsl-link/src/file.rs",
 ];
 
-const ROOTS: [&str; 3] = ["ObjectModule", "File", "Flat"];
+const ROOTS: [&str; 2] = ["ObjectModule", "File"];
 
 const SNAPSHOT: &str = "rglsl/tests/object_schema.txt";
 
@@ -347,6 +347,31 @@ fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+fn has_named_fields(name: &str, text: &str) -> bool {
+    if text.contains(&format!("enum {name} ")) {
+        return true;
+    }
+    let Some(at) = text.find(&format!("struct {name} ")) else {
+        return false;
+    };
+    let rest = text.get(at..).unwrap_or_default();
+    let brace = rest.find('{');
+    let parenthesis = rest.find('(');
+    let semicolon = rest.find(';');
+    brace.is_some_and(|brace| {
+        parenthesis.is_none_or(|parenthesis| brace < parenthesis)
+            && semicolon.is_none_or(|semicolon| brace < semicolon)
+    })
+}
+
+fn admits_unknown_fields(name: &str, text: &str) -> bool {
+    text.starts_with('#')
+        && text.contains("Deserialize")
+        && !text.contains("transparent")
+        && !text.contains("deny_unknown_fields")
+        && has_named_fields(name, text)
+}
+
 fn schema() -> TestResult<BTreeMap<String, u64>> {
     let root = workspace();
     let mut items: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -374,6 +399,19 @@ fn schema() -> TestResult<BTreeMap<String, u64>> {
                 }
             }
         }
+    }
+    let lenient: Vec<&String> = reachable
+        .iter()
+        .filter(|name| {
+            items
+                .get(*name)
+                .is_some_and(|texts| texts.iter().any(|text| admits_unknown_fields(name, text)))
+        })
+        .collect();
+    if !lenient.is_empty() {
+        return Err(
+            format!("serialized types without #[serde(deny_unknown_fields)]: {lenient:?}").into(),
+        );
     }
     Ok(reachable
         .into_iter()

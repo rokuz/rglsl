@@ -16,6 +16,8 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 4,
@@ -72,6 +74,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("Sampler"),
@@ -83,6 +87,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -97,9 +103,10 @@
             expressions: [],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -121,13 +128,14 @@
             ],
             named_expressions: {},
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(1),
-                ),
+                )),
             ],
         ),
         (
@@ -148,6 +156,7 @@
                     image: 2,
                     sampler: Some(3),
                     gather: None,
+                    gather_pattern: Quad,
                     coordinate: 4,
                     array_index: None,
                     offset: None,
@@ -161,23 +170,24 @@
                 5: "s",
             },
             body: [
-                Call(
+                Block(4),
+                Statement(Call(
                     function: 0,
                     arguments: [],
                     result: None,
-                ),
-                Call(
+                )),
+                Statement(Call(
                     function: 1,
                     arguments: [],
                     result: Some(0),
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 4,
                     end: 6,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -198,28 +208,31 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(4),
+                    Statement(Call(
                         function: 2,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 1,
                         arguments: [],
                         result: Some(0),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

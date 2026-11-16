@@ -159,9 +159,10 @@
                 0: "p",
             },
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -182,9 +183,10 @@
                 0: "p",
             },
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -205,9 +207,10 @@
                 0: "p",
             },
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -228,9 +231,10 @@
                 0: "p",
             },
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -275,35 +279,36 @@
                 0: "i",
             },
             body: [
-                Emit((
+                Block(6),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 7,
                     end: 8,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         7,
                     ],
                     result: None,
-                ),
-                Call(
+                )),
+                Statement(Call(
                     function: 1,
                     arguments: [
                         6,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -346,31 +351,32 @@
                 2: "i",
             },
             body: [
-                Emit((
+                Block(5),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 2,
                     arguments: [
                         3,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 4,
                     end: 5,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 3,
                     arguments: [
                         4,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -402,20 +408,21 @@
                 1: "i",
             },
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         2,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -478,57 +485,58 @@
                 2: "j",
             },
             body: [
-                Emit((
+                Block(10),
+                Statement(Emit((
                     start: 3,
                     end: 5,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         4,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 6,
                     end: 7,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         6,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 7,
                     end: 9,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         8,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 9,
                     end: 10,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 1,
                     arguments: [
                         9,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -599,50 +607,51 @@
                 2: "j",
             },
             body: [
-                Emit((
+                Block(9),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 4,
                     end: 6,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         5,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 6,
                     end: 8,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 8,
                     end: 9,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         8,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 9,
                     end: 12,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         11,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -681,20 +690,21 @@
                 1: "i",
             },
             body: [
-                Emit((
+                Block(3),
+                Statement(Emit((
                     start: 2,
                     end: 5,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         4,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -733,24 +743,25 @@
                 1: "i",
             },
             body: [
-                Store(
+                Block(4),
+                Statement(Store(
                     pointer: 2,
                     value: 0,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         3,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -788,31 +799,32 @@
                 3: "p1",
             },
             body: [
-                Emit((
+                Block(5),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         2,
                     ],
                     result: None,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Call(
+                ))),
+                Statement(Call(
                     function: 0,
                     arguments: [
                         3,
                     ],
                     result: None,
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -886,14 +898,15 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(11),
+                    Statement(Call(
                         function: 4,
                         arguments: [
                             5,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 5,
                         arguments: [
                             0,
@@ -901,16 +914,16 @@
                             6,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 6,
                         arguments: [
                             2,
                             7,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 7,
                         arguments: [
                             3,
@@ -918,8 +931,8 @@
                             9,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 8,
                         arguments: [
                             4,
@@ -927,46 +940,48 @@
                             11,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 9,
                         arguments: [
                             2,
                             12,
                         ],
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 17,
                         end: 18,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 10,
                         arguments: [
                             17,
                             18,
                         ],
                         result: None,
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 11,
                         arguments: [
                             2,
                             19,
                         ],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

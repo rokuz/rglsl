@@ -26,12 +26,16 @@
                         ty: 0,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("b"),
                         ty: 1,
                         binding: None,
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -178,89 +182,84 @@
                 1: "count",
             },
             body: [
-                Loop(
-                    body: [
-                        Emit((
-                            start: 4,
-                            end: 6,
-                        )),
-                        If(
-                            condition: 5,
-                            accept: [],
-                            reject: [
-                                Break,
-                            ],
-                        ),
-                        Block([
-                            Emit((
-                                start: 6,
-                                end: 8,
-                            )),
-                            Store(
-                                pointer: 8,
-                                value: 7,
-                            ),
-                        ]),
-                    ],
-                    continuing: [
-                        Emit((
-                            start: 10,
-                            end: 12,
-                        )),
-                        Store(
-                            pointer: 3,
-                            value: 11,
-                        ),
-                    ],
+                Block(5),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Loop(
-                    body: [
-                        Emit((
-                            start: 14,
-                            end: 16,
-                        )),
-                        If(
-                            condition: 15,
-                            accept: [],
-                            reject: [
-                                Break,
-                            ],
-                        ),
-                        Block([
-                            Emit((
-                                start: 16,
-                                end: 18,
-                            )),
-                            Store(
-                                pointer: 18,
-                                value: 17,
-                            ),
-                        ]),
-                    ],
-                    continuing: [
-                        Emit((
-                            start: 20,
-                            end: 22,
-                        )),
-                        Store(
-                            pointer: 13,
-                            value: 21,
-                        ),
-                    ],
+                )),
+                Block(3),
+                Statement(Emit((
+                    start: 4,
+                    end: 6,
+                ))),
+                Statement(If(
+                    condition: 5,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Break),
+                Statement(Block),
+                Block(2),
+                Statement(Emit((
+                    start: 6,
+                    end: 8,
+                ))),
+                Statement(Store(
+                    pointer: 8,
+                    value: 7,
+                )),
+                Block(2),
+                Statement(Emit((
+                    start: 10,
+                    end: 12,
+                ))),
+                Statement(Store(
+                    pointer: 3,
+                    value: 11,
+                )),
+                Statement(Loop(
                     break_if: None,
-                ),
-                Emit((
+                )),
+                Block(3),
+                Statement(Emit((
+                    start: 14,
+                    end: 16,
+                ))),
+                Statement(If(
+                    condition: 15,
+                )),
+                Block(0),
+                Block(1),
+                Statement(Break),
+                Statement(Block),
+                Block(2),
+                Statement(Emit((
+                    start: 16,
+                    end: 18,
+                ))),
+                Statement(Store(
+                    pointer: 18,
+                    value: 17,
+                )),
+                Block(2),
+                Statement(Emit((
+                    start: 20,
+                    end: 22,
+                ))),
+                Statement(Store(
+                    pointer: 13,
+                    value: 21,
+                )),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 24,
                     end: 26,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(25),
-                ),
+                )),
             ],
         ),
     ],
@@ -292,25 +291,28 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(3),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Call(
+                    ))),
+                    Statement(Call(
                         function: 0,
                         arguments: [
                             1,
                             2,
                         ],
                         result: Some(3),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

@@ -38,6 +38,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("sized_no_comma"),
@@ -46,6 +48,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("unsized_comma"),
@@ -59,6 +63,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("unsized_no_comma"),
@@ -72,6 +78,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -144,53 +152,56 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(11),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 5,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 1,
                         value: 4,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 8,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 6,
                         value: 9,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 13,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 16,
                         end: 19,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 11,
                         value: 18,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

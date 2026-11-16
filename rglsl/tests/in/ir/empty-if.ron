@@ -57,26 +57,29 @@
                     4: "phony",
                 },
                 body: [
-                    Emit((
+                    Block(4),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    If(
+                    ))),
+                    Statement(If(
                         condition: 3,
-                        accept: [],
-                        reject: [],
-                    ),
-                    Return(
+                    )),
+                    Block(0),
+                    Block(0),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

@@ -85,6 +85,8 @@
             ty: 1,
             init: Some(10),
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("store_override"),
@@ -93,6 +95,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [
@@ -185,41 +189,44 @@
                     16: "phony",
                 },
                 body: [
-                    Emit((
+                    Block(8),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 4,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 10,
                         value: 9,
-                    ),
-                    Store(
+                    )),
+                    Statement(Store(
                         pointer: 11,
                         value: 12,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

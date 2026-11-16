@@ -26,12 +26,16 @@
                         ty: 1,
                         binding: Some(BuiltIn(LocalInvocationId)),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("local_invocation_index"),
                         ty: 0,
                         binding: Some(BuiltIn(LocalInvocationIndex)),
                         offset: 12,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 16,
@@ -52,6 +56,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -109,33 +115,36 @@
                     0: "input",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 1,
                         value: 4,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 6,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 9,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

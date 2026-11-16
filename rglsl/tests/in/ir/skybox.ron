@@ -31,6 +31,8 @@
                             invariant: false,
                         ))),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("uv"),
@@ -41,8 +43,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -68,12 +75,16 @@
                         ty: 3,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("view"),
                         ty: 3,
                         binding: None,
                         offset: 64,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 128,
@@ -139,6 +150,8 @@
             ty: 4,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("r_texture"),
@@ -150,6 +163,8 @@
             ty: 8,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("r_sampler"),
@@ -161,6 +176,8 @@
             ty: 9,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -378,93 +395,96 @@
                     44: "unprojected",
                 },
                 body: [
-                    Emit((
+                    Block(21),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 4,
                         value: 3,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 7,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 9,
                         end: 11,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 12,
                         end: 13,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 14,
                         end: 17,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 18,
                         end: 19,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 20,
                         end: 21,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 23,
                         end: 24,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 25,
                         end: 26,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 29,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 30,
                         end: 31,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 31,
                         end: 34,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 35,
                         end: 36,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 36,
                         end: 41,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 42,
                         end: 45,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 45,
                         end: 48,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(47),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs_main",
@@ -489,6 +509,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -504,6 +527,7 @@
                         image: 1,
                         sampler: Some(2),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: None,
                         offset: None,
@@ -515,17 +539,20 @@
                     0: "in",
                 },
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 3,
                         end: 5,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(4),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

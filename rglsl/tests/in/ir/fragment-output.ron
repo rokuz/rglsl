@@ -94,8 +94,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec4i"),
@@ -106,8 +111,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec4u"),
@@ -118,8 +128,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 32,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec3f"),
@@ -130,8 +145,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 48,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec3i"),
@@ -142,8 +162,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 64,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec3u"),
@@ -154,8 +179,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 80,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 96,
@@ -204,8 +234,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec2i"),
@@ -216,8 +251,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("vec2u"),
@@ -228,8 +268,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("scalarf"),
@@ -240,8 +285,13 @@
                             sampling: Some(Center),
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 24,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("scalari"),
@@ -252,8 +302,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 28,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("scalaru"),
@@ -264,8 +319,13 @@
                             sampling: None,
                             blend_src: None,
                             per_primitive: false,
+                            component: None,
+                            invariant: false,
+                            patch: false,
                         )),
                         offset: 32,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 40,
@@ -364,89 +424,92 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(20),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 1,
                         value: 3,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 4,
                         value: 6,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 7,
                         value: 9,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 10,
                         end: 11,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 12,
                         end: 13,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 10,
                         value: 12,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 13,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 16,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 13,
                         value: 15,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 16,
                         end: 17,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 18,
                         end: 19,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 16,
                         value: 18,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 19,
                         end: 20,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(19),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "main_vec2scalar",
@@ -518,77 +581,80 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(17),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 1,
                         value: 3,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 4,
                         value: 6,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 7,
                         value: 9,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 10,
                         end: 11,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 10,
                         value: 11,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 12,
                         end: 13,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 12,
                         value: 13,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 14,
                         value: 15,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 16,
                         end: 17,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(16),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

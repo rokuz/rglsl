@@ -272,6 +272,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_multisampled_src"),
@@ -283,6 +285,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_depth_multisampled_src"),
@@ -294,6 +298,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_storage_src"),
@@ -305,6 +311,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_array_src"),
@@ -316,6 +324,8 @@
             ty: 4,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_dup_src"),
@@ -327,6 +337,8 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_1d_src"),
@@ -338,6 +350,8 @@
             ty: 6,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_dst"),
@@ -349,6 +363,8 @@
             ty: 7,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_1d"),
@@ -360,6 +376,8 @@
             ty: 11,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_2d"),
@@ -371,6 +389,8 @@
             ty: 12,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_2d_u32"),
@@ -382,6 +402,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_2d_i32"),
@@ -393,6 +415,8 @@
             ty: 13,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_2d_array"),
@@ -404,6 +428,8 @@
             ty: 14,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_cube"),
@@ -415,6 +441,8 @@
             ty: 15,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_cube_array"),
@@ -426,6 +454,8 @@
             ty: 16,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_3d"),
@@ -437,6 +467,8 @@
             ty: 17,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_aa"),
@@ -448,6 +480,8 @@
             ty: 18,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("sampler_reg"),
@@ -459,6 +493,8 @@
             ty: 20,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("sampler_cmp"),
@@ -470,6 +506,8 @@
             ty: 21,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_2d_depth"),
@@ -481,6 +519,8 @@
             ty: 22,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_2d_array_depth"),
@@ -492,6 +532,8 @@
             ty: 23,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("image_cube_depth"),
@@ -503,6 +545,8 @@
             ty: 24,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -993,125 +1037,128 @@
                     93: "value7u",
                 },
                 body: [
-                    Emit((
+                    Block(28),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 8,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 18,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 19,
                         end: 22,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 23,
                         end: 26,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 27,
                         end: 28,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 29,
                         end: 32,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 33,
                         end: 35,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 36,
                         end: 40,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 41,
                         end: 43,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 44,
                         end: 49,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 50,
                         end: 53,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 54,
                         end: 58,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 59,
                         end: 63,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 64,
                         end: 68,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 69,
                         end: 71,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 72,
                         end: 76,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 77,
                         end: 79,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 80,
                         end: 85,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 86,
                         end: 88,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 89,
                         end: 94,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 95,
                         end: 100,
-                    )),
-                    ImageStore(
+                    ))),
+                    Statement(ImageStore(
                         image: 94,
                         coordinate: 95,
                         array_index: None,
                         value: 99,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 101,
                         end: 107,
-                    )),
-                    ImageStore(
+                    ))),
+                    Statement(ImageStore(
                         image: 100,
                         coordinate: 102,
                         array_index: None,
                         value: 106,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "depth_load",
@@ -1207,39 +1254,42 @@
                     13: "val",
                 },
                 body: [
-                    Emit((
+                    Block(7),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 8,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 18,
-                    )),
-                    ImageStore(
+                    ))),
+                    Statement(ImageStore(
                         image: 14,
                         coordinate: 15,
                         array_index: None,
                         value: 17,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "queries",
@@ -1476,73 +1526,76 @@
                     51: "sum",
                 },
                 body: [
-                    Emit((
+                    Block(16),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 5,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 16,
                         end: 17,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 19,
                         end: 20,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 21,
                         end: 22,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 24,
                         end: 25,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 27,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 29,
                         end: 30,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 31,
                         end: 32,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 32,
                         end: 52,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 52,
                         end: 54,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(53),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "levels_queries",
@@ -1664,57 +1717,60 @@
                     24: "sum",
                 },
                 body: [
-                    Emit((
+                    Block(12),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 13,
                         end: 14,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 16,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 17,
                         end: 18,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 18,
                         end: 25,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 25,
                         end: 27,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(26),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "texture_sample",
@@ -1733,6 +1789,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [
@@ -1773,6 +1832,7 @@
                         image: 10,
                         sampler: Some(11),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 0,
                         array_index: None,
                         offset: None,
@@ -1793,6 +1853,7 @@
                         image: 15,
                         sampler: Some(16),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -1822,6 +1883,7 @@
                         image: 20,
                         sampler: Some(21),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: Some(24),
@@ -1842,6 +1904,7 @@
                         image: 28,
                         sampler: Some(29),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -1862,6 +1925,7 @@
                         image: 33,
                         sampler: Some(34),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: Some(6),
@@ -1883,6 +1947,7 @@
                         image: 38,
                         sampler: Some(39),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: Some(6),
@@ -1903,6 +1968,7 @@
                         image: 44,
                         sampler: Some(45),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -1924,6 +1990,7 @@
                         image: 49,
                         sampler: Some(50),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(51),
                         offset: None,
@@ -1945,6 +2012,7 @@
                         image: 55,
                         sampler: Some(56),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(57),
                         offset: Some(6),
@@ -1966,6 +2034,7 @@
                         image: 61,
                         sampler: Some(62),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(63),
                         offset: None,
@@ -1987,6 +2056,7 @@
                         image: 67,
                         sampler: Some(68),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(69),
                         offset: Some(6),
@@ -2009,6 +2079,7 @@
                         image: 73,
                         sampler: Some(74),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(75),
                         offset: Some(6),
@@ -2030,6 +2101,7 @@
                         image: 80,
                         sampler: Some(81),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(82),
                         offset: None,
@@ -2051,6 +2123,7 @@
                         image: 86,
                         sampler: Some(87),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(88),
                         offset: Some(6),
@@ -2072,6 +2145,7 @@
                         image: 92,
                         sampler: Some(93),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(94),
                         offset: None,
@@ -2093,6 +2167,7 @@
                         image: 98,
                         sampler: Some(99),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(100),
                         offset: Some(6),
@@ -2115,6 +2190,7 @@
                         image: 104,
                         sampler: Some(105),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(106),
                         offset: Some(6),
@@ -2136,6 +2212,7 @@
                         image: 111,
                         sampler: Some(112),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: Some(113),
                         offset: None,
@@ -2157,6 +2234,7 @@
                         image: 117,
                         sampler: Some(118),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: Some(119),
                         offset: None,
@@ -2179,6 +2257,7 @@
                         image: 123,
                         sampler: Some(124),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: Some(125),
                         offset: None,
@@ -2200,6 +2279,7 @@
                         image: 130,
                         sampler: Some(131),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: Some(132),
                         offset: None,
@@ -2221,6 +2301,7 @@
                         image: 136,
                         sampler: Some(137),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: Some(138),
                         offset: None,
@@ -2243,6 +2324,7 @@
                         image: 142,
                         sampler: Some(143),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: Some(144),
                         offset: None,
@@ -2262,305 +2344,308 @@
                     7: "level",
                 },
                 body: [
-                    Emit((
+                    Block(74),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 12,
                         end: 14,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 13,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 17,
                         end: 19,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 18,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 19,
                         end: 20,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 24,
                         end: 27,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 26,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 27,
                         end: 28,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 30,
                         end: 32,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 31,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 32,
                         end: 33,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 35,
                         end: 37,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 36,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 37,
                         end: 38,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 41,
                         end: 43,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 42,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 43,
                         end: 44,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 46,
                         end: 48,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 47,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 48,
                         end: 49,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 52,
                         end: 54,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 53,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 54,
                         end: 55,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 58,
                         end: 60,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 59,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 60,
                         end: 61,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 64,
                         end: 66,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 65,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 66,
                         end: 67,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 70,
                         end: 72,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 71,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 72,
                         end: 73,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 77,
                         end: 79,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 78,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 79,
                         end: 80,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 83,
                         end: 85,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 84,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 85,
                         end: 86,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 89,
                         end: 91,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 90,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 91,
                         end: 92,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 95,
                         end: 97,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 96,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 97,
                         end: 98,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 101,
                         end: 103,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 102,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 103,
                         end: 104,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 108,
                         end: 110,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 109,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 110,
                         end: 111,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 114,
                         end: 116,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 115,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 116,
                         end: 117,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 120,
                         end: 122,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 121,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 122,
                         end: 123,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 127,
                         end: 129,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 128,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 129,
                         end: 130,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 133,
                         end: 135,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 134,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 135,
                         end: 136,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 139,
                         end: 141,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 140,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 141,
                         end: 142,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 146,
                         end: 148,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 8,
                         value: 147,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 148,
                         end: 149,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(148),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "texture_sample_comparison",
@@ -2579,6 +2664,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [
@@ -2610,6 +2698,7 @@
                         image: 7,
                         sampler: Some(8),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -2631,6 +2720,7 @@
                         image: 12,
                         sampler: Some(13),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(14),
                         offset: None,
@@ -2652,6 +2742,7 @@
                         image: 18,
                         sampler: Some(19),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(20),
                         offset: None,
@@ -2672,6 +2763,7 @@
                         image: 24,
                         sampler: Some(25),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: None,
                         offset: None,
@@ -2692,6 +2784,7 @@
                         image: 29,
                         sampler: Some(30),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -2713,6 +2806,7 @@
                         image: 34,
                         sampler: Some(35),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(36),
                         offset: None,
@@ -2734,6 +2828,7 @@
                         image: 40,
                         sampler: Some(41),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: Some(42),
                         offset: None,
@@ -2754,6 +2849,7 @@
                         image: 46,
                         sampler: Some(47),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 3,
                         array_index: None,
                         offset: None,
@@ -2775,121 +2871,124 @@
                     4: "dref",
                 },
                 body: [
-                    Emit((
+                    Block(28),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 7,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 11,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 10,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 17,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 16,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 17,
                         end: 18,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 21,
                         end: 23,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 22,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 23,
                         end: 24,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 28,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 27,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 28,
                         end: 29,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 31,
                         end: 33,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 32,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 33,
                         end: 34,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 37,
                         end: 39,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 38,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 39,
                         end: 40,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 43,
                         end: 45,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 44,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 45,
                         end: 46,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 48,
                         end: 50,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 5,
                         value: 49,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 50,
                         end: 51,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(50),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "gather",
@@ -2908,6 +3007,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -2924,6 +3026,7 @@
                         image: 3,
                         sampler: Some(4),
                         gather: Some(Y),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -2945,6 +3048,7 @@
                         image: 6,
                         sampler: Some(7),
                         gather: Some(W),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: Some(10),
@@ -2957,6 +3061,7 @@
                         image: 12,
                         sampler: Some(13),
                         gather: Some(X),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -2978,6 +3083,7 @@
                         image: 15,
                         sampler: Some(16),
                         gather: Some(X),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: Some(19),
@@ -2990,6 +3096,7 @@
                         image: 21,
                         sampler: Some(22),
                         gather: Some(X),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -3002,6 +3109,7 @@
                         image: 24,
                         sampler: Some(25),
                         gather: Some(X),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -3056,49 +3164,52 @@
                     29: "f",
                 },
                 body: [
-                    Emit((
+                    Block(10),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 10,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 19,
                         end: 21,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 23,
                         end: 24,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 27,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 27,
                         end: 30,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 30,
                         end: 34,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(33),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "depth_no_comparison",
@@ -3117,6 +3228,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -3133,6 +3247,7 @@
                         image: 3,
                         sampler: Some(4),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -3145,6 +3260,7 @@
                         image: 6,
                         sampler: Some(7),
                         gather: Some(X),
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -3157,6 +3273,7 @@
                         image: 9,
                         sampler: Some(10),
                         gather: None,
+                        gather_pattern: Quad,
                         coordinate: 1,
                         array_index: None,
                         offset: None,
@@ -3190,33 +3307,36 @@
                     11: "s2d_level",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 8,
                         end: 9,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 12,
                         end: 16,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(15),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

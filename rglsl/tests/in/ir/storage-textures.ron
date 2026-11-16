@@ -84,6 +84,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("s_rg_r"),
@@ -95,6 +97,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("s_rgba_r"),
@@ -106,6 +110,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("s_r_w"),
@@ -117,6 +123,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("s_rg_w"),
@@ -128,6 +136,8 @@
             ty: 4,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("s_rgba_w"),
@@ -139,6 +149,8 @@
             ty: 5,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -202,25 +214,28 @@
                     11: "phony",
                 },
                 body: [
-                    Emit((
+                    Block(4),
+                    Statement(Emit((
                         start: 2,
                         end: 4,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 6,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 10,
                         end: 12,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "csStore",
@@ -270,55 +285,58 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(10),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    ImageStore(
+                    ))),
+                    Statement(ImageStore(
                         image: 0,
                         coordinate: 2,
                         array_index: None,
                         value: 4,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    ImageStore(
+                    ))),
+                    Statement(ImageStore(
                         image: 5,
                         coordinate: 7,
                         array_index: None,
                         value: 9,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 12,
                         end: 13,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    ImageStore(
+                    ))),
+                    Statement(ImageStore(
                         image: 10,
                         coordinate: 12,
                         array_index: None,
                         value: 14,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

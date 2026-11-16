@@ -1182,24 +1182,51 @@ fn hostile_object_files_are_rejected_on_a_small_stack() -> TestResult {
         .compile(&options, &shader("", "if (t) { b = 2; }"))
         .map_err(|errors| format!("{errors:?}"))?;
     let text = encode(&object)?;
-    let shell = "accept:[],reject:[]";
-    let at = text
-        .find(shell)
-        .ok_or("the object file has no if statement")?;
-    let condition = text[..at]
-        .rfind("If(condition:")
-        .ok_or("the object file has no if statement")?;
-    let head = &text[condition..at];
-    for depth in [3, 5, 8, 100, 1_000, DEEP_DEPTH] {
-        let inner = format!(
-            "{}{head}accept:[],reject:[]){}",
-            format!("{head}accept:[").repeat(depth - 1),
-            "],reject:[])".repeat(depth - 1)
-        );
+    let version = format!("(format_version:{},", rglsl::object::FORMAT_VERSION);
+    let nested = |open: &str, close: &str| {
+        format!("{}{},", open.repeat(DEEP_DEPTH), close.repeat(DEEP_DEPTH))
+    };
+    let positions = [
+        (
+            "unknown field",
+            version.as_str(),
+            format!("unknown:{}", nested("(", ")")),
+        ),
+        (
+            "unknown list field",
+            version.as_str(),
+            format!("unknown:{}", nested("[", "]")),
+        ),
+        (
+            "unknown map field",
+            version.as_str(),
+            format!("unknown:{}", nested("{", "}")),
+        ),
+        (
+            "unknown field of a module",
+            "modules:[(",
+            format!("unknown:{}", nested("(", ")")),
+        ),
+        ("struct", "object:(", nested("(", ")")),
+        ("sequence", "modules:[", nested("[", "]")),
+        ("sequence of functions", "functions:[", nested("[", "]")),
+        ("sequence of expressions", "expressions:[", nested("[", "]")),
+        ("block", "body:[", nested("[", "]")),
+        ("map", "named_expressions:{", nested("{", "}")),
+        ("tuple", "work_group_size_placeholders:(", nested("(", ")")),
+        ("option", "Some(", nested("Some(", ")")),
+        ("enum variant payload", "Statement(", nested("(", ")")),
+        ("struct variant payload", "Scalar(", nested("(", ")")),
+    ];
+    for (name, anchor, payload) in positions {
+        let at = text
+            .find(anchor)
+            .ok_or_else(|| format!("no {anchor} in the object file"))?
+            + anchor.len();
         let hostile = format!(
-            "{}accept:[{inner}],reject:[]{}",
+            "{}{payload}{}",
             text.get(..at).unwrap_or_default(),
-            text.get(at + shell.len()..).unwrap_or_default()
+            text.get(at..).unwrap_or_default()
         );
         let decoded = on_small_stack(move || {
             decode(&hostile)
@@ -1207,9 +1234,18 @@ fn hostile_object_files_are_rejected_on_a_small_stack() -> TestResult {
                 .map_err(|error| error.to_string())
         })?;
         assert!(
-            decoded.is_err() || depth < 100,
-            "a hostile object file nested {depth} deep: {decoded:?}"
+            decoded.is_err(),
+            "a hostile object file with a nested {name}"
         );
+    }
+    for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+        let hostile = format!("{}{}", open.repeat(DEEP_DEPTH), close.repeat(DEEP_DEPTH));
+        let decoded = on_small_stack(move || {
+            decode(&hostile)
+                .map(drop)
+                .map_err(|error| error.to_string())
+        })?;
+        assert!(decoded.is_err(), "a hostile object file of nested {open}");
     }
     Ok(())
 }

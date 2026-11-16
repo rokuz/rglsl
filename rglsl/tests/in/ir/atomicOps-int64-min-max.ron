@@ -31,12 +31,16 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("atomic_arr"),
                         ty: 2,
                         binding: None,
                         offset: 8,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 24,
@@ -72,6 +76,8 @@
             ty: 1,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("storage_atomic_arr"),
@@ -85,6 +91,8 @@
             ty: 2,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("storage_struct"),
@@ -98,6 +106,8 @@
             ty: 3,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
         (
             name: Some("input"),
@@ -109,6 +119,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -226,118 +238,121 @@
                     0: "id",
                 },
                 body: [
-                    Emit((
+                    Block(24),
+                    Statement(Emit((
                         start: 3,
                         end: 4,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 1,
                         fun: Max,
                         value: 3,
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 5,
                         end: 6,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 7,
                         end: 8,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 5,
                         fun: Max,
                         value: 9,
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 11,
                         end: 12,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 11,
                         fun: Max,
                         value: 12,
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 14,
                         end: 15,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 15,
                         end: 18,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 15,
                         fun: Max,
                         value: 17,
                         result: None,
-                    ),
-                    ControlBarrier(("WORK_GROUP")),
-                    Emit((
+                    )),
+                    Statement(ControlBarrier(("WORK_GROUP"))),
+                    Statement(Emit((
                         start: 20,
                         end: 21,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 18,
                         fun: Min,
                         value: 20,
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 22,
                         end: 23,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 24,
                         end: 25,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 26,
                         end: 27,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 22,
                         fun: Min,
                         value: 26,
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 28,
                         end: 29,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 28,
                         fun: Min,
                         value: 29,
                         result: None,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 31,
                         end: 32,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 32,
                         end: 35,
-                    )),
-                    Atomic(
+                    ))),
+                    Statement(Atomic(
                         pointer: 32,
                         fun: Min,
                         value: 34,
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

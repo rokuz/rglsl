@@ -30,9 +30,10 @@
             ],
             named_expressions: {},
             body: [
-                Return(
+                Block(1),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -48,14 +49,15 @@
             ],
             named_expressions: {},
             body: [
-                Call(
+                Block(2),
+                Statement(Call(
                     function: 0,
                     arguments: [],
                     result: Some(0),
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -81,22 +83,23 @@
             ],
             named_expressions: {},
             body: [
-                Call(
+                Block(4),
+                Statement(Call(
                     function: 0,
                     arguments: [],
                     result: Some(0),
-                ),
-                Store(
+                )),
+                Statement(Store(
                     pointer: 1,
                     value: 0,
-                ),
-                Emit((
+                )),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(2),
-                ),
+                )),
             ],
         ),
         (
@@ -114,14 +117,15 @@
                 0: "q",
             },
             body: [
-                Call(
+                Block(2),
+                Statement(Call(
                     function: 0,
                     arguments: [],
                     result: Some(0),
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: Some(0),
-                ),
+                )),
             ],
         ),
         (
@@ -136,14 +140,15 @@
                 0: "phony",
             },
             body: [
-                Call(
+                Block(2),
+                Statement(Call(
                     function: 0,
                     arguments: [],
                     result: Some(0),
-                ),
-                Return(
+                )),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -166,29 +171,30 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(5),
+                    Statement(Call(
                         function: 1,
                         arguments: [],
                         result: Some(0),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 2,
                         arguments: [],
                         result: Some(1),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 3,
                         arguments: [],
                         result: Some(2),
-                    ),
-                    Call(
+                    )),
+                    Statement(Call(
                         function: 4,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,

@@ -51,21 +51,22 @@
                 5: "width",
             },
             body: [
-                Emit((
+                Block(4),
+                Statement(Emit((
                     start: 1,
                     end: 2,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 3,
                     end: 4,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
         (
@@ -76,12 +77,13 @@
             expressions: [],
             named_expressions: {},
             body: [
-                ControlBarrier(("STORAGE")),
-                ControlBarrier(("WORK_GROUP")),
-                ControlBarrier(("TEXTURE")),
-                Return(
+                Block(4),
+                Statement(ControlBarrier(("STORAGE"))),
+                Statement(ControlBarrier(("WORK_GROUP"))),
+                Statement(ControlBarrier(("TEXTURE"))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -103,6 +105,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -111,18 +116,21 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: Some(0),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "compute",
@@ -138,18 +146,21 @@
                 expressions: [],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 1,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

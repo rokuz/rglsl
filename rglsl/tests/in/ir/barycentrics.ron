@@ -57,6 +57,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -75,17 +78,20 @@
                     0: "bary",
                 },
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(2),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
         (
             name: "fs_main_no_perspective",
@@ -113,6 +119,9 @@
                         sampling: Some(Center),
                         blend_src: None,
                         per_primitive: false,
+                        component: None,
+                        invariant: false,
+                        patch: false,
                     )),
                 )),
                 local_variables: [],
@@ -131,17 +140,20 @@
                     0: "bary",
                 },
                 body: [
-                    Emit((
+                    Block(2),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(2),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

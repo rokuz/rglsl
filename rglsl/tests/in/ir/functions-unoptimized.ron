@@ -94,33 +94,34 @@
                 15: "c_8",
             },
             body: [
-                Emit((
+                Block(7),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 7,
                     end: 8,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 9,
                     end: 11,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 12,
                     end: 13,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 14,
                     end: 16,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(15),
-                ),
+                )),
             ],
         ),
     ],
@@ -143,18 +144,21 @@
                     0: "c",
                 },
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(0),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

@@ -44,6 +44,7 @@ pub struct SourceMap {
 #[derive(Clone, Default)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
 #[cfg_attr(feature = "serialize", serde(into = "SpanParts"))]
 #[cfg_attr(feature = "deserialize", serde(from = "SpanParts"))]
 pub struct SpanMap {
@@ -99,6 +100,7 @@ impl SpanMap {
 
 #[cfg(any(feature = "serialize", feature = "deserialize"))]
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpanParts {
     root: u32,
     length: u32,

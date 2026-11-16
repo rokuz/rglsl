@@ -1,6 +1,5 @@
 use rglsl::object::{CompiledUnit, FORMAT_VERSION, ObjectModule, ObjectTarget};
 use rglsl::valid::{ValidationFlags, ValidationMode, Validator};
-use rglsl::{Block, Span, Statement};
 
 #[derive(Debug, thiserror::Error)]
 pub enum FileError {
@@ -22,37 +21,16 @@ pub enum FileError {
     },
 }
 
-#[derive(serde::Deserialize)]
-struct Header {
-    format_version: u32,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-enum Flat {
-    Block(u32),
-    Statement(Statement),
-}
-
 #[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct File {
     format_version: u32,
     object: ObjectModule,
+    specialized: Vec<Option<CompiledUnit>>,
     modules: Vec<rglsl::Module>,
     functions: Vec<rglsl::Function>,
-    bodies: Vec<Vec<Flat>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     spans: Vec<rglsl::ModuleSpans>,
-}
-
-enum Open {
-    Block {
-        block: Block,
-        remaining: usize,
-    },
-    Statement {
-        statement: Statement,
-        children: Vec<Block>,
-    },
 }
 
 pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
@@ -61,41 +39,36 @@ pub fn encode(object: &ObjectModule) -> Result<String, FileError> {
         .into_iter()
         .map(rglsl::collect_spans)
         .collect();
-    let mut functions = Vec::new();
-    let mut bodies = Vec::new();
-    for function in function_slots(&mut object) {
-        bodies.push(flatten(&core::mem::take(&mut function.body))?);
-        functions.push(core::mem::take(function));
-    }
+    let functions = function_slots(&mut object)
+        .into_iter()
+        .map(core::mem::take)
+        .collect();
     let modules = module_slots(&mut object)
         .into_iter()
         .map(core::mem::take)
         .collect();
+    let specialized = units(&mut object)
+        .into_iter()
+        .map(|unit| unit.specialized.take().map(|specialized| *specialized))
+        .collect();
     let file = File {
         format_version: FORMAT_VERSION,
         object,
+        specialized,
         modules,
         functions,
-        bodies,
         spans,
     };
-    let text = ron::ser::to_string(&file).map_err(|error| FileError::Encode(error.to_string()))?;
-    check_structure_depth(&text).map_err(|_| {
-        FileError::Encode(String::from(
-            "the object module is nested deeper than its format allows",
-        ))
-    })?;
-    Ok(text)
+    ron::ser::to_string(&file).map_err(|error| FileError::Encode(error.to_string()))
 }
 
 pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
-    check_structure_depth(text)?;
     let File {
         format_version,
         mut object,
+        specialized,
         modules,
         functions,
-        bodies,
         spans,
     } = ron::de::from_str(text).map_err(|error| undecodable(text, &error))?;
     if format_version != FORMAT_VERSION {
@@ -103,6 +76,15 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
             found: format_version,
             expected: FORMAT_VERSION,
         });
+    }
+    let slots = units(&mut object);
+    if slots.len() != specialized.len() {
+        return Err(decode_error(
+            "the number of specialized units does not match",
+        ));
+    }
+    for (slot, unit) in slots.into_iter().zip(specialized) {
+        slot.specialized = unit.map(Box::new);
     }
     let slots = module_slots(&mut object);
     if slots.len() != modules.len() {
@@ -115,12 +97,8 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
     if slots.len() != functions.len() {
         return Err(decode_error("the number of functions does not match"));
     }
-    if slots.len() != bodies.len() {
-        return Err(decode_error("the number of function bodies does not match"));
-    }
-    for ((slot, function), flat) in slots.into_iter().zip(functions).zip(bodies) {
+    for (slot, function) in slots.into_iter().zip(functions) {
         *slot = function;
-        slot.body = unflatten(flat)?;
     }
     if !spans.is_empty() {
         let modules = module_slots(&mut object);
@@ -138,13 +116,43 @@ pub fn decode(text: &str) -> Result<ObjectModule, FileError> {
 }
 
 fn undecodable(text: &str, error: &ron::error::SpannedError) -> FileError {
-    match ron::de::from_str::<Header>(text) {
-        Err(header) => FileError::Decode(header.to_string()),
-        Ok(header) if header.format_version != FORMAT_VERSION => FileError::Version {
-            found: header.format_version,
+    match format_version(text) {
+        Some(found) if found != FORMAT_VERSION => FileError::Version {
+            found,
             expected: FORMAT_VERSION,
         },
-        Ok(_) => FileError::Decode(error.to_string()),
+        _ => FileError::Decode(error.to_string()),
+    }
+}
+
+fn format_version(text: &str) -> Option<u32> {
+    let rest = skip_blank(text);
+    let rest = rest.strip_prefix("File").unwrap_or(rest);
+    let rest = skip_blank(skip_blank(rest).strip_prefix('(')?);
+    let rest = skip_blank(rest.strip_prefix("format_version")?);
+    let rest = skip_blank(rest.strip_prefix(':')?);
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest.get(..end)?.parse().ok()
+}
+
+fn skip_blank(mut text: &str) -> &str {
+    loop {
+        let trimmed = text.trim_start();
+        if let Some(comment) = trimmed.strip_prefix("//") {
+            text = comment
+                .find('\n')
+                .and_then(|end| comment.get(end..))
+                .unwrap_or_default();
+        } else if let Some(comment) = trimmed.strip_prefix("/*") {
+            text = comment
+                .find("*/")
+                .and_then(|end| comment.get(end + 2..))
+                .unwrap_or_default();
+        } else {
+            return trimmed;
+        }
     }
 }
 
@@ -283,192 +291,4 @@ fn function_slots(object: &mut ObjectModule) -> Vec<&mut rglsl::Function> {
         slots.extend(entry_points.iter_mut().map(|entry| &mut entry.function));
     }
     slots
-}
-
-fn flatten(root: &Block) -> Result<Vec<Flat>, FileError> {
-    let mut flat = Vec::new();
-    let mut pending = Vec::from([(root, 0, false)]);
-    while let Some(&mut (block, ref mut next, ref mut started)) = pending.last_mut() {
-        if !*started {
-            *started = true;
-            let length = u32::try_from(block.len())
-                .map_err(|_| FileError::Encode(String::from("a block is too long")))?;
-            flat.push(Flat::Block(length));
-        }
-        let Some(statement) = block.get(*next) else {
-            pending.pop();
-            continue;
-        };
-        *next += 1;
-        flat.push(Flat::Statement(statement.shell()));
-        pending.extend(
-            statement
-                .child_blocks()
-                .into_iter()
-                .rev()
-                .map(|child| (child, 0, false)),
-        );
-    }
-    Ok(flat)
-}
-
-fn unflatten(flat: Vec<Flat>) -> Result<Block, FileError> {
-    let mut open: Vec<Open> = Vec::new();
-    let mut root = None;
-    for entry in flat {
-        if root.is_some() {
-            return Err(decode_error("a function body has trailing statements"));
-        }
-        match entry {
-            Flat::Block(length) => {
-                let remaining =
-                    usize::try_from(length).map_err(|_| decode_error("a block is too long"))?;
-                open.push(Open::Block {
-                    block: Block::with_capacity(remaining.min(1 << 16)),
-                    remaining,
-                });
-            }
-            Flat::Statement(statement) => {
-                if statement.child_blocks().is_empty() {
-                    add_statement(&mut open, statement)?;
-                } else {
-                    open.push(Open::Statement {
-                        statement,
-                        children: Vec::new(),
-                    });
-                }
-            }
-        }
-        root = settle(&mut open)?;
-    }
-    root.ok_or_else(|| decode_error("a function body is incomplete"))
-}
-
-fn add_statement(open: &mut [Open], statement: Statement) -> Result<(), FileError> {
-    match open.last_mut() {
-        Some(&mut Open::Block {
-            ref mut block,
-            ref mut remaining,
-        }) if *remaining > 0 => {
-            block.push(statement, Span::default());
-            *remaining -= 1;
-            Ok(())
-        }
-        _ => Err(decode_error("a statement is outside of its block")),
-    }
-}
-
-fn settle(open: &mut Vec<Open>) -> Result<Option<Block>, FileError> {
-    loop {
-        let finished = match open.last() {
-            Some(&Open::Block { remaining: 0, .. }) => open.pop(),
-            _ => return Ok(None),
-        };
-        let Some(Open::Block { block, .. }) = finished else {
-            return Err(decode_error("a block is malformed"));
-        };
-        let complete = match open.last_mut() {
-            None => return Ok(Some(block)),
-            Some(&mut Open::Statement {
-                ref statement,
-                ref mut children,
-            }) => {
-                children.push(block);
-                children.len() == statement.child_blocks().len()
-            }
-            Some(&mut Open::Block { .. }) => {
-                return Err(decode_error("a block is outside of a statement"));
-            }
-        };
-        if complete {
-            let Some(Open::Statement {
-                mut statement,
-                children,
-            }) = open.pop()
-            else {
-                return Err(decode_error("a statement is malformed"));
-            };
-            for (slot, child) in statement.child_blocks_mut().into_iter().zip(children) {
-                *slot = child;
-            }
-            add_statement(open, statement)?;
-        }
-    }
-}
-
-const MAX_STRUCTURE_DEPTH: usize = 20;
-
-fn check_structure_depth(text: &str) -> Result<(), FileError> {
-    let bytes = text.as_bytes();
-    let mut depth = 0_usize;
-    let mut index = 0;
-    while let Some(&byte) = bytes.get(index) {
-        index += 1;
-        match byte {
-            b'(' | b'[' | b'{' => {
-                depth += 1;
-                if depth > MAX_STRUCTURE_DEPTH {
-                    return Err(decode_error(
-                        "the object file is nested deeper than its format allows",
-                    ));
-                }
-            }
-            b')' | b']' | b'}' => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| decode_error("the object file has unbalanced brackets"))?;
-            }
-            b'"' => index = skip_string(bytes, index, 0)?,
-            b'r' if matches!(bytes.get(index), Some(b'"' | b'#')) => {
-                let hashes = bytes.get(index..).map_or(0, |rest| {
-                    rest.iter().take_while(|&&byte| byte == b'#').count()
-                });
-                if bytes.get(index + hashes) == Some(&b'"') {
-                    index = skip_string(bytes, index + hashes + 1, hashes)?;
-                }
-            }
-            b'/' if bytes.get(index) == Some(&b'/') => {
-                while bytes.get(index).is_some_and(|&byte| byte != b'\n') {
-                    index += 1;
-                }
-            }
-            b'/' if bytes.get(index) == Some(&b'*') => {
-                let mut open = 1_usize;
-                index += 1;
-                while open > 0 {
-                    match (bytes.get(index), bytes.get(index + 1)) {
-                        (Some(b'/'), Some(b'*')) => {
-                            open += 1;
-                            index += 2;
-                        }
-                        (Some(b'*'), Some(b'/')) => {
-                            open -= 1;
-                            index += 2;
-                        }
-                        (Some(_), _) => index += 1,
-                        (None, _) => return Err(decode_error("an unterminated comment")),
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn skip_string(bytes: &[u8], mut index: usize, hashes: usize) -> Result<usize, FileError> {
-    loop {
-        match bytes.get(index) {
-            None => return Err(decode_error("an unterminated string")),
-            Some(b'\\') if hashes == 0 => index += 2,
-            Some(b'"')
-                if bytes
-                    .get(index + 1..index + 1 + hashes)
-                    .is_some_and(|rest| rest.iter().all(|&byte| byte == b'#')) =>
-            {
-                return Ok(index + 1 + hashes);
-            }
-            Some(_) => index += 1,
-        }
-    }
 }

@@ -49,6 +49,8 @@
             ty: 0,
             init: None,
             memory_decorations: (""),
+            io: None,
+            xfb: None,
         ),
     ],
     global_expressions: [],
@@ -100,36 +102,39 @@
                     0: "id",
                 },
                 body: [
-                    Emit((
+                    Block(6),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    ImageAtomic(
+                    ))),
+                    Statement(ImageAtomic(
                         image: 1,
                         coordinate: 4,
                         array_index: None,
                         fun: Max,
                         value: 5,
-                    ),
-                    ControlBarrier(("WORK_GROUP")),
-                    Emit((
+                    )),
+                    Statement(ControlBarrier(("WORK_GROUP"))),
+                    Statement(Emit((
                         start: 9,
                         end: 10,
-                    )),
-                    ImageAtomic(
+                    ))),
+                    Statement(ImageAtomic(
                         image: 6,
                         coordinate: 9,
                         array_index: None,
                         fun: Min,
                         value: 10,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

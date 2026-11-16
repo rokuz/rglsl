@@ -33,12 +33,16 @@
                         ty: 1,
                         binding: None,
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("b"),
                         ty: 2,
                         binding: None,
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -582,97 +586,100 @@
                     96: "cc19",
                 },
                 body: [
-                    Emit((
+                    Block(22),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 0,
                         value: 4,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 9,
                         end: 12,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 28,
                         end: 33,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 43,
                         end: 44,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 46,
                         end: 47,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 48,
                         end: 49,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 50,
                         end: 51,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 52,
                         end: 54,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 58,
                         end: 59,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 65,
                         end: 66,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 0,
                         end: 0,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 69,
                         end: 70,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 73,
                         end: 75,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

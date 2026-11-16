@@ -70,25 +70,26 @@
                 8: "c",
             },
             body: [
-                Emit((
+                Block(5),
+                Statement(Emit((
                     start: 2,
                     end: 3,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 5,
                     end: 6,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 8,
                     end: 9,
-                )),
-                Emit((
+                ))),
+                Statement(Emit((
                     start: 9,
                     end: 10,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: Some(9),
-                ),
+                )),
             ],
         ),
     ],
@@ -111,18 +112,21 @@
                     0: "a",
                 },
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: Some(0),
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

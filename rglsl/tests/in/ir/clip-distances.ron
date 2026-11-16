@@ -36,12 +36,16 @@
                             invariant: false,
                         ))),
                         offset: 0,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                     (
                         name: Some("clip_distances"),
                         ty: 2,
                         binding: Some(BuiltIn(ClipDistances)),
                         offset: 16,
+                        matrix_layout: None,
+                        xfb_offset: None,
                     ),
                 ],
                 span: 32,
@@ -95,29 +99,32 @@
                 ],
                 named_expressions: {},
                 body: [
-                    Emit((
+                    Block(5),
+                    Statement(Emit((
                         start: 1,
                         end: 2,
-                    )),
-                    Emit((
+                    ))),
+                    Statement(Emit((
                         start: 2,
                         end: 3,
-                    )),
-                    Store(
+                    ))),
+                    Statement(Store(
                         pointer: 2,
                         value: 3,
-                    ),
-                    Emit((
+                    )),
+                    Statement(Emit((
                         start: 4,
                         end: 5,
-                    )),
-                    Return(
+                    ))),
+                    Statement(Return(
                         value: Some(4),
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )

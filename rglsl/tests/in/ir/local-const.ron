@@ -59,13 +59,14 @@
             expressions: [],
             named_expressions: {},
             body: [
-                Emit((
+                Block(2),
+                Statement(Emit((
                     start: 0,
                     end: 0,
-                )),
-                Return(
+                ))),
+                Statement(Return(
                     value: None,
-                ),
+                )),
             ],
         ),
     ],
@@ -84,18 +85,21 @@
                 expressions: [],
                 named_expressions: {},
                 body: [
-                    Call(
+                    Block(2),
+                    Statement(Call(
                         function: 0,
                         arguments: [],
                         result: None,
-                    ),
-                    Return(
+                    )),
+                    Statement(Return(
                         value: None,
-                    ),
+                    )),
                 ],
             ),
             task_payload: None,
             incoming_ray_payload: None,
+            interface: [],
+            transform_feedback: false,
         ),
     ],
 )
