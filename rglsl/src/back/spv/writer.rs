@@ -85,6 +85,62 @@ impl Function {
     }
 }
 
+impl BlockContext<'_> {
+    fn write_local_variable(
+        &mut self,
+        handle: Handle<crate::LocalVariable>,
+        variable: &crate::LocalVariable,
+        prelude: &mut Block,
+    ) -> Result<(), Error> {
+        let id = self.gen_id();
+        self.writer
+            .decorate_pointer_variable(&self.ir_module.types, variable.ty, id);
+        if variable.relaxed_precision {
+            self.writer
+                .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
+
+        if self.writer.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = variable.name
+        {
+            self.writer.debugs.push(Instruction::name(id, name));
+        }
+
+        let type_id = self.get_handle_type_id(variable.ty)?;
+        let converted = self
+            .writer
+            .needs_layout_conversion(type_id, spirv::StorageClass::Function);
+        let init_word = match variable.init {
+            Some(constant) if converted => {
+                let value = self.writer.convert_layout(
+                    prelude,
+                    type_id,
+                    self.cached.get(constant)?,
+                    true,
+                )?;
+                prelude.body.push(Instruction::store(id, value, None));
+                None
+            }
+            Some(constant) => Some(self.cached.get(constant)?),
+            None => None,
+        };
+        let pointer_type_id = self
+            .writer
+            .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function)?;
+        let instruction = Instruction::variable(
+            pointer_type_id,
+            id,
+            spirv::StorageClass::Function,
+            init_word,
+        );
+
+        self.function
+            .variables
+            .insert(handle, LocalVariable { id, instruction });
+        Ok(())
+    }
+}
+
 impl Writer {
     pub fn new(options: &Options) -> Result<Self, Error> {
         let (major, minor) = options.lang_version;
@@ -656,6 +712,233 @@ impl Writer {
         }
     }
 
+    fn write_global_access(
+        &mut self,
+        ir_module: &crate::Module,
+        handle: Handle<crate::GlobalVariable>,
+        var: &crate::GlobalVariable,
+        prelude: &mut Block,
+    ) -> Result<(), Error> {
+        let mut gv = self.global_variables[handle].clone();
+
+        if matches!(
+            ir_module.types[var.ty].inner,
+            crate::TypeInner::BindingArray { .. }
+        ) {
+            gv.access_id = gv.var_id;
+        } else if var.space == crate::AddressSpace::Handle {
+            let var_type_id = self.get_handle_type_id(var.ty)?;
+            let id = self.id_gen.next();
+            prelude
+                .body
+                .push(Instruction::load(var_type_id, id, gv.var_id, None));
+            if var.relaxed_precision {
+                self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+            }
+            gv.access_id = gv.var_id;
+            gv.handle_id = id;
+        } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
+            let class = self.storage_class(var.space);
+            let pointer_type_id = if var.space == crate::AddressSpace::WorkGroup
+                && var.block == Some(crate::BlockDeclaration::Shared)
+            {
+                let base = self.get_handle_type_id(var.ty)?;
+                self.get_localtype_id(LocalType::Pointer { base, class })
+            } else {
+                self.get_handle_pointer_type_id(var.ty, class)?
+            };
+            let index_id = self.get_index_constant(0);
+            let id = self.id_gen.next();
+            prelude.body.push(Instruction::access_chain(
+                pointer_type_id,
+                id,
+                gv.var_id,
+                &[index_id],
+            ));
+            gv.access_id = id;
+        } else {
+            gv.access_id = gv.var_id;
+        }
+
+        // work around borrow checking in the presence of `self.xxx()` calls
+        self.global_variables[handle] = gv;
+        Ok(())
+    }
+
+    fn write_function_parameter(
+        &mut self,
+        ir_module: &crate::Module,
+        argument: &crate::FunctionArgument,
+        argument_type_id: Word,
+        handle_ty: bool,
+        prelude: &mut Block,
+    ) -> Result<FunctionArgument, Error> {
+        let argument_id = self.id_gen.next();
+        self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
+        if argument.relaxed_precision {
+            self.decorate(argument_id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
+        self.decorate_parameter_memory(argument_id, argument.memory_decorations);
+        let instruction = Instruction::function_parameter(argument_type_id, argument_id);
+        if self.flags.contains(WriterFlags::DEBUG)
+            && let Some(ref name) = argument.name
+        {
+            self.debugs.push(Instruction::name(argument_id, name));
+        }
+        let handle_id = if handle_ty {
+            let id = self.id_gen.next();
+            prelude.body.push(Instruction::load(
+                self.get_handle_type_id(argument.ty)?,
+                id,
+                argument_id,
+                None,
+            ));
+            id
+        } else {
+            0
+        };
+        Ok(FunctionArgument {
+            instruction,
+            handle_id,
+        })
+    }
+
+    fn write_entry_point_argument(
+        &mut self,
+        ir_module: &crate::Module,
+        argument: &crate::FunctionArgument,
+        argument_type_id: Word,
+        iface: &mut FunctionInterface,
+        prelude: &mut Block,
+    ) -> Result<Word, Error> {
+        let class = spirv::StorageClass::Input;
+        Ok(if let Some(ref binding) = argument.binding {
+            let name = argument.name.as_deref();
+
+            let varying_id =
+                self.write_varying(ir_module, iface.stage, class, name, argument.ty, binding)?;
+            iface.varying_ids.push(varying_id);
+            self.load_varying(&mut prelude.body, varying_id, argument_type_id)
+        } else if let crate::TypeInner::Struct { ref members, .. } =
+            ir_module.types[argument.ty].inner
+        {
+            let struct_id = self.id_gen.next();
+            let mut constituent_ids = Vec::with_capacity(members.len());
+            for member in members {
+                let type_id = self.get_handle_type_id(member.ty)?;
+                let name = member.name.as_deref();
+                let Some(binding) = member.binding.as_ref() else {
+                    return Err(Error::Validation(
+                        "entry point argument member has no binding",
+                    ));
+                };
+                let varying_id =
+                    self.write_varying(ir_module, iface.stage, class, name, member.ty, binding)?;
+                iface.varying_ids.push(varying_id);
+                let id = self.load_varying(&mut prelude.body, varying_id, type_id);
+                constituent_ids.push(id);
+            }
+            prelude.body.push(Instruction::composite_construct(
+                argument_type_id,
+                struct_id,
+                &constituent_ids,
+            ));
+            struct_id
+        } else {
+            return Err(Error::Validation("entry point argument has no binding"));
+        })
+    }
+
+    fn write_entry_point_result(
+        &mut self,
+        ir_module: &crate::Module,
+        result: &crate::FunctionResult,
+        iface: &mut FunctionInterface,
+        results: &mut Vec<ResultMember>,
+        prelude: &mut Block,
+    ) -> Result<(), Error> {
+        let mut has_point_size = false;
+        let class = spirv::StorageClass::Output;
+        if let Some(ref binding) = result.binding {
+            has_point_size |= *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
+            let type_id = self.get_handle_type_id(result.ty)?;
+            let varying_id = if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
+                0
+            } else {
+                let varying_id =
+                    self.write_varying(ir_module, iface.stage, class, None, result.ty, binding)?;
+                iface.varying_ids.push(varying_id);
+                varying_id
+            };
+            results.push(ResultMember {
+                id: varying_id,
+                type_id,
+                built_in: binding.to_built_in(),
+            });
+        } else if let crate::TypeInner::Struct { ref members, .. } =
+            ir_module.types[result.ty].inner
+        {
+            for member in members {
+                let type_id = self.get_handle_type_id(member.ty)?;
+                let name = member.name.as_deref();
+                let Some(binding) = member.binding.as_ref() else {
+                    return Err(Error::Validation(
+                        "entry point result member has no binding",
+                    ));
+                };
+                has_point_size |= *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
+                // This isn't an actual builtin in SPIR-V. It can only appear as the
+                // output of a task shader and the output is used when writing the
+                // entry point return, in which case the id is ignored anyway.
+                let varying_id =
+                    if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
+                        0
+                    } else {
+                        let varying_id = self.write_varying(
+                            ir_module,
+                            iface.stage,
+                            class,
+                            name,
+                            member.ty,
+                            binding,
+                        )?;
+                        iface.varying_ids.push(varying_id);
+                        varying_id
+                    };
+                results.push(ResultMember {
+                    id: varying_id,
+                    type_id,
+                    built_in: binding.to_built_in(),
+                });
+            }
+        } else {
+            return Err(Error::Validation("entry point result has no binding"));
+        }
+
+        if self.flags.contains(WriterFlags::FORCE_POINT_SIZE)
+            && iface.stage == crate::ShaderStage::Vertex
+            && !has_point_size
+        {
+            // add point size artificially
+            let varying_id = self.id_gen.next();
+            let pointer_type_id = self.get_f32_pointer_type_id(class);
+            Instruction::variable(pointer_type_id, varying_id, class, None)
+                .to_words(&mut self.logical_layout.declarations);
+            self.decorate(
+                varying_id,
+                spirv::Decoration::BuiltIn,
+                &[spirv::BuiltIn::PointSize as u32],
+            );
+            iface.varying_ids.push(varying_id);
+
+            let default_value_id = self.get_constant_scalar(crate::Literal::F32(1.0));
+            prelude
+                .body
+                .push(Instruction::store(varying_id, default_value_id, None));
+        }
+        Ok(())
+    }
+
     fn write_function(
         &mut self,
         ir_function: &crate::Function,
@@ -677,7 +960,6 @@ impl Writer {
         let mut parameter_type_ids = Vec::with_capacity(ir_function.arguments.len());
 
         for argument in ir_function.arguments.iter() {
-            let class = spirv::StorageClass::Input;
             let handle_ty = ir_module.types[argument.ty].inner.is_handle();
             let binding_array = matches!(
                 ir_module.types[argument.ty].inner,
@@ -690,82 +972,23 @@ impl Writer {
             };
 
             if let Some(ref mut iface) = interface {
-                let id = if let Some(ref binding) = argument.binding {
-                    let name = argument.name.as_deref();
-
-                    let varying_id = self.write_varying(
-                        ir_module,
-                        iface.stage,
-                        class,
-                        name,
-                        argument.ty,
-                        binding,
-                    )?;
-                    iface.varying_ids.push(varying_id);
-                    self.load_varying(&mut prelude.body, varying_id, argument_type_id)
-                } else if let crate::TypeInner::Struct { ref members, .. } =
-                    ir_module.types[argument.ty].inner
-                {
-                    let struct_id = self.id_gen.next();
-                    let mut constituent_ids = Vec::with_capacity(members.len());
-                    for member in members {
-                        let type_id = self.get_handle_type_id(member.ty)?;
-                        let name = member.name.as_deref();
-                        let Some(binding) = member.binding.as_ref() else {
-                            return Err(Error::Validation(
-                                "entry point argument member has no binding",
-                            ));
-                        };
-                        let varying_id = self.write_varying(
-                            ir_module,
-                            iface.stage,
-                            class,
-                            name,
-                            member.ty,
-                            binding,
-                        )?;
-                        iface.varying_ids.push(varying_id);
-                        let id = self.load_varying(&mut prelude.body, varying_id, type_id);
-                        constituent_ids.push(id);
-                    }
-                    prelude.body.push(Instruction::composite_construct(
-                        argument_type_id,
-                        struct_id,
-                        &constituent_ids,
-                    ));
-                    struct_id
-                } else {
-                    return Err(Error::Validation("entry point argument has no binding"));
-                };
+                let id = self.write_entry_point_argument(
+                    ir_module,
+                    argument,
+                    argument_type_id,
+                    iface,
+                    &mut prelude,
+                )?;
                 ep_context.argument_ids.push(id);
             } else {
-                let argument_id = self.id_gen.next();
-                self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
-                if argument.relaxed_precision {
-                    self.decorate(argument_id, spirv::Decoration::RelaxedPrecision, &[]);
-                }
-                self.decorate_parameter_memory(argument_id, argument.memory_decorations);
-                let instruction = Instruction::function_parameter(argument_type_id, argument_id);
-                if self.flags.contains(WriterFlags::DEBUG)
-                    && let Some(ref name) = argument.name
-                {
-                    self.debugs.push(Instruction::name(argument_id, name));
-                }
-                function.parameters.push(FunctionArgument {
-                    instruction,
-                    handle_id: if handle_ty {
-                        let id = self.id_gen.next();
-                        prelude.body.push(Instruction::load(
-                            self.get_handle_type_id(argument.ty)?,
-                            id,
-                            argument_id,
-                            None,
-                        ));
-                        id
-                    } else {
-                        0
-                    },
-                });
+                let parameter = self.write_function_parameter(
+                    ir_module,
+                    argument,
+                    argument_type_id,
+                    handle_ty,
+                    &mut prelude,
+                )?;
+                function.parameters.push(parameter);
                 parameter_type_ids.push(argument_type_id);
             };
         }
@@ -773,95 +996,13 @@ impl Writer {
         let return_type_id = match ir_function.result {
             Some(ref result) => {
                 if let Some(ref mut iface) = interface {
-                    let mut has_point_size = false;
-                    let class = spirv::StorageClass::Output;
-                    if let Some(ref binding) = result.binding {
-                        has_point_size |=
-                            *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
-                        let type_id = self.get_handle_type_id(result.ty)?;
-                        let varying_id =
-                            if *binding == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize) {
-                                0
-                            } else {
-                                let varying_id = self.write_varying(
-                                    ir_module,
-                                    iface.stage,
-                                    class,
-                                    None,
-                                    result.ty,
-                                    binding,
-                                )?;
-                                iface.varying_ids.push(varying_id);
-                                varying_id
-                            };
-                        ep_context.results.push(ResultMember {
-                            id: varying_id,
-                            type_id,
-                            built_in: binding.to_built_in(),
-                        });
-                    } else if let crate::TypeInner::Struct { ref members, .. } =
-                        ir_module.types[result.ty].inner
-                    {
-                        for member in members {
-                            let type_id = self.get_handle_type_id(member.ty)?;
-                            let name = member.name.as_deref();
-                            let Some(binding) = member.binding.as_ref() else {
-                                return Err(Error::Validation(
-                                    "entry point result member has no binding",
-                                ));
-                            };
-                            has_point_size |=
-                                *binding == crate::Binding::BuiltIn(crate::BuiltIn::PointSize);
-                            // This isn't an actual builtin in SPIR-V. It can only appear as the
-                            // output of a task shader and the output is used when writing the
-                            // entry point return, in which case the id is ignored anyway.
-                            let varying_id = if *binding
-                                == crate::Binding::BuiltIn(crate::BuiltIn::MeshTaskSize)
-                            {
-                                0
-                            } else {
-                                let varying_id = self.write_varying(
-                                    ir_module,
-                                    iface.stage,
-                                    class,
-                                    name,
-                                    member.ty,
-                                    binding,
-                                )?;
-                                iface.varying_ids.push(varying_id);
-                                varying_id
-                            };
-                            ep_context.results.push(ResultMember {
-                                id: varying_id,
-                                type_id,
-                                built_in: binding.to_built_in(),
-                            });
-                        }
-                    } else {
-                        return Err(Error::Validation("entry point result has no binding"));
-                    }
-
-                    if self.flags.contains(WriterFlags::FORCE_POINT_SIZE)
-                        && iface.stage == crate::ShaderStage::Vertex
-                        && !has_point_size
-                    {
-                        // add point size artificially
-                        let varying_id = self.id_gen.next();
-                        let pointer_type_id = self.get_f32_pointer_type_id(class);
-                        Instruction::variable(pointer_type_id, varying_id, class, None)
-                            .to_words(&mut self.logical_layout.declarations);
-                        self.decorate(
-                            varying_id,
-                            spirv::Decoration::BuiltIn,
-                            &[spirv::BuiltIn::PointSize as u32],
-                        );
-                        iface.varying_ids.push(varying_id);
-
-                        let default_value_id = self.get_constant_scalar(crate::Literal::F32(1.0));
-                        prelude
-                            .body
-                            .push(Instruction::store(varying_id, default_value_id, None));
-                    }
+                    self.write_entry_point_result(
+                        ir_module,
+                        result,
+                        iface,
+                        &mut ep_context.results,
+                        &mut prelude,
+                    )?;
                     self.void_type
                 } else {
                     self.get_handle_type_id(result.ty)?
@@ -939,55 +1080,13 @@ impl Writer {
                 continue;
             }
 
-            let mut gv = self.global_variables[handle].clone();
             if let Some(ref mut iface) = interface {
                 // Have to include global variables in the interface
                 if self.physical_layout.version >= 0x10400 {
-                    iface.varying_ids.push(gv.var_id);
+                    iface.varying_ids.push(self.global_variables[handle].var_id);
                 }
             }
-
-            if matches!(
-                ir_module.types[var.ty].inner,
-                crate::TypeInner::BindingArray { .. }
-            ) {
-                gv.access_id = gv.var_id;
-            } else if var.space == crate::AddressSpace::Handle {
-                let var_type_id = self.get_handle_type_id(var.ty)?;
-                let id = self.id_gen.next();
-                prelude
-                    .body
-                    .push(Instruction::load(var_type_id, id, gv.var_id, None));
-                if var.relaxed_precision {
-                    self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
-                }
-                gv.access_id = gv.var_id;
-                gv.handle_id = id;
-            } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
-                let class = self.storage_class(var.space);
-                let pointer_type_id = if var.space == crate::AddressSpace::WorkGroup
-                    && var.block == Some(crate::BlockDeclaration::Shared)
-                {
-                    let base = self.get_handle_type_id(var.ty)?;
-                    self.get_localtype_id(LocalType::Pointer { base, class })
-                } else {
-                    self.get_handle_pointer_type_id(var.ty, class)?
-                };
-                let index_id = self.get_index_constant(0);
-                let id = self.id_gen.next();
-                prelude.body.push(Instruction::access_chain(
-                    pointer_type_id,
-                    id,
-                    gv.var_id,
-                    &[index_id],
-                ));
-                gv.access_id = id;
-            } else {
-                gv.access_id = gv.var_id;
-            }
-
-            // work around borrow checking in the presence of `self.xxx()` calls
-            self.global_variables[handle] = gv;
+            self.write_global_access(ir_module, handle, var, &mut prelude)?;
         }
 
         // Create a `BlockContext` for generating SPIR-V for the function's
@@ -1021,54 +1120,7 @@ impl Writer {
         }
 
         for (handle, variable) in ir_function.local_variables.iter() {
-            let id = context.gen_id();
-            context
-                .writer
-                .decorate_pointer_variable(&ir_module.types, variable.ty, id);
-            if variable.relaxed_precision {
-                context
-                    .writer
-                    .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
-            }
-
-            if context.writer.flags.contains(WriterFlags::DEBUG)
-                && let Some(ref name) = variable.name
-            {
-                context.writer.debugs.push(Instruction::name(id, name));
-            }
-
-            let type_id = context.get_handle_type_id(variable.ty)?;
-            let converted = context
-                .writer
-                .needs_layout_conversion(type_id, spirv::StorageClass::Function);
-            let init_word = match variable.init {
-                Some(constant) if converted => {
-                    let value = context.writer.convert_layout(
-                        &mut prelude,
-                        type_id,
-                        context.cached.get(constant)?,
-                        true,
-                    )?;
-                    prelude.body.push(Instruction::store(id, value, None));
-                    None
-                }
-                Some(constant) => Some(context.cached.get(constant)?),
-                None => None,
-            };
-            let pointer_type_id = context
-                .writer
-                .get_handle_pointer_type_id(variable.ty, spirv::StorageClass::Function)?;
-            let instruction = Instruction::variable(
-                pointer_type_id,
-                id,
-                spirv::StorageClass::Function,
-                init_word,
-            );
-
-            context
-                .function
-                .variables
-                .insert(handle, LocalVariable { id, instruction });
+            context.write_local_variable(handle, variable, &mut prelude)?;
         }
 
         super::atomic::collect_texel_images(&ir_function.body, &mut context.function.texel_images);
