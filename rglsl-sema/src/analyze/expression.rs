@@ -1,19 +1,16 @@
 use crate::scope::QualifierFlags;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cell::RefCell;
 
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::{InlineDepth, run_from};
+use rglsl_types::stack::recurse;
 
+use rglsl_ast::Span;
 use rglsl_ast::ast::{
     AssignmentOperator, BinaryOperator, Expression, ExpressionKind, FunctionIdentifier, Identifier,
     NumericKind, NumericLiteral, UnaryOperator,
 };
-use rglsl_ast::{Chain, Span, Spine, SpineLinks};
 
-use super::call::Operands;
-use super::frames::Cx;
 use super::{Analyzer, ExpressionInfo, Operand, Place};
 use crate::constant::{Constant, Linear, Value, fold_binary, fold_linear, fold_unary};
 use crate::diagnostic::DiagnosticKind;
@@ -41,313 +38,110 @@ impl Access {
     };
 }
 
+pub(crate) const fn closing_parenthesis(call: &Expression) -> Span {
+    let end = call.span.end;
+    Span::new(end.saturating_sub(1), end)
+}
+
 impl Analyzer<'_> {
-    fn leaf_operand(&mut self, expression: &Expression) -> Option<Operand> {
-        Some(match &expression.kind {
+    pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
+        recurse(|| {
+            let uses = self.specialization_uses;
+            let operand = self.expression_kind(expression);
+            self.recorded(expression, uses, operand)
+        })
+    }
+
+    fn expression_kind(&mut self, expression: &Expression) -> Operand {
+        let span = expression.span;
+        match &expression.kind {
             ExpressionKind::Variable(name) => self.variable(expression, name),
-            ExpressionKind::Number(number) => self.number(expression.span, number),
+            ExpressionKind::Number(number) => self.number(span, number),
             ExpressionKind::Bool(value) => {
                 Operand::constant(Type::BOOL, Some(Constant::single(Value::Bool(*value))))
             }
             ExpressionKind::String(_) => Operand::constant(Type::STRING, None),
-            _ => return None,
-        })
-    }
-
-    fn is_flat(expression: &Expression, depth: InlineDepth) -> bool {
-        if let ExpressionKind::FunctionCall(call) = &expression.kind {
-            return matches!(
-                &call.function.node,
-                FunctionIdentifier::Constructor(specifier)
-                    if Self::is_simple_type_specifier(specifier)
-            ) && call
-                .arguments
-                .iter()
-                .all(|argument| argument.kind.is_leaf());
-        }
-        if expression.kind.is_leaf() {
-            return true;
-        }
-        let Some(nested) = depth.nested() else {
-            return false;
-        };
-        match &expression.kind {
-            ExpressionKind::Parenthesized(inner) => Self::is_flat(inner, nested),
+            ExpressionKind::FunctionCall(call) => self.call_expression(expression, call),
+            ExpressionKind::Sequence(expressions) => self.sequence(expressions),
+            ExpressionKind::Parenthesized(inner) => self.expression(inner),
+            ExpressionKind::Unary {
+                operator: operator @ (UnaryOperator::Increment | UnaryOperator::Decrement),
+                operand,
+            } => {
+                let inner = self.expression(operand);
+                self.increment_checked(span, operand, operator.symbol(), inner)
+            }
             ExpressionKind::Unary { operator, operand } => {
-                !matches!(
-                    operator,
-                    UnaryOperator::Increment | UnaryOperator::Decrement
-                ) && Self::is_flat(operand, nested)
+                let inner = self.expression(operand);
+                self.unary_checked(span, *operator, inner)
             }
-            ExpressionKind::Binary { left, right, .. } => {
-                Self::is_flat(left, nested) && Self::is_flat(right, nested)
+            ExpressionKind::Postfix { operand, operator } => {
+                let inner = self.expression(operand);
+                let span = Span::new(operand.span.end, span.end);
+                self.increment_checked(span, operand, operator.symbol(), inner)
             }
-            _ => false,
-        }
-    }
-
-    fn flat_operand(&mut self, expression: &Expression) -> Option<Operand> {
-        let uses = self.specialization_uses;
-        let operand = match &expression.kind {
-            ExpressionKind::FunctionCall(call) => {
-                let FunctionIdentifier::Constructor(specifier) = &call.function.node else {
-                    return None;
-                };
-                let close = closing_parenthesis(expression);
-                let ty = self.simple_type_specifier(specifier, close)?;
-                let mut operands = Operands::with_capacity(call.arguments.len());
-                for argument in &call.arguments {
-                    operands.push(self.flat_operand(argument)?);
-                }
-                self.constructor_with(expression, close, &call.arguments, ty, &operands)
+            ExpressionKind::Subscript { base, index } => {
+                let base_operand = self.expression(base);
+                let index_operand = self.expression(index);
+                let span = Span::new(base.span.end, index.span.start);
+                self.subscript_checked(base, index, span, base_operand, index_operand)
             }
-            ExpressionKind::Parenthesized(inner) => self.flat_operand(inner)?,
-            ExpressionKind::Unary { operator, operand } => {
-                let inner = self.flat_operand(operand)?;
-                self.unary_checked(expression.span, *operator, inner)
+            ExpressionKind::FieldSelection { base, field } => {
+                let base_operand = self.expression(base);
+                self.field_checked(field, base_operand)
             }
             ExpressionKind::Binary {
                 operator,
                 left,
                 right,
             } => {
-                let left_operand = self.flat_operand(left)?;
-                let right_operand = self.flat_operand(right)?;
+                let left_operand = self.expression(left);
+                let right_operand = self.expression(right);
                 let span = Span::new(left.span.end, right.span.start);
                 self.binary_checked(*operator, left, right, span, left_operand, right_operand)
             }
-            _ => self.leaf_operand(expression)?,
-        };
-        Some(self.recorded(expression, uses, operand))
-    }
-
-    fn flat_expression(&mut self, expression: &Expression) -> Option<Operand> {
-        if self.flat_expressions && Self::is_flat(expression, InlineDepth::MAX) {
-            self.flat_operand(expression)
-        } else {
-            None
-        }
-    }
-}
-
-pub(crate) const fn closing_parenthesis(call: &Expression) -> Span {
-    let end = call.span.end;
-    Span::new(end.saturating_sub(1), end)
-}
-
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn value_expression(self, expression: &'b Expression) -> Operand {
-        self.clone().expression(expression).await
-    }
-
-    pub(crate) async fn child_expression(self, expression: &'b Expression) -> Operand {
-        if let Some(operand) = self.with(|analyzer| analyzer.flat_expression(expression)) {
-            return operand;
-        }
-        self.call(self.clone().nested_expression(expression)).await
-    }
-
-    pub(crate) async fn expression(self, expression: &'b Expression) -> Operand {
-        if let Some(operand) = self.with(|analyzer| analyzer.flat_expression(expression)) {
-            return operand;
-        }
-        self.clone().nested_expression(expression).await
-    }
-
-    async fn nested_expression(self, expression: &'b Expression) -> Operand {
-        if matches!(expression.kind, ExpressionKind::Parenthesized(_)) {
-            return self.clone().binary_chain(expression).await;
-        }
-        match expression.kind.chain() {
-            Some(Chain::Binary) => self.clone().binary_chain(expression).await,
-            Some(Chain::Unary | Chain::Postfix) => self.clone().operand_chain(expression).await,
-            Some(Chain::Assignment | Chain::Conditional) => {
-                self.clone().right_chain(expression).await
-            }
-            None => {
-                let uses = self.with(|analyzer| analyzer.specialization_uses);
-                let operand = self.clone().expression_kind(expression).await;
-                self.with(|analyzer| analyzer.recorded(expression, uses, operand))
-            }
-        }
-    }
-
-    async fn binary_chain(self, expression: &'b Expression) -> Operand {
-        let uses = self.with(|analyzer| analyzer.specialization_uses);
-        let mut links = SpineLinks::new();
-        let mut head = expression;
-        loop {
-            match &head.kind {
-                ExpressionKind::Binary { left, .. } => {
-                    links.push(head);
-                    head = left;
-                }
-                ExpressionKind::Parenthesized(inner) => {
-                    links.push(head);
-                    head = inner;
-                }
-                _ => break,
-            }
-        }
-        let mut operand = self.clone().child_expression(head).await;
-        for node in links.into_iter().rev() {
-            if let ExpressionKind::Binary {
+            ExpressionKind::Assignment {
                 operator,
-                left,
-                right,
-            } = &node.kind
-            {
-                let span = Span::new(left.span.end, right.span.start);
-                let right_operand = self.clone().child_expression(right).await;
-                operand = self.with(|analyzer| {
-                    analyzer.binary_checked(*operator, left, right, span, operand, right_operand)
-                });
-            }
-            operand = self.with(|analyzer| analyzer.recorded(node, uses, operand));
-        }
-        operand
-    }
-
-    async fn operand_chain(self, expression: &'b Expression) -> Operand {
-        let uses = self.with(|analyzer| analyzer.specialization_uses);
-        let spine = Spine::of(expression);
-        let mut operand = self.clone().child_expression(spine.head).await;
-        for node in spine.links.into_iter().rev() {
-            operand = self.clone().operand_link(node, operand).await;
-            operand = self.with(|analyzer| analyzer.recorded(node, uses, operand));
-        }
-        operand
-    }
-
-    async fn operand_link(self, node: &'b Expression, operand: Operand) -> Operand {
-        let span = node.span;
-        match &node.kind {
-            ExpressionKind::Unary {
-                operator: operator @ (UnaryOperator::Increment | UnaryOperator::Decrement),
-                operand: inner,
-            } => self.with(|analyzer| {
-                analyzer.increment_checked(span, inner, operator.symbol(), operand)
-            }),
-            ExpressionKind::Unary { operator, .. } => {
-                self.with(|analyzer| analyzer.unary_checked(span, *operator, operand))
-            }
-            ExpressionKind::Subscript { base, index } => {
-                let span = Span::new(base.span.end, index.span.start);
-                let index_operand = self.clone().child_expression(index).await;
-                self.with(|analyzer| {
-                    analyzer.subscript_checked(base, index, span, operand, index_operand)
-                })
-            }
-            ExpressionKind::FieldSelection { field, .. } => {
-                self.with(|analyzer| analyzer.field_checked(field, operand))
-            }
-            ExpressionKind::Postfix {
-                operand: inner,
-                operator,
-            } => self.with(|analyzer| {
-                analyzer.increment_checked(
-                    Span::new(inner.span.end, span.end),
-                    inner,
-                    operator.symbol(),
-                    operand,
-                )
-            }),
-            _ => operand,
-        }
-    }
-
-    async fn right_chain(self, expression: &'b Expression) -> Operand {
-        let spine = Spine::of(expression);
-        let mut pending = Vec::with_capacity(spine.links.len());
-        for node in spine.links {
-            let uses = self.with(|analyzer| analyzer.specialization_uses);
-            let first = match &node.kind {
-                ExpressionKind::Assignment { target, .. } => {
-                    self.clone().child_expression(target).await
-                }
-                ExpressionKind::Conditional {
-                    condition,
-                    then_expression,
-                    ..
-                } => {
-                    let condition_operand = self.clone().child_expression(condition).await;
-                    let then_operand = self.clone().child_expression(then_expression).await;
-                    pending.push((node, uses, condition_operand));
-                    then_operand
-                }
-                _ => Operand::error(),
-            };
-            pending.push((node, uses, first));
-        }
-        let mut operand = self.clone().child_expression(spine.head).await;
-        while let Some((node, uses, first)) = pending.pop() {
-            operand = match &node.kind {
-                ExpressionKind::Assignment {
-                    operator,
+                target,
+                value,
+            } => {
+                let target_operand = self.expression(target);
+                let value_operand = self.expression(value);
+                let span = Span::new(target.span.end, value.span.start);
+                self.assignment_checked(
+                    *operator,
                     target,
                     value,
-                } => {
-                    let span = Span::new(target.span.end, value.span.start);
-                    self.with(|analyzer| {
-                        analyzer.assignment_checked(*operator, target, value, span, first, operand)
-                    })
-                }
-                ExpressionKind::Conditional {
-                    condition,
+                    span,
+                    target_operand,
+                    value_operand,
+                )
+            }
+            ExpressionKind::Conditional {
+                condition,
+                then_expression,
+                else_expression,
+            } => {
+                let condition_operand = self.expression(condition);
+                let then_operand = self.expression(then_expression);
+                let else_operand = self.expression(else_expression);
+                let span = Span::new(condition.span.end, then_expression.span.start);
+                self.conditional_checked(
                     then_expression,
                     else_expression,
-                } => {
-                    let condition_operand = pending
-                        .pop()
-                        .map_or_else(Operand::error, |(_, _, condition)| condition);
-                    let span = Span::new(condition.span.end, then_expression.span.start);
-                    self.with(|analyzer| {
-                        analyzer.conditional_checked(
-                            then_expression,
-                            else_expression,
-                            span,
-                            condition_operand,
-                            first,
-                            operand,
-                        )
-                    })
-                }
-                _ => operand,
-            };
-            operand = self.with(|analyzer| analyzer.recorded(node, uses, operand));
-        }
-        operand
-    }
-
-    async fn expression_kind(self, expression: &'b Expression) -> Operand {
-        match &expression.kind {
-            ExpressionKind::Variable(_)
-            | ExpressionKind::Number(_)
-            | ExpressionKind::Bool(_)
-            | ExpressionKind::String(_) => self
-                .with(|analyzer| analyzer.leaf_operand(expression))
-                .unwrap_or_else(Operand::error),
-            ExpressionKind::FunctionCall(call) => {
-                self.clone().call_expression(expression, call).await
+                    span,
+                    condition_operand,
+                    then_operand,
+                    else_operand,
+                )
             }
-            ExpressionKind::Sequence(expressions) => {
-                self.call(self.clone().sequence(expressions)).await
-            }
-            ExpressionKind::Parenthesized(_)
-            | ExpressionKind::Subscript { .. }
-            | ExpressionKind::FieldSelection { .. }
-            | ExpressionKind::Postfix { .. }
-            | ExpressionKind::Unary { .. }
-            | ExpressionKind::Binary { .. }
-            | ExpressionKind::Conditional { .. }
-            | ExpressionKind::Assignment { .. } => Operand::error(),
         }
     }
 
-    async fn sequence(self, expressions: &'b [Expression]) -> Operand {
+    fn sequence(&mut self, expressions: &[Expression]) -> Operand {
         let mut last = Operand::error();
         for expression in expressions {
-            last = self.call(self.clone().expression(expression)).await;
+            last = self.expression(expression);
         }
         Operand::temporary(last.ty)
     }
@@ -690,24 +484,6 @@ const fn compound_operator(operator: AssignmentOperator) -> Option<BinaryOperato
 }
 
 impl Analyzer<'_> {
-    pub(crate) fn value_expression(&mut self, expression: &Expression) -> Operand {
-        self.expression(expression)
-    }
-
-    pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
-        if let Some(operand) = self.flat_expression(expression) {
-            return operand;
-        }
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).expression(expression)
-            })
-        };
-        finished.unwrap_or_else(|| self.stalled(Operand::error()))
-    }
-
     fn forget_component_values(&mut self, expression: &Expression) {
         let ExpressionKind::FunctionCall(ref call) = expression.kind else {
             return;

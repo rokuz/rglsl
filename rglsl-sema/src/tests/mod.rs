@@ -7,8 +7,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::analyze::analyze_unit;
-use crate::{Analysis, DiagnosticKind, FreshTables, Options, analyze};
+use crate::{Analysis, DiagnosticKind, Options, analyze};
 
 use rglsl_types::ShaderStage;
 
@@ -229,41 +228,5 @@ fn mutated_shaders_are_analysed_without_panicking() -> TestResult {
     }
     assert!(analysed > 1000, "{analysed}");
     assert!(rejected > 300, "{rejected}");
-    Ok(())
-}
-
-fn same_entries<K: Eq + core::hash::Hash, V: core::fmt::Debug>(
-    left: &rglsl_types::FastHashMap<K, V>,
-    right: &rglsl_types::FastHashMap<K, V>,
-) -> bool {
-    left.len() == right.len()
-        && left.iter().all(|(key, value)| {
-            right
-                .get(key)
-                .is_some_and(|other| format!("{value:?}") == format!("{other:?}"))
-        })
-}
-
-#[test]
-fn flat_expressions_are_analysed_like_nested_ones() -> TestResult {
-    let mut differences = Vec::new();
-    for case in cases()? {
-        let Ok(unit) = rglsl_ast::parse(&case.source) else {
-            continue;
-        };
-        let options = Options::new(case.stage);
-        let flat = analyze_unit(&unit, &options, &FreshTables, true);
-        let nested = analyze_unit(&unit, &options, &FreshTables, false);
-        if !same_entries(&flat.expressions, &nested.expressions)
-            || flat.references != nested.references
-            || flat.calls != nested.calls
-            || flat.declarations != nested.declarations
-            || format!("{:?}", flat.symbols) != format!("{:?}", nested.symbols)
-            || flat.diagnostics != nested.diagnostics
-        {
-            differences.push(case.name);
-        }
-    }
-    assert!(differences.is_empty(), "{}", differences.join("\n"));
     Ok(())
 }

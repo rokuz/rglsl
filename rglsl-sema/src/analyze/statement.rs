@@ -1,8 +1,7 @@
 use alloc::boxed::Box;
-use core::cell::RefCell;
 
 use rglsl_types::extension::Extension;
-use rglsl_types::stack::run_from;
+use rglsl_types::stack::recurse;
 
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
@@ -10,7 +9,6 @@ use rglsl_ast::ast::{
     ExpressionKind, ForStatement, JumpStatement, Statement, StatementKind,
 };
 
-use super::frames::Cx;
 use super::{Analyzer, Operand, SwitchContext};
 use crate::constant::Constant;
 use crate::diagnostic::DiagnosticKind;
@@ -19,19 +17,6 @@ use crate::types::Type;
 use rglsl_types::ShaderStage;
 
 impl Analyzer<'_> {
-    pub(crate) fn statements(&mut self, statements: &[Statement]) {
-        let base = self.stack_base;
-        let finished = {
-            let analyzer = RefCell::new(&mut *self);
-            run_from(base, |stack| {
-                Cx::new(&analyzer, stack).statements(statements)
-            })
-        };
-        if finished.is_none() {
-            self.stalled(());
-        }
-    }
-
     fn attribute_value(&mut self, attribute: &Attribute, statement: &Statement, operand: &Operand) {
         let value = operand
             .value
@@ -95,7 +80,7 @@ impl Analyzer<'_> {
     }
 
     fn boolean_condition(&mut self, span: Span, condition: &Expression) {
-        let operand = self.value_expression(condition);
+        let operand = self.expression(condition);
         if !operand.ty.is_error() && !operand.ty.is_bool() {
             self.error(
                 span,
@@ -149,7 +134,7 @@ impl Analyzer<'_> {
         let value = match label {
             CaseLabel::Default => None,
             CaseLabel::Case(expression) => {
-                let operand = self.value_expression(expression);
+                let operand = self.expression(expression);
                 if operand.ty.is_error() {
                     return;
                 }
@@ -283,38 +268,34 @@ fn generates_code(statement: &Statement) -> bool {
     }
 }
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn statements(self, statements: &'b [Statement]) {
+impl Analyzer<'_> {
+    pub(crate) fn statements(&mut self, statements: &[Statement]) {
         for statement in statements {
-            self.clone().statement(statement).await;
+            self.statement(statement);
         }
     }
 
-    async fn compound(self, compound: &'b CompoundStatement) {
-        self.with(|analyzer| {
-            analyzer.nesting += 1;
-            analyzer.scopes.push();
-        });
-        self.clone().statements(&compound.statements).await;
-        self.with(|analyzer| {
-            analyzer.scopes.pop();
-            analyzer.nesting -= 1;
-        });
+    fn compound(&mut self, compound: &CompoundStatement) {
+        self.nesting += 1;
+        self.scopes.push();
+        self.statements(&compound.statements);
+        self.scopes.pop();
+        self.nesting -= 1;
     }
 
-    pub(crate) async fn statement(self, statement: &'b Statement) {
-        match &statement.kind {
+    pub(crate) fn statement(&mut self, statement: &Statement) {
+        recurse(|| match &statement.kind {
             StatementKind::Compound(compound) => {
-                self.call(self.clone().compound(compound)).await;
+                self.compound(compound);
             }
             StatementKind::Declaration(declaration) => {
-                self.with(|analyzer| analyzer.declaration(declaration));
+                self.declaration(declaration);
             }
             StatementKind::Expression(expression) => {
                 if let Some(expression) = expression
-                    && !self.with(|analyzer| analyzer.names_struct(expression))
+                    && !self.names_struct(expression)
                 {
-                    self.clone().expression(expression).await;
+                    self.expression(expression);
                 }
             }
             StatementKind::Selection {
@@ -322,72 +303,61 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 then_branch,
                 else_branch,
             } => {
-                let operand = self.clone().value_expression(condition).await;
-                self.with(|analyzer| {
-                    analyzer.boolean_condition_with(statement.span, &operand);
-                    analyzer.nesting += 1;
-                    analyzer.stage_layout.selections += 1;
-                    analyzer.scopes.push();
-                });
-                self.call(self.clone().statement(then_branch)).await;
-                self.with(|analyzer| analyzer.scopes.pop());
+                let operand = self.expression(condition);
+                self.boolean_condition_with(statement.span, &operand);
+                self.nesting += 1;
+                self.stage_layout.selections += 1;
+                self.scopes.push();
+                self.statement(then_branch);
+                self.scopes.pop();
                 if let Some(else_branch) = else_branch {
-                    self.with(|analyzer| analyzer.scopes.push());
-                    self.call(self.clone().statement(else_branch)).await;
-                    self.with(|analyzer| analyzer.scopes.pop());
+                    self.scopes.push();
+                    self.statement(else_branch);
+                    self.scopes.pop();
                 }
-                self.with(|analyzer| {
-                    analyzer.stage_layout.selections -= 1;
-                    analyzer.nesting -= 1;
-                });
+                self.stage_layout.selections -= 1;
+                self.nesting -= 1;
             }
             StatementKind::Switch {
                 selector,
                 statements,
             } => {
-                self.call(self.clone().switch(statement.span, selector, statements))
-                    .await;
+                self.switch(statement.span, selector, statements);
             }
             StatementKind::CaseLabel(label) => {
-                self.with(|analyzer| analyzer.case_label(statement.span, label));
+                self.case_label(statement.span, label);
             }
             StatementKind::While { condition, body } => {
-                self.with(|analyzer| {
-                    analyzer.loop_limitation(statement.span, "while");
-                    analyzer.scopes.push();
-                    analyzer.condition(condition);
-                });
-                self.call(self.clone().loop_body(body)).await;
-                self.with(|analyzer| analyzer.scopes.pop());
+                self.loop_limitation(statement.span, "while");
+                self.scopes.push();
+                self.condition(condition);
+                self.loop_body(body);
+                self.scopes.pop();
             }
             StatementKind::DoWhile { body, condition } => {
-                self.with(|analyzer| analyzer.scopes.push());
-                self.call(self.clone().loop_body(body)).await;
-                self.with(|analyzer| analyzer.scopes.pop());
+                self.scopes.push();
+                self.loop_body(body);
+                self.scopes.pop();
                 let end = statement.span.end;
-                let operand = self.clone().value_expression(condition).await;
-                self.with(|analyzer| {
-                    analyzer.loop_limitation(statement.span, "do-while");
-                    analyzer
-                        .boolean_condition_with(Span::new(end.saturating_sub(1), end), &operand);
-                });
+                let operand = self.expression(condition);
+                self.loop_limitation(statement.span, "do-while");
+                self.boolean_condition_with(Span::new(end.saturating_sub(1), end), &operand);
             }
             StatementKind::For(for_statement) => {
-                self.call(self.clone().for_statement(for_statement)).await;
-                self.with(|analyzer| analyzer.inductive_loop_check(statement.span, for_statement));
+                self.for_statement(for_statement);
+                self.inductive_loop_check(statement.span, for_statement);
             }
-            StatementKind::Jump(jump) => self.with(|analyzer| analyzer.jump(statement.span, jump)),
+            StatementKind::Jump(jump) => self.jump(statement.span, jump),
             StatementKind::Attributed {
                 attributes,
                 statement,
             } => {
-                self.call(self.clone().attributed(attributes, statement))
-                    .await;
+                self.attributed(attributes, statement);
             }
-        }
+        });
     }
 
-    async fn attributed(self, attributes: &'b [Attribute], statement: &'b Statement) {
+    fn attributed(&mut self, attributes: &[Attribute], statement: &Statement) {
         let selection = matches!(
             statement.kind,
             StatementKind::Selection { .. } | StatementKind::Switch { .. }
@@ -401,72 +371,64 @@ impl<'b> Cx<'b, Analyzer<'_>> {
                 Extension::QcomMultipleWaitQueues,
             ]
         };
-        self.with(|analyzer| analyzer.require_extensions(statement.span, extensions, "attribute"));
+        self.require_extensions(statement.span, extensions, "attribute");
         for attribute in attributes {
             let Some(argument) = &attribute.argument else {
                 continue;
             };
-            let operand = self.call(self.clone().value_expression(argument)).await;
+            let operand = self.expression(argument);
             if !selection {
-                self.with(|analyzer| analyzer.attribute_value(attribute, statement, &operand));
+                self.attribute_value(attribute, statement, &operand);
             }
         }
-        self.call(self.clone().statement(statement)).await;
+        self.statement(statement);
     }
 
-    async fn unscoped(self, statement: &'b Statement) {
+    fn unscoped(&mut self, statement: &Statement) {
         match &statement.kind {
             StatementKind::Compound(compound) => {
-                self.clone().statements(&compound.statements).await;
+                self.statements(&compound.statements);
             }
-            _ => self.call(self.clone().statement(statement)).await,
+            _ => self.statement(statement),
         }
     }
 
-    async fn loop_body(self, body: &'b Statement) {
-        self.with(|analyzer| {
-            analyzer.loop_depth += 1;
-            analyzer.nesting += 1;
-        });
-        self.call(self.clone().unscoped(body)).await;
-        self.with(|analyzer| {
-            analyzer.nesting -= 1;
-            analyzer.loop_depth -= 1;
-        });
+    fn loop_body(&mut self, body: &Statement) {
+        self.loop_depth += 1;
+        self.nesting += 1;
+        self.unscoped(body);
+        self.nesting -= 1;
+        self.loop_depth -= 1;
     }
 
-    async fn for_statement(self, statement: &'b ForStatement) {
-        self.with(|analyzer| analyzer.scopes.push());
-        self.call(self.clone().statement(&statement.init)).await;
+    fn for_statement(&mut self, statement: &ForStatement) {
+        self.scopes.push();
+        self.statement(&statement.init);
         if let Some(condition) = &statement.condition {
-            self.with(|analyzer| analyzer.condition(condition));
+            self.condition(condition);
         }
         if let Some(increment) = &statement.increment {
-            self.call(self.clone().expression(increment)).await;
+            self.expression(increment);
         }
-        self.call(self.clone().loop_body(&statement.body)).await;
-        self.with(|analyzer| analyzer.scopes.pop());
+        self.loop_body(&statement.body);
+        self.scopes.pop();
     }
 
-    async fn switch(self, span: Span, selector: &'b Expression, statements: &'b [Statement]) {
-        let operand = self.call(self.clone().value_expression(selector)).await;
-        self.with(|analyzer| analyzer.switch_selector(span, &operand));
+    fn switch(&mut self, span: Span, selector: &Expression, statements: &[Statement]) {
+        let operand = self.expression(selector);
+        self.switch_selector(span, &operand);
         let mut labelled = false;
         for statement in statements {
             if matches!(statement.kind, StatementKind::CaseLabel(_)) {
                 labelled = true;
             } else if generates_code(statement) && !labelled {
                 labelled = true;
-                self.with(|analyzer| {
-                    analyzer.error(statement.span, DiagnosticKind::StatementBeforeCase);
-                });
+                self.error(statement.span, DiagnosticKind::StatementBeforeCase);
             }
-            self.call(self.clone().statement(statement)).await;
+            self.statement(statement);
         }
-        self.with(|analyzer| {
-            analyzer.scopes.pop();
-            analyzer.switches.pop();
-            analyzer.nesting -= 1;
-        });
+        self.scopes.pop();
+        self.switches.pop();
+        self.nesting -= 1;
     }
 }

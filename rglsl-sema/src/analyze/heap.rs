@@ -6,7 +6,6 @@ use rglsl_ast::ast::{BlockStructure, Spanned, StructDeclaration};
 use rglsl_types::extension::Extension;
 
 use super::Analyzer;
-use super::frames::Cx;
 use super::reference::{matrix_of, packing_of};
 use crate::diagnostic::DiagnosticKind;
 use crate::layout::block_size;
@@ -274,25 +273,18 @@ impl Analyzer<'_> {
             );
         }
     }
-}
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn inline_reference(
-        self,
+    pub(crate) fn inline_reference(
+        &mut self,
         span: Span,
         qualifiers: Qualifiers,
-        members: &'b [Spanned<StructDeclaration>],
+        members: &[Spanned<StructDeclaration>],
         in_heap: bool,
     ) -> Type {
-        if !self.with(|analyzer| analyzer.inline_reference_allowed(span, &qualifiers, in_heap)) {
+        if !self.inline_reference_allowed(span, &qualifiers, in_heap) {
             return Type::ERROR;
         }
-        let members = self
-            .call(
-                self.clone()
-                    .struct_members(members, Some(qualifiers.clone())),
-            )
-            .await;
-        self.with(|analyzer| analyzer.inline_reference_with(&qualifiers, members))
+        let members = self.struct_members(members, Some(&qualifiers));
+        self.inline_reference_with(&qualifiers, members)
     }
 }

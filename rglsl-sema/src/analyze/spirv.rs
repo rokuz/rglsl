@@ -9,7 +9,6 @@ use rglsl_ast::ast::{
 };
 
 use super::expression::literal;
-use super::frames::Cx;
 use super::{Analyzer, Operand};
 use crate::constant::Value;
 use crate::diagnostic::DiagnosticKind;
@@ -396,27 +395,17 @@ impl Analyzer<'_> {
             }
         }
     }
-}
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn spirv_decorate(
-        self,
-        decorate: &'b SpirvDecorate,
-    ) -> Option<SpirvDecoration> {
-        let decoration = self.with(|analyzer| {
-            analyzer.spirv_requirements(&decorate.requirements);
-            let decoration = integer(&decorate.decoration)?;
-            let first_literal = decorate.operands.first().and_then(integer);
-            analyzer.opencl_decoration(decorate.decoration.span, decoration, first_literal);
-            Some(decoration)
-        })?;
+    pub(crate) fn spirv_decorate(&mut self, decorate: &SpirvDecorate) -> Option<SpirvDecoration> {
+        self.spirv_requirements(&decorate.requirements);
+        let decoration = integer(&decorate.decoration)?;
+        let first_literal = decorate.operands.first().and_then(integer);
+        self.opencl_decoration(decorate.decoration.span, decoration, first_literal);
         let mut ids = Vec::new();
         if decorate.kind == SpirvDecorateKind::Id {
             for operand in &decorate.operands {
-                let evaluated = self.call(self.clone().expression(operand)).await;
-                if let Some(id) =
-                    self.with(|analyzer| analyzer.spirv_id_operand_with(operand, &evaluated))
-                {
+                let evaluated = self.expression(operand);
+                if let Some(id) = self.spirv_id_operand_with(operand, &evaluated) {
                     ids.push(id);
                 }
             }
@@ -424,36 +413,30 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         Some(Analyzer::spirv_decorate_with(decorate, decoration, ids))
     }
 
-    pub(crate) async fn spirv_type_specifier(self, specifier: &'b SpirvTypeSpecifier) -> Type {
-        let instruction = self.with(|analyzer| {
-            analyzer.spirv_requirements(&specifier.requirements);
-            analyzer.spirv_instruction(&specifier.instruction)
-        });
+    pub(crate) fn spirv_type_specifier(&mut self, specifier: &SpirvTypeSpecifier) -> Type {
+        self.spirv_requirements(&specifier.requirements);
+        let instruction = self.spirv_instruction(&specifier.instruction);
         let opcode = instruction.id.filter(|_| instruction.set.is_empty());
         let mut parameters = Vec::new();
         for (index, parameter) in specifier.parameters.iter().enumerate() {
             if let (Some(opcode), SpirvTypeParameter::Constant(expression)) = (opcode, parameter)
                 && let Some(value) = integer(expression)
             {
-                self.with(|analyzer| {
-                    analyzer.opencl_type_operand(expression.span, opcode, index, value);
-                });
+                self.opencl_type_operand(expression.span, opcode, index, value);
             }
             match parameter {
                 SpirvTypeParameter::Type(ty) => {
-                    let ty = self.call(self.clone().type_specifier(ty)).await;
+                    let ty = self.type_specifier(ty);
                     parameters.push(TypeParameter::Type(ty));
                 }
                 SpirvTypeParameter::Constant(expression) => {
-                    let operand = self.call(self.clone().expression(expression)).await;
-                    if let Some(parameter) = self
-                        .with(|analyzer| analyzer.spirv_type_constant_with(expression, &operand))
-                    {
+                    let operand = self.expression(expression);
+                    if let Some(parameter) = self.spirv_type_constant_with(expression, &operand) {
                         parameters.push(parameter);
                     }
                 }
             }
         }
-        self.with(|analyzer| analyzer.spirv_type_with(instruction, parameters))
+        self.spirv_type_with(instruction, parameters)
     }
 }

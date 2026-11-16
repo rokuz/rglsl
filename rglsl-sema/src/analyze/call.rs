@@ -10,7 +10,6 @@ use rglsl_ast::ast::{
 use rglsl_types::extension::Extension;
 use rglsl_types::small_vec::SmallVec;
 
-use super::frames::Cx;
 use super::{Analyzer, Callee, Operand};
 use crate::builtins::kind::{
     AmdShaderBallot, AtomicOperation, Barrier, BuiltinKind, Collective, Gather, GatherOffsets,
@@ -192,73 +191,57 @@ const ABORT: &str = "abortEXT";
 
 pub(crate) type Operands = SmallVec<Operand, 1>;
 
-impl<'b> Cx<'b, Analyzer<'_>> {
-    pub(crate) async fn operands(self, arguments: &'b [Expression]) -> Operands {
+impl Analyzer<'_> {
+    pub(crate) fn operands(&mut self, arguments: &[Expression]) -> Operands {
         let mut operands = Operands::with_capacity(arguments.len());
         for argument in arguments {
-            operands.push(self.clone().child_expression(argument).await);
+            operands.push(self.expression(argument));
         }
         operands
     }
 
-    pub(crate) async fn call_expression(
-        self,
-        expression: &'b Expression,
-        call: &'b FunctionCall,
+    pub(crate) fn call_expression(
+        &mut self,
+        expression: &Expression,
+        call: &FunctionCall,
     ) -> Operand {
         let close = super::expression::closing_parenthesis(expression);
         match &call.function.node {
             FunctionIdentifier::Function(name) => {
-                self.clone()
-                    .function_call(expression, close, name, &call.arguments)
-                    .await
+                self.function_call(expression, close, name, &call.arguments)
             }
             FunctionIdentifier::Constructor(specifier) => {
-                self.clone()
-                    .constructor(expression, close, specifier, &call.arguments)
-                    .await
+                self.constructor(expression, close, specifier, &call.arguments)
             }
             FunctionIdentifier::Cast(specifier) => {
-                let castable = self
-                    .call(self.clone().castable(close, specifier, &call.arguments))
-                    .await;
+                let castable = self.castable(close, specifier, &call.arguments);
                 if castable {
-                    self.call(self.clone().constructor(
-                        expression,
-                        close,
-                        specifier,
-                        &call.arguments,
-                    ))
-                    .await
+                    self.constructor(expression, close, specifier, &call.arguments)
                 } else {
                     Operand::error()
                 }
             }
             FunctionIdentifier::Method { object, name } => {
-                let operand = self.call(self.clone().expression(object)).await;
-                self.call(self.clone().operands(&call.arguments)).await;
-                self.with(|analyzer| {
-                    analyzer.method_with(expression, name, &call.arguments, operand)
-                })
+                let operand = self.expression(object);
+                self.operands(&call.arguments);
+                self.method_with(expression, name, &call.arguments, operand)
             }
             FunctionIdentifier::Expression(callee) => {
-                self.call(self.clone().expression(callee)).await;
-                self.call(self.clone().operands(&call.arguments)).await;
-                self.with(|analyzer| analyzer.error(close, DiagnosticKind::InvalidCallee));
+                self.expression(callee);
+                self.operands(&call.arguments);
+                self.error(close, DiagnosticKind::InvalidCallee);
                 Operand::error()
             }
         }
     }
 
-    async fn castable(
-        self,
+    fn castable(
+        &mut self,
         span: Span,
-        specifier: &'b TypeSpecifier,
-        arguments: &'b [Expression],
+        specifier: &TypeSpecifier,
+        arguments: &[Expression],
     ) -> bool {
-        let ty = self
-            .call(self.clone().bare_type_specifier(specifier, span))
-            .await;
+        let ty = self.bare_type_specifier(specifier, span);
         let castable = !ty.is_array()
             && matches!(
                 ty.kind,
@@ -270,93 +253,68 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         if ty.is_error() || castable {
             return true;
         }
-        self.call(self.clone().operands(arguments)).await;
-        self.with(|analyzer| {
-            analyzer.error(
-                span,
-                DiagnosticKind::InvalidConstructor {
-                    ty: analyzer.show(&ty),
-                    reason: "type cast has to be either scalar, vector, matrix or buffer reference",
-                },
-            );
-        });
+        self.operands(arguments);
+        self.error(
+            span,
+            DiagnosticKind::InvalidConstructor {
+                ty: self.show(&ty),
+                reason: "type cast has to be either scalar, vector, matrix or buffer reference",
+            },
+        );
         false
     }
 
-    async fn function_call(
-        self,
-        expression: &'b Expression,
+    fn function_call(
+        &mut self,
+        expression: &Expression,
         span: Span,
-        name: &'b str,
-        arguments: &'b [Expression],
+        name: &str,
+        arguments: &[Expression],
     ) -> Operand {
         if name == rglsl_ast::NON_UNIFORM {
-            let operands = self.call(self.clone().operands(arguments)).await;
-            return self.with(|analyzer| analyzer.non_uniform_with(expression, span, operands));
+            let operands = self.operands(arguments);
+            return self.non_uniform_with(expression, span, operands);
         }
         if name == DEBUG_PRINTF || name == ABORT {
-            let operands = self.call(self.clone().operands(arguments)).await;
-            return self.with(|analyzer| {
-                analyzer.message_call_with(expression, span, name, arguments, &operands)
-            });
+            let operands = self.operands(arguments);
+            return self.message_call_with(expression, span, name, arguments, &operands);
         }
-        let unknown = self.with(|analyzer| analyzer.scopes.function_levels(name).is_empty());
+        let unknown = self.scopes.function_levels(name).is_empty();
         if super::cooperative_call::cooperative_function(name) && unknown {
-            let operands = self.call(self.clone().operands(arguments)).await;
-            return self.with(|analyzer| {
-                analyzer.cooperative_call_with(expression, span, name, arguments, &operands)
-            });
+            let operands = self.operands(arguments);
+            return self.cooperative_call_with(expression, span, name, arguments, &operands);
         }
         if super::tensor::tensor_arm_function(name) && unknown {
-            let operands = self.call(self.clone().operands(arguments)).await;
-            return self.with(|analyzer| {
-                analyzer.tensor_arm_call_with(expression, span, name, arguments, &operands)
-            });
+            let operands = self.operands(arguments);
+            return self.tensor_arm_call_with(expression, span, name, arguments, &operands);
         }
         if unknown {
             if let Some(call) = super::cooperative_matrix2::tensor_call(name) {
-                return self
-                    .call(
-                        self.clone()
-                            .tensor_function(expression, span, name, call, arguments),
-                    )
-                    .await;
+                return self.tensor_function(expression, span, name, call, arguments);
             }
             if super::cooperative_matrix2::matrix_call(name) {
-                return self
-                    .call(
-                        self.clone()
-                            .matrix2_function(expression, span, name, arguments),
-                    )
-                    .await;
+                return self.matrix2_function(expression, span, name, arguments);
             }
         }
-        let operands = self.clone().operands(arguments).await;
-        self.with(|analyzer| {
-            analyzer.function_call_with(expression, span, name, arguments, &operands)
-        })
+        let operands = self.operands(arguments);
+        self.function_call_with(expression, span, name, arguments, &operands)
     }
 
-    async fn constructor(
-        self,
-        expression: &'b Expression,
+    fn constructor(
+        &mut self,
+        expression: &Expression,
         span: Span,
-        specifier: &'b TypeSpecifier,
-        arguments: &'b [Expression],
+        specifier: &TypeSpecifier,
+        arguments: &[Expression],
     ) -> Operand {
-        let ty = match self.with(|analyzer| analyzer.simple_type_specifier(specifier, span)) {
+        let ty = match self.simple_type_specifier(specifier, span) {
             Some(ty) => ty,
-            None => {
-                self.call(self.clone().bare_type_specifier(specifier, span))
-                    .await
-            }
+            None => self.bare_type_specifier(specifier, span),
         };
-        let operands = self.clone().operands(arguments).await;
-        self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, &operands))
+        let operands = self.operands(arguments);
+        self.constructor_with(expression, span, arguments, ty, &operands)
     }
-}
 
-impl Analyzer<'_> {
     fn candidate(&self, candidate: Candidate) -> Option<&Function> {
         match candidate {
             Candidate::User(id) => self.function(id),
