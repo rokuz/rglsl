@@ -344,7 +344,13 @@ impl<'b> Cx<'b, Analyzer<'_>> {
         specifier: &'b TypeSpecifier,
         arguments: &'b [Expression],
     ) -> Operand {
-        let ty = self.clone().bare_type_specifier(specifier, span).await;
+        let ty = match self.with(|analyzer| analyzer.simple_type_specifier(specifier, span)) {
+            Some(ty) => ty,
+            None => {
+                self.call(self.clone().bare_type_specifier(specifier, span))
+                    .await
+            }
+        };
         let operands = self.clone().operands(arguments).await;
         self.with(|analyzer| analyzer.constructor_with(expression, span, arguments, ty, &operands))
     }
