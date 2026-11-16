@@ -119,7 +119,7 @@ pub(super) fn analyze(
         return None;
     }
     let text = preprocessed.text.as_str();
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let (unit, failure) = parse_unit(options, text);
     if failure.is_some() {
         return None;
     }
@@ -259,8 +259,8 @@ impl Parsed {
         includer: &mut dyn rglsl_pp::Includer,
     ) -> Self {
         let preprocessed = preprocess(options, stage, source, root, includer);
-        let unit = (!preprocessed.has_errors())
-            .then(|| rglsl_ast::parse_prefix(preprocessed.text.as_str()));
+        let unit =
+            (!preprocessed.has_errors()).then(|| parse_unit(options, preprocessed.text.as_str()));
         Self {
             stage,
             preprocessed,
@@ -920,6 +920,64 @@ fn only_version_errors(preprocessed: &rglsl_pp::Preprocessed) -> bool {
         })
 }
 
+pub(super) fn parse_unit(
+    options: &Options,
+    text: &str,
+) -> (TranslationUnit, Option<rglsl_ast::ParseError>) {
+    let (mut unit, failure) = rglsl_ast::parse_prefix(text);
+    if !options.auto_sampled_textures {
+        return (unit, failure);
+    }
+    match auto_sampled_textures(options, &mut unit, text) {
+        Ok(()) => (unit, failure),
+        Err(unsupported) => {
+            let error = rglsl_ast::ParseError::new(
+                rglsl_ast::ParseErrorKind::Unsupported {
+                    what: "auto-sampled textures",
+                    reason: unsupported.reason,
+                },
+                unsupported.span,
+                text,
+            );
+            (unit, failure.or(Some(error)))
+        }
+    }
+}
+
+fn auto_sampled_textures(
+    options: &Options,
+    unit: &mut TranslationUnit,
+    text: &str,
+) -> core::result::Result<(), rglsl_ast::sampled::Unsupported> {
+    rglsl_ast::sampled::upgrade_textures(unit)?;
+    let analysis = analyze_unit(options, unit, &sema_options(options, text));
+    let mut removed = BTreeSet::new();
+    for argument in rglsl_ast::sampled::call_arguments(unit) {
+        let Some(info) = analysis.expression(argument.id) else {
+            continue;
+        };
+        let rglsl_sema::types::TypeKind::Opaque(opaque) = info.ty.kind else {
+            continue;
+        };
+        if !matches!(opaque.kind, rglsl_sema::types::OpaqueKind::Sampler) {
+            continue;
+        }
+        let mut current = argument;
+        while let rglsl_ast::ast::ExpressionKind::Parenthesized(ref inner) = current.kind {
+            current = inner;
+        }
+        if !matches!(current.kind, rglsl_ast::ast::ExpressionKind::Variable(_)) {
+            return Err(rglsl_ast::sampled::Unsupported {
+                span: argument.span,
+                reason: "a sampler passed to a function must be a sampler variable, not an element of a sampler array or another expression, to be removed from the call",
+            });
+        }
+        removed.insert(argument.id);
+    }
+    rglsl_ast::sampled::remove_samplers(unit, &removed);
+    Ok(())
+}
+
 fn analyze_unit(options: &Options, unit: &TranslationUnit, sema: &rglsl_sema::Options) -> Analysis {
     rglsl_sema::analyze_with_tables(unit, sema, &*options.builtin_tables)
 }
@@ -933,7 +991,7 @@ fn semantic_errors_before(
     let map = &preprocessed.source_map;
     let text = preprocessed.text.as_str();
     class.identifiers(text);
-    let (unit, failure) = rglsl_ast::parse_prefix(text);
+    let (unit, failure) = parse_unit(options, text);
     let analysis = analyze_unit(options, &unit, &sema_options(options, text));
     class.probe.narrow(analysis.stages);
     class.version.set(analysis.version);

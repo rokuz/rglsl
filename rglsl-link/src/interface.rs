@@ -86,7 +86,11 @@ fn element(module: &Module, stage: ShaderStage, global: &GlobalVariable) -> Hand
     }
 }
 
-fn ranges(module: &Module, stage: ShaderStage, global: &GlobalVariable) -> Vec<(u32, u32)> {
+pub(crate) fn ranges(
+    module: &Module,
+    stage: ShaderStage,
+    global: &GlobalVariable,
+) -> Vec<(u32, u32)> {
     match global.io {
         Some(Binding::Location { location, .. }) => {
             let count = location_count(module, element(module, stage, global));

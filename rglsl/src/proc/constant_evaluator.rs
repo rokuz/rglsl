@@ -1684,6 +1684,9 @@ impl<'a> ConstantEvaluator<'a> {
             | Mf::Min
             | Mf::Max
             | Mf::Clamp
+            | Mf::NMin
+            | Mf::NMax
+            | Mf::NClamp
             | Mf::Sign
             | Mf::Fma
             | Mf::Step
@@ -1759,15 +1762,23 @@ impl<'a> ConstantEvaluator<'a> {
                     Scalar::U64([e]) => Ok(Scalar::U64([e])),
                 })
             }
-            crate::MathFunction::Min => {
+            crate::MathFunction::Min | crate::MathFunction::NMin => {
                 component_wise_scalar!(self, span, [arg, required(arg1)?], |e1, e2| {
                     Ok([e1.min(e2)])
                 })
             }
-            crate::MathFunction::Max => {
+            crate::MathFunction::Max | crate::MathFunction::NMax => {
                 component_wise_scalar!(self, span, [arg, required(arg1)?], |e1, e2| {
                     Ok([e1.max(e2)])
                 })
+            }
+            crate::MathFunction::NClamp => {
+                component_wise_scalar!(
+                    self,
+                    span,
+                    [arg, required(arg1)?, required(arg2)?],
+                    |e, low, high| { Ok([e.max(low).min(high)]) }
+                )
             }
             crate::MathFunction::Clamp => {
                 component_wise_scalar!(

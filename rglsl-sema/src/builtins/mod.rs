@@ -1,3 +1,4 @@
+mod configuration;
 pub(crate) mod footprint;
 pub mod kind;
 mod limits;
@@ -15,6 +16,7 @@ use alloc::vec::Vec;
 
 use rglsl_ast::Span;
 
+pub use configuration::Configuration;
 pub use limits::ResourceLimits;
 pub use stages::StageTables;
 pub use table::{BuiltinFlags, BuiltinFunction};

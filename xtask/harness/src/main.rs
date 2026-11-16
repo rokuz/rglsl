@@ -9,7 +9,7 @@ use rglsl::back::spv;
 use rglsl::front::glsl::{self, BuiltinTables, FreshTables};
 use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{
-    BuiltinCache, CompileOptions, Compiler, IncludeKind, IncludeRequest, ProgramOptions,
+    BuiltinCache, CompileOptions, Compiler, DebugInfo, IncludeKind, IncludeRequest, ProgramOptions,
     ResolvedInclude,
 };
 use rglsl_pp::FileSystemIncluder;
@@ -112,6 +112,7 @@ impl Job {
             },
             source_text: true,
             processes: &[],
+            source_file: None,
             entry_point: Some(spv::DebugEntryPoint {
                 signature: "rglsl",
                 arguments: "",
@@ -297,18 +298,24 @@ fn facade(compiler: &Compiler, job: &Job, source: &str) -> Result<f64> {
     if !job.preamble.is_empty() || job.hlsl_offsets {
         bail!("CompileOptions has no preamble and no HLSL offsets");
     }
+    let debug_info = if job.debug.is_some() {
+        DebugInfo::Lines
+    } else {
+        DebugInfo::Names
+    };
     let options = CompileOptions {
         auto_map_bindings: job.automap,
         auto_map_locations: job.automap,
-        debug_info: job.debug.is_some(),
+        debug_info,
         spirv_version: job.spirv,
         ..CompileOptions::new(job.path.clone(), job.stage)
     };
     let program_options = ProgramOptions {
         auto_map_bindings: job.automap,
         auto_map_locations: job.automap,
-        debug_info: job.debug.is_some(),
+        debug_info,
         spirv_version: job.spirv,
+        ..ProgramOptions::default()
     };
     let started = Instant::now();
     let object = compiler

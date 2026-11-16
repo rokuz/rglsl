@@ -170,6 +170,55 @@ fn usage_errors_exit_with_one() -> TestResult {
 }
 
 #[test]
+fn options_without_effect_are_unrecognized() -> TestResult {
+    let directory = work_dir("removed")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    for option in [
+        "--link",
+        "-d",
+        "-C",
+        "-t",
+        "-i",
+        "-r",
+        "--relaxed-errors",
+        "--spirv-val",
+        "--relax-set-binding-limits",
+        "-O",
+        "-Os",
+        "-Od",
+    ] {
+        let run = rglsl(&directory, &["-V", option, "shader.frag"])?;
+        assert_eq!(run.code, Some(1), "{option}");
+        assert!(
+            run.stderr.contains(&format!(
+                "Error: {option}: unrecognized command-line option"
+            )),
+            "{option}: {}",
+            run.stderr
+        );
+    }
+    for arguments in [
+        &["--sep", "main"][..],
+        &["--source-entrypoint", "main"],
+        &["--suavb", "1"],
+        &["--shift-uav-binding", "1"],
+        &["--scb", "1"],
+        &["--shift-cbuffer-bindings", "1"],
+    ] {
+        let mut command = vec!["-V"];
+        command.extend_from_slice(arguments);
+        command.push("shader.frag");
+        let run = rglsl(&directory, &command)?;
+        assert_eq!(run.code, Some(1), "{arguments:?}");
+        assert!(
+            run.stderr.contains("unrecognized command-line option"),
+            "{arguments:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn hexadecimal_output_and_variable_names() -> TestResult {
     let directory = work_dir("hex")?;
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
@@ -293,7 +342,7 @@ fn links_libraries_and_object_modules() -> TestResult {
     let run = rglsl(&directory, &["--object", "lighting.glsl"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(directory.join("lighting.rglo").is_file());
-    let run = rglsl(&directory, &["--link", "main.frag", "lighting.rglo"])?;
+    let run = rglsl(&directory, &["-V", "main.frag", "lighting.rglo"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     assert!(directory.join("frag.spv").is_file());
     let run = rglsl(&directory, &["-V", "main.frag"])?;
@@ -400,7 +449,7 @@ fn indents_structured_control_flow() -> TestResult {
 }
 
 #[test]
-fn spirv_dis_prints_no_disassembly() -> TestResult {
+fn spirv_dis_prints_the_standard_form() -> TestResult {
     let directory = work_dir("spirv_dis")?;
     fs::write(directory.join("shader.frag"), FRAGMENT)?;
     for args in [
@@ -409,9 +458,18 @@ fn spirv_dis_prints_no_disassembly() -> TestResult {
     ] {
         let run = rglsl(&directory, args)?;
         assert_eq!(run.code, Some(0), "{}", run.stderr);
-        assert_eq!(run.stdout, "");
+        assert!(
+            run.stdout.starts_with("; SPIR-V\n; Version: 1.0\n"),
+            "{}",
+            run.stdout
+        );
+        assert!(run.stdout.contains("       %main = OpFunction %void None "));
+        assert!(!run.stdout.contains("// Module Version"));
         assert!(directory.join("frag.spv").is_file());
     }
+    let run = rglsl(&directory, &["-l", "--spirv-dis", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert_eq!(run.stdout, "");
     Ok(())
 }
 
@@ -751,5 +809,67 @@ fn reflection_needs_linking_and_survives_errors() -> TestResult {
         run.stdout,
         "Uniform reflection:\n\nUniform block reflection:\n\nBuffer variable reflection:\n\nBuffer block reflection:\n\nPipeline input reflection:\n\nPipeline output reflection:\n\nSPIR-V is not generated for failed compile or link\n"
     );
+    Ok(())
+}
+
+#[test]
+fn code_generation_options_change_the_spirv() -> TestResult {
+    let directory = work_dir("code_generation")?;
+    fs::write(
+        directory.join("shader.vert"),
+        "#version 450\nlayout(location = 0) in vec4 position;\nvoid main() { gl_Position = position; }\n",
+    )?;
+    fs::write(
+        directory.join("shader.frag"),
+        "#version 450\nlayout(location = 0) in vec2 value;\nlayout(location = 0) out vec4 color;\nvoid main() {\n    if (value.x < 0.0) discard;\n    color = vec4(min(value.x, value.y), max(value.x, 1.0), clamp(value.y, 0.0, 1.0), 1.0);\n}\n",
+    )?;
+    let plain = rglsl(&directory, &["-H", "shader.vert"])?;
+    assert!(!plain.stdout.contains("FNegate"), "{}", plain.stdout);
+    let inverted = rglsl(&directory, &["-H", "--invert-y", "shader.vert"])?;
+    assert_eq!(inverted.code, Some(0), "{}", inverted.stderr);
+    assert!(inverted.stdout.contains("FNegate"), "{}", inverted.stdout);
+    let clamped = rglsl(&directory, &["-H", "--nan-clamp", "shader.frag"])?;
+    assert_eq!(clamped.code, Some(0), "{}", clamped.stderr);
+    for operation in ["(NMin)", "(NMax)", "(NClamp)"] {
+        assert!(clamped.stdout.contains(operation), "{}", clamped.stdout);
+    }
+    let terminated = rglsl(
+        &directory,
+        &[
+            "-H",
+            "--target-env",
+            "vulkan1.3",
+            "--discard-is-terminate",
+            "-g",
+            "shader.frag",
+        ],
+    )?;
+    assert_eq!(terminated.code, Some(0), "{}", terminated.stderr);
+    assert!(terminated.stdout.contains("TerminateInvocation"));
+    assert!(!terminated.stdout.contains(" Kill"));
+    assert!(
+        terminated.stdout.contains("\"discard-is-terminate\""),
+        "{}",
+        terminated.stdout
+    );
+    let killed = rglsl(&directory, &["-H", "--discard-is-terminate", "shader.frag"])?;
+    assert!(killed.stdout.contains("Kill"), "{}", killed.stdout);
+    Ok(())
+}
+
+#[test]
+fn g_n_records_only_the_source_file_name() -> TestResult {
+    let directory = work_dir("debug_file_name")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-H", "-gN", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    assert!(
+        run.stdout.contains("String  \"shader.frag\""),
+        "{}",
+        run.stdout
+    );
+    assert!(run.stdout.contains("Source GLSL 450 "), "{}", run.stdout);
+    assert!(!run.stdout.contains(" Line "), "{}", run.stdout);
+    assert!(!run.stdout.contains("ModuleProcessed"), "{}", run.stdout);
     Ok(())
 }

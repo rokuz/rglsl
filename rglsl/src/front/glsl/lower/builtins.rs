@@ -263,6 +263,18 @@ const fn coordinate_count(opaque: Opaque) -> u32 {
 }
 
 impl FunctionLowerer<'_, '_> {
+    pub(super) const fn nan_clamped(&self, fun: MathFunction) -> MathFunction {
+        if !self.lw.options.nan_clamp {
+            return fun;
+        }
+        match fun {
+            MathFunction::Min => MathFunction::NMin,
+            MathFunction::Max => MathFunction::NMax,
+            MathFunction::Clamp => MathFunction::NClamp,
+            _ => fun,
+        }
+    }
+
     pub(super) fn math_call(
         &mut self,
         fun: MathFunction,
@@ -508,7 +520,7 @@ impl FunctionLowerer<'_, '_> {
                         }
                     }
                 }
-                self.math_call(math_function(math), &values, at)
+                self.math_call(self.nan_clamped(math_function(math)), &values, at)
             }
             Pure::PackedBitcast { .. } => Err(internal(at)),
         }

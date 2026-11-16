@@ -64,9 +64,10 @@ commands:
       --check             only check that the committed header is up to date
   gen-spirv           generate the SPIR-V tables from the pinned sources in target/oracles:
                       rglsl/src/back/spv/grammar.rs (enumerants the `spirv` crate lacks, from
-                      SPIRV-Headers' grammar, else glslang's headers) and
-                      rglsl-cli/src/disassemble/glslang_tables.rs (the -H tables of glslang's
-                      SPIRV/doc.cpp and disassemble.cpp)
+                      SPIRV-Headers' grammar, else glslang's headers),
+                      rglsl-dis/src/glslang/glslang_tables.rs (the -H tables of glslang's
+                      SPIRV/doc.cpp and disassemble.cpp) and rglsl-dis/src/standard/grammar.rs
+                      (the --spirv-dis tables of SPIRV-Headers' grammars and spir-v.xml)
       --glslang-dir DIR   glslang checkout to read (default: target/oracles/src/glslang;
                           its HEAD must be the pinned commit)
       --check             only check that the committed files are up to date
@@ -386,6 +387,10 @@ fn run(args: Vec<String>) -> Result<i32> {
                 preamble.push_str(&line);
                 preamble.push('\n');
             }
+            let mut options = Vec::new();
+            while let Some(option) = args.value("--option")? {
+                options.push(option);
+            }
             let input = args.next_positional().context("input file is required")?;
             args.finish()?;
             Ok(worker::compile_one(
@@ -400,6 +405,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     include_dirs: &include_dirs,
                     preamble: (!preamble.is_empty()).then_some(preamble),
                     debug: debug.as_deref(),
+                    options: &options,
                 },
                 Path::new(&out),
             ))

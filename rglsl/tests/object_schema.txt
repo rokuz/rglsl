@@ -1,4 +1,4 @@
-FORMAT_VERSION 35
+FORMAT_VERSION 36
 AddressSpace 4a48334cc713a1a7
 AmdBarycentric 35f954a2f201384f
 Arena 283cda9d7570b2b9
@@ -96,7 +96,7 @@ LocalVariable 69c9a77b804218f1
 LongVectorClass 2d3a59993dbc8de0
 LoopControl c01c2429b300c91d
 LoopDependency eea7e46a8abe8a1a
-MathFunction 9fbd5915fe0f2787
+MathFunction 61c3d0d0a611bfbc
 MatrixLayout 0bf4fc06e6b83e46
 MemoryDecorations 74ca2bb8f37e4494
 MemoryOrder 2a34b0b584b6a1f1
@@ -113,7 +113,7 @@ NamedExpressions ef68b8e46f50368c
 NonMaxU32 199642326e90593c
 NonUniform 9fa94bf0fd16833a
 NonUniformExpressions 651f697f46ed4fd6
-ObjectModule f2b9eb11a4029917
+ObjectModule 4e6c66a8281095d4
 ObjectTarget d49650a56acd9ed5
 Override e3496cdb490ea15f
 ParameterQualifier 12eab1455d2d5d87

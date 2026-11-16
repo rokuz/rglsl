@@ -1,0 +1,15 @@
+[package]
+name = "rglsl-dis"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Text forms of SPIR-V binaries for rglsl: glslang's and SPIRV-Tools' disassembly, hexadecimal text"
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

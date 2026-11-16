@@ -6,7 +6,9 @@ use rglsl::valid::{ModuleInfo, ValidationError, ValidationFlags, Validator};
 use rglsl::{Module, WithSpan};
 use rglsl_pp::{FileId, Includer};
 
-use crate::{LinkError, LinkErrors, Linked, finish_module, message, validate_object};
+use crate::{
+    LinkError, LinkErrors, Linked, finish_module, message, rename_entry_point, validate_object,
+};
 
 #[derive(Debug)]
 pub enum CompileError {
@@ -64,6 +66,10 @@ pub fn compile_program(
     let object = glsl::Frontend::default()
         .compile_program(options, source, root, includer)
         .map_err(CompileError::Frontend)?;
+    check_program(object)
+}
+
+pub fn check_program(object: ObjectModule) -> Result<Linked, CompileError> {
     let info = match Validator::new(ValidationFlags::all()).validate(&object.unit.module) {
         Ok(info) => info,
         Err(error) => {
@@ -80,12 +86,17 @@ pub fn finish_program(object: ObjectModule, info: ModuleInfo) -> Result<Linked, 
     let stage = object
         .stage()
         .ok_or_else(|| LinkError::Internal(String::from("a program without a stage")))?;
+    let glsl_version = object.unit.glsl_version;
     let mut module = *object.unit.module;
     let info = finish_module(&mut module, Some(info))?;
+    rename_entry_point(&mut module, object.entry_point.as_deref());
     Ok(Linked {
         stage,
         module,
         info,
         warnings: Vec::new(),
+        processes: object.processes,
+        source_name: object.name,
+        glsl_version,
     })
 }

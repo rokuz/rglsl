@@ -157,7 +157,7 @@ impl FunctionLowerer<'_, '_> {
                     Ok(value)
                 }
             }
-            Pure::Math(math) => self.math_call(math_function(math), &values, at),
+            Pure::Math(math) => self.math_call(self.nan_clamped(math_function(math)), &values, at),
             Pure::MatrixCompMult | Pure::RepackBits | Pure::PackedBitcast { .. } => {
                 return Ok(None);
             }

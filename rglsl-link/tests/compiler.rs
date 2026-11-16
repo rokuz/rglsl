@@ -209,7 +209,9 @@ fn a_shared_compiler_compiles_like_the_free_functions_on_several_threads() -> Te
 #[test]
 fn a_preamble_comes_before_the_source() -> TestResult {
     let mut options = program_options();
-    options.preamble = Some(String::from("#define VALUE 0.5\n"));
+    options
+        .macros
+        .push(rglsl_link::Macro::Text(String::from("#define VALUE 0.5")));
     let program = compile_and_link(
         &[(
             "#version 450
@@ -222,4 +224,302 @@ void main() { color = vec4(VALUE); }
     )?;
     assert_eq!(program.stages.len(), 1);
     Ok(())
+}
+
+const VERTEX: &str = "#version 450
+layout(location = 0) in vec3 position;
+layout(location = 0) out vec2 coordinate;
+void main() {
+    coordinate = position.xy;
+    gl_Position = vec4(position, 1.0);
+}
+";
+
+const SAMPLED: &str = "#version 450
+layout(location = 0) in vec2 coordinate;
+layout(location = 0) out vec4 color;
+layout(binding = 1) uniform sampler2D image;
+void main() {
+    color = texture(image, coordinate);
+}
+";
+
+fn glsl(text: &str, options: CompileOptions) -> rglsl_link::Input<'_> {
+    rglsl_link::Input {
+        source: rglsl_link::Source::Glsl(text),
+        options,
+    }
+}
+
+#[test]
+fn builds_programs_like_the_command_line() -> TestResult {
+    let compiler = Compiler::new();
+    let mut fragment =
+        CompileOptions::new("shader.frag", ShaderStage::Fragment).target_vulkan(1, 2);
+    fragment.entry_point = Some(String::from("shade"));
+    if let Some(base) = fragment
+        .binding_shifts
+        .base
+        .get_mut(rglsl_link::ResourceClass::CombinedSampler.index())
+    {
+        *base = 4;
+    }
+    let vertex = CompileOptions::new("shader.vert", ShaderStage::Vertex).target_vulkan(1, 2);
+    let processes = fragment.processes();
+    assert!(processes.contains(&String::from("entry-point shade")));
+    assert!(processes.contains(&String::from("shift-combined-sampler-binding 4")));
+    assert!(processes.contains(&String::from("target-env vulkan1.2")));
+    let options = ProgramOptions {
+        spirv_version: (1, 5),
+        reflection: Some(rglsl_link::reflect::Options::default()),
+        ..ProgramOptions::default()
+    };
+    let build = compiler.build(
+        &[glsl(VERTEX, vertex), glsl(SAMPLED, fragment)],
+        &options,
+        &mut |_| None,
+    );
+    assert!(
+        !build.compile_failed() && !build.link_failed(),
+        "{}",
+        build.link
+    );
+    assert_eq!(build.units.len(), 2);
+    assert_eq!(build.stages.len(), 2);
+    let fragment = build.stages.get(1).ok_or("no fragment stage")?;
+    assert_eq!(fragment.stage, ShaderStage::Fragment);
+    assert_eq!(fragment.entry_point, "shade");
+    assert!(fragment.result.is_ok());
+    let reflection = build.reflection.ok_or("no reflection")?;
+    assert!(reflection.contains("image:"), "{reflection}");
+    assert!(reflection.contains("binding 5"), "{reflection}");
+    Ok(())
+}
+
+#[test]
+fn single_programs_report_link_errors_per_stage() {
+    let build = Compiler::new().build(
+        &[glsl(
+            "#version 450\nvoid helper();\nvoid main() { helper(); }\n",
+            CompileOptions::new("missing.comp", ShaderStage::Compute),
+        )],
+        &ProgramOptions::default(),
+        &mut |_| None,
+    );
+    assert!(!build.compile_failed());
+    assert!(build.link_failed());
+    assert!(
+        build
+            .link
+            .to_string()
+            .starts_with("ERROR: Linking compute stage: "),
+        "{}",
+        build.link
+    );
+}
+
+#[test]
+fn diagnostics_format_as_glslang() {
+    let source = "#version 450\nvoid main() {\n    float x = missing;\n}\n";
+    let Err(diagnostics) = compile(
+        source,
+        &CompileOptions::new("bad.comp", ShaderStage::Compute),
+    ) else {
+        panic!("the shader compiled");
+    };
+    let plain = diagnostics.format(rglsl_link::DiagnosticFormat::default());
+    assert!(plain.starts_with("ERROR: bad.comp:3: "), "{plain}");
+    let unnamed = diagnostics.info_log(rglsl_link::DiagnosticFormat {
+        unnamed_source: true,
+        ..rglsl_link::DiagnosticFormat::default()
+    });
+    assert!(unnamed.starts_with("ERROR: 0:3: "), "{unnamed}");
+    assert!(unnamed.ends_with("ERROR: 1 compilation errors.  No code generated.\n\n"));
+}
+
+#[test]
+fn preprocesses_with_the_preamble_and_lists_includes() {
+    let options = CompileOptions::new("main.vert", ShaderStage::Vertex)
+        .define("SIZE", "3")
+        .include("common.h", "float common_value;\n");
+    let preprocessed = Compiler::new().preprocess(
+        "#version 450\n#extension GL_GOOGLE_include_directive : require\n#include \"common.h\"\nfloat values[SIZE];\n",
+        &options,
+        &mut |_| None,
+    );
+    assert!(
+        preprocessed.diagnostics.is_empty(),
+        "{}",
+        preprocessed.diagnostics
+    );
+    assert!(
+        preprocessed.text.contains("float values[3];"),
+        "{}",
+        preprocessed.text
+    );
+    assert!(preprocessed.text.contains("float common_value;"));
+    assert_eq!(preprocessed.files_read, ["./common.h"]);
+}
+
+#[test]
+fn depfiles_escape_like_make() {
+    assert_eq!(
+        rglsl_link::depfile(
+            &[String::from("frag.spv")],
+            &[String::from("a b.frag"), String::from("$x.h")]
+        ),
+        "frag.spv: a\\ b.frag $$x.h\n"
+    );
+}
+
+#[test]
+fn enhanced_messages_keep_the_first_error() {
+    let source = "#version 450\nvoid main() {\n    float x = missing;\n    float y = absent;\n}\n";
+    let mut options = CompileOptions::new("two.comp", ShaderStage::Compute);
+    let Err(all) = compile(source, &options) else {
+        panic!("the shader compiled");
+    };
+    assert!(all.errors() >= 2, "{all}");
+    options.enhanced_messages = true;
+    let Err(first) = compile(source, &options) else {
+        panic!("the shader compiled");
+    };
+    assert_eq!(first.errors(), 1);
+    assert_eq!(first.list.first(), all.list.first());
+}
+
+#[test]
+fn validate_io_needs_an_output_for_every_input_read() {
+    let vertex = "#version 450\nvoid main() { gl_Position = vec4(0.0); }\n";
+    let fragment = "#version 450\nlayout(location = 2) in vec4 tint;\nlayout(location = 0) out vec4 color;\nvoid helper() {}\nvoid main() {\n    color = tint;\n}\n";
+    let inputs = [
+        glsl(
+            vertex,
+            CompileOptions::new("plain.vert", ShaderStage::Vertex),
+        ),
+        glsl(
+            fragment,
+            CompileOptions::new("tinted.frag", ShaderStage::Fragment),
+        ),
+    ];
+    let compiler = Compiler::new();
+    let lenient = compiler.build(&inputs, &ProgramOptions::default(), &mut |_| None);
+    assert!(!lenient.link_failed(), "{}", lenient.link);
+    let options = ProgramOptions {
+        validate_io: true,
+        ..ProgramOptions::default()
+    };
+    let strict = compiler.build(&inputs, &options, &mut |_| None);
+    assert!(strict.link_failed());
+    assert_eq!(
+        strict.link.to_string(),
+        "ERROR: tinted.frag:6: Linking fragment and vertex stages: Preceding stage has no matching declaration for statically used input: tint"
+    );
+}
+
+fn auto_sampled(source: &str) -> Result<rglsl_link::ObjectModule, rglsl_link::Diagnostics> {
+    let mut options = CompileOptions::new("separate.frag", ShaderStage::Fragment);
+    options.auto_sampled_textures = true;
+    compile(source, &options)
+}
+
+fn sampler_globals(object: &rglsl_link::ObjectModule) -> usize {
+    let module = &object.unit.module;
+    module
+        .global_variables
+        .iter()
+        .filter(|&(_, global)| {
+            let mut ty = global.ty;
+            while let rglsl::TypeInner::Array { base, .. } = module.types[ty].inner {
+                ty = base;
+            }
+            matches!(module.types[ty].inner, rglsl::TypeInner::Sampler { .. })
+        })
+        .count()
+}
+
+#[test]
+fn auto_sampled_textures_combine_arrays_through_user_functions() -> TestResult {
+    let object = auto_sampled(
+        "#version 450
+layout(set = 0, binding = 0) uniform texture2D textures[2];
+layout(set = 0, binding = 1) uniform sampler samplers[2];
+layout(set = 0, binding = 2) uniform sampler single;
+layout(location = 0) in vec2 uv;
+layout(location = 0) out vec4 color;
+vec4 inner(texture2D t, sampler s, vec2 p) { return texture(sampler2D(t, s), p); }
+vec4 outer(texture2D t, sampler s, vec2 p) {
+    return texture(sampler2D(t, s), p) + inner(t, (s), p);
+}
+void main() {
+    color = outer(textures[0], single, uv) + texture(sampler2D(textures[1], samplers[1]), uv);
+}
+",
+    )?;
+    assert_eq!(sampler_globals(&object), 0);
+    let module = &object.unit.module;
+    assert!(
+        module
+            .types
+            .iter()
+            .any(|(_, ty)| matches!(ty.inner, rglsl::TypeInner::SampledImage { .. }))
+    );
+    let program = link_spirv(&[object], &ProgramOptions::default())?;
+    assert_eq!(program.stages.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn auto_sampled_textures_follow_scopes() -> TestResult {
+    let object = auto_sampled(
+        "#version 450
+layout(set = 0, binding = 0) uniform texture2D image;
+layout(set = 0, binding = 1) uniform sampler s;
+layout(location = 0) out vec4 color;
+float scale(float s) { return s * 2.0; }
+vec4 fetch(texture2D image) { return texelFetch(image, ivec2(0), 0); }
+void main() {
+    float s = 0.25;
+    color = fetch(image) * scale(s) + vec4(scale((s)));
+}
+",
+    )?;
+    assert_eq!(sampler_globals(&object), 0);
+    let program = link_spirv(&[object], &ProgramOptions::default())?;
+    assert_eq!(program.stages.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn auto_sampled_textures_reject_what_cannot_be_rewritten() {
+    for (source, reason) in [
+        (
+            "#version 450
+layout(set = 0, binding = 0) uniform texture2D t;
+layout(set = 0, binding = 1) uniform sampler samplers[2];
+layout(location = 0) out vec4 color;
+vec4 f(texture2D t, sampler s) { return texture(sampler2D(t, s), vec2(0.5)); }
+void main() { color = f(t, samplers[1]); }
+",
+            "an element of a sampler array",
+        ),
+        (
+            "#version 450
+layout(set = 0, binding = 0) uniform texture2D t;
+layout(set = 0, binding = 1) uniform samplerShadow s;
+layout(location = 0) out vec4 color;
+void main() { color = vec4(texture(sampler2DShadow(t, s), vec3(0.5))); }
+",
+            "depth comparison",
+        ),
+    ] {
+        let Err(diagnostics) = auto_sampled(source) else {
+            panic!("the shader compiled");
+        };
+        let text = diagnostics.to_string();
+        assert!(
+            text.contains("auto-sampled textures is not supported: ") && text.contains(reason),
+            "{text}"
+        );
+    }
 }

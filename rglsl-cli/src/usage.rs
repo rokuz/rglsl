@@ -27,7 +27,6 @@ subset of glslangValidator's options that applies to Vulkan GLSL.
    configuration (see -c below for generating a template)
 
 Options:
-  -C          accepted for compatibility (all errors are reported)
   -D<name[=def]> | --D <name[=def]> | --define-macro <name[=def]>
               define a pre-processor macro
   -E          print pre-processed GLSL; cannot be used with -l; errors will
@@ -36,8 +35,9 @@ Options:
               on -V
   -I<dir>     add <dir> to the include search path; includer's directory is
               searched first, followed by left-to-right order of -I
-  -O | -Os | -Od
-              accepted for compatibility; rglsl does not optimize
+  -P<text> | --preamble-text <text> | --P <text>
+              inject custom preamble text, which is treated as if it appeared
+              immediately after the version declaration (if any)
   -S <stage>  uses the specified <stage> rather than parsing the file extension
   -U<name> | --undef-macro <name> | --U <name>
               undefine a pre-processor macro
@@ -49,17 +49,14 @@ Options:
               specify <name> as the entry-point function name
   -g          generate debug information
   -g0         strip debug information
+  -gN         generate debug information for the source file name only
   -gV         generate nonsemantic shader debug information
   -gVS        generate nonsemantic shader debug information with source
   -h | --help print this usage message
-  -i          accepted for compatibility; no AST is printed
   -l          link all input files together to form a single module
   -o <file>   save binary to <file>; requires a binary option (e.g., -V)
   -q          dump reflection query database; requires -l for linking
-  -r | --relaxed-errors
-              accepted for compatibility; errors are not relaxed
   -s          silence syntax and semantic error reporting
-  -t          accepted for compatibility
   -v | --version
               print version strings
   -w | --suppress-warnings
@@ -72,12 +69,25 @@ Options:
                                     explicit bindings
   --auto-map-locations | --aml      automatically locate input/output lacking
                                     'location'
+  --auto-sampled-textures           removes sampler variables and converts
+                                    existing textures to sampled textures
   --client vulkan100                see -V
   --depfile <file>                  writes depfile for build systems
+  --discard-is-terminate            map GLSL discard to OpTerminateInvocation
+                                    (SPIR-V 1.6 and later; discard is OpKill
+                                    before)
+  --enhanced-msgs                   print more readable error messages: only
+                                    the first error of each compilation
   --error-column                    display the column of the error along the
                                     line
   --hlsl-offsets                    allow block offsets to follow HLSL rules
+  --invert-y | --iy                 invert position.Y output in the vertex,
+                                    geometry and tessellation evaluation stages
   --keep-uncalled | --ku            don't eliminate uncalled functions
+  --nan-clamp                       favor non-NaN operand in min, max, and clamp
+  --no-link                         only compile shader; do not link (each
+                                    file is written on its own, its functions
+                                    exported)
   --quiet                           do not print the names of the compiled files
   --reflect-all-block-variables     reflect all variables in blocks, whether
                                     inactive or active
@@ -96,7 +106,6 @@ Options:
                                     reflecting
   --reflect-unwrap-io-blocks        unwrap input/output blocks the same as
                                     uniform blocks
-  --relax-set-binding-limits        accepted for compatibility
   --resource-set-binding [stage] <set>
                                     set descriptor set for all resources
   --resource-set-bindings | --rsb   synonyms for --resource-set-binding
@@ -111,26 +120,17 @@ Options:
   --shift-ssbo-bindings | --sbb     base binding number for SSBOs
   --shift-texture-binding [stage] <num> [<set>]...
   --shift-texture-bindings | --stb  base binding number for textures
-  --shift-uav-binding [stage] <num> [<set>]...
-  --shift-uav-bindings | --suavb    base binding number for UAVs (no GLSL resource
-                                    is a UAV)
   --shift-ubo-binding [stage] <num> [<set>]...
-  --shift-ubo-bindings | --sub | --shift-cbuffer-binding(s) | --scb
-                                    base binding number for UBOs
+  --shift-ubo-bindings | --sub      base binding number for UBOs
   --shift-combined-sampler-binding [stage] <num> [<set>]...
   --shift-combined-sampler-bindings | --scsb
                                     base binding number for combined samplers
   --shift-as-binding [stage] <num> [<set>]...
   --shift-as-bindings | --sab       base binding number for acceleration
                                     structures
-  --spirv-dis                       accepted for compatibility; rglsl has no
-                                    standard-form disassembler (as glslang
-                                    without SPIRV-Tools), so nothing is printed
-                                    and -H prints nothing either
-  --spirv-val                       accepted for compatibility; rglsl validates
-                                    every module it writes
-  --source-entrypoint <name> | --sep <name>
-                                    the source entry point, which must be main
+  --spirv-dis                       output standard-form disassembly; works
+                                    only when a SPIR-V generation option is
+                                    also used; -H then prints this form too
   --stdin                           read from stdin instead of from a file;
                                     requires providing the shader stage using -S
   --target-env {vulkan1.0 | vulkan1.1 | vulkan1.2 | vulkan1.3 | vulkan1.4 |
@@ -143,6 +143,8 @@ Options:
                                      * spirv1.5  under --target-env vulkan1.2
                                      * spirv1.6  under --target-env vulkan1.3
                                      * spirv1.6  under --target-env vulkan1.4
+  --validate-io                     validate cross stage IO: an input a stage
+                                    reads needs an output of the stage before
   --variable-name <name> | --vn <name>
                                     creates a C header file that contains a
                                     uint32_t array named <name> initialized with
@@ -151,6 +153,4 @@ Options:
 rglsl's own options:
   --object                          compile every input file to an rglsl object
                                     module (<file>.rglo, or -o for one input)
-  --link                            the same as -V: compile and link every input
-                                    (GLSL sources, libraries, .rglo modules)
 ";

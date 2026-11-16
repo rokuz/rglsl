@@ -226,6 +226,47 @@ static int show_link_error(const rglsl_object *fragment)
     return 0;
 }
 
+static int show_build_and_text_forms(rglsl_compile_options *const *options)
+{
+    rglsl_compiler *compiler = NULL;
+    rglsl_program_options *program_options = NULL;
+    rglsl_program *program = NULL;
+    rglsl_diagnostics *diagnostics = NULL;
+    rglsl_blob *text = NULL;
+    int status = 1;
+    if (rglsl_compiler_create(&compiler) != RGLSL_RESULT_OK ||
+        rglsl_program_options_create(&program_options) != RGLSL_RESULT_OK ||
+        rglsl_program_options_set_reflection(program_options, true, 0) != RGLSL_RESULT_OK) {
+        goto done;
+    }
+    const char *sources[3] = {vertex_source, fragment_source, lighting_source};
+    rglsl_result code =
+        rglsl_compiler_build(compiler, sources, (const rglsl_compile_options *const *)options, 3,
+                             program_options, &program, &diagnostics);
+    if (code != RGLSL_RESULT_OK) {
+        report("building from sources", code, diagnostics);
+        goto done;
+    }
+    const char *reflection = rglsl_program_reflection(program);
+    printf("reflection: %s", reflection != NULL ? reflection : "(none)\n");
+    const uint32_t *words = NULL;
+    size_t word_count = 0;
+    if (rglsl_program_spirv(program, 0, &words, &word_count) != RGLSL_RESULT_OK ||
+        rglsl_disassemble(words, word_count, RGLSL_DISASSEMBLY_GLSLANG, &text) != RGLSL_RESULT_OK) {
+        goto done;
+    }
+    const char *disassembly = rglsl_blob_text(text);
+    printf("disassembly: %.*s\n", (int)strcspn(disassembly, "\n"), disassembly);
+    status = 0;
+
+done:
+    rglsl_blob_destroy(text);
+    rglsl_program_destroy(program);
+    rglsl_program_options_destroy(program_options);
+    rglsl_compiler_destroy(compiler);
+    return status;
+}
+
 int main(int argc, char **argv)
 {
     const char *directory = argc > 1 ? argv[1] : ".";
@@ -259,6 +300,8 @@ int main(int argc, char **argv)
     status = link_program(directory, objects, 3);
     status |= show_compile_error();
     status |= show_link_error(objects[1]);
+    rglsl_compile_options *all_options[3] = {vertex_options, fragment_options, library_options};
+    status |= show_build_and_text_forms(all_options);
 
 done:
     for (size_t index = 0; index < 3; ++index) {

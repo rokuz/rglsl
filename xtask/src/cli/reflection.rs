@@ -211,8 +211,7 @@ fn sweep_one(
     work: &Path,
 ) -> Result<Outcome> {
     let runtests = corpus::runtests_options(&case.name);
-    let mut args = case.target.glslang_args();
-    args.push(String::from("-q"));
+    let mut args = vec![String::from("-q")];
     if options {
         args.extend(ALL_OPTIONS.iter().map(|&option| String::from(option)));
     }
@@ -228,14 +227,20 @@ fn sweep_one(
     }
     args.push(case.path.to_string_lossy().into_owned());
     let mut outputs = Vec::new();
-    for (tool, side) in [(&env.glslang.path, "glslang"), (&env.rglsl, "rglsl")] {
+    for (tool, side, target_args) in [
+        (&env.glslang.path, "glslang", case.target.glslang_args()),
+        (&env.rglsl, "rglsl", case.target.rglsl_args()),
+    ] {
         let directory = work.join(side);
         if directory.exists() {
             fs::remove_dir_all(&directory)?;
         }
         fs::create_dir_all(&directory)?;
         let mut command = Command::new(tool);
-        command.current_dir(&directory).args(&args);
+        command
+            .current_dir(&directory)
+            .args(target_args)
+            .args(&args);
         outputs.push(process::run(command, env.timeout)?);
     }
     let (Some(glslang), Some(ours)) = (outputs.first(), outputs.get(1)) else {

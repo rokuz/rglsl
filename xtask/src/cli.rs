@@ -79,12 +79,6 @@ impl Case {
         self
     }
 
-    fn ignore_messages(mut self, why: &'static str) -> Self {
-        self.ignore_stdout = Some(why);
-        self.ignore_stderr = true;
-        self
-    }
-
     fn exact_stdout(mut self) -> Self {
         self.exact_stdout = true;
         self
@@ -130,6 +124,29 @@ impl Case {
 }
 
 const TARGET_SHADER: &str = "spv.targetVulkan.vert";
+
+fn enhanced(shader: &'static str) -> Case {
+    Case::new(
+        shader,
+        &[
+            "--enhanced-msgs",
+            "-V",
+            "--target-env",
+            "vulkan1.2",
+            "--amb",
+            "--aml",
+            shader,
+        ],
+        &[shader],
+    )
+}
+
+fn removed(name: &'static str, options: &[&'static str], why: &'static str) -> Case {
+    let mut args = vec!["-V"];
+    args.extend_from_slice(options);
+    args.push(TARGET_SHADER);
+    Case::new(name, &args, &[TARGET_SHADER]).rejected(why)
+}
 const DEBUG_SHADER: &str = "spv.debuginfo.glsl.frag";
 const REGISTERS: &str = "spv.glsl.register.autoassign.frag";
 
@@ -250,46 +267,60 @@ fn cases() -> Vec<Case> {
             "spirv-dis",
             &["-V", "--spirv-dis", TARGET_SHADER],
             &[TARGET_SHADER],
-        ),
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
         Case::new(
             "H-spirv-dis",
             &["-H", "--spirv-dis", TARGET_SHADER],
             &[TARGET_SHADER],
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
+        Case::new(
+            "spirv-dis-link",
+            &[
+                "--spirv-dis",
+                "-V",
+                "--aml",
+                "--amb",
+                "link.vk.crossStageIO.1.vert",
+                "link.vk.crossStageIO.1.geom",
+                "link.vk.crossStageIO.1.frag",
+            ],
+            &[
+                "link.vk.crossStageIO.1.vert",
+                "link.vk.crossStageIO.1.geom",
+                "link.vk.crossStageIO.1.frag",
+            ],
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
+        Case::new(
+            "spirv-dis-gVS",
+            &[
+                "-V",
+                "--spirv-dis",
+                "--target-env",
+                "vulkan1.2",
+                "-gVS",
+                "-o",
+                "out.spv",
+                "spv.debuginfo.glsl.comp",
+            ],
+            &["spv.debuginfo.glsl.comp"],
+        )
+        .ignore_stdout("glslang is built without SPIRV-Tools and prints no standard form; rglsl's is compared with spirv-dis"),
+        Case::new(
+            "spirv-dis-without-spirv",
+            &["-l", "--spirv-dis", DEBUG_SHADER],
+            &[DEBUG_SHADER],
         ),
         Case::new(
             "entry-point-rename",
-            &[
-                "-H",
-                "-e",
-                "foo",
-                "--source-entrypoint",
-                "main",
-                "glsl.entryPointRename.vert",
-            ],
-            &["glsl.entryPointRename.vert"],
-        ),
-        Case::new(
-            "entry-point-rename-bad-source",
-            &[
-                "-H",
-                "-e",
-                "foo",
-                "--source-entrypoint",
-                "bar",
-                "glsl.entryPointRename.vert",
-            ],
+            &["-H", "-e", "foo", "glsl.entryPointRename.vert"],
             &["glsl.entryPointRename.vert"],
         ),
         Case::new(
             "entry-point-rename-no-main",
-            &[
-                "-H",
-                "-e",
-                "foo",
-                "--source-entrypoint",
-                "main",
-                "glsl.entryPointRename2.vert",
-            ],
+            &["-H", "-e", "foo", "glsl.entryPointRename2.vert"],
             &["glsl.entryPointRename2.vert"],
         ),
         Case::new(
@@ -299,7 +330,7 @@ fn cases() -> Vec<Case> {
         ),
         Case::new(
             "no-location",
-            &["-V", "-C", "spv.noLocation.vert"],
+            &["-V", "spv.noLocation.vert"],
             &["spv.noLocation.vert"],
         ),
         Case::new(
@@ -479,6 +510,16 @@ fn cases() -> Vec<Case> {
             &[TARGET_SHADER],
         ),
         Case::new(
+            "gN",
+            &["-V", "-gN", "-o", "out.spv", TARGET_SHADER],
+            &[TARGET_SHADER],
+        ),
+        Case::new(
+            "gN-H",
+            &["-H", "-gN", "spv.debuginfo.glsl.frag"],
+            &["spv.debuginfo.glsl.frag"],
+        ),
+        Case::new(
             "g0",
             &["-V", "-g0", "-o", "out.spv", TARGET_SHADER],
             &[TARGET_SHADER],
@@ -524,20 +565,10 @@ fn cases() -> Vec<Case> {
         )
         .dir("inc2"),
         Case::new(
-            "optimization-flags",
-            &["-V", "-Od", "-o", "out.spv", TARGET_SHADER],
-            &[TARGET_SHADER],
-        ),
-        Case::new(
-            "compatibility-flags",
+            "suppress-warnings",
             &[
                 "-V",
-                "-C",
-                "-t",
-                "-r",
                 "-w",
-                "--spirv-val",
-                "--relax-set-binding-limits",
                 "--suppress-warnings",
                 "-o",
                 "out.spv",
@@ -545,12 +576,6 @@ fn cases() -> Vec<Case> {
             ],
             &[TARGET_SHADER],
         ),
-        Case::new(
-            "i",
-            &["-i", "-V", "-o", "out.spv", TARGET_SHADER],
-            &[TARGET_SHADER],
-        )
-        .ignore_messages("rglsl prints no AST"),
         Case::new(
             "auto-map",
             &["-V", "--amb", "--aml", "-o", "out.spv", REGISTERS],
@@ -579,8 +604,6 @@ fn cases() -> Vec<Case> {
                 "20",
                 "--shift-ssbo-bindings",
                 "30",
-                "--shift-uav-binding",
-                "7",
                 "--shift-combined-sampler-binding",
                 "40",
                 "-o",
@@ -797,7 +820,6 @@ fn cases() -> Vec<Case> {
             "P-runtests",
             &[
                 "-P#define TEST1",
-                "-i",
                 "-l",
                 "--preamble-text",
                 "#define TEST2",
@@ -806,8 +828,7 @@ fn cases() -> Vec<Case> {
                 "glsl.-P.frag",
             ],
             &["glsl.-P.frag"],
-        )
-        .ignore_messages("rglsl prints no AST"),
+        ),
         Case::new(
             "P-V",
             &[
@@ -904,6 +925,233 @@ fn cases() -> Vec<Case> {
             "no-link-validate",
             &["--no-link", "spv.exportFunctions.comp"],
             &["spv.exportFunctions.comp"],
+        ),
+        Case::new(
+            "invert-y",
+            &["-H", "--invert-y", "enhanced.3.vert"],
+            &["enhanced.3.vert"],
+        ),
+        Case::new(
+            "iy-geometry",
+            &["-H", "--iy", "spv.debuginfo.glsl.geom"],
+            &["spv.debuginfo.glsl.geom"],
+        ),
+        Case::new(
+            "iy-tessellation-evaluation",
+            &["-V", "--iy", "-o", "out.spv", "spv.debuginfo.glsl.tese"],
+            &["spv.debuginfo.glsl.tese"],
+        ),
+        Case::new(
+            "invert-y-fragment",
+            &["-V", "--invert-y", "-o", "out.spv", "spv.float32.frag"],
+            &["spv.float32.frag"],
+        ),
+        Case::new(
+            "nan-clamp",
+            &["--nan-clamp", "-H", "--ku", "--aml", "--amb", "spv.float32.frag"],
+            &["spv.float32.frag"],
+        ),
+        Case::new(
+            "discard-is-terminate",
+            &[
+                "-H",
+                "--target-env",
+                "vulkan1.3",
+                "--discard-is-terminate",
+                "spv.dead-after-discard.frag",
+            ],
+            &["spv.dead-after-discard.frag"],
+        ),
+        Case::new(
+            "discard-is-terminate-spirv-1.0",
+            &[
+                "-V",
+                "--discard-is-terminate",
+                "-o",
+                "out.spv",
+                "spv.dead-after-discard.frag",
+            ],
+            &["spv.dead-after-discard.frag"],
+        ),
+        Case::new(
+            "codegen-options-processes",
+            &[
+                "-V",
+                "--target-env",
+                "vulkan1.3",
+                "-gV",
+                "--invert-y",
+                "--nan-clamp",
+                "--discard-is-terminate",
+                "-o",
+                "out.spv",
+                "spv.debuginfo.glsl.frag",
+            ],
+            &["spv.debuginfo.glsl.frag"],
+        ),
+        enhanced("enhanced.0.frag"),
+        enhanced("enhanced.1.frag"),
+        enhanced("enhanced.2.frag"),
+        Case::new(
+            "enhanced-link",
+            &[
+                "--enhanced-msgs",
+                "-V",
+                "--target-env",
+                "vulkan1.2",
+                "--amb",
+                "--aml",
+                "enhanced.4.vert",
+                "enhanced.4.frag",
+            ],
+            &["enhanced.4.vert", "enhanced.4.frag"],
+        )
+        .exits(
+            0,
+            "glslang matches the output and input block VS_OUT by name and rejects their different locations; rglsl matches stage interfaces by location",
+        ),
+        Case::new(
+            "enhanced-compile-errors",
+            &["--enhanced-msgs", "-V", "samplerlessTextureFunctions.frag"],
+            &["samplerlessTextureFunctions.frag"],
+        ),
+        Case::new(
+            "validate-io-missing",
+            &[
+                "-V",
+                "--aml",
+                "--amb",
+                "--validate-io",
+                "link.vk.missingCrossStageIO.0.vert",
+                "link.vk.missingCrossStageIO.0.frag",
+            ],
+            &[
+                "link.vk.missingCrossStageIO.0.vert",
+                "link.vk.missingCrossStageIO.0.frag",
+            ],
+        ),
+        Case::new(
+            "validate-io-matching",
+            &[
+                "-V",
+                "--aml",
+                "--amb",
+                "--validate-io",
+                "link.vk.crossStageIO.1.vert",
+                "link.vk.crossStageIO.1.geom",
+                "link.vk.crossStageIO.1.frag",
+            ],
+            &[
+                "link.vk.crossStageIO.1.vert",
+                "link.vk.crossStageIO.1.geom",
+                "link.vk.crossStageIO.1.frag",
+            ],
+        ),
+        Case::new(
+            "validate-io-link-only",
+            &[
+                "-l",
+                "--aml",
+                "--validate-io",
+                "link.vk.crossStageIO.0.vert",
+                "link.vk.crossStageIO.0.frag",
+            ],
+            &["link.vk.crossStageIO.0.vert", "link.vk.crossStageIO.0.frag"],
+        ),
+        Case::new(
+            "validate-io-without-link",
+            &["--validate-io", "link.vk.crossStageIO.0.vert"],
+            &["link.vk.crossStageIO.0.vert"],
+        ),
+        Case::new(
+            "auto-sampled-textures",
+            &[
+                "--auto-sampled-textures",
+                "-H",
+                "-S",
+                "frag",
+                "glsl.autosampledtextures.frag",
+            ],
+            &["glsl.autosampledtextures.frag"],
+        ),
+        Case::new(
+            "auto-sampled-textures-V",
+            &[
+                "--auto-sampled-textures",
+                "-V",
+                "--aml",
+                "--amb",
+                "-o",
+                "out.spv",
+                "spv.sampledImageBlock.frag",
+            ],
+            &["spv.sampledImageBlock.frag"],
+        ),
+        Case::new(
+            "auto-sampled-textures-keep-uncalled",
+            &[
+                "--auto-sampled-textures",
+                "--ku",
+                "-H",
+                "spv.debuginfo.sampler_type.glsl.frag",
+            ],
+            &["spv.debuginfo.sampler_type.glsl.frag"],
+        ),
+        Case::new("link-option", &["--link", TARGET_SHADER], &[TARGET_SHADER]),
+        removed("O", &["-O"], "rglsl does not optimize yet"),
+        removed("Os", &["-Os"], "rglsl does not optimize yet"),
+        removed("Od", &["-Od"], "rglsl does not optimize yet"),
+        removed("C", &["-C"], "rglsl always reports every error"),
+        removed("t", &["-t"], "rglsl has no threading option"),
+        removed("d", &["-d"], "desktop #version 110 is out of scope"),
+        removed("i", &["-i"], "rglsl prints no AST"),
+        removed("r", &["-r"], "rglsl does not relax errors"),
+        removed(
+            "relaxed-errors",
+            &["--relaxed-errors"],
+            "rglsl does not relax errors",
+        ),
+        removed(
+            "no-storage-format",
+            &["--no-storage-format"],
+            "GLSL storage images without a format already have the Unknown format",
+        ),
+        removed(
+            "nsf",
+            &["--nsf"],
+            "GLSL storage images without a format already have the Unknown format",
+        ),
+        removed(
+            "spirv-val",
+            &["--spirv-val"],
+            "rglsl does not run SPIRV-Tools' validator",
+        ),
+        removed(
+            "relax-set-binding-limits",
+            &["--relax-set-binding-limits"],
+            "rglsl has no set and binding limits to relax",
+        ),
+        removed(
+            "source-entrypoint",
+            &["--source-entrypoint", "main"],
+            "the source entry point is always main",
+        ),
+        removed("sep", &["--sep", "main"], "the source entry point is always main"),
+        removed(
+            "shift-uav-binding",
+            &["--shift-uav-binding", "7"],
+            "UAVs are an HLSL concept",
+        ),
+        removed("suavb", &["--suavb", "7"], "UAVs are an HLSL concept"),
+        removed(
+            "shift-cbuffer-binding",
+            &["--shift-cbuffer-binding", "7"],
+            "cbuffers are an HLSL concept; --sub shifts uniform buffers",
+        ),
+        removed(
+            "scb",
+            &["--scb", "7"],
+            "cbuffers are an HLSL concept; --sub shifts uniform buffers",
         ),
         Case::new(
             "hlsl-iomap",
@@ -1140,6 +1388,7 @@ fn hex_skeleton(text: &str) -> Vec<String> {
 struct Environment {
     glslang: Tool,
     spirv_val: Tool,
+    spirv_dis: Tool,
     rglsl: PathBuf,
     expected: interface::Expected,
     test_dir: PathBuf,
@@ -1368,7 +1617,7 @@ fn check(env: &Environment, case: &Case) -> Result<Verdict> {
     }
     compare_files(env, case, &glslang, &ours, &mut problems)?;
     if disassembly::prints_disassembly(case) {
-        disassembly::check_case(env, case, &glslang, &mut problems)?;
+        disassembly::check_case(env, case, &glslang, &ours, &mut problems)?;
     }
     Ok(if problems.is_empty() {
         match case.ignore_stdout {
@@ -1412,6 +1661,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     let env = Environment {
         glslang: oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?,
         spirv_val: oracles::find_tool(root, "spirv-val", "RGLSL_SPIRV_VAL")?,
+        spirv_dis: oracles::find_tool(root, "spirv-dis", "RGLSL_SPIRV_DIS")?,
         rglsl: build_rglsl(root)?,
         expected: interface::Expected::load(root)?,
         test_dir,
@@ -1456,6 +1706,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         let _ = writeln!(report, "{}\t{label}\t{command}\t{note}", case.name);
     }
     failed += disassembly::sweep(&env, options.filter.as_deref(), &mut report)?;
+    failed += disassembly::sweep_standard(&env, options.filter.as_deref(), &mut report)?;
     let sweep = reflection::sweep(&env, &glslang_dir, options.filter.as_deref())?;
     passed += sweep.passed;
     expected += sweep.expected;

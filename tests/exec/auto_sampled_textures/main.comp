@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0) uniform texture2D image;
+layout(set = 0, binding = 1) uniform sampler nearest;
+layout(std430, set = 0, binding = 2) buffer Results { vec4 results[]; };
+
+void main() {
+  results[0] = texelFetch(sampler2D(image, nearest), ivec2(0, 0), 0);
+  results[1] = texelFetch(sampler2D(image, nearest), ivec2(1, 1), 0) * 2.0;
+  results[2] = vec4(vec2(textureSize(sampler2D(image, nearest), 0)), 0.0, 1.0);
+}

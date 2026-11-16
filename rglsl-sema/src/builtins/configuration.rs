@@ -1,16 +1,22 @@
-use rglsl::front::glsl::ResourceLimits;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use super::ResourceLimits;
 
 const DELIMITERS: &[u8] = b" \t\n\r";
 const BYTE_ORDER_MARK: &[u8] = &[0xef, 0xbb, 0xbf];
 
-#[derive(Debug)]
-pub struct Decoded {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Configuration {
     pub limits: ResourceLimits,
     pub messages: Vec<String>,
 }
 
-pub fn default_configuration() -> String {
-    ResourceLimits::default().configuration()
+impl ResourceLimits {
+    pub fn decode_configuration(bytes: &[u8]) -> Configuration {
+        decode(bytes)
+    }
 }
 
 fn text_of(bytes: &[u8]) -> &[u8] {
@@ -69,9 +75,9 @@ fn bad_value(value: &[u8]) -> String {
     )
 }
 
-pub fn decode(bytes: &[u8]) -> Decoded {
+fn decode(bytes: &[u8]) -> Configuration {
     let text = text_of(bytes);
-    let mut decoded = Decoded {
+    let mut decoded = Configuration {
         limits: ResourceLimits::zeroed(),
         messages: Vec::new(),
     };
@@ -91,7 +97,7 @@ pub fn decode(bytes: &[u8]) -> Decoded {
             decoded.messages.push(bad_value(value));
             return decoded;
         }
-        let name = String::from_utf8_lossy(name);
+        let name = String::from_utf8_lossy(name).to_string();
         if !decoded.limits.set(&name, atoi(value)) {
             decoded.messages.push(format!(
                 "Warning: unrecognized limit ({name}) in configuration file.\n"
@@ -103,12 +109,14 @@ pub fn decode(bytes: &[u8]) -> Decoded {
 
 #[cfg(test)]
 mod tests {
-    use super::{atoi, decode, default_configuration};
-    use rglsl::front::glsl::ResourceLimits;
+    use alloc::string::String;
+    use alloc::vec;
+
+    use super::{ResourceLimits, atoi};
 
     #[test]
     fn the_default_configuration_lists_every_limit() {
-        let text = default_configuration();
+        let text = ResourceLimits::default().configuration();
         assert_eq!(text.lines().count(), 111);
         assert!(text.starts_with("MaxLights 32\nMaxClipPlanes 6\n"));
         assert!(text.ends_with("generalConstantMatrixVectorIndexing 1\n"));
@@ -117,14 +125,18 @@ mod tests {
 
     #[test]
     fn decoding_the_default_configuration_gives_the_defaults() {
-        let decoded = decode(default_configuration().as_bytes());
+        let decoded = ResourceLimits::decode_configuration(
+            ResourceLimits::default().configuration().as_bytes(),
+        );
         assert!(decoded.messages.is_empty());
         assert_eq!(decoded.limits, ResourceLimits::default());
     }
 
     #[test]
     fn limits_missing_from_a_configuration_are_zero() {
-        let decoded = decode(b"\xef\xbb\xbfMaxDrawBuffers 4\r\n\tMaxPatchVertices\t-3");
+        let decoded = ResourceLimits::decode_configuration(
+            b"\xef\xbb\xbfMaxDrawBuffers 4\r\n\tMaxPatchVertices\t-3",
+        );
         assert!(decoded.messages.is_empty());
         assert_eq!(decoded.limits.max_draw_buffers, 4);
         assert_eq!(decoded.limits.max_patch_vertices, -3);
@@ -134,7 +146,9 @@ mod tests {
 
     #[test]
     fn unknown_names_warn_and_bad_values_stop_decoding() {
-        let decoded = decode(b"Foo 1\nMaxDrawBuffers 2\nMaxViewports x\nMaxSamples 8\n");
+        let decoded = ResourceLimits::decode_configuration(
+            b"Foo 1\nMaxDrawBuffers 2\nMaxViewports x\nMaxSamples 8\n",
+        );
         assert_eq!(
             decoded.messages,
             vec![
@@ -150,7 +164,7 @@ mod tests {
 
     #[test]
     fn a_name_without_a_value_is_a_bad_configuration() {
-        let decoded = decode(b"MaxDrawBuffers 3 MaxSamples");
+        let decoded = ResourceLimits::decode_configuration(b"MaxDrawBuffers 3 MaxSamples");
         assert_eq!(
             decoded.messages,
             vec![String::from(

@@ -15,6 +15,7 @@ name = "rglsl_c"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+rglsl-dis.workspace = true
 rglsl-link.workspace = true
 
 [lints.rust]

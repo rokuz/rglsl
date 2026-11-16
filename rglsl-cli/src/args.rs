@@ -1,5 +1,4 @@
-use rglsl::ShaderStage;
-use rglsl::proc::ResourceClass;
+use rglsl_link::{DebugInfo, Macro, ResourceClass, ShaderStage};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_USAGE: i32 = 1;
@@ -7,45 +6,9 @@ pub const EXIT_COMPILE: i32 = 2;
 pub const EXIT_LINK: i32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Debug {
-    Lines,
-    NonSemantic,
-    NonSemanticSource,
-    Strip,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionDump {
     Full,
     Bare,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Macro {
-    Define(String),
-    Undefine(String),
-    Text(String),
-}
-
-impl Macro {
-    pub fn preamble(macros: &[Self]) -> String {
-        let mut text = String::new();
-        for edit in macros {
-            match *edit {
-                Self::Define(ref definition) => {
-                    text.push_str("#define ");
-                    text.push_str(&definition.replacen('=', " ", 1));
-                }
-                Self::Undefine(ref name) => {
-                    text.push_str("#undef ");
-                    text.push_str(name);
-                }
-                Self::Text(ref line) => text.push_str(line),
-            }
-            text.push('\n');
-        }
-        text
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,23 +39,26 @@ pub struct Options {
     pub output: Option<String>,
     pub stage: Option<String>,
     pub entry_point: Option<String>,
-    pub source_entry_point: Option<String>,
     pub macros: Vec<Macro>,
     pub include_dirs: Vec<String>,
     pub vulkan: Option<(u8, u8)>,
     pub spirv_version: Option<(u8, u8)>,
-    pub debug: Option<Debug>,
+    pub debug: DebugInfo,
     pub auto_map_bindings: bool,
     pub auto_map_locations: bool,
     pub keep_uncalled: bool,
     pub hlsl_offsets: bool,
+    pub invert_y: bool,
+    pub nan_clamp: bool,
+    pub discard_is_terminate: bool,
+    pub enhanced_messages: bool,
+    pub validate_io: bool,
+    pub auto_sampled_textures: bool,
     pub shifts: Vec<Shift>,
     pub resource_sets: Vec<ResourceSet>,
     pub quiet: bool,
     pub suppress_info: bool,
     pub suppress_warnings: bool,
-    pub relaxed_errors: bool,
-    pub relax_set_binding_limits: bool,
     pub error_column: bool,
     pub absolute_path: bool,
     pub stdin: bool,
@@ -101,7 +67,7 @@ pub struct Options {
     pub dump_config: bool,
     pub config_file: Option<String>,
     pub reflect: bool,
-    pub reflect_options: crate::reflect::Options,
+    pub reflect_options: rglsl_link::reflect::Options,
     pub files: Vec<String>,
     pub command_line: String,
 }
@@ -220,14 +186,8 @@ fn shift_class(word: &str) -> Option<ResourceClass> {
     Some(match word {
         "shift-image-bindings" | "shift-image-binding" | "sib" => ResourceClass::Image,
         "shift-sampler-bindings" | "shift-sampler-binding" | "ssb" => ResourceClass::Sampler,
-        "shift-uav-bindings" | "shift-uav-binding" | "suavb" => ResourceClass::UnorderedAccess,
         "shift-texture-bindings" | "shift-texture-binding" | "stb" => ResourceClass::Texture,
-        "shift-ubo-bindings"
-        | "shift-ubo-binding"
-        | "shift-cbuffer-bindings"
-        | "shift-cbuffer-binding"
-        | "sub"
-        | "scb" => ResourceClass::UniformBuffer,
+        "shift-ubo-bindings" | "shift-ubo-binding" | "sub" => ResourceClass::UniformBuffer,
         "shift-ssbo-bindings" | "shift-ssbo-binding" | "sbb" => ResourceClass::StorageBuffer,
         "shift-combined-sampler-bindings" | "shift-combined-sampler-binding" | "scsb" => {
             ResourceClass::CombinedSampler
@@ -332,7 +292,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
     match word.as_str() {
         "auto-map-bindings" | "auto-map-binding" | "amb" => options.auto_map_bindings = true,
         "auto-map-locations" | "aml" => options.auto_map_locations = true,
-        "relax-set-binding-limits" => options.relax_set_binding_limits = true,
         "client" => match cursor.take_next().as_deref() {
             Some("vulkan100") => set_vulkan(options),
             Some("opengl100") => return Err(Exit::out_of_scope(&word)),
@@ -350,19 +309,13 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             Some(name) => options.entry_point = Some(name),
             None => return Err(Exit::detailed("no <name> provided", word)),
         },
-        "source-entrypoint" | "sep" => match cursor.take_next() {
-            Some(name) => options.source_entry_point = Some(name),
-            None => return Err(Exit::detailed("no <entry-point> provided", word)),
-        },
         "hlsl-offsets" => options.hlsl_offsets = true,
         "keep-uncalled" | "ku" => options.keep_uncalled = true,
-        "relaxed-errors" => options.relaxed_errors = true,
         "resource-set-bindings" | "resource-set-binding" | "rsb" => {
             let set = resource_set_binding(cursor)?;
             options.resource_sets.push(set);
         }
         "spirv-dis" => options.spirv_tools_disassembler = true,
-        "spirv-val" => {}
         "stdin" => options.stdin = true,
         "suppress-warnings" => options.suppress_warnings = true,
         "target-env" => {
@@ -405,7 +358,6 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         "absolute-path" => options.absolute_path = true,
         "help" => return Err(Exit::Usage),
         "object" => options.object = true,
-        "link" => set_vulkan(options),
         "glsl-version"
         | "hlsl-iomap"
         | "hlsl-iomapper"
@@ -429,31 +381,18 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         },
         "no-link" => options.no_link = true,
         "lto" => return Err(Exit::unsupported(&argument, "link time optimization")),
-        "validate-io" => return Err(Exit::unsupported(&argument, "cross stage IO validation")),
+        "validate-io" => options.validate_io = true,
         "bindings-per-resource-type" => {
             return Err(Exit::unsupported(
                 &argument,
                 "a binding space per resource type",
             ));
         }
-        "invert-y" | "iy" => return Err(Exit::unsupported(&argument, "inverting position.y")),
-        "nan-clamp" => return Err(Exit::unsupported(&argument, "NaN clamping")),
-        "auto-sampled-textures" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "converting textures to sampled textures",
-            ));
-        }
-        "no-storage-format" | "nsf" => {
-            return Err(Exit::unsupported(&argument, "the Unknown image format"));
-        }
-        "discard-is-terminate" => {
-            return Err(Exit::unsupported(
-                &argument,
-                "discard as OpTerminateInvocation",
-            ));
-        }
-        "enhanced-msgs" => return Err(Exit::unsupported(&argument, "enhanced messages")),
+        "invert-y" | "iy" => options.invert_y = true,
+        "nan-clamp" => options.nan_clamp = true,
+        "auto-sampled-textures" => options.auto_sampled_textures = true,
+        "discard-is-terminate" => options.discard_is_terminate = true,
+        "enhanced-msgs" => options.enhanced_messages = true,
         "dump-builtin-symbols" => {
             return Err(Exit::unsupported(
                 &argument,
@@ -493,8 +432,9 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
     let option = characters.next().unwrap_or_default();
     let rest: String = characters.collect();
     match option {
-        'C' | 't' | 'd' if argument != "-dumpversion" && argument != "-dumpfullversion" => {}
-        'd' => options.version = Some(VersionDump::Bare),
+        'd' if argument == "-dumpversion" || argument == "-dumpfullversion" => {
+            options.version = Some(VersionDump::Bare);
+        }
         'D' if rest.is_empty() => return Err(Exit::out_of_scope("-D")),
         'D' => {
             let definition = attached(&argument, "-D<name[=def]>")?;
@@ -516,10 +456,6 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             let directory = attached(&argument, "-I<dir> include path")?;
             options.include_dirs.push(directory.to_owned());
         }
-        'O' => match rest.chars().next() {
-            Some('d' | 's') | None => {}
-            Some(_) => return Err(Exit::error("unknown -O option")),
-        },
         'P' => {
             let text = attached(&argument, "-P<text>")?;
             options.macros.push(Macro::Text(first_line(text)));
@@ -549,20 +485,14 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
         },
         'g' => {
             options.debug = match rest.chars().next() {
-                Some('0') => Some(Debug::Strip),
-                Some('N') => {
-                    return Err(Exit::unsupported(
-                        &argument,
-                        "debug information with the source file name only",
-                    ));
-                }
-                Some('V') if rest.chars().nth(1) == Some('S') => Some(Debug::NonSemanticSource),
-                Some('V') => Some(Debug::NonSemantic),
-                _ => Some(Debug::Lines),
+                Some('0') => DebugInfo::Stripped,
+                Some('N') => DebugInfo::FileName,
+                Some('V') if rest.chars().nth(1) == Some('S') => DebugInfo::NonSemanticWithSource,
+                Some('V') => DebugInfo::NonSemantic,
+                _ => DebugInfo::Lines,
             };
         }
         'h' => return Err(Exit::Usage),
-        'i' => {}
         'l' => options.link = true,
         'm' => return Err(Exit::unsupported(&argument, "memory leak mode")),
         'o' => match cursor.take_next() {
@@ -570,7 +500,6 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             None => return Err(Exit::error("no <file> provided for -o")),
         },
         'q' => options.reflect = true,
-        'r' => options.relaxed_errors = true,
         's' => options.suppress_info = true,
         'v' => options.version = Some(VersionDump::Full),
         'w' => options.suppress_warnings = true,
@@ -616,6 +545,11 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     if options.reflect && !options.link {
         return Err(Exit::error("reflection requires -l for linking"));
     }
+    if options.validate_io && !options.link {
+        return Err(Exit::error(
+            "cross stage IO validation requires -l for linking",
+        ));
+    }
     if options.output.is_some() && !options.spirv && !options.object {
         return Err(Exit::error("no binary generation requested (e.g., -V)"));
     }
@@ -626,7 +560,7 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     }
     if options.object && options.link {
         return Err(Exit::error(
-            "`--object` writes object modules and cannot be combined with linking (-l, -V, -H, --target-env vulkan..., --link)",
+            "`--object` writes object modules and cannot be combined with linking (-l, -V, -H, --target-env vulkan...)",
         ));
     }
     Ok(options)

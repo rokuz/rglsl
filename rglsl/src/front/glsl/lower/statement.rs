@@ -2,8 +2,9 @@ use alloc::vec::Vec;
 use rglsl_sema::scope::QualifierFlags;
 
 use rglsl_ast::ast::{
-    Attribute, CaseLabel, Condition, Declaration, DeclarationKind, ForStatement, JumpStatement,
-    Statement, StatementKind,
+    AssignmentOperator, Attribute, CaseLabel, Condition, Declaration, DeclarationKind,
+    Expression as AstExpression, ExpressionKind, ForStatement, JumpStatement, Statement,
+    StatementKind,
 };
 use rglsl_sema::constant::Value;
 use rglsl_sema::types::{Scalar as GlslScalar, Type as GlslType};
@@ -74,10 +75,95 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 
+    fn inverts_y(&self) -> bool {
+        self.lw.options.invert_y
+            && self.lw.stage_map(|stage| {
+                matches!(
+                    stage,
+                    crate::ShaderStage::Vertex
+                        | crate::ShaderStage::Geometry
+                        | crate::ShaderStage::TessEvaluation
+                )
+            })
+    }
+
+    fn is_position(&self, place: &super::expression::Place) -> bool {
+        if place.swizzle.is_some() {
+            return false;
+        }
+        let module = &self.lw.module;
+        let position = |binding: Option<&crate::Binding>| {
+            matches!(
+                binding,
+                Some(&crate::Binding::BuiltIn(crate::BuiltIn::Position { .. }))
+            )
+        };
+        match self.expressions[place.pointer] {
+            Expression::GlobalVariable(global) => {
+                position(module.global_variables[global].io.as_ref())
+            }
+            Expression::AccessIndex { base, index } => {
+                let Expression::GlobalVariable(global) = self.expressions[base] else {
+                    return false;
+                };
+                match module.types[module.global_variables[global].ty].inner {
+                    crate::TypeInner::Struct { ref members, .. } => members
+                        .get(usize::try_from(index).unwrap_or(usize::MAX))
+                        .is_some_and(|member| position(member.binding.as_ref())),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn negated_y(
+        &mut self,
+        value: crate::Handle<Expression>,
+        at: crate::Span,
+    ) -> Result<crate::Handle<Expression>> {
+        let mut components = Vec::with_capacity(4);
+        for index in 0..4 {
+            let component = self.add(Expression::AccessIndex { base: value, index }, at)?;
+            components.push(if index == 1 {
+                self.add(
+                    Expression::Unary {
+                        op: UnaryOperator::Negate,
+                        expr: component,
+                    },
+                    at,
+                )?
+            } else {
+                component
+            });
+        }
+        let ty = self.lw.module.types.insert(
+            crate::Type {
+                name: None,
+                inner: crate::TypeInner::Vector {
+                    size: crate::VectorSize::Quad,
+                    scalar: crate::Scalar::F32,
+                },
+            },
+            at,
+        );
+        self.add(Expression::Compose { ty, components }, at)
+    }
+
+    fn discard_terminates(&self) -> bool {
+        self.lw.options.discard_is_terminate
+            && self
+                .lw
+                .options
+                .spirv_version
+                .is_some_and(|version| version >= (1, 6))
+    }
+
     fn jump(&mut self, jump: &JumpStatement, at: crate::Span) -> Result<()> {
         let statement = match *jump {
             JumpStatement::Break => IrStatement::Break,
             JumpStatement::Continue => IrStatement::Continue,
+            JumpStatement::Discard if self.discard_terminates() => IrStatement::TerminateInvocation,
             JumpStatement::Discard => IrStatement::Kill,
             JumpStatement::TerminateInvocation => IrStatement::TerminateInvocation,
             JumpStatement::Demote => IrStatement::Demote,
@@ -396,6 +482,21 @@ fn declarators(
 }
 
 impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
+    async fn position_assignment(
+        self,
+        expression: &'b AstExpression,
+        target: &'b AstExpression,
+        value: &'b AstExpression,
+    ) -> Result<()> {
+        let at = self.with(|this| this.at(expression.span))?;
+        let place = self.clone().place_child(target).await?;
+        let (mut value, _) = self.clone().typed_child(value).await?;
+        if self.with(|this| this.is_position(&place))? {
+            value = self.with(|this| this.negated_y(value, at))??;
+        }
+        self.with(|this| this.store(&place, value, at))?
+    }
+
     async fn local_declaration(self, declaration: &'b Declaration) -> Result<()> {
         self.with(|this| this.check_local_declaration(declaration))??;
         for declarator in declarators(declaration) {
@@ -450,9 +551,18 @@ impl<'b, 'l, 'a> super::function::Cx<'b, 'l, 'a> {
             StatementKind::Declaration(ref declaration) => {
                 self.clone().local_declaration(declaration).await
             }
-            StatementKind::Expression(Some(ref expression)) => {
-                self.clone().effect(expression).await
-            }
+            StatementKind::Expression(Some(ref expression)) => match expression.kind {
+                ExpressionKind::Assignment {
+                    operator: AssignmentOperator::Assign,
+                    ref target,
+                    ref value,
+                } if self.with(|this| this.inverts_y())? => {
+                    self.clone()
+                        .position_assignment(expression, target, value)
+                        .await
+                }
+                _ => self.clone().effect(expression).await,
+            },
             StatementKind::Expression(None) => Ok(()),
             StatementKind::Selection {
                 ref condition,

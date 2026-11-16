@@ -76,7 +76,8 @@ pub use analyze::{
     analyze_library, analyze_with_builtins, analyze_with_tables, layout_stages,
 };
 pub use builtins::{
-    BuiltinFunctionId, BuiltinTables, Builtins, FreshTables, ResourceLimits, StageTables,
+    BuiltinFunctionId, BuiltinTables, Builtins, Configuration, FreshTables, ResourceLimits,
+    StageTables,
 };
 pub use diagnostic::{Diagnostic, DiagnosticKind};
 pub use layout_id::{LayoutExtension, LayoutId, LayoutInfo, LayoutKind};

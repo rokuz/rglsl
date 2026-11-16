@@ -166,6 +166,27 @@ impl BlockContext<'_> {
                 spirv::GlslStd450Op::UClamp,
                 "clamp of a non-numeric value",
             )?),
+            Mf::NMin => MathOp::Ext(float_sint_uint_ext(
+                arg_scalar_kind,
+                spirv::GlslStd450Op::NMin,
+                spirv::GlslStd450Op::SMin,
+                spirv::GlslStd450Op::UMin,
+                "min of a non-numeric value",
+            )?),
+            Mf::NMax => MathOp::Ext(float_sint_uint_ext(
+                arg_scalar_kind,
+                spirv::GlslStd450Op::NMax,
+                spirv::GlslStd450Op::SMax,
+                spirv::GlslStd450Op::UMax,
+                "max of a non-numeric value",
+            )?),
+            Mf::NClamp => MathOp::Ext(float_sint_uint_ext(
+                arg_scalar_kind,
+                spirv::GlslStd450Op::NClamp,
+                spirv::GlslStd450Op::SClamp,
+                spirv::GlslStd450Op::UClamp,
+                "clamp of a non-numeric value",
+            )?),
             Mf::IntelCountLeadingZeros
             | Mf::IntelCountTrailingZeros
             | Mf::AbsoluteDifference

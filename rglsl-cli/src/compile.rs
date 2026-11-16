@@ -3,70 +3,15 @@ use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use rglsl::back::spv;
-use rglsl::front::glsl;
-use rglsl::object::ObjectModule;
-use rglsl::proc::{BindingShifts, ResourceClass};
-use rglsl::valid::ModuleInfo;
-use rglsl::{Module, ShaderStage};
-
-use crate::args::{
-    Debug, EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Macro, Options, VersionDump,
+use rglsl_link::{
+    BindingShifts, Build, CompileOptions, Compiler, DiagnosticFormat, Diagnostics, Input,
+    ObjectModule, ProgramOptions, ResourceLimits, ShaderStage, Source,
 };
+
+use crate::args::{EXIT_COMPILE, EXIT_LINK, EXIT_SUCCESS, EXIT_USAGE, Exit, Options, VersionDump};
 use crate::output;
-use crate::reflect;
-use rglsl_cli::config;
 
 pub const OBJECT_EXTENSION: &str = "rglo";
-
-const STAGE_ORDER: [ShaderStage; 14] = [
-    ShaderStage::Vertex,
-    ShaderStage::TessControl,
-    ShaderStage::TessEvaluation,
-    ShaderStage::Geometry,
-    ShaderStage::Fragment,
-    ShaderStage::Compute,
-    ShaderStage::RayGeneration,
-    ShaderStage::Intersection,
-    ShaderStage::AnyHit,
-    ShaderStage::ClosestHit,
-    ShaderStage::Miss,
-    ShaderStage::Callable,
-    ShaderStage::Task,
-    ShaderStage::Mesh,
-];
-
-const fn glslang_stage_name(stage: ShaderStage) -> &'static str {
-    match stage {
-        ShaderStage::Vertex => "vertex",
-        ShaderStage::TessControl => "tessellation control",
-        ShaderStage::TessEvaluation => "tessellation evaluation",
-        ShaderStage::Geometry => "geometry",
-        ShaderStage::Fragment => "fragment",
-        ShaderStage::Compute => "compute",
-        ShaderStage::Task => "task",
-        ShaderStage::Mesh => "mesh",
-        ShaderStage::RayGeneration => "ray-generation",
-        ShaderStage::Miss => "miss",
-        ShaderStage::AnyHit => "any-hit",
-        ShaderStage::ClosestHit => "closest-hit",
-        ShaderStage::Intersection => "intersection",
-        ShaderStage::Callable => "callable",
-    }
-}
-
-const fn resource_name(class: ResourceClass) -> &'static str {
-    match class {
-        ResourceClass::Sampler => "shift-sampler-binding",
-        ResourceClass::Texture => "shift-texture-binding",
-        ResourceClass::Image => "shift-image-binding",
-        ResourceClass::UniformBuffer => "shift-ubo-binding",
-        ResourceClass::StorageBuffer => "shift-ssbo-binding",
-        ResourceClass::UnorderedAccess => "shift-uav-binding",
-        ResourceClass::CombinedSampler => "shift-combined-sampler-binding",
-        ResourceClass::AccelerationStructure => "shift-as-binding",
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
@@ -79,10 +24,25 @@ enum Class {
 struct Unit {
     name: String,
     class: Class,
+    bytes: Vec<u8>,
     text: String,
 }
 
 impl Unit {
+    fn new(name: String, class: Class, bytes: Vec<u8>) -> Self {
+        let text = if class == Class::Object {
+            String::new()
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        Self {
+            name,
+            class,
+            bytes,
+            text,
+        }
+    }
+
     const fn stage(&self) -> Option<ShaderStage> {
         match self.class {
             Class::Stage(stage) => Some(stage),
@@ -91,48 +51,13 @@ impl Unit {
     }
 }
 
-#[derive(Debug, Default)]
-struct Log {
-    compile: Vec<String>,
-    notes: Vec<String>,
-    link: Vec<String>,
-}
-
-struct Compiled {
-    object: Option<ObjectModule>,
-    info: Option<ModuleInfo>,
-    log: Log,
-}
-
-impl Compiled {
-    const fn failed(log: Log) -> Self {
-        Self {
-            object: None,
-            info: None,
-            log,
-        }
-    }
-}
-
 pub struct Session<'a> {
     options: &'a Options,
-    preamble: String,
-    limits: glsl::ResourceLimits,
+    compiler: Compiler,
+    limits: ResourceLimits,
     directory: Option<String>,
     included: BTreeSet<String>,
     outputs: Vec<String>,
-    validation_mode: bool,
-}
-
-fn full_message(error: &dyn std::error::Error) -> String {
-    let mut message = error.to_string();
-    let mut source = error.source();
-    while let Some(inner) = source {
-        message.push_str(": ");
-        message.push_str(&inner.to_string());
-        source = inner.source();
-    }
-    message
 }
 
 fn print_version(dump: VersionDump) {
@@ -150,12 +75,12 @@ fn print_version(dump: VersionDump) {
     }
 }
 
-fn resource_limits(options: &Options) -> Result<glsl::ResourceLimits, Exit> {
+fn resource_limits(options: &Options) -> Result<ResourceLimits, Exit> {
     let Some(ref name) = options.config_file else {
-        return Ok(glsl::ResourceLimits::default());
+        return Ok(ResourceLimits::default());
     };
     let bytes = fs::read(name).map_err(|_| Exit::error("unable to open input file"))?;
-    let decoded = config::decode(&bytes);
+    let decoded = ResourceLimits::decode_configuration(&bytes);
     for message in &decoded.messages {
         output::stdout(message);
     }
@@ -164,7 +89,7 @@ fn resource_limits(options: &Options) -> Result<glsl::ResourceLimits, Exit> {
 
 pub fn run(options: &Options) -> Result<i32, Exit> {
     if options.dump_config {
-        output::stdout(&config::default_configuration());
+        output::stdout(&ResourceLimits::default().configuration());
         if options.files.is_empty() {
             return Ok(EXIT_SUCCESS);
         }
@@ -193,17 +118,16 @@ pub fn run(options: &Options) -> Result<i32, Exit> {
 }
 
 impl<'a> Session<'a> {
-    fn new(options: &'a Options, limits: glsl::ResourceLimits) -> Self {
+    fn new(options: &'a Options, limits: ResourceLimits) -> Self {
         Self {
             options,
+            compiler: Compiler::new(),
             limits,
-            preamble: Macro::preamble(&options.macros),
             directory: std::env::current_dir()
                 .ok()
                 .map(|directory| directory.to_string_lossy().into_owned()),
             included: BTreeSet::new(),
             outputs: Vec::new(),
-            validation_mode: false,
         }
     }
 
@@ -234,25 +158,17 @@ impl<'a> Session<'a> {
     fn load(&self, name: &str) -> Result<Unit, Exit> {
         let class = self.classify(name)?;
         let bytes = fs::read(name).map_err(|_| Exit::error("unable to open input file"))?;
-        Ok(Unit {
-            name: name.to_owned(),
-            class,
-            text: String::from_utf8_lossy(&bytes).into_owned(),
-        })
+        Ok(Unit::new(name.to_owned(), class, bytes))
     }
 
     fn load_all(&self) -> Result<Vec<Unit>, Exit> {
         if self.options.stdin {
             let class = self.classify("stdin")?;
-            let mut text = String::new();
+            let mut bytes = Vec::new();
             std::io::stdin()
-                .read_to_string(&mut text)
+                .read_to_end(&mut bytes)
                 .map_err(|_| Exit::error("unable to read the standard input"))?;
-            return Ok(vec![Unit {
-                name: String::from("stdin"),
-                class,
-                text,
-            }]);
+            return Ok(vec![Unit::new(String::from("stdin"), class, bytes)]);
         }
         self.options
             .files
@@ -291,323 +207,110 @@ impl<'a> Session<'a> {
             .collect()
     }
 
-    fn resource_set(&self, stage: Option<ShaderStage>) -> Option<u32> {
-        match self.resource_set_values(stage).as_slice() {
-            [single] => Some(
-                single
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect::<String>()
-                    .parse()
-                    .unwrap_or(0),
-            ),
-            _ => None,
-        }
-    }
-
-    const fn wants_debug(&self) -> bool {
-        matches!(
-            self.options.debug,
-            Some(Debug::Lines | Debug::NonSemantic | Debug::NonSemanticSource)
-        )
-    }
-
-    fn frontend_options(&self, unit: &Unit) -> glsl::Options {
-        let stage = unit.stage();
-        glsl::Options {
-            preamble: Some(self.preamble.clone()),
-            auto_map_bindings: self.options.auto_map_bindings,
-            auto_map_locations: self.options.auto_map_locations,
-            spirv_version: Some(self.options.target_spirv()),
-            library: unit.class == Class::Library,
-            hlsl_offsets: self.options.hlsl_offsets,
-            debug_info: self.wants_debug(),
-            source_name: Some(unit.name.clone()),
-            keep_uncalled: self.options.keep_uncalled,
-            resource_set: self.resource_set(stage),
-            binding_shifts: self.shifts(stage),
-            export_functions: self.options.no_link && self.options.spirv,
-            limits: self.limits,
-            ..glsl::Options::from(stage.unwrap_or(ShaderStage::Compute))
-        }
-    }
-
-    fn processes(&self, stage: ShaderStage) -> Vec<String> {
+    fn compile_options(&self, unit: &Unit) -> CompileOptions {
         let options = self.options;
-        let mut processes = Vec::new();
-        if let Some(ref name) = options.entry_point {
-            processes.push(format!("entry-point {name}"));
-        }
-        for edit in &options.macros {
-            processes.push(match *edit {
-                Macro::Define(ref definition) => format!("define-macro {definition}"),
-                Macro::Undefine(ref name) => format!("undef-macro {name}"),
-                Macro::Text(ref text) => format!("preamble-text{text}"),
-            });
-        }
-        let shifts = self.shifts(Some(stage));
-        for class in ResourceClass::ALL {
-            let index = class.index();
-            if let Some(&base) = shifts.base.get(index)
-                && base != 0
-            {
-                processes.push(format!("{} {base}", resource_name(class)));
-            }
-            for (set, base) in shifts.per_set.get(index).into_iter().flatten() {
-                if *base != 0 {
-                    processes.push(format!("{} {base} {set}", resource_name(class)));
-                }
-            }
-        }
-        let sets = self.resource_set_values(Some(stage));
-        if !sets.is_empty() {
-            processes.push(format!("resource-set-binding {}", sets.join(" ")));
-        }
-        if options.auto_map_bindings {
-            processes.push(String::from("auto-map-bindings"));
-        }
-        if options.auto_map_locations {
-            processes.push(String::from("auto-map-locations"));
-        }
-        processes.push(String::from("client vulkan100"));
-        let (major, minor) = options.target_spirv();
-        if (major, minor) != (1, 0) {
-            processes.push(format!("target-env spirv{major}.{minor}"));
-        }
-        let (major, minor) = options.vulkan_version();
-        processes.push(format!("target-env vulkan{major}.{minor}"));
-        if options.relaxed_errors {
-            processes.push(String::from("relaxed-errors"));
-        }
-        if options.suppress_warnings {
-            processes.push(String::from("suppress-warnings"));
-        }
-        if options.keep_uncalled {
-            processes.push(String::from("keep-uncalled"));
-        }
-        if options.relax_set_binding_limits {
-            processes.push(String::from("relax-set-binding-limits"));
-        }
-        if let Some(ref name) = options.source_entry_point {
-            processes.push(format!("source-entrypoint {name}"));
-        }
-        if options.hlsl_offsets {
-            processes.push(String::from("hlsl-offsets"));
-        }
-        if options.entry_point.is_none() {
-            processes.push(String::from("entry-point main"));
-        }
-        processes
-    }
-
-    fn place(&self, file: &str, line: u32, column: Option<u32>) -> String {
-        let file = if self.options.absolute_path && file != "0" {
-            fs::canonicalize(file).map_or_else(
-                |_| file.to_owned(),
-                |path| path.to_string_lossy().into_owned(),
-            )
-        } else {
-            file.to_owned()
+        let stage = unit.stage();
+        let mut compile = match stage {
+            Some(stage) => CompileOptions::new(unit.name.clone(), stage),
+            None => CompileOptions::library(unit.name.clone()),
         };
-        match column.filter(|_| self.options.error_column) {
-            Some(column) => format!("{file}:{line}:{column}"),
-            None => format!("{file}:{line}"),
+        compile.macros.clone_from(&options.macros);
+        compile.include_dirs.clone_from(&options.include_dirs);
+        compile.file_system_includes = true;
+        compile.entry_point.clone_from(&options.entry_point);
+        compile.vulkan_version = options.vulkan_version();
+        compile.spirv_version = options.target_spirv();
+        compile.auto_map_bindings = options.auto_map_bindings;
+        compile.auto_map_locations = options.auto_map_locations;
+        compile.binding_shifts = self.shifts(stage);
+        compile.resource_set_binding = self.resource_set_values(stage);
+        compile.keep_uncalled = options.keep_uncalled;
+        compile.hlsl_offsets = options.hlsl_offsets;
+        compile.export_functions = options.no_link && options.spirv;
+        compile.suppress_warnings = options.suppress_warnings;
+        compile.debug_info = options.debug;
+        compile.limits = self.limits;
+        compile.invert_y = options.invert_y;
+        compile.nan_clamp = options.nan_clamp;
+        compile.discard_is_terminate = options.discard_is_terminate;
+        compile.enhanced_messages = options.enhanced_messages;
+        compile.auto_sampled_textures = options.auto_sampled_textures;
+        compile
+    }
+
+    fn program_options(&self) -> ProgramOptions {
+        let options = self.options;
+        ProgramOptions {
+            link: !options.no_link,
+            generate_spirv: options.spirv,
+            auto_map_bindings: options.auto_map_bindings,
+            auto_map_locations: options.auto_map_locations,
+            binding_shifts: ShaderStage::ALL
+                .iter()
+                .map(|&stage| (stage, self.shifts(Some(stage))))
+                .collect(),
+            keep_uncalled: options.keep_uncalled,
+            export_functions: options.no_link,
+            suppress_warnings: options.suppress_warnings || options.suppress_info,
+            debug_info: options.debug,
+            spirv_version: options.target_spirv(),
+            command_line: Some(options.command_line.clone()),
+            working_directory: self.directory.clone(),
+            limits: self.limits,
+            validate_io: options.validate_io,
+            reflection: options.reflect.then_some(options.reflect_options),
         }
     }
 
-    fn root_name<'u>(&self, unit: &'u Unit) -> &'u str {
-        if self.validation_mode {
-            "0"
-        } else {
-            unit.name.as_str()
+    const fn format(&self, unnamed_source: bool) -> DiagnosticFormat {
+        DiagnosticFormat {
+            error_column: self.options.error_column,
+            absolute_path: self.options.absolute_path,
+            unnamed_source,
         }
     }
 
-    fn parse_log(&self, unit: &Unit, errors: &glsl::ParseErrors) -> Log {
-        let mut log = Log::default();
-        let root = self.root_name(unit);
-        for (index, error) in errors.errors.iter().enumerate() {
-            if let glsl::ErrorKind::Link(ref message) = error.kind {
-                log.link.push(message.clone());
-                continue;
-            }
-            let location = match errors.include_location(index) {
-                Some(included) => self.place(&included.file, included.line, None),
-                None if error.meta.is_defined() => {
-                    let location = error.meta.location(&unit.text);
-                    self.place(root, location.line_number, Some(location.line_position))
-                }
-                None => root.to_owned(),
-            };
-            log.compile
-                .push(format!("ERROR: {location}: {}", error.kind));
-        }
-        log
-    }
-
-    fn validation_log(&self, unit: &Unit, invalid: &rglsl_link::InvalidModule) -> Log {
-        let root = self.root_name(unit);
-        let location = invalid
-            .error
-            .spans()
-            .next()
-            .and_then(|&(span, _)| invalid.module.span_sources.locate(span))
-            .map_or_else(
-                || root.to_owned(),
-                |location| match location.file.filter(|_| location.included) {
-                    Some(file) => self.place(file, location.line, None),
-                    None => self.place(root, location.line, Some(location.column)),
-                },
-            );
-        Log {
-            compile: vec![format!(
-                "ERROR: {location}: {}",
-                full_message(invalid.error.as_inner())
-            )],
-            ..Log::default()
-        }
-    }
-
-    fn infolog(log: &Log) -> String {
-        let mut text = String::new();
-        for line in &log.notes {
-            text.push_str(line);
-            text.push('\n');
-        }
-        for line in &log.compile {
-            text.push_str(line);
-            text.push('\n');
-        }
-        if !log.compile.is_empty() {
-            text.push_str(&format!(
-                "ERROR: {} compilation errors.  No code generated.\n\n",
-                log.compile.len()
-            ));
-        }
-        text
-    }
-
-    fn report_unit(&self, unit: &Unit, log: &Log) {
+    fn report_unit(&self, name: &str, diagnostics: &Diagnostics) {
         if self.options.suppress_info {
             return;
         }
         if !self.options.quiet {
-            output::err!("{}", unit.name);
+            output::err!("{name}");
         }
-        let text = Self::infolog(log);
+        let text = diagnostics.info_log(self.format(false));
         if !text.is_empty() {
             output::err!("{text}");
         }
     }
 
-    fn report_link(&self, lines: &[String]) {
-        if self.options.suppress_info || lines.is_empty() {
+    fn report_link(&self, diagnostics: &Diagnostics) {
+        if self.options.suppress_info || diagnostics.is_empty() {
             return;
         }
-        let mut text = String::new();
-        for line in lines {
-            text.push_str(line);
-            text.push('\n');
-        }
-        output::err!("{text}");
+        output::err!("{}", diagnostics.format(self.format(false)));
     }
 
-    fn source_entry_point_notes(&self) -> Vec<String> {
-        match self.options.source_entry_point {
-            Some(ref name) if name != "main" => {
-                vec![String::from("ERROR: Source entry point must be \"main\"")]
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    fn warn_source_entry_point(&self) {
-        if self.options.source_entry_point.is_some() && self.options.entry_point.is_none() {
-            output::out!(
-                "Warning: Changing source entry point name without setting an entry-point name.\nUse '-e <name>'."
-            );
-        }
-    }
-
-    fn includer(&self) -> rglsl_pp::FileSystemIncluder {
-        rglsl_pp::FileSystemIncluder::new(&self.options.include_dirs)
-    }
-
-    fn remember_includes(
-        &mut self,
-        includer: &rglsl_pp::FileSystemIncluder,
-        root: rglsl_pp::FileId,
-    ) {
-        for (file, name) in includer.files() {
-            if file != root {
-                self.included.insert(name.to_owned());
-            }
-        }
-    }
-
-    fn compile_object(&mut self, unit: &Unit) -> Compiled {
-        let mut log = Log {
-            notes: self.source_entry_point_notes(),
-            ..Log::default()
-        };
+    fn compile_unit(&mut self, unit: &Unit) -> Result<ObjectModule, Diagnostics> {
         if unit.class == Class::Object {
-            return match rglsl_link::decode(&unit.text) {
-                Ok(object) => Compiled {
-                    object: Some(object),
-                    info: None,
-                    log,
-                },
-                Err(error) => {
-                    log.compile.push(format!("ERROR: {}: {error}", unit.name));
-                    Compiled::failed(log)
-                }
-            };
+            return rglsl_link::read_object(&unit.bytes).map_err(|diagnostics| Diagnostics {
+                list: diagnostics
+                    .list
+                    .into_iter()
+                    .map(|diagnostic| rglsl_link::Diagnostic {
+                        file: Some(unit.name.clone()),
+                        ..diagnostic
+                    })
+                    .collect(),
+            });
         }
-        let options = self.frontend_options(unit);
-        let mut includer = self.includer();
-        let root = includer.add_root(&unit.name);
-        let result = rglsl_link::compile_object(&options, &unit.text, root, &mut includer);
-        self.remember_includes(&includer, root);
-        match result {
-            Ok(rglsl_link::CompiledObject { mut object, info }) => {
-                object.name = Path::new(&unit.name)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned());
-                Compiled {
-                    object: Some(object),
-                    info: Some(info),
-                    log,
-                }
-            }
-            Err(rglsl_link::CompileError::Frontend(errors)) => {
-                let parsed = self.parse_log(unit, &errors);
-                log.compile.extend(parsed.compile);
-                log.compile.extend(parsed.link.into_iter().map(|message| {
-                    continued(&format!("ERROR: {}: {message}", self.root_name(unit)))
-                }));
-                Compiled::failed(log)
-            }
-            Err(
-                rglsl_link::CompileError::Object(errors) | rglsl_link::CompileError::Link(errors),
-            ) => {
-                let root = self.root_name(unit).to_owned();
-                log.compile
-                    .extend(errors.iter().map(|error| format!("ERROR: {root}: {error}")));
-                Compiled::failed(log)
-            }
-            Err(rglsl_link::CompileError::Invalid(invalid)) => {
-                let root = self.root_name(unit).to_owned();
-                log.compile.push(format!(
-                    "ERROR: {root}: {}",
-                    full_message(invalid.error.as_inner())
-                ));
-                Compiled::failed(log)
-            }
-        }
+        let compiled =
+            self.compiler
+                .compile_unit(&unit.text, &self.compile_options(unit), &mut |_| None);
+        self.included.extend(compiled.files_read);
+        compiled.result
     }
 
     fn validate_each(&mut self) -> Result<i32, Exit> {
-        self.validation_mode = true;
         let several = self.options.files.len() > 1;
         let mut failed = false;
         let names = if self.options.stdin {
@@ -621,12 +324,12 @@ impl<'a> Session<'a> {
             } else {
                 self.load(name)?
             };
-            let compiled = self.compile_object(&unit);
-            failed |= compiled.object.is_none();
+            let diagnostics = self.compile_unit(&unit).err().unwrap_or_default();
+            failed |= diagnostics.has_errors();
             let results = if self.options.suppress_info {
                 String::new()
             } else {
-                Self::infolog(&compiled.log)
+                diagnostics.info_log(self.format(true))
             };
             if several || !results.is_empty() {
                 output::out!("{}", unit.name);
@@ -643,17 +346,22 @@ impl<'a> Session<'a> {
         let single = units.len() == 1;
         let mut failed = false;
         for unit in &units {
-            let compiled = self.compile_object(unit);
-            self.report_unit(unit, &compiled.log);
-            let Some(object) = compiled.object else {
-                failed = true;
-                continue;
+            let object = match self.compile_unit(unit) {
+                Ok(object) => {
+                    self.report_unit(&unit.name, &Diagnostics::default());
+                    object
+                }
+                Err(diagnostics) => {
+                    self.report_unit(&unit.name, &diagnostics);
+                    failed = true;
+                    continue;
+                }
             };
             let output = match self.options.output {
                 Some(ref output) if single => PathBuf::from(output),
                 _ => Path::new(&unit.name).with_extension(OBJECT_EXTENSION),
             };
-            let encoded = rglsl_link::encode(&object).map_err(|error| {
+            let encoded = rglsl_link::write_object(&object).map_err(|error| {
                 Exit::error(format!(
                     "cannot encode the object module of {}: {error}",
                     unit.name
@@ -672,42 +380,18 @@ impl<'a> Session<'a> {
     fn preprocess(&mut self, units: &[Unit]) -> i32 {
         let mut failed = false;
         for unit in units {
-            let options = rglsl_pp::Options {
-                preamble: Some(self.preamble.clone()),
-                vulkan_client_version: Some(100),
-                stage: unit.stage(),
-                source_name: Some(unit.name.clone()),
-                listing: true,
-                ..rglsl_pp::Options::default()
-            };
-            let mut includer = self.includer();
-            let root = includer.add_root(&unit.name);
-            let result = rglsl_pp::preprocess(&unit.text, root, &options, &mut includer);
-            self.remember_includes(&includer, root);
-            let mut log = Log::default();
-            for diagnostic in result.errors() {
-                let file = if diagnostic.location.file == root {
-                    unit.name.clone()
-                } else {
-                    result
-                        .source_map
-                        .file_name(diagnostic.location.file)
-                        .map_or_else(|| unit.name.clone(), str::to_owned)
-                };
-                log.compile.push(format!(
-                    "ERROR: {}: {}",
-                    self.place(&file, diagnostic.line, None),
-                    diagnostic.kind
-                ));
-            }
-            if log.compile.is_empty() {
+            let result =
+                self.compiler
+                    .preprocess(&unit.text, &self.compile_options(unit), &mut |_| None);
+            self.included.extend(result.files_read);
+            if result.diagnostics.is_empty() {
                 if !result.text.is_empty() {
                     output::out!("{}", result.text);
                 }
             } else {
                 failed = true;
                 if !self.options.suppress_info {
-                    output::err!("{}", Self::infolog(&log));
+                    output::err!("{}", result.diagnostics.info_log(self.format(false)));
                 }
             }
         }
@@ -719,17 +403,15 @@ impl<'a> Session<'a> {
         if self.options.preprocess {
             return Ok(self.preprocess(&units));
         }
-        self.warn_source_entry_point();
-        let code = match units.as_slice() {
-            [unit] if matches!(unit.class, Class::Stage(_)) => self.program(unit)?,
-            [unit] if unit.class == Class::Library => {
-                return Err(Exit::detailed(
-                    "a library (a .glsl file without a stage) has no entry point; link it with a program, or compile it with --object",
-                    unit.name.clone(),
-                ));
-            }
-            _ => self.link(&units)?,
-        };
+        if let [ref unit] = *units.as_slice()
+            && unit.class == Class::Library
+        {
+            return Err(Exit::detailed(
+                "a library (a .glsl file without a stage) has no entry point; link it with a program, or compile it with --object",
+                unit.name.clone(),
+            ));
+        }
+        let code = self.build(&units)?;
         if code == EXIT_SUCCESS {
             self.write_depfile(&units)?;
         }
@@ -738,44 +420,20 @@ impl<'a> Session<'a> {
 
     fn compile_only(&mut self) -> Result<i32, Exit> {
         let units = self.load_all()?;
-        self.warn_source_entry_point();
-        let mut compiled = Vec::with_capacity(units.len());
-        let mut failed = false;
-        for unit in &units {
-            let Class::Stage(stage) = unit.class else {
-                return Err(Exit::detailed(
-                    "--no-link compiles shaders of a stage; a library or an object module has none",
-                    unit.name.clone(),
-                ));
-            };
-            let result = self.compile_object(unit);
-            self.report_unit(unit, &result.log);
-            match result.object {
-                Some(object) => compiled.push((stage, object, result.info, unit.name.clone())),
-                None => failed = true,
-            }
+        if let Some(unit) = units
+            .iter()
+            .find(|unit| !matches!(unit.class, Class::Stage(_)))
+        {
+            return Err(Exit::detailed(
+                "--no-link compiles shaders of a stage; a library or an object module has none",
+                unit.name.clone(),
+            ));
         }
-        if failed {
-            self.not_generated();
-            return Ok(EXIT_COMPILE);
+        let code = self.build(&units)?;
+        if code == EXIT_SUCCESS {
+            self.write_depfile(&units)?;
         }
-        if self.options.spirv {
-            for (stage, mut object, info, name) in compiled {
-                let info = match info {
-                    Some(info) => info,
-                    None => rglsl_link::validate_object(&object).map_err(|errors| {
-                        Exit::error(format!("cannot validate the module of {name}: {errors}"))
-                    })?,
-                };
-                self.rename_entry_point(&mut object.unit.module);
-                let code = self.emit(stage, &object.unit.module, &info, &name)?;
-                if code != EXIT_SUCCESS {
-                    return Ok(code);
-                }
-            }
-        }
-        self.write_depfile(&units)?;
-        Ok(EXIT_SUCCESS)
+        Ok(code)
     }
 
     fn not_generated(&self) {
@@ -784,327 +442,78 @@ impl<'a> Session<'a> {
         }
     }
 
-    fn program(&mut self, unit: &Unit) -> Result<i32, Exit> {
-        let Class::Stage(stage) = unit.class else {
-            return Err(Exit::Usage);
-        };
-        let options = self.frontend_options(unit);
-        let mut includer = self.includer();
-        let root = includer.add_root(&unit.name);
-        let compiled = rglsl_link::compile_program(&options, &unit.text, root, &mut includer);
-        self.remember_includes(&includer, root);
-        let notes = self.source_entry_point_notes();
-        let mut linked = match compiled {
-            Ok(linked) => linked,
-            Err(rglsl_link::CompileError::Frontend(errors)) => {
-                let mut log = self.parse_log(unit, &errors);
-                log.notes = notes;
-                self.report_unit(unit, &log);
-                let link: Vec<String> = log
-                    .link
-                    .iter()
-                    .map(|message| {
-                        continued(&format!(
-                            "ERROR: Linking {} stage: {message}",
-                            glslang_stage_name(stage)
-                        ))
-                    })
-                    .collect();
-                self.report_link(&link);
-                self.reflect(&[(unit, log.compile.is_empty())], &[])?;
-                self.not_generated();
-                return Ok(if log.compile.is_empty() {
-                    EXIT_LINK
-                } else {
-                    EXIT_COMPILE
-                });
-            }
-            Err(rglsl_link::CompileError::Invalid(invalid)) => {
-                let mut log = self.validation_log(unit, &invalid);
-                log.notes = notes;
-                self.report_unit(unit, &log);
-                self.reflect(&[(unit, true)], &[(stage, &invalid.module)])?;
-                self.not_generated();
-                return Ok(EXIT_COMPILE);
-            }
-            Err(
-                rglsl_link::CompileError::Object(errors) | rglsl_link::CompileError::Link(errors),
-            ) => {
-                self.report_unit(
-                    unit,
-                    &Log {
-                        notes,
-                        ..Log::default()
-                    },
-                );
-                let lines: Vec<String> = errors
-                    .iter()
-                    .map(|error| link_line(Some(stage), error))
-                    .collect();
-                self.report_link(&lines);
-                self.reflect(&[(unit, true)], &[])?;
-                self.not_generated();
-                return Ok(EXIT_LINK);
-            }
-        };
-        self.report_unit(
-            unit,
-            &Log {
-                notes,
-                ..Log::default()
-            },
-        );
-        self.rename_entry_point(&mut linked.module);
-        self.reflect(&[(unit, true)], &[(stage, &linked.module)])?;
-        if self.options.spirv {
-            return self.emit(stage, &linked.module, &linked.info, &unit.name);
-        }
-        Ok(EXIT_SUCCESS)
-    }
-
-    fn analyze(&self, unit: &Unit, stage: ShaderStage) -> Option<glsl::Analyzed> {
-        let mut options = self.frontend_options(unit);
-        options.stage = stage;
-        options.library = false;
-        let mut includer = self.includer();
-        let root = includer.add_root(&unit.name);
-        glsl::Frontend::default().analyze_with_includer(&options, &unit.text, root, &mut includer)
-    }
-
-    fn reflect(
-        &self,
-        units: &[(&Unit, bool)],
-        modules: &[(ShaderStage, &Module)],
-    ) -> Result<(), Exit> {
-        if !self.options.reflect {
-            return Ok(());
-        }
-        let mut analyzed: Vec<(ShaderStage, Vec<(glsl::Analyzed, bool)>)> = Vec::new();
-        for stage in STAGE_ORDER {
-            if !units
-                .iter()
-                .any(|(unit, _)| unit.class == Class::Stage(stage))
-            {
-                continue;
-            }
-            let mut stage_units = Vec::new();
-            for &(unit, compiled) in units {
-                let wanted = match unit.class {
-                    Class::Stage(own) => own == stage,
-                    Class::Library => true,
-                    Class::Object => false,
-                };
-                if !wanted {
-                    continue;
-                }
-                if let Some(result) = self.analyze(unit, stage) {
-                    stage_units.push((result, compiled));
-                }
-            }
-            analyzed.push((stage, stage_units));
-        }
-        let inputs: Vec<reflect::StageInput> = analyzed
+    fn build(&mut self, units: &[Unit]) -> Result<i32, Exit> {
+        let inputs: Vec<Input<'_>> = units
             .iter()
-            .map(|(stage, units)| reflect::StageInput {
-                stage: *stage,
-                units: units
-                    .iter()
-                    .map(|(analyzed, compiled)| reflect::Unit {
-                        analyzed,
-                        compiled: *compiled,
-                    })
-                    .collect(),
-                module: modules
-                    .iter()
-                    .find(|(candidate, _)| candidate == stage)
-                    .map(|&(_, module)| module),
+            .map(|unit| Input {
+                source: match unit.class {
+                    Class::Object => Source::Object(&unit.bytes),
+                    Class::Stage(_) | Class::Library => Source::Glsl(&unit.text),
+                },
+                options: self.compile_options(unit),
             })
             .collect();
-        let settings = reflect::Settings {
-            options: self.options.reflect_options,
-            spirv: self.options.spirv,
-            keep_uncalled: self.options.keep_uncalled,
-            auto_map_bindings: self.options.auto_map_bindings,
-        };
-        let text = reflect::reflect(settings, &inputs)
-            .map_err(|stalled| Exit::error(format!("internal error: {stalled}")))?;
-        output::stdout(&text);
-        Ok(())
-    }
-
-    fn rename_entry_point(&self, module: &mut Module) {
-        if let Some(ref name) = self.options.entry_point {
-            for entry in &mut module.entry_points {
-                entry.name.clone_from(name);
-                entry.function.name = Some(name.clone());
-            }
+        let build = self
+            .compiler
+            .build(&inputs, &self.program_options(), &mut |_| None);
+        self.included.extend(build.files_read.iter().cloned());
+        for unit in &build.units {
+            self.report_unit(&unit.name, &unit.diagnostics);
         }
-    }
-
-    fn link_options(&self) -> rglsl_link::Options {
-        let binding_shifts = ShaderStage::ALL
-            .iter()
-            .map(|&stage| (stage, self.shifts(Some(stage))))
-            .filter(|(_, shifts)| !shifts.is_empty())
-            .collect();
-        rglsl_link::Options {
-            auto_map_locations: self.options.auto_map_locations,
-            auto_map_bindings: self.options.auto_map_bindings,
-            binding_shifts,
-            keep_uncalled: self.options.keep_uncalled,
-            limits: self.limits,
+        self.report_link(&build.link);
+        if let Some(ref reflection) = build.reflection {
+            output::stdout(reflection);
         }
-    }
-
-    fn link(&mut self, units: &[Unit]) -> Result<i32, Exit> {
-        let mut objects = Vec::with_capacity(units.len());
-        let mut failed = false;
-        let mut outcomes = Vec::with_capacity(units.len());
-        for unit in units {
-            let compiled = self.compile_object(unit);
-            self.report_unit(unit, &compiled.log);
-            outcomes.push((unit, compiled.object.is_some()));
-            match compiled.object {
-                Some(object) => objects.push(object),
-                None => failed = true,
-            }
-        }
-        if failed {
-            self.reflect(&outcomes, &[])?;
+        if build.compile_failed() {
             self.not_generated();
             return Ok(EXIT_COMPILE);
         }
-        let mut linked = match rglsl_link::link_program_staged(
-            rglsl_link::group_objects_by_stage(objects),
-            &self.link_options(),
-        ) {
-            Ok(linked) => linked,
-            Err(errors) => {
-                let lines: Vec<String> = errors
-                    .iter()
-                    .map(|&(stage, ref error)| link_line(stage, error))
-                    .collect();
-                self.report_link(&lines);
-                self.reflect(&outcomes, &[])?;
-                self.not_generated();
-                return Ok(EXIT_LINK);
-            }
-        };
-        if !self.options.suppress_warnings && !self.options.suppress_info {
-            let warnings: Vec<String> = linked
-                .iter()
-                .flat_map(|stage| {
-                    stage.warnings.iter().map(move |warning| {
-                        format!(
-                            "WARNING: Linking {name} and {name} stages: {warning}",
-                            name = glslang_stage_name(stage.stage)
-                        )
-                    })
-                })
-                .collect();
-            self.report_link(&warnings);
+        if build.link_failed() {
+            self.not_generated();
+            return Ok(EXIT_LINK);
         }
-        linked.sort_by_key(|stage| {
-            STAGE_ORDER
-                .iter()
-                .position(|&candidate| candidate == stage.stage)
-        });
-        let name = units
-            .first()
-            .map(|unit| unit.name.clone())
-            .unwrap_or_default();
-        for stage in &mut linked {
-            self.rename_entry_point(&mut stage.module);
-        }
-        let modules: Vec<(ShaderStage, &Module)> = linked
-            .iter()
-            .map(|stage| (stage.stage, &stage.module))
-            .collect();
-        self.reflect(&outcomes, &modules)?;
-        if self.options.spirv {
-            for stage in &linked {
-                let code = self.emit(stage.stage, &stage.module, &stage.info, &name)?;
-                if code != EXIT_SUCCESS {
-                    return Ok(code);
-                }
-            }
-        }
-        Ok(EXIT_SUCCESS)
+        self.emit(&build)
     }
 
-    fn emit(
-        &mut self,
-        stage: ShaderStage,
-        module: &Module,
-        info: &ModuleInfo,
-        name: &str,
-    ) -> Result<i32, Exit> {
-        let processes = self.processes(stage);
-        let debug_info = match self.options.debug {
-            Some(Debug::Lines) => Some((spv::DebugLevel::Lines, true)),
-            Some(Debug::NonSemantic) => Some((spv::DebugLevel::NonSemantic, false)),
-            Some(Debug::NonSemanticSource) => Some((spv::DebugLevel::NonSemantic, true)),
-            Some(Debug::Strip) | None => None,
-        }
-        .map(|(level, source_text)| spv::DebugInfo {
-            level,
-            source_text,
-            processes: &processes,
-            entry_point: Some(spv::DebugEntryPoint {
-                signature: "rglsl",
-                arguments: &self.options.command_line,
-                directory: self.directory.as_deref(),
-            }),
-        });
-        let mut flags =
-            spv::WriterFlags::LABEL_VARYINGS | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE;
-        if self.options.no_link {
-            flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
-        }
-        if self.options.debug != Some(Debug::Strip) {
-            flags |= spv::WriterFlags::DEBUG;
-        }
-        let spv_options = spv::Options {
-            lang_version: self.options.target_spirv(),
-            debug_info,
-            flags,
-            ..spv::Options::default()
-        };
-        let words = match spv::write_vec(module, info, &spv_options, None) {
-            Ok(words) => words,
-            Err(error) => {
-                if !self.options.suppress_info {
-                    output::err!(
-                        "ERROR: {name}: cannot generate SPIR-V for the {} stage: {}\n",
-                        glslang_stage_name(stage),
-                        full_message(&error)
-                    );
+    fn emit(&mut self, build: &Build) -> Result<i32, Exit> {
+        for stage in &build.stages {
+            let words = match stage.result {
+                Ok(ref words) => words,
+                Err(ref diagnostic) => {
+                    if !self.options.suppress_info {
+                        output::err!("{}\n", diagnostic.format(DiagnosticFormat::default()));
+                    }
+                    self.not_generated();
+                    return Ok(EXIT_COMPILE);
                 }
-                self.not_generated();
-                return Ok(EXIT_COMPILE);
+            };
+            let path = self
+                .options
+                .output
+                .clone()
+                .unwrap_or_else(|| format!("{}.spv", stage.stage.extension()));
+            if !output::write(
+                &path,
+                words,
+                self.options.hex,
+                self.options.variable_name.as_deref(),
+            ) {
+                return Err(Exit::Printed(format!(
+                    "ERROR: Failed to open file: {path}\n"
+                )));
             }
-        };
-        let path = self
-            .options
-            .output
-            .clone()
-            .unwrap_or_else(|| format!("{}.spv", stage.extension()));
-        if !output::write(
-            &path,
-            &words,
-            self.options.hex,
-            self.options.variable_name.as_deref(),
-        ) {
-            return Err(Exit::Printed(format!(
-                "ERROR: Failed to open file: {path}\n"
-            )));
-        }
-        self.outputs.push(path);
-        if self.options.disassemble && !self.options.spirv_tools_disassembler {
-            let disassembly = rglsl_cli::disassemble::disassemble_bytes(&words);
-            output::stdout_bytes(&disassembly.text);
-            if disassembly.failed {
-                return Ok(EXIT_USAGE);
+            self.outputs.push(path);
+            let form = if self.options.spirv_tools_disassembler {
+                Some(rglsl_dis::Form::Standard)
+            } else {
+                self.options.disassemble.then_some(rglsl_dis::Form::Glslang)
+            };
+            if let Some(form) = form {
+                let disassembly = rglsl_dis::disassemble(words, form);
+                output::stdout_bytes(&disassembly.text);
+                if disassembly.failed {
+                    return Ok(EXIT_USAGE);
+                }
             }
         }
         Ok(EXIT_SUCCESS)
@@ -1116,7 +525,7 @@ impl<'a> Session<'a> {
         };
         let mut sources: Vec<String> = units.iter().map(|unit| unit.name.clone()).collect();
         sources.extend(self.included.iter().cloned());
-        if output::write_depfile(depfile, &self.outputs, &sources) {
+        if fs::write(depfile, rglsl_link::depfile(&self.outputs, &sources)).is_ok() {
             Ok(())
         } else {
             Err(Exit::Printed(format!(
@@ -1124,22 +533,4 @@ impl<'a> Session<'a> {
             )))
         }
     }
-}
-
-fn continued(message: &str) -> String {
-    message.replace('\n', "\nERROR: ")
-}
-
-fn link_line(stage: Option<ShaderStage>, error: &rglsl_link::LinkError) -> String {
-    continued(&match (stage, error) {
-        (_, rglsl_link::LinkError::CrossStage { stages, name, what }) => format!(
-            "ERROR: Linking {} stages: {what} of `{name}` must match between stages",
-            stages.to_lowercase()
-        ),
-        (Some(stage), _) => format!(
-            "ERROR: Linking {} stage: {error}",
-            glslang_stage_name(stage)
-        ),
-        (None, _) => format!("ERROR: Linking: {error}"),
-    })
 }
