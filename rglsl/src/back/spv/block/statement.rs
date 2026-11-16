@@ -488,7 +488,7 @@ impl BlockContext<'_> {
         let mut value_id = self.cached.get(value)?;
         if let Some(class) = self.pointer_class(pointer) {
             let value_type_id = self.get_expression_type_id(&self.fun_info[value].ty)?;
-            let explicit = self.pointer_explicit_layout(pointer, class);
+            let explicit = self.writer.has_explicit_layout(class);
             if self
                 .writer
                 .needs_layout_conversion_explicit(value_type_id, explicit)

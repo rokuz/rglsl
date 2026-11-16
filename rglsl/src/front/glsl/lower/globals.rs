@@ -2296,40 +2296,21 @@ impl<'a> Lowerer<'a> {
             ));
         }
         if !self.object && !self.options.export_functions {
-            let shared_block_count = self
-                .module
-                .global_variables
-                .iter()
-                .filter(|&(_, global)| {
-                    global.space == AddressSpace::WorkGroup
-                        && global.block == Some(crate::BlockDeclaration::Shared)
-                })
-                .count();
-            let has_shared_plain = self.module.global_variables.iter().any(|(_, global)| {
-                global.space == AddressSpace::WorkGroup && global.block.is_none()
-            });
-            if shared_block_count > 0 && has_shared_plain {
-                self.errors.push(Error {
-                    kind: ErrorKind::Link(String::from(
-                        "cannot mix use of shared variables inside and outside blocks",
-                    )),
-                    meta: Span::UNDEFINED,
+            for (handle, conflict) in
+                crate::proc::SharedBlocks::of(&self.module.global_variables, true).conflicts()
+            {
+                self.errors.push(match conflict {
+                    crate::proc::SharedBlockConflict::Mixed => Error {
+                        kind: ErrorKind::Link(String::from(
+                            "cannot mix use of shared variables inside and outside blocks",
+                        )),
+                        meta: Span::UNDEFINED,
+                    },
+                    crate::proc::SharedBlockConflict::RestrictAliased => semantic(
+                        "`restrict` on aliased shared memory blocks is not supported: SPIR-V forbids decorating a Workgroup variable with both Aliased and Restrict",
+                        self.module.global_variables.get_span(handle),
+                    ),
                 });
-            }
-            if shared_block_count > 1 {
-                for (handle, global) in self.module.global_variables.iter() {
-                    if global.space == AddressSpace::WorkGroup
-                        && global.block == Some(crate::BlockDeclaration::Shared)
-                        && global
-                            .memory_decorations
-                            .contains(MemoryDecorations::RESTRICT)
-                    {
-                        self.errors.push(semantic(
-                            "`restrict` on aliased shared memory blocks is not supported: SPIR-V forbids decorating a Workgroup variable with both Aliased and Restrict",
-                            self.module.global_variables.get_span(handle),
-                        ));
-                    }
-                }
             }
         }
         self.check_shared_layouts();

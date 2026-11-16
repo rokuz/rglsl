@@ -182,7 +182,6 @@ impl Writer {
             global_variables: HandleVec::new(),
             laid_out_types: crate::arena::HandleSet::new(),
             workgroup_explicit_layout: false,
-            mixed_workgroup_layout: false,
             aliased_workgroup_blocks: false,
             composite_types: crate::FastHashMap::default(),
             plain_types: crate::FastHashMap::default(),
@@ -336,7 +335,6 @@ impl Writer {
             global_variables: take(&mut self.global_variables).reclaim(),
             laid_out_types: crate::arena::HandleSet::new(),
             workgroup_explicit_layout: false,
-            mixed_workgroup_layout: false,
             aliased_workgroup_blocks: false,
             composite_types: take(&mut self.composite_types).reclaim(),
             plain_types: take(&mut self.plain_types).reclaim(),
@@ -739,9 +737,7 @@ impl Writer {
             gv.handle_id = id;
         } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
             let class = self.storage_class(var.space);
-            let pointer_type_id = if var.space == crate::AddressSpace::WorkGroup
-                && var.block == Some(crate::BlockDeclaration::Shared)
-            {
+            let pointer_type_id = if var.is_shared_block() {
                 let base = self.get_handle_type_id(var.ty)?;
                 self.get_localtype_id(LocalType::Pointer { base, class })
             } else {
@@ -1215,9 +1211,7 @@ impl Writer {
             }
         }
         for (handle, var) in ir_module.global_variables.iter() {
-            if var.space == crate::AddressSpace::WorkGroup
-                && var.block == Some(crate::BlockDeclaration::Shared)
-            {
+            if var.is_shared_block() {
                 let id = self.global_variables[handle].var_id;
                 if id != 0 && !interface_ids.contains(&id) {
                     interface_ids.push(id);
@@ -3087,8 +3081,7 @@ impl Writer {
         } else {
             None
         };
-        let is_shared_block = global_variable.space == crate::AddressSpace::WorkGroup
-            && global_variable.block == Some(crate::BlockDeclaration::Shared);
+        let is_shared_block = global_variable.is_shared_block();
         if is_shared_block && self.aliased_workgroup_blocks {
             self.decorate(id, Decoration::Aliased, &[]);
         }
@@ -3640,16 +3633,9 @@ impl Writer {
         if !self.physical_pointees.is_empty() {
             self.use_feature(&feature::PHYSICAL_STORAGE_BUFFER);
         }
-        let mut workgroup_block_count = 0usize;
-        let mut has_workgroup_plain = false;
         for (_, var) in ir_module.global_variables.iter() {
-            if var.space == crate::AddressSpace::WorkGroup {
-                if var.block == Some(crate::BlockDeclaration::Shared) {
-                    workgroup_block_count += 1;
-                    mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
-                } else {
-                    has_workgroup_plain = true;
-                }
+            if var.is_shared_block() {
+                mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
             }
             if let crate::AddressSpace::Uniform
             | crate::AddressSpace::Storage { .. }
@@ -3659,10 +3645,20 @@ impl Writer {
                 mark_laid_out(&ir_module.types, &mut self.laid_out_types, var.ty);
             }
         }
-        self.workgroup_explicit_layout = workgroup_block_count > 0 && !has_workgroup_plain;
-        self.mixed_workgroup_layout = workgroup_block_count > 0 && has_workgroup_plain;
-        self.aliased_workgroup_blocks =
-            workgroup_block_count > 1 && !ir_module.entry_points.is_empty();
+        let shared_blocks = crate::proc::SharedBlocks::of(
+            &ir_module.global_variables,
+            !ir_module.entry_points.is_empty(),
+        );
+        if shared_blocks
+            .conflicts()
+            .any(|(_, conflict)| conflict == crate::proc::SharedBlockConflict::Mixed)
+        {
+            return Err(Error::Validation(
+                "shared variables are used both inside and outside blocks",
+            ));
+        }
+        self.workgroup_explicit_layout = shared_blocks.explicit_layout();
+        self.aliased_workgroup_blocks = shared_blocks.aliased();
         self.prepare_heaps(ir_module, mod_info);
         self.descriptor_heap = ir_module.descriptor_heap;
 
@@ -3724,8 +3720,7 @@ impl Writer {
             // A variable in an entry point's interface is written whether or
             // not the code uses it: it is part of what the pipeline sees.
             let in_interface = |ep: &crate::EntryPoint| -> bool { ep.interface.contains(&handle) };
-            let is_shared_block = var.space == crate::AddressSpace::WorkGroup
-                && var.block == Some(crate::BlockDeclaration::Shared);
+            let is_shared_block = var.is_shared_block();
             let gvar = match ep_index {
                 Some(index)
                     if mod_info.get_entry_point(index)[handle].is_empty()

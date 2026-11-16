@@ -820,7 +820,6 @@ pub struct Writer {
     /// memory.
     laid_out_types: crate::arena::HandleSet<crate::Type>,
     workgroup_explicit_layout: bool,
-    mixed_workgroup_layout: bool,
     aliased_workgroup_blocks: bool,
     composite_types: crate::FastHashMap<Word, plain_types::CompositeType>,
     plain_types: crate::FastHashMap<Word, Word>,

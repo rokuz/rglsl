@@ -9,6 +9,7 @@ mod layouter;
 mod overloads;
 mod reachability;
 mod resource;
+mod shared_blocks;
 pub use rglsl_types::small_float;
 mod subgroup;
 mod terminator;
@@ -25,6 +26,7 @@ pub use layouter::{Alignment, LayoutError, LayoutErrorInner, Layouter, TypeLayou
 pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
 pub use resource::{BindingShifts, ResourceClass, free_binding};
+pub use shared_blocks::{SharedBlockConflict, SharedBlocks};
 pub use terminator::ensure_block_returns;
 use thiserror::Error;
 pub use type_methods::{
