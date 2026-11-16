@@ -1003,6 +1003,15 @@ pub enum ConstantEvaluatorError {
     EmptyCompose,
 }
 
+enum CastStep {
+    Enter(Handle<Expression>, Span),
+    Compose(TypeInner, usize, Span),
+    Splat(crate::VectorSize, Span),
+    Replicate(TypeInner, Span),
+}
+
+type CastOutcome = Result<Expression, Vec<CastStep>>;
+
 impl<'a> ConstantEvaluator<'a> {
     /// Return a [`ConstantEvaluator`] that will add expressions to `module`'s
     /// constant expression arena.
@@ -2571,8 +2580,48 @@ impl<'a> ConstantEvaluator<'a> {
         target: crate::Scalar,
         span: Span,
     ) -> Result<Handle<Expression>, ConstantEvaluatorError> {
-        let expr = self.eval_zero_value(expr, span)?;
+        let mut steps = vec![CastStep::Enter(expr, span)];
+        let mut results: Vec<Handle<Expression>> = Vec::new();
+        while let Some(step) = steps.pop() {
+            let (expr, span) = match step {
+                CastStep::Enter(expr, span) => {
+                    let expr = self.eval_zero_value(expr, span)?;
+                    match self.cast_step(expr, target, span)? {
+                        Ok(literal) => results.push(self.register_evaluated_expr(literal, span)?),
+                        Err(nested) => steps.extend(nested),
+                    }
+                    continue;
+                }
+                CastStep::Compose(inner, count, span) => {
+                    let start = results
+                        .len()
+                        .checked_sub(count)
+                        .ok_or(ConstantEvaluatorError::Unfinished)?;
+                    let components = results.split_off(start);
+                    let ty = self.types.insert(Type { name: None, inner }, span);
+                    (Expression::Compose { ty, components }, span)
+                }
+                CastStep::Splat(size, span) => {
+                    let value = results.pop().ok_or(ConstantEvaluatorError::Unfinished)?;
+                    (Expression::Splat { size, value }, span)
+                }
+                CastStep::Replicate(inner, span) => {
+                    let value = results.pop().ok_or(ConstantEvaluatorError::Unfinished)?;
+                    let ty = self.types.insert(Type { name: None, inner }, span);
+                    (Expression::Replicate { ty, value }, span)
+                }
+            };
+            results.push(self.register_evaluated_expr(expr, span)?);
+        }
+        results.pop().ok_or(ConstantEvaluatorError::Unfinished)
+    }
 
+    fn cast_step(
+        &self,
+        expr: Handle<Expression>,
+        target: crate::Scalar,
+        span: Span,
+    ) -> Result<CastOutcome, ConstantEvaluatorError> {
         let make_error = || -> Result<_, ConstantEvaluatorError> {
             let from = format!("{:?} {:?}", expr, self.expressions[expr]);
 
@@ -2581,15 +2630,12 @@ impl<'a> ConstantEvaluator<'a> {
             Err(ConstantEvaluatorError::InvalidCastArg { from, to })
         };
 
-        let expr = match self.expressions[expr] {
+        match self.expressions[expr] {
             Expression::Literal(literal) => match cast::cast_literal(literal, target) {
-                Some(literal) => Expression::Literal(literal),
-                None => return make_error(),
+                Some(literal) => Ok(Ok(Expression::Literal(literal))),
+                None => make_error(),
             },
-            Expression::Compose {
-                ty,
-                components: ref src_components,
-            } => {
+            Expression::Compose { ty, ref components } => {
                 let ty_inner = match self.types[ty].inner {
                     TypeInner::Vector { size, .. } => TypeInner::Vector {
                         size,
@@ -2607,29 +2653,21 @@ impl<'a> ConstantEvaluator<'a> {
                     },
                     _ => return make_error(),
                 };
-
-                let mut components = src_components.clone();
-                for component in &mut components {
-                    *component = self.cast(*component, target, span)?;
-                }
-
-                let ty = self.types.insert(
-                    Type {
-                        name: None,
-                        inner: ty_inner,
-                    },
-                    span,
+                let mut steps = vec![CastStep::Compose(ty_inner, components.len(), span)];
+                steps.extend(
+                    components
+                        .iter()
+                        .rev()
+                        .map(|&component| CastStep::Enter(component, span)),
                 );
-
-                Expression::Compose { ty, components }
+                Ok(Err(steps))
             }
             Expression::Splat { size, value } => {
                 let value_span = self.expressions.get_span(value);
-                let cast_value = self.cast(value, target, value_span)?;
-                Expression::Splat {
-                    size,
-                    value: cast_value,
-                }
+                Ok(Err(vec![
+                    CastStep::Splat(size, span),
+                    CastStep::Enter(value, value_span),
+                ]))
             }
             Expression::Replicate { ty, value } => {
                 let inner = match self.types[ty].inner {
@@ -2656,14 +2694,13 @@ impl<'a> ConstantEvaluator<'a> {
                     _ => return make_error(),
                 };
                 let value_span = self.expressions.get_span(value);
-                let value = self.cast(value, target, value_span)?;
-                let ty = self.types.insert(Type { name: None, inner }, span);
-                Expression::Replicate { ty, value }
+                Ok(Err(vec![
+                    CastStep::Replicate(inner, span),
+                    CastStep::Enter(value, value_span),
+                ]))
             }
-            _ => return make_error(),
-        };
-
-        self.register_evaluated_expr(expr, span)
+            _ => make_error(),
+        }
     }
 
     /// Convert the scalar leaves of  `expr` to `target`, handling arrays.
