@@ -1648,12 +1648,7 @@ impl Writer {
                 {
                     if scalar == crate::Scalar::F16 {
                         self.require(&feature::FLOAT16_WITH_STORAGE)?;
-                    } else if scalar.width == 2
-                        && matches!(
-                            scalar.kind,
-                            crate::ScalarKind::Sint | crate::ScalarKind::Uint
-                        )
-                    {
+                    } else if scalar.width == 2 && scalar.kind.is_integer() {
                         self.require(&feature::INT16_WITH_STORAGE)?;
                     }
                 }

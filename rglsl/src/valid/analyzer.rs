@@ -638,27 +638,19 @@ impl FunctionInfo {
             E::Access { base, index } => {
                 let base_ty = self[base].ty.inner_with(resolve_context.types);
 
-                if let crate::TypeInner::BindingArray { base: element, .. } = *base_ty {
-                    match resolve_context.types[element].inner {
-                        crate::TypeInner::Image { .. }
-                        | crate::TypeInner::Sampler { .. }
-                        | crate::TypeInner::SampledImage { .. }
-                        | crate::TypeInner::AccelerationStructure
-                        | crate::TypeInner::Tensor { .. } => {}
-                        _ => {
-                            if !matches!(
-                                expression_arena[base],
-                                E::GlobalVariable(global)
-                                    if matches!(
-                                        resolve_context.global_vars[global].space,
-                                        crate::AddressSpace::Uniform
-                                            | crate::AddressSpace::Storage { .. }
-                                    )
-                            ) {
-                                return Err(ExpressionError::InvalidBaseType(base));
-                            }
-                        }
-                    }
+                if let crate::TypeInner::BindingArray { base: element, .. } = *base_ty
+                    && !resolve_context.types[element].inner.is_handle()
+                    && !matches!(
+                        expression_arena[base],
+                        E::GlobalVariable(global)
+                            if matches!(
+                                resolve_context.global_vars[global].space,
+                                crate::AddressSpace::Uniform
+                                    | crate::AddressSpace::Storage { .. }
+                            )
+                    )
+                {
+                    return Err(ExpressionError::InvalidBaseType(base));
                 }
 
                 Uniformity {

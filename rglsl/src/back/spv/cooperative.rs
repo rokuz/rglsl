@@ -838,7 +838,7 @@ impl BlockContext<'_> {
         };
         let same_use = source_role == role;
         let matrix_id = self.cached.get(matrix)?;
-        let integer = |kind: ScalarKind| matches!(kind, ScalarKind::Sint | ScalarKind::Uint);
+        let integer = |kind: ScalarKind| kind.is_integer();
         let float = |kind: ScalarKind| kind.is_any_float();
         let op = match (source.kind, target.kind) {
             (from, to) if float(from) && float(to) && source != target => Op::FConvert,

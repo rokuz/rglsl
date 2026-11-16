@@ -84,12 +84,7 @@ impl super::super::Validator {
         let coordinates_inner =
             context.resolve_type_inner(coordinates, &self.valid_expression_set)?;
         match super::super::expression::tensor_shape(coordinates_inner, context.types) {
-            Some((index, shape))
-                if shape.coordinates_of(rank)
-                    && matches!(
-                        index.kind,
-                        crate::ScalarKind::Uint | crate::ScalarKind::Sint
-                    ) => {}
+            Some((index, shape)) if shape.coordinates_of(rank) && index.kind.is_integer() => {}
             _ => return Err(invalid(coordinates)),
         }
         let value_inner = context.resolve_type_inner(value, &self.valid_expression_set)?;

@@ -498,7 +498,7 @@ impl super::super::Validator {
                         kind: Sk::Uint | Sk::Sint,
                         ..
                     })
-                ) || !matches!(source.kind, Sk::Uint | Sk::Sint)
+                ) || !source.kind.is_integer()
                     || target.bit_width() > source.bit_width()
                 {
                     return Err(ExpressionError::InvalidBitcast(

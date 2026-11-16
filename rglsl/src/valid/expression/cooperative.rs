@@ -106,12 +106,7 @@ impl super::super::Validator {
         else {
             return Err(ExpressionError::InvalidTensorOperand(coordinates));
         };
-        if !shape.coordinates_of(rank)
-            || !matches!(
-                index.kind,
-                crate::ScalarKind::Uint | crate::ScalarKind::Sint
-            )
-        {
+        if !shape.coordinates_of(rank) || !index.kind.is_integer() {
             return Err(ExpressionError::InvalidTensorOperand(coordinates));
         }
         let Some((element, _)) = tensor_shape(&module.types[ty].inner, &module.types) else {

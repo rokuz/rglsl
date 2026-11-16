@@ -196,6 +196,18 @@ impl crate::CooperativeSize {
 }
 
 impl crate::TypeInner {
+    /// Returns true if a variable of this type is a handle.
+    pub const fn is_handle(&self) -> bool {
+        matches!(
+            *self,
+            Self::Image { .. }
+                | Self::SampledImage { .. }
+                | Self::Sampler { .. }
+                | Self::AccelerationStructure
+                | Self::Tensor { .. }
+        )
+    }
+
     /// Return the scalar type of `self`.
     ///
     /// If `inner` is a scalar, vector, or matrix type, return
