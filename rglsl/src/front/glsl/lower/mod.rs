@@ -481,19 +481,27 @@ fn lower_parsed(
         .borrow_mut()
         .extend(analysis.stage_names.iter().cloned());
     if let Some(ref error) = *failure {
-        let earlier = analysis.diagnostics.iter().filter(|diagnostic| {
-            diagnostic.offset(text) < error.span.start
-                && !matches!(
-                    diagnostic.kind,
-                    rglsl_sema::DiagnosticKind::MissingEntryPoint
-                        | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
-                        | rglsl_sema::DiagnosticKind::MissingVersion
-                )
-                && unit
-                    .external_declarations
-                    .last()
-                    .is_none_or(|last| diagnostic.span.start < external_end(last))
-        });
+        let found = analysis
+            .diagnostics
+            .len()
+            .saturating_sub(analysis.target_limits);
+        let earlier = analysis
+            .diagnostics
+            .iter()
+            .take(found)
+            .filter(|diagnostic| {
+                diagnostic.offset(text) < error.span.start
+                    && !matches!(
+                        diagnostic.kind,
+                        rglsl_sema::DiagnosticKind::MissingEntryPoint
+                            | rglsl_sema::DiagnosticKind::MissingFunctionBody(_)
+                            | rglsl_sema::DiagnosticKind::MissingVersion
+                    )
+                    && unit
+                        .external_declarations
+                        .last()
+                        .is_none_or(|last| diagnostic.span.start < external_end(last))
+            });
         let mut errors: Vec<(Error, Option<IncludeLocation>)> = earlier
             .map(|diagnostic| {
                 (

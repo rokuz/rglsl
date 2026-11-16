@@ -1431,7 +1431,7 @@ impl Analyzer<'_> {
                 && let Some((first_operand, opaque)) =
                     first.and_then(|operand| Some((operand, operand.ty.as_opaque()?)))
             {
-                let value_index = if opaque.multisample { 3 } else { 2 };
+                let value_index = opaque.image_atomic_value_index();
                 let value_ty = (!matches!(
                     kind,
                     BuiltinKind::Texture(Texture::ImageAtomic(AtomicOperation::Load))
@@ -1454,6 +1454,17 @@ impl Analyzer<'_> {
                             && first_operand.image_format != Some(expected)
                         {
                             return invalid(self, span, reason);
+                        }
+                        if value_ty.is_none_or(|ty| *ty == Type::FLOAT)
+                            && first_operand.image_format != Some(LayoutId::R32f)
+                        {
+                            self.target_limit(
+                                span,
+                                DiagnosticKind::InvalidBuiltinCall {
+                                    name: String::from(name),
+                                    reason: "the image format must be r32f",
+                                },
+                            );
                         }
                     }
                     crate::types::SampledType::Int
