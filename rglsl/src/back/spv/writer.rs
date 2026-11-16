@@ -2950,15 +2950,7 @@ impl Writer {
             ))?;
             if let Some(block) = crate::proc::interface_block(&ir_module.types, global_variable.ty)
             {
-                self.write_interface_block(
-                    ir_module,
-                    handle,
-                    global_variable,
-                    block,
-                    stage,
-                    class,
-                    id,
-                )?;
+                self.write_interface_block(ir_module, handle, block, stage, class, id)?;
             } else if global_variable.io.is_none()
                 && crate::proc::has_spirv_built_in(global_variable)
             {
@@ -3229,20 +3221,16 @@ impl Writer {
         Ok(id)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     fn write_interface_block(
         &mut self,
         ir_module: &crate::Module,
         handle: Handle<crate::GlobalVariable>,
-        global_variable: &crate::GlobalVariable,
         block: crate::proc::InterfaceBlock,
         stage: crate::ShaderStage,
         class: spirv::StorageClass,
         id: Word,
     ) -> Result<(), Error> {
+        let global_variable = &ir_module.global_variables[handle];
         if let Some(ref binding) = global_variable.io {
             let decorations =
                 self.map_binding(ir_module, stage, class, global_variable.ty, binding)?;

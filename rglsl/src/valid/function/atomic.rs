@@ -426,34 +426,21 @@ impl super::super::Validator {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the fields of Statement::ImageAtomic"
-    )]
     pub(super) fn validate_image_atomic(
         &mut self,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         fun: crate::AtomicFunction,
         value: Handle<crate::Expression>,
-        sample: Option<Handle<crate::Expression>>,
         result: Option<Handle<crate::Expression>>,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
         use crate::{StorageFormat as Sf, TypeInner as Ti};
-        let texel = crate::Texel {
-            image,
-            coordinate,
-            array_index,
-            sample,
-        };
         let (format, access) = self.validate_texel(&texel, context)?;
         if !access.contains(crate::StorageAccess::ATOMIC) {
             return Err(FunctionError::InvalidImageAtomic(
                 ExpressionError::InvalidImageStorageAccess(access),
             )
-            .with_span_handle(image, context.expressions));
+            .with_span_handle(texel.image, context.expressions));
         }
         let float_rmw = matches!(
             fun,
@@ -486,12 +473,12 @@ impl super::super::Validator {
                 return Err(FunctionError::InvalidImageAtomic(
                     ExpressionError::InvalidImageFormat(format),
                 )
-                .with_span_handle(image, context.expressions));
+                .with_span_handle(texel.image, context.expressions));
             }
         };
         if !supported {
             return Err(FunctionError::InvalidImageAtomicFunction(fun)
-                .with_span_handle(image, context.expressions));
+                .with_span_handle(texel.image, context.expressions));
         }
         if *context.resolve_type_inner(value, &self.valid_expression_set)? != value_ty {
             return Err(FunctionError::InvalidImageAtomicValue(value)

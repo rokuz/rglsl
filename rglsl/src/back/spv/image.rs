@@ -187,6 +187,28 @@ impl Access for Store {
     fn result_type(&self) {}
 }
 
+pub(super) struct ImageSampleParams {
+    pub(super) image: Handle<crate::Expression>,
+    pub(super) sampler: Option<Handle<crate::Expression>>,
+    pub(super) gather: Option<(crate::SwizzleComponent, crate::ImageGatherPattern)>,
+    pub(super) coordinate: Handle<crate::Expression>,
+    pub(super) array_index: Option<Handle<crate::Expression>>,
+    pub(super) offset: Option<Handle<crate::Expression>>,
+    pub(super) level: crate::SampleLevel,
+    pub(super) depth_ref: Option<Handle<crate::Expression>>,
+    pub(super) min_lod: Option<Handle<crate::Expression>>,
+    pub(super) sparse: bool,
+}
+
+pub(super) struct ImageFootprintParams {
+    pub(super) image: Handle<crate::Expression>,
+    pub(super) coordinate: Handle<crate::Expression>,
+    pub(super) granularity: Handle<crate::Expression>,
+    pub(super) coarse: Handle<crate::Expression>,
+    pub(super) level: crate::SampleLevel,
+    pub(super) min_lod: Option<Handle<crate::Expression>>,
+}
+
 impl BlockContext<'_> {
     /// Extend image coordinates with an array index, if necessary.
     ///
@@ -408,21 +430,20 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageLoad` expression.
     ///
     /// The arguments are the components of an `Expression::ImageLoad` variant.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_load(
         &mut self,
         result_type_id: Word,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
         sparse: bool,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         let image_id = self.get_image_id(image, block)?;
         let image_type = self.fun_info[image].ty.inner_with(&self.ir_module.types);
         let (crate::TypeInner::Image {
@@ -511,26 +532,25 @@ impl BlockContext<'_> {
     /// Generate code for an `ImageSample` expression.
     ///
     /// The arguments are the components of an `Expression::ImageSample` variant.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_sample(
         &mut self,
         sample_expression: Handle<crate::Expression>,
         result_type_id: Word,
-        image: Handle<crate::Expression>,
-        sampler: Option<Handle<crate::Expression>>,
-        gather: Option<(crate::SwizzleComponent, crate::ImageGatherPattern)>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        offset: Option<Handle<crate::Expression>>,
-        level: crate::SampleLevel,
-        depth_ref: Option<Handle<crate::Expression>>,
-        min_lod: Option<Handle<crate::Expression>>,
-        sparse: bool,
+        params: ImageSampleParams,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let ImageSampleParams {
+            image,
+            sampler,
+            gather,
+            coordinate,
+            array_index,
+            offset,
+            level,
+            depth_ref,
+            min_lod,
+            sparse,
+        } = params;
         use super::instructions::SampleLod;
         let handle_id = self.get_non_uniform_handle_id(image, block)?;
         let (crate::TypeInner::Image {
@@ -1118,20 +1138,19 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_store(
         &mut self,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
         value: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         let image_id = self.get_non_uniform_handle_id(image, block)?;
         let coordinates = self.write_image_coordinates(coordinate, array_index, block)?;
         let value_id = self.cached.get(value)?;
@@ -1177,21 +1196,20 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(super) fn write_image_footprint(
         &mut self,
         result_type_id: Word,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        granularity: Handle<crate::Expression>,
-        coarse: Handle<crate::Expression>,
-        level: crate::SampleLevel,
-        min_lod: Option<Handle<crate::Expression>>,
+        params: ImageFootprintParams,
         block: &mut Block,
     ) -> Result<Word, Error> {
+        let ImageFootprintParams {
+            image,
+            coordinate,
+            granularity,
+            coarse,
+            level,
+            min_lod,
+        } = params;
         self.writer.require(&feature::IMAGE_FOOTPRINT)?;
         let image_id = self.get_handle_id(image)?;
         let id = self.gen_id();

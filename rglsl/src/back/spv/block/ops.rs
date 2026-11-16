@@ -188,12 +188,8 @@ impl BlockContext<'_> {
                 self.write_matrix_matrix_column_op(
                     expr_handle,
                     block,
-                    operands.id,
-                    operands.result_type_id,
-                    operands.left_id,
-                    operands.right_id,
-                    columns,
-                    rows,
+                    operands,
+                    (columns, rows),
                     scalar.width,
                     float_op,
                 )?;
@@ -348,23 +344,21 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     fn write_matrix_matrix_column_op(
         &mut self,
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
-        result_id: Word,
-        result_type_id: Word,
-        left_id: Word,
-        right_id: Word,
-        columns: crate::VectorSize,
-        rows: crate::VectorSize,
+        operands: &BinaryOperands,
+        (columns, rows): (crate::VectorSize, crate::VectorSize),
         width: u8,
         op: spirv::Op,
     ) -> Result<(), Error> {
+        let &BinaryOperands {
+            id: result_id,
+            result_type_id,
+            left_id,
+            right_id,
+        } = operands;
         self.temp_list.clear();
         let non_uniform = self
             .non_uniform(expr_handle)

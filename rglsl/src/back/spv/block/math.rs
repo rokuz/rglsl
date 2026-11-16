@@ -508,8 +508,7 @@ impl BlockContext<'_> {
                     self.write_dot_product(
                         ids.id,
                         result_type_id,
-                        ids.arg0_id,
-                        ids.arg1_id,
+                        [ids.arg0_id, ids.arg1_id],
                         size as u32,
                         block,
                         |result_id, composite_id, index| {
@@ -652,8 +651,7 @@ impl BlockContext<'_> {
         self.write_dot_product(
             ids.id,
             result_type_id,
-            arg0_id,
-            arg1_id,
+            [arg0_id, arg1_id],
             VEC_LENGTH as Word,
             block,
             |result_id, composite_id, index| {
@@ -815,13 +813,11 @@ impl BlockContext<'_> {
         )))
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn write_dot_product(
         &mut self,
         result_id: Word,
         result_type_id: Word,
-        arg0_id: Word,
-        arg1_id: Word,
+        [arg0_id, arg1_id]: [Word; 2],
         size: u32,
         block: &mut Block,
         extractor: impl Fn(Word, Word, Word) -> Instruction,

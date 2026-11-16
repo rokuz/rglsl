@@ -304,10 +304,12 @@ impl BlockContext<'_> {
                 level,
                 value,
             } => self.write_image_store(
-                image,
-                coordinate,
-                array_index,
-                sample,
+                crate::Texel {
+                    image,
+                    coordinate,
+                    array_index,
+                    sample,
+                },
                 level,
                 value,
                 &mut block,

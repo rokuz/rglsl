@@ -2,6 +2,16 @@ use super::super::{FunctionInfo, ShaderStages};
 use super::{ExpressionError, ExpressionTypeResolver};
 use crate::arena::Handle;
 
+pub(super) struct ImageFootprintParams {
+    pub(super) image: Handle<crate::Expression>,
+    pub(super) coordinate: Handle<crate::Expression>,
+    pub(super) granularity: Handle<crate::Expression>,
+    pub(super) coarse: Handle<crate::Expression>,
+    pub(super) level: crate::SampleLevel,
+    pub(super) min_lod: Option<Handle<crate::Expression>>,
+    pub(super) ty: Handle<crate::Type>,
+}
+
 pub(super) struct ImageSampleParams {
     pub(super) image: Handle<crate::Expression>,
     pub(super) sampler: Option<Handle<crate::Expression>>,
@@ -290,15 +300,8 @@ impl super::super::Validator {
         Ok(stages)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "image load expression fields plus function, module, info, and resolver"
-    )]
     pub(super) fn validate_image_load(
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
         sparse: Option<Handle<crate::Type>>,
         function: &crate::Function,
@@ -306,6 +309,12 @@ impl super::super::Validator {
         info: &FunctionInfo,
         resolver: &ExpressionTypeResolver,
     ) -> Result<ShaderStages, ExpressionError> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         use crate::{ImageClass as Ic, Scalar as Sc, ScalarKind as Sk, TypeInner as Ti};
 
         let ty = Self::global_var_ty(module, function, info, image)?;
@@ -485,21 +494,20 @@ impl super::super::Validator {
         Ok(ShaderStages::all())
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "image footprint expression fields plus module and resolver"
-    )]
     pub(super) fn validate_image_footprint(
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        granularity: Handle<crate::Expression>,
-        coarse: Handle<crate::Expression>,
-        level: crate::SampleLevel,
-        min_lod: Option<Handle<crate::Expression>>,
-        ty: Handle<crate::Type>,
+        params: ImageFootprintParams,
         module: &crate::Module,
         resolver: &ExpressionTypeResolver,
     ) -> Result<ShaderStages, ExpressionError> {
+        let ImageFootprintParams {
+            image,
+            coordinate,
+            granularity,
+            coarse,
+            level,
+            min_lod,
+            ty,
+        } = params;
         use crate::{Scalar as Sc, TypeInner as Ti};
 
         let Ti::SampledImage {

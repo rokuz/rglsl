@@ -280,22 +280,10 @@ impl super::Validator {
                 Self::validate_expression_handle(handle, expressions)?;
             }
 
-            for handle_and_expr in expressions.iter() {
-                Self::validate_expression_handles(
-                    handle_and_expr,
-                    constants,
-                    overrides,
-                    types,
-                    local_variables,
-                    global_variables,
-                    arguments,
-                    functions,
-                    function_handle,
-                )?;
-            }
-
-            Self::validate_block_handles(
-                body,
+            let checker = HandleChecker {
+                dependent: None,
+                global: false,
+                max_type: None,
                 expressions,
                 constants,
                 overrides,
@@ -303,8 +291,12 @@ impl super::Validator {
                 local_variables,
                 global_variables,
                 functions,
-                function_handle,
-            )?;
+                current_function: function_handle,
+            };
+            for (handle, expression) in expressions.iter() {
+                checker.check_expression(handle, expression, arguments)?;
+            }
+            checker.check_block(body)?;
 
             Ok(())
         };
@@ -571,74 +563,9 @@ impl super::Validator {
         expression.visit(&mut checker)?;
         Ok(checker.max_type)
     }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
-    fn validate_expression_handles(
-        (handle, expression): (Handle<crate::Expression>, &crate::Expression),
-        constants: &Arena<crate::Constant>,
-        overrides: &Arena<crate::Override>,
-        types: &UniqueArena<crate::Type>,
-        local_variables: &Arena<crate::LocalVariable>,
-        global_variables: &Arena<crate::GlobalVariable>,
-        arguments: &[crate::FunctionArgument],
-        functions: &Arena<crate::Function>,
-        current_function: Option<Handle<crate::Function>>,
-    ) -> Result<(), InvalidHandleError> {
-        let mut checker = HandleChecker {
-            dependent: Some(handle),
-            global: false,
-            max_type: None,
-            expressions: &Arena::new(),
-            constants,
-            overrides,
-            types,
-            local_variables,
-            global_variables,
-            functions,
-            current_function,
-        };
-        HandleChecker::check_argument(expression, arguments)?;
-        expression.visit(&mut checker)
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
-    fn validate_block_handles(
-        block: &crate::Block,
-        expressions: &Arena<crate::Expression>,
-        constants: &Arena<crate::Constant>,
-        overrides: &Arena<crate::Override>,
-        types: &UniqueArena<crate::Type>,
-        local_variables: &Arena<crate::LocalVariable>,
-        global_variables: &Arena<crate::GlobalVariable>,
-        functions: &Arena<crate::Function>,
-        current_function: Option<Handle<crate::Function>>,
-    ) -> Result<(), InvalidHandleError> {
-        let mut checker = HandleChecker {
-            dependent: None,
-            global: false,
-            max_type: None,
-            expressions,
-            constants,
-            overrides,
-            types,
-            local_variables,
-            global_variables,
-            functions,
-            current_function,
-        };
-        for statement in block.walk() {
-            statement.visit(&mut checker)?;
-        }
-        Ok(())
-    }
 }
 
+#[derive(Clone, Copy)]
 struct HandleChecker<'r> {
     dependent: Option<Handle<crate::Expression>>,
     global: bool,
@@ -654,6 +581,29 @@ struct HandleChecker<'r> {
 }
 
 impl HandleChecker<'_> {
+    fn check_expression(
+        &self,
+        handle: Handle<crate::Expression>,
+        expression: &crate::Expression,
+        arguments: &[crate::FunctionArgument],
+    ) -> Result<(), InvalidHandleError> {
+        let mut checker = HandleChecker {
+            dependent: Some(handle),
+            expressions: &Arena::new(),
+            ..*self
+        };
+        Self::check_argument(expression, arguments)?;
+        expression.visit(&mut checker)
+    }
+
+    fn check_block(&self, block: &crate::Block) -> Result<(), InvalidHandleError> {
+        let mut checker = *self;
+        for statement in block.walk() {
+            statement.visit(&mut checker)?;
+        }
+        Ok(())
+    }
+
     fn check_argument(
         expression: &crate::Expression,
         arguments: &[crate::FunctionArgument],

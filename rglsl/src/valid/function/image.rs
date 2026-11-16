@@ -5,21 +5,20 @@ use crate::arena::Handle;
 use crate::span::{AddSpan as _, WithSpan};
 
 impl super::super::Validator {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the fields of Statement::ImageStore"
-    )]
     pub(super) fn validate_image_store(
         &self,
-        image: Handle<crate::Expression>,
-        coordinate: Handle<crate::Expression>,
-        array_index: Option<Handle<crate::Expression>>,
-        sample: Option<Handle<crate::Expression>>,
+        texel: crate::Texel,
         level: Option<Handle<crate::Expression>>,
         value: Handle<crate::Expression>,
         span: crate::Span,
         context: &BlockContext,
     ) -> Result<(), WithSpan<FunctionError>> {
+        let crate::Texel {
+            image,
+            coordinate,
+            array_index,
+            sample,
+        } = texel;
         use crate::{Expression as E, TypeInner as Ti};
         let global_ty;
         let image_ty;

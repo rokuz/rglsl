@@ -13,6 +13,14 @@ const fn pick(flavor: HitObjectFlavor, nv: Op, ext: Op) -> Op {
     }
 }
 
+pub(in super::super) struct MicroTriangleVertexQuery {
+    pub(in super::super) acceleration_structure: Handle<crate::Expression>,
+    pub(in super::super) instance_id: Handle<crate::Expression>,
+    pub(in super::super) geometry_index: Handle<crate::Expression>,
+    pub(in super::super) primitive_index: Handle<crate::Expression>,
+    pub(in super::super) barycentric: Handle<crate::Expression>,
+}
+
 impl BlockContext<'_> {
     fn hit_object_flavor(
         &self,
@@ -388,21 +396,20 @@ impl BlockContext<'_> {
         Ok(id)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the arguments are the parts of one request"
-    )]
     pub(in super::super) fn write_fetch_micro_triangle_vertex(
         &mut self,
-        acceleration_structure: Handle<crate::Expression>,
-        instance_id: Handle<crate::Expression>,
-        geometry_index: Handle<crate::Expression>,
-        primitive_index: Handle<crate::Expression>,
-        barycentric: Handle<crate::Expression>,
+        params: MicroTriangleVertexQuery,
         value: crate::MicroTriangleVertexValue,
         result_type_id: spirv::Word,
         block: &mut Block,
     ) -> Result<spirv::Word, Error> {
+        let MicroTriangleVertexQuery {
+            acceleration_structure,
+            instance_id,
+            geometry_index,
+            primitive_index,
+            barycentric,
+        } = params;
         self.writer.require(&feature::DISPLACEMENT_MICROMAP_FETCH)?;
         let mut operands = alloc::vec![self.get_handle_id(acceleration_structure)?];
         operands.extend(self.ids(&[instance_id, geometry_index, primitive_index, barycentric])?);
