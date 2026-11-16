@@ -1,256 +1,54 @@
-use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
-use alloc::vec::Vec;
-use core::any::Any;
 use core::fmt;
 
-const INLINE_NESTING: u8 = 1;
-
-pub trait Decode: Sized + 'static {
-    fn decode(input: &mut Input<'_>) -> Result<Decoded<Self>, Error>;
+pub trait Decode: Sized {
+    fn decode(input: &mut Input<'_>) -> Result<Self, Error>;
 }
 
-pub enum Decoded<T> {
-    Value(T),
-    Frame(Child),
+pub fn from_str<T: Decode>(text: &str) -> Result<T, Error> {
+    let mut input = Input { text, at: 0 };
+    let value = T::decode(&mut input)?;
+    input.end()?;
+    Ok(value)
 }
-
-impl<T> fmt::Debug for Decoded<T> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match *self {
-            Self::Value(_) => "Value",
-            Self::Frame(_) => "Frame",
-        })
-    }
-}
-
-pub type Child = Box<dyn Frame>;
-
-pub enum Step {
-    Push(Child),
-    Done,
-}
-
-impl fmt::Debug for Step {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match *self {
-            Self::Push(_) => "Push",
-            Self::Done => "Done",
-        })
-    }
-}
-
-pub trait Frame {
-    fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error>;
-
-    fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error>;
-
-    fn build(self: Box<Self>, input: &mut Input<'_>, slot: &mut dyn Any) -> Result<(), Error>;
-}
-
-pub trait Record: Sized + 'static {
-    type Value: 'static;
-
-    fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error>;
-
-    fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error>;
-
-    fn value(self, input: &mut Input<'_>) -> Result<Self::Value, Error>;
-}
-
-struct Held<R> {
-    record: R,
-    held: Option<Child>,
-}
-
-impl<R: Record> Frame for Held<R> {
-    fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error> {
-        match self.held.take() {
-            Some(child) => Ok(Step::Push(child)),
-            None => self.record.step(input),
-        }
-    }
-
-    fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error> {
-        self.record.accept(child, input)
-    }
-
-    fn build(self: Box<Self>, input: &mut Input<'_>, slot: &mut dyn Any) -> Result<(), Error> {
-        let Some(slot) = slot.downcast_mut::<Option<R::Value>>() else {
-            return Err(input.internal());
-        };
-        *slot = Some(self.record.value(input)?);
-        Ok(())
-    }
-}
-
-pub fn start<R: Record>(mut record: R, input: &mut Input<'_>) -> Result<Decoded<R::Value>, Error> {
-    let Some(budget) = input.budget.checked_sub(1) else {
-        return Ok(Decoded::Frame(Box::new(Held { record, held: None })));
-    };
-    input.budget = budget;
-    let stepped = record.step(input);
-    input.budget = budget + 1;
-    match stepped? {
-        Step::Done => record.value(input).map(Decoded::Value),
-        Step::Push(child) => Ok(Decoded::Frame(Box::new(Held {
-            record,
-            held: Some(child),
-        }))),
-    }
-}
-
-pub fn built<T: 'static>(frame: Child, input: &mut Input<'_>) -> Result<T, Error> {
-    let mut slot: Option<T> = None;
-    frame.build(input, &mut slot)?;
-    slot.ok_or_else(|| input.internal())
-}
-
-pub type FieldDecoder<R> = fn(&mut R, &mut Input<'_>) -> Result<Option<Child>, Error>;
-
-pub type FieldAcceptor<R> = fn(&mut R, Child, &mut Input<'_>) -> Result<(), Error>;
-
-pub type VariantDecoder<T> = fn(&mut Input<'_>) -> Result<Decoded<T>, Error>;
 
 pub fn field<T: Decode>(
     slot: &mut Option<T>,
     input: &mut Input<'_>,
     owner: &str,
     name: &str,
-) -> Result<Option<Child>, Error> {
+) -> Result<(), Error> {
     if slot.is_some() {
         return Err(input.duplicate_field(owner, name));
     }
-    element(slot, input)
-}
-
-pub fn element<T: Decode>(
-    slot: &mut Option<T>,
-    input: &mut Input<'_>,
-) -> Result<Option<Child>, Error> {
-    match T::decode(input)? {
-        Decoded::Value(value) => {
-            *slot = Some(value);
-            Ok(None)
-        }
-        Decoded::Frame(frame) => Ok(Some(frame)),
-    }
-}
-
-pub fn fill<T: 'static>(
-    slot: &mut Option<T>,
-    child: Child,
-    input: &mut Input<'_>,
-) -> Result<(), Error> {
-    *slot = Some(built(child, input)?);
+    *slot = Some(T::decode(input)?);
     Ok(())
 }
 
-struct Then<T, W> {
-    value: Option<T>,
-    started: bool,
-    close: bool,
-    wrap: fn(T) -> W,
-}
-
-impl<T: Decode, W: 'static> Record for Then<T, W> {
-    type Value = W;
-
-    fn step(&mut self, input: &mut Input<'_>) -> Result<Step, Error> {
-        if !self.started {
-            self.started = true;
-            match T::decode(input)? {
-                Decoded::Value(value) => self.value = Some(value),
-                Decoded::Frame(frame) => return Ok(Step::Push(frame)),
-            }
-        }
-        if self.close {
-            input.expect(b')')?;
-        }
-        Ok(Step::Done)
-    }
-
-    fn accept(&mut self, child: Child, input: &mut Input<'_>) -> Result<(), Error> {
-        self.value = Some(built::<T>(child, input)?);
-        Ok(())
-    }
-
-    fn value(self, input: &mut Input<'_>) -> Result<W, Error> {
-        self.value.map(self.wrap).ok_or_else(|| input.internal())
-    }
-}
-
-pub fn wrap<T: Decode, W: 'static>(
+pub fn element<T: Decode>(
     input: &mut Input<'_>,
-    wrap: fn(T) -> W,
-    close: bool,
-) -> Result<Decoded<W>, Error> {
-    let mut then = Then {
-        value: None,
-        started: false,
-        close,
-        wrap,
-    };
-    let Some(budget) = input.budget.checked_sub(1) else {
-        return Ok(Decoded::Frame(Box::new(Held {
-            record: then,
-            held: None,
-        })));
-    };
-    then.started = true;
-    input.budget = budget;
-    let decoded = T::decode(input);
-    input.budget = budget + 1;
-    match decoded? {
-        Decoded::Value(value) => {
-            if close {
-                input.expect(b')')?;
-            }
-            Ok(Decoded::Value(wrap(value)))
-        }
-        Decoded::Frame(frame) => Ok(Decoded::Frame(Box::new(Held {
-            record: then,
-            held: Some(frame),
-        }))),
+    more: &mut bool,
+    owner: &str,
+    count: usize,
+) -> Result<T, Error> {
+    if input.next_element(more, b')')? {
+        T::decode(input)
+    } else {
+        Err(input.length(owner, count))
     }
 }
 
-pub fn from_str<T: Decode>(text: &str) -> Result<T, Error> {
-    let mut input = Input {
-        text,
-        at: 0,
-        budget: INLINE_NESTING,
-    };
-    let value = match T::decode(&mut input)? {
-        Decoded::Value(value) => value,
-        Decoded::Frame(root) => {
-            let root = drive(root, &mut input)?;
-            built::<T>(root, &mut input)?
-        }
-    };
-    input.end()?;
-    Ok(value)
-}
-
-fn drive(root: Child, input: &mut Input<'_>) -> Result<Child, Error> {
-    let mut frames = Vec::from([root]);
-    loop {
-        let Some(top) = frames.last_mut() else {
-            return Err(input.internal());
-        };
-        match top.step(input)? {
-            Step::Push(child) => frames.push(child),
-            Step::Done => {
-                let Some(done) = frames.pop() else {
-                    return Err(input.internal());
-                };
-                match frames.last_mut() {
-                    Some(parent) => parent.accept(done, input)?,
-                    None => return Ok(done),
-                }
-            }
-        }
+pub fn no_more_elements(
+    input: &mut Input<'_>,
+    more: &mut bool,
+    owner: &str,
+    count: usize,
+) -> Result<(), Error> {
+    if input.next_element(more, b')')? {
+        Err(input.length(owner, count))
+    } else {
+        Ok(())
     }
 }
 
@@ -277,7 +75,6 @@ impl core::error::Error for Error {}
 pub struct Input<'t> {
     text: &'t str,
     at: usize,
-    budget: u8,
 }
 
 fn quoted(names: &[&str]) -> String {
@@ -304,10 +101,6 @@ impl<'t> Input<'t> {
                 .get(line_start..)
                 .map_or(1, |line| line.chars().count() + 1),
         }
-    }
-
-    fn internal(&self) -> Error {
-        self.error("internal error: a decoded value has an unexpected type")
     }
 
     fn found(&self) -> String {

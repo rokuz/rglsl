@@ -106,11 +106,18 @@ fn fields_of(fields: &Fields) -> syn::Result<(Style, Vec<Field<'_>>)> {
             Some(ref ident) => (Member::Named(ident.clone()), ident.unraw().to_string()),
             None => (Member::Unnamed(syn::Index::from(index)), index.to_string()),
         };
+        let attributes = field_attributes(field)?;
+        if style == Style::Positional && attributes.default {
+            return Err(syn::Error::new(
+                field.span(),
+                "#[rglo(default)] and #[rglo(skip_if)] need a named field",
+            ));
+        }
         collected.push(Field {
             member,
             name,
             ty: &field.ty,
-            attributes: field_attributes(field)?,
+            attributes,
             binding: format_ident!("__field{}", index),
         });
     }
@@ -173,7 +180,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
 fn flags(name: &Ident, owner: &str) -> TokenStream {
     quote! {
         impl __rglo::Encode for #name {
-            fn encode<'a>(&'a self, out: &mut __rglo::Encoder<'a>) {
+            fn encode(&self, out: &mut __rglo::Encoder) {
                 __rglo::encode_flags(self, out);
             }
         }
@@ -181,7 +188,7 @@ fn flags(name: &Ident, owner: &str) -> TokenStream {
         impl __rglo::Decode for #name {
             fn decode(
                 input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<__rglo::Decoded<Self>, __rglo::Error> {
+            ) -> ::core::result::Result<Self, __rglo::Error> {
                 __rglo::decode_flags(input, #owner)
             }
         }
@@ -201,30 +208,27 @@ fn transparent(
         ));
     };
     let member = &field.member;
-    let ty = field.ty;
     let skipped = fields
         .iter()
         .filter(|field| field.attributes.skip)
         .map(|field| &field.member);
     Ok(quote! {
         impl __rglo::Encode for #name {
-            fn encode<'a>(&'a self, out: &mut __rglo::Encoder<'a>) {
-                out.value(&self.#member);
+            fn encode(&self, out: &mut __rglo::Encoder) {
+                ::rglsl_types::stack::recurse(|| __rglo::Encode::encode(&self.#member, out));
             }
         }
 
         impl __rglo::Decode for #name {
             fn decode(
                 input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<__rglo::Decoded<Self>, __rglo::Error> {
-                __rglo::wrap::<#ty, #name>(
-                    input,
-                    |value| #name {
-                        #member: value,
+            ) -> ::core::result::Result<Self, __rglo::Error> {
+                ::rglsl_types::stack::recurse(|| {
+                    ::core::result::Result::Ok(#name {
+                        #member: __rglo::Decode::decode(input)?,
                         #(#skipped: ::core::default::Default::default(),)*
-                    },
-                    false,
-                )
+                    })
+                })
             }
         }
     })
@@ -292,7 +296,7 @@ fn encode_fields(
                 }
                 flush(&mut text, &mut statements);
                 statements.push(quote! {
-                    out.value(#value);
+                    __rglo::Encode::encode(#value, out);
                     #mark
                 });
             }
@@ -306,7 +310,7 @@ fn encode_fields(
                 statements.push(quote! {
                     if !#skip_if(#value) {
                         out.token(#token);
-                        out.value(#value);
+                        __rglo::Encode::encode(#value, out);
                         #mark
                     }
                 });
@@ -325,210 +329,86 @@ fn flush(text: &mut String, statements: &mut Vec<TokenStream>) {
     }
 }
 
-struct RecordParts {
-    items: TokenStream,
-    new: TokenStream,
-}
-
-fn index_of<'n>(names: impl Iterator<Item = &'n str>) -> TokenStream {
-    let arms = names
-        .enumerate()
-        .map(|(index, name)| quote!(#name => ::core::option::Option::Some(#index),));
-    quote! {
-        match name {
-            #(#arms)*
-            _ => ::core::option::Option::None,
+fn decode_named(owner: &str, fields: &[Field<'_>], construct: &TokenStream) -> TokenStream {
+    let kept = kept(fields);
+    let slots: Vec<&Ident> = kept.iter().map(|field| &field.binding).collect();
+    let types: Vec<&Type> = kept.iter().map(|field| field.ty).collect();
+    let names: Vec<&str> = kept.iter().map(|field| field.name.as_str()).collect();
+    let values = fields.iter().map(|field| {
+        let member = &field.member;
+        let slot = &field.binding;
+        let name = &field.name;
+        if field.attributes.skip {
+            quote!(#member: ::core::default::Default::default(),)
+        } else if field.attributes.default {
+            quote!(#member: #slot.unwrap_or_default(),)
+        } else {
+            quote! {
+                #member: match #slot {
+                    ::core::option::Option::Some(value) => value,
+                    ::core::option::Option::None => {
+                        return ::core::result::Result::Err(input.missing_field(#owner, #name));
+                    }
+                },
+            }
         }
+    });
+    quote! {
+        const FIELDS: &[&str] = &[#(#names),*];
+        #(let mut #slots: ::core::option::Option<#types> = ::core::option::Option::None;)*
+        let mut more = false;
+        while input.next_element(&mut more, b')')? {
+            let name = input.field_name()?;
+            match name {
+                #(#names => __rglo::field(&mut #slots, input, #owner, #names)?,)*
+                _ => return ::core::result::Result::Err(input.unknown_field(#owner, name, FIELDS)),
+            }
+        }
+        ::core::result::Result::Ok(#construct { #(#values)* })
     }
 }
 
-fn record(
-    record: &Ident,
-    value: &Ident,
-    owner: &str,
-    style: Style,
-    fields: &[Field<'_>],
-    construct: &TokenStream,
-) -> RecordParts {
-    let kept = kept(fields);
-    let slots: Vec<Ident> = kept.iter().map(|field| field.binding.clone()).collect();
-    let types: Vec<&Type> = kept.iter().map(|field| field.ty).collect();
-    let names: Vec<&str> = kept.iter().map(|field| field.name.as_str()).collect();
-    let count = kept.len();
-    let decoders = kept.iter().map(|field| {
-        let slot = &field.binding;
-        let name = &field.name;
-        match style {
-            Style::Named => quote! {
-                |record: &mut #record, input: &mut __rglo::Input<'_>| {
-                    __rglo::field(&mut record.#slot, input, #owner, #name)
-                }
-            },
-            Style::Positional => quote! {
-                |record: &mut #record, input: &mut __rglo::Input<'_>| {
-                    __rglo::element(&mut record.#slot, input)
-                }
-            },
-        }
-    });
-    let acceptors = kept.iter().map(|field| {
-        let slot = &field.binding;
-        quote! {
-            |record: &mut #record, child: __rglo::Child, input: &mut __rglo::Input<'_>| {
-                __rglo::fill(&mut record.#slot, child, input)
-            }
-        }
-    });
-    let step = match style {
-        Style::Named => {
-            let index = index_of(names.iter().copied());
-            quote! {
-                const FIELDS: &[&str] = &[#(#names),*];
-                while input.next_element(&mut self.more, b')')? {
-                    let name = input.field_name()?;
-                    let index: ::core::option::Option<usize> = #index;
-                    let Some((index, decode)) =
-                        index.and_then(|index| Some((index, *Self::DECODERS.get(index)?)))
-                    else {
-                        return ::core::result::Result::Err(
-                            input.unknown_field(#owner, name, FIELDS),
-                        );
-                    };
-                    if let ::core::option::Option::Some(frame) = decode(self, input)? {
-                        self.pending = index;
-                        return ::core::result::Result::Ok(__rglo::Step::Push(frame));
-                    }
-                }
-                ::core::result::Result::Ok(__rglo::Step::Done)
-            }
-        }
-        Style::Positional => quote! {
-            while input.next_element(&mut self.more, b')')? {
-                let Some(decode) = Self::DECODERS.get(self.pending) else {
-                    return ::core::result::Result::Err(input.length(#owner, #count));
-                };
-                self.pending += 1;
-                if let ::core::option::Option::Some(frame) = decode(self, input)? {
-                    return ::core::result::Result::Ok(__rglo::Step::Push(frame));
-                }
-            }
-            ::core::result::Result::Ok(__rglo::Step::Done)
-        },
-    };
-    let accepted = match style {
-        Style::Named => quote!(self.pending),
-        Style::Positional => quote!(self.pending.wrapping_sub(1)),
-    };
+fn decode_positional(owner: &str, fields: &[Field<'_>], construct: &TokenStream) -> TokenStream {
+    let count = kept(fields).len();
     let values = fields.iter().map(|field| {
         let member = &field.member;
         if field.attributes.skip {
-            return quote!(#member: ::core::default::Default::default(),);
-        }
-        let slot = &field.binding;
-        if field.attributes.default {
-            return quote!(#member: #slot.unwrap_or_default(),);
-        }
-        let missing = match style {
-            Style::Named => {
-                let name = &field.name;
-                quote!(input.missing_field(#owner, #name))
-            }
-            Style::Positional => quote!(input.length(#owner, #count)),
-        };
-        quote! {
-            #member: match #slot {
-                ::core::option::Option::Some(value) => value,
-                ::core::option::Option::None => return ::core::result::Result::Err(#missing),
-            },
+            quote!(#member: ::core::default::Default::default(),)
+        } else {
+            quote!(#member: __rglo::element(input, &mut more, #owner, #count)?,)
         }
     });
-    let items = quote! {
-        #[allow(non_camel_case_types)]
-        struct #record {
-            more: bool,
-            pending: usize,
-            #(#slots: ::core::option::Option<#types>,)*
-        }
-
-        impl #record {
-            const DECODERS: &'static [__rglo::FieldDecoder<Self>] = &[#(#decoders),*];
-            const ACCEPTORS: &'static [__rglo::FieldAcceptor<Self>] = &[#(#acceptors),*];
-        }
-
-        impl __rglo::Record for #record {
-            type Value = #value;
-
-            fn step(
-                &mut self,
-                input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<__rglo::Step, __rglo::Error> {
-                #step
-            }
-
-            fn accept(
-                &mut self,
-                child: __rglo::Child,
-                input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<(), __rglo::Error> {
-                match Self::ACCEPTORS.get(#accepted) {
-                    ::core::option::Option::Some(accept) => accept(self, child, input),
-                    ::core::option::Option::None => {
-                        ::core::result::Result::Err(input.error("a decoded value has no field"))
-                    }
-                }
-            }
-
-            fn value(
-                self,
-                input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<#value, __rglo::Error> {
-                let #record { #(#slots,)* .. } = self;
-                ::core::result::Result::Ok(#construct { #(#values)* })
-            }
-        }
-    };
-    RecordParts {
-        items,
-        new: quote! {
-            #record {
-                more: false,
-                pending: 0,
-                #(#slots: ::core::option::Option::None,)*
-            }
-        },
+    quote! {
+        let mut more = false;
+        let value = #construct { #(#values)* };
+        __rglo::no_more_elements(input, &mut more, #owner, #count)?;
+        ::core::result::Result::Ok(value)
     }
 }
 
 fn structure(name: &Ident, owner: &str, fields: &[Field<'_>]) -> TokenStream {
-    let kept_fields = kept(fields);
-    let encode = encode_fields(String::from("("), Style::Named, &kept_fields, &|field| {
+    let encode = encode_fields(String::from("("), Style::Named, &kept(fields), &|field| {
         let member = &field.member;
         quote!(&self.#member)
     });
-    let record_name = format_ident!("__RgloRecord");
-    let RecordParts { items, new } = record(
-        &record_name,
-        name,
-        owner,
-        Style::Named,
-        fields,
-        &quote!(#name),
-    );
+    let decode = decode_named(owner, fields, &quote!(#name));
     quote! {
         impl __rglo::Encode for #name {
-            fn encode<'a>(&'a self, out: &mut __rglo::Encoder<'a>) {
-                #encode
+            fn encode(&self, out: &mut __rglo::Encoder) {
+                ::rglsl_types::stack::recurse(|| {
+                    #encode
+                });
             }
         }
-
-        #items
 
         impl __rglo::Decode for #name {
             fn decode(
                 input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<__rglo::Decoded<Self>, __rglo::Error> {
-                input.expect(b'(')?;
-                __rglo::start(#new, input)
+            ) -> ::core::result::Result<Self, __rglo::Error> {
+                ::rglsl_types::stack::recurse(|| {
+                    input.expect(b'(')?;
+                    #decode
+                })
             }
         }
     }
@@ -536,8 +416,8 @@ fn structure(name: &Ident, owner: &str, fields: &[Field<'_>]) -> TokenStream {
 
 fn enumeration(name: &Ident, owner: &str, data: &syn::DataEnum) -> syn::Result<TokenStream> {
     let mut encode_arms = Vec::new();
+    let mut decode_arms = Vec::new();
     let mut decoders = Vec::new();
-    let mut items = Vec::new();
     let mut variant_names = Vec::new();
     for (index, variant) in data.variants.iter().enumerate() {
         let ident = &variant.ident;
@@ -551,102 +431,99 @@ fn enumeration(name: &Ident, owner: &str, data: &syn::DataEnum) -> syn::Result<T
             quote!(#member: ref #binding)
         });
         let pattern = quote!(#name::#ident { #(#bindings,)* .. });
-        let skipped: Vec<&Member> = fields
-            .iter()
-            .filter(|field| field.attributes.skip)
-            .map(|field| &field.member)
-            .collect();
-        let qualified = format!("{owner}::{variant_name}");
-        variant_names.push(variant_name);
+        let construct = quote!(#name::#ident);
         if kept_fields.is_empty() && (style == Style::Positional || variant.fields.is_empty()) {
+            let skipped = fields.iter().map(|field| &field.member);
             encode_arms.push(quote!(#pattern => out.token(#written),));
-            decoders.push(quote! {
-                |_: &mut __rglo::Input<'_>| {
-                    ::core::result::Result::Ok(__rglo::Decoded::Value(
-                        #name::#ident { #(#skipped: ::core::default::Default::default(),)* },
-                    ))
-                }
+            decode_arms.push(quote! {
+                #variant_name => ::core::result::Result::Ok(
+                    #construct { #(#skipped: ::core::default::Default::default(),)* },
+                ),
             });
+            variant_names.push(variant_name);
             continue;
         }
-        if let (Style::Positional, &[field]) = (style, kept_fields.as_slice()) {
+        let qualified = format!("{owner}::{variant_name}");
+        let decode = if let (Style::Positional, &[field]) = (style, kept_fields.as_slice()) {
             let binding = &field.binding;
-            let member = &field.member;
-            let ty = field.ty;
             let open = format!("{written}(");
             encode_arms.push(quote! {
                 #pattern => {
                     out.token(#open);
-                    out.value(#binding);
+                    __rglo::Encode::encode(#binding, out);
                     out.token(")");
                 }
             });
-            decoders.push(quote! {
-                |input: &mut __rglo::Input<'_>| {
-                    input.expect(b'(')?;
-                    __rglo::wrap::<#ty, #name>(
-                        input,
-                        |value| #name::#ident {
-                            #member: value,
-                            #(#skipped: ::core::default::Default::default(),)*
-                        },
-                        true,
-                    )
+            let values = fields.iter().map(|field| {
+                let member = &field.member;
+                if field.attributes.skip {
+                    quote!(#member: ::core::default::Default::default(),)
+                } else {
+                    quote!(#member: __rglo::Decode::decode(input)?,)
                 }
             });
-            continue;
-        }
-        let encode = encode_fields(format!("{written}("), style, &kept_fields, &|field| {
-            let binding = &field.binding;
-            quote!(#binding)
-        });
-        encode_arms.push(quote!(#pattern => { #encode }));
-        let record_name = format_ident!("__RgloRecord{}", index);
-        let RecordParts {
-            items: record_items,
-            new,
-        } = record(
-            &record_name,
-            name,
-            &qualified,
-            style,
-            &fields,
-            &quote!(#name::#ident),
-        );
-        items.push(record_items);
+            quote! {
+                let value = #construct { #(#values)* };
+                input.expect(b')')?;
+                ::core::result::Result::Ok(value)
+            }
+        } else {
+            let encode = encode_fields(format!("{written}("), style, &kept_fields, &|field| {
+                let binding = &field.binding;
+                quote!(#binding)
+            });
+            encode_arms.push(quote!(#pattern => { #encode }));
+            match style {
+                Style::Named => decode_named(&qualified, &fields, &construct),
+                Style::Positional => decode_positional(&qualified, &fields, &construct),
+            }
+        };
+        let decoder = format_ident!("__rglo_variant{}", index);
         decoders.push(quote! {
-            |input: &mut __rglo::Input<'_>| {
+            fn #decoder(
+                input: &mut __rglo::Input<'_>,
+            ) -> ::core::result::Result<#name, __rglo::Error> {
                 input.expect(b'(')?;
-                __rglo::start(#new, input)
+                #decode
             }
         });
+        decode_arms.push(quote!(#variant_name => #decoder(input),));
+        variant_names.push(variant_name);
     }
-    let index = index_of(variant_names.iter().map(String::as_str));
+    let encode = quote! {
+        match *self {
+            #(#encode_arms)*
+        }
+    };
+    let decode = quote! {
+        const VARIANTS: &[&str] = &[#(#variant_names),*];
+        let name = input.identifier()?;
+        match name {
+            #(#decode_arms)*
+            _ => ::core::result::Result::Err(input.unknown_variant(#owner, name, VARIANTS)),
+        }
+    };
+    let (encode, decode) = if decoders.is_empty() {
+        (encode, decode)
+    } else {
+        (
+            quote!(::rglsl_types::stack::recurse(|| #encode);),
+            quote!(::rglsl_types::stack::recurse(|| { #decode })),
+        )
+    };
     Ok(quote! {
         impl __rglo::Encode for #name {
-            fn encode<'a>(&'a self, out: &mut __rglo::Encoder<'a>) {
-                match *self {
-                    #(#encode_arms)*
-                }
+            fn encode(&self, out: &mut __rglo::Encoder) {
+                #encode
             }
         }
-
-        #(#items)*
 
         impl __rglo::Decode for #name {
             fn decode(
                 input: &mut __rglo::Input<'_>,
-            ) -> ::core::result::Result<__rglo::Decoded<Self>, __rglo::Error> {
-                const VARIANTS: &[&str] = &[#(#variant_names),*];
-                const DECODERS: &[__rglo::VariantDecoder<#name>] = &[#(#decoders),*];
-                let name = input.identifier()?;
-                let index: ::core::option::Option<usize> = #index;
-                match index.and_then(|index| DECODERS.get(index)) {
-                    ::core::option::Option::Some(decode) => decode(input),
-                    ::core::option::Option::None => ::core::result::Result::Err(
-                        input.unknown_variant(#owner, name, VARIANTS),
-                    ),
-                }
+            ) -> ::core::result::Result<Self, __rglo::Error> {
+                #(#decoders)*
+                #decode
             }
         }
     })

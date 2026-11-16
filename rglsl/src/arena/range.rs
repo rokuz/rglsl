@@ -30,7 +30,7 @@ pub struct Range<T> {
 }
 
 impl<T> rglo::Encode for Range<T> {
-    fn encode<'a>(&'a self, out: &mut rglo::Encoder<'a>) {
+    fn encode(&self, out: &mut rglo::Encoder) {
         out.token("(start:");
         out.unsigned(u64::from(self.inner.start));
         out.token(",end:");
@@ -39,8 +39,8 @@ impl<T> rglo::Encode for Range<T> {
     }
 }
 
-impl<T: 'static> rglo::Decode for Range<T> {
-    fn decode(input: &mut rglo::Input<'_>) -> Result<rglo::Decoded<Self>, rglo::Error> {
+impl<T> rglo::Decode for Range<T> {
+    fn decode(input: &mut rglo::Input<'_>) -> Result<Self, rglo::Error> {
         const FIELDS: [&str; 2] = ["start", "end"];
         input.expect(b'(')?;
         let mut bounds = [None, None];
@@ -60,10 +60,10 @@ impl<T: 'static> rglo::Decode for Range<T> {
             *slot = Some(input.unsigned("u32")?);
         }
         match bounds {
-            [Some(start), Some(end)] => Ok(rglo::Decoded::Value(Self {
+            [Some(start), Some(end)] => Ok(Self {
                 inner: start..end,
                 marker: PhantomData,
-            })),
+            }),
             [None, _] => Err(input.missing_field("Range", "start")),
             [_, None] => Err(input.missing_field("Range", "end")),
         }
