@@ -9,6 +9,11 @@ use hashbrown::{HashMap, HashSet};
 
 const ALLOWLIST: &str = "xtask/recursion-allowed.toml";
 const SANCTIONED: &str = "rglsl_types::stack::recurse";
+const GUARDS: [&str; 3] = [SANCTIONED, "stacker::maybe_grow", "stacker::grow"];
+const GUARD_DEPTH: usize = 3;
+const DROP_GLUE: &str = "core::ptr::drop_in_place<";
+const DROP_IMPL: &str = " as core::ops::drop::Drop>::drop";
+const DROP_IMPL_FOR: &str = "<impl core::ops::drop::Drop for ";
 const SHOWN_MEMBERS: usize = 40;
 
 pub struct Options {
@@ -38,13 +43,19 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     let names: Vec<String> = graph.symbols.iter().map(|s| demangle(s)).collect();
     let workspace: Vec<bool> = names.iter().map(|n| mentions(n, &crates)).collect();
     let sanctioned: Vec<bool> = names.iter().map(|n| n.starts_with(SANCTIONED)).collect();
+    let guarded = guarded_drops(&names, &graph.edges);
+    let removed: Vec<bool> = sanctioned
+        .iter()
+        .zip(&guarded)
+        .map(|(&sanctioned, &guarded)| sanctioned || guarded)
+        .collect();
     let all = cycles(&graph.edges, &vec![false; names.len()]);
-    let residual = cycles(&graph.edges, &sanctioned);
+    let residual = cycles(&graph.edges, &removed);
     let workspace_cycle = |cycle: &&Vec<usize>| cycle.iter().any(|&n| workspace[n]);
     let all_count = all.iter().filter(workspace_cycle).count();
     let residual: Vec<&Vec<usize>> = residual.iter().filter(workspace_cycle).collect();
     println!(
-        "{} .ll files, {} functions, {} edges; {} workspace cycles, {} without {}",
+        "{} .ll files, {} functions, {} edges; {} workspace cycles, {} without {} and guarded drops",
         files.len(),
         names.len(),
         graph.edges.iter().map(Vec::len).sum::<usize>(),
@@ -52,6 +63,20 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         residual.len(),
         SANCTIONED,
     );
+    if options.verbose {
+        let mut types: Vec<&str> = names
+            .iter()
+            .zip(&guarded)
+            .filter(|&(_, &guarded)| guarded)
+            .filter_map(|(name, _)| drop_glue_type(name))
+            .filter(|ty| mentions(ty, &crates))
+            .collect();
+        types.sort_unstable();
+        types.dedup();
+        for ty in types {
+            println!("guarded drop: {ty}");
+        }
+    }
     let mut used = vec![0_usize; allowlist.entries.len()];
     let mut failures = 0;
     for cycle in residual {
@@ -73,6 +98,29 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
                 if options.verbose {
                     let entry = &allowlist.entries[index];
                     println!("allowed ({}): {}", entry.name, members.join(", "));
+                }
+            }
+            None if members.iter().all(|member| is_drop_glue(member)) => {
+                failures += 1;
+                let mut types: Vec<&str> = members
+                    .iter()
+                    .filter_map(|member| drop_glue_type(member))
+                    .filter(|ty| starts_with_crate(ty, &crates))
+                    .collect();
+                types.dedup();
+                println!(
+                    "\nrecursion: drop glue of recursive types without a guarded Drop: {}",
+                    types.join(", ")
+                );
+                println!(
+                    "  give one of them a Drop impl that moves the nested values out and drops \
+                     them inside {SANCTIONED}"
+                );
+                for member in members.iter().take(SHOWN_MEMBERS) {
+                    println!("    {member}");
+                }
+                if members.len() > SHOWN_MEMBERS {
+                    println!("    ... and {} more", members.len() - SHOWN_MEMBERS);
                 }
             }
             None => {
@@ -261,6 +309,72 @@ fn executable_ll(deps: &Path, executable: &Path) -> Result<PathBuf> {
         }
     }
     bail!("no LLVM IR for {}", executable.display())
+}
+
+fn starts_with_crate(name: &str, crates: &[String]) -> bool {
+    crates.iter().any(|krate| {
+        name.strip_prefix(krate.as_str())
+            .is_some_and(|rest| rest.starts_with("::"))
+    })
+}
+
+fn drop_glue_type(name: &str) -> Option<&str> {
+    name.strip_prefix(DROP_GLUE)?.strip_suffix('>')
+}
+
+fn drop_impl_type(name: &str) -> Option<&str> {
+    if let Some(ty) = name
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix(DROP_IMPL))
+    {
+        return Some(ty);
+    }
+    let at = name.find(DROP_IMPL_FOR)?;
+    name[at + DROP_IMPL_FOR.len()..].strip_suffix(">::drop")
+}
+
+fn is_drop_glue(name: &str) -> bool {
+    drop_glue_type(name).is_some() || drop_impl_type(name).is_some()
+}
+
+fn base_path(ty: &str) -> &str {
+    ty.find('<').map_or(ty, |at| &ty[..at])
+}
+
+fn guarded_drops(names: &[String], edges: &[Vec<usize>]) -> Vec<bool> {
+    let guard = |node: usize| GUARDS.iter().any(|guard| names[node].starts_with(guard));
+    let reaches_guard = |start: usize| {
+        let mut seen: HashSet<usize> = [start].into_iter().collect();
+        let mut frontier = vec![start];
+        for _ in 0..GUARD_DEPTH {
+            let mut next = Vec::new();
+            for node in frontier {
+                for &target in &edges[node] {
+                    if guard(target) {
+                        return true;
+                    }
+                    if drop_glue_type(&names[target]).is_none() && seen.insert(target) {
+                        next.push(target);
+                    }
+                }
+            }
+            frontier = next;
+        }
+        false
+    };
+    names
+        .iter()
+        .enumerate()
+        .map(|(node, name)| {
+            drop_glue_type(name).is_some_and(|ty| {
+                edges[node].iter().any(|&target| {
+                    drop_impl_type(&names[target])
+                        .is_some_and(|implemented| base_path(implemented) == base_path(ty))
+                        && reaches_guard(target)
+                })
+            })
+        })
+        .collect()
 }
 
 fn mentions(name: &str, crates: &[String]) -> bool {
@@ -573,6 +687,16 @@ impl Allowlist {
             if members.is_empty() {
                 bail!("{name}: `functions` is empty");
             }
+            if let Some(pattern) = members.iter().find(|pattern| {
+                [DROP_GLUE, DROP_IMPL, DROP_IMPL_FOR]
+                    .iter()
+                    .any(|every| every.contains(pattern.as_str()))
+            }) {
+                bail!(
+                    "{name}: `{pattern}` matches the drop glue of every type; name the types, \
+                     or give a recursive type a Drop impl through {SANCTIONED}"
+                );
+            }
             entries.push(Entry {
                 name: name.clone(),
                 members,
@@ -675,4 +799,129 @@ fn unescape(part: &str) -> String {
         rest = chars.as_str();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Allowlist, drop_glue_type, drop_impl_type, guarded_drops, is_drop_glue};
+
+    fn graph(names: &[&str], edges: &[(usize, usize)]) -> (Vec<String>, Vec<Vec<usize>>) {
+        let mut out = vec![Vec::new(); names.len()];
+        for &(from, to) in edges {
+            out[from].push(to);
+        }
+        (names.iter().map(|name| name.to_string()).collect(), out)
+    }
+
+    #[test]
+    fn drop_glue_names() {
+        assert_eq!(
+            drop_glue_type("core::ptr::drop_in_place<alloc::vec::Vec<rglsl::ir::Statement>>"),
+            Some("alloc::vec::Vec<rglsl::ir::Statement>")
+        );
+        assert_eq!(
+            drop_impl_type("<rglsl::ir::block::Block as core::ops::drop::Drop>::drop"),
+            Some("rglsl::ir::block::Block")
+        );
+        assert!(is_drop_glue(
+            "<alloc::vec::Vec<T,A> as core::ops::drop::Drop>::drop"
+        ));
+        assert!(!is_drop_glue(
+            "<rglsl::ir::block::Block as core::ops::drop::Drop>::drop::{{closure}}"
+        ));
+        assert!(!is_drop_glue("rglsl::ir::block::Block::drop"));
+    }
+
+    #[test]
+    fn a_drop_impl_through_recurse_guards_its_drop_glue() {
+        let (names, edges) = graph(
+            &[
+                "core::ptr::drop_in_place<rglsl::ir::block::Block>",
+                "<rglsl::ir::block::Block as core::ops::drop::Drop>::drop",
+                "core::mem::take",
+                "rglsl_types::stack::recurse",
+                "core::ptr::drop_in_place<alloc::vec::Vec<rglsl::ir::Statement>>",
+                "core::ptr::drop_in_place<rglsl::ir::Statement>",
+            ],
+            &[(0, 1), (0, 4), (1, 2), (1, 3), (4, 5), (5, 0)],
+        );
+        assert_eq!(
+            guarded_drops(&names, &edges),
+            [true, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn a_drop_impl_reaches_the_guard_within_a_few_calls() {
+        let (names, edges) = graph(
+            &[
+                "core::ptr::drop_in_place<a::Tree<u32>>",
+                "<a::Tree<T> as core::ops::drop::Drop>::drop",
+                "a::Tree<T>::take_children",
+                "stacker::maybe_grow",
+            ],
+            &[(0, 1), (1, 2), (2, 3)],
+        );
+        assert_eq!(guarded_drops(&names, &edges), [true, false, false, false]);
+    }
+
+    #[test]
+    fn other_drops_do_not_guard() {
+        let (names, edges) = graph(
+            &[
+                "core::ptr::drop_in_place<a::List>",
+                "<a::List as core::ops::drop::Drop>::drop",
+                "core::ptr::drop_in_place<a::Other>",
+                "<a::Other as core::ops::drop::Drop>::drop",
+                "rglsl_types::stack::recurse",
+                "core::ptr::drop_in_place<alloc::boxed::Box<a::List>>",
+                "<alloc::boxed::Box<T,A> as core::ops::drop::Drop>::drop",
+                "a::far",
+                "a::farther",
+                "a::farthest",
+            ],
+            &[
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 4),
+                (0, 5),
+                (5, 6),
+                (5, 0),
+                (6, 7),
+                (7, 8),
+                (8, 9),
+                (9, 4),
+            ],
+        );
+        assert_eq!(
+            guarded_drops(&names, &edges),
+            [
+                false, false, true, false, false, false, false, false, false, false
+            ]
+        );
+    }
+
+    #[test]
+    fn the_allowlist_rejects_patterns_of_every_drop() -> anyhow::Result<()> {
+        let directory =
+            std::env::temp_dir().join(format!("rglsl-recursion-{}", std::process::id()));
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join("allowed.toml");
+        for (pattern, accepted) in [
+            ("core::ptr::drop_in_place<", false),
+            ("as core::ops::drop::Drop>::drop", false),
+            ("impl core::ops::drop::Drop for", false),
+            ("core::ptr::drop_in_place<a::List>", true),
+            ("a::List", true),
+        ] {
+            std::fs::write(
+                &path,
+                format!("[entry]\nfunctions = [\"{pattern}\"]\nreason = \"r\"\nbound = \"1\"\n"),
+            )?;
+            assert_eq!(Allowlist::read(&path).is_ok(), accepted, "{pattern}");
+        }
+        std::fs::remove_dir_all(&directory)?;
+        Ok(())
+    }
 }

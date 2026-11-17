@@ -66,7 +66,9 @@ commands:
                       whose address is taken, through vtables and function pointers) and fail
                       on every cycle that touches the workspace, does not go through
                       rglsl_types::stack::recurse and is not allowed, with its reason and
-                      bound, in xtask/recursion-allowed.toml
+                      bound, in xtask/recursion-allowed.toml; drop glue (drop_in_place<T>)
+                      is cut where T has a Drop impl that reaches recurse, and a drop glue
+                      cycle without one names the recursive types to give such a Drop impl
       --no-build          reuse the LLVM IR of the last build
       --verbose           also list the allowed cycles
   capi-header         generate rglsl-capi/include/rglsl.h with cbindgen

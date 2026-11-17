@@ -122,7 +122,10 @@ cargo xtask recursion [--no-build] [--verbose]               # call graph of the
                                                    # (target/xtask/recursion): fails on every
                                                    # cycle that does not go through stack::recurse
                                                    # and is not allowed in
-                                                   # xtask/recursion-allowed.toml (reason, bound)
+                                                   # xtask/recursion-allowed.toml (reason, bound);
+                                                   # a recursive type's drop glue must be cut by a
+                                                   # Drop impl that drops the nested values inside
+                                                   # recurse (rglsl-ast/src/deep.rs, ir::Block)
 cargo xtask gen-spirv [--check]                              # regenerate (or check) the SPIR-V tables from the
                                                    # pinned SPIRV-Headers and glslang in target/oracles:
                                                    # rglsl/src/back/spv/grammar.rs (enumerants the
