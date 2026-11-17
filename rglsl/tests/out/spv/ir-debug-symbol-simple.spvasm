@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 89
+; Bound: 88
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -108,41 +108,38 @@ OpBranch %62
 %62 = OpLabel
 %64 = OpLoad  %8  %54
 %66 = OpSLessThan  %65  %64 %49
-OpSelectionMerge %67 None
-OpBranchConditional %66 %67 %68
-%68 = OpLabel
-OpBranch %61
+OpBranchConditional %66 %67 %61
 %67 = OpLabel
+OpBranch %68
+%68 = OpLabel
+%70 = OpLoad  %8  %54
+%71 = OpConvertSToF  %3  %70
+OpStore %56 %71
+%72 = OpAccessChain  %57  %53 %34
+%73 = OpLoad  %3  %72
+%74 = OpLoad  %3  %56
+%75 = OpFMul  %3  %74 %50
+%76 = OpFAdd  %3  %73 %75
+%77 = OpAccessChain  %57  %53 %34
+OpStore %77 %76
+%78 = OpAccessChain  %57  %53 %28
+%79 = OpLoad  %3  %78
+%80 = OpLoad  %3  %56
+%81 = OpFMul  %3  %80 %51
+%82 = OpFAdd  %3  %79 %81
+%83 = OpAccessChain  %57  %53 %28
+OpStore %83 %82
 OpBranch %69
 %69 = OpLabel
-%71 = OpLoad  %8  %54
-%72 = OpConvertSToF  %3  %71
-OpStore %56 %72
-%73 = OpAccessChain  %57  %53 %34
-%74 = OpLoad  %3  %73
-%75 = OpLoad  %3  %56
-%76 = OpFMul  %3  %75 %50
-%77 = OpFAdd  %3  %74 %76
-%78 = OpAccessChain  %57  %53 %34
-OpStore %78 %77
-%79 = OpAccessChain  %57  %53 %28
-%80 = OpLoad  %3  %79
-%81 = OpLoad  %3  %56
-%82 = OpFMul  %3  %81 %51
-%83 = OpFAdd  %3  %80 %82
-%84 = OpAccessChain  %57  %53 %28
-OpStore %84 %83
-OpBranch %70
-%70 = OpLabel
 OpBranch %63
 %63 = OpLabel
-%85 = OpLoad  %8  %54
-%86 = OpIAdd  %8  %85 %52
-OpStore %54 %86
+%84 = OpLoad  %8  %54
+%85 = OpIAdd  %8  %84 %52
+OpStore %54 %85
 OpBranch %60
 %61 = OpLabel
-%87 = OpLoad  %4  %53
-%88 = OpCompositeConstruct  %6  %87 %22
-OpStore %46 %88
+%86 = OpLoad  %4  %53
+%87 = OpCompositeConstruct  %6  %86 %22
+OpStore %46 %87
 OpReturn
 OpFunctionEnd

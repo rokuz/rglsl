@@ -30,6 +30,38 @@ pub(super) struct LoopContext {
     pub(super) break_id: Option<Word>,
 }
 
+struct LoopTest {
+    index: usize,
+    condition: Handle<crate::Expression>,
+    break_when: bool,
+}
+
+fn loop_test(body: &crate::Block) -> Option<LoopTest> {
+    let index = body
+        .iter()
+        .position(|statement| !matches!(*statement, Statement::Emit(_)))?;
+    let Statement::If {
+        condition,
+        ref accept,
+        ref reject,
+        control: crate::SelectionControl::None,
+    } = body[index]
+    else {
+        return None;
+    };
+    let is_break = |block: &crate::Block| matches!(**block, [Statement::Break]);
+    let break_when = match (is_break(accept), is_break(reject)) {
+        (true, false) if reject.is_empty() => true,
+        (false, true) if accept.is_empty() => false,
+        _ => return None,
+    };
+    Some(LoopTest {
+        index,
+        condition,
+        break_when,
+    })
+}
+
 const fn selection_control(control: crate::SelectionControl) -> spirv::SelectionControl {
     match control {
         crate::SelectionControl::None => spirv::SelectionControl::NONE,
@@ -46,22 +78,37 @@ impl BlockContext<'_> {
         exit: BlockExit,
         loop_context: LoopContext,
     ) -> Result<BlockExitDisposition, Error> {
-        let mut block = Block::new(label_id);
         let nested = !core::ptr::eq(ir, &self.ir_function.body);
-        for (statement, span) in ir.span_iter() {
+        let Some(block) =
+            self.write_statements(Block::new(label_id), ir.span_iter(), nested, loop_context)?
+        else {
+            return Ok(BlockExitDisposition::Discarded);
+        };
+        self.finish_block(block, exit, loop_context, nested)?;
+        Ok(BlockExitDisposition::Used)
+    }
+
+    fn write_statements<'s>(
+        &mut self,
+        block: Block,
+        statements: impl Iterator<Item = (&'s Statement, &'s crate::Span)>,
+        nested: bool,
+        loop_context: LoopContext,
+    ) -> Result<Option<Block>, Error> {
+        let mut block = block;
+        for (statement, span) in statements {
             self.mark_statement_span(&mut block, statement, *span, nested);
             match self.write_statement(block, statement, loop_context)? {
                 Some(next) if !self.reachability.completes(statement) => {
                     self.function
                         .consume(next, Instruction::new(spirv::Op::Unreachable));
-                    return Ok(BlockExitDisposition::Discarded);
+                    return Ok(None);
                 }
                 Some(following) => block = following,
-                None => return Ok(BlockExitDisposition::Discarded),
+                None => return Ok(None),
             }
         }
-        self.finish_block(block, exit, loop_context, nested)?;
-        Ok(BlockExitDisposition::Used)
+        Ok(Some(block))
     }
 
     fn mark_statement_span(
@@ -325,18 +372,26 @@ impl BlockContext<'_> {
 
         self.function.consume(block, Instruction::branch(body_id));
 
+        let body_context = LoopContext {
+            continuing_id: Some(continuing_id),
+            break_id: Some(merge_id),
+        };
         recurse(|| {
-            let _ = self.write_block(
-                body_id,
-                body,
-                BlockExit::Branch {
-                    target: continuing_id,
-                },
-                LoopContext {
-                    continuing_id: Some(continuing_id),
-                    break_id: Some(merge_id),
-                },
-            )?;
+            match loop_test(body) {
+                Some(test) => {
+                    self.write_loop_test(body_id, body, &test, merge_id, body_context)?;
+                }
+                None => {
+                    let _ = self.write_block(
+                        body_id,
+                        body,
+                        BlockExit::Branch {
+                            target: continuing_id,
+                        },
+                        body_context,
+                    )?;
+                }
+            }
             match continuing {
                 None => self
                     .function
@@ -363,6 +418,59 @@ impl BlockContext<'_> {
             }
             Ok(Some(Block::new(merge_id)))
         })
+    }
+
+    fn write_loop_test(
+        &mut self,
+        label_id: Word,
+        body: &crate::Block,
+        test: &LoopTest,
+        merge_id: Word,
+        body_context: LoopContext,
+    ) -> Result<(), Error> {
+        let Some(mut block) = self.write_statements(
+            Block::new(label_id),
+            body.span_iter().take(test.index),
+            true,
+            body_context,
+        )?
+        else {
+            return Err(Error::Validation("loop condition does not complete"));
+        };
+        let Some((statement, span)) = body.span_iter().nth(test.index) else {
+            return Err(Error::Validation("loop condition is missing"));
+        };
+        self.mark_statement_span(&mut block, statement, *span, true);
+        let condition_id = self.cached.get(test.condition)?;
+        let rest_id = self.gen_id();
+        let (accept_id, reject_id) = if test.break_when {
+            (merge_id, rest_id)
+        } else {
+            (rest_id, merge_id)
+        };
+        self.function.consume(
+            block,
+            Instruction::branch_conditional(condition_id, accept_id, reject_id),
+        );
+        let Some(continuing_id) = body_context.continuing_id else {
+            return Err(Error::Validation("loop without a continuing block"));
+        };
+        if let Some(block) = self.write_statements(
+            Block::new(rest_id),
+            body.span_iter().skip(test.index + 1),
+            true,
+            body_context,
+        )? {
+            self.finish_block(
+                block,
+                BlockExit::Branch {
+                    target: continuing_id,
+                },
+                body_context,
+                true,
+            )?;
+        }
+        Ok(())
     }
 
     pub(in super::super) fn write_function_body(&mut self, entry_id: Word) -> Result<(), Error> {

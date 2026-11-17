@@ -296,20 +296,13 @@ impl FunctionLowerer<'_, '_> {
         if self.is_true(condition) {
             return Ok(());
         }
-        let negated = self.add(
-            Expression::Unary {
-                op: UnaryOperator::LogicalNot,
-                expr: condition,
-            },
-            at,
-        )?;
-        let mut accept = Block::new();
-        accept.push(IrStatement::Break, at);
+        let mut reject = Block::new();
+        reject.push(IrStatement::Break, at);
         self.push(
             IrStatement::If {
-                condition: negated,
-                accept,
-                reject: Block::new(),
+                condition,
+                accept: Block::new(),
+                reject,
                 control: SelectionControl::None,
             },
             at,
