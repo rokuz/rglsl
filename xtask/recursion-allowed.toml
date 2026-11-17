@@ -1,16 +1,3 @@
-[ast-shells]
-functions = [
-    "rglsl_ast::deep::",
-    "rglsl_ast::chain::<impl rglsl_ast::ast::ExpressionKind>::for_each_child",
-    "rglsl_ast::chain::<impl core::clone::Clone for rglsl_ast::ast::ExpressionKind>::clone",
-    "rglsl_ast::chain::<impl core::cmp::PartialEq for rglsl_ast::ast::ExpressionKind>::eq",
-    "rglsl_ast::chain::<impl core::ops::drop::Drop for rglsl_ast::ast::ExpressionKind>::drop",
-    "<rglsl_ast::ast::",
-    "core::ptr::drop_in_place<",
-]
-reason = "AST clone, == and drop walk expressions, type specifiers, initializers and statements with work lists; the call graph closes only through the shells (copies whose expression and type slots are placeholders) and the owned parts moved out before a drop"
-bound = "at most 3 nested work lists (statement, initializer, expression and type specifier)"
-
 [compiled-unit]
 functions = [
     "rglsl::object::CompiledUnit",
