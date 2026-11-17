@@ -54,3 +54,30 @@ why = "Metal's shader compiler miscompiles `extract_bits`/`insert_bits` with `bi
 
 ["fuzz/s5_muller/variant_028.frag"]
 why = "KosmicKrisp keeps Private variables in `uchar scratch[N]` without an initializer on macOS 27 (KK_WORKAROUND_1 is disabled there), and the variant reads `GLF_live4obj.numbers[1]`, which is never written: an undefined value in SPIR-V, undefined behavior in MSL. Once dead stores into the same scratch array are removed (rglsl -O, spirv-opt -O on glslang's module), the Metal compiler proves the load uninitialized and the GPU hangs; a KosmicKrisp build that zero-initializes scratch runs all modules and they agree"
+
+["fuzz/s3_stable_mergesort/variant_013.frag"]
+why = "KosmicKrisp prints an undefined scalar source as the untyped literal `00` (src_to_msl in nir_to_msl.c; vectors get their type), so `sign(00)`, `cos(00)`, `fract(00)` or `dfdy(00)` is ambiguous between the half and float overloads and the Metal compiler rejects the MSL, for glslang's module and ours alike. The variant passes an uninitialized value to one of them; a KosmicKrisp build that prints `T(0)` compiles it and the variant agrees with its reference"
+
+["fuzz/s4_stable_mergesort/variant_015.frag"]
+why = "KosmicKrisp prints an undefined scalar source as the untyped literal `00` (src_to_msl in nir_to_msl.c; vectors get their type), so `sign(00)`, `cos(00)`, `fract(00)` or `dfdy(00)` is ambiguous between the half and float overloads and the Metal compiler rejects the MSL, for glslang's module and ours alike. The variant passes an uninitialized value to one of them; a KosmicKrisp build that prints `T(0)` compiles it and the variant agrees with its reference"
+
+["fuzz/s6_squares_intfunctions/variant_008.frag"]
+why = "KosmicKrisp prints an undefined scalar source as the untyped literal `00` (src_to_msl in nir_to_msl.c; vectors get their type), so `sign(00)`, `cos(00)`, `fract(00)` or `dfdy(00)` is ambiguous between the half and float overloads and the Metal compiler rejects the MSL, for glslang's module and ours alike. The variant passes an uninitialized value to one of them; a KosmicKrisp build that prints `T(0)` compiles it and the variant agrees with its reference"
+
+["fuzz/s6_squares_intfunctions/variant_033.frag"]
+why = "KosmicKrisp prints an undefined scalar source as the untyped literal `00` (src_to_msl in nir_to_msl.c; vectors get their type), so `sign(00)`, `cos(00)`, `fract(00)` or `dfdy(00)` is ambiguous between the half and float overloads and the Metal compiler rejects the MSL, for glslang's module and ours alike. The variant passes an uninitialized value to one of them; a KosmicKrisp build that prints `T(0)` compiles it and the variant agrees with its reference"
+
+["fuzz/s3_mandelbrot_zoom_intfunctions/variant_022.frag"]
+why = "the GPU watchdog of macOS kills fragment work after a few tens of milliseconds per invocation (a fragment shader looping 30 million times on one pixel loses the device; a compute shader loops 300 million times), and KosmicKrisp reports it as a lost device. The variant's live code adds about 150 loop iterations to each of up to 1001 Mandelbrot iterations, 16 times per pixel, for glslang's module and ours alike; with the reference's iteration cap lowered to 400 the variant runs and agrees, and the AMD driver drops the dead live code and runs it in 0.4 s"
+
+["fuzz/s5_mandelbrot_zoom_intfunctions/variant_031.frag"]
+why = "the GPU watchdog of macOS kills fragment work after a few tens of milliseconds per invocation (a fragment shader looping 30 million times on one pixel loses the device; a compute shader loops 300 million times), and KosmicKrisp reports it as a lost device. The variant's live code adds about 150 loop iterations to each of up to 1001 Mandelbrot iterations, 16 times per pixel, for glslang's module and ours alike; with the reference's iteration cap lowered to 400 the variant runs and agrees, and the AMD driver drops the dead live code and runs it in 0.4 s"
+
+["fuzz/s5_squares/variant_015.frag"]
+why = "the Metal compiler miscompiles KosmicKrisp's `while (true)` loops on M4 with macOS 27 and the device is lost, for glslang's module and ours alike. KK_WORKAROUND_2 (emit `for (uint64_t no_crash = 0u; no_crash < UINT64_MAX; ++no_crash)` instead) is disabled on macOS 27 except on M5; with it the variant runs and agrees with its reference. With loop counters added the program terminates in every pixel and renders the reference's image"
+
+["fuzz/s5_stable_quicksort/variant_007.frag"]
+why = "the Metal compiler miscompiles KosmicKrisp's `while (true)` loops on M4 with macOS 27 and the device is lost, for glslang's module and ours alike. KK_WORKAROUND_2 (emit `for (uint64_t no_crash = 0u; no_crash < UINT64_MAX; ++no_crash)` instead) is disabled on macOS 27 except on M5; with it the variant runs and agrees with its reference. With loop counters added the program terminates in every pixel and renders the reference's image"
+
+["fuzz/s5_stable_bubblesort_flag/variant_039.frag"]
+why = "the Metal compiler (AGX backend in MTLCompilerService) never finishes compiling the fragment shader, so vkCreateGraphicsPipelines does not return, for glslang's module and ours alike. The 368-line MSL has discard_fragment() inside nested loops with breaks; without the discards it compiles and runs"
