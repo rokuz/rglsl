@@ -1,4 +1,5 @@
-//! The pinned reference tools: glslang, spirv-val, spirv-as and spirv-dis.
+//! The pinned reference tools: glslang, spirv-val, spirv-as, spirv-dis and
+//! spirv-opt, and `glslang-opt`, the pinned glslang with the optimizer.
 //!
 //! Pins live in `oracles.toml`. `cargo xtask oracles` builds them into
 //! `target/oracles/bin/`, which is where `cargo xtask test` looks first.
@@ -146,6 +147,10 @@ pub fn oracles_dir(root: &Path) -> PathBuf {
     root.join("target").join("oracles")
 }
 
+pub fn install_dir(root: &Path) -> PathBuf {
+    oracles_dir(root).join("install")
+}
+
 /// The default glslang checkout used for the corpus.
 pub fn default_glslang_src(root: &Path) -> PathBuf {
     oracles_dir(root).join("src").join("glslang")
@@ -266,6 +271,21 @@ fn write_stamp(root: &Path, pins: &Pins) -> Result<()> {
         "glslang = \"{}\"\nspirv-tools = \"{}\"\nspirv-headers = \"{}\"\n",
         pins.glslang.commit, pins.spirv_tools.commit, pins.spirv_headers.commit
     );
+    let built = |name: &str| {
+        dir.join("bin")
+            .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+            .is_file()
+    };
+    if built("spirv-opt") {
+        let _ = writeln!(stamp, "spirv-opt = \"{}\"", pins.spirv_tools.commit);
+    }
+    if built("glslang-opt") {
+        let _ = writeln!(
+            stamp,
+            "glslang-opt = \"{} with spirv-tools {}\"",
+            pins.glslang.commit, pins.spirv_tools.commit
+        );
+    }
     if dir.join("bin").join("amber").is_file() {
         let amber = amber_source_override().map_or_else(
             || pins.exec.amber.commit.clone(),
@@ -301,52 +321,7 @@ fn build_reference(
     let build = dir.join("build");
     let bin = dir.join("bin");
 
-    // glslang
-    let glslang_src = match glslang_dir {
-        Some(dir) => {
-            let head = git_head(dir)?;
-            if head != pins.glslang.commit {
-                bail!(
-                    "{} is at {head}, but oracles.toml pins glslang {}; check out the pinned commit or update the pin",
-                    dir.display(),
-                    pins.glslang.commit
-                );
-            }
-            dir.to_path_buf()
-        }
-        None => {
-            let dir = default_glslang_src(root);
-            checkout(&pins.glslang, &dir)?;
-            dir
-        }
-    };
-    let glslang_build = build.join("glslang");
-    checked(
-        Command::new("cmake")
-            .arg("-S")
-            .arg(&glslang_src)
-            .arg("-B")
-            .arg(&glslang_build)
-            .args(generator)
-            .args([
-                "-DCMAKE_BUILD_TYPE=Release",
-                "-DENABLE_OPT=OFF",
-                "-DGLSLANG_TESTS=OFF",
-                "-DBUILD_TESTING=OFF",
-                "-DENABLE_GLSLANG_BINARIES=ON",
-            ]),
-        "configure glslang",
-    )?;
-    checked(
-        Command::new("cmake")
-            .arg("--build")
-            .arg(&glslang_build)
-            .args(["--target", "glslang-standalone", "--parallel"]),
-        "build glslang",
-    )?;
-    copy_binary(&glslang_build.join("StandAlone"), "glslang", &bin)?;
-
-    // SPIRV-Tools (spirv-val, spirv-as and spirv-dis)
+    // SPIRV-Tools (spirv-val, spirv-as, spirv-dis and spirv-opt)
     let tools_src = src.join("spirv-tools");
     checkout(&pins.spirv_tools, &tools_src)?;
     checkout(
@@ -372,18 +347,81 @@ fn build_reference(
         Command::new("cmake")
             .arg("--build")
             .arg(&tools_build)
-            .args([
-                "--target",
-                "spirv-val",
-                "spirv-as",
-                "spirv-dis",
-                "--parallel",
-            ]),
-        "build spirv-val, spirv-as and spirv-dis",
+            .arg("--parallel"),
+        "build SPIRV-Tools",
     )?;
-    copy_binary(&tools_build.join("tools"), "spirv-val", &bin)?;
-    copy_binary(&tools_build.join("tools"), "spirv-as", &bin)?;
-    copy_binary(&tools_build.join("tools"), "spirv-dis", &bin)
+    let install = install_dir(root);
+    checked(
+        Command::new("cmake")
+            .arg("--install")
+            .arg(&tools_build)
+            .arg("--prefix")
+            .arg(&install),
+        "install SPIRV-Tools",
+    )?;
+    for tool in ["spirv-val", "spirv-as", "spirv-dis", "spirv-opt"] {
+        copy_binary(&tools_build.join("tools"), tool, &bin, tool)?;
+    }
+
+    // glslang
+    let glslang_src = match glslang_dir {
+        Some(dir) => {
+            let head = git_head(dir)?;
+            if head != pins.glslang.commit {
+                bail!(
+                    "{} is at {head}, but oracles.toml pins glslang {}; check out the pinned commit or update the pin",
+                    dir.display(),
+                    pins.glslang.commit
+                );
+            }
+            dir.to_path_buf()
+        }
+        None => {
+            let dir = default_glslang_src(root);
+            checkout(&pins.glslang, &dir)?;
+            dir
+        }
+    };
+    let common = [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DGLSLANG_TESTS=OFF",
+        "-DBUILD_TESTING=OFF",
+        "-DENABLE_GLSLANG_BINARIES=ON",
+    ];
+    for (name, options) in [
+        ("glslang", vec!["-DENABLE_OPT=OFF".to_string()]),
+        (
+            "glslang-opt",
+            vec![
+                "-DENABLE_OPT=ON".to_string(),
+                "-DALLOW_EXTERNAL_SPIRV_TOOLS=ON".to_string(),
+                "-DBUILD_EXTERNAL=OFF".to_string(),
+                format!("-DCMAKE_PREFIX_PATH={}", install.display()),
+            ],
+        ),
+    ] {
+        let glslang_build = build.join(name);
+        checked(
+            Command::new("cmake")
+                .arg("-S")
+                .arg(&glslang_src)
+                .arg("-B")
+                .arg(&glslang_build)
+                .args(generator)
+                .args(common)
+                .args(&options),
+            &format!("configure {name}"),
+        )?;
+        checked(
+            Command::new("cmake")
+                .arg("--build")
+                .arg(&glslang_build)
+                .args(["--target", "glslang-standalone", "--parallel"]),
+            &format!("build {name}"),
+        )?;
+        copy_binary(&glslang_build.join("StandAlone"), "glslang", &bin, name)?;
+    }
+    Ok(())
 }
 
 fn build_exec(root: &Path, pins: &ExecPins, generator: &[String]) -> Result<()> {
@@ -436,7 +474,7 @@ fn build_exec(root: &Path, pins: &ExecPins, generator: &[String]) -> Result<()> 
             .args(["--target", "amber", "--parallel"]),
         "build Amber",
     )?;
-    copy_binary(&amber_build, "amber", &dir.join("bin"))?;
+    copy_binary(&amber_build, "amber", &dir.join("bin"), "amber")?;
     let layer = build_tensor_layer(&dir, &pins.tensor_layer, generator)?;
 
     let amber = Amber {
@@ -631,10 +669,10 @@ pub fn git_head(dir: &Path) -> Result<String> {
     .with_context(|| format!("reading the git HEAD of {}", dir.display()))
 }
 
-fn copy_binary(from_dir: &Path, name: &str, to_dir: &Path) -> Result<()> {
-    let exe = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    let from = from_dir.join(&exe);
-    let to = to_dir.join(&exe);
+fn copy_binary(from_dir: &Path, name: &str, to_dir: &Path, to_name: &str) -> Result<()> {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let from = from_dir.join(format!("{name}{suffix}"));
+    let to = to_dir.join(format!("{to_name}{suffix}"));
     match fs::remove_file(&to) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             return Err(error).with_context(|| format!("removing {}", to.display()));

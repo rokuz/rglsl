@@ -20,6 +20,7 @@ mod gen_spirv;
 mod groups;
 mod interface;
 mod object_path;
+mod opt_quality;
 mod oracles;
 mod process;
 mod recursion;
@@ -38,7 +39,8 @@ usage: cargo xtask <command> [options]
 
 commands:
   oracles             fetch and build the pinned oracles into target/oracles: glslang,
-                      spirv-val and spirv-as, and on macOS arm64 the exec oracles (KosmicKrisp, Amber,
+                      spirv-val, spirv-as, spirv-dis, spirv-opt, glslang-opt (glslang with the
+                      optimizer, for bench and opt-quality), and on macOS arm64 the exec oracles (KosmicKrisp, Amber,
                       the ML emulation layer's tensor library)
       --glslang-dir DIR   use an existing glslang checkout instead of cloning it
                           (its HEAD must be the pinned commit)
@@ -122,6 +124,15 @@ commands:
                           against target/oracles/build; first and steady-state compiles of
                           the Vulkan and gl-as-vulkan corpus shaders and the synthetic ones;
                           report in target/xtask/bench-in-process.md and .tsv
+  opt-quality         build every shader rglsl compiles (glslang corpus, tests/link references,
+                      tests/exec, synthetic) as rglsl, spirv-opt -O and -Os of rglsl's module and
+                      glslang -O (target/oracles/bin/glslang-opt), validate each with spirv-val and
+                      count SPIR-V instructions, Function variables, loads, stores, blocks,
+                      functions and words; report in target/xtask/opt-quality.md and .tsv, modules
+                      in target/xtask/opt-quality/modules
+      --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
+      --filter TEXT       only shaders whose name contains TEXT (or one of the comma-separated TEXTs)
+      --timeout SECS      per-process timeout (default: 120)
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
@@ -164,7 +175,8 @@ commands:
 
 environment:
   RGLSL_GLSLANG, RGLSL_SPIRV_VAL   override the oracle binaries
-  RGLSL_SPIRV_AS
+  RGLSL_SPIRV_AS, RGLSL_SPIRV_OPT
+  RGLSL_GLSLANG_OPT
   RGLSL_AMBER, RGLSL_VK_ICD        override Amber and the Vulkan driver manifest
   RGLSL_EXEC_REMOTE                remote exec targets: comma-separated SSH host aliases of Windows
                                    machines with Vulkan, each optionally followed by @DEVICE, a
@@ -304,6 +316,15 @@ fn run(args: Vec<String>) -> Result<i32> {
                 };
             args.finish()?;
             bench::run(&workspace_root()?, &options)
+        }
+        "opt-quality" => {
+            let options = opt_quality::Options {
+                glslang_dir: args.value("--glslang-dir")?.map(PathBuf::from),
+                filter: args.value("--filter")?,
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(120),
+            };
+            args.finish()?;
+            opt_quality::run(&workspace_root()?, &options)
         }
         "fuzz" if args.has("--libfuzzer") => {
             let options = fuzz_libfuzzer::Options {

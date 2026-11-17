@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, bail};
 
 use super::{
-    DebugInfo, Environment, Excluded, Group, Options, Summary, cmake_value, milliseconds, seconds,
-    stats, summary_row, synthetic, times,
+    DebugInfo, Environment, Excluded, Group, Options, Summary, budget, cmake_value, milliseconds,
+    seconds, stats, summary_row, synthetic, times,
 };
 use crate::corpus::{self, Corpus};
 use crate::oracles::{self, Tool};
@@ -273,6 +273,13 @@ impl Harness {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OptimizerSample {
+    steady: f64,
+    spirv_opt: f64,
+    words: f64,
+}
+
 #[derive(Debug, Clone)]
 struct GlslangSample {
     first: f64,
@@ -281,10 +288,19 @@ struct GlslangSample {
     link: f64,
     spv: f64,
     words: f64,
+    optimizer: Option<OptimizerSample>,
 }
 
 impl GlslangSample {
     fn new(fields: &Fields) -> Result<Self> {
+        let optimizer = match fields.optional_median("steady_opt") {
+            Some(steady) => Some(OptimizerSample {
+                steady,
+                spirv_opt: fields.median("opt")?,
+                words: fields.median("opt_words")?,
+            }),
+            None => None,
+        };
         Ok(Self {
             first: fields.median("first")?,
             steady: fields.median("steady")?,
@@ -292,6 +308,7 @@ impl GlslangSample {
             link: fields.median("link")?,
             spv: fields.median("spv")?,
             words: fields.median("words")?,
+            optimizer,
         })
     }
 }
@@ -359,6 +376,18 @@ impl Measured {
     fn first_ratio(&self) -> Option<f64> {
         stats::ratio(self.rglsl.first, self.glslang.first)
     }
+
+    fn budget_row(&self) -> Option<budget::Row<'_>> {
+        let optimizer = self.glslang.optimizer?;
+        Some(budget::Row {
+            name: &self.name,
+            group: self.group,
+            glslang: self.glslang.steady,
+            glslang_opt: optimizer.steady,
+            optimizer: optimizer.spirv_opt,
+            rglsl: self.rglsl.steady,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +404,7 @@ struct Outcome {
     rejected: Vec<(Group, Excluded, String)>,
     crashes: Vec<Crash>,
     compiler_rejects: Vec<(String, String)>,
+    optimizer_failures: Vec<(String, String)>,
     no_link: Vec<String>,
     load_before: Option<String>,
     load_after: Option<String>,
@@ -426,7 +456,7 @@ pub fn run(root: &Path, glslang_dir: &Path, options: &Options) -> Result<i32> {
     environment.glslang.push((
         "harness".into(),
         format!(
-            "xtask/harness/glslang.cpp, built with `{compiler} -O2` against libglslang.a of target/oracles/build/glslang"
+            "xtask/harness/glslang.cpp, built with `{compiler} -O2` against libglslang.a of target/oracles/build/glslang and libSPIRV-Tools-opt.a of target/oracles/install"
         ),
     ));
 
@@ -460,7 +490,7 @@ pub fn run(root: &Path, glslang_dir: &Path, options: &Options) -> Result<i32> {
             );
         }
         let line = job.line(options.runs);
-        let glslang_reply = glslang.request(&line)?;
+        let glslang_reply = glslang.request(&format!("{line}\toptimize=1"))?;
         let rglsl_reply = rglsl.request(&line)?;
         record(&mut outcome, job, glslang_reply, rglsl_reply)?;
     }
@@ -512,6 +542,11 @@ fn record(outcome: &mut Outcome, job: &Job, glslang: Reply, rglsl: Reply) -> Res
             if let Some(reason) = rglsl.notes.get("compiler_rejects") {
                 outcome
                     .compiler_rejects
+                    .push((job.name.clone(), first_line(reason)));
+            }
+            if let Some(reason) = glslang.notes.get("opt_error") {
+                outcome
+                    .optimizer_failures
                     .push((job.name.clone(), first_line(reason)));
             }
             outcome.measured.push(Measured {
@@ -609,15 +644,18 @@ fn build_glslang_harness(root: &Path, out_dir: &Path, compiler: &str) -> Result<
         );
     }
     let build = oracles::oracles_dir(root).join("build").join("glslang");
+    let install = oracles::install_dir(root);
     let libraries = [
         build.join("glslang").join("libglslang.a"),
         build
             .join("glslang")
             .join("libglslang-default-resource-limits.a"),
+        install.join("lib").join("libSPIRV-Tools-opt.a"),
+        install.join("lib").join("libSPIRV-Tools.a"),
     ];
     if let Some(missing) = libraries.iter().find(|library| !library.is_file()) {
         bail!(
-            "{} not found: run `cargo xtask oracles` to build the pinned glslang",
+            "{} not found: run `cargo xtask oracles` to build the pinned glslang and SPIRV-Tools",
             missing.display()
         );
     }
@@ -645,6 +683,8 @@ fn build_glslang_harness(root: &Path, out_dir: &Path, compiler: &str) -> Result<
         .arg(&source)
         .arg("-I")
         .arg(build.join("include"))
+        .arg("-I")
+        .arg(install.join("include"))
         .arg(root.join("xtask").join("harness").join("glslang.cpp"))
         .args(&libraries)
         .arg("-o")
@@ -807,7 +847,7 @@ fn phases_tables(out: &mut String, measured: &[Measured]) {
             milliseconds_total(tables),
         );
     }
-    out.push_str("\nglslang, steady state:\n\n| shader set | parse (preprocessor, parser, semantics) | link and mapIO | SPIR-V | total |\n|---|--:|--:|--:|--:|\n");
+    out.push_str("\nglslang, steady state (`spirv-opt` is the optimizer of `glslang -O`, as a share of all four phases, over the shaders it optimizes):\n\n| shader set | parse (preprocessor, parser, semantics) | link and mapIO | SPIR-V | total | spirv-opt |\n|---|--:|--:|--:|--:|--:|\n");
     for (label, shaders) in groups_with_all(measured) {
         let phases = [
             sum(&shaders, |shader| shader.glslang.parse),
@@ -819,11 +859,28 @@ fn phases_tables(out: &mut String, measured: &[Measured]) {
             .iter()
             .map(|&phase| format!("{} ({})", milliseconds_total(phase), share(phase, total)))
             .collect();
+        let optimized: Vec<&Measured> = shaders
+            .iter()
+            .copied()
+            .filter(|shader| shader.glslang.optimizer.is_some())
+            .collect();
+        let optimizer = sum(&optimized, |shader| {
+            shader
+                .glslang
+                .optimizer
+                .map_or(0.0, |optimizer| optimizer.spirv_opt)
+        });
+        let optimized_total = optimizer
+            + sum(&optimized, |shader| {
+                shader.glslang.parse + shader.glslang.link + shader.glslang.spv
+            });
         let _ = writeln!(
             out,
-            "| {label} | {} | {} |",
+            "| {label} | {} | {} | {} ({}) |",
             cells.join(" | "),
             milliseconds_total(total),
+            milliseconds_total(optimizer),
+            share(optimizer, optimized_total),
         );
     }
 }
@@ -942,6 +999,15 @@ fn markdown(environment: &Environment, outcome: &Outcome, options: &Options) -> 
     out.push_str("rglsl, steady state, totals of the per-shader medians and their share. The preprocessor, the parser and sema are timed by calling `rglsl_pp::preprocess`, `rglsl_ast::parse_prefix` and `rglsl_sema::analyze_with_tables` on their own; lowering is the rest of `Frontend::compile_program` (per run: frontend − preprocessor − parser − sema, so it can be slightly negative for tiny shaders); the validator checks the program's object module and the linker finishes it alone (`rglsl_link::compile_program`, as the command-line tool does: compaction, and a second validation only when compaction removed something); SPIR-V includes freeing the module.\n\n");
     phases_tables(&mut out, measured);
 
+    let rows: Vec<budget::Row> = measured.iter().filter_map(Measured::budget_row).collect();
+    budget::section(
+        &mut out,
+        &rows,
+        &GROUPS,
+        "the `spirv-opt` phase of the glslang harness: `spvtools::Optimizer` with `RegisterPerformancePasses` on the output of `GlslangToSpv`, as `glslang -O` runs it; `glslang -O` is the steady compile with that phase",
+        outcome.optimizer_failures.len(),
+    );
+
     out.push_str("\n## Shaders\n");
     let top = 15;
     let highest = sorted_by(measured, |shader| shader.steady_ratio().unwrap_or(0.0), top);
@@ -1035,6 +1101,16 @@ fn not_measured(out: &mut String, outcome: &Outcome) {
             );
         }
     }
+    if !outcome.optimizer_failures.is_empty() {
+        let _ = writeln!(
+            out,
+            "\n`spirv-opt` fails on {} shaders glslang compiles:\n",
+            outcome.optimizer_failures.len()
+        );
+        for (name, reason) in &outcome.optimizer_failures {
+            let _ = writeln!(out, "- `{name}`: {reason}");
+        }
+    }
     if !outcome.compiler_rejects.is_empty() {
         let _ = writeln!(
             out,
@@ -1049,16 +1125,17 @@ fn not_measured(out: &mut String, outcome: &Outcome) {
 
 fn tsv(measured: &[Measured]) -> String {
     let mut out = String::from(
-        "shader\tset\tglslang_first_ms\tglslang_steady_ms\tglslang_parse_ms\tglslang_link_ms\tglslang_spv_ms\trglsl_first_ms\trglsl_steady_ms\trglsl_fresh_ms\trglsl_pp_ms\trglsl_parse_ms\trglsl_sema_ms\trglsl_lowering_ms\trglsl_validate_ms\trglsl_link_ms\trglsl_spv_ms\tcompiler_first_ms\tcompiler_steady_ms\tsteady_ratio\tfirst_ratio\tglslang_words\trglsl_words\tcommand_line\n",
+        "shader\tset\tglslang_first_ms\tglslang_steady_ms\tglslang_parse_ms\tglslang_link_ms\tglslang_spv_ms\trglsl_first_ms\trglsl_steady_ms\trglsl_fresh_ms\trglsl_pp_ms\trglsl_parse_ms\trglsl_sema_ms\trglsl_lowering_ms\trglsl_validate_ms\trglsl_link_ms\trglsl_spv_ms\tcompiler_first_ms\tcompiler_steady_ms\tsteady_ratio\tfirst_ratio\tglslang_words\trglsl_words\tglslang_opt_steady_ms\tglslang_spirv_opt_ms\tglslang_opt_words\tbudget_ms\tcommand_line\n",
     );
     let optional =
         |value: Option<f64>| value.map_or_else(String::new, |value| format!("{value:.4}"));
     for shader in measured {
         let glslang = &shader.glslang;
         let rglsl = &shader.rglsl;
+        let optimizer = glslang.optimizer;
         let _ = writeln!(
             out,
-            "{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{:.0}\t{:.0}\t{}",
+            "{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{:.0}\t{:.0}\t{}\t{}\t{}\t{}\t{}",
             shader.name,
             shader.group.key(),
             glslang.first,
@@ -1082,6 +1159,10 @@ fn tsv(measured: &[Measured]) -> String {
             optional(shader.first_ratio()),
             glslang.words,
             rglsl.words,
+            optional(optimizer.map(|optimizer| optimizer.steady)),
+            optional(optimizer.map(|optimizer| optimizer.spirv_opt)),
+            optimizer.map_or_else(String::new, |optimizer| format!("{:.0}", optimizer.words)),
+            optional(shader.budget_row().map(|row| row.budget())),
             shader.command_line,
         );
     }
@@ -1173,7 +1254,7 @@ mod tests {
     #[test]
     fn report_has_every_section() -> Result<()> {
         let glslang = GlslangSample::new(&reply(
-            "ok\tfirst=40\tsteady=4,4\tparse=3,3\tlink=0.5,0.5\tspv=0.5,0.5\twords=90",
+            "ok\tfirst=40\tsteady=4,4\tparse=3,3\tlink=0.5,0.5\tspv=0.5,0.5\twords=90\topt=2,2\tsteady_opt=6,6\topt_words=50",
         )?)?;
         let rglsl = RglslSample::new(&rglsl_fields()?)?;
         let measured = Measured {
@@ -1187,6 +1268,7 @@ mod tests {
             measured: vec![measured],
             rejected: vec![(Group::Synthetic, Excluded::RglslRejects, "x.frag".into())],
             no_link: vec!["n.frag".into()],
+            optimizer_failures: vec![("f.frag".into(), "bad".into())],
             load_before: Some("1.00 2.00 3.00".into()),
             ..Outcome::default()
         };
@@ -1209,6 +1291,9 @@ mod tests {
             "## First compile",
             "## Phases",
             "## Not measured",
+            "## Optimizer budget",
+            "`spirv-opt` fails on 1 shaders glslang compiles",
+            "| `a.frag` | vulkan | 4.00 ms | 6.00 ms | 2.00 ms | 2.00 ms | 4.00 ms | 2.00× |",
             "Only rglsl rejects: `x.frag`.",
             "(`--no-link`) by glslang's tests, not reproduced in process: 1 shaders",
             "at the start: 1.00 2.00 3.00; at the end: unknown",
@@ -1220,6 +1305,7 @@ mod tests {
         let table = tsv(&outcome.measured);
         assert_eq!(table.lines().count(), 2);
         assert!(table.contains("a.frag\tvulkan\t40.0000\t4.0000\t"));
+        assert!(table.contains("\t90\t100\t6.0000\t2.0000\t50\t4.0000\t"));
         Ok(())
     }
 }

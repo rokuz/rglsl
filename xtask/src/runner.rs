@@ -609,6 +609,28 @@ fn run_exec(executor: &Executor, results: &[CaseResult]) -> Vec<(usize, exec::Ou
     outcomes
 }
 
+pub fn validator_args(case: &Case, source: &Path) -> Vec<String> {
+    let environment = if case.target.compile_only {
+        format!("spv{}.{}", case.target.spirv.0, case.target.spirv.1)
+    } else {
+        case.target.spirv_val_env()
+    };
+    let mut args = vec!["--target-env".to_string(), environment];
+    if enables_extension(source, "GL_EXT_texture_offset_non_const") {
+        args.push("--allow-offset-texture-operand".into());
+    }
+    if enables_extension(source, "GL_EXT_scalar_block_layout") {
+        args.push("--scalar-block-layout".into());
+        if enables_extension(source, "GL_EXT_shared_memory_block") {
+            args.push("--workgroup-scalar-block-layout".into());
+        }
+    }
+    if corpus::runtests_options(&case.name).hlsl_offsets {
+        args.push("--relax-block-layout".into());
+    }
+    args
+}
+
 pub fn validate(
     env: &Environment,
     case: &Case,
@@ -616,24 +638,7 @@ pub fn validate(
     timeout: Duration,
 ) -> Result<Option<String>> {
     let mut command = Command::new(&env.spirv_val.path);
-    let environment = if case.target.compile_only {
-        format!("spv{}.{}", case.target.spirv.0, case.target.spirv.1)
-    } else {
-        case.target.spirv_val_env()
-    };
-    command.args(["--target-env", &environment]);
-    if enables_extension(&case.path, "GL_EXT_texture_offset_non_const") {
-        command.arg("--allow-offset-texture-operand");
-    }
-    if enables_extension(&case.path, "GL_EXT_scalar_block_layout") {
-        command.arg("--scalar-block-layout");
-        if enables_extension(&case.path, "GL_EXT_shared_memory_block") {
-            command.arg("--workgroup-scalar-block-layout");
-        }
-    }
-    if corpus::runtests_options(&case.name).hlsl_offsets {
-        command.arg("--relax-block-layout");
-    }
+    command.args(validator_args(case, &case.path));
     command.arg(module);
     let output = process::run(command, timeout)?;
     if matches!(output.exit, Exit::Code(0)) {

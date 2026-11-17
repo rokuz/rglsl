@@ -14,9 +14,10 @@ use crate::groups;
 use crate::oracles::{self, Tool};
 use crate::process::{self, Exit};
 
+mod budget;
 mod in_process;
-mod stats;
-mod synthetic;
+pub mod stats;
+pub mod synthetic;
 
 #[derive(Debug)]
 pub struct Options {
@@ -97,21 +98,25 @@ enum Output {
 }
 
 #[derive(Debug, Clone)]
-struct Item {
+pub struct Item {
     name: String,
     group: Group,
-    dir: PathBuf,
-    options: Vec<String>,
-    glslang_options: Vec<String>,
-    inputs: Vec<String>,
+    pub dir: PathBuf,
+    pub options: Vec<String>,
+    pub glslang_options: Vec<String>,
+    pub inputs: Vec<String>,
     output: Output,
     copy_from: Option<PathBuf>,
 }
 
 impl Item {
     fn arguments(&self, compiler: Compiler, output: &Path) -> Vec<OsString> {
-        let mut arguments: Vec<OsString> = self.options.iter().map(OsString::from).collect();
-        if let Compiler::Glslang = compiler {
+        let mut arguments: Vec<OsString> = Vec::new();
+        if let Compiler::GlslangOpt = compiler {
+            arguments.push("-O".into());
+        }
+        arguments.extend(self.options.iter().map(OsString::from));
+        if let Compiler::Glslang | Compiler::GlslangOpt = compiler {
             arguments.extend(self.glslang_options.iter().map(OsString::from));
         }
         if self.output == Output::File {
@@ -136,6 +141,7 @@ impl Item {
 #[derive(Debug, Clone, Copy)]
 enum Compiler {
     Glslang,
+    GlslangOpt,
     Rglsl,
 }
 
@@ -143,6 +149,15 @@ impl Compiler {
     const fn name(self) -> &'static str {
         match self {
             Self::Glslang => "glslang",
+            Self::GlslangOpt => "glslang -O",
+            Self::Rglsl => "rglsl",
+        }
+    }
+
+    const fn file(self) -> &'static str {
+        match self {
+            Self::Glslang => "glslang",
+            Self::GlslangOpt => "glslang-opt",
             Self::Rglsl => "rglsl",
         }
     }
@@ -151,6 +166,7 @@ impl Compiler {
 #[derive(Debug)]
 struct Tools {
     glslang: Tool,
+    glslang_opt: Option<Tool>,
     rglsl: PathBuf,
     time: Option<TimeWrapper>,
     out_dir: PathBuf,
@@ -161,12 +177,16 @@ impl Tools {
     fn program(&self, compiler: Compiler) -> &Path {
         match compiler {
             Compiler::Glslang => &self.glslang.path,
+            Compiler::GlslangOpt => self
+                .glslang_opt
+                .as_ref()
+                .map_or(&self.glslang.path, |tool| &tool.path),
             Compiler::Rglsl => &self.rglsl,
         }
     }
 
     fn output(&self, compiler: Compiler) -> PathBuf {
-        self.out_dir.join(format!("{}.spv", compiler.name()))
+        self.out_dir.join(format!("{}.spv", compiler.file()))
     }
 
     fn command(&self, compiler: Compiler, item: &Item) -> Command {
@@ -260,12 +280,25 @@ struct Measured {
     group: Group,
     command_line: String,
     glslang: Sample,
+    glslang_opt: Option<Sample>,
     rglsl: Sample,
 }
 
 impl Measured {
     fn ratio(&self) -> Option<f64> {
         stats::ratio(self.rglsl.median, self.glslang.median)
+    }
+
+    fn budget_row(&self) -> Option<budget::Row<'_>> {
+        let glslang_opt = self.glslang_opt?;
+        Some(budget::Row {
+            name: &self.name,
+            group: self.group,
+            glslang: self.glslang.median,
+            glslang_opt: glslang_opt.median,
+            optimizer: glslang_opt.median - self.glslang.median,
+            rglsl: self.rglsl.median,
+        })
     }
 }
 
@@ -291,6 +324,13 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
             glslang.path.display()
         );
     }
+    let glslang_opt = match oracles::find_tool(root, "glslang-opt", "RGLSL_GLSLANG_OPT") {
+        Ok(tool) => Some(tool),
+        Err(error) => {
+            eprintln!("[xtask] warning: {error}; `glslang -O` is not measured");
+            None
+        }
+    };
     let rglsl = cli::build_rglsl(root)?;
 
     let bench_dir = root.join("target").join("xtask").join("bench");
@@ -317,6 +357,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
 
     let tools = Tools {
         glslang,
+        glslang_opt,
         rglsl,
         time: TimeWrapper::find(),
         out_dir: work.join("out"),
@@ -332,6 +373,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
     let started = Instant::now();
     let mut measured = Vec::new();
     let mut excluded: Vec<(Group, Excluded, String)> = Vec::new();
+    let mut optimizer_failures = Vec::new();
     for (index, item) in items.iter().enumerate() {
         if index > 0 && index % 100 == 0 {
             eprintln!(
@@ -357,10 +399,23 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
                 continue;
             }
         }
+        let mut glslang_opt_warm = None;
+        if tools.glslang_opt.is_some() {
+            let warm = tools.warm_up(Compiler::GlslangOpt, item)?;
+            if warm.accepted {
+                glslang_opt_warm = Some(warm);
+            } else {
+                optimizer_failures.push(item.name.clone());
+            }
+        }
         let mut glslang_times = Vec::with_capacity(options.runs);
+        let mut glslang_opt_times = Vec::with_capacity(options.runs);
         let mut rglsl_times = Vec::with_capacity(options.runs);
         for _ in 0..options.runs {
             glslang_times.push(tools.timed(Compiler::Glslang, item)?);
+            if glslang_opt_warm.is_some() {
+                glslang_opt_times.push(tools.timed(Compiler::GlslangOpt, item)?);
+            }
             rglsl_times.push(tools.timed(Compiler::Rglsl, item)?);
         }
         measured.push(Measured {
@@ -368,6 +423,9 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
             group: item.group,
             command_line: item.command_line(),
             glslang: sample(&glslang_times, glslang_warm.peak_rss)?,
+            glslang_opt: glslang_opt_warm
+                .map(|warm| sample(&glslang_opt_times, warm.peak_rss))
+                .transpose()?,
             rglsl: sample(&rglsl_times, rglsl_warm.peak_rss)?,
         });
     }
@@ -380,7 +438,14 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         .debug_info
         .map(|debug| format!("-{}", debug.mode()))
         .unwrap_or_default();
-    let report = markdown(&environment, &measured, &excluded, options, elapsed);
+    let report = markdown(
+        &environment,
+        &measured,
+        &excluded,
+        &optimizer_failures,
+        options,
+        elapsed,
+    );
     let xtask_dir = root.join("target").join("xtask");
     let report_path = xtask_dir.join(format!("bench{suffix}.md"));
     let table_path = xtask_dir.join(format!("bench{suffix}.tsv"));
@@ -518,7 +583,7 @@ fn collect(
     Ok(items)
 }
 
-fn corpus_item(case: &Case, test_dir: &Path, debug_info: Option<DebugInfo>) -> Item {
+pub fn corpus_item(case: &Case, test_dir: &Path, debug_info: Option<DebugInfo>) -> Item {
     let mut target = case.target;
     if let Some(debug) = debug_info {
         target.debug = Some(debug.mode());
@@ -794,6 +859,7 @@ fn markdown(
     environment: &Environment,
     measured: &[Measured],
     excluded: &[(Group, Excluded, String)],
+    optimizer_failures: &[String],
     options: &Options,
     elapsed: Duration,
 ) -> String {
@@ -807,7 +873,8 @@ fn markdown(
         "Each compiler runs as a command-line tool with the same command line, writing SPIR-V to a file, \
          one process at a time on this machine. Per shader: one warm-up run of each (it also decides \
          whether both accept the shader and measures peak RSS with `/usr/bin/time`), then {} timed runs \
-         alternating glslang and rglsl; the time of a shader is the median wall time of its runs, \
+         alternating glslang, `glslang -O` (the pinned glslang with the optimizer, `glslang-opt -O`, \
+         when it is built) and rglsl; the time of a shader is the median wall time of its runs, \
          process start-up included. Debug information: {mode}.\n",
         options.runs
     );
@@ -858,6 +925,22 @@ fn markdown(
             mebibytes(maximum(&glslang_rss)),
             mebibytes(maximum(&rglsl_rss))
         );
+    }
+
+    let rows: Vec<budget::Row> = measured.iter().filter_map(Measured::budget_row).collect();
+    budget::section(
+        &mut out,
+        &rows,
+        &Group::ALL,
+        "`glslang -O` − glslang per shader, process start-up cancelled out (noisy for tiny shaders)",
+        optimizer_failures.len(),
+    );
+    if !optimizer_failures.is_empty() {
+        let names: Vec<String> = optimizer_failures
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect();
+        let _ = writeln!(out, "\n`glslang -O` fails on: {}.", names.join(", "));
     }
 
     out.push_str("\n## Shaders\n");
@@ -938,13 +1021,16 @@ fn markdown(
 
 fn tsv(measured: &[Measured]) -> String {
     let mut out = String::from(
-        "shader\tset\tglslang_median_ms\trglsl_median_ms\tratio\tglslang_min_ms\trglsl_min_ms\tglslang_peak_rss_kib\trglsl_peak_rss_kib\tcommand_line\n",
+        "shader\tset\tglslang_median_ms\trglsl_median_ms\tratio\tglslang_min_ms\trglsl_min_ms\tglslang_peak_rss_kib\trglsl_peak_rss_kib\tglslang_opt_median_ms\tglslang_opt_min_ms\tglslang_opt_peak_rss_kib\tbudget_ms\tcommand_line\n",
     );
     let kib = |rss: Option<u64>| rss.map_or_else(String::new, |rss| (rss / 1024).to_string());
+    let optional =
+        |value: Option<f64>| value.map_or_else(String::new, |value| format!("{value:.3}"));
     for shader in measured {
+        let opt = shader.glslang_opt;
         let _ = writeln!(
             out,
-            "{}\t{}\t{:.3}\t{:.3}\t{}\t{:.3}\t{:.3}\t{}\t{}\t{}",
+            "{}\t{}\t{:.3}\t{:.3}\t{}\t{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             shader.name,
             shader.group.key(),
             shader.glslang.median,
@@ -956,6 +1042,10 @@ fn tsv(measured: &[Measured]) -> String {
             shader.rglsl.min,
             kib(shader.glslang.peak_rss),
             kib(shader.rglsl.peak_rss),
+            optional(opt.map(|sample| sample.median)),
+            optional(opt.map(|sample| sample.min)),
+            kib(opt.and_then(|sample| sample.peak_rss)),
+            optional(shader.budget_row().map(|row| row.budget())),
             shader.command_line,
         );
     }
@@ -977,6 +1067,7 @@ mod tests {
             group,
             command_line: String::new(),
             glslang: sample(glslang),
+            glslang_opt: Some(sample(glslang * 2.0)),
             rglsl: sample(rglsl),
         }
     }
@@ -1021,6 +1112,10 @@ mod tests {
             item.arguments(Compiler::Glslang, Path::new("o.spv")),
             ["-V", "-gVS", "-o", "o.spv", "x.frag"].map(OsString::from)
         );
+        assert_eq!(
+            item.arguments(Compiler::GlslangOpt, Path::new("o.spv")),
+            ["-O", "-V", "-gVS", "-o", "o.spv", "x.frag"].map(OsString::from)
+        );
     }
 
     #[test]
@@ -1064,6 +1159,7 @@ mod tests {
                 Excluded::RglslRejects,
                 "synthetic/x.frag".into(),
             )],
+            &["o.frag".into()],
             &options,
             Duration::from_secs(1),
         );
@@ -1073,8 +1169,11 @@ mod tests {
         assert!(report.contains("`-gVS` added"));
         assert!(report.contains("Only rglsl rejects: `synthetic/x.frag`."));
         assert!(report.contains("0.50×"));
+        assert!(report.contains("## Optimizer budget"));
+        assert!(report.contains("`glslang -O` fails on: `o.frag`."));
         let table = tsv(&measured);
         assert_eq!(table.lines().count(), 3);
         assert!(table.contains("a.frag\tvulkan\t10.000\t5.000\t0.500"));
+        assert!(table.contains("\t20.000\t20.000\t4096\t15.000\t"));
     }
 }
