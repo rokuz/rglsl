@@ -133,6 +133,17 @@ commands:
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
       --filter TEXT       only shaders whose name contains TEXT (or one of the comma-separated TEXTs)
       --timeout SECS      per-process timeout (default: 120)
+      --exec              also run every shader the exec planner can execute on the Vulkan
+                          targets (local and remote, as for `test`) as rglsl, spirv-opt -O(rglsl)
+                          and glslang -O with Amber's --pipeline-stats: driver statistics
+                          (VK_KHR_pipeline_executable_properties, VK_AMD_shader_info), pipeline
+                          creation time, GPU time of repeated TIMED_EXECUTION runs, and whether
+                          spirv-opt -O(rglsl) and glslang -O compute what rglsl's module does;
+                          report in target/xtask/opt-quality-exec.md and .tsv (RGLSL_AMBER: a
+                          locally built Amber)
+      --exec-target T     with --exec, run on these targets only: local, remote or an entry of
+                          RGLSL_EXEC_REMOTE
+      --runs N            with --exec, timed runs of each shader (default 10)
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
@@ -322,6 +333,17 @@ fn run(args: Vec<String>) -> Result<i32> {
                 glslang_dir: args.value("--glslang-dir")?.map(PathBuf::from),
                 filter: args.value("--filter")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(120),
+                exec: {
+                    let exec = args.flag("--exec");
+                    let only = args.value("--exec-target")?;
+                    match (exec, only) {
+                        (false, Some(_)) => bail!("--exec-target needs --exec"),
+                        (false, None) => Vec::new(),
+                        (true, None) => exec::select_targets(true, true)?,
+                        (true, Some(name)) => exec::named_targets(&name)?,
+                    }
+                },
+                runs: args.parsed("--runs")?.unwrap_or(10),
             };
             args.finish()?;
             opt_quality::run(&workspace_root()?, &options)

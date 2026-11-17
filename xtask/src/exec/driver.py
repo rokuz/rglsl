@@ -57,17 +57,14 @@ def run_amber(command, cwd, timeout):
             errors="replace",
         )
     except OSError as error:
-        status = ("error", "starting amber: %s" % error)
-    else:
-        try:
-            out, err = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            kill_tree(process)
-            process.communicate()
-            status = ("timeout", "amber timed out")
-        else:
-            status = classify(process.returncode, out, err)
-    return status
+        return ("error", "starting amber: %s" % error), ""
+    try:
+        out, err = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_tree(process)
+        process.communicate()
+        return ("timeout", "amber timed out"), ""
+    return classify(process.returncode, out, err), out
 
 
 def transient(status):
@@ -76,9 +73,10 @@ def transient(status):
 
 def run_job(settings, job):
     amber, version, timeout, base, results, device = settings
-    index, directory, script, dumps, layer = job
+    index, directory, script, dumps, layer, capture = job
     cwd = os.path.join(base, directory)
     dump = os.path.join(cwd, "batch-%s.dump.txt" % index)
+    statistics = "%s.stats.json" % script
     command = [amber, "-d", "-v", version, "-q"]
     if device:
         command += ["--device-name", device]
@@ -88,9 +86,13 @@ def run_job(settings, job):
         command += ["-b", dump]
         for name in dumps:
             command += ["-B", name]
+    if "statistics" in capture:
+        command += ["--pipeline-stats", statistics]
+    if "timing" in capture:
+        command.append("--log-execution-timing")
     command.append(script)
     for attempt in range(ATTEMPTS):
-        status = run_amber(command, cwd, timeout)
+        status, out = run_amber(command, cwd, timeout)
         if not transient(status):
             break
         time.sleep(2.0 * (attempt + 1))
@@ -99,6 +101,14 @@ def run_job(settings, job):
             shutil.copyfile(dump, os.path.join(results, "%s.dump" % index))
         except OSError as error:
             status = ("error", "reading the dump: %s" % error)
+    if status[0] == "ok" and "statistics" in capture:
+        try:
+            shutil.copyfile(os.path.join(cwd, statistics), os.path.join(results, "%s.stats.json" % index))
+        except OSError:
+            pass
+    if status[0] == "ok" and "timing" in capture:
+        with open(os.path.join(results, "%s.stdout" % index), "w", encoding="utf-8") as file:
+            file.write(out)
     with open(os.path.join(results, "%s.status" % index), "w", encoding="utf-8") as file:
         file.write("%s\n%s\n" % status)
 
@@ -108,10 +118,14 @@ def read_manifest(path):
     with open(path, encoding="utf-8") as file:
         for line in file:
             fields = line.rstrip("\n").split("\t")
-            if len(fields) != 5:
+            if len(fields) == 5:
+                fields.append("")
+            if len(fields) != 6:
                 continue
-            index, directory, script, dumps, layer = fields
-            jobs.append((index, directory, script, [d for d in dumps.split(",") if d], layer))
+            index, directory, script, dumps, layer, capture = fields
+            jobs.append(
+                (index, directory, script, [d for d in dumps.split(",") if d], layer, capture.split(","))
+            )
     return jobs
 
 

@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow, bail};
 
-use super::amber::{Device, VULKAN_VERSION, first_line, parse_device};
+use super::amber::{Device, VULKAN_VERSION, add_captures, first_line, parse_device};
 use super::batch::{self, Job, JobResult};
 use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
@@ -426,7 +426,14 @@ fn read_results(dir: &Path, jobs: &[Job]) -> Vec<JobResult> {
             let status =
                 fs::read_to_string(dir.join(format!("{index}.status"))).unwrap_or_default();
             let dump = fs::read_to_string(dir.join(format!("{index}.dump"))).ok();
-            batch::parse_result(&status, dump.as_deref(), !job.dumps.is_empty())
+            let mut result = batch::parse_result(&status, dump.as_deref(), !job.dumps.is_empty());
+            if let Ok(outputs) = &mut result {
+                let statistics = fs::read(dir.join(format!("{index}.stats.json"))).ok();
+                let stdout =
+                    fs::read_to_string(dir.join(format!("{index}.stdout"))).unwrap_or_default();
+                add_captures(outputs, job.capture, statistics, &stdout);
+            }
+            result
         })
         .collect()
 }

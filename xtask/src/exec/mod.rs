@@ -15,6 +15,7 @@ pub mod references;
 pub mod reflect;
 pub mod remote;
 pub mod requirements;
+pub mod statistics;
 pub mod twin;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +30,7 @@ use anyhow::{Result, anyhow, bail};
 
 use self::amber::{Amber, Device};
 pub use self::batch::Outputs;
-use self::batch::{Job, JobResult};
+use self::batch::{Capture, Job, JobResult};
 use self::compare::{Comparison, compare};
 use self::harness::ShaderKind;
 use self::plan::{Inputs, Plan, PlannedTensor, Refusal, ScriptPaths};
@@ -499,6 +500,27 @@ impl Executor {
         Ok(executor)
     }
 
+    pub fn probe_capture(&self, capture: Capture) -> Result<Outputs, String> {
+        let dir = self.work.join("probes").join("capture");
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        fs::copy(&self.dump_shader, dir.join("probe.spv")).map_err(|e| e.to_string())?;
+        fs::write(
+            dir.join("probe.amber"),
+            "#!amber\nSHADER compute probe SPIRV-BIN FILE probe.spv\nPIPELINE compute p\n  ATTACH probe\nEND\nRUN TIMED_EXECUTION p 1 1 1\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let job = Job {
+            dir,
+            script: "probe.amber".into(),
+            dumps: Vec::new(),
+            tensor_layer: false,
+            capture,
+        };
+        self.confirm_jobs(&[job])
+            .pop()
+            .unwrap_or_else(|| Err("no result from the probe".into()))
+    }
+
     pub fn describe(&self) -> String {
         format!(
             "{} (Vulkan {}, {})",
@@ -525,6 +547,7 @@ impl Executor {
                 script: "probe.amber".into(),
                 dumps: Vec::new(),
                 tensor_layer: need.tensor_layer(),
+                capture: Capture::NONE,
             });
         }
         let results = self.confirm_jobs(&jobs);
@@ -712,18 +735,12 @@ impl Executor {
             script: name,
             dumps: plan.dumps().into_iter().map(str::to_string).collect(),
             tensor_layer: requirements::tensor_layer(&plan.needs),
+            capture: Capture::NONE,
         })
     }
 
-    fn stage_case(&self, case: &ExecCase) -> Result<Ready, Outcome> {
-        let reflect = |path: &Path| -> Result<Reflection, String> {
-            let bytes = fs::read(path).map_err(|e| e.to_string())?;
-            reflect::reflect_bytes(&bytes)
-        };
-        let theirs = reflect(&case.reference).map_err(|e| Outcome::skip(SkipReason::Binding, e))?;
-        let mine = reflect(&case.ours)
-            .map_err(|e| Outcome::Fail(format!("reflecting our module: {e}")))?;
-        let stage_needs = requirements::stage_needs(theirs.model);
+    pub fn plan_module(&self, name: &str, reflection: &Reflection) -> Result<Plan, Outcome> {
+        let stage_needs = requirements::stage_needs(reflection.model);
         if let Some(need) = stage_needs.into_iter().find(|n| !self.supports(*n)) {
             return Err(Outcome::skip(
                 SkipReason::DeviceFeature,
@@ -731,11 +748,11 @@ impl Executor {
             ));
         }
         let inputs = Inputs {
-            seed: case.name.clone(),
+            seed: name.to_string(),
             ..Inputs::default()
         };
-        let mut plan = Plan::new(&theirs, &inputs).map_err(refusal)?;
-        self.tensor_limits(theirs.model, &plan.tensors)?;
+        let mut plan = Plan::new(reflection, &inputs).map_err(refusal)?;
+        self.tensor_limits(reflection.model, &plan.tensors)?;
         if let Some(need) = self.missing(&plan.needs) {
             return Err(Outcome::skip(
                 SkipReason::DeviceFeature,
@@ -743,20 +760,20 @@ impl Executor {
             ));
         }
         let limits = cooperative::Limits {
-            invocations: theirs.local_size.iter().product(),
+            invocations: reflection.local_size.iter().product(),
             max_dimension: self.device.cooperative.max_dimension,
         };
         let specialization = cooperative::specialize(
-            &theirs.cooperative_matrices,
+            &reflection.cooperative_matrices,
             &self.device.cooperative,
             &limits,
         )
         .map_err(|shape| Outcome::skip(SkipReason::DeviceFeature, shape))?;
         if let Some(product) =
-            cooperative::unsupported_product(&theirs.vector_products, &self.device.cooperative)
+            cooperative::unsupported_product(&reflection.vector_products, &self.device.cooperative)
                 .or_else(|| {
                     cooperative::unsupported_saturation(
-                        theirs.saturating_accumulation,
+                        reflection.saturating_accumulation,
                         &self.device.cooperative,
                     )
                 })
@@ -770,10 +787,26 @@ impl Executor {
                 self.why_missing(need),
             ));
         }
-        let specializations = specialization.values;
+        plan.specializations = specialization.values;
+        Ok(plan)
+    }
+
+    fn stage_case(&self, case: &ExecCase) -> Result<Ready, Outcome> {
+        let reflect = |path: &Path| -> Result<Reflection, String> {
+            let bytes = fs::read(path).map_err(|e| e.to_string())?;
+            reflect::reflect_bytes(&bytes)
+        };
+        let theirs = reflect(&case.reference).map_err(|e| Outcome::skip(SkipReason::Binding, e))?;
+        let mine = reflect(&case.ours)
+            .map_err(|e| Outcome::Fail(format!("reflecting our module: {e}")))?;
+        let plan = self.plan_module(&case.name, &theirs)?;
         if let Some(difference) = interface_difference(&theirs, &mine) {
             return Err(Outcome::Fail(format!("interface differs: {difference}")));
         }
+        let inputs = Inputs {
+            seed: case.name.clone(),
+            ..Inputs::default()
+        };
         let mut our_plan = Plan::new(&mine, &inputs).map_err(|error| {
             Outcome::Fail(format!(
                 "our module needs what glslang's does not: {}",
@@ -787,8 +820,7 @@ impl Executor {
             )));
         }
         our_plan.needs.extend(plan.needs.iter().copied());
-        plan.specializations.clone_from(&specializations);
-        our_plan.specializations = specializations;
+        our_plan.specializations.clone_from(&plan.specializations);
         let dir = self.work.join(&case.name);
         let harness = self
             .prepare(&plan, &dir)
@@ -936,6 +968,7 @@ impl Executor {
                 script: script_name.clone(),
                 dumps: Vec::new(),
                 tensor_layer: requirements::tensor_layer(&needs),
+                capture: Capture::NONE,
             })
         };
         Ok((stage("rglsl", &ours)?, stage("glslang", &theirs)?))
