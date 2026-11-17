@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 49
+; Bound: 43
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -30,59 +30,47 @@ OpBranch %17
 %17 = OpLabel
 %19 = OpLoad  %3  %10
 %21 = OpSLessThan  %20  %19 %8
-%22 = OpLogicalNot  %20  %21
-OpSelectionMerge %23 None
-OpBranchConditional %22 %24 %23
-%24 = OpLabel
-OpBranch %16
-%23 = OpLabel
+OpBranchConditional %21 %22 %16
+%22 = OpLabel
 OpStore %12 %7
+OpBranch %23
+%23 = OpLabel
+OpLoopMerge %24 %26 None
 OpBranch %25
 %25 = OpLabel
-OpLoopMerge %26 %28 None
-OpBranch %27
-%27 = OpLabel
-%29 = OpLoad  %3  %12
-%30 = OpSLessThan  %20  %29 %8
-%31 = OpLogicalNot  %20  %30
-OpSelectionMerge %32 None
-OpBranchConditional %31 %33 %32
-%33 = OpLabel
-OpBranch %26
-%32 = OpLabel
+%27 = OpLoad  %3  %12
+%28 = OpSLessThan  %20  %27 %8
+OpBranchConditional %28 %29 %24
+%29 = OpLabel
 OpStore %13 %7
-OpBranch %34
-%34 = OpLabel
-OpLoopMerge %35 %37 None
-OpBranch %36
+OpBranch %30
+%30 = OpLabel
+OpLoopMerge %31 %33 None
+OpBranch %32
+%32 = OpLabel
+%34 = OpLoad  %3  %13
+%35 = OpSLessThan  %20  %34 %8
+OpBranchConditional %35 %36 %31
 %36 = OpLabel
-%38 = OpLoad  %3  %13
-%39 = OpSLessThan  %20  %38 %8
-%40 = OpLogicalNot  %20  %39
-OpSelectionMerge %41 None
-OpBranchConditional %40 %42 %41
-%42 = OpLabel
-OpBranch %35
-%41 = OpLabel
-OpBranch %37
-%37 = OpLabel
-%43 = OpLoad  %3  %13
-%44 = OpIAdd  %3  %43 %9
-OpStore %13 %44
-OpBranch %34
-%35 = OpLabel
-OpBranch %28
-%28 = OpLabel
-%45 = OpLoad  %3  %12
-%46 = OpIAdd  %3  %45 %9
-OpStore %12 %46
-OpBranch %25
+OpBranch %33
+%33 = OpLabel
+%37 = OpLoad  %3  %13
+%38 = OpIAdd  %3  %37 %9
+OpStore %13 %38
+OpBranch %30
+%31 = OpLabel
+OpBranch %26
 %26 = OpLabel
+%39 = OpLoad  %3  %12
+%40 = OpIAdd  %3  %39 %9
+OpStore %12 %40
+OpBranch %23
+%24 = OpLabel
 OpBranch %18
 %18 = OpLabel
-%47 = OpLoad  %3  %10
-%48 = OpIAdd  %3  %47 %9
-OpStore %10 %48
+%41 = OpLoad  %3  %10
+%42 = OpIAdd  %3  %41 %9
+OpStore %10 %42
 OpBranch %15
 %16 = OpLabel
 OpReturn
