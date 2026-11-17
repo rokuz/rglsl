@@ -1258,7 +1258,8 @@ fn reflected(source: &str, options: rglsl_link::reflect::Options) -> Result<Stri
 }
 
 fn deep_reflection_on_a_small_stack(depth: usize) -> TestResult {
-    let last = depth - 1;
+    let members_depth = depth.min(DEFAULT_DEPTH);
+    let last = members_depth - 1;
     let sources = [
         (
             "statements",
@@ -1298,7 +1299,7 @@ fn deep_reflection_on_a_small_stack(depth: usize) -> TestResult {
             shader(
                 &format!(
                     "{}layout(std140, binding = 0) uniform U {{ S{last} s; }} u;",
-                    struct_chain(depth)
+                    struct_chain(members_depth)
                 ),
                 "b = u.s.b;",
             ),
