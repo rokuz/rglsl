@@ -23,6 +23,7 @@ pub struct Options {
     pub timeout_secs: u64,
     pub exec: Vec<TargetSpec>,
     pub exec_glslang: bool,
+    pub optimize: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,10 +34,14 @@ pub enum Verdict {
     BackendFailed,
     InvalidSpirv,
     Crash,
+    OptimizerFailed,
+    InvalidSpirvOptimized,
     ExecSkipped,
     WrongResultGlslang,
     ExecFailed,
     WrongResult,
+    ExecFailedOptimized,
+    WrongResultOptimized,
 }
 
 impl Verdict {
@@ -48,10 +53,14 @@ impl Verdict {
             Self::BackendFailed => "backend-failed",
             Self::InvalidSpirv => "invalid-spirv",
             Self::Crash => "crash",
+            Self::OptimizerFailed => "optimizer-failed",
+            Self::InvalidSpirvOptimized => "invalid-spirv-O",
             Self::ExecSkipped => "exec-skipped",
             Self::WrongResultGlslang => "wrong-result-glslang",
             Self::ExecFailed => "exec-failed",
             Self::WrongResult => "wrong-result",
+            Self::ExecFailedOptimized => "exec-failed-O",
+            Self::WrongResultOptimized => "wrong-result-O",
         }
     }
 
@@ -62,8 +71,12 @@ impl Verdict {
                 | Self::BackendFailed
                 | Self::InvalidSpirv
                 | Self::Crash
+                | Self::OptimizerFailed
+                | Self::InvalidSpirvOptimized
                 | Self::ExecFailed
                 | Self::WrongResult
+                | Self::ExecFailedOptimized
+                | Self::WrongResultOptimized
         )
     }
 }
@@ -118,6 +131,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                         shader,
                         &spirv,
                         timeout,
+                        options.optimize,
                     ) {
                         Ok(outcome) => outcomes
                             .lock()
@@ -153,7 +167,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         timeout,
     )?;
     let judgements = exec::parallel_map(&executors, |executor| {
-        metamorphic(executor, &outcomes, options.exec_glslang)
+        metamorphic(executor, &outcomes, options.exec_glslang, options.optimize)
     });
     let per_target: Vec<(TargetId, Vec<Judgement>)> = executors
         .iter()
@@ -199,6 +213,10 @@ fn collect_shaders(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(shaders)
 }
 
+pub fn optimized_module(spirv: &Path) -> PathBuf {
+    spirv.with_extension("O.spv")
+}
+
 pub fn compare(
     glslang: &Path,
     spirv_val: &Path,
@@ -206,6 +224,7 @@ pub fn compare(
     shader: &Path,
     spirv: &Path,
     timeout: Duration,
+    optimize: bool,
 ) -> Result<Outcome> {
     let outcome = |verdict, note: String| Outcome {
         shader: shader.to_path_buf(),
@@ -230,11 +249,40 @@ pub fn compare(
         return Ok(outcome(Verdict::GlslangRejects, note.to_string()));
     }
 
+    if let Some((verdict, note)) = ours(self_exe, stage, shader, spirv, None, timeout)? {
+        return Ok(outcome(verdict, note));
+    }
+    if let Some(note) = invalid(spirv_val, spirv, timeout)? {
+        return Ok(outcome(Verdict::InvalidSpirv, note));
+    }
+    if optimize {
+        let optimized = optimized_module(spirv);
+        if let Some((_, note)) = ours(self_exe, stage, shader, &optimized, Some("O"), timeout)? {
+            return Ok(outcome(Verdict::OptimizerFailed, note));
+        }
+        if let Some(note) = invalid(spirv_val, &optimized, timeout)? {
+            return Ok(outcome(Verdict::InvalidSpirvOptimized, note));
+        }
+    }
+    Ok(outcome(Verdict::Agree, String::new()))
+}
+
+fn ours(
+    self_exe: &Path,
+    stage: &str,
+    shader: &Path,
+    spirv: &Path,
+    level: Option<&str>,
+    timeout: Duration,
+) -> Result<Option<(Verdict, String)>> {
     let mut ours = Command::new(self_exe);
     ours.arg("compile-one")
         .args(["--stage", stage, "--spv", "1.0", "--out"])
-        .arg(spirv)
-        .arg(shader);
+        .arg(spirv);
+    if let Some(level) = level {
+        ours.arg(format!("--opt={level}"));
+    }
+    ours.arg(shader);
     let ours = process::run(ours, timeout)?;
     let diagnostic = ours
         .stdout
@@ -242,48 +290,57 @@ pub fn compare(
         .find_map(|line| line.strip_prefix("E "))
         .unwrap_or_default()
         .to_string();
-    match ours.exit {
-        Exit::Code(EXIT_ACCEPTED) => {}
-        Exit::Code(EXIT_REJECTED) => return Ok(outcome(Verdict::WeReject, diagnostic)),
-        Exit::Code(EXIT_BACKEND_FAILED) => return Ok(outcome(Verdict::BackendFailed, diagnostic)),
+    Ok(match ours.exit {
+        Exit::Code(EXIT_ACCEPTED) => None,
+        Exit::Code(EXIT_REJECTED) => Some((Verdict::WeReject, diagnostic)),
+        Exit::Code(EXIT_BACKEND_FAILED) => Some((Verdict::BackendFailed, diagnostic)),
         Exit::Code(_) | Exit::Signal => {
             let note = ours
                 .stderr
                 .lines()
                 .find(|line| !line.trim().is_empty())
                 .unwrap_or("crashed");
-            return Ok(outcome(Verdict::Crash, note.to_string()));
+            Some((Verdict::Crash, note.to_string()))
         }
-        Exit::Timeout => return Ok(outcome(Verdict::Crash, "timeout".to_string())),
-    }
+        Exit::Timeout => Some((Verdict::Crash, "timeout".to_string())),
+    })
+}
 
+fn invalid(spirv_val: &Path, spirv: &Path, timeout: Duration) -> Result<Option<String>> {
     let mut validator = Command::new(spirv_val);
     validator.args(["--target-env", "vulkan1.0"]).arg(spirv);
     let validation = process::run(validator, timeout)?;
-    if !matches!(validation.exit, Exit::Code(0)) {
-        let note = validation
+    if matches!(validation.exit, Exit::Code(0)) {
+        return Ok(None);
+    }
+    Ok(Some(
+        validation
             .stderr
             .lines()
             .chain(validation.stdout.lines())
             .find(|line| !line.trim().is_empty())
-            .unwrap_or("spirv-val failed");
-        return Ok(outcome(Verdict::InvalidSpirv, note.to_string()));
-    }
-    Ok(outcome(Verdict::Agree, String::new()))
+            .unwrap_or("spirv-val failed")
+            .to_string(),
+    ))
 }
 
-type RunPair = (Run, Option<Run>);
-type StagedPair = (Staged, Option<Staged>);
+type RunPair = (Run, Option<Run>, Option<Run>);
+type StagedPair = (Staged, Option<Staged>, Option<Staged>);
 type Judgement = Option<(Verdict, String)>;
 
-fn stage_all(executor: &Executor, outcomes: &[Outcome], glslang: bool) -> Vec<StagedPair> {
+fn stage_all(
+    executor: &Executor,
+    outcomes: &[Outcome],
+    glslang: bool,
+    optimize: bool,
+) -> Vec<StagedPair> {
     let indices: Vec<usize> = (0..outcomes.len()).collect();
     exec::parallel_map(&indices, |index| {
         let Some(outcome) = outcomes.get(*index) else {
-            return (Staged::Refused(String::new()), None);
+            return (Staged::Refused(String::new()), None, None);
         };
         if outcome.verdict != Verdict::Agree || fuzz_exec::family_of(&outcome.shader).is_none() {
-            return (Staged::Refused(String::new()), None);
+            return (Staged::Refused(String::new()), None, None);
         }
         let dir = executor
             .work_dir()
@@ -301,7 +358,16 @@ fn stage_all(executor: &Executor, outcomes: &[Outcome], glslang: bool) -> Vec<St
                 "glslang",
             )
         });
-        (ours, theirs)
+        let optimized = optimize.then(|| {
+            fuzz_exec::stage_module(
+                executor,
+                &optimized_module(&outcome.spirv),
+                json.as_deref(),
+                &dir,
+                "rglsl-O",
+            )
+        });
+        (ours, theirs, optimized)
     })
 }
 
@@ -313,8 +379,11 @@ fn execute(
 ) -> BTreeMap<usize, RunPair> {
     let mut jobs = Vec::new();
     for index in indices {
-        if let Some((ours, theirs)) = staged.get(*index) {
-            for stage in std::iter::once(ours).chain(theirs.iter()) {
+        if let Some((ours, theirs, optimized)) = staged.get(*index) {
+            for stage in std::iter::once(ours)
+                .chain(theirs.iter())
+                .chain(optimized.iter())
+            {
                 if let Staged::Ready { job, .. } = stage {
                     jobs.push(job.clone());
                 }
@@ -329,7 +398,7 @@ fn execute(
     let mut results = results.into_iter();
     let mut runs = BTreeMap::new();
     for index in indices {
-        let Some((ours, theirs)) = staged.get(*index) else {
+        let Some((ours, theirs, optimized)) = staged.get(*index) else {
             continue;
         };
         let mut finish = |stage: &Staged| {
@@ -341,7 +410,8 @@ fn execute(
         };
         let ours = finish(ours);
         let theirs = theirs.as_ref().map(&mut finish);
-        runs.insert(*index, (ours, theirs));
+        let optimized = optimized.as_ref().map(&mut finish);
+        runs.insert(*index, (ours, theirs, optimized));
     }
     runs
 }
@@ -363,12 +433,38 @@ fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
 }
 
 fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) -> Judgement {
+    let judged = judge_unoptimized(outcomes, runs, index)?;
+    if judged.0.is_failure() {
+        return Some(judged);
+    }
+    let (ours, _, optimized) = runs.get(&index)?;
+    Some(match (ours, optimized) {
+        (Run::Ran { .. }, Some(optimized)) => match differs(ours, optimized) {
+            Some(Ok(difference)) => (
+                Verdict::WrongResultOptimized,
+                format!("-O differs from the unoptimized module: {difference}"),
+            ),
+            Some(Err(error)) => (
+                Verdict::ExecFailedOptimized,
+                format!("-O fails, the unoptimized module runs: {error}"),
+            ),
+            None => judged,
+        },
+        _ => judged,
+    })
+}
+
+fn judge_unoptimized(
+    outcomes: &[Outcome],
+    runs: &BTreeMap<usize, RunPair>,
+    index: usize,
+) -> Judgement {
     let outcome = outcomes.get(index)?;
     if outcome.verdict != Verdict::Agree {
         return None;
     }
     let reference = fuzz_exec::family_of(&outcome.shader)?;
-    let (ours, theirs) = runs.get(&index)?;
+    let (ours, theirs, _) = runs.get(&index)?;
     let reference_index = outcomes.iter().position(|o| o.shader == reference);
     let reference_runs = reference_index.and_then(|i| runs.get(&i));
     Some(if reference == outcome.shader {
@@ -398,7 +494,7 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
                 ),
                 _ => (Verdict::ExecFailed, why.clone()),
             },
-            (Some((reference_ours @ Run::Ran { .. }, reference_theirs)), Run::Ran { .. }) => {
+            (Some((reference_ours @ Run::Ran { .. }, reference_theirs, _)), Run::Ran { .. }) => {
                 let glslang_difference = match (reference_theirs, theirs) {
                     (Some(reference_theirs), Some(theirs)) => {
                         differs(reference_theirs, theirs).map(|d| d.unwrap_or_else(|e| e))
@@ -421,7 +517,7 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
                     _ => (Verdict::Agree, String::new()),
                 }
             }
-            (Some((reference, _)), Run::Ran { .. }) => (
+            (Some((reference, _, _)), Run::Ran { .. }) => (
                 Verdict::ExecSkipped,
                 match reference {
                     Run::Refused(why) | Run::Failed(why) => {
@@ -441,12 +537,21 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
 const fn needs_confirmation(verdict: Verdict) -> bool {
     matches!(
         verdict,
-        Verdict::WrongResult | Verdict::WrongResultGlslang | Verdict::ExecFailed
+        Verdict::WrongResult
+            | Verdict::WrongResultGlslang
+            | Verdict::ExecFailed
+            | Verdict::WrongResultOptimized
+            | Verdict::ExecFailedOptimized
     )
 }
 
-fn metamorphic(executor: &Executor, outcomes: &[Outcome], glslang: bool) -> Vec<Judgement> {
-    let staged = stage_all(executor, outcomes, glslang);
+fn metamorphic(
+    executor: &Executor,
+    outcomes: &[Outcome],
+    glslang: bool,
+    optimize: bool,
+) -> Vec<Judgement> {
+    let staged = stage_all(executor, outcomes, glslang, optimize);
     let all: Vec<usize> = (0..outcomes.len()).collect();
     let mut runs = execute(executor, &staged, &all, false);
     let mut judgements: Vec<Judgement> = all.iter().map(|i| judge(outcomes, &runs, *i)).collect();
@@ -611,7 +716,10 @@ mod tests {
         let outcomes = [outcome("reference.frag"), outcome("variant_000.frag")];
         let lost = || Run::Failed("device lost".to_string());
         let verdict = |theirs: Option<Run>| {
-            let runs = BTreeMap::from([(0, (lost(), Some(lost()))), (1, (lost(), theirs))]);
+            let runs = BTreeMap::from([
+                (0, (lost(), Some(lost()), None)),
+                (1, (lost(), theirs, None)),
+            ]);
             judge(&outcomes, &runs, 1).map(|(verdict, _)| verdict)
         };
         assert_eq!(verdict(Some(lost())), Some(Verdict::ExecSkipped));

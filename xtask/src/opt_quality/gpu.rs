@@ -15,14 +15,21 @@ use crate::exec::statistics::Report;
 use crate::exec::{self, Executor, TargetSpec, amber, reflect};
 use crate::oracles;
 
-pub const VARIANTS: [Variant; 3] = [Variant::Rglsl, Variant::SpirvOptO, Variant::GlslangO];
-const CHECKED: [Variant; 2] = [Variant::SpirvOptO, Variant::GlslangO];
+pub const VARIANTS: [Variant; 4] = [
+    Variant::Rglsl,
+    Variant::RglslO,
+    Variant::SpirvOptO,
+    Variant::GlslangO,
+];
+const CHECKED: [Variant; 3] = [Variant::RglslO, Variant::SpirvOptO, Variant::GlslangO];
 const PIPELINE: &str = "main";
 const LISTED: usize = 60;
 
 const fn tag(variant: Variant) -> &'static str {
     match variant {
         Variant::Rglsl => "rglsl",
+        Variant::RglslO => "rglsl-O",
+        Variant::RglslOs => "rglsl-Os",
         Variant::SpirvOptO => "spirv-opt-O",
         Variant::SpirvOptOs => "spirv-opt-Os",
         Variant::GlslangO => "glslang-O",
@@ -501,20 +508,21 @@ fn pairs<'a>(
 }
 
 fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> String {
-    let mut out =
-        String::from("# Driver statistics and GPU time: rglsl, spirv-opt -O and glslang -O\n\n");
+    let mut out = String::from(
+        "# Driver statistics and GPU time: rglsl, rglsl -O, spirv-opt -O and glslang -O\n\n",
+    );
     let _ = writeln!(
         out,
         "Every shader the exec planner can run (`xtask/src/exec`, the harness of `cargo xtask test`) is staged once per \
-         variant with the plan of rglsl's module: *rglsl*, *spirv-opt -O(rglsl)* and *glslang -O*. A check run \
+         variant with the plan of rglsl's module: *rglsl*, *rglsl -O*, *spirv-opt -O(rglsl)* and *glslang -O*. A check run \
          (`amber --pipeline-stats`) gives the outputs and the driver's statistics of the tested stage of the \
          pipeline `main` (VK_KHR_pipeline_executable_properties; VK_AMD_shader_info values are prefixed `amd:`); \
          a timed run repeats every `RUN` {runs} times as `RUN TIMED_EXECUTION` (one Amber process at a time) and \
          gives the median GPU time and the median `vkCreate*Pipelines` wall time (with the statistics capture \
-         flags when the driver has them). *Equivalence*: the outputs of spirv-opt -O(rglsl) and of glslang -O \
+         flags when the driver has them). *Equivalence*: the outputs of rglsl -O, spirv-opt -O(rglsl) and glslang -O \
          against rglsl's module with the comparison of `cargo xtask test`; a difference or a failure is rerun \
          alone with rglsl's module, and rglsl's module is checked to give the same outputs again. A difference \
-         is a spirv-opt or driver bug, not ours. Ratios are to spirv-opt -O(rglsl): statistics per shader as \
+         of rglsl -O is our bug; of the others, a spirv-opt or driver bug. Ratios are to spirv-opt -O(rglsl): statistics per shader as \
          (value + 1) / (reference + 1), times as plain ratios; below 1: smaller than spirv-opt -O.\n"
     );
     for target in targets {

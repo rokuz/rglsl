@@ -328,6 +328,7 @@ struct RglslSample {
     words: f64,
     compiler_first: Option<f64>,
     compiler: Option<f64>,
+    optimized: Option<f64>,
 }
 
 impl RglslSample {
@@ -355,6 +356,7 @@ impl RglslSample {
             words: fields.median("words")?,
             compiler_first: fields.optional_median("compiler_first"),
             compiler: fields.optional_median("compiler"),
+            optimized: fields.optional_median("steady_opt"),
         })
     }
 }
@@ -386,6 +388,7 @@ impl Measured {
             glslang_opt: optimizer.steady,
             optimizer: optimizer.spirv_opt,
             rglsl: self.rglsl.steady,
+            rglsl_opt: self.rglsl.optimized,
         })
     }
 }
@@ -405,6 +408,7 @@ struct Outcome {
     crashes: Vec<Crash>,
     compiler_rejects: Vec<(String, String)>,
     optimizer_failures: Vec<(String, String)>,
+    rglsl_optimizer_failures: Vec<(String, String)>,
     no_link: Vec<String>,
     load_before: Option<String>,
     load_after: Option<String>,
@@ -491,7 +495,7 @@ pub fn run(root: &Path, glslang_dir: &Path, options: &Options) -> Result<i32> {
         }
         let line = job.line(options.runs);
         let glslang_reply = glslang.request(&format!("{line}\toptimize=1"))?;
-        let rglsl_reply = rglsl.request(&line)?;
+        let rglsl_reply = rglsl.request(&format!("{line}\toptimize=1"))?;
         record(&mut outcome, job, glslang_reply, rglsl_reply)?;
     }
     outcome.elapsed = started.elapsed();
@@ -518,6 +522,19 @@ pub fn run(root: &Path, glslang_dir: &Path, options: &Options) -> Result<i32> {
         report_path.display(),
         table_path.display()
     );
+    let rows: Vec<budget::Row> = outcome
+        .measured
+        .iter()
+        .filter_map(Measured::budget_row)
+        .collect();
+    let slower = budget::slower(&rows).len();
+    if slower > 0 || !outcome.rglsl_optimizer_failures.is_empty() {
+        eprintln!(
+            "[xtask] rglsl -O is not faster than glslang -O on {slower} shaders; rglsl -O fails on {}",
+            outcome.rglsl_optimizer_failures.len()
+        );
+        return Ok(1);
+    }
     Ok(0)
 }
 
@@ -547,6 +564,11 @@ fn record(outcome: &mut Outcome, job: &Job, glslang: Reply, rglsl: Reply) -> Res
             if let Some(reason) = glslang.notes.get("opt_error") {
                 outcome
                     .optimizer_failures
+                    .push((job.name.clone(), first_line(reason)));
+            }
+            if let Some(reason) = rglsl.notes.get("opt_error") {
+                outcome
+                    .rglsl_optimizer_failures
                     .push((job.name.clone(), first_line(reason)));
             }
             outcome.measured.push(Measured {
@@ -1007,6 +1029,9 @@ fn markdown(environment: &Environment, outcome: &Outcome, options: &Options) -> 
         "the `spirv-opt` phase of the glslang harness: `spvtools::Optimizer` with `RegisterPerformancePasses` on the output of `GlslangToSpv`, as `glslang -O` runs it; `glslang -O` is the steady compile with that phase",
         outcome.optimizer_failures.len(),
     );
+    for (name, reason) in &outcome.rglsl_optimizer_failures {
+        let _ = writeln!(out, "\nrglsl -O fails on `{name}`: {reason}");
+    }
 
     out.push_str("\n## Shaders\n");
     let top = 15;
@@ -1125,7 +1150,7 @@ fn not_measured(out: &mut String, outcome: &Outcome) {
 
 fn tsv(measured: &[Measured]) -> String {
     let mut out = String::from(
-        "shader\tset\tglslang_first_ms\tglslang_steady_ms\tglslang_parse_ms\tglslang_link_ms\tglslang_spv_ms\trglsl_first_ms\trglsl_steady_ms\trglsl_fresh_ms\trglsl_pp_ms\trglsl_parse_ms\trglsl_sema_ms\trglsl_lowering_ms\trglsl_validate_ms\trglsl_link_ms\trglsl_spv_ms\tcompiler_first_ms\tcompiler_steady_ms\tsteady_ratio\tfirst_ratio\tglslang_words\trglsl_words\tglslang_opt_steady_ms\tglslang_spirv_opt_ms\tglslang_opt_words\tbudget_ms\tcommand_line\n",
+        "shader\tset\tglslang_first_ms\tglslang_steady_ms\tglslang_parse_ms\tglslang_link_ms\tglslang_spv_ms\trglsl_first_ms\trglsl_steady_ms\trglsl_fresh_ms\trglsl_pp_ms\trglsl_parse_ms\trglsl_sema_ms\trglsl_lowering_ms\trglsl_validate_ms\trglsl_link_ms\trglsl_spv_ms\tcompiler_first_ms\tcompiler_steady_ms\tsteady_ratio\tfirst_ratio\tglslang_words\trglsl_words\tglslang_opt_steady_ms\tglslang_spirv_opt_ms\tglslang_opt_words\tbudget_ms\trglsl_opt_steady_ms\tcommand_line\n",
     );
     let optional =
         |value: Option<f64>| value.map_or_else(String::new, |value| format!("{value:.4}"));
@@ -1135,7 +1160,7 @@ fn tsv(measured: &[Measured]) -> String {
         let optimizer = glslang.optimizer;
         let _ = writeln!(
             out,
-            "{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{:.0}\t{:.0}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{:.0}\t{:.0}\t{}\t{}\t{}\t{}\t{}\t{}",
             shader.name,
             shader.group.key(),
             glslang.first,
@@ -1163,6 +1188,7 @@ fn tsv(measured: &[Measured]) -> String {
             optional(optimizer.map(|optimizer| optimizer.spirv_opt)),
             optimizer.map_or_else(String::new, |optimizer| format!("{:.0}", optimizer.words)),
             optional(shader.budget_row().map(|row| row.budget())),
+            optional(rglsl.optimized),
             shader.command_line,
         );
     }

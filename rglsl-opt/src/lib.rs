@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod ir;
 mod manager;
 mod pass;
 mod preset;
@@ -15,7 +16,7 @@ pub use manager::optimize;
 pub use pass::{Changed, DebugRule, PASSES, Pass, Scope, Session};
 pub use preset::{PRESETS, Preset, Step};
 pub use summary::Summary;
-pub use target::{GpuClass, GpuParameters, GpuProfile, PROFILES, TargetGpu};
+pub use target::{GpuClass, GpuParameters, GpuProfile, Inlining, PROFILES, TargetGpu};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum OptLevel {

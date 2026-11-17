@@ -66,14 +66,18 @@ impl Set {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Variant {
     Rglsl,
+    RglslO,
+    RglslOs,
     SpirvOptO,
     SpirvOptOs,
     GlslangO,
 }
 
 impl Variant {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Rglsl,
+        Self::RglslO,
+        Self::RglslOs,
         Self::SpirvOptO,
         Self::SpirvOptOs,
         Self::GlslangO,
@@ -84,6 +88,8 @@ impl Variant {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Rglsl => "rglsl",
+            Self::RglslO => "rglsl -O",
+            Self::RglslOs => "rglsl -Os",
             Self::SpirvOptO => "spirv-opt -O(rglsl)",
             Self::SpirvOptOs => "spirv-opt -Os(rglsl)",
             Self::GlslangO => "glslang -O",
@@ -93,6 +99,8 @@ impl Variant {
     pub const fn key(self) -> &'static str {
         match self {
             Self::Rglsl => "rglsl",
+            Self::RglslO => "rglsl_O",
+            Self::RglslOs => "rglsl_Os",
             Self::SpirvOptO => "rglsl_opt_O",
             Self::SpirvOptOs => "rglsl_opt_Os",
             Self::GlslangO => "glslang_O",
@@ -103,7 +111,15 @@ impl Variant {
         match self {
             Self::SpirvOptO => Some("-O"),
             Self::SpirvOptOs => Some("-Os"),
-            Self::Rglsl | Self::GlslangO => None,
+            Self::Rglsl | Self::RglslO | Self::RglslOs | Self::GlslangO => None,
+        }
+    }
+
+    const fn rglsl_flag(self) -> Option<&'static str> {
+        match self {
+            Self::RglslO => Some("-O"),
+            Self::RglslOs => Some("-Os"),
+            Self::Rglsl | Self::SpirvOptO | Self::SpirvOptOs | Self::GlslangO => None,
         }
     }
 }
@@ -374,6 +390,22 @@ impl Tools {
                 outcomes,
             });
         }
+        for variant in [Variant::RglslO, Variant::RglslOs] {
+            let Some(flag) = variant.rglsl_flag() else {
+                continue;
+            };
+            let out = path(variant)?;
+            let mut command = Command::new(&self.rglsl);
+            command
+                .current_dir(&unit.dir)
+                .args(&unit.rglsl_args)
+                .arg(flag)
+                .arg("-o")
+                .arg(&out)
+                .arg(&unit.input);
+            let failure = self.run(command)?;
+            outcomes.insert(variant, self.module(unit, out, failure)?);
+        }
         for variant in [Variant::SpirvOptO, Variant::SpirvOptOs] {
             let Some(flag) = variant.spirv_opt_flag() else {
                 continue;
@@ -614,8 +646,8 @@ fn geomean(results: &[UnitResult], variant: Variant, metric: fn(&Metrics) -> usi
 fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
     let mut out = String::from("# SPIR-V after optimization: rglsl, spirv-opt and glslang -O\n\n");
     out.push_str(
-        "Every shader rglsl compiles is built in four variants: *rglsl* (the `rglsl` command-line tool), \
-         *spirv-opt -O(rglsl)* and *spirv-opt -Os(rglsl)* (the pinned `spirv-opt` on rglsl's module, \
+        "Every shader rglsl compiles is built in six variants: *rglsl* (the `rglsl` command-line tool), \
+         *rglsl -O* and *rglsl -Os* (the same command line with `-O` or `-Os`), *spirv-opt -O(rglsl)* and *spirv-opt -Os(rglsl)* (the pinned `spirv-opt` on rglsl's module, \
          `--skip-validation` as `glslang -O` runs it, only when rglsl's module is valid), and *glslang -O* \
          (`target/oracles/bin/glslang-opt -O` with the command line of the corpus run). Each module is \
          checked with `spirv-val` with the options of the corpus run. Counts: *instructions in functions* \
@@ -691,7 +723,13 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
             count("skipped"),
         );
     }
-    for variant in [Variant::SpirvOptO, Variant::SpirvOptOs, Variant::GlslangO] {
+    for variant in [
+        Variant::RglslO,
+        Variant::RglslOs,
+        Variant::SpirvOptO,
+        Variant::SpirvOptOs,
+        Variant::GlslangO,
+    ] {
         let problems: Vec<String> = results
             .iter()
             .filter_map(|result| match result.outcome(variant) {
@@ -747,7 +785,7 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
     let common: Vec<&UnitResult> = results.iter().filter(|r| every_valid(r)).collect();
     let _ = writeln!(
         out,
-        "\n## Totals\n\nSums over the {} shaders whose four modules are all valid, and their ratio to spirv-opt -O(rglsl).\n",
+        "\n## Totals\n\nSums over the {} shaders whose six modules are all valid, and their ratio to spirv-opt -O(rglsl).\n",
         common.len()
     );
     out.push_str("| metric |");
@@ -843,7 +881,7 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
 
     let shader_table = |out: &mut String, title: &str, ranked: &[(&UnitResult, f64)]| {
         let _ = writeln!(out, "\n### {title}\n");
-        out.push_str("| shader | set | rglsl | spirv-opt -O(rglsl) | spirv-opt -Os(rglsl) | glslang -O | ratio |\n|---|---|--:|--:|--:|--:|--:|\n");
+        out.push_str("| shader | set | rglsl | rglsl -O | spirv-opt -O(rglsl) | spirv-opt -Os(rglsl) | glslang -O | ratio |\n|---|---|--:|--:|--:|--:|--:|--:|\n");
         for (result, ratio) in ranked {
             let cell = |variant: Variant| {
                 result
@@ -852,10 +890,11 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
             };
             let _ = writeln!(
                 out,
-                "| `{}` | {} | {} | {} | {} | {} | {ratio:.2} |",
+                "| `{}` | {} | {} | {} | {} | {} | {} | {ratio:.2} |",
                 result.unit.name,
                 result.unit.set.key(),
                 cell(Variant::Rglsl),
+                cell(Variant::RglslO),
                 cell(Variant::SpirvOptO),
                 cell(Variant::SpirvOptOs),
                 cell(Variant::GlslangO),
@@ -888,6 +927,11 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
         &mut out,
         "Most shrunk by spirv-opt -O (ratio: rglsl / spirv-opt -O(rglsl))",
         &ranked(Variant::Rglsl, false),
+    );
+    shader_table(
+        &mut out,
+        "rglsl -O furthest above spirv-opt -O(rglsl) (ratio: rglsl -O / spirv-opt -O(rglsl))",
+        &ranked(Variant::RglslO, false),
     );
     let _ = writeln!(out, "\nWall time: {:.0} s.", elapsed.as_secs_f64());
     out
@@ -1015,7 +1059,7 @@ mod tests {
         Ok(())
     }
 
-    fn result(name: &str, counts: [Option<usize>; 4]) -> UnitResult {
+    fn result(name: &str, counts: [Option<usize>; 6]) -> UnitResult {
         let mut outcomes = BTreeMap::new();
         for (variant, count) in Variant::ALL.into_iter().zip(counts) {
             outcomes.insert(
@@ -1053,21 +1097,34 @@ mod tests {
     #[test]
     fn report_has_ratios_and_failures() {
         let results = [
-            result("a.frag", [Some(19), Some(9), Some(9), Some(9)]),
-            result("b.frag", [Some(39), Some(9), None, Some(19)]),
+            result(
+                "a.frag",
+                [Some(19), Some(13), Some(13), Some(9), Some(9), Some(9)],
+            ),
+            result(
+                "b.frag",
+                [Some(39), Some(19), Some(19), Some(9), None, Some(19)],
+            ),
         ];
         let report = markdown(&results, Duration::from_secs(1));
         assert!(report.contains("| **all** | 2 | 0 | 0 | 1 |"));
         assert!(report.contains("| spirv-opt -Os(rglsl) | 1 | 1 | 0 | 0 |"));
         assert!(report.contains("- `b.frag` (vulkan): fails: spirv-opt: boom"));
         assert!(report.contains(
-            "| instructions in functions | 19 (2.111×) | 9 (1.000×) | 9 (1.000×) | 9 (1.000×) |"
+            "| instructions in functions | 19 (2.111×) | 13 (1.444×) | 13 (1.444×) | 9 (1.000×) | 9 (1.000×) | 9 (1.000×) |"
         ));
-        assert!(report.contains("| instructions in functions | 2.828 | 1.000 | 1.000 | 1.414 |"));
+        assert!(report.contains(
+            "| instructions in functions | 2.828 | 1.673 | 1.673 | 1.000 | 1.000 | 1.414 |"
+        ));
+        assert!(report.contains("| `b.frag` | vulkan | 39 | 19 | 9 | - | 19 | 2.00 |"));
         let table = tsv(&results);
         assert_eq!(table.lines().count(), 3);
         assert!(table.contains("b.frag\tvulkan\tok\t39\t"));
         assert!(table.contains("\tfailed\t\t\t\t\t\t\t\tok\t19\t"));
-        assert!(table.ends_with("\t4.0000\t4.2432\t\t\t2.0000\t2.0811\n"));
+        assert!(
+            table.ends_with(
+                "\t4.0000\t4.2432\t2.0000\t2.0811\t2.0000\t2.0811\t\t\t2.0000\t2.0811\n"
+            )
+        );
     }
 }

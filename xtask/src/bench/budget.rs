@@ -10,12 +10,56 @@ pub struct Row<'a> {
     pub glslang_opt: f64,
     pub optimizer: f64,
     pub rglsl: f64,
+    pub rglsl_opt: Option<f64>,
 }
 
 impl Row<'_> {
     pub fn budget(&self) -> f64 {
         self.glslang_opt - self.rglsl
     }
+}
+
+pub fn slower<'r, 'a>(rows: &'r [Row<'a>]) -> Vec<&'r Row<'a>> {
+    rows.iter()
+        .filter(|row| {
+            row.rglsl_opt
+                .is_some_and(|rglsl_opt| rglsl_opt >= row.glslang_opt)
+        })
+        .collect()
+}
+
+fn optimized_row(out: &mut String, label: &str, rows: &[&Row]) {
+    let measured: Vec<(&Row, f64)> = rows
+        .iter()
+        .filter_map(|row| Some((*row, row.rglsl_opt?)))
+        .collect();
+    if measured.is_empty() {
+        return;
+    }
+    let ratios: Vec<f64> = measured
+        .iter()
+        .filter_map(|(row, rglsl_opt)| stats::ratio(*rglsl_opt, row.glslang_opt))
+        .collect();
+    let passes: Vec<f64> = measured
+        .iter()
+        .map(|(row, rglsl_opt)| rglsl_opt - row.rglsl)
+        .collect();
+    let slower = measured
+        .iter()
+        .filter(|(row, rglsl_opt)| *rglsl_opt >= row.glslang_opt)
+        .count();
+    let _ = writeln!(
+        out,
+        "| {label} | {} | {} | {} | {} | {} |",
+        measured.len(),
+        spread(&passes),
+        times(stats::geometric_mean(&ratios)),
+        times(stats::ratio(
+            measured.iter().map(|(_, rglsl_opt)| rglsl_opt).sum(),
+            measured.iter().map(|(row, _)| row.glslang_opt).sum()
+        )),
+        slower,
+    );
 }
 
 fn spread(values: &[f64]) -> String {
@@ -113,6 +157,46 @@ pub fn section(out: &mut String, rows: &[Row], groups: &[Group], optimizer: &str
     by_optimizer.sort_by(|a, b| b.optimizer.total_cmp(&a.optimizer));
     by_optimizer.truncate(10);
     table(out, "Slowest optimizer", &by_optimizer);
+    if rows.iter().all(|row| row.rglsl_opt.is_none()) {
+        return;
+    }
+    out.push_str(
+        "\n## rglsl -O against glslang -O
+\n",
+    );
+    out.push_str("`rglsl -O` is rglsl's steady compile with its optimizer (`ProgramOptions::optimize` at `-O`, no validation after each pass) between linking and SPIR-V; *optimizer* is that phase. Every shader must compile faster with `rglsl -O` than with `glslang -O`.\n\n");
+    out.push_str("| shader set | shaders | optimizer min / median / max | geometric mean of (rglsl -O)/(glslang -O) | (rglsl -O)/(glslang -O) (totals) | not faster |\n|---|--:|--:|--:|--:|--:|\n");
+    for &group in groups {
+        let selected: Vec<&Row> = rows.iter().filter(|row| row.group == group).collect();
+        optimized_row(out, group.label(), &selected);
+    }
+    optimized_row(out, "**all**", &all);
+    let mut closest: Vec<&Row> = rows.iter().filter(|row| row.rglsl_opt.is_some()).collect();
+    closest.sort_by(|a, b| {
+        let ratio = |row: &Row| {
+            row.rglsl_opt
+                .and_then(|rglsl_opt| stats::ratio(rglsl_opt, row.glslang_opt))
+                .unwrap_or(0.0)
+        };
+        ratio(b).total_cmp(&ratio(a))
+    });
+    closest.truncate(15);
+    out.push_str("\n### Closest to glslang -O\n\n| shader | set | rglsl | rglsl -O | glslang -O | (rglsl -O)/(glslang -O) |\n|---|---|--:|--:|--:|--:|\n");
+    for row in closest {
+        let Some(rglsl_opt) = row.rglsl_opt else {
+            continue;
+        };
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} | {} |",
+            row.name,
+            row.group.key(),
+            milliseconds(row.rglsl),
+            milliseconds(rglsl_opt),
+            milliseconds(row.glslang_opt),
+            times(stats::ratio(rglsl_opt, row.glslang_opt)),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -129,6 +213,7 @@ mod tests {
                 glslang_opt: 5.0,
                 optimizer: 3.0,
                 rglsl: 1.0,
+                rglsl_opt: Some(1.5),
             },
             Row {
                 name: "b.frag",
@@ -137,6 +222,7 @@ mod tests {
                 glslang_opt: 3.0,
                 optimizer: 1.0,
                 rglsl: 3.0,
+                rglsl_opt: Some(3.5),
             },
         ];
         let mut out = String::new();
@@ -149,5 +235,7 @@ mod tests {
         assert!(out.contains(
             "| `b.frag` | vulkan | 2.00 ms | 3.00 ms | 1.00 ms | 3.00 ms | 0.00 ms | 0.00× |"
         ));
+        assert!(out.contains("| **all** | 2 | 0.50 ms / 0.50 ms / 0.50 ms |"));
+        assert_eq!(slower(&rows).len(), 1);
     }
 }

@@ -586,6 +586,10 @@ fn optimization_options() -> TestResult {
             ),
             rglsl_c::rglsl_program_options_set_optimizer_passes(
                 program_options.pointer,
+                c"inline,dce".as_ptr(),
+            ),
+            rglsl_c::rglsl_program_options_set_optimizer_passes(
+                program_options.pointer,
                 c"".as_ptr(),
             ),
             rglsl_c::rglsl_program_options_set_optimizer_passes(
@@ -594,7 +598,7 @@ fn optimization_options() -> TestResult {
             ),
         ]
     };
-    assert_eq!(codes, [RGLSL_RESULT_OK; 5]);
+    assert_eq!(codes, [RGLSL_RESULT_OK; 6]);
     let rejected = unsafe {
         [
             rglsl_c::rglsl_program_options_set_optimization(
@@ -607,7 +611,7 @@ fn optimization_options() -> TestResult {
             ),
             rglsl_c::rglsl_program_options_set_optimizer_passes(
                 program_options.pointer,
-                c"inline".as_ptr(),
+                c"inline,unroll-everything".as_ptr(),
             ),
         ]
     };

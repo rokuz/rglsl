@@ -11,6 +11,7 @@ rust-version.workspace = true
 
 [dependencies]
 rglsl.workspace = true
+rglsl-types.workspace = true
 thiserror.workspace = true
 
 [lints]

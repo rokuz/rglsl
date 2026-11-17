@@ -163,7 +163,7 @@ fn pass_names_are_unique() {
 }
 
 #[test]
-fn empty_presets_leave_the_module_alone() -> TestResult {
+fn presets_run_on_an_empty_module() -> TestResult {
     for level in OptLevel::ALL {
         let mut fixture = Fixture::new()?;
         let options = OptOptions {
