@@ -2,6 +2,7 @@
 #include <StandAlone/DirStackFileIncluder.h>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
+#include <spirv-tools/optimizer.hpp>
 
 #include <chrono>
 #include <cstdio>
@@ -30,6 +31,7 @@ struct Job {
     bool automap = false;
     bool relax = false;
     bool hlslOffsets = false;
+    bool optimize = false;
     std::string debug;
     std::vector<std::string> includeDirs;
     std::string preamble;
@@ -156,6 +158,8 @@ bool parseJob(const std::string& line, Job& job, std::string& error)
             ok = flagOf(value, job.relax);
         else if (key == "hlsl-offsets")
             ok = flagOf(value, job.hlslOffsets);
+        else if (key == "optimize")
+            ok = flagOf(value, job.optimize);
         else if (key == "debug") {
             job.debug = value;
             ok = value.empty() || value == "g" || value == "gVS";
@@ -188,9 +192,50 @@ struct Run {
     double spv = 0;
     double total = 0;
     size_t words = 0;
+    bool optimized = false;
+    std::string optimizerError;
+    double opt = 0;
+    double totalOpt = 0;
+    size_t optWords = 0;
 };
 
-void compile(const Job& job, const std::string& source, Run& run)
+spv_target_env targetEnv(const Job& job)
+{
+    switch (job.vulkan) {
+    case glslang::EShTargetVulkan_1_0:
+        return SPV_ENV_VULKAN_1_0;
+    case glslang::EShTargetVulkan_1_1:
+        return job.spirv >= glslang::EShTargetSpv_1_4 ? SPV_ENV_VULKAN_1_1_SPIRV_1_4 : SPV_ENV_VULKAN_1_1;
+    case glslang::EShTargetVulkan_1_2:
+        return SPV_ENV_VULKAN_1_2;
+    case glslang::EShTargetVulkan_1_3:
+        return SPV_ENV_VULKAN_1_3;
+    default:
+        return SPV_ENV_VULKAN_1_4;
+    }
+}
+
+void optimize(const Job& job, std::vector<unsigned int>& spirv, Run& run)
+{
+    spvtools::Optimizer optimizer(targetEnv(job));
+    std::string& error = run.optimizerError;
+    optimizer.SetMessageConsumer([&error](spv_message_level_t level, const char*, const spv_position_t&, const char* message) {
+        if (level <= SPV_MSG_ERROR && error.empty() && message)
+            error = message;
+    });
+    optimizer.RegisterPerformancePasses();
+    spvtools::OptimizerOptions options;
+    options.set_run_validator(false);
+    std::vector<uint32_t> optimized;
+    run.optimized = optimizer.Run(spirv.data(), spirv.size(), &optimized, options);
+    run.optWords = optimized.size();
+    if (run.optimized)
+        spirv.swap(optimized);
+    else if (error.empty())
+        error = "spirv-opt failed";
+}
+
+void compile(const Job& job, const std::string& source, bool withOptimizer, Run& run)
 {
     int messages = EShMsgSpvRules | EShMsgVulkanRules | EShMsgHlslLegalization;
     if (!job.debug.empty())
@@ -249,16 +294,23 @@ void compile(const Job& job, const std::string& source, Run& run)
     run.spv = milliseconds(generating);
     run.words = spirv.size();
     run.ok = !spirv.empty();
-    if (!run.ok)
+    run.total = milliseconds(started);
+    if (!run.ok) {
         run.error = logger.getAllMessages();
+        return;
+    }
+    if (withOptimizer) {
+        Clock::time_point optimizing = Clock::now();
+        optimize(job, spirv, run);
+        run.opt = milliseconds(optimizing);
+        run.totalOpt = milliseconds(started);
+    }
 }
 
-Run measure(const Job& job, const std::string& source)
+Run measure(const Job& job, const std::string& source, bool withOptimizer)
 {
-    Clock::time_point started = Clock::now();
     Run run;
-    compile(job, source, run);
-    run.total = milliseconds(started);
+    compile(job, source, withOptimizer, run);
     return run;
 }
 
@@ -298,21 +350,24 @@ int main()
 
         glslang::FinalizeProcess();
         glslang::InitializeProcess();
-        Run first = measure(job, source);
+        Run first = measure(job, source, false);
         if (!first.ok) {
             std::cout << "rejected\t" << escape(first.error) << std::endl;
             continue;
         }
-        measure(job, source);
-        std::vector<double> steady, parse, link, spv;
+        Run warm = measure(job, source, job.optimize);
+        bool optimized = job.optimize && warm.optimized;
+        std::vector<double> steady, parse, link, spv, opt, steadyOpt;
         bool failed = false;
         for (int i = 0; i < job.runs && !failed; ++i) {
-            Run run = measure(job, source);
-            failed = !run.ok;
+            Run run = measure(job, source, optimized);
+            failed = !run.ok || (optimized && !run.optimized);
             steady.push_back(run.total);
             parse.push_back(run.parse);
             link.push_back(run.link);
             spv.push_back(run.spv);
+            opt.push_back(run.opt);
+            steadyOpt.push_back(run.totalOpt);
         }
         if (failed) {
             std::cout << "rejected\t" << escape("a timed run failed after the first one succeeded") << std::endl;
@@ -325,6 +380,13 @@ int main()
         field(std::cout, "parse", parse);
         field(std::cout, "link", link);
         field(std::cout, "spv", spv);
+        if (optimized) {
+            field(std::cout, "opt", opt);
+            field(std::cout, "steady_opt", steadyOpt);
+            field(std::cout, "opt_words", {double(warm.optWords)});
+        } else if (job.optimize) {
+            std::cout << "\topt_error=" << escape(warm.optimizerError);
+        }
         std::cout << std::endl;
     }
     glslang::FinalizeProcess();
