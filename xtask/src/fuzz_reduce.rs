@@ -60,6 +60,7 @@ pub struct Options {
     pub target: TargetSpec,
     pub preserve_semantics: bool,
     pub max_steps: u32,
+    pub repeats: u32,
     pub guards: bool,
     pub output: Option<PathBuf>,
     pub timeout_secs: u64,
@@ -256,7 +257,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         |executor| executor.work_dir().join("fuzz").join("stage"),
     );
     let mut first = true;
-    let mut judge = |candidate: &ShaderJob| -> Result<bool> {
+    let mut judge_once = |candidate: &ShaderJob| -> Result<bool> {
         let shader = write_job(candidate, &candidate_json)?;
         let optimize = options.interesting == Interesting::OptimizerDiffers;
         let (verdict, spirv) = tools.verdict(&shader, optimize)?;
@@ -329,6 +330,19 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             }
         };
         Ok(interesting)
+    };
+    let repeats = if options.interesting.needs_exec() {
+        options.repeats.max(1)
+    } else {
+        1
+    };
+    let mut judge = |candidate: &ShaderJob| -> Result<bool> {
+        for _ in 0..repeats {
+            if !judge_once(candidate)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     };
     let mut adapter = |candidate: &ShaderJob| {
         judge(candidate).map_err(|error| rglsl_fuzz::Error::Generation(format!("{error:#}")))
