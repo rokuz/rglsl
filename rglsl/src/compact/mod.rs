@@ -174,8 +174,22 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
                 }
             }
 
-            if let Some(task_payload) = e.task_payload {
-                module_tracer.global_variables_used.insert(task_payload);
+            for payload in [e.task_payload, e.incoming_ray_payload]
+                .into_iter()
+                .flatten()
+            {
+                module_tracer.global_variables_used.insert(payload);
+            }
+            for &(variable, _) in e.geometry.iter().flat_map(|geometry| &geometry.streams) {
+                module_tracer.global_variables_used.insert(variable);
+            }
+            for &variable in e
+                .geometry
+                .iter()
+                .flat_map(|geometry| &geometry.passthrough)
+                .chain(e.mesh_shader.iter().flat_map(|mesh| &mesh.task_memory))
+            {
+                module_tracer.global_variables_used.insert(variable);
             }
             // The interface is kept whole: an input or output the code does
             // not use is still visible to the pipeline.
@@ -462,8 +476,11 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         {
             module_map.globals.adjust(variable)?;
         }
-        if let Some(ref mut task_payload) = entry.task_payload {
-            module_map.globals.adjust(task_payload)?;
+        for payload in [&mut entry.task_payload, &mut entry.incoming_ray_payload]
+            .into_iter()
+            .flatten()
+        {
+            module_map.globals.adjust(payload)?;
         }
         for variable in entry
             .mesh_shader
@@ -558,12 +575,13 @@ impl<'module> ModuleTracer<'module> {
         // global expressions in valid modules, we can do this with a single
         // forward scan of the type arena. The rules further imply that T can
         // only be referred to by expressions after E.
-        for (_handle, ty) in self.module.types.iter() {
+        for (handle, ty) in self.module.types.iter() {
             if let crate::TypeInner::Pointer {
                 base,
                 space: crate::AddressSpace::PhysicalStorage { .. },
             } = ty.inner
             {
+                self.types_used.insert(handle);
                 self.types_used.insert(base);
             }
         }

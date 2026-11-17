@@ -126,8 +126,8 @@ commands:
                           the Vulkan and gl-as-vulkan corpus shaders and the synthetic ones;
                           report in target/xtask/bench-in-process.md and .tsv
   opt-quality         build every shader rglsl compiles (glslang corpus, tests/link references,
-                      tests/exec, synthetic) as rglsl, spirv-opt -O and -Os of rglsl's module and
-                      glslang -O (target/oracles/bin/glslang-opt), validate each with spirv-val and
+                      tests/exec, synthetic) as rglsl, rglsl -O and -Os, spirv-opt -O and -Os of
+                      rglsl's module and glslang -O (target/oracles/bin/glslang-opt), validate each with spirv-val and
                       count SPIR-V instructions, Function variables, loads, stores, blocks,
                       functions and words; report in target/xtask/opt-quality.md and .tsv, modules
                       in target/xtask/opt-quality/modules
@@ -135,12 +135,12 @@ commands:
       --filter TEXT       only shaders whose name contains TEXT (or one of the comma-separated TEXTs)
       --timeout SECS      per-process timeout (default: 120)
       --exec              also run every shader the exec planner can execute on the Vulkan
-                          targets (local and remote, as for `test`) as rglsl, spirv-opt -O(rglsl)
-                          and glslang -O with Amber's --pipeline-stats: driver statistics
-                          (VK_KHR_pipeline_executable_properties, VK_AMD_shader_info), pipeline
-                          creation time, GPU time of repeated TIMED_EXECUTION runs, and whether
-                          spirv-opt -O(rglsl) and glslang -O compute what rglsl's module does;
-                          report in target/xtask/opt-quality-exec.md and .tsv (RGLSL_AMBER: a
+                          targets (local and remote, as for `test`) as rglsl, rglsl -O,
+                          spirv-opt -O(rglsl) and glslang -O with Amber's --pipeline-stats:
+                          driver statistics (VK_KHR_pipeline_executable_properties,
+                          VK_AMD_shader_info), pipeline creation time, GPU time of repeated
+                          TIMED_EXECUTION runs, and whether rglsl -O, spirv-opt -O(rglsl) and
+                          glslang -O compute what rglsl's module does; report in target/xtask/opt-quality-exec.md and .tsv (RGLSL_AMBER: a
                           locally built Amber)
       --exec-target T     with --exec, run on these targets only: local, remote or an entry of
                           RGLSL_EXEC_REMOTE
@@ -156,6 +156,8 @@ commands:
                           target) or an entry of RGLSL_EXEC_REMOTE (`alias` or `alias@device`);
                           with --reduce it must name one target
       --exec-glslang      with --exec, also run the modules glslang compiles
+      --opt               also compile every shader with -O and validate it; with --exec, run
+                          the -O module too: it must compute what the unoptimized one does
       --reduce JOB        reduce the variant shader job JOB (a .json next to its shader) with
                           rglsl-fuzz's reducer instead of comparing a directory
       --interesting K     with --reduce: crash, reject, invalid-spirv (glslang accepts and
@@ -165,7 +167,9 @@ commands:
                           (rglsl's module renders differently from glslang's on the exec
                           target), differs-from-reference (rglsl's variant renders
                           differently from rglsl's reference, glslang's does not) or
-                          exec-fails (rglsl's module fails on the driver, glslang's runs)
+                          exec-fails (rglsl's module fails on the driver, glslang's runs) or
+                          optimizer-differs (rglsl -O renders differently from rglsl or fails
+                          on the driver while rglsl's module runs)
       --preserve-semantics  with --reduce: only undo the generator's transformations
       --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
       --no-ub-guards      with --reduce and without --preserve-semantics: do not bound loops,
@@ -422,6 +426,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     }
                 },
                 exec_glslang: args.flag("--exec-glslang"),
+                optimize: args.flag("--opt"),
             };
             args.finish()?;
             if options.exec_glslang && options.exec.is_empty() {

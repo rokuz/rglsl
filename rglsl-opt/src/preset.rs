@@ -16,6 +16,8 @@ pub struct Preset {
     pub steps: &'static [Step],
 }
 
+const OPTIMIZE: &[Step] = &[Step::Run("inline"), Step::Run("dce")];
+
 pub static PRESETS: &[Preset] = &[
     Preset {
         level: OptLevel::Disabled,
@@ -25,12 +27,12 @@ pub static PRESETS: &[Preset] = &[
     Preset {
         level: OptLevel::Performance,
         flag: "-O",
-        steps: &[],
+        steps: OPTIMIZE,
     },
     Preset {
         level: OptLevel::Size,
         flag: "-Os",
-        steps: &[],
+        steps: OPTIMIZE,
     },
 ];
 

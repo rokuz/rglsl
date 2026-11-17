@@ -215,38 +215,49 @@ fn options_without_effect_are_unrecognized() -> TestResult {
     Ok(())
 }
 
+const OPTIMIZABLE: &str = "#version 450
+layout(location = 0) in vec4 unused_input;
+layout(location = 0) out vec4 color;
+layout(binding = 1) uniform Block { vec4 tint; };
+layout(binding = 2) uniform sampler2D unused_image;
+vec4 scaled(vec4 value) { if (value.x < 0.0) return vec4(0.0); return value * 2.0; }
+void main() { color = scaled(tint); }
+";
+
 #[test]
-fn optimization_levels_keep_the_module_while_the_presets_are_empty() -> TestResult {
+fn optimization_levels() -> TestResult {
     let directory = work_dir("optimize")?;
-    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    fs::write(directory.join("shader.frag"), OPTIMIZABLE)?;
     let run = rglsl(&directory, &["-V", "-o", "plain.spv", "shader.frag"])?;
     assert_eq!(run.code, Some(0), "{}", run.stderr);
     let plain = fs::read(directory.join("plain.spv"))?;
-    for options in [
-        &["-O"][..],
-        &["-Os"],
-        &["-Od"],
-        &["-O", "-Od"],
-        &["-O", "--target-gpu", "nvidia"],
-        &[
-            "-Os",
-            "--target-gpu",
-            "universal-mobile",
-            "--opt-validate-each",
-        ],
-        &["--opt-passes", ""],
-    ] {
+    let compile = |options: &[&str]| -> TestResult<Vec<u8>> {
         let mut command = vec!["-V", "-o", "optimized.spv"];
         command.extend_from_slice(options);
         command.push("shader.frag");
         let run = rglsl(&directory, &command)?;
         assert_eq!(run.code, Some(0), "{options:?}: {}", run.stderr);
-        assert_eq!(
-            fs::read(directory.join("optimized.spv"))?,
-            plain,
-            "{options:?}"
-        );
+        Ok(fs::read(directory.join("optimized.spv"))?)
+    };
+    for options in [&["-Od"][..], &["-O", "-Od"], &["--opt-passes", ""]] {
+        assert_eq!(compile(options)?, plain, "{options:?}");
     }
+    let optimized = compile(&["-O"])?;
+    assert!(optimized.len() < plain.len());
+    for options in [
+        &["-Os"][..],
+        &["-O", "--target-gpu", "nvidia"],
+        &["--opt-passes", "inline,dce"],
+    ] {
+        assert_eq!(compile(options)?, optimized, "{options:?}");
+    }
+    let mobile = compile(&[
+        "-Os",
+        "--target-gpu",
+        "universal-mobile",
+        "--opt-validate-each",
+    ])?;
+    assert!(mobile.len() < plain.len());
     Ok(())
 }
 
@@ -262,8 +273,8 @@ fn bad_optimization_options_are_rejected() -> TestResult {
         ),
         (&["--target-gpu"], "Error: target-gpu: no <gpu> provided"),
         (
-            &["--opt-passes", "inline"],
-            "Error: --opt-passes: unknown optimizer pass `inline` (known passes: none)",
+            &["--opt-passes", "inline,unroll"],
+            "Error: --opt-passes: unknown optimizer pass `unroll` (known passes: inline, dce)",
         ),
     ] {
         let mut command = vec!["-V", "shader.frag"];

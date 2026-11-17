@@ -16,7 +16,24 @@ pub enum GpuClass {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GpuParameters {}
+pub enum Inlining {
+    #[default]
+    Exhaustive,
+    NoGrowth,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GpuParameters {
+    pub inlining: Inlining,
+}
+
+const DESKTOP: GpuParameters = GpuParameters {
+    inlining: Inlining::Exhaustive,
+};
+
+const MOBILE: GpuParameters = GpuParameters {
+    inlining: Inlining::NoGrowth,
+};
 
 #[derive(Debug)]
 pub struct GpuProfile {
@@ -31,25 +48,25 @@ pub static PROFILES: &[GpuProfile] = &[
         gpu: TargetGpu::Nvidia,
         name: "nvidia",
         class: GpuClass::Desktop,
-        parameters: GpuParameters {},
+        parameters: DESKTOP,
     },
     GpuProfile {
         gpu: TargetGpu::Amd,
         name: "amd",
         class: GpuClass::Desktop,
-        parameters: GpuParameters {},
+        parameters: DESKTOP,
     },
     GpuProfile {
         gpu: TargetGpu::UniversalDesktop,
         name: "universal-desktop",
         class: GpuClass::Desktop,
-        parameters: GpuParameters {},
+        parameters: DESKTOP,
     },
     GpuProfile {
         gpu: TargetGpu::UniversalMobile,
         name: "universal-mobile",
         class: GpuClass::Mobile,
-        parameters: GpuParameters {},
+        parameters: MOBILE,
     },
 ];
 

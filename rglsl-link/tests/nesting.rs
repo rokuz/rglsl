@@ -4,8 +4,8 @@ use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{
-    CompileOptions, Compiler, Input, Options as LinkOptions, ProgramOptions, Source, decode,
-    encode, link,
+    CompileOptions, Compiler, Input, OptLevel, OptOptions, Options as LinkOptions, ProgramOptions,
+    Source, decode, encode, link, optimize,
 };
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
 
@@ -157,9 +157,25 @@ fn linked(options: &Options, source: &str) -> Outcome {
         Ok(linked) => linked,
         Err(errors) => return Outcome::Failed(format!("link: {errors}")),
     };
+    if let Err(error) = spv::write_vec(&linked.module, &linked.info, &spv::Options::default(), None)
+    {
+        return Outcome::Failed(format!("linked SPIR-V: {error}"));
+    }
+    let mut stages = [linked];
+    let optimized = ProgramOptions {
+        optimize: OptOptions {
+            level: OptLevel::Performance,
+            ..OptOptions::default()
+        },
+        ..ProgramOptions::default()
+    };
+    if let Err(error) = optimize(&mut stages, &optimized) {
+        return Outcome::Failed(format!("-O: {error}"));
+    }
+    let [linked] = stages;
     match spv::write_vec(&linked.module, &linked.info, &spv::Options::default(), None) {
         Ok(_) => Outcome::Compiled,
-        Err(error) => Outcome::Failed(format!("linked SPIR-V: {error}")),
+        Err(error) => Outcome::Failed(format!("-O SPIR-V: {error}")),
     }
 }
 

@@ -24,6 +24,7 @@ pub enum Interesting {
     DiffersFromGlslang,
     DiffersFromReference,
     ExecFails,
+    OptimizerDiffers,
 }
 
 impl Interesting {
@@ -36,6 +37,7 @@ impl Interesting {
             "differs-from-glslang" => Some(Self::DiffersFromGlslang),
             "differs-from-reference" => Some(Self::DiffersFromReference),
             "exec-fails" => Some(Self::ExecFails),
+            "optimizer-differs" => Some(Self::OptimizerDiffers),
             _ => None,
         }
     }
@@ -43,7 +45,10 @@ impl Interesting {
     const fn needs_exec(self) -> bool {
         matches!(
             self,
-            Self::DiffersFromGlslang | Self::DiffersFromReference | Self::ExecFails
+            Self::DiffersFromGlslang
+                | Self::DiffersFromReference
+                | Self::ExecFails
+                | Self::OptimizerDiffers
         )
     }
 }
@@ -97,7 +102,7 @@ struct Tools {
 }
 
 impl Tools {
-    fn verdict(&self, shader: &Path) -> Result<(Verdict, PathBuf)> {
+    fn verdict(&self, shader: &Path, optimize: bool) -> Result<(Verdict, PathBuf)> {
         let spirv = shader.with_extension("spv");
         let outcome = compare(
             &self.glslang,
@@ -106,6 +111,7 @@ impl Tools {
             shader,
             &spirv,
             self.timeout,
+            optimize,
         )?;
         Ok((outcome.verdict, spirv))
     }
@@ -225,7 +231,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 .context("no shader")?;
             let reference = fuzz_exec::family_of(&shader)
                 .context("the job is not a variant of a shader family with a reference")?;
-            let (verdict, spirv) = tools.verdict(&reference)?;
+            let (verdict, spirv) = tools.verdict(&reference, false)?;
             if verdict != Verdict::Agree {
                 bail!("the reference does not compile: {}", verdict.label());
             }
@@ -252,7 +258,8 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let mut first = true;
     let mut judge = |candidate: &ShaderJob| -> Result<bool> {
         let shader = write_job(candidate, &candidate_json)?;
-        let (verdict, spirv) = tools.verdict(&shader)?;
+        let optimize = options.interesting == Interesting::OptimizerDiffers;
+        let (verdict, spirv) = tools.verdict(&shader, optimize)?;
         let interesting = match options.interesting {
             Interesting::Crash => verdict == Verdict::Crash,
             Interesting::Reject => matches!(verdict, Verdict::WeReject | Verdict::BackendFailed),
@@ -262,6 +269,27 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 Verdict::Agree | Verdict::InvalidSpirv => tools.linked_alone_fails(&shader)?,
                 _ => false,
             },
+            Interesting::OptimizerDiffers => {
+                let Some(executor) = &executor else {
+                    return Ok(false);
+                };
+                if verdict != Verdict::Agree {
+                    return Ok(false);
+                }
+                let _ = fs::remove_dir_all(&stage_dir);
+                let ours = run_module(executor, &spirv, &candidate_json, &stage_dir, "rglsl");
+                let optimized = run_module(
+                    executor,
+                    &crate::fuzz::optimized_module(&spirv),
+                    &candidate_json,
+                    &stage_dir,
+                    "rglsl-O",
+                );
+                match (&ours, &optimized) {
+                    (Run::Ran { .. }, Run::Failed(_)) => true,
+                    _ => differs(&ours, &optimized) == Some(true),
+                }
+            }
             Interesting::DiffersFromGlslang
             | Interesting::DiffersFromReference
             | Interesting::ExecFails => {

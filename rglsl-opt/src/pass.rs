@@ -30,7 +30,29 @@ pub struct Pass {
     pub counterpart: &'static [&'static str],
 }
 
-pub static PASSES: &[Pass] = &[];
+pub static PASSES: &[Pass] = &[
+    Pass {
+        name: "inline",
+        scope: Scope::Function,
+        applies: |summary| summary.calls,
+        run: crate::ir::inline::run,
+        debug_info: DebugRule::LinesOnly,
+        counterpart: &[
+            "--wrap-opkill",
+            "--merge-return",
+            "--inline-entry-points-exhaustive",
+            "--eliminate-dead-functions",
+        ],
+    },
+    Pass {
+        name: "dce",
+        scope: Scope::Function,
+        applies: |_| true,
+        run: crate::ir::dce::run,
+        debug_info: DebugRule::Preserves,
+        counterpart: &["--eliminate-dead-code-aggressive"],
+    },
+];
 
 #[derive(Debug)]
 pub struct Session<'s, 'm> {

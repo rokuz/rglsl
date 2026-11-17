@@ -9,8 +9,8 @@ use rglsl::back::spv;
 use rglsl::front::glsl::{self, BuiltinTables, FreshTables};
 use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{
-    BuiltinCache, CompileOptions, Compiler, DebugInfo, IncludeKind, IncludeRequest, ProgramOptions,
-    ResolvedInclude,
+    BuiltinCache, CompileOptions, Compiler, DebugInfo, IncludeKind, IncludeRequest, OptLevel,
+    OptOptions, ProgramOptions, ResolvedInclude,
 };
 use rglsl_pp::FileSystemIncluder;
 
@@ -33,6 +33,7 @@ struct Job {
     include_dirs: Vec<String>,
     preamble: String,
     runs: usize,
+    optimize: bool,
 }
 
 impl Job {
@@ -46,6 +47,7 @@ impl Job {
         let mut include_dirs = Vec::new();
         let mut preamble = String::new();
         let mut runs = 1;
+        let mut optimize = false;
         for field in line.split('\t') {
             let (key, value) = field
                 .split_once('=')
@@ -74,6 +76,7 @@ impl Job {
                 "include" => include_dirs.push(value),
                 "preamble" => preamble = value,
                 "runs" => runs = value.parse().with_context(|| format!("runs `{value}`"))?,
+                "optimize" => optimize = flag(&value)?,
                 other => bail!("unknown job field `{other}`"),
             }
         }
@@ -87,6 +90,7 @@ impl Job {
             include_dirs,
             preamble,
             runs,
+            optimize,
         })
     }
 
@@ -126,6 +130,22 @@ impl Job {
                 | spv::WriterFlags::SMALL_TYPE_CAPABILITIES_BY_USE
                 | spv::WriterFlags::DEBUG,
             ..spv::Options::default()
+        }
+    }
+
+    fn optimizer_options(&self) -> ProgramOptions {
+        ProgramOptions {
+            debug_info: match self.debug {
+                None => DebugInfo::Names,
+                Some(Debug::Lines) => DebugInfo::Lines,
+                Some(Debug::NonSemantic) => DebugInfo::NonSemanticWithSource,
+            },
+            optimize: OptOptions {
+                level: OptLevel::Performance,
+                validate_each: false,
+                ..OptOptions::default()
+            },
+            ..ProgramOptions::default()
         }
     }
 
@@ -184,17 +204,18 @@ struct CliRun {
     frontend: f64,
     validate: f64,
     link: f64,
+    optimizer: f64,
     spv: f64,
     words: usize,
 }
 
 impl CliRun {
     fn total(&self) -> f64 {
-        self.frontend + self.validate + self.link + self.spv
+        self.frontend + self.validate + self.link + self.optimizer + self.spv
     }
 }
 
-fn cli(job: &Job, source: &str, tables: Tables) -> Result<CliRun> {
+fn cli(job: &Job, source: &str, tables: Tables, optimize: bool) -> Result<CliRun> {
     let options = job.frontend_options(tables);
     let spv_options = job.spv_options();
     let (mut includer, root) = job.includer();
@@ -209,7 +230,14 @@ fn cli(job: &Job, source: &str, tables: Tables) -> Result<CliRun> {
     let started = Instant::now();
     let linked = rglsl_link::finish_program(object, info);
     let link = milliseconds(started);
-    let linked = linked.map_err(|errors| anyhow!("link: {errors}"))?;
+    let mut linked = [linked.map_err(|errors| anyhow!("link: {errors}"))?];
+    let started = Instant::now();
+    if optimize {
+        rglsl_link::optimize(&mut linked, &job.optimizer_options())
+            .map_err(|error| anyhow!("optimizer: {error}"))?;
+    }
+    let optimizer = milliseconds(started);
+    let [linked] = linked;
     let started = Instant::now();
     let words = spv::write_vec(&linked.module, &linked.info, &spv_options, None);
     drop(linked);
@@ -219,6 +247,7 @@ fn cli(job: &Job, source: &str, tables: Tables) -> Result<CliRun> {
         frontend,
         validate,
         link,
+        optimizer,
         spv,
         words: words.len(),
     })
@@ -370,11 +399,11 @@ impl Harness {
         let fresh: Tables = Arc::new(FreshTables);
         let cached: Tables = Arc::clone(&self.cache) as Tables;
         let mut reply = Reply::default();
-        let first = cli(job, &source, Arc::clone(&fresh))?;
+        let first = cli(job, &source, Arc::clone(&fresh), false)?;
         reply.push("first", first.total());
         reply.push("words", first.words as f64);
         let compiler_first = facade(&Compiler::new(), job, &source);
-        cli(job, &source, Arc::clone(&cached))?;
+        cli(job, &source, Arc::clone(&cached), job.optimize)?;
         let compiler_warm = facade(&self.compiler, job, &source);
         let with_compiler = match (compiler_first, compiler_warm) {
             (Ok(first), Ok(_)) => {
@@ -387,7 +416,7 @@ impl Harness {
             }
         };
         for _ in 0..job.runs {
-            let run = cli(job, &source, Arc::clone(&cached))?;
+            let run = cli(job, &source, Arc::clone(&cached), false)?;
             reply.push("steady", run.total());
             reply.push("frontend", run.frontend);
             reply.push("validate", run.validate);
@@ -401,7 +430,25 @@ impl Harness {
             reply.push("sema", phases.sema);
         }
         for _ in 0..job.runs {
-            reply.push("fresh", cli(job, &source, Arc::clone(&fresh))?.total());
+            reply.push(
+                "fresh",
+                cli(job, &source, Arc::clone(&fresh), false)?.total(),
+            );
+        }
+        if job.optimize {
+            for _ in 0..job.runs {
+                match cli(job, &source, Arc::clone(&cached), true) {
+                    Ok(run) => {
+                        reply.push("steady_opt", run.total());
+                        reply.push("optimizer", run.optimizer);
+                        reply.push("opt_words", run.words as f64);
+                    }
+                    Err(error) => {
+                        reply.notes.push(("opt_error", format!("{error:#}")));
+                        break;
+                    }
+                }
+            }
         }
         if with_compiler {
             for _ in 0..job.runs {

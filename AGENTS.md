@@ -15,7 +15,7 @@ Adding a GLSL extension: `EXTENSIONS.md`.
 | `rglsl-ast/` | GLSL AST, parser and printer; shared by the compiler frontend and the fuzzer |
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format; the compiler API (`src/compiler`: `CompileOptions`, `ProgramOptions`, `Compiler::{compile_unit, preprocess, build}`, glslang-style diagnostics, depfiles) and glslang's reflection (`src/reflect`) |
-| `rglsl-opt/` | the optimizer of linked IR (`-O`, `-Os`): one table of passes (`PASSES`), presets per level as tables of steps (`PRESETS`), target GPU profiles (`PROFILES`: `TargetGpu`), the pass manager (`optimize`: a preset or `--opt-passes` on every stage after linking, IR validation after each pass with `--opt-validate-each`, compaction and validation once at the end); called by `rglsl-link` before SPIR-V generation, never on objects |
+| `rglsl-opt/` | the optimizer of linked IR (`-O`, `-Os`): one table of passes (`PASSES`; `src/ir/`: `inline`, `dce`), presets per level as tables of steps (`PRESETS`), target GPU profiles (`PROFILES`: `TargetGpu`), the pass manager (`optimize`: a preset or `--opt-passes` on every stage after linking, IR validation after each pass with `--opt-validate-each`, compaction and validation once at the end); called by `rglsl-link` before SPIR-V generation, never on objects |
 | `rglsl-dis/` | text forms of SPIR-V: glslang's `-H` disassembly (`src/glslang`), SPIRV-Tools' `spirv-dis` form (`src/standard`, `--spirv-dis`) and hexadecimal text (`-x`, `--vn`) |
 | `tests/link/` | link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics, code generation options); an optional `options` file holds command-line options for glslang and rglsl |
@@ -144,19 +144,20 @@ cargo xtask bench [--runs N] [--filter NAME] [--debug-info g|gVS]
 cargo xtask bench --in-process [--runs N] [--filter NAME] [--debug-info g|gVS]
                                                    # the same in one process each (no start-up),
                                                    # first and steady compiles, rglsl phases, glslang's
-                                                   # spirv-opt phase: target/xtask/bench-in-process.md, .tsv
-cargo xtask opt-quality [--filter NAME]                      # SPIR-V counts of rglsl, spirv-opt -O/-Os of rglsl's
+                                                   # spirv-opt phase, rglsl -O against glslang -O (exit 1 when
+                                                   # not faster on a shader): target/xtask/bench-in-process.md, .tsv
+cargo xtask opt-quality [--filter NAME]                      # SPIR-V counts of rglsl, rglsl -O/-Os, spirv-opt -O/-Os of rglsl's
                                                    # module and glslang -O on every shader rglsl compiles,
                                                    # spirv-val on each: target/xtask/opt-quality.md, .tsv
 cargo xtask opt-quality --exec [--exec-target T] [--runs N]  # and on the Vulkan targets: driver statistics (Amber
                                                    # --pipeline-stats), GPU and pipeline creation time,
-                                                   # exec equivalence of spirv-opt -O(rglsl) and glslang -O
+                                                   # exec equivalence of rglsl -O, spirv-opt -O(rglsl) and glslang -O
                                                    # with rglsl: target/xtask/opt-quality-exec.md, .tsv
 
-cargo xtask fuzz --shaders DIR [--exec]                      # differential fuzzing against glslang (+ exec)
+cargo xtask fuzz --shaders DIR [--exec] [--opt]              # differential fuzzing against glslang (+ exec, + -O)
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run
 cargo xtask fuzz --decode INPUT                              # glsl_variant input -> shader family
-cargo xtask fuzz --reduce JOB.json --interesting K           # GraphicsFuzz reducer
+cargo xtask fuzz --reduce JOB.json --interesting K           # GraphicsFuzz reducer (K = optimizer-differs: -O vs rglsl)
 ```
 
 Per-shader results of the last corpus run: `target/xtask/results.tsv`. Fuzzer findings of every

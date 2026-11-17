@@ -298,6 +298,7 @@ impl Measured {
             glslang_opt: glslang_opt.median,
             optimizer: glslang_opt.median - self.glslang.median,
             rglsl: self.rglsl.median,
+            rglsl_opt: None,
         })
     }
 }
