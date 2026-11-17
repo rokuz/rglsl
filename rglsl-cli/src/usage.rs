@@ -35,6 +35,9 @@ Options:
               on -V
   -I<dir>     add <dir> to the include search path; includer's directory is
               searched first, followed by left-to-right order of -I
+  -O          optimizes SPIR-V for performance
+  -Os         optimizes for a smaller driver code size
+  -Od         disables optimization (the default)
   -P<text> | --preamble-text <text> | --P <text>
               inject custom preamble text, which is treated as if it appeared
               immediately after the version declaration (if any)
@@ -153,4 +156,7 @@ Options:
 rglsl's own options:
   --object                          compile every input file to an rglsl object
                                     module (<file>.rglo, or -o for one input)
+  --target-gpu {nvidia | amd | universal-desktop | universal-mobile}
+                                    the GPU that -O and -Os optimize for;
+                                    defaults to universal-desktop
 ";

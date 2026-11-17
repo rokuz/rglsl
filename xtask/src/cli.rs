@@ -147,6 +147,16 @@ fn removed(name: &'static str, options: &[&'static str], why: &'static str) -> C
     args.push(TARGET_SHADER);
     Case::new(name, &args, &[TARGET_SHADER]).rejected(why)
 }
+fn optimized(name: &'static str, options: &[&'static str]) -> Case {
+    let mut args = vec!["-V"];
+    args.extend_from_slice(options);
+    args.extend_from_slice(&["-o", "out.spv", TARGET_SHADER]);
+    Case::new(name, &args, &[TARGET_SHADER]).exits(
+        0,
+        "rglsl optimizes with its own optimizer, whose output is not spirv-opt's; the glslang oracle is built without spirv-opt and rejects -O and -Os",
+    )
+}
+
 const DEBUG_SHADER: &str = "spv.debuginfo.glsl.frag";
 const REGISTERS: &str = "spv.glsl.register.autoassign.frag";
 
@@ -1098,9 +1108,11 @@ fn cases() -> Vec<Case> {
             &["spv.debuginfo.sampler_type.glsl.frag"],
         ),
         Case::new("link-option", &["--link", TARGET_SHADER], &[TARGET_SHADER]),
-        removed("O", &["-O"], "rglsl does not optimize yet"),
-        removed("Os", &["-Os"], "rglsl does not optimize yet"),
-        removed("Od", &["-Od"], "rglsl does not optimize yet"),
+        optimized("O", &["-O"]),
+        optimized("Os", &["-Os"]),
+        optimized("O-target-gpu", &["-O", "--target-gpu", "amd"]),
+        Case::new("Od", &["-V", "-Od", TARGET_SHADER], &[TARGET_SHADER]),
+        Case::new("O-unknown", &["-V", "-Ox", TARGET_SHADER], &[TARGET_SHADER]),
         removed("C", &["-C"], "rglsl always reports every error"),
         removed("t", &["-t"], "rglsl has no threading option"),
         removed("d", &["-d"], "desktop #version 110 is out of scope"),

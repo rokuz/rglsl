@@ -476,9 +476,18 @@ version = "0.1.0"
 dependencies = [
  "rglsl",
  "rglsl-ast",
+ "rglsl-opt",
  "rglsl-pp",
  "rglsl-sema",
  "rglsl-types",
+ "thiserror",
+]
+
+[[package]]
+name = "rglsl-opt"
+version = "0.1.0"
+dependencies = [
+ "rglsl",
  "thiserror",
 ]
 

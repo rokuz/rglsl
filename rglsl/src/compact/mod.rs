@@ -429,15 +429,11 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
         }
     })?;
 
-    // Temporary storage to help us reuse allocations of existing
-    // named expression tables.
-    let mut reused_named_expressions = crate::NamedExpressions::default();
-
     // Drop unused functions. Compact and adjust used functions.
     module.functions.try_retain_mut(|handle, function| {
         if let Some(map) = function_maps.get(handle) {
             log::trace!("retaining and compacting function {:?}", function.name);
-            map.compact(function, &module_map, &mut reused_named_expressions)?;
+            map.compact(function, &module_map)?;
             Ok(true)
         } else {
             log::trace!("dropping function {:?}", function.name);
@@ -448,11 +444,7 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
     // Compact each entry point.
     for (entry, map) in module.entry_points.iter_mut().zip(entry_point_maps.iter()) {
         log::trace!("compacting entry point {:?}", entry.function.name);
-        map.compact(
-            &mut entry.function,
-            &module_map,
-            &mut reused_named_expressions,
-        )?;
+        map.compact(&mut entry.function, &module_map)?;
         for variable in &mut entry.interface {
             module_map.globals.adjust(variable)?;
         }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use rglsl::ShaderStage;
 use rglsl::front::glsl;
 use rglsl::proc::{BindingShifts, ResourceClass};
+use rglsl_opt::{DebugLevel, OptOptions};
 use rglsl_sema::ResourceLimits;
 
 use crate::cache::BuiltinCache;
@@ -58,6 +59,14 @@ impl DebugInfo {
             self,
             Self::Lines | Self::NonSemantic | Self::NonSemanticWithSource
         )
+    }
+
+    pub const fn optimizer_level(self) -> DebugLevel {
+        match self {
+            Self::Lines => DebugLevel::Lines,
+            Self::NonSemantic | Self::NonSemanticWithSource => DebugLevel::Variables,
+            Self::Names | Self::Stripped | Self::FileName => DebugLevel::None,
+        }
     }
 }
 
@@ -291,6 +300,7 @@ pub struct ProgramOptions {
     pub limits: ResourceLimits,
     pub validate_io: bool,
     pub reflection: Option<reflect::Options>,
+    pub optimize: OptOptions,
 }
 
 impl Default for ProgramOptions {
@@ -311,11 +321,20 @@ impl Default for ProgramOptions {
             limits: ResourceLimits::default(),
             validate_io: false,
             reflection: None,
+            optimize: OptOptions::default(),
         }
     }
 }
 
 impl ProgramOptions {
+    pub const fn optimizer_context(&self) -> rglsl_opt::Context {
+        rglsl_opt::Context {
+            debug: self.debug_info.optimizer_level(),
+            export_functions: self.export_functions,
+            unlinked: !self.link,
+        }
+    }
+
     pub(crate) fn link_options(&self) -> crate::Options {
         crate::Options {
             auto_map_locations: self.auto_map_locations,

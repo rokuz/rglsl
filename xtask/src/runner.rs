@@ -71,6 +71,7 @@ pub struct CaseResult {
     pub interface: Option<interface::Check>,
     pub debug: Option<bool>,
     pub object: Option<crate::object_path::Outcome>,
+    pub optimized: Option<crate::optimized::Outcome>,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +143,10 @@ impl CaseResult {
 
     pub fn object(&self) -> Option<bool> {
         self.object.as_ref().map(|outcome| outcome.passed)
+    }
+
+    pub fn valid_optimized(&self) -> Option<bool> {
+        self.optimized.as_ref().map(|outcome| outcome.passed)
     }
 
     pub fn interface(&self) -> Option<bool> {
@@ -377,6 +382,14 @@ fn run_case(
         None
     };
 
+    let optimized = if matches!(ours, OursResult::Accepted) && !case.target.compile_only {
+        Some(crate::optimized::check_file(
+            env, self_exe, case, &out, timeout,
+        )?)
+    } else {
+        None
+    };
+
     let reference = work_dir.join("glslang").join(format!("{}.spv", case.name));
     let interface = (matches!(oracle, OracleResult::Accepted)
         && matches!(ours, OursResult::Accepted)
@@ -448,6 +461,7 @@ fn run_case(
         interface,
         debug,
         object,
+        optimized,
     })
 }
 
@@ -794,17 +808,20 @@ fn run_group(
     };
 
     let spirv = format!("{}.{}", case.target.spirv.0, case.target.spirv.1);
-    let mut command = Command::new(self_exe);
-    command
-        .arg("compile-group")
-        .args(["--spv", spirv.as_str(), "--auto-map-locations"])
-        .arg("--out-dir")
-        .arg(&ours_dir);
-    if auto_map_bindings {
-        command.arg("--auto-map-bindings");
-    }
-    command.args(&sources);
-    let output = process::run(command, timeout)?;
+    let group_command = |out_dir: &Path| {
+        let mut command = Command::new(self_exe);
+        command
+            .arg("compile-group")
+            .args(["--spv", spirv.as_str(), "--auto-map-locations"])
+            .arg("--out-dir")
+            .arg(out_dir);
+        if auto_map_bindings {
+            command.arg("--auto-map-bindings");
+        }
+        command.args(&sources);
+        command
+    };
+    let output = process::run(group_command(&ours_dir), timeout)?;
     let messages: Vec<String> = output
         .stdout
         .lines()
@@ -867,6 +884,24 @@ fn run_group(
         _ => None,
     };
 
+    let optimized = if matches!(ours, OursResult::Accepted) {
+        let optimized_dir = directory.join(format!("ours-{}", crate::optimized::LEVEL));
+        fs::create_dir_all(&optimized_dir)?;
+        let modules: Vec<(PathBuf, PathBuf)> = produced
+            .iter()
+            .filter_map(|module| Some((module.clone(), optimized_dir.join(module.file_name()?))))
+            .collect();
+        Some(crate::optimized::check_group(
+            env,
+            case,
+            group_command(&optimized_dir),
+            &modules,
+            timeout,
+        )?)
+    } else {
+        None
+    };
+
     let pairs: Vec<(PathBuf, &PathBuf)> = produced
         .iter()
         .filter_map(|module| {
@@ -921,6 +956,7 @@ fn run_group(
         interface,
         debug: None,
         object: None,
+        optimized,
     })
 }
 
@@ -1080,6 +1116,7 @@ fn run_script(
         interface,
         debug: None,
         object: None,
+        optimized: None,
     })
 }
 

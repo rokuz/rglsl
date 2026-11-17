@@ -48,6 +48,7 @@ pub struct OneOptions<'a> {
     pub preamble: Option<String>,
     pub debug: Option<&'a str>,
     pub options: &'a [String],
+    pub optimize: Option<rglsl_link::OptLevel>,
 }
 
 fn debug_options(debug: Option<&str>) -> Option<spv::DebugInfo<'static>> {
@@ -81,6 +82,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         ref preamble,
         debug,
         options: extra,
+        optimize,
     } = *one;
     let source = match std::fs::read(input) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -153,11 +155,50 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         );
     }
     match rglsl_link::compile_program(&options, &source, root, &mut includer) {
-        Ok(linked) => write_spirv(&linked.module, &linked.info, lang_version, debug, out),
+        Ok(mut linked) => {
+            if let Some(level) = optimize
+                && let Err(error) =
+                    optimize_linked(core::slice::from_mut(&mut linked), level, debug)
+            {
+                diagnostic("optimize", None, &error.to_string());
+                return EXIT_BACKEND_FAILED;
+            }
+            write_spirv(&linked.module, &linked.info, lang_version, debug, out)
+        }
         Err(error) => {
             report(&error, &source);
             EXIT_REJECTED
         }
+    }
+}
+
+fn optimize_linked(
+    linked: &mut [rglsl_link::Linked],
+    level: rglsl_link::OptLevel,
+    debug: Option<&str>,
+) -> Result<(), rglsl_link::OptError> {
+    let options = rglsl_link::ProgramOptions {
+        optimize: rglsl_link::OptOptions {
+            level,
+            validate_each: true,
+            ..rglsl_link::OptOptions::default()
+        },
+        debug_info: match debug {
+            None => rglsl_link::DebugInfo::Names,
+            Some("g") => rglsl_link::DebugInfo::Lines,
+            Some(_) => rglsl_link::DebugInfo::NonSemanticWithSource,
+        },
+        ..rglsl_link::ProgramOptions::default()
+    };
+    rglsl_link::optimize(linked, &options)
+}
+
+pub fn opt_level(name: &str) -> anyhow::Result<rglsl_link::OptLevel> {
+    match name {
+        "O" => Ok(rglsl_link::OptLevel::Performance),
+        "Os" => Ok(rglsl_link::OptLevel::Size),
+        "Od" => Ok(rglsl_link::OptLevel::Disabled),
+        _ => anyhow::bail!("unknown optimization level `{name}` (O, Os or Od)"),
     }
 }
 
@@ -242,6 +283,7 @@ pub struct GroupOptions<'a> {
     pub auto_map_locations: bool,
     pub auto_map_bindings: bool,
     pub out_dir: &'a Path,
+    pub optimize: Option<rglsl_link::OptLevel>,
 }
 
 pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
@@ -300,7 +342,7 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
         auto_map_bindings: options.auto_map_bindings,
         ..rglsl_link::Options::default()
     };
-    let linked = match rglsl_link::link_program(
+    let mut linked = match rglsl_link::link_program(
         rglsl_link::group_objects_by_stage(objects),
         &link_options,
     ) {
@@ -312,6 +354,12 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
             return EXIT_REJECTED;
         }
     };
+    if let Some(level) = options.optimize
+        && let Err(error) = optimize_linked(&mut linked, level, options.debug.as_deref())
+    {
+        diagnostic("optimize", None, &error.to_string());
+        return EXIT_BACKEND_FAILED;
+    }
     for stage in &linked {
         let out = options
             .out_dir

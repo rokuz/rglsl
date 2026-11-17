@@ -21,6 +21,7 @@ mod groups;
 mod interface;
 mod object_path;
 mod opt_quality;
+mod optimized;
 mod oracles;
 mod process;
 mod recursion;
@@ -440,6 +441,10 @@ fn run(args: Vec<String>) -> Result<i32> {
             let via_object = args.flag("--via-object");
             let hlsl_offsets = args.flag("--hlsl-offsets");
             let debug = args.value("--debug")?;
+            let optimize = args
+                .value("--opt")?
+                .map(|level| worker::opt_level(&level))
+                .transpose()?;
             let mut include_dirs = Vec::new();
             while let Some(directory) = args.value("--include-dir")? {
                 include_dirs.push(directory);
@@ -468,6 +473,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     preamble: (!preamble.is_empty()).then_some(preamble),
                     debug: debug.as_deref(),
                     options: &options,
+                    optimize,
                 },
                 Path::new(&out),
             ))
@@ -493,6 +499,10 @@ fn run(args: Vec<String>) -> Result<i32> {
             let auto_map_locations = args.flag("--auto-map-locations");
             let auto_map_bindings = args.flag("--auto-map-bindings");
             let debug = args.value("--debug")?;
+            let optimize = args
+                .value("--opt")?
+                .map(|level| worker::opt_level(&level))
+                .transpose()?;
             let mut inputs = Vec::new();
             while let Some(input) = args.next_positional() {
                 inputs.push(input);
@@ -506,6 +516,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     auto_map_locations,
                     auto_map_bindings,
                     out_dir: Path::new(&out_dir),
+                    optimize,
                 },
             ))
         }

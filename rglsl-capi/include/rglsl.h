@@ -63,6 +63,10 @@ typedef void (*rglsl_include_callback)(void *user_data,
 
 typedef uint32_t rglsl_severity;
 
+typedef uint32_t rglsl_opt_level;
+
+typedef uint32_t rglsl_target_gpu;
+
 typedef uint32_t rglsl_resource;
 
 typedef uint32_t rglsl_disassembly;
@@ -124,6 +128,20 @@ typedef uint32_t rglsl_disassembly;
 #define RGLSL_DEBUG_INFO_NON_SEMANTIC_SOURCE 4
 
 #define RGLSL_DEBUG_INFO_FILE_NAME 5
+
+#define RGLSL_OPT_LEVEL_DISABLED 0
+
+#define RGLSL_OPT_LEVEL_PERFORMANCE 1
+
+#define RGLSL_OPT_LEVEL_SIZE 2
+
+#define RGLSL_TARGET_GPU_NVIDIA 0
+
+#define RGLSL_TARGET_GPU_AMD 1
+
+#define RGLSL_TARGET_GPU_UNIVERSAL_DESKTOP 2
+
+#define RGLSL_TARGET_GPU_UNIVERSAL_MOBILE 3
 
 #define RGLSL_RESOURCE_SAMPLER 0
 
@@ -316,6 +334,18 @@ rglsl_result rglsl_compile_options_set_discard_is_terminate(rglsl_compile_option
                                                             bool enabled);
 
 rglsl_result rglsl_program_options_set_validate_io(rglsl_program_options *options, bool enabled);
+
+rglsl_result rglsl_program_options_set_optimization(rglsl_program_options *options,
+                                                    rglsl_opt_level level);
+
+rglsl_result rglsl_program_options_set_target_gpu(rglsl_program_options *options,
+                                                  rglsl_target_gpu gpu);
+
+rglsl_result rglsl_program_options_set_optimizer_passes(rglsl_program_options *options,
+                                                        const char *passes);
+
+rglsl_result rglsl_program_options_set_optimizer_validate_each(rglsl_program_options *options,
+                                                               bool enabled);
 
 rglsl_result rglsl_compile_options_add_undefine(rglsl_compile_options *options, const char *name);
 

@@ -32,7 +32,7 @@ pub use compiler::{
     Build, CompileOptions, Compiled, Compiler, DebugInfo, Diagnostic, DiagnosticFormat,
     Diagnostics, Input, Macro, Origin, Preprocessed, Program, ProgramOptions, Resolve, STAGE_ORDER,
     Severity, Source, StageBinary, StageOutput, UnitReport, compile, compile_and_link,
-    compile_with_includer, depfile, glslang_stage_name, link_spirv, read_object,
+    compile_with_includer, depfile, glslang_stage_name, link_spirv, optimize, read_object,
     spirv_version_of_vulkan, write_object,
 };
 pub use error::{LinkError, LinkErrors, SourcePosition};
@@ -44,6 +44,7 @@ pub use program::{
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
 pub use rglsl::proc::{BindingShifts, ResourceClass};
+pub use rglsl_opt::{OptError, OptLevel, OptOptions, TargetGpu};
 pub use rglsl_pp::{IncludeKind, IncludeRequest, ResolvedInclude};
 pub use rglsl_sema::{Configuration, ResourceLimits};
 

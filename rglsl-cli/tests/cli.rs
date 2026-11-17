@@ -183,9 +183,6 @@ fn options_without_effect_are_unrecognized() -> TestResult {
         "--relaxed-errors",
         "--spirv-val",
         "--relax-set-binding-limits",
-        "-O",
-        "-Os",
-        "-Od",
     ] {
         let run = rglsl(&directory, &["-V", option, "shader.frag"])?;
         assert_eq!(run.code, Some(1), "{option}");
@@ -215,6 +212,69 @@ fn options_without_effect_are_unrecognized() -> TestResult {
             "{arguments:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn optimization_levels_keep_the_module_while_the_presets_are_empty() -> TestResult {
+    let directory = work_dir("optimize")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    let run = rglsl(&directory, &["-V", "-o", "plain.spv", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let plain = fs::read(directory.join("plain.spv"))?;
+    for options in [
+        &["-O"][..],
+        &["-Os"],
+        &["-Od"],
+        &["-O", "-Od"],
+        &["-O", "--target-gpu", "nvidia"],
+        &[
+            "-Os",
+            "--target-gpu",
+            "universal-mobile",
+            "--opt-validate-each",
+        ],
+        &["--opt-passes", ""],
+    ] {
+        let mut command = vec!["-V", "-o", "optimized.spv"];
+        command.extend_from_slice(options);
+        command.push("shader.frag");
+        let run = rglsl(&directory, &command)?;
+        assert_eq!(run.code, Some(0), "{options:?}: {}", run.stderr);
+        assert_eq!(
+            fs::read(directory.join("optimized.spv"))?,
+            plain,
+            "{options:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn bad_optimization_options_are_rejected() -> TestResult {
+    let directory = work_dir("optimize_rejected")?;
+    fs::write(directory.join("shader.frag"), FRAGMENT)?;
+    for (options, message) in [
+        (&["-Ox"][..], "Error: unknown -O option"),
+        (
+            &["--target-gpu", "apple"],
+            "Error: target-gpu: expects one of: nvidia, amd, universal-desktop, universal-mobile",
+        ),
+        (&["--target-gpu"], "Error: target-gpu: no <gpu> provided"),
+        (
+            &["--opt-passes", "inline"],
+            "Error: --opt-passes: unknown optimizer pass `inline` (known passes: none)",
+        ),
+    ] {
+        let mut command = vec!["-V", "shader.frag"];
+        command.extend_from_slice(options);
+        let run = rglsl(&directory, &command)?;
+        assert_eq!(run.code, Some(1), "{options:?}");
+        assert!(run.stderr.contains(message), "{options:?}: {}", run.stderr);
+    }
+    let run = rglsl(&directory, &["--object", "-O", "shader.frag"])?;
+    assert_eq!(run.code, Some(1));
+    assert!(run.stderr.contains("never optimized"), "{}", run.stderr);
     Ok(())
 }
 

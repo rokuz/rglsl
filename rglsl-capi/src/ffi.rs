@@ -4,7 +4,8 @@ use std::slice;
 
 use crate::api::{
     self, Blob, CompileOptions, Compiler, DebugInfo, Diagnostics, Disassembly, IncludeResult,
-    Limits, Location, Object, Program, ProgramOptions, Resource, ResultCode, Severity, Stage,
+    Limits, Location, Object, OptLevel, Program, ProgramOptions, Resource, ResultCode, Severity,
+    Stage, TargetGpu,
 };
 
 pub type IncludeCallback = Option<
@@ -615,6 +616,43 @@ pub unsafe extern "C" fn rglsl_program_options_set_validate_io(
 ) -> ResultCode {
     let options = unsafe { options.as_mut() };
     api::program_options_set_flags(options, |options| options.validate_io = enabled)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_optimization(
+    options: *mut ProgramOptions,
+    level: OptLevel,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_optimization(options, level)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_target_gpu(
+    options: *mut ProgramOptions,
+    gpu: TargetGpu,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_target_gpu(options, gpu)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_optimizer_passes(
+    options: *mut ProgramOptions,
+    passes: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let passes = unsafe { c_str(passes) };
+    api::program_options_set_optimizer_passes(options, passes)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_set_optimizer_validate_each(
+    options: *mut ProgramOptions,
+    enabled: bool,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.optimize.validate_each = enabled)
 }
 
 #[unsafe(no_mangle)]

@@ -15,6 +15,7 @@ Adding a GLSL extension: `EXTENSIONS.md`.
 | `rglsl-ast/` | GLSL AST, parser and printer; shared by the compiler frontend and the fuzzer |
 | `rglsl-sema/` | semantic analysis over the AST: scopes, types, built-ins, expression typing, diagnostics |
 | `rglsl-link/` | the linker: merges object modules (`rglsl::object::ObjectModule`) into programs, object file format; the compiler API (`src/compiler`: `CompileOptions`, `ProgramOptions`, `Compiler::{compile_unit, preprocess, build}`, glslang-style diagnostics, depfiles) and glslang's reflection (`src/reflect`) |
+| `rglsl-opt/` | the optimizer of linked IR (`-O`, `-Os`): one table of passes (`PASSES`), presets per level as tables of steps (`PRESETS`), target GPU profiles (`PROFILES`: `TargetGpu`), the pass manager (`optimize`: a preset or `--opt-passes` on every stage after linking, IR validation after each pass with `--opt-validate-each`, compaction and validation once at the end); called by `rglsl-link` before SPIR-V generation, never on objects |
 | `rglsl-dis/` | text forms of SPIR-V: glslang's `-H` disassembly (`src/glslang`), SPIRV-Tools' `spirv-dis` form (`src/standard`, `--spirv-dis`) and hexadecimal text (`-x`, `--vn`) |
 | `tests/link/` | link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics, code generation options); an optional `options` file holds command-line options for glslang and rglsl |

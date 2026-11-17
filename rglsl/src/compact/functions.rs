@@ -77,10 +77,7 @@ impl FunctionMap {
         &self,
         function: &mut crate::Function,
         module_map: &ModuleMap,
-        reuse: &mut crate::NamedExpressions,
     ) -> Result<(), BadHandle> {
-        reuse.clear();
-
         for argument in function.arguments.iter_mut() {
             module_map.types.adjust(&mut argument.ty)?;
         }
@@ -107,23 +104,9 @@ impl FunctionMap {
             }
         })?;
 
-        // Adjust named expressions.
-        for (mut handle, name) in function.named_expressions.drain(..) {
-            self.expressions.adjust(&mut handle)?;
-            reuse.insert(handle, name);
-        }
-        core::mem::swap(&mut function.named_expressions, reuse);
-
-        let non_uniform = core::mem::take(&mut function.non_uniform);
-        function.non_uniform = non_uniform
-            .into_iter()
-            .filter_map(|(handle, flags)| Some((self.expressions.try_adjust(handle)?, flags)))
-            .collect();
-        let precision = core::mem::take(&mut function.precision);
-        function.precision = precision
-            .into_iter()
-            .filter_map(|(handle, flags)| Some((self.expressions.try_adjust(handle)?, flags)))
-            .collect();
+        function
+            .tables()
+            .remap(|handle| self.expressions.try_adjust(handle));
 
         // Adjust statements.
         self.adjust_body(function, module_map)

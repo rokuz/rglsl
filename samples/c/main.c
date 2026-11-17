@@ -183,7 +183,11 @@ static int link_program(const char *directory, rglsl_object *const *objects, siz
 {
     rglsl_program_options *options = NULL;
     if (rglsl_program_options_create(&options) != RGLSL_RESULT_OK ||
-        rglsl_program_options_set_spirv_version(options, 1, 3) != RGLSL_RESULT_OK) {
+        rglsl_program_options_set_spirv_version(options, 1, 3) != RGLSL_RESULT_OK ||
+        rglsl_program_options_set_optimization(options, RGLSL_OPT_LEVEL_PERFORMANCE) !=
+            RGLSL_RESULT_OK ||
+        rglsl_program_options_set_target_gpu(options, RGLSL_TARGET_GPU_UNIVERSAL_DESKTOP) !=
+            RGLSL_RESULT_OK) {
         rglsl_program_options_destroy(options);
         return 1;
     }

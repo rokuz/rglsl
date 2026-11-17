@@ -3,8 +3,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rglsl_link::{
-    CompileOptions, Diagnostics, ObjectModule, Program, ProgramOptions, ShaderStage, compile,
-    compile_and_link, link_spirv,
+    CompileOptions, Diagnostics, ObjectModule, OptLevel, OptOptions, Program, ProgramOptions,
+    ShaderStage, compile, compile_and_link, link_spirv,
 };
 
 const VERTEX: &str = "#version 450
@@ -125,7 +125,14 @@ fn failures() -> Result<(), Box<dyn Error>> {
 fn run() -> Result<(), Box<dyn Error>> {
     let objects = compile_objects()?;
     println!("compiled {} object modules", objects.len());
-    let program = link_spirv(&objects, &ProgramOptions::default())?;
+    let options = ProgramOptions {
+        optimize: OptOptions {
+            level: OptLevel::Performance,
+            ..OptOptions::default()
+        },
+        ..ProgramOptions::default()
+    };
+    let program = link_spirv(&objects, &options)?;
     println!("linked {} stages:", program.stages.len());
     describe(&program);
     if let Some(directory) = std::env::args_os().nth(1) {

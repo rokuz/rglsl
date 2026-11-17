@@ -1,0 +1,71 @@
+#![forbid(unsafe_code)]
+
+mod error;
+mod manager;
+mod pass;
+mod preset;
+mod summary;
+mod target;
+
+use rglsl::valid::ModuleInfo;
+use rglsl::{Module, ShaderStage};
+
+pub use error::OptError;
+pub use manager::optimize;
+pub use pass::{Changed, DebugRule, PASSES, Pass, Scope, Session};
+pub use preset::{PRESETS, Preset, Step};
+pub use summary::Summary;
+pub use target::{GpuClass, GpuParameters, GpuProfile, PROFILES, TargetGpu};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum OptLevel {
+    #[default]
+    Disabled,
+    Performance,
+    Size,
+}
+
+impl OptLevel {
+    pub const ALL: [Self; 3] = [Self::Disabled, Self::Performance, Self::Size];
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptOptions {
+    pub level: OptLevel,
+    pub target_gpu: TargetGpu,
+    pub passes: Option<Vec<String>>,
+    pub validate_each: bool,
+}
+
+impl Default for OptOptions {
+    fn default() -> Self {
+        Self {
+            level: OptLevel::Disabled,
+            target_gpu: TargetGpu::default(),
+            passes: None,
+            validate_each: cfg!(debug_assertions),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum DebugLevel {
+    #[default]
+    None,
+    Lines,
+    Variables,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Context {
+    pub debug: DebugLevel,
+    pub export_functions: bool,
+    pub unlinked: bool,
+}
+
+#[derive(Debug)]
+pub struct StageModule<'m> {
+    pub stage: ShaderStage,
+    pub module: &'m mut Module,
+    pub info: &'m mut ModuleInfo,
+}

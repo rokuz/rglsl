@@ -136,8 +136,7 @@ impl Remap {
         let map = FunctionMap {
             expressions: HandleMap::from_set(all),
         };
-        let mut reuse = crate::NamedExpressions::default();
-        map.compact(function, &self.map, &mut reuse)
+        map.compact(function, &self.map)
     }
 }
 

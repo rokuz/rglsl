@@ -7,12 +7,13 @@ use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 
 use rglsl_c::{
-    Blob, CompileOptions, Compiler, Diagnostics, Limits, Object, Program, ProgramOptions,
+    Blob, CompileOptions, Compiler, Diagnostics, Limits, Object, OptLevel, Program, ProgramOptions,
     RGLSL_DEBUG_INFO_LINES, RGLSL_DEBUG_INFO_STRIPPED, RGLSL_DISASSEMBLY_GLSLANG,
     RGLSL_DISASSEMBLY_STANDARD, RGLSL_FORMAT_ERROR_COLUMN, RGLSL_FORMAT_UNNAMED_SOURCE,
-    RGLSL_REFLECT_ALL_BLOCK_VARIABLES, RGLSL_RESOURCE_TEXTURE, RGLSL_RESULT_COMPILE_FAILED,
-    RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_SPIRV, RGLSL_RESULT_OK,
-    RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX, ResultCode, Stage,
+    RGLSL_OPT_LEVEL_PERFORMANCE, RGLSL_REFLECT_ALL_BLOCK_VARIABLES, RGLSL_RESOURCE_TEXTURE,
+    RGLSL_RESULT_COMPILE_FAILED, RGLSL_RESULT_INVALID_ARGUMENT, RGLSL_RESULT_INVALID_SPIRV,
+    RGLSL_RESULT_OK, RGLSL_STAGE_COMPUTE, RGLSL_STAGE_FRAGMENT, RGLSL_STAGE_VERTEX,
+    RGLSL_TARGET_GPU_UNIVERSAL_MOBILE, ResultCode, Stage, TargetGpu,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -557,5 +558,63 @@ void main() {
     assert!(text.contains("TypeSampledImage"), "{text}");
     assert!(!text.contains("TypeSampler"), "{text}");
     assert!(!text.contains("linear"), "{text}");
+    Ok(())
+}
+
+#[test]
+fn optimization_options() -> TestResult {
+    let compiler = compiler()?;
+    let fragment = options(c"tinted.frag", RGLSL_STAGE_FRAGMENT)?;
+    let plain_options = program_options()?;
+    let (code, plain, _) = build(&compiler, &[FRAGMENT], &[&fragment], &plain_options);
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let plain = Owned::new(plain, rglsl_c::rglsl_program_destroy)?;
+    let program_options = program_options()?;
+    let codes = unsafe {
+        [
+            rglsl_c::rglsl_program_options_set_optimization(
+                program_options.pointer,
+                RGLSL_OPT_LEVEL_PERFORMANCE,
+            ),
+            rglsl_c::rglsl_program_options_set_target_gpu(
+                program_options.pointer,
+                RGLSL_TARGET_GPU_UNIVERSAL_MOBILE,
+            ),
+            rglsl_c::rglsl_program_options_set_optimizer_validate_each(
+                program_options.pointer,
+                true,
+            ),
+            rglsl_c::rglsl_program_options_set_optimizer_passes(
+                program_options.pointer,
+                c"".as_ptr(),
+            ),
+            rglsl_c::rglsl_program_options_set_optimizer_passes(
+                program_options.pointer,
+                ptr::null(),
+            ),
+        ]
+    };
+    assert_eq!(codes, [RGLSL_RESULT_OK; 5]);
+    let rejected = unsafe {
+        [
+            rglsl_c::rglsl_program_options_set_optimization(
+                program_options.pointer,
+                OptLevel::from_raw(7),
+            ),
+            rglsl_c::rglsl_program_options_set_target_gpu(
+                program_options.pointer,
+                TargetGpu::from_raw(9),
+            ),
+            rglsl_c::rglsl_program_options_set_optimizer_passes(
+                program_options.pointer,
+                c"inline".as_ptr(),
+            ),
+        ]
+    };
+    assert_eq!(rejected, [RGLSL_RESULT_INVALID_ARGUMENT; 3]);
+    let (code, optimized, _) = build(&compiler, &[FRAGMENT], &[&fragment], &program_options);
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let optimized = Owned::new(optimized, rglsl_c::rglsl_program_destroy)?;
+    assert_eq!(spirv(&optimized, 0)?, spirv(&plain, 0)?);
     Ok(())
 }
