@@ -1,0 +1,17 @@
+[package]
+name = "rglsl-opt"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+description = "Optimizer of rglsl's linked IR"
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rglsl.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

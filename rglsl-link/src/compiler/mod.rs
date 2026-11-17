@@ -154,11 +154,43 @@ pub fn link_spirv<O: Borrow<ObjectModule>>(
     spirv_program(group_by_stage(objects), options)
 }
 
+pub fn optimize(
+    stages: &mut [Linked],
+    options: &ProgramOptions,
+) -> Result<(), rglsl_opt::OptError> {
+    let mut modules: Vec<rglsl_opt::StageModule<'_>> = stages
+        .iter_mut()
+        .map(|linked| rglsl_opt::StageModule {
+            stage: linked.stage,
+            module: &mut linked.module,
+            info: &mut linked.info,
+        })
+        .collect();
+    optimize_modules(&mut modules, options)
+}
+
+pub(crate) fn optimize_modules(
+    modules: &mut [rglsl_opt::StageModule<'_>],
+    options: &ProgramOptions,
+) -> Result<(), rglsl_opt::OptError> {
+    rglsl_opt::optimize(modules, &options.optimize, options.optimizer_context())
+}
+
+pub(crate) fn optimizer_diagnostic(error: &rglsl_opt::OptError) -> Diagnostic {
+    Diagnostic::linking(
+        Severity::Error,
+        Origin::Program,
+        format!("cannot optimize: {error}"),
+    )
+}
+
 fn spirv_program(
     stages: Vec<Vec<ObjectModule>>,
     options: &ProgramOptions,
 ) -> Result<Program, Diagnostics> {
-    let linked = link_stages(stages, options)?;
+    let mut linked = link_stages(stages, options)?;
+    optimize(&mut linked, options)
+        .map_err(|error| Diagnostics::from(optimizer_diagnostic(&error)))?;
     let mut program = Program {
         stages: Vec::with_capacity(linked.len()),
         warnings: link_warnings(&linked, options),

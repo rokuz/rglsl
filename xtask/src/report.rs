@@ -9,8 +9,9 @@ use crate::interface;
 use crate::runner::{CaseResult, Environment, OracleResult, OursResult};
 
 fn table_header(sources: &[(TargetId, ExecSource)]) -> String {
-    let mut header = String::from("| Stage | Files | accept | diag | valid | interface | object |");
-    let mut rule = String::from("|---|---:|---:|---:|---:|---:|---:|");
+    let mut header =
+        String::from("| Stage | Files | accept | diag | valid | valid -O | interface | object |");
+    let mut rule = String::from("|---|---:|---:|---:|---:|---:|---:|---:|");
     for (target, _) in sources {
         let _ = write!(header, " {} |", column(target));
         rule.push_str("---:|");
@@ -62,6 +63,7 @@ struct Row {
     accept: Score,
     diag: Score,
     valid: Score,
+    valid_optimized: Score,
     interface: Score,
     object: Score,
     exec: BTreeMap<TargetId, Score>,
@@ -73,6 +75,7 @@ impl Row {
     fn add(&mut self, result: &CaseResult) {
         self.crashes += usize::from(matches!(result.ours, OursResult::Crashed));
         self.link.add(result.link());
+        self.valid_optimized.add(result.valid_optimized());
         if matches!(result.case.kind, Kind::Group { .. }) {
             return;
         }
@@ -96,11 +99,12 @@ impl Row {
 
     fn line(&self, label: &str, exec: &[String]) -> String {
         format!(
-            "| {label} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {label} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             self.files,
             self.accept.cell(),
             self.diag.cell(),
             self.valid.cell(),
+            self.valid_optimized.cell(),
             self.interface.cell(),
             self.object.cell(),
             exec.join(" | "),
@@ -368,6 +372,7 @@ pub fn progress(env: &Environment, results: &[CaseResult], carried: Option<&Carr
 | `accept` | we accept the shader exactly when glslang does | every shader glslang compiles without crashing |
 | `diag` | we reject it and our first error is on a line glslang reports an error on | shaders glslang rejects |
 | `valid` | we produce SPIR-V and `spirv-val` accepts it | shaders we accept |
+| `valid -O` | `rglsl -O` compiles it too (the optimizer validates the IR after every pass) and `spirv-val` accepts every module | shaders we accept, except those compiled only as objects; link groups we accept |
 | `interface` | reflection of our module matches glslang's: entry points, execution modes and local size (with specialization constant ids), inputs and outputs (location, component, built-in, type, interpolation and other interface decorations), resources (set, binding, storage class, type with array sizes, image dimensions, format and sampling, block layout: offsets, strides, matrix layout), push constants, ray tracing and task payloads, specialization constants (ids, types, defaults); names, ids and debug information are ignored; the deliberate differences listed in `xtask/interface-expected.toml` count as matches | shaders both accept (also when exec is skipped); for link groups, every linked module |
 | `exec local` | our module and glslang's, run by Amber on KosmicKrisp on the Mac with the same inputs, write the same buffers, images and color attachments | shaders both accept and that we could execute; skips are counted apart |
 | {remote_columns} | the same on each remote Windows target (a real GPU and its vendor's Vulkan driver), driven over SSH; the column is named after the GPU's vendor, or after the GPU when two targets share a vendor | as for `exec local` |
@@ -661,6 +666,29 @@ pub fn summary(results: &[CaseResult], ran: &[TargetId]) -> String {
                 let _ = writeln!(out, "  interface FAIL {}: {first}", result.case.name);
             }
         }
+        let optimized: Vec<&crate::optimized::Outcome> = results
+            .iter()
+            .filter_map(|result| result.optimized.as_ref())
+            .collect();
+        if !optimized.is_empty() {
+            let _ = writeln!(
+                out,
+                "-O identical to the unoptimized SPIR-V: {} / {}\n",
+                optimized.iter().filter(|outcome| outcome.identical).count(),
+                optimized.len()
+            );
+        }
+        for result in &results {
+            if let Some(ref outcome) = result.optimized
+                && !outcome.passed
+            {
+                let _ = writeln!(
+                    out,
+                    "  valid -O FAIL {}: {}",
+                    result.case.name, outcome.note
+                );
+            }
+        }
         for result in &results {
             if let Some(ref outcome) = result.object
                 && !outcome.passed
@@ -751,7 +779,7 @@ pub fn details(results: &[CaseResult]) -> String {
     for target in &targets {
         let _ = write!(out, "\texec_{}_note", target.label());
     }
-    out.push_str("\tobject\tobject_note\n");
+    out.push_str("\tobject\tobject_note\tvalid_O\tvalid_O_identical\tvalid_O_note\n");
     let mark = |outcome: Option<bool>| match outcome {
         Some(true) => "pass",
         Some(false) => "FAIL",
@@ -818,9 +846,14 @@ pub fn details(results: &[CaseResult]) -> String {
         }
         let _ = writeln!(
             out,
-            "\t{}\t{}",
+            "\t{}\t{}\t{}\t{}\t{}",
             mark(r.object()),
             r.object.as_ref().map_or(String::new(), |outcome| outcome
+                .note
+                .replace(['\t', '\n'], " ")),
+            mark(r.valid_optimized()),
+            mark(r.optimized.as_ref().map(|outcome| outcome.identical)),
+            r.optimized.as_ref().map_or(String::new(), |outcome| outcome
                 .note
                 .replace(['\t', '\n'], " "))
         );
@@ -1005,7 +1038,7 @@ Exec nvidia: Amber `c9f1e287` on NVIDIA GeForce RTX 4090, NVIDIA 617.14 (Vulkan 
         assert_eq!(labels(&exec_sources(&[], None)), ["local:absent"]);
         let header = table_header(&exec_sources(&[], Some(&carried)));
         assert!(header.starts_with(
-            "| Stage | Files | accept | diag | valid | interface | object | exec local | exec amd | exec nvidia | link | crashes |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+            "| Stage | Files | accept | diag | valid | valid -O | interface | object | exec local | exec amd | exec nvidia | link | crashes |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
         ));
     }
 

@@ -259,6 +259,7 @@ impl<'a> Session<'a> {
             limits: self.limits,
             validate_io: options.validate_io,
             reflection: options.reflect.then_some(options.reflect_options),
+            optimize: options.optimization.options(),
         }
     }
 

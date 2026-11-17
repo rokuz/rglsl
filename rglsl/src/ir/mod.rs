@@ -223,6 +223,7 @@ mod block;
 mod debug;
 mod flat;
 mod sources;
+mod tables;
 pub mod visit;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
@@ -252,6 +253,7 @@ pub use rglsl_types::flavor::{
 };
 pub use rglsl_types::{ResourceBinding, ShaderStage, ShaderStageMask};
 pub use sources::{SpanLocation, SpanSources};
+pub use tables::FunctionTables;
 
 /// Explicitly allows early depth/stencil tests.
 ///

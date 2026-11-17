@@ -133,6 +133,61 @@ impl DebugInfo {
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OptLevel(u32);
+
+pub const RGLSL_OPT_LEVEL_DISABLED: OptLevel = OptLevel(0);
+pub const RGLSL_OPT_LEVEL_PERFORMANCE: OptLevel = OptLevel(1);
+pub const RGLSL_OPT_LEVEL_SIZE: OptLevel = OptLevel(2);
+
+impl OptLevel {
+    pub const fn from_raw(value: u32) -> Self {
+        Self(value)
+    }
+
+    fn level(self) -> Result<rglsl_link::OptLevel, Failure> {
+        Ok(match self {
+            RGLSL_OPT_LEVEL_DISABLED => rglsl_link::OptLevel::Disabled,
+            RGLSL_OPT_LEVEL_PERFORMANCE => rglsl_link::OptLevel::Performance,
+            RGLSL_OPT_LEVEL_SIZE => rglsl_link::OptLevel::Size,
+            _ => {
+                return Err(Failure::argument(format!(
+                    "{} is not an optimization level",
+                    self.0
+                )));
+            }
+        })
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TargetGpu(u32);
+
+pub const RGLSL_TARGET_GPU_NVIDIA: TargetGpu = TargetGpu(0);
+pub const RGLSL_TARGET_GPU_AMD: TargetGpu = TargetGpu(1);
+pub const RGLSL_TARGET_GPU_UNIVERSAL_DESKTOP: TargetGpu = TargetGpu(2);
+pub const RGLSL_TARGET_GPU_UNIVERSAL_MOBILE: TargetGpu = TargetGpu(3);
+
+impl TargetGpu {
+    pub const fn from_raw(value: u32) -> Self {
+        Self(value)
+    }
+
+    fn gpu(self) -> Result<rglsl_link::TargetGpu, Failure> {
+        Ok(match self {
+            RGLSL_TARGET_GPU_NVIDIA => rglsl_link::TargetGpu::Nvidia,
+            RGLSL_TARGET_GPU_AMD => rglsl_link::TargetGpu::Amd,
+            RGLSL_TARGET_GPU_UNIVERSAL_DESKTOP => rglsl_link::TargetGpu::UniversalDesktop,
+            RGLSL_TARGET_GPU_UNIVERSAL_MOBILE => rglsl_link::TargetGpu::UniversalMobile,
+            _ => {
+                return Err(Failure::argument(format!("{} is not a target GPU", self.0)));
+            }
+        })
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resource(u32);
 
 pub const RGLSL_RESOURCE_SAMPLER: Resource = Resource(0);
@@ -1118,6 +1173,49 @@ pub(crate) fn program_options_set_limits(
 ) -> ResultCode {
     program_options_change(options, |options| {
         options.limits = required(limits, "limits")?.limits;
+        Ok(())
+    })
+}
+
+pub(crate) fn program_options_set_optimization(
+    options: Option<&mut ProgramOptions>,
+    level: OptLevel,
+) -> ResultCode {
+    program_options_change(options, |options| {
+        options.optimize.level = level.level()?;
+        Ok(())
+    })
+}
+
+pub(crate) fn program_options_set_target_gpu(
+    options: Option<&mut ProgramOptions>,
+    gpu: TargetGpu,
+) -> ResultCode {
+    program_options_change(options, |options| {
+        options.optimize.target_gpu = gpu.gpu()?;
+        Ok(())
+    })
+}
+
+pub(crate) fn program_options_set_optimizer_passes(
+    options: Option<&mut ProgramOptions>,
+    passes: Option<&CStr>,
+) -> ResultCode {
+    program_options_change(options, |options| {
+        let passes = optional_text(passes, "passes")?.map(|list| {
+            list.split(',')
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect()
+        });
+        let changed = rglsl_link::OptOptions {
+            passes,
+            ..options.optimize.clone()
+        };
+        changed
+            .check()
+            .map_err(|error| Failure::argument(error.to_string()))?;
+        options.optimize = changed;
         Ok(())
     })
 }

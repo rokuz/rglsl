@@ -1,4 +1,4 @@
-use rglsl_link::{DebugInfo, Macro, ResourceClass, ShaderStage};
+use rglsl_link::{DebugInfo, Macro, OptLevel, OptOptions, ResourceClass, ShaderStage, TargetGpu};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_USAGE: i32 = 1;
@@ -68,8 +68,38 @@ pub struct Options {
     pub config_file: Option<String>,
     pub reflect: bool,
     pub reflect_options: rglsl_link::reflect::Options,
+    pub optimization: Optimization,
     pub files: Vec<String>,
     pub command_line: String,
+}
+
+#[derive(Debug, Default)]
+pub struct Optimization {
+    pub level: Option<OptLevel>,
+    pub disabled: bool,
+    pub target_gpu: Option<TargetGpu>,
+    pub passes: Option<Vec<String>>,
+    pub validate_each: bool,
+}
+
+impl Optimization {
+    pub fn options(&self) -> OptOptions {
+        let defaults = OptOptions::default();
+        OptOptions {
+            level: if self.disabled {
+                OptLevel::Disabled
+            } else {
+                self.level.unwrap_or(defaults.level)
+            },
+            target_gpu: self.target_gpu.unwrap_or(defaults.target_gpu),
+            passes: self.passes.clone(),
+            validate_each: self.validate_each || defaults.validate_each,
+        }
+    }
+
+    const fn requested(&self) -> bool {
+        matches!(self.level, Some(OptLevel::Performance | OptLevel::Size)) || self.passes.is_some()
+    }
 }
 
 impl Options {
@@ -382,6 +412,33 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
         "no-link" => options.no_link = true,
         "lto" => return Err(Exit::unsupported(&argument, "link time optimization")),
         "validate-io" => options.validate_io = true,
+        "target-gpu" => match cursor.take_next() {
+            Some(name) => match TargetGpu::from_name(&name) {
+                Some(gpu) => options.optimization.target_gpu = Some(gpu),
+                None => {
+                    return Err(Exit::detailed(
+                        format!(
+                            "expects one of: {}",
+                            TargetGpu::names().collect::<Vec<_>>().join(", ")
+                        ),
+                        word,
+                    ));
+                }
+            },
+            None => return Err(Exit::detailed("no <gpu> provided", word)),
+        },
+        "opt-passes" => match cursor.take_next() {
+            Some(list) => {
+                options.optimization.passes = Some(
+                    list.split(',')
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                );
+            }
+            None => return Err(Exit::detailed("no <pass,...> provided", word)),
+        },
+        "opt-validate-each" => options.optimization.validate_each = true,
         "bindings-per-resource-type" => {
             return Err(Exit::unsupported(
                 &argument,
@@ -456,6 +513,12 @@ fn short_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> 
             let directory = attached(&argument, "-I<dir> include path")?;
             options.include_dirs.push(directory.to_owned());
         }
+        'O' => match rest.chars().next() {
+            None => options.optimization.level = Some(OptLevel::Performance),
+            Some('s') => options.optimization.level = Some(OptLevel::Size),
+            Some('d') => options.optimization.disabled = true,
+            Some(_) => return Err(Exit::error("unknown -O option")),
+        },
         'P' => {
             let text = attached(&argument, "-P<text>")?;
             options.macros.push(Macro::Text(first_line(text)));
@@ -556,6 +619,14 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     if options.spirv_version.is_some() && !options.spirv {
         return Err(Exit::error(
             "To generate SPIR-V, also specify client semantics. See -G and -V.",
+        ));
+    }
+    if let Err(error) = options.optimization.options().check() {
+        return Err(Exit::detailed(error.to_string(), "--opt-passes"));
+    }
+    if options.object && options.optimization.requested() {
+        return Err(Exit::error(
+            "`--object` writes object modules, which are never optimized; -O, -Os and --opt-passes apply when they are linked",
         ));
     }
     if options.object && options.link {

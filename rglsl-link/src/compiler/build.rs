@@ -11,7 +11,7 @@ use super::include::{Includes, Resolve};
 use super::{
     CompileOptions, Compiler, Diagnostic, Diagnostics, Emission, Origin, ProgramOptions,
     STAGE_ORDER, Severity, glslang_stage_name, link_diagnostic, link_stages, link_warnings,
-    write_spirv,
+    optimize, optimize_modules, optimizer_diagnostic, write_spirv,
 };
 use crate::{CompileError, InvalidModule, message, reflect, rename_entry_point};
 
@@ -280,7 +280,7 @@ impl Compiler {
             diagnostics: Diagnostics::default(),
             compiled: true,
         };
-        let linked = match compiled {
+        let mut linked = match compiled {
             Ok(linked) => linked,
             Err(CompileError::Frontend(errors)) => {
                 for diagnostic in parse_diagnostics(&errors, text, &compile_options.name) {
@@ -324,6 +324,11 @@ impl Compiler {
             }
         };
         build.units.push(report);
+        if let Err(error) = optimize(core::slice::from_mut(&mut linked), options) {
+            build.link.list.push(optimizer_diagnostic(&error));
+            build.reflection = self.reflect(&[unit(true)], &[], options, resolve);
+            return;
+        }
         build.reflection =
             self.reflect(&[unit(true)], &[(stage, &linked.module)], options, resolve);
         if options.generate_spirv {
@@ -361,7 +366,7 @@ impl Compiler {
             .iter()
             .filter_map(|unit| unit.object.clone())
             .collect();
-        let linked = match link_stages(crate::group_objects_by_stage(objects), options) {
+        let mut linked = match link_stages(crate::group_objects_by_stage(objects), options) {
             Ok(linked) => linked,
             Err(errors) => {
                 build.link.list.extend(errors.list);
@@ -370,6 +375,11 @@ impl Compiler {
             }
         };
         build.link.list.extend(link_warnings(&linked, options).list);
+        if let Err(error) = optimize(&mut linked, options) {
+            build.link.list.push(optimizer_diagnostic(&error));
+            build.reflection = self.reflect(&reflected, &[], options, resolve);
+            return;
+        }
         let modules: Vec<(ShaderStage, &Module)> = linked
             .iter()
             .map(|stage| (stage.stage, &stage.module))
@@ -487,7 +497,19 @@ fn unlinked(units: Vec<Unit<'_>>, options: &ProgramOptions, build: &mut Build) {
                 )
             }),
         };
-        let info = match info {
+        let optimized = info.and_then(|mut info| {
+            optimize_modules(
+                &mut [rglsl_opt::StageModule {
+                    stage,
+                    module: &mut object.unit.module,
+                    info: &mut info,
+                }],
+                options,
+            )
+            .map(|()| info)
+            .map_err(|error| Diagnostic::source(&unit.name, format!("cannot optimize: {error}")))
+        });
+        let info = match optimized {
             Ok(info) => info,
             Err(diagnostic) => {
                 build.stages.push(StageOutput {

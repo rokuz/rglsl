@@ -74,6 +74,8 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_object_read(data, size, &object, &diagnostics)` | `.rglo` bytes to an object |
 | `rglsl_program_options_create` and its setters | options of the link and of SPIR-V generation: auto mapping, binding shifts per stage, keep uncalled, debug info, SPIR-V version, the command line and working directory recorded by `-gV`, limits, linking (`--no-link`), generating SPIR-V (`-l` without `-V`), reflection (`-q`, `RGLSL_REFLECT_*` for the `--reflect-*` options) |
 | `rglsl_program_options_set_validate_io` | `--validate-io`: an input a stage reads needs an output of the stage before |
+| `rglsl_program_options_set_optimization`, `_set_target_gpu` | `-O`, `-Os`, `-Od` (`RGLSL_OPT_LEVEL_*`, disabled by default) and `--target-gpu` (`RGLSL_TARGET_GPU_*`, universal desktop by default): the optimizer runs on every linked stage before SPIR-V generation; objects are never optimized |
+| `rglsl_program_options_set_optimizer_passes`, `_set_optimizer_validate_each` | `--opt-passes` (comma-separated pass names that replace the preset, `NULL` for the preset; an unknown name is `RGLSL_RESULT_INVALID_ARGUMENT`) and `--opt-validate-each` (validate the IR after every pass; on by default in debug builds) |
 | `rglsl_limits_create`, `_decode`, `_set`, `_get`, `_message_count`, `_message`, `_configuration` | resource limits: glslang's defaults, a `.conf` file and its messages, `-c` |
 | `rglsl_disassemble(words, count, form, &text)` | `-H` (`RGLSL_DISASSEMBLY_GLSLANG`) and `--spirv-dis` (`RGLSL_DISASSEMBLY_STANDARD`, the form of SPIRV-Tools' `spirv-dis`); `RGLSL_RESULT_INVALID_SPIRV` with the text up to the error for malformed SPIR-V |
 | `rglsl_hex_text(words, count, variable_name, &text)` | `-x`, `--vn` |
@@ -94,7 +96,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
   (a panic inside rglsl, caught at the boundary; it is a bug). Getters return `NULL` or `0` for
   a `NULL` handle or an index out of range.
 - **Enumerations** (`rglsl_result`, `rglsl_stage`, `rglsl_severity`, `rglsl_debug_info`,
-  `rglsl_resource`, `rglsl_disassembly`) are `uint32_t` with
+  `rglsl_resource`, `rglsl_disassembly`, `rglsl_opt_level`, `rglsl_target_gpu`) are `uint32_t` with
   `#define`d values, so any value a caller passes is defined behavior and an unknown one is
   rejected with `RGLSL_RESULT_INVALID_ARGUMENT`. Stages are numbered like glslang's
   `EShLanguage`.
