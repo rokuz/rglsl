@@ -1,27 +1,17 @@
 [compiled-unit]
 functions = [
     "rglsl::object::CompiledUnit",
-    "core::ptr::drop_in_place<",
 ]
-reason = "CompiledUnit::specialized is a unit without its own specialized unit"
+reason = "CompiledUnit::specialized (also its drop glue) is a unit without its own specialized unit"
 bound = "2"
 
 [sema-builtins]
 functions = [
     "rglsl_sema::builtins::Builtins",
     "rglsl_sema::types::TypeRegistry",
-    "core::ptr::drop_in_place<",
 ]
-reason = "the type registry of the built-in tables has no built-in tables of its own"
+reason = "the type registry of the built-in tables (also its drop glue) has no built-in tables of its own"
 bound = "2"
-
-[sema-layout]
-functions = [
-    "rglsl_sema::layout::",
-    "core::ptr::drop_in_place<",
-]
-reason = "TypeLayout drop moves the nested layouts into a work list"
-bound = "1"
 
 [sema-small]
 functions = [

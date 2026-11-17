@@ -1,6 +1,8 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use rglsl_types::stack::recurse;
+
 use crate::layout_id::LayoutId;
 use crate::scope::Qualifiers;
 use crate::types::{ArraySize, BlockType, Member, Packing, Scalar, Type, TypeKind, TypeRegistry};
@@ -88,19 +90,10 @@ impl TypeLayout {
 
 impl Drop for TypeLayout {
     fn drop(&mut self) {
-        let mut pending = Vec::new();
-        take_nested(&mut self.shape, &mut pending);
-        while let Some(mut layout) = pending.pop() {
-            take_nested(&mut layout.shape, &mut pending);
+        if matches!(self.shape, Shape::Array { .. } | Shape::Struct(_)) {
+            let shape = core::mem::replace(&mut self.shape, Shape::Plain);
+            recurse(move || drop(shape));
         }
-    }
-}
-
-fn take_nested(shape: &mut Shape, into: &mut Vec<TypeLayout>) {
-    match core::mem::replace(shape, Shape::Plain) {
-        Shape::Array { element, .. } => into.push(*element),
-        Shape::Struct(members) => into.extend(members.into_iter().map(|member| member.layout)),
-        Shape::Plain | Shape::Matrix { .. } => {}
     }
 }
 
@@ -546,4 +539,33 @@ enum LayoutTask<'t> {
     },
     Array(ArraySize),
     Members(&'t [Member]),
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::boxed::Box;
+    use alloc::vec;
+
+    use super::{MemberLayout, Shape, TypeLayout, plain};
+
+    #[test]
+    fn deeply_nested_layouts_drop_without_overflow() {
+        let mut layout = plain(4, 4);
+        for level in 0..100_000 {
+            let shape = if level % 2 == 0 {
+                Shape::Array {
+                    stride: 4,
+                    element: Box::new(layout),
+                }
+            } else {
+                Shape::Struct(vec![MemberLayout { offset: 0, layout }])
+            };
+            layout = TypeLayout {
+                alignment: 4,
+                size: 4,
+                shape,
+            };
+        }
+        drop(layout);
+    }
 }
