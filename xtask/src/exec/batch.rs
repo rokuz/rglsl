@@ -9,12 +9,46 @@ use super::amber::{Amber, parse_dump};
 pub type Outputs = BTreeMap<String, Vec<u8>>;
 pub type JobResult = Result<Outputs, String>;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capture {
+    pub statistics: bool,
+    pub timing: bool,
+}
+
+impl Capture {
+    pub const NONE: Self = Self {
+        statistics: false,
+        timing: false,
+    };
+
+    fn field(self) -> String {
+        let mut parts = Vec::new();
+        if self.statistics {
+            parts.push("statistics");
+        }
+        if self.timing {
+            parts.push("timing");
+        }
+        parts.join(",")
+    }
+}
+
+pub const STATISTICS: &str = "#pipeline-statistics";
+pub const TIMING: &str = "#execution-timing";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job {
     pub dir: PathBuf,
     pub script: String,
     pub dumps: Vec<String>,
     pub tensor_layer: bool,
+    pub capture: Capture,
+}
+
+impl Job {
+    pub fn statistics_file(&self) -> String {
+        format!("{}.stats.json", self.script)
+    }
 }
 
 const ATTEMPTS: usize = 3;
@@ -62,15 +96,12 @@ pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> 
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let Some(job) = jobs.get(index) else { break };
-                    let dumps: Vec<&str> = job.dumps.iter().map(String::as_str).collect();
-                    let out = job.dir.join(format!("{}.dump.txt", job.script));
-                    let script = job.dir.join(&job.script);
-                    let mut result = amber.run(&script, &dumps, &out, job.tensor_layer);
+                    let mut result = amber.run(job);
                     for _ in 1..ATTEMPTS {
                         if !result.as_ref().is_err_and(|e| transient(e)) {
                             break;
                         }
-                        result = amber.run(&script, &dumps, &out, job.tensor_layer);
+                        result = amber.run(job);
                     }
                     results
                         .lock()
@@ -105,6 +136,7 @@ pub fn manifest(root: &Path, jobs: &[Job]) -> Result<String, String> {
             job.script.clone(),
             job.dumps.join(","),
             if job.tensor_layer { "tensor" } else { "" }.to_string(),
+            job.capture.field(),
         ];
         if fields.iter().any(|f| f.contains(['\t', '\n'])) {
             return Err(format!("job {index} has a tab or newline in a field"));
@@ -159,6 +191,7 @@ mod tests {
             script: script.into(),
             dumps: dumps.iter().map(|d| (*d).to_string()).collect(),
             tensor_layer: false,
+            capture: Capture::NONE,
         }
     }
 
@@ -208,14 +241,20 @@ mod tests {
 
     #[test]
     fn writes_a_manifest_relative_to_the_root() -> anyhow::Result<()> {
+        let mut timed = job("/w/a.comp", "rglsl.timed.amber", &[]);
+        timed.capture = Capture {
+            statistics: true,
+            timing: true,
+        };
         let jobs = [
             job("/w/a.comp", "glslang.amber", &["dump:0:0", "dump:0:1"]),
             job("/w/probes/x", "p.amber", &[]),
+            timed,
         ];
         let text = manifest(Path::new("/w"), &jobs).map_err(anyhow::Error::msg)?;
         assert_eq!(
             text,
-            "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\t\n1\tprobes/x\tp.amber\t\t\n"
+            "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\t\t\n1\tprobes/x\tp.amber\t\t\t\n2\ta.comp\trglsl.timed.amber\t\t\tstatistics,timing\n"
         );
         assert!(manifest(Path::new("/other"), &jobs).is_err());
         assert_eq!(dirs(Path::new("/w"), &jobs), ["a.comp", "probes/x"]);

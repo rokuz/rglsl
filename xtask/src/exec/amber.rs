@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+use super::batch::{Capture, Job, STATISTICS, TIMING};
 use super::cooperative::{self, Support};
 use crate::process::{self, Exit};
 
@@ -102,36 +103,32 @@ impl Amber {
         })
     }
 
-    pub fn run(
-        &self,
-        script: &Path,
-        dumps: &[&str],
-        out: &Path,
-        layer: bool,
-    ) -> Result<BTreeMap<String, Vec<u8>>, String> {
-        if layer && self.layer.is_none() {
+    pub fn run(&self, job: &Job) -> Result<BTreeMap<String, Vec<u8>>, String> {
+        if job.tensor_layer && self.layer.is_none() {
             return Err(format!(
                 "the script needs the ML emulation layer, which is not built: run `cargo xtask oracles` or set {}",
                 crate::oracles::TENSOR_LAYER_VAR
             ));
         }
-        let _ = std::fs::remove_file(out);
-        let mut command = self.command(layer);
+        let out = job.dir.join(format!("{}.dump.txt", job.script));
+        let statistics = job.dir.join(job.statistics_file());
+        let _ = std::fs::remove_file(&out);
+        let _ = std::fs::remove_file(&statistics);
+        let mut command = self.command(job.tensor_layer);
         command.arg("-q");
-        if !dumps.is_empty() {
-            command.arg("-b").arg(out);
-            for dump in dumps {
+        if !job.dumps.is_empty() {
+            command.arg("-b").arg(&out);
+            for dump in &job.dumps {
                 command.args(["-B", dump]);
             }
         }
-        match (script.parent(), script.file_name()) {
-            (Some(dir), Some(name)) if !dir.as_os_str().is_empty() => {
-                command.current_dir(dir).arg(name);
-            }
-            _ => {
-                command.arg(script);
-            }
+        if job.capture.statistics {
+            command.arg("--pipeline-stats").arg(job.statistics_file());
         }
+        if job.capture.timing {
+            command.arg("--log-execution-timing");
+        }
+        command.current_dir(&job.dir).arg(&job.script);
         let output = process::run(command, self.timeout).map_err(|e| format!("{e:#}"))?;
         match output.exit {
             Exit::Code(0) => {}
@@ -149,12 +146,53 @@ impl Amber {
             }
             Exit::Timeout => return Err("amber timed out".into()),
         }
-        if dumps.is_empty() {
-            return Ok(BTreeMap::new());
-        }
-        let text = std::fs::read_to_string(out).map_err(|e| format!("reading the dump: {e}"))?;
-        parse_dump(&text)
+        let mut outputs = if job.dumps.is_empty() {
+            BTreeMap::new()
+        } else {
+            let text =
+                std::fs::read_to_string(&out).map_err(|e| format!("reading the dump: {e}"))?;
+            parse_dump(&text)?
+        };
+        add_captures(
+            &mut outputs,
+            job.capture,
+            std::fs::read(&statistics).ok(),
+            &output.stdout,
+        );
+        Ok(outputs)
     }
+}
+
+pub fn add_captures(
+    outputs: &mut BTreeMap<String, Vec<u8>>,
+    capture: Capture,
+    statistics: Option<Vec<u8>>,
+    stdout: &str,
+) {
+    if let (true, Some(bytes)) = (capture.statistics, statistics) {
+        outputs.insert(STATISTICS.to_string(), bytes);
+    }
+    if capture.timing {
+        outputs.insert(TIMING.to_string(), stdout.as_bytes().to_vec());
+    }
+}
+
+pub fn parse_timing(stdout: &str) -> Vec<f64> {
+    let mut lines = stdout.lines();
+    let mut times = Vec::new();
+    while let Some(line) = lines.next() {
+        if !line.trim_start().starts_with("Execution timing") {
+            continue;
+        }
+        if let Some(values) = lines.next() {
+            times.extend(
+                values
+                    .split(',')
+                    .filter_map(|value| value.trim().parse::<f64>().ok()),
+            );
+        }
+    }
+    times
 }
 
 pub fn first_line(primary: &str, secondary: &str) -> String {
@@ -241,6 +279,25 @@ mod tests {
         assert!(parse_dump(" 00\n").is_err());
         assert!(parse_dump("x\n zz\n").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn parses_execution_timing() {
+        let stdout = "Execution timing (in script-order):\n    0.5, 0.25, 1e-3\n\nExecution time median = 0.25 ms\n";
+        assert_eq!(parse_timing(stdout), [0.5, 0.25, 0.001]);
+        assert!(parse_timing("Summary: 1 pass\n").is_empty());
+        let mut outputs = BTreeMap::new();
+        add_captures(
+            &mut outputs,
+            Capture {
+                statistics: true,
+                timing: false,
+            },
+            Some(b"{}".to_vec()),
+            stdout,
+        );
+        assert_eq!(outputs.get(STATISTICS).map(Vec::as_slice), Some(&b"{}"[..]));
+        assert!(!outputs.contains_key(TIMING));
     }
 
     #[test]

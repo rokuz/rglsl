@@ -13,11 +13,15 @@ use crate::corpus::{self, Case, Kind};
 use crate::process::{self, Exit};
 use crate::{cli, exec, groups, oracles, runner};
 
+mod gpu;
+
 #[derive(Debug)]
 pub struct Options {
     pub glslang_dir: Option<PathBuf>,
     pub filter: Option<String>,
     pub timeout_secs: u64,
+    pub exec: Vec<exec::TargetSpec>,
+    pub runs: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -107,6 +111,7 @@ impl Variant {
 #[derive(Debug, Clone)]
 pub struct Unit {
     pub name: String,
+    pub case: String,
     pub set: Set,
     pub dir: PathBuf,
     pub rglsl_args: Vec<String>,
@@ -449,6 +454,7 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
             input: case.name.clone(),
             target_env: case.target.spirv_val_env(),
             validator: runner::validator_args(&case, &case.path),
+            case: case.name.clone(),
             name: case.name,
         });
     }
@@ -486,6 +492,7 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
         fs::write(synthetic_dir.join(&name), text)?;
         units.push(Unit {
             name: format!("synthetic/{name}"),
+            case: format!("synthetic/{name}"),
             set: Set::Synthetic,
             dir: synthetic_dir.clone(),
             rglsl_args: vec!["-V".into()],
@@ -506,6 +513,7 @@ fn file_unit(case: &Case, dir: &Path, file: &str, set: Set, options: &[String]) 
     glslang_args.extend(case.target.glslang_only_args());
     Unit {
         name: format!("{}/{file}", case.name),
+        case: case.name.clone(),
         set,
         dir: dir.to_path_buf(),
         rglsl_args,
@@ -567,6 +575,15 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         table_path.display(),
         modules.display()
     );
+    if !options.exec.is_empty() {
+        gpu::run(
+            root,
+            &results,
+            &options.exec,
+            options.runs,
+            Duration::from_secs(options.timeout_secs),
+        )?;
+    }
     Ok(0)
 }
 
@@ -606,7 +623,8 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
          and non-semantic extended instructions; *`Function` variables* are `OpVariable` with storage \
          class `Function`; *blocks* are `OpLabel`; *words* is the module size. Ratios are to \
          *spirv-opt -O(rglsl)*, per shader as (value + 1) / (reference + 1), so that zero counts stay \
-         defined; below 1: fewer than spirv-opt -O. GPU-side statistics are not part of this report.\n\n",
+         defined; below 1: fewer than spirv-opt -O. Driver statistics and GPU times: `--exec`, in \
+         opt-quality-exec.md.\n\n",
     );
 
     out.push_str("## Shaders\n\n");
@@ -1019,6 +1037,7 @@ mod tests {
         UnitResult {
             unit: Unit {
                 name: name.into(),
+                case: name.into(),
                 set: Set::Vulkan,
                 dir: PathBuf::new(),
                 rglsl_args: Vec::new(),
