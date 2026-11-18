@@ -152,7 +152,8 @@ cargo xtask opt-quality [--filter NAME]                      # SPIR-V counts of 
 cargo xtask opt-quality --exec [--exec-target T] [--runs N]  # and on the Vulkan targets: driver statistics (Amber
                                                    # --pipeline-stats), GPU and pipeline creation time,
                                                    # exec equivalence of rglsl -O, spirv-opt -O(rglsl) and glslang -O
-                                                   # with rglsl: target/xtask/opt-quality-exec.md, .tsv
+                                                   # with rglsl (shaders of xtask/exec-ub run as their twins):
+                                                   # target/xtask/opt-quality-exec.md, .tsv
 
 cargo xtask fuzz --shaders DIR [--exec] [--opt]              # differential fuzzing against glslang (+ exec, + -O)
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run

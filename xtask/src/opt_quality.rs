@@ -135,6 +135,23 @@ pub struct Unit {
     pub input: String,
     pub target_env: String,
     pub validator: Vec<String>,
+    pub role: Role,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Measured,
+    Undefined,
+    Twin,
+}
+
+impl Unit {
+    pub fn seed(&self) -> &str {
+        match self.role {
+            Role::Twin => &self.case,
+            Role::Measured | Role::Undefined => &self.name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -467,6 +484,7 @@ fn first_message(output: &process::Output, fallback: &str) -> String {
 
 pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> {
     let test_dir = glslang_dir.join("Test");
+    let known = exec::known::Known::load(root)?;
     let mut units = Vec::new();
     for case in corpus::load(glslang_dir)? {
         if !case.kind.is_file() || case.target.compile_only || case.target.ast_only {
@@ -475,7 +493,7 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
         let item = bench::corpus_item(&case, &test_dir, None);
         let mut glslang_args = item.options.clone();
         glslang_args.extend(item.glslang_options.iter().cloned());
-        units.push(Unit {
+        let unit = Unit {
             set: match case.corpus {
                 corpus::Corpus::Vulkan => Set::Vulkan,
                 _ => Set::OpenGlAsVulkan,
@@ -487,8 +505,25 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
             target_env: case.target.spirv_val_env(),
             validator: runner::validator_args(&case, &case.path),
             case: case.name.clone(),
-            name: case.name,
-        });
+            name: case.name.clone(),
+            role: Role::Measured,
+        };
+        match known.get(&case.name) {
+            Some(undefined) => {
+                units.push(Unit {
+                    name: format!("{}/{}", exec::known::DIR, case.name),
+                    input: undefined.twin.to_string_lossy().into_owned(),
+                    validator: runner::validator_args(&case, &undefined.twin),
+                    role: Role::Twin,
+                    ..unit.clone()
+                });
+                units.push(Unit {
+                    role: Role::Undefined,
+                    ..unit
+                });
+            }
+            None => units.push(unit),
+        }
     }
     for case in groups::load_own(root)? {
         let Kind::Own {
@@ -532,6 +567,7 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
             input: name,
             target_env: "vulkan1.0".into(),
             validator: vec!["--target-env".into(), "vulkan1.0".into()],
+            role: Role::Measured,
         });
     }
     Ok(units)
@@ -553,6 +589,7 @@ fn file_unit(case: &Case, dir: &Path, file: &str, set: Set, options: &[String]) 
         input: file.to_string(),
         target_env: case.target.spirv_val_env(),
         validator: runner::validator_args(case, &dir.join(file)),
+        role: Role::Measured,
     }
 }
 
@@ -594,6 +631,9 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         result.with_context(|| unit.name.clone())
     });
     let results = results.into_iter().collect::<Result<Vec<_>>>()?;
+    let (twins, results): (Vec<_>, Vec<_>) = results
+        .into_iter()
+        .partition(|result| result.unit.role == Role::Twin);
     let report = markdown(&results, started.elapsed());
     let xtask_dir = root.join("target").join("xtask");
     let report_path = xtask_dir.join("opt-quality.md");
@@ -608,9 +648,14 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
         modules.display()
     );
     if !options.exec.is_empty() {
+        let executed: Vec<UnitResult> = results
+            .into_iter()
+            .filter(|result| result.unit.role != Role::Undefined)
+            .chain(twins)
+            .collect();
         gpu::run(
             root,
-            &results,
+            &executed,
             &options.exec,
             options.runs,
             Duration::from_secs(options.timeout_secs),
@@ -1114,6 +1159,7 @@ mod tests {
                 input: name.into(),
                 target_env: "vulkan1.0".into(),
                 validator: Vec::new(),
+                role: Role::Measured,
             },
             outcomes,
         }

@@ -156,7 +156,7 @@ fn stage_unit(
     let bytes = fs::read(rglsl).map_err(|e| e.to_string())?;
     let reflection = reflect::reflect_bytes(&bytes).map_err(|e| format!("reflection: {e}"))?;
     let plan = executor
-        .plan_module(&result.unit.name, &reflection)
+        .plan_module(result.unit.seed(), &reflection)
         .map_err(|outcome| match outcome {
             exec::Outcome::Skip { reason, detail } => format!("{}: {detail}", reason.code()),
             exec::Outcome::Fail(detail) => detail,
