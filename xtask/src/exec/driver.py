@@ -14,6 +14,7 @@ TRANSIENT = (
     "Unable to create vulkan",
 )
 ATTEMPTS = 3
+RECOVERY_SECONDS = 15
 TAIL_LINES = 20
 
 
@@ -109,6 +110,8 @@ def run_job(settings, job):
             break
         time.sleep(2.0 * (attempt + 1))
     end = now_ms()
+    if status[0] == "timeout" or transient(status):
+        time.sleep(RECOVERY_SECONDS)
     with open(os.path.join(results, "%s.run" % index), "w", encoding="utf-8") as file:
         file.write("start %d\nend %d\npid %s\ncode %s\n" % (start, end, "" if pid is None else pid, code))
     if status[0] != "ok" and tail:
