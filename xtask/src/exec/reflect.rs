@@ -753,6 +753,23 @@ pub struct CooperativeMatrixType {
     pub columns_spec: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InterfaceExtent {
+    pub per_vertex: u32,
+    pub patch: u32,
+}
+
+impl InterfaceExtent {
+    fn include(&mut self, patch: bool, end: u32) {
+        let extent = if patch {
+            &mut self.patch
+        } else {
+            &mut self.per_vertex
+        };
+        *extent = (*extent).max(end);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reflection {
     pub model: ExecutionModel,
@@ -762,6 +779,8 @@ pub struct Reflection {
     pub push_constants: Option<Layout>,
     pub inputs: Vec<Varying>,
     pub outputs: Vec<Varying>,
+    pub input_extent: InterfaceExtent,
+    pub output_extent: InterfaceExtent,
     pub input_builtins: BTreeSet<BuiltIn>,
     pub output_builtins: BTreeSet<BuiltIn>,
     pub capabilities: BTreeSet<Capability>,
@@ -811,6 +830,8 @@ impl Reflection {
             push_constants: None,
             inputs: Vec::new(),
             outputs: Vec::new(),
+            input_extent: InterfaceExtent::default(),
+            output_extent: InterfaceExtent::default(),
             input_builtins: BTreeSet::new(),
             output_builtins: BTreeSet::new(),
             capabilities: BTreeSet::new(),
@@ -906,6 +927,53 @@ impl Types<'_> {
 
     fn opcode(&self, id: u32) -> Option<u32> {
         self.get(id).map(|i| i.opcode)
+    }
+
+    fn locations(&self, id: u32) -> Result<u32, String> {
+        let mut total: u32 = 0;
+        let mut pending = vec![(id, 1u32)];
+        while let Some((id, count)) = pending.pop() {
+            let instruction = self
+                .get(id)
+                .ok_or("interface variable of an unknown type")?;
+            let add = |total: u32, locations: u32| {
+                count
+                    .checked_mul(locations)
+                    .and_then(|locations| total.checked_add(locations))
+                    .ok_or_else(|| "interface too large".to_string())
+            };
+            if instruction.is(Op::TypeArray) {
+                let length = instruction
+                    .word(2)
+                    .and_then(|length| self.constant_u32(length))
+                    .ok_or("interface array without a constant length")?;
+                let element = instruction.word(1).ok_or("bad array type")?;
+                let count = count.checked_mul(length).ok_or("interface too large")?;
+                pending.push((element, count));
+            } else if instruction.is(Op::TypeMatrix) {
+                let column = instruction.word(1).ok_or("bad matrix type")?;
+                let columns = instruction.word(2).ok_or("bad matrix type")?;
+                let count = count.checked_mul(columns).ok_or("interface too large")?;
+                pending.push((column, count));
+            } else if instruction.is(Op::TypeStruct) {
+                pending.extend(instruction.rest(1).iter().map(|member| (*member, count)));
+            } else if instruction.is(Op::TypeVector) {
+                let scalar = instruction
+                    .word(1)
+                    .and_then(|component| self.scalar(component))
+                    .ok_or("bad vector type")?;
+                let components = instruction.word(2).ok_or("bad vector type")?;
+                let locations = if scalar.width == 64 && components > 2 {
+                    2
+                } else {
+                    1
+                };
+                total = add(total, locations)?;
+            } else {
+                total = add(total, 1)?;
+            }
+        }
+        Ok(total)
     }
 
     fn constant_u32(&self, id: u32) -> Option<u32> {
@@ -1360,6 +1428,51 @@ fn per_vertex_element(types: &Types, pointee: u32) -> Result<u32, String> {
     outer.word(1).ok_or_else(|| "bad array type".to_string())
 }
 
+fn interface_extent(
+    types: &Types,
+    id: u32,
+    pointee: u32,
+    arrayed: bool,
+    extent: &mut InterfaceExtent,
+) -> Result<(), String> {
+    let decorations = types.decorations;
+    let patch = decorations.has(id, Decoration::Patch);
+    let pointee = if arrayed && !patch {
+        per_vertex_element(types, pointee)?
+    } else {
+        pointee
+    };
+    let location = decorations.value(id, Decoration::Location);
+    let instruction = types
+        .get(pointee)
+        .ok_or("interface variable of an unknown type")?;
+    if instruction.is(Op::TypeStruct) {
+        let mut next = location;
+        for (index, member) in instruction.rest(1).iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| "struct too large")?;
+            let start = decorations
+                .member_value(pointee, index, Decoration::Location)
+                .or(next)
+                .ok_or("interface block member without a location")?;
+            let end = start
+                .checked_add(types.locations(*member)?)
+                .ok_or("interface too large")?;
+            extent.include(
+                patch || decorations.member_has(pointee, index, Decoration::Patch),
+                end,
+            );
+            next = Some(end);
+        }
+        return Ok(());
+    }
+    let start = location.ok_or("interface variable without a location")?;
+    let end = start
+        .checked_add(types.locations(pointee)?)
+        .ok_or("interface too large")?;
+    extent.include(patch, end);
+    Ok(())
+}
+
 fn varyings(types: &Types, id: u32, pointee: u32, arrayed: bool) -> Result<Vec<Varying>, String> {
     let decorations = types.decorations;
     let patch = decorations.has(id, Decoration::Patch);
@@ -1792,6 +1905,15 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
                     pointee
                 };
                 if decorations.member_builtins.contains(&block) {
+                    continue;
+                }
+                let extent = if output {
+                    &mut reflection.output_extent
+                } else {
+                    &mut reflection.input_extent
+                };
+                if let Err(problem) = interface_extent(&types, id, pointee, arrayed, extent) {
+                    reflection.problems.push(problem);
                     continue;
                 }
                 let varyings = match varyings(&types, id, pointee, arrayed) {
@@ -3421,6 +3543,43 @@ mod tests {
 
         let reflection = reflected(&query_module(9, 4)?)?;
         assert_eq!(reflection.problems, vec![NOT_A_FIELD.to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn counts_the_locations_an_interface_consumes() -> anyhow::Result<()> {
+        let words = module(&[
+            op(Op::Capability, &[Capability::Shader as u32])?,
+            op(Op::Capability, &[Capability::Float64 as u32])?,
+            op(Op::EntryPoint, &entry(ExecutionModel::Vertex))?,
+            op(Op::Decorate, &[20, Decoration::Location as u32, 61])?,
+            op(Op::Decorate, &[21, Decoration::Location as u32, 3])?,
+            op(Op::Decorate, &[22, Decoration::Location as u32, 1])?,
+            op(Op::Decorate, &[23, Decoration::Block as u32])?,
+            op(
+                Op::MemberDecorate,
+                &[23, 1, Decoration::Location as u32, 40],
+            )?,
+            op(Op::TypeFloat, &[5, 32])?,
+            op(Op::TypeVector, &[6, 5, 4])?,
+            op(Op::TypeInt, &[7, 32, 0])?,
+            op(Op::Constant, &[7, 8, 3])?,
+            op(Op::TypeArray, &[9, 6, 8])?,
+            op(Op::TypeMatrix, &[11, 6, 4])?,
+            op(Op::TypeFloat, &[12, 64])?,
+            op(Op::TypeVector, &[13, 12, 4])?,
+            op(Op::TypeStruct, &[23, 11, 13])?,
+            op(Op::TypePointer, &[14, StorageClass::Output as u32, 6])?,
+            op(Op::TypePointer, &[15, StorageClass::Input as u32, 9])?,
+            op(Op::TypePointer, &[16, StorageClass::Output as u32, 23])?,
+            op(Op::Variable, &[14, 20, StorageClass::Output as u32])?,
+            op(Op::Variable, &[15, 21, StorageClass::Input as u32])?,
+            op(Op::Variable, &[16, 22, StorageClass::Output as u32])?,
+        ]);
+        let reflection = reflected(&words)?;
+        assert_eq!(reflection.input_extent.per_vertex, 6);
+        assert_eq!(reflection.output_extent.per_vertex, 62);
+        assert_eq!(reflection.output_extent.patch, 0);
         Ok(())
     }
 

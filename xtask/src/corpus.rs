@@ -267,6 +267,9 @@ fn parse_version(source: &str) -> Option<(u32, Option<String>)> {
 
 /// Lists the in-scope shaders in `<glslang>/Test` with the target they are
 /// compiled for.
+const TENSORS_VULKAN: (u8, u8) = (1, 3);
+const TENSORS_SPIRV: (u8, u8) = (1, 6);
+
 pub fn load(glslang_dir: &Path) -> Result<Vec<Case>> {
     let test_dir = glslang_dir.join("Test");
     let manifest = load_manifest(&glslang_dir.join("gtests"))?;
@@ -299,6 +302,15 @@ pub fn load(glslang_dir: &Path) -> Result<Vec<Case>> {
         let (corpus, target) = match target.semantics {
             Semantics::Vulkan => (Corpus::Vulkan, target),
             Semantics::OpenGL => (Corpus::OpenGlAsVulkan, Target::VULKAN_DEFAULT),
+        };
+        let target = if source.contains("GL_ARM_tensors") && target.semantics == Semantics::Vulkan {
+            Target {
+                vulkan: target.vulkan.max(TENSORS_VULKAN),
+                spirv: target.spirv.max(TENSORS_SPIRV),
+                ..target
+            }
+        } else {
+            target
         };
         cases.push(Case {
             name: name.to_string(),

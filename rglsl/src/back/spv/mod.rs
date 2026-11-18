@@ -955,6 +955,18 @@ pub struct PipelineOptions {
     pub entry_point: String,
 }
 
+pub fn minimum_version(module: &crate::Module) -> (u8, u8) {
+    if module
+        .types
+        .iter()
+        .any(|(_, ty)| matches!(ty.inner, crate::TypeInner::Tensor { .. }))
+    {
+        (1, 6)
+    } else {
+        (1, 0)
+    }
+}
+
 pub fn write_vec(
     module: &crate::Module,
     info: &crate::valid::ModuleInfo,
@@ -962,6 +974,17 @@ pub fn write_vec(
     pipeline_options: Option<&PipelineOptions>,
 ) -> Result<Vec<u32>, Error> {
     let mut words: Vec<u32> = Vec::new();
+    let minimum = minimum_version(module);
+    let raised;
+    let options = if options.lang_version < minimum {
+        raised = Options {
+            lang_version: minimum,
+            ..options.clone()
+        };
+        &raised
+    } else {
+        options
+    };
     let mut w = Writer::new(options)?;
 
     w.write(module, info, pipeline_options, &mut words)?;

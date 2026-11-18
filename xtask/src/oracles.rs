@@ -246,7 +246,7 @@ pub fn build_remote(root: &Path) -> Result<()> {
             device.driver,
             label.label()
         );
-        match device.tensors {
+        match &device.tensors {
             Some(tensors) => eprintln!(
                 "[xtask] {}: ML emulation layer {}: VK_ARM_tensors with tensors of rank up to {}",
                 spec.entry(),

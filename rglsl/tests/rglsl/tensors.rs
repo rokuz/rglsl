@@ -18,16 +18,6 @@ struct Target {
     spirv: (u8, u8),
 }
 
-const VULKAN_1_0: Target = Target {
-    environment: "vulkan1.0",
-    validator: "vulkan1.0",
-    spirv: (1, 0),
-};
-const VULKAN_1_1_SPIRV_1_4: Target = Target {
-    environment: "vulkan1.1",
-    validator: "vulkan1.1spv1.4",
-    spirv: (1, 4),
-};
 const VULKAN_1_3: Target = Target {
     environment: "vulkan1.3",
     validator: "vulkan1.3",
@@ -106,7 +96,7 @@ fn compile(stage: ShaderStage, source: &str, target: Target) -> TestResult<Vec<u
 
 fn rejection_lines(stage: ShaderStage, source: &str) -> TestResult<Vec<(u32, String)>> {
     let errors = crate::rejected(
-        glsl::Frontend::default().parse(&options(stage, VULKAN_1_0, false), source),
+        glsl::Frontend::default().parse(&options(stage, VULKAN_1_3, false), source),
     )?;
     Ok(errors
         .errors
@@ -463,7 +453,7 @@ fn without_tensor_indexing(shape: &Shape) -> Shape {
 }
 
 fn matches_glslang(stage: ShaderStage, source: &str) -> TestResult<Shape> {
-    matches_glslang_in(stage, source, VULKAN_1_0)
+    matches_glslang_in(stage, source, VULKAN_1_3)
 }
 
 fn rejected_by_rglsl(source: &str, line: u32, message: &str) -> TestResult {
@@ -481,10 +471,10 @@ fn rejected_by_rglsl(source: &str, line: u32, message: &str) -> TestResult {
 
 fn rejected_like_glslang(source: &str, line: u32, message: &str) -> TestResult {
     rejected_by_rglsl(source, line, message)?;
-    if let Glslang::Rejected(lines) = glslang(ShaderStage::Compute, source, VULKAN_1_0, false)? {
+    if let Glslang::Rejected(lines) = glslang(ShaderStage::Compute, source, VULKAN_1_3, false)? {
         assert_eq!(lines.first(), Some(&line), "glslang: {source}");
     } else if !matches!(
-        glslang(ShaderStage::Compute, source, VULKAN_1_0, false)?,
+        glslang(ShaderStage::Compute, source, VULKAN_1_3, false)?,
         Glslang::Missing
     ) {
         panic!("glslang accepts {source}");
@@ -866,7 +856,7 @@ void main() {
     ssbo[0].size = tensorSizeARM(intTensors[1], 3) + tensorSizeARM(floatTensors[0], 0);
 }
 ";
-    let shape = matches_glslang_in(ShaderStage::Compute, source, VULKAN_1_1_SPIRV_1_4)?;
+    let shape = matches_glslang_in(ShaderStage::Compute, source, VULKAN_1_3)?;
     assert_eq!(
         shape.tensor_types,
         ["tensor(rank 2) f32", "tensor(rank 4) i32"]
@@ -882,7 +872,7 @@ void main() {
     tensorReadARM(t, uint[](1, 2, 3, 4), ssbo[1].out_data);
 }
 ";
-    matches_glslang_in(ShaderStage::Compute, corpus, VULKAN_1_1_SPIRV_1_4)?;
+    matches_glslang_in(ShaderStage::Compute, corpus, VULKAN_1_3)?;
     Ok(())
 }
 
@@ -1199,7 +1189,8 @@ void main() {
     b.s = tensorSizeARM(tc[2], 0) + tensorSizeARM(tn[0], 1);
 }
 ";
-    for target in [VULKAN_1_0, VULKAN_1_3] {
+    {
+        let target = VULKAN_1_3;
         let words = compile(ShaderStage::Compute, source, target)?;
         let capabilities = capability_words(&words)?;
         for capability in [
@@ -1242,10 +1233,10 @@ void main() {
     tensorReadARM(ta[two + 1u], uint[](0u), b.f);
 }
 ";
-    let capabilities = capability_words(&compile(ShaderStage::Compute, constant, VULKAN_1_0)?)?;
+    let capabilities = capability_words(&compile(ShaderStage::Compute, constant, VULKAN_1_3)?)?;
     assert!(!capabilities.contains(&dynamic) && !capabilities.contains(&non_uniform));
     let uniform = constant.replace("ta[1]", "ta[b.i]");
-    let capabilities = capability_words(&compile(ShaderStage::Compute, &uniform, VULKAN_1_0)?)?;
+    let capabilities = capability_words(&compile(ShaderStage::Compute, &uniform, VULKAN_1_3)?)?;
     assert!(capabilities.contains(&dynamic) && !capabilities.contains(&non_uniform));
     let varying = "#version 460
 #extension GL_ARM_tensors : require
@@ -1259,7 +1250,7 @@ void main() {
     b.i = pick(ta, b.i);
 }
 ";
-    let capabilities = capability_words(&compile(ShaderStage::Compute, varying, VULKAN_1_0)?)?;
+    let capabilities = capability_words(&compile(ShaderStage::Compute, varying, VULKAN_1_3)?)?;
     assert!(capabilities.contains(&dynamic) && capabilities.contains(&non_uniform));
     Ok(())
 }
