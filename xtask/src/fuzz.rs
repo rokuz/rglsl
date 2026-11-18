@@ -10,7 +10,6 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 
 use crate::corpus::STAGE_EXTENSIONS;
-use crate::exec::drivers::DriverBugs;
 use crate::exec::{self, Executor, TargetId, TargetSpec};
 use crate::fuzz_exec::{self, Run, Staged};
 use crate::oracles;
@@ -182,7 +181,6 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let judgements = exec::parallel_map(&executors, |executor| {
         metamorphic(
             executor,
-            &shaders_dir,
             &outcomes,
             options.exec_glslang,
             options.optimize,
@@ -354,18 +352,8 @@ struct Optimizer {
 type StagedPair = (Staged, Option<Staged>, Option<Staged>);
 type Judgement = Option<(Verdict, String)>;
 
-fn known_driver_bug(bugs: &DriverBugs, root: &Path, shader: &Path) -> Option<String> {
-    let relative = shader.strip_prefix(root).ok()?;
-    let family = relative.parent()?;
-    [relative, family].iter().find_map(|path| {
-        let key = format!("fuzz/{}", path.to_str()?.replace('\\', "/"));
-        bugs.get(&key).map(|why| format!("known driver bug: {why}"))
-    })
-}
-
 fn stage_all(
     executor: &Executor,
-    root: &Path,
     outcomes: &[Outcome],
     glslang: bool,
     optimize: bool,
@@ -377,9 +365,6 @@ fn stage_all(
         };
         if outcome.verdict != Verdict::Agree || fuzz_exec::family_of(&outcome.shader).is_none() {
             return (Staged::Refused(String::new()), None, None);
-        }
-        if let Some(why) = known_driver_bug(&executor.driver_bugs, root, &outcome.shader) {
-            return (Staged::Refused(why), None, None);
         }
         let dir = executor
             .work_dir()
@@ -727,13 +712,12 @@ const fn needs_confirmation(verdict: Verdict) -> bool {
 
 fn metamorphic(
     executor: &Executor,
-    root: &Path,
     outcomes: &[Outcome],
     glslang: bool,
     optimize: bool,
     optimizer: Option<&Optimizer>,
 ) -> Vec<Judgement> {
-    let staged = stage_all(executor, root, outcomes, glslang, optimize);
+    let staged = stage_all(executor, outcomes, glslang, optimize);
     let all: Vec<usize> = (0..outcomes.len()).collect();
     let mut runs = execute(executor, &staged, &all, false);
     let mut judgements: Vec<Judgement> = all.iter().map(|i| judge(outcomes, &runs, *i)).collect();
@@ -875,27 +859,6 @@ fn cause(note: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn skips_known_driver_bugs_by_shader_and_family() -> Result<()> {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let root = Path::new("shaders");
-        let kk = DriverBugs::load(&repo, "KosmicKrisp Mesa 26.3.0 (git-0a6fa60abb)")?;
-        let skipped =
-            |bugs: &DriverBugs, shader: &str| known_driver_bug(bugs, root, &root.join(shader));
-        assert!(
-            skipped(&kk, "s4_colorgrid_modulo_intfunctions/variant_003.frag")
-                .is_some_and(|why| why.starts_with("known driver bug: kosmickrisp: "))
-        );
-        assert!(skipped(&kk, "s4_colorgrid_modulo_intfunctions/reference.frag").is_some());
-        assert!(skipped(&kk, "s5_muller/variant_028.frag").is_some());
-        assert!(skipped(&kk, "s5_muller/variant_027.frag").is_none());
-        assert!(skipped(&kk, "s5_muller/reference.frag").is_none());
-        let amd = DriverBugs::load(&repo, "AMD proprietary driver 26.10.1 (LLPC)")?;
-        assert!(skipped(&amd, "s5_muller/variant_028.frag").is_none());
-        assert!(skipped(&amd, "s4_colorgrid_modulo_intfunctions/variant_003.frag").is_none());
-        Ok(())
-    }
 
     #[test]
     fn groups_failures_by_message() {
