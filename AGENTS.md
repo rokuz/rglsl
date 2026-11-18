@@ -20,6 +20,7 @@ Adding a GLSL extension: `EXTENSIONS.md`.
 | `tests/link/` | link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics, code generation options); an optional `options` file holds command-line options for glslang and rglsl |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0) |
+| `tests/fuzz-quarantine/` | shaders of `cargo xtask fuzz --random` whose glslang module hangs, resets or crashes a driver, per exec target and mode (`O0`, `O`), each with its job and `reason.toml`; rglsl does not run them there |
 | `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `ir`, `object`, `glsl_variant` |
 | `rglsl-types/` | types shared by the rglsl crates (`ShaderStage`, ...) and the GLSL extension registry (`src/extension.rs`: one row per extension) and the reader and writer of the `.rglo` object file text (`src/rglo`) |
 | `rglsl-derive/` | `#[derive(Rglo)]`: the `.rglo` encoding and decoding of a type, from its definition and `#[rglo(...)]` attributes |
@@ -156,6 +157,14 @@ cargo xtask opt-quality --exec [--exec-target T] [--runs N]  # and on the Vulkan
                                                    # target/xtask/opt-quality-exec.md, .tsv
 
 cargo xtask fuzz --shaders DIR [--exec] [--opt]              # differential fuzzing against glslang (+ exec, + -O)
+cargo xtask fuzz --random [--seed N] [--families K] [--variants V] [--exec] [--opt]
+                                                   # a fresh set of rglsl-fuzz families (seed from the
+                                                   # clock by default), qualified on every exec target
+                                                   # and mode (O0: glslang, O: glslang -O); a hang, driver
+                                                   # reset or driver crash confirmed alone goes to
+                                                   # tests/fuzz-quarantine/<target>/<mode>/; rglsl runs on
+                                                   # the qualified shaders and every failure is ours:
+                                                   # target/xtask/fuzz/random/<seed>/report.md, .tsv
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run
 cargo xtask fuzz --decode INPUT                              # glsl_variant input -> shader family
 cargo xtask fuzz --reduce JOB.json --interesting K           # GraphicsFuzz reducer (K = optimizer-differs: -O vs rglsl)

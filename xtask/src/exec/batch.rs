@@ -86,7 +86,66 @@ impl Job {
     }
 }
 
-const ATTEMPTS: usize = 3;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ending {
+    Exited(i64),
+    Crashed(Option<u32>),
+    TimedOut,
+}
+
+impl Ending {
+    pub const fn crashed(self) -> bool {
+        match self {
+            Self::Crashed(_) => true,
+            Self::Exited(code) => code < 0 || code >= 0xC000_0000,
+            Self::TimedOut => false,
+        }
+    }
+
+    pub fn describe(self) -> String {
+        match self {
+            Self::Exited(code) if self.crashed() => {
+                format!("exit code 0x{:08X}", code & 0xFFFF_FFFF)
+            }
+            Self::Exited(code) => format!("exit code {code}"),
+            Self::Crashed(Some(code)) => format!("crashed (0x{code:08X})"),
+            Self::Crashed(None) => "killed by a signal".into(),
+            Self::TimedOut => "timed out".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Trace {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub pid: Option<u32>,
+    pub ending: Option<Ending>,
+    pub tail: String,
+}
+
+impl Trace {
+    pub const fn ran(&self) -> bool {
+        self.start_ms != 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Traced {
+    pub result: JobResult,
+    pub trace: Trace,
+}
+
+impl Traced {
+    pub fn not_run(error: JobError) -> Self {
+        Self {
+            result: Err(error),
+            trace: Trace::default(),
+        }
+    }
+}
+
+pub const ATTEMPTS: usize = 3;
 const TRANSIENT: [&str; 5] = [
     "ERROR_INCOMPATIBLE_DRIVER",
     "ERROR_INITIALIZATION_FAILED",
@@ -123,25 +182,44 @@ pub fn retry_transient(
 }
 
 pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> {
+    run_local_traced(amber, jobs, workers, ATTEMPTS)
+        .into_iter()
+        .map(|traced| traced.result)
+        .collect()
+}
+
+pub fn run_local_traced(
+    amber: &Amber,
+    jobs: &[Job],
+    workers: usize,
+    attempts: usize,
+) -> Vec<Traced> {
     let next = AtomicUsize::new(0);
-    let results: Mutex<Vec<(usize, JobResult)>> = Mutex::new(Vec::with_capacity(jobs.len()));
+    let results: Mutex<Vec<(usize, Traced)>> = Mutex::new(Vec::with_capacity(jobs.len()));
     std::thread::scope(|scope| {
         for _ in 0..workers.max(1).min(jobs.len().max(1)) {
             scope.spawn(|| {
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let Some(job) = jobs.get(index) else { break };
-                    let mut result = amber.run(job).map_err(JobError::Failed);
-                    for _ in 1..ATTEMPTS {
+                    let (result, mut trace) = amber.run_traced(job);
+                    let start_ms = trace.start_ms;
+                    let mut result = result.map_err(JobError::Failed);
+                    for _ in 1..attempts {
                         if !result.as_ref().is_err_and(JobError::is_transient) {
                             break;
                         }
-                        result = amber.run(job).map_err(JobError::Failed);
+                        let (again, again_trace) = amber.run_traced(job);
+                        result = again.map_err(JobError::Failed);
+                        trace = Trace {
+                            start_ms,
+                            ..again_trace
+                        };
                     }
                     results
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
-                        .push((index, result));
+                        .push((index, Traced { result, trace }));
                 }
             });
         }

@@ -4,6 +4,7 @@ pub mod compare;
 pub mod cooperative;
 pub mod data;
 pub mod drivers;
+pub mod events;
 pub mod glsl;
 pub mod harness;
 pub mod known;
@@ -826,6 +827,31 @@ impl Executor {
                 }
                 None => remote.run(&self.work, jobs),
             },
+        }
+    }
+
+    pub fn run_watched(&self, jobs: &[Job], alone: bool) -> remote::Watched {
+        if jobs.is_empty() {
+            return remote::Watched::default();
+        }
+        match &self.backend {
+            Backend::Local(amber) => remote::Watched {
+                results: batch::run_local_traced(
+                    amber,
+                    jobs,
+                    if alone { 1 } else { LOCAL_GPU_JOBS },
+                    1,
+                ),
+                ..remote::Watched::default()
+            },
+            Backend::Remote(remote) => {
+                let watched = Remote {
+                    jobs: if alone { 1 } else { remote.jobs },
+                    attempts: 1,
+                    ..remote.clone()
+                };
+                watched.run_watched(&self.work, jobs, true)
+            }
         }
     }
 

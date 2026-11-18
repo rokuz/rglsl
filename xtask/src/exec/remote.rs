@@ -8,7 +8,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow, bail};
 
 use super::amber::{Device, VULKAN_VERSION, add_captures, first_line, parse_device};
-use super::batch::{self, Job, JobError, JobResult};
+use super::batch::{self, Ending, Job, JobError, JobResult, Trace, Traced};
+use super::events::{self, DriverEvent};
 use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
 
@@ -121,7 +122,15 @@ pub struct Remote {
     pub device_name: Option<String>,
     pub dir: String,
     pub jobs: usize,
+    pub attempts: usize,
     pub timeout: Duration,
+}
+
+#[derive(Debug, Default)]
+pub struct Watched {
+    pub results: Vec<Traced>,
+    pub events: Vec<DriverEvent>,
+    pub problems: Vec<String>,
 }
 
 impl Remote {
@@ -137,6 +146,7 @@ impl Remote {
             device_name: spec.device.clone(),
             dir: dir.trim_end_matches('/').to_string(),
             jobs,
+            attempts: batch::ATTEMPTS,
             timeout,
         }
     }
@@ -314,26 +324,60 @@ impl Remote {
     }
 
     pub fn run(&self, root: &Path, jobs: &[Job]) -> Vec<JobResult> {
-        let mut results = Vec::with_capacity(jobs.len());
+        self.run_watched(root, jobs, false)
+            .results
+            .into_iter()
+            .map(|traced| traced.result)
+            .collect()
+    }
+
+    pub fn run_watched(&self, root: &Path, jobs: &[Job], watch: bool) -> Watched {
+        let mut watched = Watched::default();
         for range in batch::chunks(jobs.len(), BATCH_LIMIT) {
             let slice = jobs.get(range.clone()).unwrap_or_default();
             match self.run_batch(root, slice) {
-                Ok(batch) => results.extend(batch),
+                Ok((results, since)) => {
+                    if watch && let Some(since) = since {
+                        match self.driver_events(since) {
+                            Ok(found) => watched.events.extend(found),
+                            Err(error) => watched
+                                .problems
+                                .push(format!("reading the driver events: {error}")),
+                        }
+                    }
+                    watched.results.extend(results);
+                }
                 Err(error) => {
-                    results.extend(
-                        slice
-                            .iter()
-                            .map(|_| Err(JobError::NotRun(format!("remote target: {error}")))),
-                    );
+                    watched.results.extend(slice.iter().map(|_| {
+                        Traced::not_run(JobError::NotRun(format!("remote target: {error}")))
+                    }));
                 }
             }
         }
-        results
+        watched
     }
 
-    fn run_batch(&self, root: &Path, jobs: &[Job]) -> Result<Vec<JobResult>, String> {
+    pub fn driver_events(&self, since_ms: u64) -> Result<Vec<DriverEvent>, String> {
+        let since = since_ms.saturating_sub(events::EVENT_SLACK_MS);
+        let mut command = self.ssh_command();
+        command.arg("powershell -NoProfile -Command -");
+        let script = events::query_script(since).replace('\n', "\r\n");
+        let output = process::run_with_input(command, CONNECT, Some(script.into_bytes()))
+            .map_err(|e| format!("ssh: {e:#}"))?;
+        match output.exit {
+            Exit::Code(0) => Ok(events::parse_events(&output.stdout)),
+            Exit::Code(code) => Err(format!(
+                "powershell on the remote target exited with {code}: {}",
+                first_line(&output.stderr, &output.stdout)
+            )),
+            Exit::Signal => Err("ssh was killed".into()),
+            Exit::Timeout => Err("the event query timed out".into()),
+        }
+    }
+
+    fn run_batch(&self, root: &Path, jobs: &[Job]) -> Result<(Vec<Traced>, Option<u64>), String> {
         if jobs.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -366,7 +410,7 @@ impl Remote {
         local: &Path,
         id: &str,
         jobs: &[Job],
-    ) -> Result<Vec<JobResult>, String> {
+    ) -> Result<(Vec<Traced>, Option<u64>), String> {
         let manifest_name = format!("batches/{id}/manifest.tsv");
         fs::write(local.join("manifest.tsv"), batch::manifest(root, jobs)?)
             .map_err(|e| e.to_string())?;
@@ -397,7 +441,7 @@ impl Remote {
         let budget = self.timeout.saturating_mul(rounds.saturating_add(1)) + CONNECT;
         let base = format!("runs/{id}");
         let command = format!(
-            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION} \"{}\"",
+            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION} \"{}\" {}",
             self.windows(&base),
             self.windows(&base),
             self.windows(&base),
@@ -405,7 +449,8 @@ impl Remote {
             self.amber(),
             self.jobs,
             self.timeout.as_secs().max(1),
-            self.device_name.as_deref().unwrap_or_default()
+            self.device_name.as_deref().unwrap_or_default(),
+            self.attempts.max(1)
         );
         self.ssh_ok(&command, budget, "the batch driver")?;
         let out = local.join("out.tgz");
@@ -419,11 +464,39 @@ impl Remote {
                 first_line(&unpacked.stderr, &unpacked.stdout)
             ));
         }
-        Ok(read_results(&local.join("results"), jobs))
+        let results_dir = local.join("results");
+        let since = fs::read_to_string(results_dir.join("batch.run"))
+            .ok()
+            .and_then(|text| run_field(&text, "start").and_then(|start| start.parse().ok()));
+        Ok((read_results(&results_dir, jobs), since))
     }
 }
 
-fn read_results(dir: &Path, jobs: &[Job]) -> Vec<JobResult> {
+fn run_field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        let (name, value) = line.split_once(' ').unwrap_or((line, ""));
+        (name == key).then(|| value.trim())
+    })
+}
+
+pub fn parse_trace(run: &str, tail: &str) -> Trace {
+    let number = |key: &str| run_field(run, key).and_then(|value| value.parse::<u64>().ok());
+    let ending = run_field(run, "code").and_then(|code| match code {
+        "timeout" => Some(Ending::TimedOut),
+        "" => None,
+        code => code.parse::<i64>().ok().map(Ending::Exited),
+    });
+    Trace {
+        start_ms: number("start").unwrap_or_default(),
+        end_ms: number("end").unwrap_or_default(),
+        pid: number("pid").and_then(|pid| u32::try_from(pid).ok()),
+        ending,
+        tail: tail.trim_end().to_string(),
+    }
+}
+
+fn read_results(dir: &Path, jobs: &[Job]) -> Vec<Traced> {
     jobs.iter()
         .enumerate()
         .map(|(index, job)| {
@@ -437,7 +510,12 @@ fn read_results(dir: &Path, jobs: &[Job]) -> Vec<JobResult> {
                     fs::read_to_string(dir.join(format!("{index}.stdout"))).unwrap_or_default();
                 add_captures(outputs, job.capture, statistics, &stdout);
             }
-            result
+            let run = fs::read_to_string(dir.join(format!("{index}.run"))).unwrap_or_default();
+            let tail = fs::read_to_string(dir.join(format!("{index}.tail"))).unwrap_or_default();
+            Traced {
+                result,
+                trace: parse_trace(&run, &tail),
+            }
         })
         .collect()
 }
@@ -637,6 +715,7 @@ mod tests {
             device_name: Some("RTX".into()),
             dir: "C:/work".into(),
             jobs: 2,
+            attempts: 1,
             timeout: Duration::from_secs(5),
         };
         assert_eq!(remote.windows("runs/b1"), "C:\\work\\runs\\b1");
@@ -667,6 +746,22 @@ mod tests {
         assert!(parse_specs("a@x, a@X").is_err());
         assert!(parse_specs("a, a@x").is_ok());
         Ok(())
+    }
+
+    #[test]
+    fn reads_the_trace_of_a_remote_job() {
+        let trace = parse_trace("start 100\nend 250\npid 4242\ncode 3221225477\n", "a\nb\n");
+        assert_eq!(trace.start_ms, 100);
+        assert_eq!(trace.end_ms, 250);
+        assert_eq!(trace.pid, Some(4242));
+        assert_eq!(trace.ending, Some(Ending::Exited(0xC000_0005)));
+        assert!(trace.ending.is_some_and(Ending::crashed));
+        assert_eq!(trace.tail, "a\nb");
+        let timeout = parse_trace("start 1\nend 2\npid \ncode timeout\n", "");
+        assert_eq!(timeout.ending, Some(Ending::TimedOut));
+        assert_eq!(timeout.pid, None);
+        assert!(!parse_trace("", "").ran());
+        assert_eq!(run_field("start 5\nend 7\n", "end"), Some("7"));
     }
 
     #[test]
