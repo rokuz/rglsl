@@ -109,6 +109,72 @@ fn live_code_donation() -> TestResult {
     run(Transformation::DonateLiveCode, "GLF_live")
 }
 
+fn uninitialised_donated_variables(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut aggregate = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("struct ")
+            || (trimmed.contains('{')
+                && (trimmed.contains("uniform ") || trimmed.contains("buffer ")))
+        {
+            aggregate = true;
+        }
+        if aggregate {
+            if trimmed.contains('}') {
+                aggregate = false;
+            }
+            continue;
+        }
+        let Some(declaration) = trimmed.strip_suffix(';') else {
+            continue;
+        };
+        let words: Vec<&str> = declaration.split_whitespace().collect();
+        let [ty, name] = words.as_slice() else {
+            continue;
+        };
+        let name = name.split('[').next().unwrap_or(name);
+        let identifier = |word: &str| word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let donated = (name.starts_with("GLF_live") || name.starts_with("GLF_dead"))
+            && identifier(ty)
+            && identifier(name);
+        if donated && !matches!(*ty, "return" | "uniform" | "layout") {
+            found.push(trimmed.to_owned());
+        }
+    }
+    found
+}
+
+#[test]
+fn donated_variables_are_always_initialised() -> TestResult {
+    let jobs = sample_jobs()?;
+    let donors = sample_donors()?;
+    let options = GeneratorOptions {
+        min_nodes: 1500,
+        max_nodes: 3000,
+        enabled: EnabledTransformations::none()
+            .with(Transformation::DonateLiveCode)
+            .with(Transformation::DonateDeadCode),
+        ..GeneratorOptions::default()
+    };
+    let mut donated = 0;
+    for (index, (name, reference)) in jobs.iter().enumerate() {
+        let seed = 11 + u64::try_from(index)?;
+        let variant =
+            generate_variant_with_donors(reference, &options, &donors, &mut Random::new(seed))?;
+        for (_, text) in variant.emit()?.shaders {
+            donated += text.matches("GLF_live").count() + text.matches("GLF_dead").count();
+            let uninitialised = uninitialised_donated_variables(&text);
+            assert!(
+                uninitialised.is_empty(),
+                "{name}: donated variables without an initializer: {uninitialised:?}"
+            );
+        }
+    }
+    assert!(donated > 0, "nothing was donated");
+    Ok(())
+}
+
 #[test]
 fn outlining() -> TestResult {
     run(Transformation::OutlineStatement, "_GLF_outlined_")
