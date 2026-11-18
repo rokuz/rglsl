@@ -520,6 +520,13 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             " } } while (false);",
         ),
         (
+            "dead loops",
+            "float d = 0.0;",
+            "for (int i = 0; i < b; i++) { if (d > 1.0) break; ",
+            "d = d + float(c[0]);",
+            " }",
+        ),
+        (
             "repeated values",
             "",
             "if (b > c[0]) { b = b * c[1] + c[0]; ",

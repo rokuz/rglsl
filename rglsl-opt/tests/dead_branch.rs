@@ -125,7 +125,7 @@ fn a_loop_with_a_break_inside_its_body_stays() -> TestResult {
     let source = shader(
         "",
         "    do { if (inColor.x > 0.5) break; color.y += 1.0; } while (false);
-    for (;;) { if (inColor.y > 0.5) continue; break; }",
+    for (;;) { color.w += 1.0; if (inColor.y > 0.5) continue; break; }",
     );
     let module = fragment(&source, PRUNE)?;
     assert_eq!(shape(entry(&module)?).loops, 2);
