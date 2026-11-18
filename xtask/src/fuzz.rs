@@ -68,7 +68,7 @@ impl Verdict {
         }
     }
 
-    const fn is_failure(self) -> bool {
+    pub const fn is_failure(self) -> bool {
         matches!(
             self,
             Self::WeReject
@@ -88,10 +88,10 @@ impl Verdict {
 
 #[derive(Debug)]
 pub struct Outcome {
-    shader: PathBuf,
+    pub shader: PathBuf,
     pub verdict: Verdict,
-    note: String,
-    spirv: PathBuf,
+    pub note: String,
+    pub spirv: PathBuf,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -213,7 +213,7 @@ fn stage_of(path: &Path) -> Option<&'static str> {
         .find(|stage| *stage == extension)
 }
 
-fn collect_shaders(dir: &Path) -> Result<Vec<PathBuf>> {
+pub fn collect_shaders(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut shaders = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -843,7 +843,7 @@ fn summary(outcomes: &[Outcome]) -> String {
     out
 }
 
-fn cause(note: &str) -> String {
+pub fn cause(note: &str) -> String {
     let mut words = note.split(' ');
     let phase = words.next().unwrap_or_default();
     let line = words.next().unwrap_or_default();

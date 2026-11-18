@@ -15,6 +15,7 @@ mod exec;
 mod fuzz;
 mod fuzz_exec;
 mod fuzz_libfuzzer;
+mod fuzz_random;
 mod fuzz_reduce;
 mod gen_spirv;
 mod groups;
@@ -149,6 +150,24 @@ commands:
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv
       --shaders DIR       the shaders to compare (searched recursively)
+      --random            instead of --shaders: generate a fresh set of shader families with
+                          rglsl-fuzz (references and donors from rglsl-fuzz/tests/data/450)
+                          into target/xtask/fuzz/random/<seed>/ (the previous set is deleted),
+                          compile them with glslang and rglsl and, with --exec, qualify every
+                          shader on every exec target and mode (O0: glslang, with --opt also O:
+                          glslang-opt -O) by running glslang's module: it must run and render
+                          the image of glslang's unoptimized reference; a hang, driver reset
+                          or driver crash that repeats alone is added to
+                          tests/fuzz-quarantine/<target>/<mode>/, Amber crashes and glslang's
+                          wrong results are reported to fix or analyse; rglsl (with -O in mode
+                          O) then runs on the qualified shaders not in quarantine, and every
+                          failure of rglsl fails the run; driver resets of the Windows targets
+                          are read from the System log after every batch, and a target with
+                          too many of them is stopped; report in
+                          target/xtask/fuzz/random/<seed>/report.md and report.tsv
+      --seed N            with --random: the generator's seed (default: from the clock, printed)
+      --families K        with --random: shader families to generate (default 29)
+      --variants V        with --random: variants per family (default 16)
       --exec              also run every shader family of rglsl-fuzz on the Vulkan targets
                           (local and remote, as for `test`): a variant whose image differs
                           from its reference is a wrong result; failures are rerun alone
@@ -158,6 +177,7 @@ commands:
       --exec-glslang      with --exec, also run the modules glslang compiles
       --opt               also compile every shader with -O and validate it; with --exec, run
                           the -O module too: it must compute what the unoptimized one does
+                          (with --random: qualify and run the O mode too)
       --reduce JOB        reduce the variant shader job JOB (a .json next to its shader) with
                           rglsl-fuzz's reducer instead of comparing a directory
       --interesting K     with --reduce: crash, reject, invalid-spirv (glslang accepts and
@@ -377,6 +397,44 @@ fn run(args: Vec<String>) -> Result<i32> {
             args.finish()?;
             fuzz_libfuzzer::decode_artifact(&workspace_root()?, Path::new(&input), output)?;
             Ok(0)
+        }
+        "fuzz" if args.has("--random") => {
+            let command_line = std::iter::once("cargo xtask fuzz".to_string())
+                .chain(args.args.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let _ = args.flag("--random");
+            let options = fuzz_random::Options {
+                seed: args.parsed("--seed")?,
+                families: args
+                    .parsed("--families")?
+                    .unwrap_or(fuzz_random::DEFAULT_FAMILIES),
+                variants: args
+                    .parsed("--variants")?
+                    .unwrap_or(fuzz_random::DEFAULT_VARIANTS),
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+                exec: {
+                    let exec = args.flag("--exec");
+                    let only = args.value("--exec-target")?;
+                    match (exec, only) {
+                        (false, Some(_)) => bail!("--exec-target needs --exec"),
+                        (false, None) => Vec::new(),
+                        (true, None) => exec::select_targets(true, true)?,
+                        (true, Some(name)) => exec::named_targets(&name)?,
+                    }
+                },
+                optimize: args.flag("--opt"),
+                args: command_line,
+            };
+            args.finish()?;
+            if options.families == 0 || options.variants == 0 {
+                bail!("--families and --variants must be at least 1");
+            }
+            Ok(if fuzz_random::run(&workspace_root()?, &options)? {
+                0
+            } else {
+                1
+            })
         }
         "fuzz" if args.has("--reduce") => {
             let job = args
