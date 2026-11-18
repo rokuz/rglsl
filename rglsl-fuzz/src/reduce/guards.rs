@@ -1,9 +1,15 @@
 use rglsl_ast::Span;
 use rglsl_ast::ast::{
-    BinaryOperator, Condition, DeclarationKind, Expression, ExpressionKind, ExternalDeclaration,
-    Initializer, PostfixOperator, Spanned, Statement, StatementKind, TranslationUnit,
+    ArrayDimension, ArraySpecifier, BasicType, BinaryOperator, Condition, Declaration,
+    DeclarationKind, Dimension, Expression, ExpressionKind, ExternalDeclaration, Initializer,
+    NodeId, PostfixOperator, Scalar, Spanned, Statement, StatementKind, TranslationUnit,
+    TypeSpecifier, TypeSpecifierNonArray,
 };
+use rglsl_sema::scope::{Origin, Storage};
+use rglsl_sema::types::ArraySize;
+use rglsl_sema::{Analysis, Type, TypeKind};
 use rglsl_types::ShaderStage;
+use rglsl_types::stack::recurse;
 
 use crate::basic;
 use crate::build::Builder;
@@ -16,7 +22,7 @@ use crate::job::parse_unit;
 use crate::macros::emit;
 use crate::rewrite::rewrite_statements;
 
-const MAX_INITIALISED_ARRAY: u32 = 1024;
+const MAX_INITIALISER_VALUES: u32 = 4096;
 
 fn counted(body: &Statement) -> bool {
     let StatementKind::Compound(compound) = &body.kind else {
@@ -101,54 +107,180 @@ fn truncate_loops(unit: &mut TranslationUnit, builder: &mut Builder) -> bool {
     any
 }
 
-fn initialise(unit: &mut TranslationUnit, builder: &mut Builder) {
-    rewrite_statements(unit, &mut |statement| {
-        let StatementKind::Declaration(declaration) = &mut statement.kind else {
-            return;
-        };
-        let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind else {
-            return;
-        };
-        if list.ty.node.qualifier.is_some() {
-            return;
+fn dimension(size: u8) -> Option<Dimension> {
+    match size {
+        2 => Some(Dimension::Two),
+        3 => Some(Dimension::Three),
+        4 => Some(Dimension::Four),
+        _ => None,
+    }
+}
+
+fn basic_type(kind: TypeKind) -> Option<BasicType> {
+    match kind {
+        TypeKind::Scalar(scalar) => Some(BasicType::Scalar(scalar)),
+        TypeKind::Vector { scalar, size } => Some(BasicType::Vector {
+            scalar,
+            size: dimension(size)?,
+        }),
+        TypeKind::Matrix {
+            scalar,
+            columns,
+            rows,
+        } => Some(BasicType::Matrix {
+            scalar,
+            columns: dimension(columns)?,
+            rows: dimension(rows)?,
+        }),
+        _ => None,
+    }
+}
+
+const fn plain_scalar(ty: BasicType) -> bool {
+    matches!(
+        ty,
+        BasicType::Scalar(Scalar::Int | Scalar::Uint | Scalar::Float | Scalar::Bool)
+    )
+}
+
+struct Zeroes<'a> {
+    analysis: &'a Analysis,
+    builder: &'a mut Builder,
+    budget: u32,
+}
+
+impl Zeroes<'_> {
+    fn spend(&mut self, count: u32) -> Option<()> {
+        self.budget = self.budget.checked_sub(count)?;
+        Some(())
+    }
+
+    fn non_array(&self, kind: TypeKind) -> Option<TypeSpecifierNonArray> {
+        if let Some(ty) = basic_type(kind) {
+            return Some(TypeSpecifierNonArray::Basic(ty));
         }
-        let Some(ty) = basic::from_specifier(&list.ty.node.specifier.node) else {
-            return;
+        let TypeKind::Struct(id) = kind else {
+            return None;
         };
-        for declarator in &mut list.declarators {
-            if declarator.kind.initializer.is_some() {
-                continue;
-            }
-            let value = match &declarator.kind.array {
-                None => literal_zero_or_one(builder, true, ty),
-                Some(array) => {
-                    let [dimension] = array.node.dimensions.as_slice() else {
-                        continue;
-                    };
-                    let rglsl_ast::ast::ArrayDimension::Sized(size) = &dimension.node else {
-                        continue;
-                    };
-                    let ExpressionKind::Number(literal) = &size.kind else {
-                        continue;
-                    };
-                    let Ok(count) = literal.digits().parse::<u32>() else {
-                        continue;
-                    };
-                    if count > MAX_INITIALISED_ARRAY {
-                        continue;
-                    }
-                    let elements = (0..count)
-                        .map(|_| literal_zero_or_one(builder, true, ty))
-                        .collect();
-                    let mut specifier = basic::specifier(ty);
-                    specifier.array = Some(array.clone());
-                    builder.construct_specifier(specifier, elements)
-                }
+        let name = self.analysis.types.structure(id)?.name.clone()?;
+        Some(TypeSpecifierNonArray::TypeName(name))
+    }
+
+    fn specifier(&mut self, ty: &Type) -> Option<TypeSpecifier> {
+        let non_array = self.non_array(ty.kind)?;
+        let mut dimensions = Vec::new();
+        for size in ty.dimensions() {
+            let ArraySize::Sized(count) = size else {
+                return None;
             };
-            declarator.kind.initializer = Some(Spanned::new(
-                Span::new(0, 0),
-                Initializer::Expression(value),
-            ));
+            let count = self.builder.int(i64::from(*count));
+            dimensions.push(Spanned::new(Span::new(0, 0), ArrayDimension::Sized(count)));
+        }
+        let array = (!dimensions.is_empty())
+            .then(|| Spanned::new(Span::new(0, 0), ArraySpecifier { dimensions }));
+        Some(TypeSpecifier {
+            non_array,
+            parameters: None,
+            array,
+        })
+    }
+
+    fn zero(&mut self, ty: &Type) -> Option<Expression> {
+        recurse(|| {
+            if let Some(size) = ty.outer_size() {
+                let ArraySize::Sized(count) = size else {
+                    return None;
+                };
+                self.spend(count)?;
+                let element = ty.element_type()?;
+                let elements = (0..count)
+                    .map(|_| self.zero(&element))
+                    .collect::<Option<Vec<_>>>()?;
+                let specifier = self.specifier(ty)?;
+                return Some(self.builder.construct_specifier(specifier, elements));
+            }
+            if let Some(basic) = basic_type(ty.kind) {
+                self.spend(1)?;
+                let value = literal_zero_or_one(self.builder, true, basic);
+                if basic::is_scalar(basic) && !plain_scalar(basic) {
+                    return Some(self.builder.construct(basic, vec![value]));
+                }
+                return Some(value);
+            }
+            let TypeKind::Struct(id) = ty.kind else {
+                return None;
+            };
+            let structure = self.analysis.types.structure(id)?;
+            if structure.contains_opaque
+                || structure.contains_unsized_array
+                || structure.contains_reference
+            {
+                return None;
+            }
+            let members: Vec<Type> = structure
+                .members
+                .iter()
+                .map(|member| member.ty.clone())
+                .collect();
+            self.spend(1)?;
+            let values = members
+                .iter()
+                .map(|member| self.zero(member))
+                .collect::<Option<Vec<_>>>()?;
+            let specifier = self.specifier(ty)?;
+            Some(self.builder.construct_specifier(specifier, values))
+        })
+    }
+}
+
+fn uninitialised_variable(analysis: &Analysis, declarator: NodeId) -> Option<Type> {
+    let symbol = analysis.declarations.get(&declarator)?;
+    let variable = analysis.symbol(*symbol)?.variable()?;
+    let plain = variable.qualifiers.storage == Storage::None
+        && variable.value.is_none()
+        && matches!(variable.origin, Origin::Global | Origin::Local);
+    plain.then(|| variable.ty.clone())
+}
+
+fn initialise_declaration(
+    analysis: &Analysis,
+    builder: &mut Builder,
+    declaration: &mut Declaration,
+) {
+    let DeclarationKind::InitDeclaratorList(list) = &mut declaration.kind else {
+        return;
+    };
+    for declarator in &mut list.declarators {
+        if declarator.kind.initializer.is_some() {
+            continue;
+        }
+        let Some(ty) = uninitialised_variable(analysis, declarator.id) else {
+            continue;
+        };
+        let mut zeroes = Zeroes {
+            analysis,
+            builder: &mut *builder,
+            budget: MAX_INITIALISER_VALUES,
+        };
+        let Some(value) = zeroes.zero(&ty) else {
+            continue;
+        };
+        declarator.kind.initializer = Some(Spanned::new(
+            Span::new(0, 0),
+            Initializer::Expression(value),
+        ));
+    }
+}
+
+fn initialise(unit: &mut TranslationUnit, analysis: &Analysis, builder: &mut Builder) {
+    for external in &mut unit.external_declarations {
+        if let ExternalDeclaration::Declaration(declaration) = external {
+            initialise_declaration(analysis, builder, declaration);
+        }
+    }
+    rewrite_statements(unit, &mut |statement| {
+        if let StatementKind::Declaration(declaration) = &mut statement.kind {
+            initialise_declaration(analysis, builder, declaration);
         }
     });
 }
@@ -169,13 +301,16 @@ fn declares_counter(unit: &TranslationUnit) -> bool {
 pub fn add_guards(
     unit: &TranslationUnit,
     stage: ShaderStage,
-    bound: u32,
+    bound: Option<u32>,
 ) -> Result<Option<TranslationUnit>, Error> {
     let analysis = analyze_shader(unit, stage, true, None);
     let mut result = in_bounds(unit, &analysis);
     let mut builder = Builder::new(result.next_id());
+    initialise(&mut result, &analysis, &mut builder);
+    let Some(bound) = bound else {
+        return Ok(parse_unit("guards", &emit(&result)?).ok());
+    };
     let looped = truncate_loops(&mut result, &mut builder);
-    initialise(&mut result, &mut builder);
     if looped && !declares_counter(&result) {
         let declarations = parse_unit(
             "guards",

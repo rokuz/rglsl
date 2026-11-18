@@ -34,6 +34,7 @@ impl Default for ReduceOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reduction {
     pub job: ShaderJob,
+    pub guarded: bool,
     pub loop_bound: Option<u32>,
     pub steps: u32,
     pub successes: u32,
@@ -152,19 +153,27 @@ pub fn reduce(
     if !options.preserve_semantics {
         passes.extend(Pass::EVERYWHERE);
     }
-    let mut bound = None;
+    let mut guards = None;
     if !options.preserve_semantics && options.guards {
-        for candidate in GLOBAL_LOOP_BOUNDS {
-            if let Some(guarded) = add_guards_to_job(&current, candidate)?
+        let bounds = GLOBAL_LOOP_BOUNDS.into_iter().map(Some).chain([None]);
+        for bound in bounds {
+            if let Some(guarded) = add_guards_to_job(&current, bound)?
                 && judge(&guarded)?
             {
-                bound = Some(candidate);
+                guards = Some(bound);
                 break;
             }
         }
+        if guards.is_none() {
+            return Err(Error::Generation(String::from(
+                "the shader job is not interesting once its undefined behaviour is guarded \
+                 (initialised variables, clamped indices, with or without bounded loops); \
+                 reducing it without the guards could end in undefined behaviour",
+            )));
+        }
     }
     let mut guarded_judge = |candidate: &ShaderJob| -> Result<bool, Error> {
-        let Some(bound) = bound else {
+        let Some(bound) = guards else {
             return judge(candidate);
         };
         match add_guards_to_job(candidate, bound)? {
@@ -192,19 +201,20 @@ pub fn reduce(
     }
     let steps = reducer.steps;
     let successes = reducer.successes;
-    let job = match bound {
+    let job = match guards {
         Some(bound) => add_guards_to_job(&current, bound)?.unwrap_or(current),
         None => current,
     };
     Ok(Reduction {
         job,
-        loop_bound: bound,
+        guarded: guards.is_some(),
+        loop_bound: guards.flatten(),
         steps,
         successes,
     })
 }
 
-pub fn add_guards_to_job(job: &ShaderJob, bound: u32) -> Result<Option<ShaderJob>, Error> {
+pub fn add_guards_to_job(job: &ShaderJob, bound: Option<u32>) -> Result<Option<ShaderJob>, Error> {
     let mut result = job.clone();
     for shader in &mut result.shaders {
         let stage = shader.stage();

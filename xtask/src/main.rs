@@ -194,8 +194,12 @@ commands:
       --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
       --repeats N         with --reduce and an exec criterion: a candidate is interesting only
                           if it is interesting on N runs in a row (default 3)
-      --no-ub-guards      with --reduce and without --preserve-semantics: do not bound loops,
-                          clamp indices and initialise locals in every candidate
+      --no-ub-guards      with --reduce and without --preserve-semantics: do not guard every
+                          candidate against undefined behaviour (by default: every local and
+                          private global without an initializer is zero-initialised, whatever
+                          its type, indices are clamped and loops bounded when the input stays
+                          interesting with bounded loops; an input that is interesting only
+                          without the guards is an error)
       --output DIR        with --reduce: where the reproducer goes
                           (default target/xtask/fuzz/reduce/<family>-<variant>/result)
       --libfuzzer T       run the cargo-fuzz target T of rglsl-fuzz/fuzz (glsl_parser,
