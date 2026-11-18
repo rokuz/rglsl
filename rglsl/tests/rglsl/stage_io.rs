@@ -260,7 +260,17 @@ fn block_location(location: u32) -> Binding {
 }
 
 pub(crate) fn spirv_val(words: &[u32]) -> TestResult {
-    spirv_val_in(words, &["--target-env", "vulkan1.0"])
+    let environment = match words
+        .get(1)
+        .map(|version| (version >> 16, (version >> 8) & 0xff))
+    {
+        Some((1, 6)) => "vulkan1.3",
+        Some((1, 5)) => "vulkan1.2",
+        Some((1, 4)) => "vulkan1.1spv1.4",
+        Some((1, 3)) => "vulkan1.1",
+        _ => "vulkan1.0",
+    };
+    spirv_val_in(words, &["--target-env", environment])
 }
 
 pub(crate) fn oracle(variable: &str, name: &str) -> std::path::PathBuf {

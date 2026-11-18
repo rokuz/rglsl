@@ -48,6 +48,38 @@ fn compiles_and_links_into_spirv() -> TestResult {
 }
 
 #[test]
+fn tensors_raise_the_spirv_version_to_1_6() -> TestResult {
+    const TENSORS: &str = "#version 460
+#extension GL_ARM_tensors : enable
+layout(set = 0, binding = 0) uniform tensorARM<int, 1> t;
+layout(set = 0, binding = 1) buffer Out { uint size; };
+void main() {
+    size = tensorSizeARM(t, 0);
+}
+";
+    let program = compile_and_link(
+        &[(
+            TENSORS,
+            CompileOptions::new("tensors.comp", ShaderStage::Compute),
+        )],
+        &ProgramOptions::default(),
+    )?;
+    let binary = program
+        .stage(ShaderStage::Compute)
+        .ok_or("no compute stage")?;
+    assert_eq!(binary.words.get(1), Some(&0x0001_0600));
+    let plain = compile_and_link(
+        &[(PROGRAM, program_options()), (LIBRARY, library_options())],
+        &ProgramOptions::default(),
+    )?;
+    let binary = plain
+        .stage(ShaderStage::Fragment)
+        .ok_or("no fragment stage")?;
+    assert_eq!(binary.words.get(1), Some(&0x0001_0000));
+    Ok(())
+}
+
+#[test]
 fn object_files_round_trip() -> TestResult {
     let objects = [
         compile(PROGRAM, &program_options())?,
