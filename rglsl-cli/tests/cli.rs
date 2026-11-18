@@ -247,10 +247,13 @@ fn optimization_levels() -> TestResult {
     for options in [
         &["-Os"][..],
         &["-O", "--target-gpu", "nvidia"],
-        &["--opt-passes", "inline,dce"],
+        &["-O", "--target-gpu", "amd"],
     ] {
         assert_eq!(compile(options)?, optimized, "{options:?}");
     }
+    let partial = compile(&["--opt-passes", "inline,dce"])?;
+    assert!(partial.len() < plain.len());
+    assert!(optimized.len() < partial.len());
     let mobile = compile(&[
         "-Os",
         "--target-gpu",
@@ -274,7 +277,7 @@ fn bad_optimization_options_are_rejected() -> TestResult {
         (&["--target-gpu"], "Error: target-gpu: no <gpu> provided"),
         (
             &["--opt-passes", "inline,unroll"],
-            "Error: --opt-passes: unknown optimizer pass `unroll` (known passes: inline, dce)",
+            "Error: --opt-passes: unknown optimizer pass `unroll` (known passes: inline, forward, sroa, dce)",
         ),
     ] {
         let mut command = vec!["-V", "shader.frag"];

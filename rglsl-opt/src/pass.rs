@@ -1,4 +1,4 @@
-use rglsl::Module;
+use rglsl::{Module, ShaderStage};
 
 use crate::{Context, GpuProfile, OptError, StageModule, Summary};
 
@@ -45,6 +45,27 @@ pub static PASSES: &[Pass] = &[
         ],
     },
     Pass {
+        name: "forward",
+        scope: Scope::Function,
+        applies: |_| true,
+        run: crate::ir::forward::run,
+        debug_info: DebugRule::Preserves,
+        counterpart: &[
+            "--eliminate-local-single-block",
+            "--eliminate-local-single-store",
+            "--private-to-local",
+            "--ssa-rewrite",
+        ],
+    },
+    Pass {
+        name: "sroa",
+        scope: Scope::Function,
+        applies: |summary| summary.local_variables,
+        run: crate::ir::sroa::run,
+        debug_info: DebugRule::LinesOnly,
+        counterpart: &["--scalar-replacement=0", "--convert-local-access-chains"],
+    },
+    Pass {
         name: "dce",
         scope: Scope::Function,
         applies: |_| true,
@@ -72,6 +93,19 @@ impl Session<'_, '_> {
             .ok_or_else(|| OptError::Pass {
                 pass,
                 message: String::from("a program-wide pass asked for the module of one stage"),
+            })
+    }
+}
+
+impl Session<'_, '_> {
+    pub fn stage(&self) -> Result<ShaderStage, OptError> {
+        let pass = self.pass;
+        self.focus
+            .and_then(|index| self.stages.get(index))
+            .map(|stage| stage.stage)
+            .ok_or_else(|| OptError::Pass {
+                pass,
+                message: String::from("a program-wide pass asked for the stage of one module"),
             })
     }
 }
