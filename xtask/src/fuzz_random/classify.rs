@@ -17,6 +17,7 @@ pub enum Class {
     NotRun,
     Refused,
     ReferenceNotQualified,
+    ReferenceDiffers,
     NotCompiled,
     Quarantined,
 }
@@ -34,6 +35,7 @@ impl Class {
             Self::NotRun => "not-run",
             Self::Refused => "refused",
             Self::ReferenceNotQualified => "reference-not-qualified",
+            Self::ReferenceDiffers => "reference-differs",
             Self::NotCompiled => "not-compiled",
             Self::Quarantined => "quarantined",
         }
@@ -150,7 +152,10 @@ impl ReferenceVerdict {
     }
 
     pub fn reason(&self) -> String {
-        if self.unoptimized.0 == Class::GlslangWrong {
+        if matches!(
+            self.unoptimized.0,
+            Class::GlslangWrong | Class::ReferenceDiffers
+        ) {
             return self.unoptimized.1.clone();
         }
         let mut parts = Vec::new();
@@ -171,6 +176,93 @@ impl ReferenceVerdict {
             parts.join("; ")
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Consensus {
+    Agrees,
+    Differs {
+        consensus: Vec<usize>,
+        detail: String,
+    },
+    NoMajority {
+        detail: String,
+    },
+}
+
+pub type Image<'a> = (&'a Plan, &'a Outputs);
+
+fn difference(reference: Image<'_>, image: Image<'_>) -> Option<String> {
+    fuzz_exec::compare_runs(reference, image).err()
+}
+
+pub fn consensus(images: &[Option<Image<'_>>]) -> Vec<Consensus> {
+    let mut verdicts = vec![Consensus::Agrees; images.len()];
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+    for (index, image) in images.iter().enumerate() {
+        let Some(image) = image else {
+            continue;
+        };
+        let home = clusters.iter_mut().find(|cluster| {
+            cluster
+                .first()
+                .and_then(|first| images.get(*first).copied().flatten())
+                .is_some_and(|representative| difference(representative, *image).is_none())
+        });
+        match home {
+            Some(cluster) => cluster.push(index),
+            None => clusters.push(vec![index]),
+        }
+    }
+    if clusters.len() < 2 {
+        return verdicts;
+    }
+    let representative = |cluster: &Vec<usize>| {
+        cluster
+            .first()
+            .and_then(|first| images.get(*first).copied().flatten())
+    };
+    let largest = clusters.iter().map(Vec::len).max().unwrap_or_default();
+    let majority = clusters
+        .iter()
+        .filter(|cluster| cluster.len() == largest)
+        .collect::<Vec<_>>();
+    let majority = match majority.as_slice() {
+        [cluster] if largest >= 2 => Some((*cluster).clone()),
+        _ => None,
+    };
+    for (position, cluster) in clusters.iter().enumerate() {
+        let other = clusters
+            .iter()
+            .enumerate()
+            .find(|(other, _)| *other != position)
+            .and_then(|(_, other)| representative(other));
+        for index in cluster {
+            let Some(image) = images.get(*index).copied().flatten() else {
+                continue;
+            };
+            let verdict = match &majority {
+                Some(members) if members.contains(index) => Consensus::Agrees,
+                Some(members) => Consensus::Differs {
+                    consensus: members.clone(),
+                    detail: members
+                        .first()
+                        .and_then(|first| images.get(*first).copied().flatten())
+                        .and_then(|reference| difference(reference, image))
+                        .unwrap_or_default(),
+                },
+                None => Consensus::NoMajority {
+                    detail: other
+                        .and_then(|reference| difference(reference, image))
+                        .unwrap_or_default(),
+                },
+            };
+            if let Some(slot) = verdicts.get_mut(*index) {
+                *slot = verdict;
+            }
+        }
+    }
+    verdicts
 }
 
 pub fn judge_reference(unoptimized: Side<'_>, optimized: Option<Side<'_>>) -> ReferenceVerdict {
@@ -478,6 +570,64 @@ mod tests {
         assert!(unoptimized_only.qualified());
         assert_eq!(unoptimized_only.optimized, None);
         assert!(!judge_reference(Side::Failed(Class::Hang, "timeout"), None).qualified());
+        Ok(())
+    }
+
+    #[test]
+    fn a_reference_that_differs_from_the_other_targets_consensus_is_rejected() -> anyhow::Result<()>
+    {
+        let plan = plan()?;
+        let images: Vec<Outputs> = (0..5).map(outputs).collect();
+        let image = |value: usize| images.get(value).map(|outputs| (&plan, outputs));
+        let agrees = |verdicts: &[Consensus]| {
+            verdicts
+                .iter()
+                .filter(|verdict| **verdict == Consensus::Agrees)
+                .count()
+        };
+
+        let majority = consensus(&[image(1), image(1), image(2)]);
+        assert_eq!(agrees(&majority), 2);
+        assert!(matches!(
+            majority.get(2),
+            Some(Consensus::Differs { consensus, detail }) if consensus == &[0, 1] && !detail.is_empty()
+        ));
+        let majority = consensus(&[image(3), image(1), image(1), image(1)]);
+        assert!(matches!(
+            majority.first(),
+            Some(Consensus::Differs { consensus, .. }) if consensus == &[1, 2, 3]
+        ));
+        assert_eq!(agrees(&majority), 3);
+
+        let two = consensus(&[image(1), image(2)]);
+        assert!(two.iter().all(
+            |verdict| matches!(verdict, Consensus::NoMajority { detail } if !detail.is_empty())
+        ));
+        let all_differ = consensus(&[image(1), image(2), image(3)]);
+        assert!(
+            all_differ
+                .iter()
+                .all(|verdict| matches!(verdict, Consensus::NoMajority { .. }))
+        );
+        let tie = consensus(&[image(1), image(1), image(2), image(2)]);
+        assert!(
+            tie.iter()
+                .all(|verdict| matches!(verdict, Consensus::NoMajority { .. }))
+        );
+        let missing = consensus(&[image(1), None, image(2)]);
+        assert_eq!(missing.get(1), Some(&Consensus::Agrees));
+        assert!(matches!(
+            missing.first(),
+            Some(Consensus::NoMajority { .. })
+        ));
+
+        assert_eq!(consensus(&[image(1)]), [Consensus::Agrees]);
+        assert_eq!(
+            consensus(&[image(4), None]),
+            [Consensus::Agrees, Consensus::Agrees]
+        );
+        assert_eq!(agrees(&consensus(&[image(2), image(2), image(2)])), 3);
+        assert!(consensus(&[]).is_empty());
         Ok(())
     }
 
