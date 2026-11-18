@@ -83,6 +83,10 @@ fn has_result_type(code: u32) -> bool {
             | Op::RayQueryGenerateIntersectionKHR
             | Op::RayQueryConfirmIntersectionKHR
             | Op::CooperativeVectorStoreNV
+            | Op::CooperativeMatrixStoreKHR
+            | Op::CooperativeMatrixStoreNV
+            | Op::CooperativeMatrixStoreTensorNV
+            | Op::TensorWriteARM
             | Op::CooperativeVectorOuterProductAccumulateNV
             | Op::CooperativeVectorReduceSumAccumulateNV
             | Op::Name
@@ -100,7 +104,10 @@ fn is_literal(code: u32, index: usize) -> bool {
         Some(Op::BranchConditional) => index >= 3,
         Some(Op::LoopMerge | Op::SelectionMerge) => true,
         Some(Op::CooperativeVectorLoadNV) => index >= 2,
-        Some(Op::CooperativeVectorStoreNV) => index >= 3,
+        Some(
+            Op::CooperativeVectorStoreNV | Op::CooperativeMatrixStoreTensorNV | Op::TensorWriteARM,
+        ) => index >= 3,
+        Some(Op::CooperativeMatrixStoreKHR | Op::CooperativeMatrixStoreNV) => index >= 4,
         Some(Op::CooperativeVectorMatrixMulNV) => index >= 10,
         Some(Op::CooperativeVectorMatrixMulAddNV) => index >= 13,
         _ => false,
