@@ -21,11 +21,15 @@ const OPTIMIZE: &[Step] = &[
     Step::Run("dce"),
     Step::Repeat {
         limit: 2,
-        passes: &["forward", "dce"],
+        passes: &["forward", "fold", "dead-branch", "dce"],
     },
     Step::Repeat {
         limit: 2,
-        passes: &["sroa", "forward", "dce"],
+        passes: &["sroa", "forward", "fold", "dead-branch", "dce"],
+    },
+    Step::Repeat {
+        limit: 2,
+        passes: &["cse", "forward", "fold", "dce"],
     },
 ];
 

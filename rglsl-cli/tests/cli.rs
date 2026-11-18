@@ -277,7 +277,7 @@ fn bad_optimization_options_are_rejected() -> TestResult {
         (&["--target-gpu"], "Error: target-gpu: no <gpu> provided"),
         (
             &["--opt-passes", "inline,unroll"],
-            "Error: --opt-passes: unknown optimizer pass `unroll` (known passes: inline, forward, sroa, dce)",
+            "Error: --opt-passes: unknown optimizer pass `unroll` (known passes: inline, forward, sroa, fold, dead-branch, cse, dce)",
         ),
     ] {
         let mut command = vec!["-V", "shader.frag"];

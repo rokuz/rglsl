@@ -8,6 +8,11 @@ use rglsl_types::stack::recurse;
 use crate::analysis::elements;
 use crate::analysis::locals::FIRST;
 
+pub(crate) fn statements(function: &Function) -> u32 {
+    let count = u32::try_from(function.body.walk().count()).unwrap_or(u32::MAX);
+    count.saturating_add(FIRST)
+}
+
 pub(crate) trait Policy {
     fn expression(
         &mut self,
