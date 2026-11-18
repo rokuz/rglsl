@@ -5,6 +5,7 @@ use rglsl::{
     Handle, LocalVariable, Module, Override, Range, Sampling, ShaderStage, Statement, Type,
     TypeInner, UniqueArena,
 };
+use rglsl_types::stack::recurse;
 
 use crate::float::{self, UndefinedUse};
 use crate::{Changed, Context, DebugLevel, OptError, Session};
@@ -33,17 +34,99 @@ enum Root {
     Global(Handle<GlobalVariable>),
 }
 
-type Store = (Handle<Expression>, Handle<Expression>);
+const NONE: u32 = u32::MAX;
 
-struct Live {
-    expressions: Vec<bool>,
-    locals: Vec<bool>,
-    stores: Vec<Vec<Store>>,
-    roots: Vec<Root>,
+struct Node<'m> {
+    statement: &'m Statement,
+    parent: u32,
+    end: u32,
 }
 
-impl Live {
-    fn new(function: &Function) -> Self {
+struct Tree<'m> {
+    nodes: Vec<Node<'m>>,
+    exits: Vec<Vec<u32>>,
+}
+
+impl<'m> Tree<'m> {
+    fn of(body: &'m Block) -> Self {
+        struct Frame<'m> {
+            statements: core::slice::Iter<'m, Statement>,
+            parent: u32,
+            breaks: u32,
+            continues: u32,
+        }
+        let mut tree = Self {
+            nodes: Vec::new(),
+            exits: Vec::new(),
+        };
+        let mut pending = Vec::from([Frame {
+            statements: body.iter(),
+            parent: NONE,
+            breaks: NONE,
+            continues: NONE,
+        }]);
+        while let Some(frame) = pending.last_mut() {
+            let Some(statement) = frame.statements.next() else {
+                pending.pop();
+                continue;
+            };
+            let (parent, breaks, continues) = (frame.parent, frame.breaks, frame.continues);
+            let id = u32::try_from(tree.nodes.len()).unwrap_or(NONE);
+            tree.nodes.push(Node {
+                statement,
+                parent,
+                end: id.saturating_add(1),
+            });
+            tree.exits.push(Vec::new());
+            let target = match *statement {
+                Statement::Break => breaks,
+                Statement::Continue => continues,
+                _ => NONE,
+            };
+            if let Some(exits) = tree.exits.get_mut(target as usize) {
+                exits.push(id);
+            }
+            let (breaks, continues) = match *statement {
+                Statement::Loop { .. } => (id, id),
+                Statement::Switch { .. } => (id, continues),
+                _ => (breaks, continues),
+            };
+            let start = pending.len();
+            statement.for_each_child_block(|child| {
+                pending.push(Frame {
+                    statements: child.iter(),
+                    parent: id,
+                    breaks,
+                    continues,
+                });
+            });
+            if let Some(children) = pending.get_mut(start..) {
+                children.reverse();
+            }
+        }
+        for id in (0..tree.nodes.len()).rev() {
+            let Some(&Node { parent, end, .. }) = tree.nodes.get(id) else {
+                continue;
+            };
+            if let Some(node) = tree.nodes.get_mut(parent as usize) {
+                node.end = node.end.max(end);
+            }
+        }
+        tree
+    }
+}
+
+struct Live<'m> {
+    expressions: Vec<bool>,
+    locals: Vec<bool>,
+    stores: Vec<Vec<u32>>,
+    roots: Vec<Root>,
+    tree: Tree<'m>,
+    statements: Vec<bool>,
+}
+
+impl<'m> Live<'m> {
+    fn new(function: &'m Function) -> Self {
         let mut roots: Vec<Root> = Vec::with_capacity(function.expressions.len());
         for (_, expression) in function.expressions.iter() {
             let root = match *expression {
@@ -56,11 +139,18 @@ impl Live {
             };
             roots.push(root);
         }
+        let tree = Tree::of(&function.body);
         Self {
             expressions: vec![false; function.expressions.len()],
             locals: vec![false; function.local_variables.len()],
             stores: vec![Vec::new(); function.local_variables.len()],
             roots,
+            statements: tree
+                .nodes
+                .iter()
+                .map(|node| matches!(*node.statement, Statement::Emit(_)))
+                .collect(),
+            tree,
         }
     }
 
@@ -74,14 +164,15 @@ impl Live {
 
 struct Marker<'m> {
     functions: Vec<&'m Function>,
-    live: Vec<Live>,
+    live: Vec<Live<'m>>,
     tracked: Vec<bool>,
     globals: Vec<bool>,
-    global_stores: Vec<Vec<(usize, Store)>>,
+    global_stores: Vec<Vec<(usize, u32)>>,
     pending: Vec<(usize, Handle<Expression>)>,
+    pending_statements: Vec<(usize, u32)>,
 }
 
-impl Marker<'_> {
+impl<'m> Marker<'m> {
     fn mark(&mut self, function: usize, handle: Handle<Expression>) {
         if let Some(slot) = self
             .live
@@ -94,20 +185,97 @@ impl Marker<'_> {
         }
     }
 
+    fn keep(&mut self, function: usize, id: u32) {
+        let Some(live) = self.live.get_mut(function) else {
+            return;
+        };
+        let mut current = id;
+        while let Some(slot) = live.statements.get_mut(current as usize)
+            && !*slot
+        {
+            *slot = true;
+            self.pending_statements.push((function, current));
+            current = live
+                .tree
+                .nodes
+                .get(current as usize)
+                .map_or(NONE, |node| node.parent);
+        }
+    }
+
     fn run(&mut self) {
-        while let Some((index, handle)) = self.pending.pop() {
-            let Some(&function) = self.functions.get(index) else {
-                continue;
-            };
-            let Ok(expression) = function.expressions.try_get(handle) else {
-                continue;
-            };
-            match *expression {
-                Expression::LocalVariable(local) => self.local(index, function, local),
-                Expression::GlobalVariable(global) => self.global(global),
-                _ => {}
+        loop {
+            if let Some((index, handle)) = self.pending.pop() {
+                self.expression(index, handle);
+            } else if let Some((index, id)) = self.pending_statements.pop() {
+                self.statement(index, id);
+            } else {
+                return;
             }
-            expression.for_each_operand(|operand| self.mark(index, operand));
+        }
+    }
+
+    fn expression(&mut self, index: usize, handle: Handle<Expression>) {
+        let Some(&function) = self.functions.get(index) else {
+            return;
+        };
+        let Ok(expression) = function.expressions.try_get(handle) else {
+            return;
+        };
+        match *expression {
+            Expression::LocalVariable(local) => self.local(index, function, local),
+            Expression::GlobalVariable(global) => self.global(global),
+            _ => {}
+        }
+        expression.for_each_operand(|operand| self.mark(index, operand));
+    }
+
+    fn statement(&mut self, index: usize, id: u32) {
+        let Some(node) = self
+            .live
+            .get(index)
+            .and_then(|live| live.tree.nodes.get(id as usize))
+        else {
+            return;
+        };
+        let statement: &'m Statement = node.statement;
+        match *statement {
+            Statement::Emit(_) | Statement::Block(_) | Statement::Break | Statement::Continue => {}
+            Statement::If { condition, .. } => self.mark(index, condition),
+            Statement::Switch { selector, .. } => {
+                self.mark(index, selector);
+                self.exits(index, id);
+            }
+            Statement::Loop { break_if, .. } => {
+                if let Some(condition) = break_if {
+                    self.mark(index, condition);
+                }
+                self.exits(index, id);
+            }
+            Statement::Store { pointer, value } => {
+                self.mark(index, pointer);
+                self.mark(index, value);
+            }
+            ref other => {
+                other.for_each_operand(|operand| self.mark(index, operand));
+                let mut results = Vec::new();
+                let Ok(()) = other.visit(&mut Collect(&mut results));
+                for result in results {
+                    self.mark(index, result);
+                }
+            }
+        }
+    }
+
+    fn exits(&mut self, index: usize, id: u32) {
+        let exits = self
+            .live
+            .get_mut(index)
+            .and_then(|live| live.tree.exits.get_mut(id as usize))
+            .map(core::mem::take)
+            .unwrap_or_default();
+        for exit in exits {
+            self.keep(index, exit);
         }
     }
 
@@ -127,9 +295,8 @@ impl Marker<'_> {
             .get_mut(local.index())
             .map(core::mem::take)
             .unwrap_or_default();
-        for (pointer, value) in stores {
-            self.mark(index, pointer);
-            self.mark(index, value);
+        for store in stores {
+            self.keep(index, store);
         }
         if let Ok(variable) = function.local_variables.try_get(local)
             && let Some(init) = variable.init
@@ -154,9 +321,8 @@ impl Marker<'_> {
             .get_mut(global.index())
             .map(core::mem::take)
             .unwrap_or_default();
-        for (index, (pointer, value)) in stores {
-            self.mark(index, pointer);
-            self.mark(index, value);
+        for (index, store) in stores {
+            self.keep(index, store);
         }
     }
 
@@ -169,17 +335,66 @@ impl Marker<'_> {
                 .is_some_and(|value| matches!(*value, Expression::Undef(_)))
     }
 
-    fn dead_store(&self, index: usize, pointer: Handle<Expression>) -> bool {
+    fn roots(&mut self, index: usize) {
         let Some(live) = self.live.get(index) else {
-            return false;
+            return;
         };
-        match live.root(pointer) {
-            Root::Local(local) => live.locals.get(local.index()) == Some(&false),
-            Root::Global(global) => {
-                self.tracked.get(global.index()) == Some(&true)
-                    && self.globals.get(global.index()) == Some(&false)
+        let mut roots = Vec::new();
+        let mut local_stores = Vec::new();
+        let mut global_stores = Vec::new();
+        for (id, node) in live.tree.nodes.iter().enumerate() {
+            let id = u32::try_from(id).unwrap_or(NONE);
+            match *node.statement {
+                Statement::Emit(_)
+                | Statement::Block(_)
+                | Statement::If { .. }
+                | Statement::Switch { .. }
+                | Statement::Break
+                | Statement::Continue => {}
+                Statement::Loop { break_if, .. } => {
+                    if break_if.is_none()
+                        && live.tree.exits.get(id as usize).is_none_or(|exits| {
+                            !exits.iter().any(|&exit| {
+                                live.tree
+                                    .nodes
+                                    .get(exit as usize)
+                                    .is_some_and(|node| matches!(*node.statement, Statement::Break))
+                            })
+                        })
+                    {
+                        roots.push(id);
+                    }
+                }
+                Statement::Store { pointer, value } => {
+                    let root = live.root(pointer);
+                    if removable(root, &self.tracked) && self.undefined_store(index, value) {
+                        continue;
+                    }
+                    match root {
+                        Root::Local(local) => local_stores.push((local, id)),
+                        Root::Global(global) if self.tracked.get(global.index()) == Some(&true) => {
+                            global_stores.push((global, id));
+                        }
+                        Root::Global(_) | Root::Value => roots.push(id),
+                    }
+                }
+                _ => roots.push(id),
             }
-            Root::Value => false,
+        }
+        if let Some(live) = self.live.get_mut(index) {
+            for (local, id) in local_stores {
+                if let Some(stores) = live.stores.get_mut(local.index()) {
+                    stores.push(id);
+                }
+            }
+        }
+        for (global, id) in global_stores {
+            if let Some(stores) = self.global_stores.get_mut(global.index()) {
+                stores.push((index, id));
+            }
+        }
+        for id in roots {
+            self.keep(index, id);
         }
     }
 }
@@ -206,55 +421,10 @@ fn sweep_functions(module: &mut Module, complete: bool, keep_locals: bool) -> Re
         tracked,
         functions,
         pending: Vec::new(),
+        pending_statements: Vec::new(),
     };
     for index in 0..marker.functions.len() {
-        let Some(&function) = marker.functions.get(index) else {
-            continue;
-        };
-        for statement in function.body.walk() {
-            match *statement {
-                Statement::Emit(_) => {}
-                Statement::Store { pointer, value } => {
-                    let root = marker
-                        .live
-                        .get(index)
-                        .map_or(Root::Value, |live| live.root(pointer));
-                    if removable(root, &marker.tracked) && marker.undefined_store(index, value) {
-                        continue;
-                    }
-                    match root {
-                        Root::Local(local) => {
-                            if let Some(stores) = marker
-                                .live
-                                .get_mut(index)
-                                .and_then(|live| live.stores.get_mut(local.index()))
-                            {
-                                stores.push((pointer, value));
-                            }
-                        }
-                        Root::Global(global)
-                            if marker.tracked.get(global.index()) == Some(&true) =>
-                        {
-                            if let Some(stores) = marker.global_stores.get_mut(global.index()) {
-                                stores.push((index, (pointer, value)));
-                            }
-                        }
-                        Root::Global(_) | Root::Value => {
-                            marker.mark(index, pointer);
-                            marker.mark(index, value);
-                        }
-                    }
-                }
-                ref other => {
-                    other.for_each_operand(|operand| marker.mark(index, operand));
-                    let mut results = Vec::new();
-                    let Ok(()) = other.visit(&mut Collect(&mut results));
-                    for result in results {
-                        marker.mark(index, result);
-                    }
-                }
-            }
-        }
+        marker.roots(index);
     }
     if keep_locals {
         for index in 0..marker.functions.len() {
@@ -304,52 +474,22 @@ fn removable(root: Root, tracked: &[bool]) -> bool {
 struct Plan {
     expressions: Vec<bool>,
     locals: Vec<bool>,
-    dead_stores: Vec<bool>,
-    removable: Vec<bool>,
-    undefined: Vec<bool>,
+    statements: Vec<bool>,
+    ends: Vec<u32>,
 }
 
 impl Plan {
     fn of(marker: &Marker<'_>, index: usize) -> Option<Self> {
         let live = marker.live.get(index)?;
-        let function = marker.functions.get(index)?;
-        let dead_stores: Vec<bool> = function
-            .expressions
-            .iter()
-            .map(|(pointer, _)| marker.dead_store(index, pointer))
-            .collect();
-        let removable: Vec<bool> = function
-            .expressions
-            .iter()
-            .map(|(pointer, _)| removable(live.root(pointer), &marker.tracked))
-            .collect();
-        let undefined: Vec<bool> = function
-            .expressions
-            .iter()
-            .map(|(value, _)| marker.undefined_store(index, value))
-            .collect();
-        let any_undefined = function.body.walk().any(|statement| {
-            matches!(*statement, Statement::Store { pointer, value }
-                if removable.get(pointer.index()) == Some(&true)
-                    && undefined.get(value.index()) == Some(&true))
-        });
         let any_dead = live.expressions.iter().any(|&live| !live)
             || live.locals.iter().any(|&live| !live)
-            || dead_stores.iter().any(|&dead| dead)
-            || any_undefined;
+            || live.statements.iter().any(|&live| !live);
         any_dead.then(|| Self {
             expressions: live.expressions.clone(),
             locals: live.locals.clone(),
-            dead_stores,
-            removable,
-            undefined,
+            statements: live.statements.clone(),
+            ends: live.tree.nodes.iter().map(|node| node.end).collect(),
         })
-    }
-
-    fn dead_store(&self, pointer: Handle<Expression>, value: Handle<Expression>) -> bool {
-        self.dead_stores.get(pointer.index()) == Some(&true)
-            || (self.removable.get(pointer.index()) == Some(&true)
-                && self.undefined.get(value.index()) == Some(&true))
     }
 
     fn apply(self, function: &mut Function) -> Result<(), String> {
@@ -401,37 +541,56 @@ impl Plan {
         function
             .tables()
             .remap(|handle| map.get(handle.index()).copied().flatten());
-        let mut error = None;
-        function.body.visit_blocks_mut(|block| {
-            if error.is_some() {
-                return;
-            }
-            if let Err(message) = self.rebuild(block, &map) {
-                error = Some(message);
-            }
-        });
-        error.map_or(Ok(()), Err)
+        let mut next = 0;
+        self.rebuild(&mut function.body, &map, &mut next)?;
+        if next as usize != self.statements.len() {
+            return Err(format!(
+                "the rebuilt body has {next} statements, the analysis counted {}",
+                self.statements.len()
+            ));
+        }
+        Ok(())
     }
 
-    fn rebuild(&self, block: &mut Block, map: &[Option<Handle<Expression>>]) -> Result<(), String> {
+    fn rebuild(
+        &self,
+        block: &mut Block,
+        map: &[Option<Handle<Expression>>],
+        next: &mut u32,
+    ) -> Result<(), String> {
         let statements = core::mem::take(block);
         for (mut statement, span) in statements.span_into_iter() {
-            match statement {
-                Statement::Emit(ref range) => {
-                    let mut kept = range
-                        .clone()
-                        .filter_map(|handle| map.get(handle.index()).copied().flatten());
-                    if let Some(first) = kept.next() {
-                        let last = kept.next_back().unwrap_or(first);
-                        block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
-                    }
+            let id = *next;
+            let end = self
+                .ends
+                .get(id as usize)
+                .copied()
+                .ok_or_else(|| format!("statement {id} is not in the analysis"))?;
+            if let Statement::Emit(ref range) = statement {
+                *next = end;
+                let mut kept = range
+                    .clone()
+                    .filter_map(|handle| map.get(handle.index()).copied().flatten());
+                if let Some(first) = kept.next() {
+                    let last = kept.next_back().unwrap_or(first);
+                    block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
                 }
-                Statement::Store { pointer, value } if self.dead_store(pointer, value) => {}
-                _ => {
-                    statement.visit_mut(&mut Renumber { map })?;
-                    block.push(statement, span);
-                }
+                continue;
             }
+            if self.statements.get(id as usize) != Some(&true) {
+                *next = end;
+                continue;
+            }
+            *next = id.saturating_add(1);
+            let mut result = Ok(());
+            statement.for_each_child_block_mut(|child| {
+                if result.is_ok() {
+                    result = recurse(|| self.rebuild(child, map, next));
+                }
+            });
+            result?;
+            statement.visit_mut(&mut Renumber { map })?;
+            block.push(statement, span);
         }
         Ok(())
     }
