@@ -17,16 +17,17 @@ pub struct Amber {
     pub timeout: Duration,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorSupport {
     pub max_rank: u32,
     pub stages: u32,
+    pub shader_formats: Option<BTreeMap<String, bool>>,
 }
 
 impl TensorSupport {
     pub const COMPUTE: u32 = 0x20;
 
-    pub const fn compute_only(self) -> bool {
+    pub const fn compute_only(&self) -> bool {
         self.stages & !Self::COMPUTE == 0
     }
 }
@@ -270,6 +271,18 @@ pub fn first_line(primary: &str, secondary: &str) -> String {
         .collect()
 }
 
+fn tensor_shader_formats(text: &str) -> Option<BTreeMap<String, bool>> {
+    let formats: BTreeMap<String, bool> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("tensorShaderFormat:"))
+        .filter_map(|value| {
+            let (format, shader) = value.trim().split_once(' ')?;
+            Some((format.to_string(), shader.trim() == "1"))
+        })
+        .collect();
+    (!formats.is_empty()).then_some(formats)
+}
+
 pub fn parse_device(text: &str) -> Option<Device> {
     let field = |key: &str| {
         text.lines()
@@ -291,6 +304,7 @@ pub fn parse_device(text: &str) -> Option<Device> {
             stages: field("shaderTensorSupportedStages:")
                 .and_then(|stages| stages.parse().ok())
                 .unwrap_or(0),
+            shader_formats: tensor_shader_formats(text),
         });
     Some(Device {
         name,
@@ -383,6 +397,19 @@ mod tests {
             .context("no tensor support")?;
         assert_eq!(tensors.max_rank, 6);
         assert!(tensors.compute_only());
+        assert_eq!(tensors.shader_formats, None);
+        let formats = format!(
+            "{text}  maxTensorDimensionCount: 6\n  tensorShaderFormat: VK_FORMAT_R32_SINT 1\n  tensorShaderFormat: VK_FORMAT_R16_SFLOAT_FPENCODING_BFLOAT16_ARM 0\n"
+        );
+        let shader_formats = parse_device(&formats)
+            .and_then(|device| device.tensors)
+            .and_then(|tensors| tensors.shader_formats)
+            .context("no tensor shader formats")?;
+        assert_eq!(shader_formats.get("VK_FORMAT_R32_SINT"), Some(&true));
+        assert_eq!(
+            shader_formats.get("VK_FORMAT_R16_SFLOAT_FPENCODING_BFLOAT16_ARM"),
+            Some(&false)
+        );
         assert_eq!(device.limits, None);
         let names = [
             "maxVertexInputAttributes",

@@ -91,10 +91,12 @@ pub struct Plan {
 pub struct PlannedTensor {
     pub description: String,
     pub rank: u32,
+    pub format: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TensorFormat {
+    vk_format: &'static str,
     data_type: &'static str,
     encoding: Option<&'static str>,
     slot: Scalar,
@@ -103,33 +105,60 @@ struct TensorFormat {
 const MAX_TENSOR_ELEMENTS: u64 = 1 << 18;
 const TENSOR_BASE_DIMENSION: u64 = 4;
 
+pub fn tensor_vk_format(element: TensorElement) -> Result<&'static str, Refusal> {
+    tensor_format(element).map(|format| format.vk_format)
+}
+
 fn tensor_format(element: TensorElement) -> Result<TensorFormat, Refusal> {
-    let plain = |data_type, kind, width| TensorFormat {
+    let plain = |vk_format, data_type, kind, width| TensorFormat {
+        vk_format,
         data_type,
         encoding: None,
         slot: scalar(kind, width),
     };
-    let encoded = |data_type, encoding, width| TensorFormat {
+    let encoded = |vk_format, data_type, encoding, width| TensorFormat {
+        vk_format,
         data_type,
         encoding: Some(encoding),
         slot: scalar(ScalarKind::Uint, width),
     };
     Ok(match (element.kind, element.width, element.encoding) {
-        (ScalarKind::Bool, _, _) => encoded("uint8", "BOOL", 8),
-        (ScalarKind::Sint, 8, _) => plain("int8", ScalarKind::Sint, 8),
-        (ScalarKind::Sint, 16, _) => plain("int16", ScalarKind::Sint, 16),
-        (ScalarKind::Sint, 32, _) => plain("int32", ScalarKind::Sint, 32),
-        (ScalarKind::Sint, 64, _) => plain("int64", ScalarKind::Sint, 64),
-        (ScalarKind::Uint, 8, _) => plain("uint8", ScalarKind::Uint, 8),
-        (ScalarKind::Uint, 16, _) => plain("uint16", ScalarKind::Uint, 16),
-        (ScalarKind::Uint, 32, _) => plain("uint32", ScalarKind::Uint, 32),
-        (ScalarKind::Uint, 64, _) => plain("uint64", ScalarKind::Uint, 64),
-        (ScalarKind::Float, 16, None) => plain("float16", ScalarKind::Float, 16),
-        (ScalarKind::Float, 32, None) => plain("float", ScalarKind::Float, 32),
-        (ScalarKind::Float, 64, None) => plain("double", ScalarKind::Float, 64),
-        (ScalarKind::Float, 16, Some(0)) => encoded("uint16", "BFLOAT16", 16),
-        (ScalarKind::Float, 8, Some(4214)) => encoded("uint8", "FLOAT8_E4M3", 8),
-        (ScalarKind::Float, 8, Some(4215)) => encoded("uint8", "FLOAT8_E5M2", 8),
+        (ScalarKind::Bool, _, _) => encoded("VK_FORMAT_R8_BOOL_ARM", "uint8", "BOOL", 8),
+        (ScalarKind::Sint, 8, _) => plain("VK_FORMAT_R8_SINT", "int8", ScalarKind::Sint, 8),
+        (ScalarKind::Sint, 16, _) => plain("VK_FORMAT_R16_SINT", "int16", ScalarKind::Sint, 16),
+        (ScalarKind::Sint, 32, _) => plain("VK_FORMAT_R32_SINT", "int32", ScalarKind::Sint, 32),
+        (ScalarKind::Sint, 64, _) => plain("VK_FORMAT_R64_SINT", "int64", ScalarKind::Sint, 64),
+        (ScalarKind::Uint, 8, _) => plain("VK_FORMAT_R8_UINT", "uint8", ScalarKind::Uint, 8),
+        (ScalarKind::Uint, 16, _) => plain("VK_FORMAT_R16_UINT", "uint16", ScalarKind::Uint, 16),
+        (ScalarKind::Uint, 32, _) => plain("VK_FORMAT_R32_UINT", "uint32", ScalarKind::Uint, 32),
+        (ScalarKind::Uint, 64, _) => plain("VK_FORMAT_R64_UINT", "uint64", ScalarKind::Uint, 64),
+        (ScalarKind::Float, 16, None) => {
+            plain("VK_FORMAT_R16_SFLOAT", "float16", ScalarKind::Float, 16)
+        }
+        (ScalarKind::Float, 32, None) => {
+            plain("VK_FORMAT_R32_SFLOAT", "float", ScalarKind::Float, 32)
+        }
+        (ScalarKind::Float, 64, None) => {
+            plain("VK_FORMAT_R64_SFLOAT", "double", ScalarKind::Float, 64)
+        }
+        (ScalarKind::Float, 16, Some(0)) => encoded(
+            "VK_FORMAT_R16_SFLOAT_FPENCODING_BFLOAT16_ARM",
+            "uint16",
+            "BFLOAT16",
+            16,
+        ),
+        (ScalarKind::Float, 8, Some(4214)) => encoded(
+            "VK_FORMAT_R8_SFLOAT_FPENCODING_FLOAT8E4M3_ARM",
+            "uint8",
+            "FLOAT8_E4M3",
+            8,
+        ),
+        (ScalarKind::Float, 8, Some(4215)) => encoded(
+            "VK_FORMAT_R8_SFLOAT_FPENCODING_FLOAT8E5M2_ARM",
+            "uint8",
+            "FLOAT8_E5M2",
+            8,
+        ),
         _ => return Err(Refusal::Binding(format!("tensors of {}", element.glsl()))),
     })
 }
@@ -1102,6 +1131,7 @@ impl Plan {
                             tensor.glsl()
                         ),
                         rank,
+                        format: format.vk_format,
                     });
                     for (index, name) in names.iter().enumerate() {
                         let dims = tensor_dimensions(rank, index);

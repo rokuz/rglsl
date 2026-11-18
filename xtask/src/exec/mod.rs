@@ -720,7 +720,7 @@ impl Executor {
         let Some(first) = tensors.first() else {
             return Ok(());
         };
-        let Some(support) = self.device.tensors else {
+        let Some(support) = &self.device.tensors else {
             return Err(Outcome::skip(
                 SkipReason::DeviceFeature,
                 format!(
@@ -735,6 +735,27 @@ impl Executor {
                 format!(
                     "{}: tensors in {model:?} shaders (shaderTensorSupportedStages is compute only: the ML emulation layer lowers tensors in compute shaders only)",
                     first.description
+                ),
+            ));
+        }
+        let Some(shader_formats) = &support.shader_formats else {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                format!(
+                    "{}: Amber does not report which tensor formats shaders can access (build Amber from the pin: `cargo xtask oracles`)",
+                    first.description
+                ),
+            ));
+        };
+        if let Some(tensor) = tensors
+            .iter()
+            .find(|tensor| shader_formats.get(tensor.format) != Some(&true))
+        {
+            return Err(Outcome::skip(
+                SkipReason::DeviceFeature,
+                format!(
+                    "{}: {} has no VK_FORMAT_FEATURE_2_TENSOR_SHADER_BIT_ARM on this device",
+                    tensor.description, tensor.format
                 ),
             ));
         }
@@ -1015,18 +1036,22 @@ impl Executor {
                 .resources
                 .iter()
                 .filter_map(|resource| match &resource.kind {
-                    reflect::ResourceKind::Tensor(tensor) => Some(PlannedTensor {
-                        description: format!(
-                            "set {} binding {} {}",
-                            resource.set,
-                            resource.binding,
-                            tensor.glsl()
-                        ),
-                        rank: plan::tensor_rank(tensor),
-                    }),
+                    reflect::ResourceKind::Tensor(tensor) => Some(
+                        plan::tensor_vk_format(tensor.element).map(|format| PlannedTensor {
+                            description: format!(
+                                "set {} binding {} {}",
+                                resource.set,
+                                resource.binding,
+                                tensor.glsl()
+                            ),
+                            rank: plan::tensor_rank(tensor),
+                            format,
+                        }),
+                    ),
                     _ => None,
                 })
-                .collect();
+                .collect::<Result<_, _>>()
+                .map_err(refusal)?;
             self.tensor_limits(reflection.model, &tensors)?;
             let limits = cooperative::Limits {
                 invocations: reflection.local_size.iter().product(),
