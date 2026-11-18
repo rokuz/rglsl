@@ -6,12 +6,13 @@ use super::reflect::{AtomicPlace, FloatAtomic, FloatAtomicOp};
 pub enum Need {
     Feature(&'static str),
     Extension(&'static str),
+    Property(&'static str),
 }
 
 impl Need {
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Feature(name) | Self::Extension(name) => name,
+            Self::Feature(name) | Self::Extension(name) | Self::Property(name) => name,
         }
     }
 
@@ -19,6 +20,7 @@ impl Need {
         match self {
             Self::Feature(name) => format!("DEVICE_FEATURE {name}"),
             Self::Extension(name) => format!("DEVICE_EXTENSION {name}"),
+            Self::Property(name) => format!("DEVICE_PROPERTY {name}"),
         }
     }
 
@@ -38,6 +40,68 @@ pub enum Requirement {
 }
 
 const NONE: Requirement = Requirement::Needs(&[]);
+
+const FLOAT_CONTROLS: [(spirv::ExecutionMode, [&str; 3]); 5] = [
+    (
+        spirv::ExecutionMode::SignedZeroInfNanPreserve,
+        [
+            "FloatControlsProperties.shaderSignedZeroInfNanPreserveFloat16",
+            "FloatControlsProperties.shaderSignedZeroInfNanPreserveFloat32",
+            "FloatControlsProperties.shaderSignedZeroInfNanPreserveFloat64",
+        ],
+    ),
+    (
+        spirv::ExecutionMode::DenormPreserve,
+        [
+            "FloatControlsProperties.shaderDenormPreserveFloat16",
+            "FloatControlsProperties.shaderDenormPreserveFloat32",
+            "FloatControlsProperties.shaderDenormPreserveFloat64",
+        ],
+    ),
+    (
+        spirv::ExecutionMode::DenormFlushToZero,
+        [
+            "FloatControlsProperties.shaderDenormFlushToZeroFloat16",
+            "FloatControlsProperties.shaderDenormFlushToZeroFloat32",
+            "FloatControlsProperties.shaderDenormFlushToZeroFloat64",
+        ],
+    ),
+    (
+        spirv::ExecutionMode::RoundingModeRTE,
+        [
+            "FloatControlsProperties.shaderRoundingModeRTEFloat16",
+            "FloatControlsProperties.shaderRoundingModeRTEFloat32",
+            "FloatControlsProperties.shaderRoundingModeRTEFloat64",
+        ],
+    ),
+    (
+        spirv::ExecutionMode::RoundingModeRTZ,
+        [
+            "FloatControlsProperties.shaderRoundingModeRTZFloat16",
+            "FloatControlsProperties.shaderRoundingModeRTZFloat32",
+            "FloatControlsProperties.shaderRoundingModeRTZFloat64",
+        ],
+    ),
+];
+
+pub fn is_float_control(mode: u32) -> bool {
+    FLOAT_CONTROLS
+        .iter()
+        .any(|(known, _)| *known as u32 == mode)
+}
+
+pub fn float_control(mode: u32, width: u32) -> Option<Need> {
+    let (_, names) = FLOAT_CONTROLS
+        .iter()
+        .find(|(known, _)| *known as u32 == mode)?;
+    let name = match width {
+        16 => names[0],
+        32 => names[1],
+        64 => names[2],
+        _ => return None,
+    };
+    Some(Need::Property(name))
+}
 
 macro_rules! needs {
     ($($need:expr),* $(,)?) => {
@@ -372,6 +436,11 @@ pub fn capability(capability: Capability) -> Requirement {
             E("VK_KHR_workgroup_memory_explicit_layout"),
             F("WorkgroupMemoryExplicitLayoutFeaturesKHR.workgroupMemoryExplicitLayout16BitAccess"),
         ],
+        C::SignedZeroInfNanPreserve
+        | C::DenormPreserve
+        | C::DenormFlushToZero
+        | C::RoundingModeRTE
+        | C::RoundingModeRTZ => NONE,
         _ => Requirement::Unsupported("a capability the harness does not enable"),
     }
 }
@@ -662,6 +731,9 @@ pub fn probes() -> Vec<Need> {
         if let Requirement::Needs(list) = self::capability(capability) {
             needs.extend_from_slice(list);
         }
+    }
+    for (_, names) in &FLOAT_CONTROLS {
+        needs.extend(names.iter().map(|name| Need::Property(name)));
     }
     for model in [
         ExecutionModel::GLCompute,

@@ -787,6 +787,7 @@ pub struct Reflection {
     pub unknown_capabilities: BTreeSet<u32>,
     pub extensions: BTreeSet<String>,
     pub modes: BTreeMap<u32, Vec<u32>>,
+    pub float_controls: BTreeSet<(u32, u32)>,
     pub ray_storage: BTreeSet<StorageClass>,
     pub ray_variables: Vec<RayVariable>,
     pub shader_record: Option<Result<Layout, String>>,
@@ -838,6 +839,7 @@ impl Reflection {
             unknown_capabilities: BTreeSet::new(),
             extensions: BTreeSet::new(),
             modes: BTreeMap::new(),
+            float_controls: BTreeSet::new(),
             ray_storage: BTreeSet::new(),
             ray_variables: Vec::new(),
             shader_record: None,
@@ -1808,6 +1810,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
     let (entry, _) = entry_point.string(2).ok_or("bad OpEntryPoint")?;
 
     let mut modes = BTreeMap::new();
+    let mut float_controls = BTreeSet::new();
     let mut capabilities = BTreeSet::new();
     let mut unknown_capabilities = BTreeSet::new();
     let mut extensions = BTreeSet::new();
@@ -1816,6 +1819,11 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
             && instruction.word(0) == Some(entry_id)
         {
             if let Some(mode) = instruction.word(1) {
+                if super::requirements::is_float_control(mode)
+                    && let Some(width) = instruction.word(2)
+                {
+                    float_controls.insert((mode, width));
+                }
                 modes.insert(mode, instruction.rest(2).to_vec());
             }
         } else if instruction.is(Op::Capability) {
@@ -1848,6 +1856,7 @@ pub fn reflect(module: &Module) -> Result<Reflection, String> {
         unknown_capabilities,
         extensions,
         modes,
+        float_controls,
         body_opcodes: module.body_opcodes.clone(),
         ..Reflection::new(model)
     };

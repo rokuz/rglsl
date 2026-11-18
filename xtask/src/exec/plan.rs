@@ -680,6 +680,18 @@ pub fn requirements(reflection: &Reflection) -> Result<BTreeSet<Need>, Refusal> 
             }
         }
     }
+    for &(mode, width) in &reflection.float_controls {
+        match requirements::float_control(mode, width) {
+            Some(need) => {
+                needs.insert(need);
+            }
+            None => {
+                return Err(Refusal::Capability(format!(
+                    "float controls execution mode {mode} for {width}-bit floats"
+                )));
+            }
+        }
+    }
     let maintenance1 = reflection
         .extensions
         .contains("SPV_EXT_cooperative_matrix_maintenance1")
