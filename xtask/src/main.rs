@@ -172,6 +172,8 @@ commands:
                           on the driver while rglsl's module runs)
       --preserve-semantics  with --reduce: only undo the generator's transformations
       --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
+      --repeats N         with --reduce and an exec criterion: a candidate is interesting only
+                          if it is interesting on N runs in a row (default 3)
       --no-ub-guards      with --reduce and without --preserve-semantics: do not bound loops,
                           clamp indices and initialise locals in every candidate
       --output DIR        with --reduce: where the reproducer goes
@@ -399,6 +401,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 },
                 preserve_semantics: args.flag("--preserve-semantics"),
                 max_steps: args.parsed("--max-steps")?.unwrap_or(2000),
+                repeats: args.parsed("--repeats")?.unwrap_or(3),
                 guards: !args.flag("--no-ub-guards"),
                 output: args.value("--output")?.map(PathBuf::from),
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),

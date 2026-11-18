@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 
-use crate::exec::batch::{Job, JobResult};
+use crate::exec::batch::{Job, JobError, JobResult};
 use crate::exec::data::Value;
 use crate::exec::plan::{Inputs, Plan};
 use crate::exec::reflect::{ScalarKind, Slot};
@@ -18,6 +18,7 @@ pub enum Run {
     Ran { plan: Box<Plan>, outputs: Outputs },
     Refused(String),
     Failed(String),
+    NotExecuted(String),
 }
 
 pub fn uniform_values(json: &str) -> Result<BTreeMap<(u32, u32), Vec<Value>>, String> {
@@ -118,8 +119,9 @@ pub fn finish(staged: &Staged, result: Option<JobResult>) -> Run {
             plan: plan.clone(),
             outputs,
         },
-        (Staged::Ready { .. }, Some(Err(error))) => Run::Failed(error),
-        (Staged::Ready { .. }, None) => Run::Failed("no result from the batch".into()),
+        (Staged::Ready { .. }, Some(Err(JobError::Failed(error)))) => Run::Failed(error),
+        (Staged::Ready { .. }, Some(Err(JobError::NotRun(error)))) => Run::NotExecuted(error),
+        (Staged::Ready { .. }, None) => Run::NotExecuted(JobError::missing("batch").to_string()),
     }
 }
 
@@ -135,14 +137,12 @@ pub fn compare_runs(
             return Err(format!("{} is missing from the variant", target.name));
         };
         let empty = Vec::new();
-        let a = quantize(
+        let (a, b, near) = quantize_pair(
             reference_outputs.get(&target.dump).unwrap_or(&empty),
-            &target.slots,
-        );
-        let b = quantize(
             variant_outputs.get(&other.dump).unwrap_or(&empty),
             &target.slots,
         );
+        tolerated += near;
         match crate::exec::compare::compare(&a, &b, &target.slots) {
             crate::exec::compare::Comparison::Equal { tolerated: t } => tolerated += t,
             crate::exec::compare::Comparison::Differ(difference) => {
@@ -157,16 +157,59 @@ pub fn compare_runs(
     Ok(tolerated)
 }
 
+fn float32_range(slot: &Slot) -> Option<std::ops::Range<usize>> {
+    if slot.scalar.kind != ScalarKind::Float || slot.scalar.width != 32 {
+        return None;
+    }
+    let start = usize::try_from(slot.offset).ok()?;
+    Some(start..start.checked_add(4)?)
+}
+
+fn float32_bits(bytes: &[u8], range: std::ops::Range<usize>) -> Option<u64> {
+    let raw: [u8; 4] = bytes.get(range)?.try_into().ok()?;
+    Some(u64::from(u32::from_le_bytes(raw)))
+}
+
+pub fn quantize_pair(
+    reference: &[u8],
+    variant: &[u8],
+    slots: &[Slot],
+) -> (Vec<u8>, Vec<u8>, usize) {
+    let a = quantize(reference, slots);
+    let mut b = quantize(variant, slots);
+    let mut tolerated = 0;
+    for range in slots.iter().filter_map(float32_range) {
+        let (Some(levels), Some(other)) = (a.get(range.clone()), b.get(range.clone())) else {
+            continue;
+        };
+        if levels == other {
+            continue;
+        }
+        let (Some(expected), Some(actual)) = (
+            float32_bits(reference, range.clone()),
+            float32_bits(variant, range.clone()),
+        ) else {
+            continue;
+        };
+        if crate::exec::compare::floats_match(expected, actual, 32) != Some(true) {
+            continue;
+        }
+        let levels = levels.to_vec();
+        if let Some(slot) = b.get_mut(range) {
+            slot.copy_from_slice(&levels);
+            tolerated += 1;
+        }
+    }
+    (a, b, tolerated)
+}
+
 pub fn quantize(bytes: &[u8], slots: &[Slot]) -> Vec<u8> {
     let mut out = bytes.to_vec();
     for slot in slots {
-        if slot.scalar.kind != ScalarKind::Float || slot.scalar.width != 32 {
-            continue;
-        }
-        let Ok(start) = usize::try_from(slot.offset) else {
+        let Some(range) = float32_range(slot) else {
             continue;
         };
-        let Some(raw) = out.get_mut(start..start + 4) else {
+        let Some(raw) = out.get_mut(range) else {
             continue;
         };
         let value = f32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
@@ -232,6 +275,52 @@ mod tests {
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
         assert_eq!(values, [128.0, 128.0, 255.0, 0.0]);
+    }
+
+    fn float_slots(count: u32) -> Vec<Slot> {
+        (0..count)
+            .map(|i| Slot {
+                offset: i * 4,
+                scalar: crate::exec::reflect::Scalar {
+                    kind: ScalarKind::Float,
+                    width: 32,
+                },
+            })
+            .collect()
+    }
+
+    fn bytes_of(bits: &[u32]) -> Vec<u8> {
+        bits.iter()
+            .flat_map(|b| f32::from_bits(*b).to_le_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn nearly_equal_floats_across_a_quantization_boundary_are_tolerated() {
+        let slots = float_slots(2);
+        let reference = bytes_of(&[0x3e6e_eef0, 0x3f00_0000]);
+        let variant = bytes_of(&[0x3e6e_eeee, 0x3f00_0000]);
+        assert_ne!(quantize(&reference, &slots), quantize(&variant, &slots));
+        let (a, b, tolerated) = quantize_pair(&reference, &variant, &slots);
+        assert_eq!(a, b);
+        assert_eq!(tolerated, 1);
+        assert_eq!(
+            crate::exec::compare::compare(&a, &b, &slots),
+            crate::exec::compare::Comparison::Equal { tolerated: 0 }
+        );
+    }
+
+    #[test]
+    fn a_real_difference_across_quantization_levels_is_kept() {
+        let slots = float_slots(2);
+        let reference = bytes_of(&[0x3e6e_eef0, 0x3f00_0000]);
+        let variant = bytes_of(&[0x3e6d_0000, 0x3f00_0000]);
+        let (a, b, tolerated) = quantize_pair(&reference, &variant, &slots);
+        assert_eq!(tolerated, 0);
+        assert!(matches!(
+            crate::exec::compare::compare(&a, &b, &slots),
+            crate::exec::compare::Comparison::Differ(_)
+        ));
     }
 
     #[test]

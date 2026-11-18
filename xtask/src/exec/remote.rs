@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow, bail};
 
 use super::amber::{Device, VULKAN_VERSION, add_captures, first_line, parse_device};
-use super::batch::{self, Job, JobResult};
+use super::batch::{self, Job, JobError, JobResult};
 use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
 
@@ -320,7 +320,11 @@ impl Remote {
             match self.run_batch(root, slice) {
                 Ok(batch) => results.extend(batch),
                 Err(error) => {
-                    results.extend(slice.iter().map(|_| Err(format!("remote target: {error}"))));
+                    results.extend(
+                        slice
+                            .iter()
+                            .map(|_| Err(JobError::NotRun(format!("remote target: {error}")))),
+                    );
                 }
             }
         }

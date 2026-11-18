@@ -60,6 +60,7 @@ pub struct Options {
     pub target: TargetSpec,
     pub preserve_semantics: bool,
     pub max_steps: u32,
+    pub repeats: u32,
     pub guards: bool,
     pub output: Option<PathBuf>,
     pub timeout_secs: u64,
@@ -130,7 +131,13 @@ impl Tools {
     }
 }
 
-fn run_module(executor: &Executor, spirv: &Path, json: &Path, dir: &Path, tag: &str) -> Run {
+fn run_module(
+    executor: &Executor,
+    spirv: &Path,
+    json: &Path,
+    dir: &Path,
+    tag: &str,
+) -> Result<Run> {
     let staged = fuzz_exec::stage_module(executor, spirv, Some(json), dir, tag);
     let result = match &staged {
         fuzz_exec::Staged::Ready { job, .. } => executor
@@ -139,7 +146,13 @@ fn run_module(executor: &Executor, spirv: &Path, json: &Path, dir: &Path, tag: &
             .next(),
         fuzz_exec::Staged::Refused(_) => None,
     };
-    fuzz_exec::finish(&staged, result)
+    match fuzz_exec::finish(&staged, result) {
+        Run::NotExecuted(why) => bail!(
+            "the {} target did not run the {tag} module: {why}",
+            executor.target.label()
+        ),
+        run => Ok(run),
+    }
 }
 
 fn differs(reference: &Run, variant: &Run) -> Option<bool> {
@@ -238,14 +251,14 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             let json = reference.with_extension("json");
             let dir = executor.work_dir().join("fuzz").join("reference");
             Some(ReferenceRuns {
-                ours: run_module(executor, &spirv, &json, &dir, "rglsl"),
+                ours: run_module(executor, &spirv, &json, &dir, "rglsl")?,
                 theirs: run_module(
                     executor,
                     &spirv.with_extension("glslang.spv"),
                     &json,
                     &dir,
                     "glslang",
-                ),
+                )?,
             })
         }
         _ => None,
@@ -256,7 +269,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         |executor| executor.work_dir().join("fuzz").join("stage"),
     );
     let mut first = true;
-    let mut judge = |candidate: &ShaderJob| -> Result<bool> {
+    let mut judge_once = |candidate: &ShaderJob| -> Result<bool> {
         let shader = write_job(candidate, &candidate_json)?;
         let optimize = options.interesting == Interesting::OptimizerDiffers;
         let (verdict, spirv) = tools.verdict(&shader, optimize)?;
@@ -277,14 +290,14 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                     return Ok(false);
                 }
                 let _ = fs::remove_dir_all(&stage_dir);
-                let ours = run_module(executor, &spirv, &candidate_json, &stage_dir, "rglsl");
+                let ours = run_module(executor, &spirv, &candidate_json, &stage_dir, "rglsl")?;
                 let optimized = run_module(
                     executor,
                     &crate::fuzz::optimized_module(&spirv),
                     &candidate_json,
                     &stage_dir,
                     "rglsl-O",
-                );
+                )?;
                 match (&ours, &optimized) {
                     (Run::Ran { .. }, Run::Failed(_)) => true,
                     _ => differs(&ours, &optimized) == Some(true),
@@ -300,14 +313,14 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                     return Ok(false);
                 }
                 let _ = fs::remove_dir_all(&stage_dir);
-                let ours = run_module(executor, &spirv, &candidate_json, &stage_dir, "rglsl");
+                let ours = run_module(executor, &spirv, &candidate_json, &stage_dir, "rglsl")?;
                 let theirs = run_module(
                     executor,
                     &spirv.with_extension("glslang.spv"),
                     &candidate_json,
                     &stage_dir,
                     "glslang",
-                );
+                )?;
                 if first {
                     for (tag, run) in [("rglsl", &ours), ("glslang", &theirs)] {
                         if let Run::Failed(why) | Run::Refused(why) = run {
@@ -329,6 +342,19 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             }
         };
         Ok(interesting)
+    };
+    let repeats = if options.interesting.needs_exec() {
+        options.repeats.max(1)
+    } else {
+        1
+    };
+    let mut judge = |candidate: &ShaderJob| -> Result<bool> {
+        for _ in 0..repeats {
+            if !judge_once(candidate)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     };
     let mut adapter = |candidate: &ShaderJob| {
         judge(candidate).map_err(|error| rglsl_fuzz::Error::Generation(format!("{error:#}")))
