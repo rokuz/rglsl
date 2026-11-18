@@ -1,7 +1,7 @@
 use rglsl::proc::{ConstantEvaluator, Emitter, ExpressionKindTracker, Layouter, TypeResolution};
 use rglsl::{
-    Arena, BinaryOperator, Block, Expression, FastHashMap, Function, Handle, Literal, Module,
-    Precision, ScalarKind, Span, TypeInner,
+    Arena, BinaryOperator, Block, Expression, FastHashMap, Function, Handle, Literal, MathFunction,
+    Module, Precision, ScalarKind, Span, Type, TypeInner,
 };
 
 use crate::analysis::resolve_types;
@@ -88,6 +88,16 @@ fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[
             is(expr) || matches!(expressions.try_get(expr), Ok(Expression::Unary { .. }))
         }
         Expression::Binary { left, right, .. } => is(left) || is(right),
+        Expression::Math {
+            fun: MathFunction::ExtractBits,
+            arg2: Some(count),
+            ..
+        }
+        | Expression::Math {
+            fun: MathFunction::InsertBits,
+            arg3: Some(count),
+            ..
+        } if is(count) => true,
         Expression::Math { .. } | Expression::Relational { .. } => {
             let mut all = true;
             expression.for_each_operand(|operand| all &= is(operand));
@@ -427,8 +437,54 @@ impl Fold<'_> {
             Expression::Binary { op, left, right } if precision.is_empty() => {
                 self.binary(rebuild, handle, op, left, right, block)
             }
+            Expression::Math {
+                fun: MathFunction::ExtractBits,
+                arg,
+                arg2: Some(count),
+                ..
+            } => {
+                if !self.zero_count(rebuild, count)? {
+                    return Ok(None);
+                }
+                let Some(inner) = self.type_inner(rebuild.source, arg)? else {
+                    return Ok(None);
+                };
+                let ty = self
+                    .module
+                    .types
+                    .insert(Type { name: None, inner }, Span::UNDEFINED);
+                let span = rebuild.span(handle);
+                Ok(Some(rebuild.constant(Expression::ZeroValue(ty), span)))
+            }
+            Expression::Math {
+                fun: MathFunction::InsertBits,
+                arg,
+                arg3: Some(count),
+                ..
+            } => {
+                if !self.zero_count(rebuild, count)? {
+                    return Ok(None);
+                }
+                Ok(Some(mapped(rebuild, arg)?))
+            }
             _ => Ok(None),
         }
+    }
+
+    fn zero_count(
+        &mut self,
+        rebuild: &Rebuild<'_>,
+        count: Handle<Expression>,
+    ) -> Result<bool, String> {
+        let count = mapped(rebuild, count)?;
+        if !self.is_constant(&rebuild.out.expressions, count) {
+            return Ok(false);
+        }
+        Ok(self
+            .numbers(&rebuild.out.expressions, count)
+            .is_some_and(|values| {
+                !values.is_empty() && values.iter().all(|value| value.matches(Pattern::Zero))
+            }))
     }
 
     fn binary(

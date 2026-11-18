@@ -223,3 +223,30 @@ fn constant_vectors_fold_component_by_component() -> TestResult {
     assert_eq!(binaries(function, BinaryOperator::Subtract), 0);
     Ok(())
 }
+
+#[test]
+fn bitfields_with_a_zero_count_fold() -> TestResult {
+    let source = shader(
+        "",
+        "    int x = int(inColor.x * 255.0);
+    ivec2 v = ivec2(inColor.yz * 255.0);
+    int count = 0;
+    int extracted = bitfieldExtract(x, 3, count);
+    ivec2 inserted = bitfieldInsert(v, ivec2(x), 1, count);
+    uint unsigned_extracted = bitfieldExtract(uint(x), 5, 0);
+    color = vec4(float(extracted), vec2(inserted), float(unsigned_extracted));",
+    );
+    let module = optimized(&source)?;
+    let function = entry(&module)?;
+    assert_eq!(maths(function, MathFunction::ExtractBits), 0);
+    assert_eq!(maths(function, MathFunction::InsertBits), 0);
+    let kept = shader(
+        "",
+        "    int x = int(inColor.x * 255.0);
+    int count = int(inColor.w);
+    color = vec4(float(bitfieldExtract(x, 1, 2)), float(bitfieldExtract(x, 0, count)), 0.0, 1.0);",
+    );
+    let module = optimized(&kept)?;
+    assert_eq!(maths(entry(&module)?, MathFunction::ExtractBits), 2);
+    Ok(())
+}
