@@ -31,6 +31,68 @@ impl TensorSupport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceLimits {
+    pub vertex_input_attributes: u32,
+    pub vertex_output_components: u32,
+    pub tessellation_control_per_vertex_input_components: u32,
+    pub tessellation_control_per_vertex_output_components: u32,
+    pub tessellation_control_per_patch_output_components: u32,
+    pub tessellation_evaluation_input_components: u32,
+    pub tessellation_evaluation_output_components: u32,
+    pub geometry_input_components: u32,
+    pub geometry_output_components: u32,
+    pub fragment_input_components: u32,
+    pub fragment_output_attachments: u32,
+}
+
+impl InterfaceLimits {
+    pub const REQUIRED: Self = Self {
+        vertex_input_attributes: 16,
+        vertex_output_components: 64,
+        tessellation_control_per_vertex_input_components: 64,
+        tessellation_control_per_vertex_output_components: 64,
+        tessellation_control_per_patch_output_components: 120,
+        tessellation_evaluation_input_components: 64,
+        tessellation_evaluation_output_components: 64,
+        geometry_input_components: 64,
+        geometry_output_components: 64,
+        fragment_input_components: 64,
+        fragment_output_attachments: 4,
+    };
+
+    fn parse(text: &str) -> Option<Self> {
+        let field = |key: &str| {
+            text.lines()
+                .find_map(|line| line.trim().strip_prefix(key))
+                .and_then(|value| value.trim().parse().ok())
+        };
+        Some(Self {
+            vertex_input_attributes: field("maxVertexInputAttributes:")?,
+            vertex_output_components: field("maxVertexOutputComponents:")?,
+            tessellation_control_per_vertex_input_components: field(
+                "maxTessellationControlPerVertexInputComponents:",
+            )?,
+            tessellation_control_per_vertex_output_components: field(
+                "maxTessellationControlPerVertexOutputComponents:",
+            )?,
+            tessellation_control_per_patch_output_components: field(
+                "maxTessellationControlPerPatchOutputComponents:",
+            )?,
+            tessellation_evaluation_input_components: field(
+                "maxTessellationEvaluationInputComponents:",
+            )?,
+            tessellation_evaluation_output_components: field(
+                "maxTessellationEvaluationOutputComponents:",
+            )?,
+            geometry_input_components: field("maxGeometryInputComponents:")?,
+            geometry_output_components: field("maxGeometryOutputComponents:")?,
+            fragment_input_components: field("maxFragmentInputComponents:")?,
+            fragment_output_attachments: field("maxFragmentOutputAttachments:")?,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Device {
     pub name: String,
@@ -38,6 +100,7 @@ pub struct Device {
     pub driver: String,
     pub cooperative: Support,
     pub tensors: Option<TensorSupport>,
+    pub limits: Option<InterfaceLimits>,
 }
 
 impl Device {
@@ -235,6 +298,7 @@ pub fn parse_device(text: &str) -> Option<Device> {
         driver,
         cooperative: cooperative::parse_support(text),
         tensors,
+        limits: InterfaceLimits::parse(text),
     })
 }
 
@@ -319,6 +383,32 @@ mod tests {
             .context("no tensor support")?;
         assert_eq!(tensors.max_rank, 6);
         assert!(tensors.compute_only());
+        assert_eq!(device.limits, None);
+        let names = [
+            "maxVertexInputAttributes",
+            "maxVertexOutputComponents",
+            "maxTessellationControlPerVertexInputComponents",
+            "maxTessellationControlPerVertexOutputComponents",
+            "maxTessellationControlPerPatchOutputComponents",
+            "maxTessellationEvaluationInputComponents",
+            "maxTessellationEvaluationOutputComponents",
+            "maxGeometryInputComponents",
+            "maxGeometryOutputComponents",
+            "maxFragmentInputComponents",
+            "maxFragmentOutputAttachments",
+        ];
+        let limited: String = names
+            .iter()
+            .zip(1..)
+            .map(|(name, value)| format!("  {name}: {value}\n"))
+            .collect();
+        let limits = parse_device(&format!("{text}{limited}"))
+            .and_then(|device| device.limits)
+            .context("no interface limits")?;
+        assert_eq!(limits.vertex_input_attributes, 1);
+        assert_eq!(limits.vertex_output_components, 2);
+        assert_eq!(limits.tessellation_control_per_patch_output_components, 5);
+        assert_eq!(limits.fragment_output_attachments, 11);
         Ok(())
     }
 }

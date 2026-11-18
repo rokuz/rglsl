@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 
-use self::amber::{Amber, Device};
+use self::amber::{Amber, Device, InterfaceLimits};
 pub use self::batch::Outputs;
 use self::batch::{Capture, Job, JobError, JobResult};
 use self::compare::{Comparison, compare};
@@ -103,13 +103,15 @@ pub enum SkipReason {
     ReferenceFails,
     DriverBug,
     Nondeterministic,
+    DeviceLimit,
 }
 
 impl SkipReason {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Stage,
         Self::Capability,
         Self::DeviceFeature,
+        Self::DeviceLimit,
         Self::Binding,
         Self::ReferenceInvalid,
         Self::ReferenceFails,
@@ -122,6 +124,7 @@ impl SkipReason {
             Self::Stage => "stage not executed by the harness",
             Self::Capability => "capability or extension the harness cannot enable",
             Self::DeviceFeature => "device feature missing on the driver",
+            Self::DeviceLimit => "interface exceeds a device limit",
             Self::Binding => "resource or interface the harness cannot bind",
             Self::ReferenceInvalid => "glslang's module is not valid SPIR-V",
             Self::ReferenceFails => "glslang's module fails on the driver",
@@ -135,6 +138,7 @@ impl SkipReason {
             Self::Stage => "stage",
             Self::Capability => "capability",
             Self::DeviceFeature => "device-feature",
+            Self::DeviceLimit => "device-limit",
             Self::Binding => "binding",
             Self::ReferenceInvalid => "reference-invalid",
             Self::ReferenceFails => "reference-fails",
@@ -351,8 +355,111 @@ pub fn open_executors(
             spec.describe(),
             executor.describe()
         );
+        if executor.device.limits.is_none() {
+            eprintln!(
+                "[xtask] warning: Amber on the `{}` target does not report the interface limits; shader interfaces are checked against the minimums Vulkan requires (build Amber from the pin: `cargo xtask oracles`)",
+                executor.target.label()
+            );
+        }
     }
     Ok(executors)
+}
+
+fn exceeded_interface_limit(limits: &InterfaceLimits, reflection: &Reflection) -> Option<String> {
+    let locations = |components: u32| components / 4;
+    let checks: Vec<(&str, u32, &str, u32)> = match reflection.model {
+        spirv::ExecutionModel::Vertex => vec![
+            (
+                "input",
+                reflection.input_extent.per_vertex,
+                "maxVertexInputAttributes",
+                limits.vertex_input_attributes,
+            ),
+            (
+                "output",
+                reflection.output_extent.per_vertex,
+                "maxVertexOutputComponents / 4",
+                locations(limits.vertex_output_components),
+            ),
+        ],
+        spirv::ExecutionModel::TessellationControl => vec![
+            (
+                "per-vertex input",
+                reflection.input_extent.per_vertex,
+                "maxTessellationControlPerVertexInputComponents / 4",
+                locations(limits.tessellation_control_per_vertex_input_components),
+            ),
+            (
+                "per-vertex output",
+                reflection.output_extent.per_vertex,
+                "maxTessellationControlPerVertexOutputComponents / 4",
+                locations(limits.tessellation_control_per_vertex_output_components),
+            ),
+            (
+                "patch output",
+                reflection.output_extent.patch,
+                "maxTessellationControlPerPatchOutputComponents / 4",
+                locations(limits.tessellation_control_per_patch_output_components),
+            ),
+        ],
+        spirv::ExecutionModel::TessellationEvaluation => vec![
+            (
+                "per-vertex input",
+                reflection.input_extent.per_vertex,
+                "maxTessellationEvaluationInputComponents / 4",
+                locations(limits.tessellation_evaluation_input_components),
+            ),
+            (
+                "patch input",
+                reflection.input_extent.patch,
+                "maxTessellationControlPerPatchOutputComponents / 4",
+                locations(limits.tessellation_control_per_patch_output_components),
+            ),
+            (
+                "output",
+                reflection.output_extent.per_vertex,
+                "maxTessellationEvaluationOutputComponents / 4",
+                locations(limits.tessellation_evaluation_output_components),
+            ),
+        ],
+        spirv::ExecutionModel::Geometry => vec![
+            (
+                "input",
+                reflection.input_extent.per_vertex,
+                "maxGeometryInputComponents / 4",
+                locations(limits.geometry_input_components),
+            ),
+            (
+                "output",
+                reflection.output_extent.per_vertex,
+                "maxGeometryOutputComponents / 4",
+                locations(limits.geometry_output_components),
+            ),
+        ],
+        spirv::ExecutionModel::Fragment => vec![
+            (
+                "input",
+                reflection.input_extent.per_vertex,
+                "maxFragmentInputComponents / 4",
+                locations(limits.fragment_input_components),
+            ),
+            (
+                "output",
+                reflection.output_extent.per_vertex,
+                "maxFragmentOutputAttachments",
+                limits.fragment_output_attachments,
+            ),
+        ],
+        _ => Vec::new(),
+    };
+    checks
+        .into_iter()
+        .find(|(_, used, _, limit)| used > limit)
+        .map(|(what, used, name, limit)| {
+            format!(
+                "the {what} interface uses {used} locations, the device allows {limit} ({name})"
+            )
+        })
 }
 
 pub fn target_labels(devices: &[(TargetId, Device)]) -> Vec<TargetId> {
@@ -598,6 +705,13 @@ impl Executor {
         Ok(())
     }
 
+    fn interface_limits(&self, reflection: &Reflection) -> Result<(), Outcome> {
+        let limits = self.device.limits.unwrap_or(InterfaceLimits::REQUIRED);
+        exceeded_interface_limit(&limits, reflection).map_or(Ok(()), |detail| {
+            Err(Outcome::skip(SkipReason::DeviceLimit, detail))
+        })
+    }
+
     fn tensor_limits(
         &self,
         model: spirv::ExecutionModel,
@@ -758,6 +872,7 @@ impl Executor {
                 self.why_missing(need),
             ));
         }
+        self.interface_limits(reflection)?;
         let inputs = Inputs {
             seed: name.to_string(),
             ..Inputs::default()
@@ -1422,6 +1537,27 @@ mod tests {
     }
 
     #[test]
+    fn skips_interfaces_beyond_the_device_limits() {
+        let mut reflection = Reflection::new(spirv::ExecutionModel::Vertex);
+        reflection.output_extent.per_vertex = 62;
+        let limits = InterfaceLimits {
+            vertex_output_components: 128,
+            ..InterfaceLimits::REQUIRED
+        };
+        assert_eq!(
+            exceeded_interface_limit(&limits, &reflection).as_deref(),
+            Some(
+                "the output interface uses 62 locations, the device allows 32 (maxVertexOutputComponents / 4)"
+            )
+        );
+        reflection.output_extent.per_vertex = 32;
+        assert_eq!(exceeded_interface_limit(&limits, &reflection), None);
+        let mut fragment = Reflection::new(spirv::ExecutionModel::Fragment);
+        fragment.output_extent.per_vertex = 5;
+        assert!(exceeded_interface_limit(&InterfaceLimits::REQUIRED, &fragment).is_some());
+    }
+
+    #[test]
     fn remote_targets_are_named_after_their_gpu() {
         let device = |name: &str, driver: &str| Device {
             name: name.into(),
@@ -1429,6 +1565,7 @@ mod tests {
             driver: driver.into(),
             cooperative: cooperative::Support::default(),
             tensors: None,
+            limits: None,
         };
         let remote = || TargetId::Remote(String::new());
         let labels = target_labels(&[
