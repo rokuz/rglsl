@@ -505,6 +505,27 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             "b = k + c[1];",
             " } break; }",
         ),
+        (
+            "constant switches",
+            "int s = 1;",
+            "switch (s) { case 1: { ",
+            "b = s + c[1];",
+            " } break; default: b = 4; break; }",
+        ),
+        (
+            "loops that never iterate",
+            "int z = 0;",
+            "do { if (z > 0) { ",
+            "b = z + c[1];",
+            " } } while (false);",
+        ),
+        (
+            "repeated values",
+            "",
+            "if (b > c[0]) { b = b * c[1] + c[0]; ",
+            "b = b * c[1] + b * c[1];",
+            " }",
+        ),
     ];
     for (name, prefix, open, core, close) in cases {
         compiles_at(depth, name, nested_body(prefix, open, core, close))?;

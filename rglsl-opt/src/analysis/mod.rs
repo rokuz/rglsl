@@ -1,9 +1,10 @@
 pub(crate) mod locals;
 
 use rglsl::ir::visit::Visitor;
+use rglsl::proc::{ResolveContext, ResolveError, TypeResolution};
 use rglsl::{
     AddressSpace, ArraySize, Block, Constant, Expression, Function, GlobalVariable, Handle,
-    LocalVariable, Override, Range, Statement, Type, TypeInner, UniqueArena,
+    LocalVariable, Module, Override, Range, Statement, Type, TypeInner, UniqueArena,
 };
 
 pub(crate) fn for_each_result(statement: &Statement, result: impl FnMut(Handle<Expression>)) {
@@ -111,4 +112,26 @@ pub(crate) fn elements(types: &UniqueArena<Type>, ty: Handle<Type>) -> Option<us
         TypeInner::Struct { ref members, .. } => Some(members.len()),
         _ => None,
     }
+}
+
+pub(crate) fn resolve_types(
+    module: &Module,
+    function: &Function,
+) -> Result<Vec<TypeResolution>, String> {
+    let context =
+        ResolveContext::with_locals(module, &function.local_variables, &function.arguments);
+    let mut resolved: Vec<TypeResolution> = Vec::with_capacity(function.expressions.len());
+    for (_, expression) in function.expressions.iter() {
+        let resolution = context
+            .resolve(expression, |operand| {
+                resolved.get(operand.index()).ok_or_else(|| {
+                    ResolveError::IncompatibleOperands(format!(
+                        "{operand:?} is used before it is defined"
+                    ))
+                })
+            })
+            .map_err(|error| error.to_string())?;
+        resolved.push(resolution);
+    }
+    Ok(resolved)
 }

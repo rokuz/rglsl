@@ -23,19 +23,29 @@ pub enum Inlining {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Reuse {
+    #[default]
+    Nested,
+    Block,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GpuParameters {
     pub inlining: Inlining,
     pub scalar_replacement: u32,
+    pub reuse: Reuse,
 }
 
 const DESKTOP: GpuParameters = GpuParameters {
     inlining: Inlining::Exhaustive,
     scalar_replacement: 1024,
+    reuse: Reuse::Nested,
 };
 
 const MOBILE: GpuParameters = GpuParameters {
     inlining: Inlining::NoGrowth,
     scalar_replacement: 64,
+    reuse: Reuse::Block,
 };
 
 #[derive(Debug)]

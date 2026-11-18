@@ -10,6 +10,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+half.workspace = true
 rglsl.workspace = true
 rglsl-types.workspace = true
 thiserror.workspace = true
