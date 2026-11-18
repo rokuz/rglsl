@@ -272,7 +272,7 @@ fn initialise_declaration(
     }
 }
 
-fn initialise(unit: &mut TranslationUnit, analysis: &Analysis, builder: &mut Builder) {
+pub(crate) fn initialise(unit: &mut TranslationUnit, analysis: &Analysis, builder: &mut Builder) {
     for external in &mut unit.external_declarations {
         if let ExternalDeclaration::Declaration(declaration) = external {
             initialise_declaration(analysis, builder, declaration);

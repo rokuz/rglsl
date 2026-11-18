@@ -393,6 +393,12 @@ fn prepare(
     }
     let unit = TranslationUnit::new(unit.external_declarations, builder.next_id());
     let text = emit(&unit)?;
+    let mut unit = parse_unit("donor", &text).map_err(|_| Rejected)?;
+    let analysis = analyze_shader(&unit, stage, true, None);
+    let mut builder = Builder::new(unit.next_id());
+    crate::reduce::guards::initialise(&mut unit, &analysis, &mut builder);
+    let unit = TranslationUnit::new(unit.external_declarations, builder.next_id());
+    let text = emit(&unit)?;
     let unit = parse_unit("donor", &text).map_err(|_| Rejected)?;
     let analysis = analyze_shader(&unit, stage, true, None);
     if analysis
