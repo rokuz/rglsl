@@ -14,6 +14,7 @@ TRANSIENT = (
     "Unable to create vulkan",
 )
 ATTEMPTS = 3
+TAIL_LINES = 20
 
 
 def first_line(*texts):
@@ -23,6 +24,15 @@ def first_line(*texts):
             if line:
                 return line[:300]
     return "no output"
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def last_lines(*texts):
+    lines = [line.rstrip() for text in texts for line in text.splitlines() if line.strip()]
+    return "\n".join(lines[-TAIL_LINES:])
 
 
 def kill_tree(process):
@@ -57,14 +67,15 @@ def run_amber(command, cwd, timeout):
             errors="replace",
         )
     except OSError as error:
-        return ("error", "starting amber: %s" % error), ""
+        return ("error", "starting amber: %s" % error), "", "", None, ""
     try:
         out, err = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_tree(process)
-        process.communicate()
-        return ("timeout", "amber timed out"), ""
-    return classify(process.returncode, out, err), out
+        out, err = process.communicate()
+        return ("timeout", "amber timed out"), "", last_lines(err or "", out or ""), process.pid, "timeout"
+    code = process.returncode
+    return classify(code, out, err), out, last_lines(err, out), process.pid, str(code)
 
 
 def transient(status):
@@ -72,7 +83,7 @@ def transient(status):
 
 
 def run_job(settings, job):
-    amber, version, timeout, base, results, device = settings
+    amber, version, timeout, base, results, device, attempts = settings
     index, directory, script, dumps, layer, capture = job
     cwd = os.path.join(base, directory)
     dump = os.path.join(cwd, "batch-%s.dump.txt" % index)
@@ -91,11 +102,18 @@ def run_job(settings, job):
     if "timing" in capture:
         command.append("--log-execution-timing")
     command.append(script)
-    for attempt in range(ATTEMPTS):
-        status, out = run_amber(command, cwd, timeout)
-        if not transient(status):
+    start = now_ms()
+    for attempt in range(attempts):
+        status, out, tail, pid, code = run_amber(command, cwd, timeout)
+        if not transient(status) or attempt + 1 == attempts:
             break
         time.sleep(2.0 * (attempt + 1))
+    end = now_ms()
+    with open(os.path.join(results, "%s.run" % index), "w", encoding="utf-8") as file:
+        file.write("start %d\nend %d\npid %s\ncode %s\n" % (start, end, "" if pid is None else pid, code))
+    if status[0] != "ok" and tail:
+        with open(os.path.join(results, "%s.tail" % index), "w", encoding="utf-8") as file:
+            file.write(tail)
     if status[0] == "ok" and dumps:
         try:
             shutil.copyfile(dump, os.path.join(results, "%s.dump" % index))
@@ -132,6 +150,7 @@ def read_manifest(path):
 def main():
     archive, workdir, manifest, output, amber, workers, timeout, version = sys.argv[1:9]
     device = sys.argv[9] if len(sys.argv) > 9 else ""
+    attempts = max(1, int(sys.argv[10])) if len(sys.argv) > 10 else ATTEMPTS
     os.makedirs(workdir, exist_ok=True)
     with tarfile.open(archive) as tar:
         tar.extractall(workdir, filter="data")
@@ -139,9 +158,12 @@ def main():
     results = os.path.join(workdir, "results")
     os.makedirs(results, exist_ok=True)
     jobs = read_manifest(os.path.join(workdir, manifest))
-    settings = (amber, version, float(timeout), workdir, results, device)
+    settings = (amber, version, float(timeout), workdir, results, device, attempts)
+    start = now_ms()
     with concurrent.futures.ThreadPoolExecutor(max(1, int(workers))) as pool:
         list(pool.map(lambda job: run_job(settings, job), jobs))
+    with open(os.path.join(results, "batch.run"), "w", encoding="utf-8") as file:
+        file.write("start %d\nend %d\n" % (start, now_ms()))
     with tarfile.open(output, "w:gz") as tar:
         tar.add(results, arcname="results")
     shutil.rmtree(workdir, ignore_errors=True)

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use super::batch::{Capture, Job, STATISTICS, TIMING};
+use super::batch::{Capture, Ending, Job, STATISTICS, TIMING, Trace};
 use super::cooperative::{self, Support};
 use crate::process::{self, Exit};
 
@@ -167,12 +167,29 @@ impl Amber {
         })
     }
 
-    pub fn run(&self, job: &Job) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    pub fn run_traced(&self, job: &Job) -> (Result<BTreeMap<String, Vec<u8>>, String>, Trace) {
+        let start_ms = now_ms();
+        let (result, ending, tail) = self.run_once(job);
+        let trace = Trace {
+            start_ms,
+            end_ms: now_ms(),
+            pid: None,
+            ending,
+            tail: if result.is_ok() { String::new() } else { tail },
+        };
+        (result, trace)
+    }
+
+    fn run_once(&self, job: &Job) -> AmberRun {
         if job.tensor_layer && self.layer.is_none() {
-            return Err(format!(
-                "the script needs the ML emulation layer, which is not built: run `cargo xtask oracles` or set {}",
-                crate::oracles::TENSOR_LAYER_VAR
-            ));
+            return (
+                Err(format!(
+                    "the script needs the ML emulation layer, which is not built: run `cargo xtask oracles` or set {}",
+                    crate::oracles::TENSOR_LAYER_VAR
+                )),
+                None,
+                String::new(),
+            );
         }
         let out = job.dir.join(format!("{}.dump.txt", job.script));
         let statistics = job.dir.join(job.statistics_file());
@@ -193,29 +210,57 @@ impl Amber {
             command.arg("--log-execution-timing");
         }
         command.current_dir(&job.dir).arg(&job.script);
-        let output = process::run(command, self.timeout).map_err(|e| format!("{e:#}"))?;
+        let output = match process::run(command, self.timeout) {
+            Ok(output) => output,
+            Err(error) => return (Err(format!("{error:#}")), None, String::new()),
+        };
+        let tail = last_lines(&output.stderr, &output.stdout, TAIL_LINES);
+        let ending = match output.exit {
+            Exit::Code(code) => Ending::Exited(i64::from(code)),
+            Exit::Signal => Ending::Crashed(None),
+            Exit::Timeout => Ending::TimedOut,
+        };
         match output.exit {
             Exit::Code(0) => {}
             Exit::Code(code) => {
-                return Err(format!(
-                    "amber exited with {code}: {}",
-                    first_line(&output.stderr, &output.stdout)
-                ));
+                return (
+                    Err(format!(
+                        "amber exited with {code}: {}",
+                        first_line(&output.stderr, &output.stdout)
+                    )),
+                    Some(ending),
+                    tail,
+                );
             }
             Exit::Signal => {
-                return Err(format!(
-                    "amber crashed: {}",
-                    first_line(&output.stderr, &output.stdout)
-                ));
+                return (
+                    Err(format!(
+                        "amber crashed: {}",
+                        first_line(&output.stderr, &output.stdout)
+                    )),
+                    Some(ending),
+                    tail,
+                );
             }
-            Exit::Timeout => return Err("amber timed out".into()),
+            Exit::Timeout => return (Err("amber timed out".into()), Some(ending), tail),
         }
         let mut outputs = if job.dumps.is_empty() {
             BTreeMap::new()
         } else {
-            let text =
-                std::fs::read_to_string(&out).map_err(|e| format!("reading the dump: {e}"))?;
-            parse_dump(&text)?
+            let text = match std::fs::read_to_string(&out) {
+                Ok(text) => text,
+                Err(error) => {
+                    return (
+                        Err(format!("reading the dump: {error}")),
+                        Some(ending),
+                        tail,
+                    );
+                }
+            };
+            match parse_dump(&text) {
+                Ok(outputs) => outputs,
+                Err(error) => return (Err(error), Some(ending), tail),
+            }
         };
         add_captures(
             &mut outputs,
@@ -223,8 +268,33 @@ impl Amber {
             std::fs::read(&statistics).ok(),
             &output.stdout,
         );
-        Ok(outputs)
+        (Ok(outputs), Some(ending), tail)
     }
+}
+
+type AmberRun = (
+    Result<BTreeMap<String, Vec<u8>>, String>,
+    Option<Ending>,
+    String,
+);
+
+pub const TAIL_LINES: usize = 20;
+
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+pub fn last_lines(primary: &str, secondary: &str, count: usize) -> String {
+    let lines: Vec<&str> = primary
+        .lines()
+        .chain(secondary.lines())
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let start = lines.len().saturating_sub(count);
+    lines.get(start..).unwrap_or_default().join("\n")
 }
 
 pub fn add_captures(
