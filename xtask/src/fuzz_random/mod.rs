@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use self::classify::{Class, Ran, Watch, failure};
+use self::classify::{Class, Ran, ReferenceVerdict, Side, Watch, failure, judge_reference};
 use self::quarantine::Mode;
 use crate::exec::batch::Job;
 use crate::exec::plan::Plan;
@@ -330,8 +330,8 @@ fn qualify(
     }
     let Some((reference_plan, reference_outputs)) = reference.and_then(|r| expected.get(&r)) else {
         return (
-            Class::NoReference,
-            "glslang's unoptimized module of the family's reference did not run".into(),
+            Class::ReferenceNotQualified,
+            "not run: reference not qualified".into(),
         );
     };
     match fuzz_exec::compare_runs((reference_plan, reference_outputs), (plan, outputs)) {
@@ -341,28 +341,6 @@ fn qualify(
             format!("differs from glslang's reference: {difference}"),
         ),
     }
-}
-
-fn expectation(
-    context: &Run<'_>,
-    ready: &BTreeMap<Key, (Box<Plan>, Job)>,
-    runs: &BTreeMap<Key, Ran>,
-) -> Expected {
-    let references: BTreeSet<usize> = context
-        .shaders
-        .iter()
-        .filter_map(|shader| shader.reference)
-        .collect();
-    let mut expected = Expected::new();
-    for reference in references {
-        let key = (Mode::Unoptimized, reference);
-        if let (Some((plan, _)), Some(ran)) = (ready.get(&key), runs.get(&key))
-            && let (Ok(outputs), None) = (&ran.result, failure(ran))
-        {
-            expected.insert(reference, (plan.clone(), outputs.clone()));
-        }
-    }
-    expected
 }
 
 fn run_target(context: &Run<'_>, executor: &Executor) -> Result<TargetRun> {
@@ -418,94 +396,56 @@ fn run_target(context: &Run<'_>, executor: &Executor) -> Result<TargetRun> {
             None => {}
         }
     }
-    eprintln!(
-        "[xtask] qualifying {} glslang modules on the {label} target",
-        ready.len()
-    );
-    let all: Vec<Key> = ready.keys().copied().collect();
-    let mut runs = run_keys(&mut watch, &ready, &all, false);
-    let mut firsts: BTreeMap<Key, (Class, String)> = BTreeMap::new();
-
-    let references: BTreeSet<Key> = context
-        .shaders
-        .iter()
-        .filter_map(|shader| shader.reference)
-        .map(|reference| (Mode::Unoptimized, reference))
-        .filter(|key| ready.contains_key(key))
-        .collect();
-    let failing_references: BTreeMap<Key, (Class, String)> = references
-        .iter()
-        .filter_map(|key| {
-            let failed = runs.get(key).and_then(failure)?;
-            failed.0.needs_confirmation().then_some((*key, failed))
-        })
-        .collect();
-    confirm(
-        &mut watch,
-        &ready,
-        failing_references,
-        &mut runs,
-        &mut firsts,
-    );
-    let mut expected = expectation(context, &ready, &runs);
-
-    let mut classes: BTreeMap<Key, (Class, String)> = BTreeMap::new();
-    for (key, (plan, _)) in &ready {
-        if let Some(ran) = runs.get(key) {
-            classes.insert(*key, qualify(context, *key, ran, plan, &expected));
-        }
-    }
-    let suspects: BTreeMap<Key, (Class, String)> = classes
-        .iter()
-        .filter(|(key, (class, _))| class.needs_confirmation() && !firsts.contains_key(key))
-        .map(|(key, seen)| (*key, seen.clone()))
-        .collect();
-    let refresh: Vec<Key> = suspects
-        .iter()
-        .filter(|(_, (class, _))| *class == Class::GlslangWrong)
-        .filter_map(|((_, index), _)| context.shaders.get(*index)?.reference)
-        .map(|reference| (Mode::Unoptimized, reference))
-        .filter(|key| !firsts.contains_key(key) && !suspects.contains_key(key))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    if !suspects.is_empty() {
-        eprintln!(
-            "[xtask] confirming {} glslang modules alone on the {label} target",
-            suspects.len()
-        );
-        for (key, ran) in run_keys(&mut watch, &ready, &refresh, true) {
-            if ran.result.is_ok() && failure(&ran).is_none() {
-                runs.insert(key, ran);
+    let mut qualification = Qualification {
+        context,
+        executor,
+        label: &label,
+        ready: &ready,
+        runs: BTreeMap::new(),
+        firsts: BTreeMap::new(),
+    };
+    let (verdicts, expected) = qualification.references(&mut watch, &cells);
+    for (reference, verdict) in &verdicts {
+        let sides = [
+            (Mode::Unoptimized, Some(&verdict.unoptimized)),
+            (Mode::Optimized, verdict.optimized.as_ref()),
+        ];
+        for (mode, side) in sides {
+            let key = (mode, *reference);
+            if let (Some((class, note)), true) = (side, ready.contains_key(&key)) {
+                cells.insert(key, qualification.finish(key, *class, note.clone())?);
             }
         }
-        expected = expectation(context, &ready, &runs);
-        confirm(&mut watch, &ready, suspects, &mut runs, &mut firsts);
     }
-    for key in firsts.keys() {
-        if let (Some((plan, _)), Some(ran)) = (ready.get(key), runs.get(key)) {
-            classes.insert(*key, qualify(context, *key, ran, plan, &expected));
+    let mut variants = Vec::new();
+    for key in ready.keys() {
+        let reference = context.shaders.get(key.1).and_then(|s| s.reference);
+        if reference == Some(key.1) {
+            continue;
         }
-    }
-    for (key, (class, note)) in classes {
-        let mut cell = Cell::new(class, note);
-        if let Some((first, first_note)) = firsts.get(&key) {
-            if first.hangs_the_driver() && class.hangs_the_driver() {
-                cell.entry = Some(add_to_quarantine(
-                    context, executor, &label, key, &cell, first_note,
-                )?);
-            } else if *first != class || class == Class::Pass {
-                cell.note = format!(
-                    "{}{}in the batch: {}: {first_note}",
-                    cell.note,
-                    if cell.note.is_empty() { "" } else { "; " },
-                    first.label()
+        match reference.and_then(|r| verdicts.get(&r)) {
+            Some(verdict) if verdict.qualified() => variants.push(*key),
+            Some(verdict) => {
+                cells.insert(
+                    *key,
+                    Cell::new(
+                        Class::ReferenceNotQualified,
+                        format!("not run: reference not qualified: {}", verdict.reason()),
+                    ),
+                );
+            }
+            None => {
+                cells.insert(
+                    *key,
+                    Cell::new(
+                        Class::ReferenceNotQualified,
+                        "not run: reference not qualified: glslang did not compile it".into(),
+                    ),
                 );
             }
         }
-        cells.insert(key, cell);
     }
-
+    let expected = qualification.variants(&mut watch, &variants, expected, &mut cells)?;
     run_rglsl(context, executor, &mut watch, &mut cells, &expected);
     Ok(TargetRun {
         label,
@@ -517,21 +457,207 @@ fn run_target(context: &Run<'_>, executor: &Executor) -> Result<TargetRun> {
     })
 }
 
-fn confirm(
-    watch: &mut Watch<'_>,
-    ready: &BTreeMap<Key, (Box<Plan>, Job)>,
-    seen: BTreeMap<Key, (Class, String)>,
-    runs: &mut BTreeMap<Key, Ran>,
-    firsts: &mut BTreeMap<Key, (Class, String)>,
-) {
-    if seen.is_empty() {
-        return;
+struct Qualification<'a, 'b> {
+    context: &'a Run<'b>,
+    executor: &'a Executor,
+    label: &'a str,
+    ready: &'a BTreeMap<Key, (Box<Plan>, Job)>,
+    runs: BTreeMap<Key, Ran>,
+    firsts: BTreeMap<Key, (Class, String)>,
+}
+
+impl Qualification<'_, '_> {
+    fn confirm(&mut self, watch: &mut Watch<'_>, seen: BTreeMap<Key, (Class, String)>) {
+        if seen.is_empty() {
+            return;
+        }
+        let keys: Vec<Key> = seen.keys().copied().collect();
+        for (key, ran) in run_keys(watch, self.ready, &keys, true) {
+            self.runs.insert(key, ran);
+        }
+        self.firsts.extend(seen);
     }
-    let keys: Vec<Key> = seen.keys().copied().collect();
-    for (key, ran) in run_keys(watch, ready, &keys, true) {
-        runs.insert(key, ran);
+
+    fn side<'s>(
+        &'s self,
+        key: Key,
+        failed: Option<&'s (Class, String)>,
+        cells: &'s BTreeMap<Key, Cell>,
+    ) -> Side<'s> {
+        if let Some((class, note)) = failed {
+            return Side::Failed(*class, note);
+        }
+        match (self.ready.get(&key), self.runs.get(&key)) {
+            (
+                Some((plan, _)),
+                Some(Ran {
+                    result: Ok(outputs),
+                    ..
+                }),
+            ) => Side::Ran(plan, outputs),
+            (Some(_), _) => Side::Failed(Class::NotRun, "no result"),
+            (None, _) => match cells.get(&key) {
+                Some(cell) => Side::Failed(cell.class, &cell.note),
+                None => Side::Failed(Class::NotCompiled, "glslang did not compile it"),
+            },
+        }
     }
-    firsts.extend(seen);
+
+    fn verdict(&self, reference: usize, cells: &BTreeMap<Key, Cell>) -> ReferenceVerdict {
+        let failed = |key: Key| {
+            self.runs
+                .get(&key)
+                .and_then(failure)
+                .filter(|_| self.ready.contains_key(&key))
+        };
+        let unoptimized_key = (Mode::Unoptimized, reference);
+        let optimized_key = (Mode::Optimized, reference);
+        let unoptimized_failure = failed(unoptimized_key);
+        let optimized_failure = failed(optimized_key);
+        let unoptimized = self.side(unoptimized_key, unoptimized_failure.as_ref(), cells);
+        let optimized = self
+            .context
+            .modes
+            .contains(&Mode::Optimized)
+            .then(|| self.side(optimized_key, optimized_failure.as_ref(), cells));
+        judge_reference(unoptimized, optimized)
+    }
+
+    fn references(
+        &mut self,
+        watch: &mut Watch<'_>,
+        cells: &BTreeMap<Key, Cell>,
+    ) -> (BTreeMap<usize, ReferenceVerdict>, Expected) {
+        let references: BTreeSet<usize> = self
+            .context
+            .shaders
+            .iter()
+            .filter_map(|shader| shader.reference)
+            .collect();
+        let keys: Vec<Key> = self
+            .ready
+            .keys()
+            .filter(|key| references.contains(&key.1))
+            .copied()
+            .collect();
+        eprintln!(
+            "[xtask] qualifying {} glslang reference modules on the {} target",
+            keys.len(),
+            self.label
+        );
+        self.runs = run_keys(watch, self.ready, &keys, false);
+        let failing: BTreeMap<Key, (Class, String)> = keys
+            .iter()
+            .filter_map(|key| {
+                let failed = self.runs.get(key).and_then(failure)?;
+                failed.0.needs_confirmation().then_some((*key, failed))
+            })
+            .collect();
+        self.confirm(watch, failing);
+        let mut disagreeing = BTreeMap::new();
+        for reference in &references {
+            let verdict = self.verdict(*reference, cells);
+            if verdict.unoptimized.0 == Class::GlslangWrong {
+                for mode in [Mode::Unoptimized, Mode::Optimized] {
+                    let key = (mode, *reference);
+                    if !self.firsts.contains_key(&key) {
+                        disagreeing.insert(key, verdict.unoptimized.clone());
+                    }
+                }
+            }
+        }
+        self.confirm(watch, disagreeing);
+        let mut verdicts = BTreeMap::new();
+        let mut expected = Expected::new();
+        for reference in references {
+            let verdict = self.verdict(reference, cells);
+            let key = (Mode::Unoptimized, reference);
+            if verdict.qualified()
+                && let (
+                    Some((plan, _)),
+                    Some(Ran {
+                        result: Ok(outputs),
+                        ..
+                    }),
+                ) = (self.ready.get(&key), self.runs.get(&key))
+            {
+                expected.insert(reference, (plan.clone(), outputs.clone()));
+            }
+            verdicts.insert(reference, verdict);
+        }
+        (verdicts, expected)
+    }
+
+    fn variants(
+        &mut self,
+        watch: &mut Watch<'_>,
+        keys: &[Key],
+        expected: Expected,
+        cells: &mut BTreeMap<Key, Cell>,
+    ) -> Result<Expected> {
+        eprintln!(
+            "[xtask] qualifying {} glslang variant modules on the {} target",
+            keys.len(),
+            self.label
+        );
+        self.runs.extend(run_keys(watch, self.ready, keys, false));
+        let classify = |this: &Self, key: &Key, expected: &Expected| {
+            let (plan, _) = this.ready.get(key)?;
+            let ran = this.runs.get(key)?;
+            Some(qualify(this.context, *key, ran, plan, expected))
+        };
+        let mut classes: BTreeMap<Key, (Class, String)> = keys
+            .iter()
+            .filter_map(|key| Some((*key, classify(self, key, &expected)?)))
+            .collect();
+        let suspects: BTreeMap<Key, (Class, String)> = classes
+            .iter()
+            .filter(|(_, (class, _))| class.needs_confirmation())
+            .map(|(key, seen)| (*key, seen.clone()))
+            .collect();
+        if !suspects.is_empty() {
+            eprintln!(
+                "[xtask] confirming {} glslang modules alone on the {} target",
+                suspects.len(),
+                self.label
+            );
+        }
+        let confirmed: Vec<Key> = suspects.keys().copied().collect();
+        self.confirm(watch, suspects);
+        for key in confirmed {
+            if let Some(class) = classify(self, &key, &expected) {
+                classes.insert(key, class);
+            }
+        }
+        for (key, (class, note)) in classes {
+            cells.insert(key, self.finish(key, class, note)?);
+        }
+        Ok(expected)
+    }
+
+    fn finish(&self, key: Key, class: Class, note: String) -> Result<Cell> {
+        let mut cell = Cell::new(class, note);
+        if let Some((first, first_note)) = self.firsts.get(&key) {
+            if first.hangs_the_driver() && class.hangs_the_driver() {
+                cell.entry = Some(add_to_quarantine(
+                    self.context,
+                    self.executor,
+                    self.label,
+                    key,
+                    &cell,
+                    first_note,
+                )?);
+            } else if *first != class || class == Class::Pass {
+                cell.note = format!(
+                    "{}{}in the batch: {}: {first_note}",
+                    cell.note,
+                    if cell.note.is_empty() { "" } else { "; " },
+                    first.label()
+                );
+            }
+        }
+        Ok(cell)
+    }
 }
 
 fn add_to_quarantine(

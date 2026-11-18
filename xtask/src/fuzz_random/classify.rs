@@ -1,6 +1,8 @@
-use crate::exec::Executor;
 use crate::exec::batch::{self, Ending, Job, JobError, JobResult, Trace};
 use crate::exec::events::{self, ResetHistory};
+use crate::exec::plan::Plan;
+use crate::exec::{Executor, Outputs};
+use crate::fuzz_exec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Class {
@@ -13,7 +15,7 @@ pub enum Class {
     GlslangWrong,
     NotRun,
     Refused,
-    NoReference,
+    ReferenceNotQualified,
     NotCompiled,
     Quarantined,
 }
@@ -30,7 +32,7 @@ impl Class {
             Self::GlslangWrong => "glslang-wrong",
             Self::NotRun => "not-run",
             Self::Refused => "refused",
-            Self::NoReference => "no-reference",
+            Self::ReferenceNotQualified => "reference-not-qualified",
             Self::NotCompiled => "not-compiled",
             Self::Quarantined => "quarantined",
         }
@@ -123,6 +125,100 @@ pub fn failure(ran: &Ran) -> Option<(Class, String)> {
         });
     }
     Some((Class::AmberError, with_exit(message, &ran.trace)))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Side<'a> {
+    Ran(&'a Plan, &'a Outputs),
+    Failed(Class, &'a str),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceVerdict {
+    pub unoptimized: (Class, String),
+    pub optimized: Option<(Class, String)>,
+}
+
+impl ReferenceVerdict {
+    pub fn qualified(&self) -> bool {
+        self.unoptimized.0 == Class::Pass
+            && self
+                .optimized
+                .as_ref()
+                .is_none_or(|(class, _)| *class == Class::Pass)
+    }
+
+    pub fn reason(&self) -> String {
+        if self.unoptimized.0 == Class::GlslangWrong {
+            return self.unoptimized.1.clone();
+        }
+        let mut parts = Vec::new();
+        for (module, side) in [
+            ("glslang's unoptimized reference", Some(&self.unoptimized)),
+            ("glslang -O's reference", self.optimized.as_ref()),
+        ] {
+            if let Some((class, note)) = side
+                && *class != Class::Pass
+                && *class != Class::ReferenceNotQualified
+            {
+                parts.push(format!("{module}: {}: {note}", class.label()));
+            }
+        }
+        if parts.is_empty() {
+            "the reference is qualified".into()
+        } else {
+            parts.join("; ")
+        }
+    }
+}
+
+pub fn judge_reference(unoptimized: Side<'_>, optimized: Option<Side<'_>>) -> ReferenceVerdict {
+    let own = |side: Side<'_>| match side {
+        Side::Ran(..) => (Class::Pass, String::new()),
+        Side::Failed(class, note) => (class, note.to_string()),
+    };
+    let Some(optimized) = optimized else {
+        return ReferenceVerdict {
+            unoptimized: own(unoptimized),
+            optimized: None,
+        };
+    };
+    if let (Side::Ran(plan, outputs), Side::Ran(optimized_plan, optimized_outputs)) =
+        (unoptimized, optimized)
+    {
+        return match fuzz_exec::compare_runs((plan, outputs), (optimized_plan, optimized_outputs)) {
+            Ok(_) => ReferenceVerdict {
+                unoptimized: (Class::Pass, String::new()),
+                optimized: Some((Class::Pass, String::new())),
+            },
+            Err(difference) => {
+                let note = format!(
+                    "glslang's unoptimized and -O references render differently: {difference}"
+                );
+                ReferenceVerdict {
+                    unoptimized: (Class::GlslangWrong, note.clone()),
+                    optimized: Some((Class::GlslangWrong, note)),
+                }
+            }
+        };
+    }
+    let mut verdict = ReferenceVerdict {
+        unoptimized: own(unoptimized),
+        optimized: Some(own(optimized)),
+    };
+    let reason = verdict.reason();
+    for side in [Some(&mut verdict.unoptimized), verdict.optimized.as_mut()]
+        .into_iter()
+        .flatten()
+    {
+        if side.0 == Class::Pass {
+            *side = (
+                Class::ReferenceNotQualified,
+                format!("the reference is not qualified: {reason}"),
+            );
+        }
+    }
+    verdict
 }
 
 #[derive(Debug)]
@@ -286,6 +382,90 @@ mod tests {
         assert_eq!(class(&reset_and_lost), Some(Class::DriverReset));
     }
 
+    fn plan() -> anyhow::Result<Plan> {
+        use crate::exec::plan::{Inputs, Target};
+        use crate::exec::reflect::{Reflection, Scalar, ScalarKind, Slot};
+        let reflection = Reflection::new(spirv::ExecutionModel::GLCompute);
+        let mut plan = Plan::new(&reflection, &Inputs::default())
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
+        plan.targets.push(Target {
+            name: "buffer".into(),
+            buffer: "b".into(),
+            dump: "dump:0:0".into(),
+            slots: vec![Slot {
+                offset: 0,
+                scalar: Scalar {
+                    kind: ScalarKind::Uint,
+                    width: 32,
+                },
+            }],
+        });
+        Ok(plan)
+    }
+
+    fn outputs(value: u32) -> Outputs {
+        [("dump:0:0".to_string(), value.to_le_bytes().to_vec())]
+            .into_iter()
+            .collect()
+    }
+
+    #[test]
+    fn a_reference_is_qualified_only_if_both_glslang_modules_agree() -> anyhow::Result<()> {
+        let plan = plan()?;
+        let (one, two) = (outputs(1), outputs(2));
+        let agree = judge_reference(Side::Ran(&plan, &one), Some(Side::Ran(&plan, &one)));
+        assert!(agree.qualified());
+        assert_eq!(agree.unoptimized.0, Class::Pass);
+        assert_eq!(agree.optimized.as_ref().map(|s| s.0), Some(Class::Pass));
+
+        let differ = judge_reference(Side::Ran(&plan, &one), Some(Side::Ran(&plan, &two)));
+        assert!(!differ.qualified());
+        assert_eq!(differ.unoptimized.0, Class::GlslangWrong);
+        assert_eq!(
+            differ.optimized.as_ref().map(|s| s.0),
+            Some(Class::GlslangWrong)
+        );
+        assert!(differ.unoptimized.1.contains("render differently"));
+        assert_eq!(differ.reason(), differ.unoptimized.1);
+
+        let hang = judge_reference(
+            Side::Ran(&plan, &one),
+            Some(Side::Failed(Class::Hang, "device lost")),
+        );
+        assert!(!hang.qualified());
+        assert_eq!(hang.unoptimized.0, Class::ReferenceNotQualified);
+        assert!(
+            hang.unoptimized
+                .1
+                .contains("glslang -O's reference: hang: device lost")
+        );
+        assert_eq!(hang.optimized.as_ref().map(|s| s.0), Some(Class::Hang));
+
+        let crash = judge_reference(
+            Side::Failed(Class::AmberCrash, "0xC0000005"),
+            Some(Side::Ran(&plan, &one)),
+        );
+        assert!(!crash.qualified());
+        assert_eq!(crash.unoptimized.0, Class::AmberCrash);
+        assert_eq!(
+            crash.optimized.as_ref().map(|s| s.0),
+            Some(Class::ReferenceNotQualified)
+        );
+
+        let quarantined = judge_reference(
+            Side::Failed(Class::Quarantined, "in tests/fuzz-quarantine"),
+            Some(Side::Failed(Class::NotCompiled, "glslang -O failed")),
+        );
+        assert!(!quarantined.qualified());
+        assert!(quarantined.reason().contains("quarantined"));
+
+        let unoptimized_only = judge_reference(Side::Ran(&plan, &two), None);
+        assert!(unoptimized_only.qualified());
+        assert_eq!(unoptimized_only.optimized, None);
+        assert!(!judge_reference(Side::Failed(Class::Hang, "timeout"), None).qualified());
+        Ok(())
+    }
+
     #[test]
     fn only_driver_hangs_go_to_quarantine() {
         for class in [Class::Hang, Class::DriverReset, Class::DriverCrash] {
@@ -300,7 +480,7 @@ mod tests {
             Class::Pass,
             Class::NotRun,
             Class::Refused,
-            Class::NoReference,
+            Class::ReferenceNotQualified,
         ] {
             assert!(!class.needs_confirmation());
         }
