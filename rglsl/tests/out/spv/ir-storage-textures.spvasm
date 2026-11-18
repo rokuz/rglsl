@@ -43,34 +43,34 @@ OpDecorate %15 Binding 2
 %14 = OpVariable  %10  UniformConstant
 %15 = OpVariable  %12  UniformConstant
 %18 = OpTypeFunction %2
-%22 = OpTypeInt 32 0
-%23 = OpConstant  %22  0
-%24 = OpTypeVector %22 2
-%25 = OpConstantComposite  %24  %23 %23
-%27 = OpTypeVector %4 4
-%36 = OpConstant  %4  0
-%37 = OpConstantComposite  %27  %36 %36 %36 %36
+%19 = OpTypeInt 32 0
+%20 = OpConstant  %19  0
+%21 = OpTypeVector %19 2
+%22 = OpConstantComposite  %21  %20 %20
+%24 = OpTypeVector %4 4
+%33 = OpConstant  %4  0
+%34 = OpConstantComposite  %24  %33 %33 %33 %33
 %17 = OpFunction  %2  None %18
 %16 = OpLabel
-%19 = OpLoad  %3  %7
-%20 = OpLoad  %5  %9
-%21 = OpLoad  %6  %11
-OpBranch %26
-%26 = OpLabel
-%28 = OpImageRead  %27  %19 %25
-%29 = OpImageRead  %27  %20 %25
-%30 = OpImageRead  %27  %21 %25
+OpBranch %23
+%23 = OpLabel
+%25 = OpLoad  %3  %7
+%26 = OpImageRead  %24  %25 %22
+%27 = OpLoad  %5  %9
+%28 = OpImageRead  %24  %27 %22
+%29 = OpLoad  %6  %11
+%30 = OpImageRead  %24  %29 %22
 OpReturn
 OpFunctionEnd
 %32 = OpFunction  %2  None %18
 %31 = OpLabel
-%33 = OpLoad  %3  %13
-%34 = OpLoad  %5  %14
-%35 = OpLoad  %6  %15
-OpBranch %38
-%38 = OpLabel
-OpImageWrite %33 %25 %37
-OpImageWrite %34 %25 %37
-OpImageWrite %35 %25 %37
+OpBranch %35
+%35 = OpLabel
+%36 = OpLoad  %3  %13
+OpImageWrite %36 %22 %34
+%37 = OpLoad  %5  %14
+OpImageWrite %37 %22 %34
+%38 = OpLoad  %6  %15
+OpImageWrite %38 %22 %34
 OpReturn
 OpFunctionEnd

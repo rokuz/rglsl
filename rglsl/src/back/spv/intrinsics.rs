@@ -177,7 +177,7 @@ impl BlockContext<'_> {
                         && self.ir_module.global_variables[global].space
                             == crate::AddressSpace::Handle
                     {
-                        self.get_handle_id(value)?
+                        self.get_handle_id(value, block)?
                     } else {
                         self.cached.get(value)?
                     }

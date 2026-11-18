@@ -184,18 +184,18 @@ OpDecorate %65 BuiltIn FrontFacing
 %606 = OpTypeStruct %7 %7
 %607 = OpTypePointer Function %606
 %673 = OpTypeFunction %2
-%684 = OpConstantComposite  %4  %88 %88 %88
-%685 = OpConstant  %5  0.16
-%686 = OpConstantComposite  %4  %89 %89 %89
-%687 = OpConstant  %3  0
-%697 = OpTypePointer Function %26
-%707 = OpTypePointer Function %3
-%712 = OpTypePointer Uniform %7
-%717 = OpTypeSampledImage %19
-%724 = OpTypePointer Uniform %5
-%745 = OpTypePointer Input %5
-%746 = OpConstant  %10  3
-%755 = OpTypeVector %25 3
+%674 = OpConstantComposite  %4  %88 %88 %88
+%675 = OpConstant  %5  0.16
+%676 = OpConstantComposite  %4  %89 %89 %89
+%677 = OpConstant  %3  0
+%687 = OpTypePointer Function %26
+%697 = OpTypePointer Function %3
+%702 = OpTypePointer Uniform %7
+%708 = OpTypeSampledImage %19
+%718 = OpTypePointer Uniform %5
+%739 = OpTypePointer Input %5
+%740 = OpConstant  %10  3
+%749 = OpTypeVector %25 3
 %855 = OpTypePointer Uniform %9
 %856 = OpTypePointer Uniform %10
 %866 = OpTypePointer Uniform %12
@@ -915,340 +915,340 @@ OpReturnValue %670
 OpFunctionEnd
 %672 = OpFunction  %2  None %673
 %671 = OpLabel
-%709 = OpVariable  %236  Function
-%705 = OpVariable  %236  Function
-%702 = OpVariable  %236  Function
-%699 = OpVariable  %340  Function
+%699 = OpVariable  %236  Function
 %695 = OpVariable  %236  Function
-%692 = OpVariable  %72  Function
+%692 = OpVariable  %236  Function
 %689 = OpVariable  %340  Function
-%708 = OpVariable  %707  Function
-%704 = OpVariable  %236  Function
-%701 = OpVariable  %72  Function
-%698 = OpVariable  %72  Function
+%685 = OpVariable  %236  Function
+%682 = OpVariable  %72  Function
+%679 = OpVariable  %340  Function
+%698 = OpVariable  %697  Function
 %694 = OpVariable  %236  Function
 %691 = OpVariable  %72  Function
-%688 = OpVariable  %340  Function
-%710 = OpVariable  %236  Function
-%706 = OpVariable  %707  Function
-%703 = OpVariable  %236  Function
+%688 = OpVariable  %72  Function
+%684 = OpVariable  %236  Function
+%681 = OpVariable  %72  Function
+%678 = OpVariable  %340  Function
 %700 = OpVariable  %236  Function
 %696 = OpVariable  %697  Function
 %693 = OpVariable  %236  Function
-%690 = OpVariable  %72  Function
-%674 = OpLoad  %19  %45
-%675 = OpLoad  %20  %47
-%676 = OpLoad  %19  %53
-%677 = OpLoad  %20  %54
-%678 = OpLoad  %19  %57
-%679 = OpLoad  %20  %58
-%680 = OpLoad  %19  %59
-%681 = OpLoad  %20  %60
-%682 = OpLoad  %19  %63
-%683 = OpLoad  %20  %64
-OpBranch %711
-%711 = OpLabel
-%713 = OpAccessChain  %712  %43 %349
-%714 = OpLoad  %7  %713
-OpStore %688 %714
-%715 = OpLoad  %7  %688
-%716 = OpLoad  %6  %33
-%718 = OpSampledImage  %717  %674 %675
-%719 = OpImageSampleImplicitLod  %7  %718 %716
-%720 = OpFMul  %7  %715 %719
-OpStore %688 %720
-%721 = OpLoad  %6  %33
-%722 = OpSampledImage  %717  %676 %677
-%723 = OpImageSampleImplicitLod  %7  %722 %721
-OpStore %689 %723
-%725 = OpAccessChain  %724  %51 %349
-%726 = OpLoad  %5  %725
-%727 = OpAccessChain  %72  %689 %489
-%728 = OpLoad  %5  %727
-%729 = OpFMul  %5  %726 %728
-OpStore %690 %729
-%730 = OpAccessChain  %724  %49 %349
-%731 = OpLoad  %5  %730
-%732 = OpAccessChain  %72  %689 %16
-%733 = OpLoad  %5  %732
-%734 = OpFMul  %5  %731 %733
-OpStore %691 %734
-%735 = OpLoad  %5  %691
-%736 = OpFunctionCall  %5  %382 %735
-OpStore %692 %736
-%737 = OpLoad  %4  %32
-%738 = OpExtInst  %4  %1 Normalize %737
-OpStore %693 %738
-%739 = OpLoad  %7  %35
-%740 = OpVectorShuffle  %4  %739 %739 0 1 2
-%741 = OpExtInst  %4  %1 Normalize %740
-OpStore %694 %741
-%742 = OpLoad  %4  %693
-%743 = OpLoad  %4  %694
-%744 = OpExtInst  %4  %1 Cross %742 %743
-%747 = OpAccessChain  %745  %35 %746
-%748 = OpLoad  %5  %747
-%749 = OpVectorTimesScalar  %4  %744 %748
-OpStore %695 %749
-%750 = OpLoad  %25  %65
-%751 = OpLoad  %4  %693
-%752 = OpLoad  %4  %693
-%753 = OpFNegate  %4  %752
-%756 = OpCompositeConstruct  %755  %750 %750 %750
-%754 = OpSelect  %4  %756 %751 %753
-OpStore %693 %754
+%690 = OpVariable  %236  Function
+%686 = OpVariable  %687  Function
+%683 = OpVariable  %236  Function
+%680 = OpVariable  %72  Function
+OpBranch %701
+%701 = OpLabel
+%703 = OpAccessChain  %702  %43 %349
+%704 = OpLoad  %7  %703
+OpStore %678 %704
+%705 = OpLoad  %7  %678
+%706 = OpLoad  %6  %33
+%707 = OpLoad  %19  %45
+%709 = OpLoad  %20  %47
+%710 = OpSampledImage  %708  %707 %709
+%711 = OpImageSampleImplicitLod  %7  %710 %706
+%712 = OpFMul  %7  %705 %711
+OpStore %678 %712
+%713 = OpLoad  %6  %33
+%714 = OpLoad  %19  %53
+%715 = OpLoad  %20  %54
+%716 = OpSampledImage  %708  %714 %715
+%717 = OpImageSampleImplicitLod  %7  %716 %713
+OpStore %679 %717
+%719 = OpAccessChain  %718  %51 %349
+%720 = OpLoad  %5  %719
+%721 = OpAccessChain  %72  %679 %489
+%722 = OpLoad  %5  %721
+%723 = OpFMul  %5  %720 %722
+OpStore %680 %723
+%724 = OpAccessChain  %718  %49 %349
+%725 = OpLoad  %5  %724
+%726 = OpAccessChain  %72  %679 %16
+%727 = OpLoad  %5  %726
+%728 = OpFMul  %5  %725 %727
+OpStore %681 %728
+%729 = OpLoad  %5  %681
+%730 = OpFunctionCall  %5  %382 %729
+OpStore %682 %730
+%731 = OpLoad  %4  %32
+%732 = OpExtInst  %4  %1 Normalize %731
+OpStore %683 %732
+%733 = OpLoad  %7  %35
+%734 = OpVectorShuffle  %4  %733 %733 0 1 2
+%735 = OpExtInst  %4  %1 Normalize %734
+OpStore %684 %735
+%736 = OpLoad  %4  %683
+%737 = OpLoad  %4  %684
+%738 = OpExtInst  %4  %1 Cross %736 %737
+%741 = OpAccessChain  %739  %35 %740
+%742 = OpLoad  %5  %741
+%743 = OpVectorTimesScalar  %4  %738 %742
+OpStore %685 %743
+%744 = OpLoad  %25  %65
+%745 = OpLoad  %4  %683
+%746 = OpLoad  %4  %683
+%747 = OpFNegate  %4  %746
+%750 = OpCompositeConstruct  %749  %744 %744 %744
+%748 = OpSelect  %4  %750 %745 %747
+OpStore %683 %748
+%751 = OpLoad  %25  %65
+%752 = OpLoad  %4  %684
+%753 = OpLoad  %4  %684
+%754 = OpFNegate  %4  %753
+%756 = OpCompositeConstruct  %749  %751 %751 %751
+%755 = OpSelect  %4  %756 %752 %754
+OpStore %684 %755
 %757 = OpLoad  %25  %65
-%758 = OpLoad  %4  %694
-%759 = OpLoad  %4  %694
+%758 = OpLoad  %4  %685
+%759 = OpLoad  %4  %685
 %760 = OpFNegate  %4  %759
-%762 = OpCompositeConstruct  %755  %757 %757 %757
+%762 = OpCompositeConstruct  %749  %757 %757 %757
 %761 = OpSelect  %4  %762 %758 %760
-OpStore %694 %761
-%763 = OpLoad  %25  %65
-%764 = OpLoad  %4  %695
-%765 = OpLoad  %4  %695
-%766 = OpFNegate  %4  %765
-%768 = OpCompositeConstruct  %755  %763 %763 %763
-%767 = OpSelect  %4  %768 %764 %766
-OpStore %695 %767
-%769 = OpLoad  %4  %694
-%770 = OpLoad  %4  %695
-%771 = OpLoad  %4  %693
-%772 = OpCompositeExtract  %5  %769 0
-%773 = OpCompositeExtract  %5  %769 1
-%774 = OpCompositeExtract  %5  %769 2
-%775 = OpCompositeExtract  %5  %770 0
-%776 = OpCompositeExtract  %5  %770 1
-%777 = OpCompositeExtract  %5  %770 2
-%778 = OpCompositeExtract  %5  %771 0
-%779 = OpCompositeExtract  %5  %771 1
-%780 = OpCompositeExtract  %5  %771 2
-%781 = OpCompositeConstruct  %4  %772 %773 %774
-%782 = OpCompositeConstruct  %4  %775 %776 %777
-%783 = OpCompositeConstruct  %4  %778 %779 %780
-%784 = OpCompositeConstruct  %26  %781 %782 %783
-OpStore %696 %784
-%785 = OpLoad  %26  %696
-%786 = OpLoad  %6  %33
-%787 = OpSampledImage  %717  %678 %679
-%788 = OpImageSampleImplicitLod  %7  %787 %786
-%789 = OpVectorShuffle  %4  %788 %788 0 1 2
-%790 = OpVectorTimesScalar  %4  %789 %293
-%791 = OpFSub  %4  %790 %684
-%792 = OpExtInst  %4  %1 Normalize %791
-%793 = OpMatrixTimesVector  %4  %785 %792
-OpStore %693 %793
-%794 = OpLoad  %6  %33
-%795 = OpSampledImage  %717  %680 %681
-%796 = OpImageSampleImplicitLod  %7  %795 %794
-%797 = OpCompositeExtract  %5  %796 0
-OpStore %698 %797
-%798 = OpAccessChain  %712  %61 %349
-%799 = OpLoad  %7  %798
-OpStore %699 %799
-%800 = OpLoad  %7  %699
-%801 = OpVectorShuffle  %4  %800 %800 0 1 2
-%802 = OpLoad  %6  %33
-%803 = OpSampledImage  %717  %682 %683
-%804 = OpImageSampleImplicitLod  %7  %803 %802
+OpStore %685 %761
+%763 = OpLoad  %4  %684
+%764 = OpLoad  %4  %685
+%765 = OpLoad  %4  %683
+%766 = OpCompositeExtract  %5  %763 0
+%767 = OpCompositeExtract  %5  %763 1
+%768 = OpCompositeExtract  %5  %763 2
+%769 = OpCompositeExtract  %5  %764 0
+%770 = OpCompositeExtract  %5  %764 1
+%771 = OpCompositeExtract  %5  %764 2
+%772 = OpCompositeExtract  %5  %765 0
+%773 = OpCompositeExtract  %5  %765 1
+%774 = OpCompositeExtract  %5  %765 2
+%775 = OpCompositeConstruct  %4  %766 %767 %768
+%776 = OpCompositeConstruct  %4  %769 %770 %771
+%777 = OpCompositeConstruct  %4  %772 %773 %774
+%778 = OpCompositeConstruct  %26  %775 %776 %777
+OpStore %686 %778
+%779 = OpLoad  %26  %686
+%780 = OpLoad  %6  %33
+%781 = OpLoad  %19  %57
+%782 = OpLoad  %20  %58
+%783 = OpSampledImage  %708  %781 %782
+%784 = OpImageSampleImplicitLod  %7  %783 %780
+%785 = OpVectorShuffle  %4  %784 %784 0 1 2
+%786 = OpVectorTimesScalar  %4  %785 %293
+%787 = OpFSub  %4  %786 %674
+%788 = OpExtInst  %4  %1 Normalize %787
+%789 = OpMatrixTimesVector  %4  %779 %788
+OpStore %683 %789
+%790 = OpLoad  %6  %33
+%791 = OpLoad  %19  %59
+%792 = OpLoad  %20  %60
+%793 = OpSampledImage  %708  %791 %792
+%794 = OpImageSampleImplicitLod  %7  %793 %790
+%795 = OpCompositeExtract  %5  %794 0
+OpStore %688 %795
+%796 = OpAccessChain  %702  %61 %349
+%797 = OpLoad  %7  %796
+OpStore %689 %797
+%798 = OpLoad  %7  %689
+%799 = OpVectorShuffle  %4  %798 %798 0 1 2
+%800 = OpLoad  %6  %33
+%801 = OpLoad  %19  %63
+%802 = OpLoad  %20  %64
+%803 = OpSampledImage  %708  %801 %802
+%804 = OpImageSampleImplicitLod  %7  %803 %800
 %805 = OpVectorShuffle  %4  %804 %804 0 1 2
-%806 = OpFMul  %4  %801 %805
+%806 = OpFMul  %4  %799 %805
 %807 = OpCompositeExtract  %5  %806 0
-%808 = OpAccessChain  %72  %699 %349
+%808 = OpAccessChain  %72  %689 %349
 OpStore %808 %807
 %809 = OpCompositeExtract  %5  %806 1
-%810 = OpAccessChain  %72  %699 %16
+%810 = OpAccessChain  %72  %689 %16
 OpStore %810 %809
 %811 = OpCompositeExtract  %5  %806 2
-%812 = OpAccessChain  %72  %699 %489
+%812 = OpAccessChain  %72  %689 %489
 OpStore %812 %811
-%813 = OpAccessChain  %712  %39 %349
+%813 = OpAccessChain  %702  %39 %349
 %814 = OpLoad  %7  %813
 %815 = OpVectorShuffle  %4  %814 %814 0 1 2
 %816 = OpLoad  %4  %30
 %817 = OpVectorShuffle  %4  %816 %816 0 1 2
 %818 = OpFSub  %4  %815 %817
 %819 = OpExtInst  %4  %1 Normalize %818
-OpStore %700 %819
-%820 = OpLoad  %4  %693
-%821 = OpLoad  %4  %700
+OpStore %690 %819
+%820 = OpLoad  %4  %683
+%821 = OpLoad  %4  %690
 %822 = OpDot  %5  %820 %821
 %823 = OpExtInst  %5  %1 FMax %822 %90
-OpStore %701 %823
-%824 = OpAccessChain  %724  %55 %349
+OpStore %691 %823
+%824 = OpAccessChain  %718  %55 %349
 %825 = OpLoad  %5  %824
-%826 = OpFMul  %5  %685 %825
-%827 = OpAccessChain  %724  %55 %349
+%826 = OpFMul  %5  %675 %825
+%827 = OpAccessChain  %718  %55 %349
 %828 = OpLoad  %5  %827
 %829 = OpFMul  %5  %826 %828
-%830 = OpLoad  %5  %690
+%830 = OpLoad  %5  %680
 %831 = OpFSub  %5  %88 %830
 %832 = OpFMul  %5  %829 %831
 %833 = OpCompositeConstruct  %4  %832 %832 %832
-%834 = OpLoad  %7  %688
+%834 = OpLoad  %7  %678
 %835 = OpVectorShuffle  %4  %834 %834 0 1 2
-%836 = OpLoad  %5  %690
+%836 = OpLoad  %5  %680
 %837 = OpCompositeConstruct  %4  %836 %836 %836
 %838 = OpFMul  %4  %835 %837
 %839 = OpFAdd  %4  %833 %838
-OpStore %702 %839
-%840 = OpLoad  %7  %688
+OpStore %692 %839
+%840 = OpLoad  %7  %678
 %841 = OpVectorShuffle  %4  %840 %840 0 1 2
-%842 = OpLoad  %5  %690
+%842 = OpLoad  %5  %680
 %843 = OpFSub  %5  %88 %842
 %844 = OpCompositeConstruct  %4  %843 %843 %843
 %845 = OpFMul  %4  %841 %844
-OpStore %703 %845
-%846 = OpLoad  %4  %700
+OpStore %693 %845
+%846 = OpLoad  %4  %690
 %847 = OpFNegate  %4  %846
-%848 = OpLoad  %4  %693
+%848 = OpLoad  %4  %683
 %849 = OpExtInst  %4  %1 Reflect %847 %848
-OpStore %704 %849
-OpStore %705 %686
-OpStore %706 %687
+OpStore %694 %849
+OpStore %695 %676
+OpStore %696 %677
 OpBranch %850
 %850 = OpLabel
 OpLoopMerge %851 %853 None
 OpBranch %852
 %852 = OpLabel
-%854 = OpLoad  %3  %706
+%854 = OpLoad  %3  %696
 %857 = OpAccessChain  %856  %41 %16 %349
 %858 = OpLoad  %10  %857
 %859 = OpBitcast  %3  %858
 %860 = OpSLessThan  %25  %854 %859
-%861 = OpLoad  %3  %706
+%861 = OpLoad  %3  %696
 %862 = OpSLessThan  %25  %861 %27
 %863 = OpLogicalAnd  %25  %860 %862
 OpBranchConditional %863 %864 %851
 %864 = OpLabel
-%865 = OpLoad  %4  %705
-%867 = OpLoad  %3  %706
+%865 = OpLoad  %4  %695
+%867 = OpLoad  %3  %696
 %869 = OpAccessChain  %868  %41 %489 %867
 %870 = OpLoad  %11  %869
-%871 = OpLoad  %5  %692
-%872 = OpLoad  %5  %701
-%873 = OpLoad  %4  %693
-%874 = OpLoad  %4  %700
-%875 = OpLoad  %4  %704
-%876 = OpLoad  %4  %702
-%877 = OpLoad  %4  %703
+%871 = OpLoad  %5  %682
+%872 = OpLoad  %5  %691
+%873 = OpLoad  %4  %683
+%874 = OpLoad  %4  %690
+%875 = OpLoad  %4  %694
+%876 = OpLoad  %4  %692
+%877 = OpLoad  %4  %693
 %878 = OpFunctionCall  %4  %445 %870 %871 %872 %873 %874 %875 %876 %877
 %879 = OpFAdd  %4  %865 %878
-OpStore %705 %879
+OpStore %695 %879
 OpBranch %853
 %853 = OpLabel
-%880 = OpLoad  %3  %706
+%880 = OpLoad  %3  %696
 %881 = OpIAdd  %3  %880 %28
-OpStore %706 %881
+OpStore %696 %881
 OpBranch %850
 %851 = OpLabel
-OpStore %708 %687
+OpStore %698 %677
 OpBranch %882
 %882 = OpLabel
 OpLoopMerge %883 %885 None
 OpBranch %884
 %884 = OpLabel
-%886 = OpLoad  %3  %708
+%886 = OpLoad  %3  %698
 %887 = OpAccessChain  %856  %41 %16 %16
 %888 = OpLoad  %10  %887
 %889 = OpBitcast  %3  %888
 %890 = OpSLessThan  %25  %886 %889
-%891 = OpLoad  %3  %708
+%891 = OpLoad  %3  %698
 %892 = OpSLessThan  %25  %891 %28
 %893 = OpLogicalAnd  %25  %890 %892
 OpBranchConditional %893 %894 %883
 %894 = OpLabel
-%895 = OpLoad  %4  %705
-%897 = OpLoad  %3  %708
-%899 = OpAccessChain  %898  %41 %746 %897
+%895 = OpLoad  %4  %695
+%897 = OpLoad  %3  %698
+%899 = OpAccessChain  %898  %41 %740 %897
 %900 = OpLoad  %14  %899
-%901 = OpLoad  %5  %692
-%902 = OpLoad  %5  %701
-%903 = OpLoad  %4  %693
-%904 = OpLoad  %4  %700
-%905 = OpLoad  %4  %704
-%906 = OpLoad  %4  %702
-%907 = OpLoad  %4  %703
+%901 = OpLoad  %5  %682
+%902 = OpLoad  %5  %691
+%903 = OpLoad  %4  %683
+%904 = OpLoad  %4  %690
+%905 = OpLoad  %4  %694
+%906 = OpLoad  %4  %692
+%907 = OpLoad  %4  %693
 %908 = OpFunctionCall  %4  %603 %900 %901 %902 %903 %904 %905 %906 %907
 %909 = OpFAdd  %4  %895 %908
-OpStore %705 %909
+OpStore %695 %909
 OpBranch %885
 %885 = OpLabel
-%910 = OpLoad  %3  %708
+%910 = OpLoad  %3  %698
 %911 = OpIAdd  %3  %910 %28
-OpStore %708 %911
+OpStore %698 %911
 OpBranch %882
 %883 = OpLabel
-%912 = OpLoad  %4  %703
-%913 = OpLoad  %5  %701
+%912 = OpLoad  %4  %693
+%913 = OpLoad  %5  %691
 %914 = OpFunctionCall  %4  %323 %912 %88 %913
-OpStore %709 %914
-%915 = OpLoad  %4  %702
-%916 = OpLoad  %5  %691
-%917 = OpLoad  %5  %701
+OpStore %699 %914
+%915 = OpLoad  %4  %692
+%916 = OpLoad  %5  %681
+%917 = OpLoad  %5  %691
 %918 = OpFunctionCall  %4  %323 %915 %916 %917
-OpStore %710 %918
-%919 = OpLoad  %4  %705
+OpStore %700 %918
+%919 = OpLoad  %4  %695
 %920 = OpCompositeExtract  %5  %919 0
-%921 = OpAccessChain  %72  %688 %349
+%921 = OpAccessChain  %72  %678 %349
 OpStore %921 %920
 %922 = OpCompositeExtract  %5  %919 1
-%923 = OpAccessChain  %72  %688 %16
+%923 = OpAccessChain  %72  %678 %16
 OpStore %923 %922
 %924 = OpCompositeExtract  %5  %919 2
-%925 = OpAccessChain  %72  %688 %489
+%925 = OpAccessChain  %72  %678 %489
 OpStore %925 %924
-%926 = OpLoad  %7  %688
+%926 = OpLoad  %7  %678
 %927 = OpVectorShuffle  %4  %926 %926 0 1 2
-%928 = OpLoad  %4  %709
-%929 = OpLoad  %4  %710
+%928 = OpLoad  %4  %699
+%929 = OpLoad  %4  %700
 %930 = OpFAdd  %4  %928 %929
-%931 = OpAccessChain  %712  %41 %349
+%931 = OpAccessChain  %702  %41 %349
 %932 = OpLoad  %7  %931
 %933 = OpVectorShuffle  %4  %932 %932 0 1 2
 %934 = OpFMul  %4  %930 %933
-%935 = OpLoad  %5  %698
+%935 = OpLoad  %5  %688
 %936 = OpVectorTimesScalar  %4  %934 %935
 %937 = OpFAdd  %4  %927 %936
 %938 = OpCompositeExtract  %5  %937 0
-%939 = OpAccessChain  %72  %688 %349
+%939 = OpAccessChain  %72  %678 %349
 OpStore %939 %938
 %940 = OpCompositeExtract  %5  %937 1
-%941 = OpAccessChain  %72  %688 %16
+%941 = OpAccessChain  %72  %678 %16
 OpStore %941 %940
 %942 = OpCompositeExtract  %5  %937 2
-%943 = OpAccessChain  %72  %688 %489
+%943 = OpAccessChain  %72  %678 %489
 OpStore %943 %942
-%944 = OpLoad  %7  %688
+%944 = OpLoad  %7  %678
 %945 = OpVectorShuffle  %4  %944 %944 0 1 2
-%946 = OpLoad  %7  %699
+%946 = OpLoad  %7  %689
 %947 = OpVectorShuffle  %4  %946 %946 0 1 2
-%948 = OpAccessChain  %72  %688 %746
+%948 = OpAccessChain  %72  %678 %740
 %949 = OpLoad  %5  %948
 %950 = OpVectorTimesScalar  %4  %947 %949
 %951 = OpFAdd  %4  %945 %950
 %952 = OpCompositeExtract  %5  %951 0
-%953 = OpAccessChain  %72  %688 %349
+%953 = OpAccessChain  %72  %678 %349
 OpStore %953 %952
 %954 = OpCompositeExtract  %5  %951 1
-%955 = OpAccessChain  %72  %688 %16
+%955 = OpAccessChain  %72  %678 %16
 OpStore %955 %954
 %956 = OpCompositeExtract  %5  %951 2
-%957 = OpAccessChain  %72  %688 %489
+%957 = OpAccessChain  %72  %678 %489
 OpStore %957 %956
-%958 = OpLoad  %7  %688
+%958 = OpLoad  %7  %678
 %959 = OpVectorShuffle  %4  %958 %958 0 1 2
 %960 = OpFunctionCall  %4  %421 %959
 %961 = OpCompositeExtract  %5  %960 0
-%962 = OpAccessChain  %72  %688 %349
+%962 = OpAccessChain  %72  %678 %349
 OpStore %962 %961
 %963 = OpCompositeExtract  %5  %960 1
-%964 = OpAccessChain  %72  %688 %16
+%964 = OpAccessChain  %72  %678 %16
 OpStore %964 %963
 %965 = OpCompositeExtract  %5  %960 2
-%966 = OpAccessChain  %72  %688 %489
+%966 = OpAccessChain  %72  %678 %489
 OpStore %966 %965
-%967 = OpLoad  %7  %688
+%967 = OpLoad  %7  %678
 OpStore %37 %967
 OpReturn
 OpFunctionEnd

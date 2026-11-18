@@ -53,7 +53,7 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let tensor_id = self.get_handle_id(tensor)?;
+        let tensor_id = self.get_handle_id(tensor, block)?;
         let coordinates_id = self.cached.get(coordinates)?;
         let id = self.gen_id();
         let mut instruction = Instruction::new(Op::TensorReadARM);
@@ -73,7 +73,7 @@ impl BlockContext<'_> {
         result_type_id: Word,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let tensor_id = self.get_handle_id(tensor)?;
+        let tensor_id = self.get_handle_id(tensor, block)?;
         let dimension_id = self.writer.get_index_constant(dimension);
         let id = self.gen_id();
         let mut instruction = Instruction::new(Op::TensorQuerySizeARM);
@@ -93,7 +93,7 @@ impl BlockContext<'_> {
         nontemporal: bool,
         block: &mut Block,
     ) -> Result<(), Error> {
-        let tensor_id = self.get_handle_id(tensor)?;
+        let tensor_id = self.get_handle_id(tensor, block)?;
         let coordinates_id = self.cached.get(coordinates)?;
         let value_id = self.cached.get(value)?;
         let mut instruction = Instruction::new(Op::TensorWriteARM);

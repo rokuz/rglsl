@@ -717,7 +717,6 @@ impl Writer {
         ir_module: &crate::Module,
         handle: Handle<crate::GlobalVariable>,
         var: &crate::GlobalVariable,
-        loaded: bool,
         prelude: &mut Block,
     ) -> Result<(), Error> {
         let mut gv = self.global_variables[handle].clone();
@@ -725,20 +724,9 @@ impl Writer {
         if matches!(
             ir_module.types[var.ty].inner,
             crate::TypeInner::BindingArray { .. }
-        ) || (var.space == crate::AddressSpace::Handle && !loaded)
+        ) || var.space == crate::AddressSpace::Handle
         {
             gv.access_id = gv.var_id;
-        } else if var.space == crate::AddressSpace::Handle {
-            let var_type_id = self.get_handle_type_id(var.ty)?;
-            let id = self.id_gen.next();
-            prelude
-                .body
-                .push(Instruction::load(var_type_id, id, gv.var_id, None));
-            if var.relaxed_precision {
-                self.decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
-            }
-            gv.access_id = gv.var_id;
-            gv.handle_id = id;
         } else if global_needs_wrapper(ir_module, &self.nested_types, var) {
             let class = self.storage_class(var.space);
             let pointer_type_id = if var.is_shared_block() {
@@ -770,8 +758,6 @@ impl Writer {
         ir_module: &crate::Module,
         argument: &crate::FunctionArgument,
         argument_type_id: Word,
-        handle_ty: bool,
-        prelude: &mut Block,
     ) -> Result<FunctionArgument, Error> {
         let argument_id = self.id_gen.next();
         self.decorate_pointer_parameter(&ir_module.types, argument.ty, argument_id);
@@ -785,22 +771,7 @@ impl Writer {
         {
             self.debugs.push(Instruction::name(argument_id, name));
         }
-        let handle_id = if handle_ty {
-            let id = self.id_gen.next();
-            prelude.body.push(Instruction::load(
-                self.get_handle_type_id(argument.ty)?,
-                id,
-                argument_id,
-                None,
-            ));
-            id
-        } else {
-            0
-        };
-        Ok(FunctionArgument {
-            instruction,
-            handle_id,
-        })
+        Ok(FunctionArgument { instruction })
     }
 
     fn write_entry_point_argument(
@@ -981,13 +952,8 @@ impl Writer {
                 )?;
                 ep_context.argument_ids.push(id);
             } else {
-                let parameter = self.write_function_parameter(
-                    ir_module,
-                    argument,
-                    argument_type_id,
-                    handle_ty,
-                    &mut prelude,
-                )?;
+                let parameter =
+                    self.write_function_parameter(ir_module, argument, argument_type_id)?;
                 function.parameters.push(parameter);
                 parameter_type_ids.push(argument_type_id);
             };
@@ -1072,7 +1038,6 @@ impl Writer {
         {
             iface.varying_ids.extend(self.heap_variable_ids());
         }
-        let loaded = super::atomic::loaded_handles(ir_function, ir_module.global_variables.len());
         for (handle, var) in ir_module.global_variables.iter() {
             if info[handle].is_empty() {
                 continue;
@@ -1087,8 +1052,7 @@ impl Writer {
                     iface.varying_ids.push(self.global_variables[handle].var_id);
                 }
             }
-            let loaded = loaded.get(handle.index()).copied().unwrap_or(true);
-            self.write_global_access(ir_module, handle, var, loaded, &mut prelude)?;
+            self.write_global_access(ir_module, handle, var, &mut prelude)?;
         }
 
         // Create a `BlockContext` for generating SPIR-V for the function's

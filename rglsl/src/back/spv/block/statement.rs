@@ -431,7 +431,7 @@ impl BlockContext<'_> {
         value: Handle<crate::Expression>,
     ) -> Result<(), Error> {
         let value_id = match *self.fun_info[value].ty.inner_with(&self.ir_module.types) {
-            crate::TypeInner::Tensor { .. } => self.get_handle_id(value)?,
+            crate::TypeInner::Tensor { .. } => self.get_handle_id(value, &mut block)?,
             crate::TypeInner::BindingArray { .. } => {
                 if matches!(
                     self.ir_function.expressions[value],

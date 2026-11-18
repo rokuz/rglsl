@@ -483,7 +483,7 @@ fn disassembles_with_h() -> TestResult {
         "               6:             TypeImage 4(float) 2D sampled format:Unknown",
         "        9(color):     10(ptr) Variable Output",
         "        16(main):           2 Function None 17",
-        "              28:    3(fvec4) FMul 26 27",
+        "              28:    3(fvec4) FMul 25 27",
     ] {
         assert!(lines.contains(&expected), "missing `{expected}`");
     }

@@ -22,7 +22,8 @@ impl BlockContext<'_> {
                 direction,
                 tmax,
             } => {
-                let acceleration_structure_id = self.get_handle_id(acceleration_structure)?;
+                let acceleration_structure_id =
+                    self.get_handle_id(acceleration_structure, block)?;
                 let mut operands = alloc::vec![query_id, acceleration_structure_id];
                 for operand in [flags, cull_mask, origin, tmin, direction, tmax] {
                     operands.push(self.cached.get(operand)?);
