@@ -473,14 +473,14 @@ impl BlockContext<'_> {
         Ok(())
     }
 
-    pub(in super::super) fn write_function_body(&mut self, entry_id: Word) -> Result<(), Error> {
+    pub(in super::super) fn write_function_body(&mut self, entry: Block) -> Result<(), Error> {
         let function = self.ir_function;
-        let _ = self.write_block(
-            entry_id,
-            &function.body,
-            BlockExit::Return,
-            LoopContext::default(),
-        )?;
+        let loop_context = LoopContext::default();
+        if let Some(block) =
+            self.write_statements(entry, function.body.span_iter(), false, loop_context)?
+        {
+            self.finish_block(block, BlockExit::Return, loop_context, false)?;
+        }
         Ok(())
     }
 }

@@ -1,0 +1,53 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, set = 0, binding = 0) buffer Results { float results[]; };
+
+float g;
+int counter;
+
+float bump(inout float x) {
+  x += 10.0;
+  return 1.0;
+}
+
+float set_global() {
+  g = 100.0;
+  return 2.0;
+}
+
+float set_buffer() {
+  results[3] = 50.0;
+  return 4.0;
+}
+
+int next() {
+  counter += 1;
+  return counter;
+}
+
+void main() {
+  float x = 1.0;
+  x += bump(x);
+  results[0] = x;
+
+  g = 3.0;
+  g *= set_global();
+  results[1] = g;
+
+  float a = 1.0;
+  float b = 2.0;
+  a += b += bump(b);
+  results[2] = a + b * 100.0;
+
+  results[3] = 1.0;
+  results[3] -= set_buffer();
+
+  float values[3] = float[3](1.0, 2.0, 3.0);
+  counter = 0;
+  values[next()] += float(next()) * 10.0;
+  results[4] = values[1] + values[2] * 1000.0;
+
+  int i = 5;
+  i += i++;
+  results[5] = float(i);
+}

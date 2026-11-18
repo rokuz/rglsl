@@ -53,8 +53,12 @@ impl BlockContext<'_> {
         }
     }
 
-    fn trace_ids(&mut self, trace: &crate::HitObjectTrace) -> Result<Vec<spirv::Word>, Error> {
-        let mut operands = alloc::vec![self.get_handle_id(trace.acceleration_structure)?];
+    fn trace_ids(
+        &mut self,
+        trace: &crate::HitObjectTrace,
+        block: &mut Block,
+    ) -> Result<Vec<spirv::Word>, Error> {
+        let mut operands = alloc::vec![self.get_handle_id(trace.acceleration_structure, block)?];
         let rest: Vec<_> = [
             trace.flags,
             trace.cull_mask,
@@ -86,7 +90,7 @@ impl BlockContext<'_> {
         let mut operands = alloc::vec![self.cached.get(object)?];
         let op = match *function {
             HitObjectFunction::TraceRay(ref trace) => {
-                operands.extend(self.trace_ids(trace)?);
+                operands.extend(self.trace_ids(trace, block)?);
                 if trace.time.is_some() {
                     self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
                     pick(
@@ -99,7 +103,7 @@ impl BlockContext<'_> {
                 }
             }
             HitObjectFunction::TraceReorderExecute { ref trace, hint } => {
-                operands.extend(self.trace_ids(trace)?);
+                operands.extend(self.trace_ids(trace, block)?);
                 operands.extend(self.hint_ids(hint)?);
                 if trace.time.is_some() {
                     self.writer.require(&feature::RAY_TRACING_MOTION_BLUR)?;
@@ -122,7 +126,7 @@ impl BlockContext<'_> {
                 time,
                 attributes,
             } => {
-                operands.push(self.get_handle_id(acceleration_structure)?);
+                operands.push(self.get_handle_id(acceleration_structure, block)?);
                 let mut rest = Vec::from([instance_id, primitive_id, geometry_index, hit_kind]);
                 sbt_record.for_each_operand(|operand| rest.push(operand));
                 rest.extend([origin, tmin, direction, tmax]);
@@ -411,7 +415,7 @@ impl BlockContext<'_> {
             barycentric,
         } = params;
         self.writer.require(&feature::DISPLACEMENT_MICROMAP_FETCH)?;
-        let mut operands = alloc::vec![self.get_handle_id(acceleration_structure)?];
+        let mut operands = alloc::vec![self.get_handle_id(acceleration_structure, block)?];
         operands.extend(self.ids(&[instance_id, geometry_index, primitive_index, barycentric])?);
         let op = match value {
             crate::MicroTriangleVertexValue::Position => Op::FetchMicroTriangleVertexPositionNV,

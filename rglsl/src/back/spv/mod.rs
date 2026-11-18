@@ -201,6 +201,8 @@ struct Function {
 
     handle_pointers: crate::FastHashMap<Handle<crate::Expression>, Word>,
 
+    size_query: Option<SizeQuery>,
+
     /// A map taking each expression to the number of [`Access`] and
     /// [`AccessIndex`] expressions that uses it as a base value. If an
     /// expression has no entry, its count is zero: it is never used as a
@@ -585,14 +587,6 @@ struct GlobalVariable {
     /// [`access_id`]: GlobalVariable::access_id
     var_id: Word,
 
-    /// The loaded value of a `AddressSpace::Handle` global variable.
-    ///
-    /// If the current function uses this global variable, this is the id of an
-    /// `OpLoad` instruction in the function's prologue that loads its value.
-    /// (This value is assigned as we write the prologue code of each function.)
-    /// It is then used for all operations on the global, such as `OpImageSample`.
-    handle_id: Word,
-
     /// The SPIR-V id of a pointer to this variable's rglsl IR value.
     ///
     /// If the current function uses this global variable, and it has been
@@ -613,7 +607,6 @@ impl GlobalVariable {
     const fn dummy() -> Self {
         Self {
             var_id: 0,
-            handle_id: 0,
             access_id: 0,
         }
     }
@@ -621,14 +614,12 @@ impl GlobalVariable {
     const fn new(id: Word) -> Self {
         Self {
             var_id: id,
-            handle_id: 0,
             access_id: 0,
         }
     }
 
     /// Prepare `self` for use within a single function.
     const fn reset_for_function(&mut self) {
-        self.handle_id = 0;
         self.access_id = 0;
     }
 }
@@ -636,7 +627,19 @@ impl GlobalVariable {
 struct FunctionArgument {
     /// Actual instruction of the argument.
     instruction: Instruction,
-    handle_id: Word,
+}
+
+struct SizeQuery {
+    image: Handle<crate::Expression>,
+    label_id: Word,
+    id: Word,
+    layer_index: u32,
+}
+
+#[derive(Clone, Copy)]
+enum HandleSource {
+    Global(Handle<crate::GlobalVariable>),
+    Argument(u32),
 }
 
 /// Tracks the expressions for which the backend emits the following instructions:

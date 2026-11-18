@@ -41,43 +41,6 @@ pub(super) struct OrderIds {
     pub unequal: Word,
 }
 
-pub(super) fn loaded_handles(function: &crate::Function, globals: usize) -> alloc::vec::Vec<bool> {
-    let mut loaded = alloc::vec![false; globals];
-    let mut mark = |operand: Handle<Expression>| {
-        if let Ok(&Expression::GlobalVariable(global)) = function.expressions.try_get(operand)
-            && let Some(slot) = loaded.get_mut(global.index())
-        {
-            *slot = true;
-        }
-    };
-    for (_, expression) in function.expressions.iter() {
-        expression.for_each_operand(&mut mark);
-    }
-    for statement in function.body.walk() {
-        let texel = match *statement {
-            Statement::ImageAtomic { image, .. } => Some(image),
-            Statement::AtomicLoad {
-                location: AtomicLocation::Texel(Texel { image, .. }),
-                ..
-            }
-            | Statement::AtomicStore {
-                location: AtomicLocation::Texel(Texel { image, .. }),
-                ..
-            } => Some(image),
-            _ => None,
-        };
-        let mut skipped = false;
-        statement.for_each_operand(|operand| {
-            if !skipped && Some(operand) == texel {
-                skipped = true;
-            } else {
-                mark(operand);
-            }
-        });
-    }
-    loaded
-}
-
 pub(super) fn collect_texel_images(block: &crate::Block, images: &mut HandleSet<Expression>) {
     for statement in block.walk() {
         match *statement {

@@ -1,15 +1,15 @@
 ; SPIR-V
 ; Version: 1.0
 ; Generator: rspirv
-; Bound: 30
+; Bound: 28
 OpCapability Shader
 OpCapability DotProduct
 OpCapability DotProductInput4x8BitPacked
 OpExtension "SPV_KHR_integer_dot_product"
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %26 "main"
-OpExecutionMode %26 LocalSize 1 1 1
+OpEntryPoint GLCompute %25 "main"
+OpExecutionMode %25 LocalSize 1 1 1
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 0
 %6 = OpTypeFunction %3
@@ -21,26 +21,22 @@ OpExecutionMode %26 LocalSize 1 1 1
 %12 = OpConstant  %3  6
 %13 = OpConstant  %3  7
 %14 = OpConstant  %3  8
-%16 = OpTypeInt 32 1
-%27 = OpTypeFunction %2
+%15 = OpTypeInt 32 1
+%26 = OpTypeFunction %2
 %5 = OpFunction  %3  None %6
 %4 = OpLabel
-OpBranch %15
-%15 = OpLabel
-%17 = OpSDot  %16  %7 %8 PackedVectorFormat4x8Bit
-%18 = OpUDot  %3  %9 %10 PackedVectorFormat4x8Bit
-%19 = OpIAdd  %3  %11 %18
-%20 = OpIAdd  %3  %12 %18
-%21 = OpSDot  %16  %19 %20 PackedVectorFormat4x8Bit
-%22 = OpIAdd  %3  %13 %18
-%23 = OpIAdd  %3  %14 %18
-%24 = OpUDot  %3  %22 %23 PackedVectorFormat4x8Bit
-OpReturnValue %24
+%16 = OpSDot  %15  %7 %8 PackedVectorFormat4x8Bit
+%17 = OpUDot  %3  %9 %10 PackedVectorFormat4x8Bit
+%18 = OpIAdd  %3  %11 %17
+%19 = OpIAdd  %3  %12 %17
+%20 = OpSDot  %15  %18 %19 PackedVectorFormat4x8Bit
+%21 = OpIAdd  %3  %13 %17
+%22 = OpIAdd  %3  %14 %17
+%23 = OpUDot  %3  %21 %22 PackedVectorFormat4x8Bit
+OpReturnValue %23
 OpFunctionEnd
-%26 = OpFunction  %2  None %27
-%25 = OpLabel
-OpBranch %28
-%28 = OpLabel
-%29 = OpFunctionCall  %3  %5
+%25 = OpFunction  %2  None %26
+%24 = OpLabel
+%27 = OpFunctionCall  %3  %5
 OpReturn
 OpFunctionEnd

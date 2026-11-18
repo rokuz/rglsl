@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 11
+; Bound: 10
 OpCapability Shader
 OpCapability MultiView
 OpExtension "SPV_KHR_multiview"
@@ -19,7 +19,5 @@ OpDecorate %5 Flat
 %8 = OpFunction  %2  None %9
 %4 = OpLabel
 %7 = OpLoad  %3  %5
-OpBranch %10
-%10 = OpLabel
 OpReturn
 OpFunctionEnd

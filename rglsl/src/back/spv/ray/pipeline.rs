@@ -37,7 +37,7 @@ impl BlockContext<'_> {
                 time,
                 payload,
             } => {
-                let mut operands = alloc::vec![self.get_handle_id(acceleration_structure)?];
+                let mut operands = alloc::vec![self.get_handle_id(acceleration_structure, block)?];
                 for operand in [
                     flags, cull_mask, sbt_offset, sbt_stride, miss_index, origin, tmin, direction,
                     tmax,

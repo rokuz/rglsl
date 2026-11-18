@@ -5,8 +5,8 @@ Generating SPIR-V for image operations.
 use spirv::Word;
 
 use super::{
-    Block, BlockContext, Error, IdGenerator, Instruction, LocalImageType, LocalType, NumericType,
-    feature, grammar,
+    Block, BlockContext, Error, HandleSource, IdGenerator, Instruction, LocalImageType, LocalType,
+    NumericType, SizeQuery, feature, grammar,
 };
 use crate::arena::Handle;
 
@@ -339,7 +339,7 @@ impl BlockContext<'_> {
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<Word, Error> {
-        let id = self.get_handle_id(expr_handle)?;
+        let id = self.get_handle_id(expr_handle, block)?;
         let shared = matches!(
             self.ir_function.expressions[expr_handle],
             crate::Expression::GlobalVariable(_) | crate::Expression::FunctionArgument(_)
@@ -366,13 +366,14 @@ impl BlockContext<'_> {
     pub(super) fn get_handle_id(
         &mut self,
         expr_handle: Handle<crate::Expression>,
+        block: &mut Block,
     ) -> Result<Word, Error> {
         let id = match self.ir_function.expressions[expr_handle] {
             crate::Expression::GlobalVariable(handle) => {
-                self.writer.global_variables[handle].handle_id
+                self.load_handle(HandleSource::Global(handle), block)?
             }
             crate::Expression::FunctionArgument(i) => {
-                self.function.parameters[i as usize].handle_id
+                self.load_handle(HandleSource::Argument(i), block)?
             }
             crate::Expression::Access { .. }
             | crate::Expression::AccessIndex { .. }
@@ -390,6 +391,40 @@ impl BlockContext<'_> {
             return Err(Error::Validation("opaque handle expression has no id"));
         }
 
+        Ok(id)
+    }
+
+    fn load_handle(&mut self, source: HandleSource, block: &mut Block) -> Result<Word, Error> {
+        let (ty, pointer_id, relaxed_precision) = match source {
+            HandleSource::Global(handle) => {
+                let var = &self.ir_module.global_variables[handle];
+                if var.space != crate::AddressSpace::Handle {
+                    return Err(Error::Validation("opaque handle expression has no id"));
+                }
+                (
+                    var.ty,
+                    self.writer.global_variables[handle].var_id,
+                    var.relaxed_precision,
+                )
+            }
+            HandleSource::Argument(index) => {
+                let argument = self
+                    .ir_function
+                    .arguments
+                    .get(index as usize)
+                    .ok_or(Error::Validation("function argument out of range"))?;
+                (argument.ty, self.function.parameter_id(index)?, false)
+            }
+        };
+        let type_id = self.writer.get_handle_type_id(ty)?;
+        let id = self.gen_id();
+        block
+            .body
+            .push(Instruction::load(type_id, id, pointer_id, None));
+        if relaxed_precision {
+            self.writer
+                .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
+        }
         Ok(id)
     }
 
@@ -910,6 +945,21 @@ impl BlockContext<'_> {
         {
             return self.write_image_query_lod(result_type_id, image, sampler, coordinate, block);
         }
+        let previous_size = self.function.size_query.take();
+        if let Iq::NumLayers = query
+            && let Some(previous) = previous_size
+            && previous.image == image
+            && previous.label_id == block.label_id
+        {
+            let extract_id = self.gen_id();
+            block.body.push(Instruction::composite_extract(
+                result_type_id,
+                extract_id,
+                previous.id,
+                &[previous.layer_index],
+            ));
+            return Ok(extract_id);
+        }
         let image_id = self.get_image_id(image, block)?;
         let (crate::TypeInner::Image {
             dim,
@@ -983,6 +1033,15 @@ impl BlockContext<'_> {
                     inst.add_operand(expr_id);
                 }
                 block.body.push(inst);
+                if arrayed {
+                    self.function.size_query = Some(SizeQuery {
+                        image,
+                        label_id: block.label_id,
+                        id: id_extended,
+                        layer_index: u32::try_from(dim_coords)
+                            .map_err(|_| Error::Validation("image dimension"))?,
+                    });
+                }
 
                 if result_type_id != extended_size_type_id && dim_coords == 1 {
                     let id = self.gen_id();
@@ -1211,7 +1270,7 @@ impl BlockContext<'_> {
             min_lod,
         } = params;
         self.writer.require(&feature::IMAGE_FOOTPRINT)?;
-        let image_id = self.get_handle_id(image)?;
+        let image_id = self.get_handle_id(image, block)?;
         let id = self.gen_id();
         let mut instruction = Instruction::new(spirv::Op::ImageSampleFootprintNV);
         instruction.set_type(result_type_id);
@@ -1288,7 +1347,7 @@ impl BlockContext<'_> {
         instruction.set_type(result_type_id);
         instruction.set_result(id);
         if let Some(image) = image {
-            instruction.add_operand(self.get_handle_id(image)?);
+            instruction.add_operand(self.get_handle_id(image, block)?);
         }
         if let Some(sample) = sample {
             instruction.add_operand(self.cached.get(sample)?);

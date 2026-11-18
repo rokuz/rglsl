@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.0
 ; Generator: rspirv
-; Bound: 51
+; Bound: 50
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -30,37 +30,35 @@ OpDecorate %14 BuiltIn LocalInvocationId
 %20 = OpConstantComposite  %8  %19 %19
 %21 = OpConstant  %4  1
 %22 = OpConstant  %6  1
-%24 = OpTypePointer Image %4
-%26 = OpConstant  %4  0
-%38 = OpTypePointer Image %6
+%23 = OpTypePointer Image %4
+%25 = OpConstant  %4  0
+%37 = OpTypePointer Image %6
 %17 = OpFunction  %2  None %18
 %13 = OpLabel
 %16 = OpLoad  %7  %14
-OpBranch %23
-%23 = OpLabel
-%25 = OpImageTexelPointer  %24  %9 %20 %26
-%27 = OpAtomicUMax  %4  %25 %22 %26 %21
-%28 = OpImageTexelPointer  %24  %9 %20 %26
-%29 = OpAtomicUMin  %4  %28 %22 %26 %21
-%30 = OpImageTexelPointer  %24  %9 %20 %26
-%31 = OpAtomicIAdd  %4  %30 %22 %26 %21
-%32 = OpImageTexelPointer  %24  %9 %20 %26
-%33 = OpAtomicAnd  %4  %32 %22 %26 %21
-%34 = OpImageTexelPointer  %24  %9 %20 %26
-%35 = OpAtomicOr  %4  %34 %22 %26 %21
-%36 = OpImageTexelPointer  %24  %9 %20 %26
-%37 = OpAtomicXor  %4  %36 %22 %26 %21
-%39 = OpImageTexelPointer  %38  %11 %20 %26
-%40 = OpAtomicSMax  %6  %39 %22 %26 %22
-%41 = OpImageTexelPointer  %38  %11 %20 %26
-%42 = OpAtomicSMin  %6  %41 %22 %26 %22
-%43 = OpImageTexelPointer  %38  %11 %20 %26
-%44 = OpAtomicIAdd  %6  %43 %22 %26 %22
-%45 = OpImageTexelPointer  %38  %11 %20 %26
-%46 = OpAtomicAnd  %6  %45 %22 %26 %22
-%47 = OpImageTexelPointer  %38  %11 %20 %26
-%48 = OpAtomicOr  %6  %47 %22 %26 %22
-%49 = OpImageTexelPointer  %38  %11 %20 %26
-%50 = OpAtomicXor  %6  %49 %22 %26 %22
+%24 = OpImageTexelPointer  %23  %9 %20 %25
+%26 = OpAtomicUMax  %4  %24 %22 %25 %21
+%27 = OpImageTexelPointer  %23  %9 %20 %25
+%28 = OpAtomicUMin  %4  %27 %22 %25 %21
+%29 = OpImageTexelPointer  %23  %9 %20 %25
+%30 = OpAtomicIAdd  %4  %29 %22 %25 %21
+%31 = OpImageTexelPointer  %23  %9 %20 %25
+%32 = OpAtomicAnd  %4  %31 %22 %25 %21
+%33 = OpImageTexelPointer  %23  %9 %20 %25
+%34 = OpAtomicOr  %4  %33 %22 %25 %21
+%35 = OpImageTexelPointer  %23  %9 %20 %25
+%36 = OpAtomicXor  %4  %35 %22 %25 %21
+%38 = OpImageTexelPointer  %37  %11 %20 %25
+%39 = OpAtomicSMax  %6  %38 %22 %25 %22
+%40 = OpImageTexelPointer  %37  %11 %20 %25
+%41 = OpAtomicSMin  %6  %40 %22 %25 %22
+%42 = OpImageTexelPointer  %37  %11 %20 %25
+%43 = OpAtomicIAdd  %6  %42 %22 %25 %22
+%44 = OpImageTexelPointer  %37  %11 %20 %25
+%45 = OpAtomicAnd  %6  %44 %22 %25 %22
+%46 = OpImageTexelPointer  %37  %11 %20 %25
+%47 = OpAtomicOr  %6  %46 %22 %25 %22
+%48 = OpImageTexelPointer  %37  %11 %20 %25
+%49 = OpAtomicXor  %6  %48 %22 %25 %22
 OpReturn
 OpFunctionEnd

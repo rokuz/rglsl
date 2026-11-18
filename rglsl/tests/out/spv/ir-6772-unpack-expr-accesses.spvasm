@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 23
+; Bound: 22
 OpCapability Shader
 OpCapability Int8
 %1 = OpExtInstImport "GLSL.std.450"
@@ -14,21 +14,19 @@ OpExecutionMode %4 LocalSize 1 1 1
 %7 = OpConstant  %6  2
 %8 = OpTypeInt 32 0
 %9 = OpConstant  %8  12
-%11 = OpTypeVector %6 4
-%14 = OpTypeInt 8 1
-%13 = OpTypeVector %14 4
-%17 = OpTypeVector %8 4
-%20 = OpTypeInt 8 0
-%19 = OpTypeVector %20 4
+%10 = OpTypeVector %6 4
+%13 = OpTypeInt 8 1
+%12 = OpTypeVector %13 4
+%16 = OpTypeVector %8 4
+%19 = OpTypeInt 8 0
+%18 = OpTypeVector %19 4
 %4 = OpFunction  %2  None %5
 %3 = OpLabel
-OpBranch %10
-%10 = OpLabel
-%15 = OpBitcast  %13  %9
-%12 = OpSConvert  %11  %15
-%16 = OpCompositeExtract  %6  %12 2
-%21 = OpBitcast  %19  %9
-%18 = OpUConvert  %17  %21
-%22 = OpCompositeExtract  %8  %18 1
+%14 = OpBitcast  %12  %9
+%11 = OpSConvert  %10  %14
+%15 = OpCompositeExtract  %6  %11 2
+%20 = OpBitcast  %18  %9
+%17 = OpUConvert  %16  %20
+%21 = OpCompositeExtract  %8  %17 1
 OpReturn
 OpFunctionEnd

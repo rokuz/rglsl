@@ -1,13 +1,13 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 191
+; Bound: 185
 OpCapability Shader
 OpCapability Float64
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %173 "main"
-OpExecutionMode %173 OriginUpperLeft
+OpEntryPoint Fragment %168 "main"
+OpExecutionMode %168 OriginUpperLeft
 %2 = OpTypeVoid
 %4 = OpTypeFloat 32
 %3 = OpTypeVector %4 4
@@ -22,25 +22,25 @@ OpExecutionMode %173 OriginUpperLeft
 %17 = OpTypeFunction %2 %3 %3
 %19 = OpTypePointer Function %3
 %22 = OpTypePointer Function %11
-%51 = OpTypeFunction %2 %5 %5
-%53 = OpTypePointer Function %5
-%84 = OpTypeFunction %2 %7 %7
-%86 = OpTypePointer Function %7
-%117 = OpTypeFunction %2 %9 %9
-%119 = OpTypePointer Function %9
-%150 = OpTypeFunction %2 %11 %11
-%156 = OpTypePointer Function %12
-%174 = OpTypeFunction %2
-%175 = OpConstant  %4  0
-%176 = OpConstantComposite  %3  %175 %175 %175 %175
-%177 = OpConstant  %6  0
-%178 = OpConstantComposite  %5  %177 %177 %177 %177
-%179 = OpConstant  %8  0
-%180 = OpConstantComposite  %7  %179 %179 %179 %179
-%181 = OpConstant  %10  0
-%182 = OpConstantComposite  %9  %181 %181 %181 %181
-%183 = OpConstantFalse  %12
-%184 = OpConstantComposite  %11  %183 %183 %183 %183
+%50 = OpTypeFunction %2 %5 %5
+%52 = OpTypePointer Function %5
+%82 = OpTypeFunction %2 %7 %7
+%84 = OpTypePointer Function %7
+%114 = OpTypeFunction %2 %9 %9
+%116 = OpTypePointer Function %9
+%146 = OpTypeFunction %2 %11 %11
+%152 = OpTypePointer Function %12
+%169 = OpTypeFunction %2
+%170 = OpConstant  %4  0
+%171 = OpConstantComposite  %3  %170 %170 %170 %170
+%172 = OpConstant  %6  0
+%173 = OpConstantComposite  %5  %172 %172 %172 %172
+%174 = OpConstant  %8  0
+%175 = OpConstantComposite  %7  %174 %174 %174 %174
+%176 = OpConstant  %10  0
+%177 = OpConstantComposite  %9  %176 %176 %176 %176
+%178 = OpConstantFalse  %12
+%179 = OpConstantComposite  %11  %178 %178 %178 %178
 %16 = OpFunction  %2  None %17
 %14 = OpFunctionParameter  %3
 %15 = OpFunctionParameter  %3
@@ -53,204 +53,192 @@ OpExecutionMode %173 OriginUpperLeft
 %20 = OpVariable  %19  Function
 %25 = OpVariable  %22  Function
 %21 = OpVariable  %22  Function
-OpBranch %28
-%28 = OpLabel
 OpStore %18 %14
 OpStore %20 %15
-%29 = OpLoad  %3  %18
-%30 = OpLoad  %3  %20
-%31 = OpFOrdLessThan  %11  %29 %30
-OpStore %21 %31
-%32 = OpLoad  %3  %18
-%33 = OpLoad  %3  %20
-%34 = OpFOrdLessThanEqual  %11  %32 %33
-OpStore %23 %34
-%35 = OpLoad  %3  %18
-%36 = OpLoad  %3  %20
-%37 = OpFOrdGreaterThan  %11  %35 %36
-OpStore %24 %37
-%38 = OpLoad  %3  %18
-%39 = OpLoad  %3  %20
-%40 = OpFOrdGreaterThanEqual  %11  %38 %39
-OpStore %25 %40
-%41 = OpLoad  %3  %18
-%42 = OpLoad  %3  %20
-%43 = OpFOrdEqual  %11  %41 %42
-OpStore %26 %43
-%44 = OpLoad  %3  %18
-%45 = OpLoad  %3  %20
-%46 = OpFUnordNotEqual  %11  %44 %45
-OpStore %27 %46
+%28 = OpLoad  %3  %18
+%29 = OpLoad  %3  %20
+%30 = OpFOrdLessThan  %11  %28 %29
+OpStore %21 %30
+%31 = OpLoad  %3  %18
+%32 = OpLoad  %3  %20
+%33 = OpFOrdLessThanEqual  %11  %31 %32
+OpStore %23 %33
+%34 = OpLoad  %3  %18
+%35 = OpLoad  %3  %20
+%36 = OpFOrdGreaterThan  %11  %34 %35
+OpStore %24 %36
+%37 = OpLoad  %3  %18
+%38 = OpLoad  %3  %20
+%39 = OpFOrdGreaterThanEqual  %11  %37 %38
+OpStore %25 %39
+%40 = OpLoad  %3  %18
+%41 = OpLoad  %3  %20
+%42 = OpFOrdEqual  %11  %40 %41
+OpStore %26 %42
+%43 = OpLoad  %3  %18
+%44 = OpLoad  %3  %20
+%45 = OpFUnordNotEqual  %11  %43 %44
+OpStore %27 %45
 OpReturn
 OpFunctionEnd
-%50 = OpFunction  %2  None %51
+%49 = OpFunction  %2  None %50
+%47 = OpFunctionParameter  %5
 %48 = OpFunctionParameter  %5
-%49 = OpFunctionParameter  %5
-%47 = OpLabel
-%59 = OpVariable  %22  Function
-%56 = OpVariable  %22  Function
-%52 = OpVariable  %53  Function
-%60 = OpVariable  %22  Function
-%57 = OpVariable  %22  Function
-%54 = OpVariable  %53  Function
+%46 = OpLabel
 %58 = OpVariable  %22  Function
 %55 = OpVariable  %22  Function
-OpBranch %61
-%61 = OpLabel
-OpStore %52 %48
-OpStore %54 %49
-%62 = OpLoad  %5  %52
-%63 = OpLoad  %5  %54
-%64 = OpFOrdLessThan  %11  %62 %63
-OpStore %55 %64
-%65 = OpLoad  %5  %52
-%66 = OpLoad  %5  %54
-%67 = OpFOrdLessThanEqual  %11  %65 %66
-OpStore %56 %67
-%68 = OpLoad  %5  %52
-%69 = OpLoad  %5  %54
-%70 = OpFOrdGreaterThan  %11  %68 %69
-OpStore %57 %70
-%71 = OpLoad  %5  %52
-%72 = OpLoad  %5  %54
-%73 = OpFOrdGreaterThanEqual  %11  %71 %72
-OpStore %58 %73
-%74 = OpLoad  %5  %52
-%75 = OpLoad  %5  %54
-%76 = OpFOrdEqual  %11  %74 %75
-OpStore %59 %76
-%77 = OpLoad  %5  %52
-%78 = OpLoad  %5  %54
-%79 = OpFUnordNotEqual  %11  %77 %78
-OpStore %60 %79
+%51 = OpVariable  %52  Function
+%59 = OpVariable  %22  Function
+%56 = OpVariable  %22  Function
+%53 = OpVariable  %52  Function
+%57 = OpVariable  %22  Function
+%54 = OpVariable  %22  Function
+OpStore %51 %47
+OpStore %53 %48
+%60 = OpLoad  %5  %51
+%61 = OpLoad  %5  %53
+%62 = OpFOrdLessThan  %11  %60 %61
+OpStore %54 %62
+%63 = OpLoad  %5  %51
+%64 = OpLoad  %5  %53
+%65 = OpFOrdLessThanEqual  %11  %63 %64
+OpStore %55 %65
+%66 = OpLoad  %5  %51
+%67 = OpLoad  %5  %53
+%68 = OpFOrdGreaterThan  %11  %66 %67
+OpStore %56 %68
+%69 = OpLoad  %5  %51
+%70 = OpLoad  %5  %53
+%71 = OpFOrdGreaterThanEqual  %11  %69 %70
+OpStore %57 %71
+%72 = OpLoad  %5  %51
+%73 = OpLoad  %5  %53
+%74 = OpFOrdEqual  %11  %72 %73
+OpStore %58 %74
+%75 = OpLoad  %5  %51
+%76 = OpLoad  %5  %53
+%77 = OpFUnordNotEqual  %11  %75 %76
+OpStore %59 %77
 OpReturn
 OpFunctionEnd
-%83 = OpFunction  %2  None %84
-%81 = OpFunctionParameter  %7
-%82 = OpFunctionParameter  %7
-%80 = OpLabel
-%92 = OpVariable  %22  Function
-%89 = OpVariable  %22  Function
-%85 = OpVariable  %86  Function
-%93 = OpVariable  %22  Function
+%81 = OpFunction  %2  None %82
+%79 = OpFunctionParameter  %7
+%80 = OpFunctionParameter  %7
+%78 = OpLabel
 %90 = OpVariable  %22  Function
-%87 = OpVariable  %86  Function
+%87 = OpVariable  %22  Function
+%83 = OpVariable  %84  Function
 %91 = OpVariable  %22  Function
 %88 = OpVariable  %22  Function
-OpBranch %94
-%94 = OpLabel
-OpStore %85 %81
-OpStore %87 %82
-%95 = OpLoad  %7  %85
-%96 = OpLoad  %7  %87
-%97 = OpSLessThan  %11  %95 %96
-OpStore %88 %97
-%98 = OpLoad  %7  %85
-%99 = OpLoad  %7  %87
-%100 = OpSLessThanEqual  %11  %98 %99
-OpStore %89 %100
-%101 = OpLoad  %7  %85
-%102 = OpLoad  %7  %87
-%103 = OpSGreaterThan  %11  %101 %102
-OpStore %90 %103
-%104 = OpLoad  %7  %85
-%105 = OpLoad  %7  %87
-%106 = OpSGreaterThanEqual  %11  %104 %105
-OpStore %91 %106
-%107 = OpLoad  %7  %85
-%108 = OpLoad  %7  %87
-%109 = OpIEqual  %11  %107 %108
-OpStore %92 %109
-%110 = OpLoad  %7  %85
-%111 = OpLoad  %7  %87
-%112 = OpINotEqual  %11  %110 %111
-OpStore %93 %112
+%85 = OpVariable  %84  Function
+%89 = OpVariable  %22  Function
+%86 = OpVariable  %22  Function
+OpStore %83 %79
+OpStore %85 %80
+%92 = OpLoad  %7  %83
+%93 = OpLoad  %7  %85
+%94 = OpSLessThan  %11  %92 %93
+OpStore %86 %94
+%95 = OpLoad  %7  %83
+%96 = OpLoad  %7  %85
+%97 = OpSLessThanEqual  %11  %95 %96
+OpStore %87 %97
+%98 = OpLoad  %7  %83
+%99 = OpLoad  %7  %85
+%100 = OpSGreaterThan  %11  %98 %99
+OpStore %88 %100
+%101 = OpLoad  %7  %83
+%102 = OpLoad  %7  %85
+%103 = OpSGreaterThanEqual  %11  %101 %102
+OpStore %89 %103
+%104 = OpLoad  %7  %83
+%105 = OpLoad  %7  %85
+%106 = OpIEqual  %11  %104 %105
+OpStore %90 %106
+%107 = OpLoad  %7  %83
+%108 = OpLoad  %7  %85
+%109 = OpINotEqual  %11  %107 %108
+OpStore %91 %109
 OpReturn
 OpFunctionEnd
-%116 = OpFunction  %2  None %117
-%114 = OpFunctionParameter  %9
-%115 = OpFunctionParameter  %9
-%113 = OpLabel
-%125 = OpVariable  %22  Function
+%113 = OpFunction  %2  None %114
+%111 = OpFunctionParameter  %9
+%112 = OpFunctionParameter  %9
+%110 = OpLabel
 %122 = OpVariable  %22  Function
-%118 = OpVariable  %119  Function
-%126 = OpVariable  %22  Function
+%119 = OpVariable  %22  Function
+%115 = OpVariable  %116  Function
 %123 = OpVariable  %22  Function
-%120 = OpVariable  %119  Function
-%124 = OpVariable  %22  Function
+%120 = OpVariable  %22  Function
+%117 = OpVariable  %116  Function
 %121 = OpVariable  %22  Function
-OpBranch %127
-%127 = OpLabel
-OpStore %118 %114
-OpStore %120 %115
-%128 = OpLoad  %9  %118
-%129 = OpLoad  %9  %120
-%130 = OpULessThan  %11  %128 %129
-OpStore %121 %130
-%131 = OpLoad  %9  %118
-%132 = OpLoad  %9  %120
-%133 = OpULessThanEqual  %11  %131 %132
-OpStore %122 %133
-%134 = OpLoad  %9  %118
-%135 = OpLoad  %9  %120
-%136 = OpUGreaterThan  %11  %134 %135
-OpStore %123 %136
-%137 = OpLoad  %9  %118
-%138 = OpLoad  %9  %120
-%139 = OpUGreaterThanEqual  %11  %137 %138
-OpStore %124 %139
-%140 = OpLoad  %9  %118
-%141 = OpLoad  %9  %120
-%142 = OpIEqual  %11  %140 %141
-OpStore %125 %142
-%143 = OpLoad  %9  %118
-%144 = OpLoad  %9  %120
-%145 = OpINotEqual  %11  %143 %144
-OpStore %126 %145
+%118 = OpVariable  %22  Function
+OpStore %115 %111
+OpStore %117 %112
+%124 = OpLoad  %9  %115
+%125 = OpLoad  %9  %117
+%126 = OpULessThan  %11  %124 %125
+OpStore %118 %126
+%127 = OpLoad  %9  %115
+%128 = OpLoad  %9  %117
+%129 = OpULessThanEqual  %11  %127 %128
+OpStore %119 %129
+%130 = OpLoad  %9  %115
+%131 = OpLoad  %9  %117
+%132 = OpUGreaterThan  %11  %130 %131
+OpStore %120 %132
+%133 = OpLoad  %9  %115
+%134 = OpLoad  %9  %117
+%135 = OpUGreaterThanEqual  %11  %133 %134
+OpStore %121 %135
+%136 = OpLoad  %9  %115
+%137 = OpLoad  %9  %117
+%138 = OpIEqual  %11  %136 %137
+OpStore %122 %138
+%139 = OpLoad  %9  %115
+%140 = OpLoad  %9  %117
+%141 = OpINotEqual  %11  %139 %140
+OpStore %123 %141
 OpReturn
 OpFunctionEnd
-%149 = OpFunction  %2  None %150
-%147 = OpFunctionParameter  %11
-%148 = OpFunctionParameter  %11
-%146 = OpLabel
-%155 = OpVariable  %156  Function
-%152 = OpVariable  %22  Function
-%158 = OpVariable  %22  Function
+%145 = OpFunction  %2  None %146
+%143 = OpFunctionParameter  %11
+%144 = OpFunctionParameter  %11
+%142 = OpLabel
+%151 = OpVariable  %152  Function
+%148 = OpVariable  %22  Function
 %154 = OpVariable  %22  Function
-%151 = OpVariable  %22  Function
-%157 = OpVariable  %156  Function
-%153 = OpVariable  %22  Function
-OpBranch %159
-%159 = OpLabel
-OpStore %151 %147
-OpStore %152 %148
-%160 = OpLoad  %11  %151
-%161 = OpLoad  %11  %152
-%162 = OpLogicalEqual  %11  %160 %161
-OpStore %153 %162
-%163 = OpLoad  %11  %151
-%164 = OpLoad  %11  %152
-%165 = OpLogicalNotEqual  %11  %163 %164
-OpStore %154 %165
-%166 = OpLoad  %11  %151
-%167 = OpAny  %12  %166
-OpStore %155 %167
-%168 = OpLoad  %11  %151
-%169 = OpAll  %12  %168
-OpStore %157 %169
-%170 = OpLoad  %11  %151
-%171 = OpLogicalNot  %11  %170
-OpStore %158 %171
+%150 = OpVariable  %22  Function
+%147 = OpVariable  %22  Function
+%153 = OpVariable  %152  Function
+%149 = OpVariable  %22  Function
+OpStore %147 %143
+OpStore %148 %144
+%155 = OpLoad  %11  %147
+%156 = OpLoad  %11  %148
+%157 = OpLogicalEqual  %11  %155 %156
+OpStore %149 %157
+%158 = OpLoad  %11  %147
+%159 = OpLoad  %11  %148
+%160 = OpLogicalNotEqual  %11  %158 %159
+OpStore %150 %160
+%161 = OpLoad  %11  %147
+%162 = OpAny  %12  %161
+OpStore %151 %162
+%163 = OpLoad  %11  %147
+%164 = OpAll  %12  %163
+OpStore %153 %164
+%165 = OpLoad  %11  %147
+%166 = OpLogicalNot  %11  %165
+OpStore %154 %166
 OpReturn
 OpFunctionEnd
-%173 = OpFunction  %2  None %174
-%172 = OpLabel
-OpBranch %185
-%185 = OpLabel
-%186 = OpFunctionCall  %2  %16 %176 %176
-%187 = OpFunctionCall  %2  %50 %178 %178
-%188 = OpFunctionCall  %2  %83 %180 %180
-%189 = OpFunctionCall  %2  %116 %182 %182
-%190 = OpFunctionCall  %2  %149 %184 %184
+%168 = OpFunction  %2  None %169
+%167 = OpLabel
+%180 = OpFunctionCall  %2  %16 %171 %171
+%181 = OpFunctionCall  %2  %49 %173 %173
+%182 = OpFunctionCall  %2  %81 %175 %175
+%183 = OpFunctionCall  %2  %113 %177 %177
+%184 = OpFunctionCall  %2  %145 %179 %179
 OpReturn
 OpFunctionEnd

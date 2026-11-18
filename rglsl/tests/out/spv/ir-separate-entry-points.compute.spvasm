@@ -1,45 +1,39 @@
 ; SPIR-V
 ; Version: 1.0
 ; Generator: rspirv
-; Bound: 26
+; Bound: 23
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %23 "compute"
-OpExecutionMode %23 LocalSize 1 1 1
+OpEntryPoint GLCompute %21 "compute"
+OpExecutionMode %21 LocalSize 1 1 1
 %2 = OpTypeVoid
 %4 = OpTypeFloat 32
 %3 = OpTypeVector %4 4
 %7 = OpTypeFunction %2
 %8 = OpConstant  %4  0
-%17 = OpTypeInt 32 0
-%16 = OpConstant  %17  2
-%18 = OpConstant  %17  1
-%19 = OpConstant  %17  72
-%20 = OpConstant  %17  264
-%21 = OpConstant  %17  2056
+%15 = OpTypeInt 32 0
+%14 = OpConstant  %15  2
+%16 = OpConstant  %15  1
+%17 = OpConstant  %15  72
+%18 = OpConstant  %15  264
+%19 = OpConstant  %15  2056
 %6 = OpFunction  %2  None %7
 %5 = OpLabel
-OpBranch %9
-%9 = OpLabel
-%10 = OpDPdx  %4  %8
-%11 = OpDPdy  %4  %8
-%12 = OpFwidth  %4  %8
+%9 = OpDPdx  %4  %8
+%10 = OpDPdy  %4  %8
+%11 = OpFwidth  %4  %8
 OpReturn
 OpFunctionEnd
-%14 = OpFunction  %2  None %7
-%13 = OpLabel
-OpBranch %15
-%15 = OpLabel
-OpControlBarrier %16 %18 %19
-OpControlBarrier %16 %16 %20
-OpControlBarrier %16 %16 %21
+%13 = OpFunction  %2  None %7
+%12 = OpLabel
+OpControlBarrier %14 %16 %17
+OpControlBarrier %14 %14 %18
+OpControlBarrier %14 %14 %19
 OpReturn
 OpFunctionEnd
-%23 = OpFunction  %2  None %7
-%22 = OpLabel
-OpBranch %24
-%24 = OpLabel
-%25 = OpFunctionCall  %2  %14
+%21 = OpFunction  %2  None %7
+%20 = OpLabel
+%22 = OpFunctionCall  %2  %13
 OpReturn
 OpFunctionEnd

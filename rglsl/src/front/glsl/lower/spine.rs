@@ -30,7 +30,6 @@ enum Mode {
 struct Pending<'e> {
     node: &'e AstExpression,
     place: Place,
-    old: Option<Handle<Expression>>,
 }
 
 struct FlatLevel<'b> {
@@ -484,23 +483,14 @@ impl FunctionLowerer<'_, '_> {
         let mut pending = Vec::with_capacity(spine.links.len());
         for node in spine.links {
             let at = self.at(node.span);
-            let ExpressionKind::Assignment {
-                operator,
-                ref target,
-                ..
-            } = node.kind
-            else {
+            let ExpressionKind::Assignment { ref target, .. } = node.kind else {
                 return Err(internal(at));
             };
             let place = self.place_child(target)?;
-            let old = match super::expression::compound(operator) {
-                Some(_) => Some(self.compound_old(target, &place, at)?),
-                None => None,
-            };
-            pending.push(Pending { node, place, old });
+            pending.push(Pending { node, place });
         }
         let mut inner = None;
-        while let Some(Pending { node, place, old }) = pending.pop() {
+        while let Some(Pending { node, place }) = pending.pop() {
             let at = self.at(node.span);
             let ExpressionKind::Assignment {
                 operator,
@@ -514,12 +504,12 @@ impl FunctionLowerer<'_, '_> {
                 Some(result) => self.passed_on(value, Some(result))?,
                 None => self.typed_child(value)?,
             };
-            let result = match (super::expression::compound(operator), old) {
-                (None, _) => typed.0,
-                (Some(binary), Some(old)) => {
+            let result = match super::expression::compound(operator) {
+                None => typed.0,
+                Some(binary) => {
+                    let old = self.compound_old(target, &place, at)?;
                     (self.compound_assignment(binary, (target, &place, old), value, typed, at))?
                 }
-                (Some(_), None) => return Err(internal(at)),
             };
             self.store(&place, result, at)?;
             inner = Some(result);
