@@ -1,4 +1,4 @@
-mod classify;
+pub mod classify;
 mod generate;
 mod quarantine;
 mod report;

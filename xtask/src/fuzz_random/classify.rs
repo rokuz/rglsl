@@ -1,6 +1,7 @@
 use crate::exec::batch::{self, Ending, Job, JobError, JobResult, Trace};
 use crate::exec::events::{self, ResetHistory};
 use crate::exec::plan::Plan;
+use crate::exec::remote::Watched;
 use crate::exec::{Executor, Outputs};
 use crate::fuzz_exec;
 
@@ -255,16 +256,9 @@ impl<'a> Watch<'a> {
                 );
                 continue;
             }
-            let watched = self.executor.run_watched(slice, alone);
-            let traces: Vec<Trace> = watched
-                .results
-                .iter()
-                .map(|traced| traced.trace.clone())
-                .collect();
-            let mut resets = events::resets_by_job(&watched.events, &traces);
-            let mut crashes = events::crashes_by_job(&watched.events, &traces);
+            let mut watched = self.executor.run_watched(slice, alone);
             self.history.record(&watched.events);
-            self.problems.extend(watched.problems);
+            self.problems.append(&mut watched.problems);
             if let Some(why) = self.history.exceeded() {
                 eprintln!(
                     "[xtask] stopping the {} target: {why}",
@@ -272,21 +266,42 @@ impl<'a> Watch<'a> {
                 );
                 self.stopped = Some(why);
             }
-            let mut results = watched.results.into_iter();
-            for index in 0..slice.len() {
-                out.push(match results.next() {
-                    Some(traced) => Ran {
-                        result: traced.result,
-                        trace: traced.trace,
-                        resets: resets.remove(&index).unwrap_or_default(),
-                        crash_module: crashes.remove(&index),
-                    },
-                    None => Ran::not_run(JobError::missing("batch").to_string()),
-                });
-            }
+            out.extend(attributed(watched, slice.len()));
         }
         out
     }
+}
+
+fn attributed(watched: Watched, count: usize) -> Vec<Ran> {
+    let traces: Vec<Trace> = watched
+        .results
+        .iter()
+        .map(|traced| traced.trace.clone())
+        .collect();
+    let mut resets = events::resets_by_job(&watched.events, &traces);
+    let mut crashes = events::crashes_by_job(&watched.events, &traces);
+    let mut results = watched.results.into_iter();
+    (0..count)
+        .map(|index| match results.next() {
+            Some(traced) => Ran {
+                result: traced.result,
+                trace: traced.trace,
+                resets: resets.remove(&index).unwrap_or_default(),
+                crash_module: crashes.remove(&index),
+            },
+            None => Ran::not_run(JobError::missing("batch").to_string()),
+        })
+        .collect()
+}
+
+pub fn run_alone(executor: &Executor, job: &Job) -> (Ran, Vec<String>) {
+    let mut watched = executor.run_watched(std::slice::from_ref(job), true);
+    let problems = std::mem::take(&mut watched.problems);
+    let ran = attributed(watched, 1)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| Ran::not_run(JobError::missing("batch").to_string()));
+    (ran, problems)
 }
 
 #[cfg(test)]
