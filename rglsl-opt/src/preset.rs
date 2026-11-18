@@ -16,7 +16,18 @@ pub struct Preset {
     pub steps: &'static [Step],
 }
 
-const OPTIMIZE: &[Step] = &[Step::Run("inline"), Step::Run("dce")];
+const OPTIMIZE: &[Step] = &[
+    Step::Run("inline"),
+    Step::Run("dce"),
+    Step::Repeat {
+        limit: 2,
+        passes: &["forward", "dce"],
+    },
+    Step::Repeat {
+        limit: 2,
+        passes: &["sroa", "forward", "dce"],
+    },
+];
 
 pub static PRESETS: &[Preset] = &[
     Preset {

@@ -475,6 +475,53 @@ fn deep_statements_compile_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
+    let cases = [
+        (
+            "forwarded loads",
+            "float x = float(b);",
+            "if (t) { ",
+            "b = int(x) + c[1];",
+            " }",
+        ),
+        (
+            "stores in loops",
+            "float x = 1.0;",
+            "for (int i = 0; i < 2; i++) { ",
+            "x = x + float(c[0]); b = int(x);",
+            " }",
+        ),
+        (
+            "overwritten stores",
+            "",
+            "if (t) { ",
+            "b = 2; v = vec4(c[0]); b = c[1];",
+            " }",
+        ),
+        (
+            "switches and blocks",
+            "int k = b;",
+            "switch (k) { case 1: { ",
+            "b = k + c[1];",
+            " } break; }",
+        ),
+    ];
+    for (name, prefix, open, core, close) in cases {
+        compiles_at(depth, name, nested_body(prefix, open, core, close))?;
+    }
+    compiles_at(depth, "private globals", |count| {
+        shader(
+            "int g = 3; vec4 h;",
+            &format!(
+                "{}h = vec4(g); b = int(h.x) + g;{}",
+                "if (t) { ".repeat(count),
+                " }".repeat(count)
+            ),
+        )
+    })?;
+    Ok(())
+}
+
 fn deep_types_compile_on_a_small_stack(depth: usize) -> TestResult {
     compiles_at(depth, "struct chains", |count| {
         shader(
@@ -1346,6 +1393,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
             depth,
         ),
         (deep_statements_compile_on_a_small_stack, depth),
+        (deep_optimizer_walks_compile_on_a_small_stack, depth),
         (deep_specialization_compiles_on_a_small_stack, depth),
         (deep_library_variants_compile_on_a_small_stack, depth),
         (deep_types_compile_on_a_small_stack, depth),

@@ -1,50 +1,8 @@
-use rglsl::back::spv;
-use rglsl::front::glsl::{Frontend, Options};
-use rglsl::valid::{ValidationFlags, Validator};
+mod common;
+
+use common::{TestResult, fragment, optimized};
 use rglsl::{AddressSpace, Module, ShaderStage, Statement};
-use rglsl_opt::{Context, DebugLevel, OptOptions, StageModule, TargetGpu, optimize};
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-fn optimized(
-    stage: ShaderStage,
-    source: &str,
-    passes: &[&str],
-    target_gpu: TargetGpu,
-    context: Context,
-) -> TestResult<Module> {
-    let mut module = Frontend::default()
-        .parse(&Options::from(stage), source)
-        .map_err(|errors| format!("{errors:?}"))?;
-    let mut info = Validator::new(ValidationFlags::all()).validate(&module)?;
-    let options = OptOptions {
-        passes: Some(passes.iter().map(|&name| name.to_owned()).collect()),
-        target_gpu,
-        validate_each: true,
-        ..OptOptions::default()
-    };
-    optimize(
-        &mut [StageModule {
-            stage,
-            module: &mut module,
-            info: &mut info,
-        }],
-        &options,
-        context,
-    )?;
-    spv::write_vec(&module, &info, &spv::Options::default(), None)?;
-    Ok(module)
-}
-
-fn fragment(source: &str, passes: &[&str]) -> TestResult<Module> {
-    optimized(
-        ShaderStage::Fragment,
-        source,
-        passes,
-        TargetGpu::default(),
-        Context::default(),
-    )
-}
+use rglsl_opt::{Context, DebugLevel, TargetGpu};
 
 fn calls(module: &Module) -> usize {
     module

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod analysis;
 mod error;
 mod ir;
 mod manager;

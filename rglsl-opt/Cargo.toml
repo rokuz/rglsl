@@ -14,5 +14,8 @@ rglsl.workspace = true
 rglsl-types.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+spirv.workspace = true
+
 [lints]
 workspace = true

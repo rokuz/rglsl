@@ -817,6 +817,31 @@ fn markdown(results: &[UnitResult], elapsed: Duration) -> String {
         out.push('\n');
     }
 
+    out.push_str("\n## Memory accesses in functions\n\n");
+    out.push_str("Shaders whose `OpLoad` + `OpStore` count is at most that of spirv-opt -O(rglsl), over the shaders where both modules are valid.\n\n| variant | at most spirv-opt -O | shaders | share |\n|---|--:|--:|--:|\n");
+    for variant in [
+        Variant::Rglsl,
+        Variant::RglslO,
+        Variant::RglslOs,
+        Variant::GlslangO,
+    ] {
+        let accesses = |metrics: &Metrics| metrics.loads + metrics.stores;
+        let (fewer, total) =
+            pairs(results, variant).fold((0, 0), |(fewer, total), (_, value, reference)| {
+                (
+                    fewer + usize::from(accesses(value) <= accesses(reference)),
+                    total + 1,
+                )
+            });
+        let _ = writeln!(
+            out,
+            "| {} | {fewer} | {total} | {} |",
+            variant.label(),
+            stats::ratio(fewer as f64 * 100.0, total as f64)
+                .map_or_else(|| "-".into(), |share| format!("{share:.1} %"))
+        );
+    }
+
     out.push_str("\n## Geometric means of the per-shader ratios to spirv-opt -O(rglsl)\n\n");
     out.push_str("Over the shaders where both modules are valid.\n\n| metric |");
     for variant in Variant::ALL {

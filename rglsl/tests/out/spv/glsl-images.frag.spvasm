@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 164
+; Bound: 157
 OpCapability Shader
 OpCapability Image1D
 OpCapability ImageQuery
@@ -64,10 +64,10 @@ OpDecorate %26 Binding 9
 %69 = OpTypePointer Function %10
 %71 = OpTypePointer Function %13
 %144 = OpTypeFunction %2
-%152 = OpConstant  %8  1
-%153 = OpConstant  %8  0
-%154 = OpConstantComposite  %9  %153 %153
-%155 = OpConstantComposite  %10  %153 %153 %153
+%145 = OpConstant  %8  1
+%146 = OpConstant  %8  0
+%147 = OpConstantComposite  %9  %146 %146
+%148 = OpConstantComposite  %10  %146 %146 %146
 %29 = OpFunction  %2  None %30
 %28 = OpFunctionParameter  %8
 %27 = OpLabel
@@ -218,21 +218,14 @@ OpReturn
 OpFunctionEnd
 %143 = OpFunction  %2  None %144
 %142 = OpLabel
-%145 = OpLoad  %3  %16
-%146 = OpLoad  %5  %18
-%147 = OpLoad  %6  %20
-%148 = OpLoad  %7  %22
-%149 = OpLoad  %5  %24
-%150 = OpLoad  %5  %25
-%151 = OpLoad  %5  %26
-OpBranch %156
-%156 = OpLabel
-%157 = OpFunctionCall  %2  %29 %152
-%158 = OpFunctionCall  %2  %47 %154
-%159 = OpFunctionCall  %2  %65 %155
-%160 = OpFunctionCall  %2  %94 %155
-%161 = OpFunctionCall  %2  %108 %154
-%162 = OpFunctionCall  %2  %122 %154
-%163 = OpFunctionCall  %2  %134 %154
+OpBranch %149
+%149 = OpLabel
+%150 = OpFunctionCall  %2  %29 %145
+%151 = OpFunctionCall  %2  %47 %147
+%152 = OpFunctionCall  %2  %65 %148
+%153 = OpFunctionCall  %2  %94 %148
+%154 = OpFunctionCall  %2  %108 %147
+%155 = OpFunctionCall  %2  %122 %147
+%156 = OpFunctionCall  %2  %134 %147
 OpReturn
 OpFunctionEnd

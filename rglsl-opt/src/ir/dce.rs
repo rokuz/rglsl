@@ -18,9 +18,7 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
 fn dce(module: &mut Module, context: Context) -> Result<Changed, String> {
     let complete = !context.unlinked && !context.export_functions;
     let mut changed = false;
-    if context.debug != DebugLevel::Variables {
-        changed |= sweep_functions(module, complete)?;
-    }
+    changed |= sweep_functions(module, complete, context.debug == DebugLevel::Variables)?;
     if complete {
         changed |= sweep_module(module)?;
     }
@@ -176,7 +174,7 @@ impl Marker<'_> {
     }
 }
 
-fn sweep_functions(module: &mut Module, complete: bool) -> Result<bool, String> {
+fn sweep_functions(module: &mut Module, complete: bool, keep_locals: bool) -> Result<bool, String> {
     let tracked: Vec<bool> = module
         .global_variables
         .iter()
@@ -242,6 +240,16 @@ fn sweep_functions(module: &mut Module, complete: bool) -> Result<bool, String> 
                         marker.mark(index, result);
                     }
                 }
+            }
+        }
+    }
+    if keep_locals {
+        for index in 0..marker.functions.len() {
+            let Some(&function) = marker.functions.get(index) else {
+                continue;
+            };
+            for (local, _) in function.local_variables.iter() {
+                marker.local(index, function, local);
             }
         }
     }
