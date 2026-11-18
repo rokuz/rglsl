@@ -717,6 +717,7 @@ impl Writer {
         ir_module: &crate::Module,
         handle: Handle<crate::GlobalVariable>,
         var: &crate::GlobalVariable,
+        loaded: bool,
         prelude: &mut Block,
     ) -> Result<(), Error> {
         let mut gv = self.global_variables[handle].clone();
@@ -724,7 +725,8 @@ impl Writer {
         if matches!(
             ir_module.types[var.ty].inner,
             crate::TypeInner::BindingArray { .. }
-        ) {
+        ) || (var.space == crate::AddressSpace::Handle && !loaded)
+        {
             gv.access_id = gv.var_id;
         } else if var.space == crate::AddressSpace::Handle {
             let var_type_id = self.get_handle_type_id(var.ty)?;
@@ -1070,6 +1072,7 @@ impl Writer {
         {
             iface.varying_ids.extend(self.heap_variable_ids());
         }
+        let loaded = super::atomic::loaded_handles(ir_function, ir_module.global_variables.len());
         for (handle, var) in ir_module.global_variables.iter() {
             if info[handle].is_empty() {
                 continue;
@@ -1084,7 +1087,8 @@ impl Writer {
                     iface.varying_ids.push(self.global_variables[handle].var_id);
                 }
             }
-            self.write_global_access(ir_module, handle, var, &mut prelude)?;
+            let loaded = loaded.get(handle.index()).copied().unwrap_or(true);
+            self.write_global_access(ir_module, handle, var, loaded, &mut prelude)?;
         }
 
         // Create a `BlockContext` for generating SPIR-V for the function's

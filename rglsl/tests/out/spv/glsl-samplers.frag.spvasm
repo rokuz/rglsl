@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 1116
+; Bound: 1101
 OpCapability Shader
 OpCapability Sampled1D
 OpCapability SampledCubeArray
@@ -449,9 +449,9 @@ OpDecorate %1082 RelaxedPrecision
 %940 = OpConstantComposite  %24  %63 %63 %63
 %951 = OpTypeSampledImage %9
 %1085 = OpTypeFunction %2
-%1101 = OpConstantComposite  %20  %450 %450
-%1102 = OpConstantComposite  %21  %450 %450 %450
-%1103 = OpConstantComposite  %22  %450 %450 %450 %450
+%1086 = OpConstantComposite  %20  %450 %450
+%1087 = OpConstantComposite  %21  %450 %450 %450
+%1088 = OpConstantComposite  %22  %450 %450 %450 %450
 %57 = OpFunction  %2  None %58
 %56 = OpFunctionParameter  %4
 %55 = OpLabel
@@ -1614,33 +1614,18 @@ OpReturn
 OpFunctionEnd
 %1084 = OpFunction  %2  None %1085
 %1083 = OpLabel
-%1086 = OpLoad  %3  %26
-%1087 = OpLoad  %5  %28
-%1088 = OpLoad  %6  %30
-%1089 = OpLoad  %7  %32
-%1090 = OpLoad  %8  %34
-%1091 = OpLoad  %9  %36
-%1092 = OpLoad  %10  %38
-%1093 = OpLoad  %12  %40
-%1094 = OpLoad  %14  %42
-%1095 = OpLoad  %15  %44
-%1096 = OpLoad  %16  %46
-%1097 = OpLoad  %17  %48
-%1098 = OpLoad  %18  %50
-%1099 = OpLoad  %14  %52
-%1100 = OpLoad  %19  %53
-OpBranch %1104
-%1104 = OpLabel
-%1105 = OpFunctionCall  %2  %57 %450
-%1106 = OpFunctionCall  %2  %204 %1101
-%1107 = OpFunctionCall  %2  %447 %1101
-%1108 = OpFunctionCall  %2  %583 %1102
-%1109 = OpFunctionCall  %2  %702 %1102
-%1110 = OpFunctionCall  %2  %783 %1102
-%1111 = OpFunctionCall  %2  %811 %1102
-%1112 = OpFunctionCall  %2  %844 %1103
-%1113 = OpFunctionCall  %2  %906 %1103
-%1114 = OpFunctionCall  %2  %937 %1102
-%1115 = OpFunctionCall  %2  %1072 %1101
+OpBranch %1089
+%1089 = OpLabel
+%1090 = OpFunctionCall  %2  %57 %450
+%1091 = OpFunctionCall  %2  %204 %1086
+%1092 = OpFunctionCall  %2  %447 %1086
+%1093 = OpFunctionCall  %2  %583 %1087
+%1094 = OpFunctionCall  %2  %702 %1087
+%1095 = OpFunctionCall  %2  %783 %1087
+%1096 = OpFunctionCall  %2  %811 %1087
+%1097 = OpFunctionCall  %2  %844 %1088
+%1098 = OpFunctionCall  %2  %906 %1088
+%1099 = OpFunctionCall  %2  %937 %1087
+%1100 = OpFunctionCall  %2  %1072 %1086
 OpReturn
 OpFunctionEnd
