@@ -2,6 +2,7 @@ mod private;
 
 use std::collections::BTreeMap;
 
+use rglsl::proc::TypeResolution;
 use rglsl::{
     AddressSpace, Arena, Binding, Block, BuiltIn, Expression, Function, GlobalVariable, Handle,
     LocalVariable, Module, ShaderStage, Span, Statement, SwitchCase, Type, UniqueArena,
@@ -9,7 +10,7 @@ use rglsl::{
 use rglsl_types::stack::recurse;
 
 use crate::analysis::locals::{FIRST, Locals, Root, Usage};
-use crate::analysis::{Class, classify_types, elements, for_each_result};
+use crate::analysis::{Class, classify_types, elements, for_each_result, resolve_types};
 use crate::ir::rebuild::{Policy, Rebuild};
 use crate::{Changed, Context, DebugLevel, OptError, Session};
 
@@ -25,9 +26,15 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
     let mut changed = false;
     let classes = classify_types(&module.types);
     let keep_stores = context.debug == DebugLevel::Variables;
-    if !context.unlinked && !context.export_functions && !keep_stores {
+    let complete = !context.unlinked && !context.export_functions;
+    if complete && !keep_stores {
         changed |= private::localize(module, &classes)?;
     }
+    let undefined = if complete {
+        private::never_written(module, &classes)
+    } else {
+        vec![false; module.global_variables.len()]
+    };
     let readonly: Vec<bool> = module
         .global_variables
         .iter()
@@ -44,25 +51,45 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
         .map(|(_, global)| global.ty)
         .collect();
     let globals = Globals {
-        types: &module.types,
         readonly: &readonly,
         outputs: &outputs,
         classes: &classes,
         global_types: &global_types,
+        undefined: &undefined,
     };
-    let functions = module
-        .functions
-        .iter_mut()
-        .map(|(_, function)| function)
-        .chain(
+    let handles: Vec<Handle<Function>> =
+        module.functions.iter().map(|(handle, _)| handle).collect();
+    for handle in handles {
+        let function = core::mem::take(
             module
-                .entry_points
-                .iter_mut()
-                .map(|entry| &mut entry.function),
+                .functions
+                .try_get_mut(handle)
+                .map_err(|error| error.to_string())?,
         );
-    for function in functions {
-        if let Some(rewritten) = rewrite(globals, function, keep_stores)? {
-            *function = rewritten;
+        let result = rewrite(module, globals, &function, keep_stores);
+        let slot = module
+            .functions
+            .try_get_mut(handle)
+            .map_err(|error| error.to_string())?;
+        *slot = function;
+        if let Some(rewritten) = result? {
+            *slot = rewritten;
+            changed = true;
+        }
+    }
+    for index in 0..module.entry_points.len() {
+        let Some(entry) = module.entry_points.get_mut(index) else {
+            continue;
+        };
+        let function = core::mem::take(&mut entry.function);
+        let result = rewrite(module, globals, &function, keep_stores);
+        let entry = module
+            .entry_points
+            .get_mut(index)
+            .ok_or("an entry point disappeared while forwarding")?;
+        entry.function = function;
+        if let Some(rewritten) = result? {
+            entry.function = rewritten;
             changed = true;
         }
     }
@@ -71,11 +98,11 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
 
 #[derive(Clone, Copy)]
 struct Globals<'a> {
-    types: &'a UniqueArena<Type>,
     readonly: &'a [bool],
     outputs: &'a [bool],
     classes: &'a [Class],
     global_types: &'a [Handle<Type>],
+    undefined: &'a [bool],
 }
 
 fn forwardable_output(stage: ShaderStage, global: &GlobalVariable) -> bool {
@@ -103,17 +130,19 @@ fn readonly(global: &GlobalVariable) -> bool {
 }
 
 fn rewrite(
-    module: Globals<'_>,
+    module: &mut Module,
+    globals: Globals<'_>,
     function: &Function,
     keep_stores: bool,
 ) -> Result<Option<Function>, String> {
     let Globals {
-        types,
         readonly,
         outputs,
         classes,
         global_types,
-    } = module;
+        undefined,
+    } = globals;
+    let types = &module.types;
     let locals = Locals::of(function, readonly.len());
     let class = |local: &LocalVariable| {
         classes
@@ -159,10 +188,15 @@ fn rewrite(
             .iter()
             .zip(readonly)
             .all(|(usage, &readonly)| !readonly || loaded(usage) < 2)
+        && locals
+            .globals
+            .iter()
+            .zip(undefined)
+            .all(|(usage, &undefined)| !undefined || loaded(usage) == 0)
     {
         return Ok(None);
     }
-    let Some(plan) = Scan::run(
+    let Some(mut plan) = Scan::run(
         types,
         function,
         &locals,
@@ -172,12 +206,17 @@ fn rewrite(
             references: &references,
             types: &slot_types,
         },
-        readonly,
+        Access {
+            readonly,
+            undefined,
+        },
         keep_stores,
     )?
     else {
         return Ok(None);
     };
+    plan.undefined_types(module, function)?;
+    let types = &module.types;
     let mut rebuild = Rebuild::new(function);
     rebuild.body(&mut Apply { plan: &plan, types }, locals.statements())?;
     for &(local, value) in &plan.inits {
@@ -195,6 +234,7 @@ fn rewrite(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Replace {
     Keep,
+    Undef,
     Value(Handle<Expression>),
     Path {
         value: Handle<Expression>,
@@ -218,6 +258,7 @@ struct Parts {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Known {
+    Undef,
     Whole(Handle<Expression>),
     Parts(Parts),
 }
@@ -256,8 +297,39 @@ struct Loop {
 
 struct Plan {
     replace: Vec<Replace>,
+    undefined: Vec<Option<Handle<Type>>>,
     dead: Vec<bool>,
     inits: Vec<(Handle<LocalVariable>, Handle<Expression>)>,
+}
+
+impl Plan {
+    fn undefined_types(&mut self, module: &mut Module, function: &Function) -> Result<(), String> {
+        if !self.replace.contains(&Replace::Undef) {
+            return Ok(());
+        }
+        let resolved = resolve_types(module, function)?;
+        self.undefined = vec![None; self.replace.len()];
+        for ((replace, resolution), slot) in
+            self.replace.iter().zip(resolved).zip(&mut self.undefined)
+        {
+            if *replace != Replace::Undef {
+                continue;
+            }
+            *slot = Some(match resolution {
+                TypeResolution::Handle(ty) => ty,
+                TypeResolution::Value(inner) => module
+                    .types
+                    .insert(Type { name: None, inner }, Span::UNDEFINED),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Access<'a> {
+    readonly: &'a [bool],
+    undefined: &'a [bool],
 }
 
 #[derive(Clone, Copy)]
@@ -273,7 +345,7 @@ struct Scan<'a> {
     handles: Vec<Handle<LocalVariable>>,
     counts: Vec<u8>,
     locals: &'a Locals,
-    readonly: &'a [bool],
+    access: Access<'a>,
     tracked: Tracked<'a>,
     keep_stores: bool,
     reads: BTreeMap<(usize, Vec<u32>), Handle<Expression>>,
@@ -303,7 +375,7 @@ impl<'a> Scan<'a> {
         function: &'a Function,
         locals: &'a Locals,
         tracked: Tracked<'a>,
-        readonly: &'a [bool],
+        access: Access<'a>,
         keep_stores: bool,
     ) -> Result<Option<Plan>, String> {
         let count = tracked.tracked.len();
@@ -325,12 +397,13 @@ impl<'a> Scan<'a> {
                 })
                 .collect(),
             locals,
-            readonly,
+            access,
             tracked,
             keep_stores,
             reads: BTreeMap::new(),
             plan: Plan {
                 replace: vec![Replace::Keep; function.expressions.len()],
+                undefined: Vec::new(),
                 dead: vec![false; locals.statements() as usize],
                 inits: Vec::new(),
             },
@@ -361,13 +434,17 @@ impl<'a> Scan<'a> {
             twice: false,
         };
         for (handle, local) in function.local_variables.iter() {
-            if let Some(init) = local.init
-                && scan.tracked(handle.index())
-                && scan.scope(init) == Scope::Always
-                && let Some(slot) = scan.known.get_mut(handle.index())
-            {
+            if !scan.tracked(handle.index()) {
+                continue;
+            }
+            let known = match local.init {
+                None => Known::Undef,
+                Some(init) if scan.scope(init) == Scope::Always => Known::Whole(init),
+                Some(_) => continue,
+            };
+            if let Some(slot) = scan.known.get_mut(handle.index()) {
                 *slot = Some(Record {
-                    known: Known::Whole(init),
+                    known,
                     position: 0,
                     region: ROOT,
                 });
@@ -519,6 +596,9 @@ impl<'a> Scan<'a> {
         let Some(known) = self.known(local) else {
             return Ok(None);
         };
+        if known == Known::Undef {
+            return Ok(Some(Replace::Undef));
+        }
         if self.references(local) {
             return Ok(match known {
                 Known::Whole(value)
@@ -574,7 +654,7 @@ impl<'a> Scan<'a> {
                         })
                 }
             }
-            Known::Parts(_) => None,
+            Known::Parts(_) | Known::Undef => None,
         })
     }
 
@@ -750,7 +830,13 @@ impl<'a> Scan<'a> {
             return Ok(());
         };
         if let Root::Global(global) = target.root
-            && self.readonly.get(global.index()) == Some(&true)
+            && self.access.undefined.get(global.index()) == Some(&true)
+        {
+            self.replace(handle, Replace::Undef);
+            return Ok(());
+        }
+        if let Root::Global(global) = target.root
+            && self.access.readonly.get(global.index()) == Some(&true)
         {
             if target.constant {
                 self.read_only(handle, global, pointer)?;
@@ -893,7 +979,7 @@ impl<'a> Scan<'a> {
                 count,
             },
             Some(Known::Parts(parts)) => parts,
-            None => Parts {
+            Some(Known::Undef) | None => Parts {
                 base: None,
                 parts: [None; PARTS],
                 count,
@@ -932,6 +1018,18 @@ impl Policy for Apply<'_> {
     ) -> Result<bool, String> {
         match self.plan.replace.get(handle.index()).copied() {
             None | Some(Replace::Keep) => Ok(false),
+            Some(Replace::Undef) => {
+                let ty = self
+                    .plan
+                    .undefined
+                    .get(handle.index())
+                    .copied()
+                    .flatten()
+                    .ok_or("an undefined value has no type")?;
+                let new = rebuild.undefined(ty, rebuild.span(handle));
+                rebuild.set(handle, new)?;
+                Ok(true)
+            }
             Some(Replace::Value(value)) => {
                 let new = rebuild.value(value)?;
                 rebuild.share_non_uniform(handle, new)?;

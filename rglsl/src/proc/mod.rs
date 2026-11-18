@@ -449,6 +449,7 @@ impl crate::Expression {
                 | Self::Constant(_)
                 | Self::Override(_)
                 | Self::ZeroValue(_)
+                | Self::Undef(_)
                 | Self::FunctionArgument(_)
                 | Self::GlobalVariable(_)
                 | Self::LocalVariable(_)

@@ -119,6 +119,7 @@ const fn eligible(expression: &Expression) -> bool {
 enum Value {
     Literal(Discriminant<Literal>, u64),
     Zero(Handle<Type>),
+    Undef(Handle<Type>),
 }
 
 fn bits(literal: Literal) -> u64 {
@@ -157,6 +158,7 @@ fn constants(function: &Function) -> Vec<Handle<Expression>> {
                     Value::Literal(core::mem::discriminant(&literal), bits(literal))
                 }
                 Expression::ZeroValue(ty) => Value::Zero(ty),
+                Expression::Undef(ty) => Value::Undef(ty),
                 _ => return handle,
             };
             *first.entry(value).or_insert(handle)

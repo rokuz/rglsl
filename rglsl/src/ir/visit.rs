@@ -100,6 +100,7 @@ macro_rules! expression_handles {
             Expression::Constant(ref $($m)? constant) => $v.constant($($d)? constant)?,
             Expression::Override(ref $($m)? r#override) => $v.r#override($($d)? r#override)?,
             Expression::ZeroValue(ref $($m)? ty)
+            | Expression::Undef(ref $($m)? ty)
             | Expression::AtomicResult {
                 ref $($m)? ty,
                 comparison: _,

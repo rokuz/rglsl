@@ -52,6 +52,8 @@ pub enum ExpressionError {
     Compose(#[from] super::ComposeError),
     #[error("Cannot construct zero value of {0:?} because it is not a constructible type")]
     InvalidZeroValue(Handle<crate::Type>),
+    #[error("Cannot make an undefined value of {0:?} because it is not a sized data type")]
+    InvalidUndef(Handle<crate::Type>),
     #[error(transparent)]
     IndexableLength(#[from] IndexableLengthError),
     #[error("Operation {0:?} can't work with {1:?}")]
@@ -432,6 +434,12 @@ impl super::Validator {
             E::ZeroValue(ty) => {
                 if !mod_info[ty].contains(TypeFlags::CONSTRUCTIBLE) {
                     return Err(ExpressionError::InvalidZeroValue(ty));
+                }
+                ShaderStages::all()
+            }
+            E::Undef(ty) => {
+                if !mod_info[ty].contains(TypeFlags::DATA | TypeFlags::SIZED) {
+                    return Err(ExpressionError::InvalidUndef(ty));
                 }
                 ShaderStages::all()
             }

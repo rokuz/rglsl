@@ -249,7 +249,7 @@ void main() {
 }
 
 #[test]
-fn a_private_global_read_before_it_is_written_stays_undefined() -> TestResult {
+fn a_private_global_read_before_it_is_written_reads_as_undefined() -> TestResult {
     let source = "#version 450
 layout(location = 0) in vec4 inColor;
 layout(location = 0) out vec4 color;
@@ -262,10 +262,13 @@ void main() {
 ";
     let module = fragment(source, CLEAN)?;
     let function = entry(&module)?;
-    let state = local(function, "state").ok_or("no local `state`")?;
-    assert!(function.local_variables[state].init.is_none());
-    assert_eq!(loads(function, "state"), 1);
-    assert_eq!(stores(function, "state"), 0);
+    assert!(local(function, "state").is_none());
+    assert!(
+        function
+            .expressions
+            .iter()
+            .any(|(_, expression)| matches!(*expression, Expression::Undef(_)))
+    );
     let first = fragment(source, &[])?;
     assert!(private_globals(&first).iter().any(|name| name == "state"));
     Ok(())

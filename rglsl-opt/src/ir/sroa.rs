@@ -276,6 +276,9 @@ impl Policy for Split<'_> {
                 Expression::ZeroValue(_) => {
                     rebuild.constant(Expression::ZeroValue(ty), rebuild.span(value))
                 }
+                Expression::Undef(_) => {
+                    rebuild.constant(Expression::Undef(ty), rebuild.span(value))
+                }
                 _ => {
                     let base = rebuild.value(value)?;
                     let index = u32::try_from(index).map_err(|error| error.to_string())?;

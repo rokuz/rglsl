@@ -1,7 +1,7 @@
 use rglsl::ir::visit::VisitorMut;
 use rglsl::{
-    Arena, Block, Constant, Expression, Function, GlobalVariable, Handle, LocalVariable, Override,
-    Range, Span, Statement, SwitchCase, Type, UniqueArena,
+    Arena, Block, Constant, Expression, FastHashMap, Function, GlobalVariable, Handle,
+    LocalVariable, Override, Range, Span, Statement, SwitchCase, Type, UniqueArena,
 };
 use rglsl_types::stack::recurse;
 
@@ -37,6 +37,7 @@ pub(crate) struct Rebuild<'f> {
     map: Vec<Option<Handle<Expression>>>,
     run: Option<(Handle<Expression>, Handle<Expression>)>,
     position: u32,
+    undefined: FastHashMap<Handle<Type>, Handle<Expression>>,
 }
 
 impl<'f> Rebuild<'f> {
@@ -56,6 +57,7 @@ impl<'f> Rebuild<'f> {
             map: vec![None; source.expressions.len()],
             run: None,
             position: FIRST,
+            undefined: FastHashMap::default(),
         }
     }
 
@@ -199,6 +201,15 @@ impl<'f> Rebuild<'f> {
             *self.out.non_uniform.entry(new).or_default() |= flags;
         }
         Ok(())
+    }
+
+    pub fn undefined(&mut self, ty: Handle<Type>, span: Span) -> Handle<Expression> {
+        if let Some(&handle) = self.undefined.get(&ty) {
+            return handle;
+        }
+        let handle = self.out.expressions.append(Expression::Undef(ty), span);
+        self.undefined.insert(ty, handle);
+        handle
     }
 
     pub fn constant(&mut self, expression: Expression, span: Span) -> Handle<Expression> {

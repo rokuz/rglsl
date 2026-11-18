@@ -222,3 +222,35 @@ fn retarget(function: &mut Function, moved: &[Option<Handle<LocalVariable>>]) {
         }
     }
 }
+
+pub(super) fn never_written(module: &Module, classes: &[Class]) -> Vec<bool> {
+    let count = module.global_variables.len();
+    let mut undefined: Vec<bool> = module
+        .global_variables
+        .iter()
+        .map(|(_, global)| {
+            movable(global)
+                && global.init.is_none()
+                && classes
+                    .get(global.ty.index())
+                    .is_some_and(|&class| class != Class::Opaque)
+        })
+        .collect();
+    if !undefined.contains(&true) {
+        return undefined;
+    }
+    let functions = module
+        .functions
+        .iter()
+        .map(|(_, function)| function)
+        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    for function in functions {
+        let locals = Locals::of(function, count);
+        for (slot, usage) in undefined.iter_mut().zip(&locals.globals) {
+            if usage.escaped || !usage.stores.is_empty() {
+                *slot = false;
+            }
+        }
+    }
+    undefined
+}
