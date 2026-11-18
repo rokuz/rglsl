@@ -167,7 +167,14 @@ cargo xtask fuzz --random [--seed N] [--families K] [--variants V] [--exec] [--o
                                                    # target/xtask/fuzz/random/<seed>/report.md, .tsv
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run
 cargo xtask fuzz --decode INPUT                              # glsl_variant input -> shader family
-cargo xtask fuzz --reduce JOB.json --interesting K           # GraphicsFuzz reducer (K = optimizer-differs: -O vs rglsl)
+cargo xtask fuzz --reduce JOB.json --interesting K           # GraphicsFuzz reducer (K = optimizer-differs: -O vs rglsl;
+                                                   # optimizer-hangs: rglsl runs, then rglsl -O hangs;
+                                                   # exec-hangs: glslang runs, then rglsl hangs; a hang
+                                                   # is a timeout, DEVICE_LOST or a driver reset event
+                                                   # of its job); every candidate keeps the UB guards
+                                                   # (initialised variables, clamped indices, bounded
+                                                   # loops if they keep it interesting) unless
+                                                   # --no-ub-guards
 ```
 
 Per-shader results of the last corpus run: `target/xtask/results.tsv`. Fuzzer findings of every

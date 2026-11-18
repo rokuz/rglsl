@@ -11,6 +11,7 @@ use rglsl_fuzz::{STAGE_EXTENSIONS, ShaderJob};
 use crate::exec::{Executor, TargetSpec};
 use crate::fuzz::{Verdict, compare};
 use crate::fuzz_exec::{self, Run};
+use crate::fuzz_random::classify::{self, Class};
 use crate::oracles;
 use crate::process::{self, Exit};
 use crate::worker::EXIT_ACCEPTED;
@@ -25,6 +26,8 @@ pub enum Interesting {
     DiffersFromReference,
     ExecFails,
     OptimizerDiffers,
+    OptimizerHangs,
+    ExecHangs,
 }
 
 impl Interesting {
@@ -38,6 +41,8 @@ impl Interesting {
             "differs-from-reference" => Some(Self::DiffersFromReference),
             "exec-fails" => Some(Self::ExecFails),
             "optimizer-differs" => Some(Self::OptimizerDiffers),
+            "optimizer-hangs" => Some(Self::OptimizerHangs),
+            "exec-hangs" => Some(Self::ExecHangs),
             _ => None,
         }
     }
@@ -49,8 +54,67 @@ impl Interesting {
                 | Self::DiffersFromReference
                 | Self::ExecFails
                 | Self::OptimizerDiffers
+                | Self::OptimizerHangs
+                | Self::ExecHangs
         )
     }
+
+    const fn optimizes(self) -> bool {
+        matches!(self, Self::OptimizerDiffers | Self::OptimizerHangs)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Outcome {
+    Ran,
+    Hung(String),
+    Failed(String),
+}
+
+impl Outcome {
+    fn of(ran: &classify::Ran) -> Result<Self> {
+        match classify::failure(ran) {
+            None => Ok(Self::Ran),
+            Some((Class::NotRun, why)) => bail!("{why}"),
+            Some((Class::Hang | Class::DriverReset, note)) => Ok(Self::Hung(note)),
+            Some((_, note)) => Ok(Self::Failed(note)),
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Self::Ran => String::from("ran"),
+            Self::Hung(note) => format!("hung: {note}"),
+            Self::Failed(note) => format!("failed: {note}"),
+        }
+    }
+}
+
+fn only_second_hangs(first: &Outcome, second: &Outcome) -> bool {
+    *first == Outcome::Ran && matches!(second, Outcome::Hung(_))
+}
+
+fn run_alone(
+    executor: &Executor,
+    spirv: &Path,
+    json: &Path,
+    dir: &Path,
+    tag: &str,
+) -> Result<Outcome> {
+    let job = match fuzz_exec::stage_module(executor, spirv, Some(json), dir, tag) {
+        fuzz_exec::Staged::Refused(why) => return Ok(Outcome::Failed(format!("refused: {why}"))),
+        fuzz_exec::Staged::Ready { job, .. } => job,
+    };
+    let (ran, problems) = classify::run_alone(executor, &job);
+    for problem in problems {
+        eprintln!("[xtask] {problem}");
+    }
+    Outcome::of(&ran).with_context(|| {
+        format!(
+            "the {} target did not run the {tag} module",
+            executor.target.label()
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -271,7 +335,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
     let mut first = true;
     let mut judge_once = |candidate: &ShaderJob| -> Result<bool> {
         let shader = write_job(candidate, &candidate_json)?;
-        let optimize = options.interesting == Interesting::OptimizerDiffers;
+        let optimize = options.interesting.optimizes();
         let (verdict, spirv) = tools.verdict(&shader, optimize)?;
         let interesting = match options.interesting {
             Interesting::Crash => verdict == Verdict::Crash,
@@ -302,6 +366,55 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                     (Run::Ran { .. }, Run::Failed(_)) => true,
                     _ => differs(&ours, &optimized) == Some(true),
                 }
+            }
+            Interesting::OptimizerHangs | Interesting::ExecHangs => {
+                let Some(executor) = &executor else {
+                    return Ok(false);
+                };
+                if verdict != Verdict::Agree {
+                    return Ok(false);
+                }
+                let _ = fs::remove_dir_all(&stage_dir);
+                let (runs, hangs) = if options.interesting == Interesting::OptimizerHangs {
+                    (
+                        (spirv.clone(), "rglsl"),
+                        (crate::fuzz::optimized_module(&spirv), "rglsl-O"),
+                    )
+                } else {
+                    (
+                        (spirv.with_extension("glslang.spv"), "glslang"),
+                        (spirv.clone(), "rglsl"),
+                    )
+                };
+                let first_outcome =
+                    run_alone(executor, &runs.0, &candidate_json, &stage_dir, runs.1)?;
+                let second_outcome = if first_outcome == Outcome::Ran {
+                    Some(run_alone(
+                        executor,
+                        &hangs.0,
+                        &candidate_json,
+                        &stage_dir,
+                        hangs.1,
+                    )?)
+                } else {
+                    None
+                };
+                if first {
+                    eprintln!(
+                        "[xtask] the input's {} module {}",
+                        runs.1,
+                        first_outcome.describe()
+                    );
+                    if let Some(outcome) = &second_outcome {
+                        eprintln!(
+                            "[xtask] the input's {} module {}",
+                            hangs.1,
+                            outcome.describe()
+                        );
+                    }
+                    first = false;
+                }
+                second_outcome.is_some_and(|second| only_second_hangs(&first_outcome, &second))
             }
             Interesting::DiffersFromGlslang
             | Interesting::DiffersFromReference
@@ -394,4 +507,112 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         shader.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::Outputs;
+    use crate::exec::batch::{Ending, JobError, JobResult, Trace};
+
+    fn ran(result: JobResult, ending: Option<Ending>, resets: &[&str]) -> classify::Ran {
+        classify::Ran {
+            result,
+            trace: Trace {
+                ending,
+                ..Trace::default()
+            },
+            resets: resets.iter().map(|reset| (*reset).to_string()).collect(),
+            crash_module: None,
+        }
+    }
+
+    fn failed(message: &str) -> JobResult {
+        Err(JobError::Failed(message.into()))
+    }
+
+    fn outcome(ran: &classify::Ran) -> Result<&'static str> {
+        Ok(match Outcome::of(ran)? {
+            Outcome::Ran => "ran",
+            Outcome::Hung(_) => "hung",
+            Outcome::Failed(_) => "failed",
+        })
+    }
+
+    #[test]
+    fn hangs_are_timeouts_lost_devices_and_resets() -> Result<()> {
+        let exited = Some(Ending::Exited(1));
+        let cases = [
+            (ran(Ok(Outputs::new()), Some(Ending::Exited(0)), &[]), "ran"),
+            (
+                ran(failed("amber timed out"), Some(Ending::TimedOut), &[]),
+                "hung",
+            ),
+            (
+                ran(
+                    failed("amber exited with 1: vkQueueSubmit Fail (DEVICE_LOST)"),
+                    exited,
+                    &[],
+                ),
+                "hung",
+            ),
+            (ran(failed("device lost after RUN"), exited, &[]), "hung"),
+            (
+                ran(
+                    Ok(Outputs::new()),
+                    Some(Ending::Exited(0)),
+                    &["nvlddmkm event 153 at 2 ms"],
+                ),
+                "hung",
+            ),
+            (
+                ran(
+                    failed("amber exited with 1: probe failed"),
+                    exited,
+                    &["Display event 4101 at 2 ms"],
+                ),
+                "hung",
+            ),
+            (
+                ran(failed("amber exited with 1: probe failed"), exited, &[]),
+                "failed",
+            ),
+            (
+                ran(
+                    failed("amber crashed: signal"),
+                    Some(Ending::Crashed(None)),
+                    &[],
+                ),
+                "failed",
+            ),
+        ];
+        for (run, expected) in cases {
+            assert_eq!(outcome(&run)?, expected, "{run:?}");
+        }
+        let not_run = ran(Err(JobError::NotRun("ssh".into())), None, &[]);
+        assert!(Outcome::of(&not_run).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn only_a_hang_after_a_clean_run_is_interesting() {
+        let hung = Outcome::Hung(String::from("amber timed out"));
+        let failed = Outcome::Failed(String::from("probe failed"));
+        assert!(only_second_hangs(&Outcome::Ran, &hung));
+        assert!(!only_second_hangs(&Outcome::Ran, &Outcome::Ran));
+        assert!(!only_second_hangs(&Outcome::Ran, &failed));
+        assert!(!only_second_hangs(&hung, &hung));
+        assert!(!only_second_hangs(&failed, &hung));
+    }
+
+    #[test]
+    fn the_hang_criteria_run_on_the_exec_target() {
+        for (name, optimizes) in [("optimizer-hangs", true), ("exec-hangs", false)] {
+            let Some(interesting) = Interesting::parse(name) else {
+                panic!("{name} is not a criterion");
+            };
+            assert!(interesting.needs_exec());
+            assert_eq!(interesting.optimizes(), optimizes);
+        }
+    }
 }

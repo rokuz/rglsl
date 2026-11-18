@@ -187,9 +187,14 @@ commands:
                           (rglsl's module renders differently from glslang's on the exec
                           target), differs-from-reference (rglsl's variant renders
                           differently from rglsl's reference, glslang's does not) or
-                          exec-fails (rglsl's module fails on the driver, glslang's runs) or
+                          exec-fails (rglsl's module fails on the driver, glslang's runs),
                           optimizer-differs (rglsl -O renders differently from rglsl or fails
-                          on the driver while rglsl's module runs)
+                          on the driver while rglsl's module runs), optimizer-hangs (rglsl's
+                          unoptimized module runs, then rglsl -O's module hangs) or exec-hangs
+                          (glslang's module runs, then rglsl's module hangs); each module of the
+                          hang criteria runs alone, and it hangs when Amber times out, the device
+                          is lost (DEVICE_LOST) or a driver reset event of a Windows target falls
+                          into its run
       --preserve-semantics  with --reduce: only undo the generator's transformations
       --max-steps N       with --reduce: interestingness tests to run at most (default 2000)
       --repeats N         with --reduce and an exec criterion: a candidate is interesting only
