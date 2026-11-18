@@ -5,7 +5,7 @@ use rglsl::{
 };
 
 use crate::analysis::resolve_types;
-use crate::float::{self, Class, Domain, Number, Operation, Pattern, Yields};
+use crate::float::{self, Class, Domain, Number, Operation, Pattern, UndefinedUse, Yields};
 use crate::ir::rebuild::{Policy, Rebuild, statements};
 use crate::{Changed, OptError, Session};
 
@@ -80,10 +80,15 @@ fn constant(expression: &Expression, flags: &[bool]) -> bool {
 
 fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[bool]) -> bool {
     let is = |handle: Handle<Expression>| flags.get(handle.index()) == Some(&true);
+    let undefined = |handle: Handle<Expression>| {
+        matches!(expressions.try_get(handle), Ok(Expression::Undef(_)))
+            && float::folds_undefined(UndefinedUse::Extract)
+    };
     match *expression {
-        Expression::Access { base, index } => is(base) && is(index),
-        Expression::AccessIndex { base, .. } => is(base),
-        Expression::Swizzle { vector, .. } => is(vector),
+        Expression::Access { base, index } => (is(base) && is(index)) || undefined(base),
+        Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. } => {
+            is(base) || undefined(base)
+        }
         Expression::Unary { expr, .. } => {
             is(expr) || matches!(expressions.try_get(expr), Ok(Expression::Unary { .. }))
         }
@@ -384,6 +389,11 @@ impl Fold<'_> {
         block: &mut Block,
     ) -> Result<Option<Handle<Expression>>, String> {
         match *expression {
+            Expression::Access { base, .. }
+            | Expression::AccessIndex { base, .. }
+            | Expression::Swizzle { vector: base, .. } => {
+                self.extract_undefined(rebuild, handle, base)
+            }
             Expression::Select {
                 condition,
                 accept,
@@ -469,6 +479,34 @@ impl Fold<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn extract_undefined(
+        &mut self,
+        rebuild: &mut Rebuild<'_>,
+        handle: Handle<Expression>,
+        base: Handle<Expression>,
+    ) -> Result<Option<Handle<Expression>>, String> {
+        let base = mapped(rebuild, base)?;
+        if !matches!(
+            rebuild.out.expressions.try_get(base),
+            Ok(Expression::Undef(_))
+        ) || !float::folds_undefined(UndefinedUse::Extract)
+        {
+            return Ok(None);
+        }
+        let Some(inner) = self.type_inner(rebuild.source, handle)? else {
+            return Ok(None);
+        };
+        if inner.pointer_space().is_some() {
+            return Ok(None);
+        }
+        let ty = self
+            .module
+            .types
+            .insert(Type { name: None, inner }, Span::UNDEFINED);
+        let span = rebuild.span(handle);
+        Ok(Some(rebuild.undefined(ty, span)))
     }
 
     fn zero_count(

@@ -18,6 +18,7 @@ mod snapshots;
 mod stage_io;
 mod sweep;
 mod tensors;
+mod undef;
 mod validation;
 
 type TestResult<T = ()> = Result<T, Box<dyn core::error::Error>>;

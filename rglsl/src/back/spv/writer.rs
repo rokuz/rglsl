@@ -2392,6 +2392,10 @@ impl Writer {
                 let type_id = self.get_handle_type_id(ty)?;
                 self.get_constant_null(type_id)
             }
+            crate::Expression::Undef(ty) => {
+                let type_id = self.get_handle_type_id(ty)?;
+                self.get_undef(type_id)
+            }
             crate::Expression::Compose { ty, ref components } => {
                 if self.is_override_dependent(handle) {
                     self.write_spec_composite(

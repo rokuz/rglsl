@@ -6,6 +6,7 @@ use rglsl::{
     TypeInner, UniqueArena,
 };
 
+use crate::float::{self, UndefinedUse};
 use crate::{Changed, Context, DebugLevel, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
@@ -159,6 +160,15 @@ impl Marker<'_> {
         }
     }
 
+    fn undefined_store(&self, index: usize, value: Handle<Expression>) -> bool {
+        float::folds_undefined(UndefinedUse::Store)
+            && self
+                .functions
+                .get(index)
+                .and_then(|function| function.expressions.try_get(value).ok())
+                .is_some_and(|value| matches!(*value, Expression::Undef(_)))
+    }
+
     fn dead_store(&self, index: usize, pointer: Handle<Expression>) -> bool {
         let Some(live) = self.live.get(index) else {
             return false;
@@ -209,6 +219,9 @@ fn sweep_functions(module: &mut Module, complete: bool, keep_locals: bool) -> Re
                         .live
                         .get(index)
                         .map_or(Root::Value, |live| live.root(pointer));
+                    if removable(root, &marker.tracked) && marker.undefined_store(index, value) {
+                        continue;
+                    }
                     match root {
                         Root::Local(local) => {
                             if let Some(stores) = marker
@@ -280,10 +293,20 @@ fn sweep_functions(module: &mut Module, complete: bool, keep_locals: bool) -> Re
     Ok(changed)
 }
 
+fn removable(root: Root, tracked: &[bool]) -> bool {
+    match root {
+        Root::Local(_) => true,
+        Root::Global(global) => tracked.get(global.index()) == Some(&true),
+        Root::Value => false,
+    }
+}
+
 struct Plan {
     expressions: Vec<bool>,
     locals: Vec<bool>,
     dead_stores: Vec<bool>,
+    removable: Vec<bool>,
+    undefined: Vec<bool>,
 }
 
 impl Plan {
@@ -295,18 +318,38 @@ impl Plan {
             .iter()
             .map(|(pointer, _)| marker.dead_store(index, pointer))
             .collect();
+        let removable: Vec<bool> = function
+            .expressions
+            .iter()
+            .map(|(pointer, _)| removable(live.root(pointer), &marker.tracked))
+            .collect();
+        let undefined: Vec<bool> = function
+            .expressions
+            .iter()
+            .map(|(value, _)| marker.undefined_store(index, value))
+            .collect();
+        let any_undefined = function.body.walk().any(|statement| {
+            matches!(*statement, Statement::Store { pointer, value }
+                if removable.get(pointer.index()) == Some(&true)
+                    && undefined.get(value.index()) == Some(&true))
+        });
         let any_dead = live.expressions.iter().any(|&live| !live)
             || live.locals.iter().any(|&live| !live)
-            || dead_stores.iter().any(|&dead| dead);
+            || dead_stores.iter().any(|&dead| dead)
+            || any_undefined;
         any_dead.then(|| Self {
             expressions: live.expressions.clone(),
             locals: live.locals.clone(),
             dead_stores,
+            removable,
+            undefined,
         })
     }
 
-    fn dead_store(&self, pointer: Handle<Expression>) -> bool {
+    fn dead_store(&self, pointer: Handle<Expression>, value: Handle<Expression>) -> bool {
         self.dead_stores.get(pointer.index()) == Some(&true)
+            || (self.removable.get(pointer.index()) == Some(&true)
+                && self.undefined.get(value.index()) == Some(&true))
     }
 
     fn apply(self, function: &mut Function) -> Result<(), String> {
@@ -383,7 +426,7 @@ impl Plan {
                         block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
                     }
                 }
-                Statement::Store { pointer, .. } if self.dead_store(pointer) => {}
+                Statement::Store { pointer, value } if self.dead_store(pointer, value) => {}
                 _ => {
                     statement.visit_mut(&mut Renumber { map })?;
                     block.push(statement, span);

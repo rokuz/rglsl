@@ -259,6 +259,7 @@ impl FunctionLowerer<'_, '_> {
                 | Expression::Constant(_)
                 | Expression::Override(_)
                 | Expression::ZeroValue(_)
+                | Expression::Undef(_)
                 | Expression::Compose { .. }
                 | Expression::Splat { .. }
                 | Expression::Swizzle { .. }

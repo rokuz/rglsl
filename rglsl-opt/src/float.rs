@@ -776,6 +776,76 @@ pub static REASSOCIATIONS: &[Reassociation] = &[
     },
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndefinedUse {
+    Load,
+    Extract,
+    Operand,
+    Condition,
+    Selector,
+    Store,
+}
+
+#[derive(Debug)]
+pub struct Undefined {
+    pub usage: UndefinedUse,
+    pub class: Class,
+    pub folds: bool,
+    pub counterpart: &'static str,
+    pub reason: &'static str,
+}
+
+pub static UNDEFINED: &[Undefined] = &[
+    Undefined {
+        usage: UndefinedUse::Load,
+        class: Class::Exact,
+        folds: true,
+        counterpart: "ssa-rewrite, eliminate-local-single-block, eliminate-local-single-store (MemPass::Type2Undef)",
+        reason: "a variable without an initializer holds an undefined value until a store reaches the load",
+    },
+    Undefined {
+        usage: UndefinedUse::Extract,
+        class: Class::Exact,
+        folds: true,
+        counterpart: "none: spirv-opt keeps OpCompositeExtract of OpUndef",
+        reason: "every part of an undefined value is undefined",
+    },
+    Undefined {
+        usage: UndefinedUse::Operand,
+        class: Class::Exact,
+        folds: false,
+        counterpart: "the folder treats OpUndef as an unknown value, not as a constant",
+        reason: "an undefined operand is an arbitrary value, not poison: only the rules that hold for every value apply",
+    },
+    Undefined {
+        usage: UndefinedUse::Condition,
+        class: Class::Exact,
+        folds: false,
+        counterpart: "eliminate-dead-branches folds only OpConstantTrue, OpConstantFalse and OpConstantNull conditions",
+        reason: "either target would be legal; the branch is kept to run the code glslang -O runs",
+    },
+    Undefined {
+        usage: UndefinedUse::Selector,
+        class: Class::Exact,
+        folds: false,
+        counterpart: "eliminate-dead-branches folds only OpConstant and OpConstantNull selectors",
+        reason: "any case would be legal; the switch is kept to run the code glslang -O runs",
+    },
+    Undefined {
+        usage: UndefinedUse::Store,
+        class: Class::Exact,
+        folds: true,
+        counterpart: "the StoringUndef folding rule",
+        reason: "the old contents of a function or private variable are one of the values an undefined store may leave",
+    },
+];
+
+pub fn folds_undefined(usage: UndefinedUse) -> bool {
+    UNDEFINED
+        .iter()
+        .any(|row| row.usage == usage && row.class == Class::Exact && row.folds)
+}
+
 pub fn rule(operation: Operation, domain: Domain) -> Option<&'static Rule> {
     RULES.iter().find(|rule| {
         rule.operation == operation && (rule.domain == domain || rule.domain == Domain::Any)

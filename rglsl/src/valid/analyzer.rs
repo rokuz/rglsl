@@ -635,6 +635,7 @@ impl FunctionInfo {
             | E::Constant(_)
             | E::Override(_)
             | E::ZeroValue(_)
+            | E::Undef(_)
             | E::Compose { .. }
             | E::Splat { .. }
             | E::Swizzle { .. }

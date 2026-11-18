@@ -2329,6 +2329,7 @@ pub enum Expression {
     Override(Handle<Override>),
     /// Zero value of a type.
     ZeroValue(Handle<Type>),
+    Undef(Handle<Type>),
     /// Composite expression.
     Compose {
         ty: Handle<Type>,

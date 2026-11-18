@@ -853,6 +853,8 @@ pub enum ConstantEvaluatorError {
     GlobalVariable,
     #[error("Constants cannot access local variables")]
     LocalVariable,
+    #[error("Constants cannot be undefined values")]
+    Undef,
     #[error("Cannot get the array length of a non array type")]
     InvalidArrayLengthArg,
     #[error("Constants cannot get the array length of a dynamically sized array")]
@@ -1340,6 +1342,7 @@ impl<'a> ConstantEvaluator<'a> {
             | Expression::BufferPointer { .. }
             | Expression::HeapOffset { .. } => Err(ConstantEvaluatorError::Load),
             Expression::LocalVariable(_) => Err(ConstantEvaluatorError::LocalVariable),
+            Expression::Undef(_) => Err(ConstantEvaluatorError::Undef),
             Expression::Derivative { .. } => Err(ConstantEvaluatorError::Derivative),
             Expression::CallResult { .. } => Err(ConstantEvaluatorError::Call),
             Expression::AtomicResult { .. } => Err(ConstantEvaluatorError::Atomic),

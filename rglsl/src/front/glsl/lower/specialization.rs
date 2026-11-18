@@ -35,6 +35,7 @@ const fn specializable(expression: &Expression) -> bool {
         | Expression::Binary { .. }
         | Expression::Select { .. } => true,
         Expression::Access { .. }
+        | Expression::Undef(_)
         | Expression::FunctionArgument(_)
         | Expression::GlobalVariable(_)
         | Expression::LocalVariable(_)
