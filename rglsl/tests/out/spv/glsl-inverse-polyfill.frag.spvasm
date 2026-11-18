@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 87
+; Bound: 86
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -44,64 +44,62 @@ OpExecutionMode %11 OriginUpperLeft
 %37 = OpVariable  %33  Function
 %32 = OpVariable  %33  Function
 %27 = OpVariable  %28  Function
-OpBranch %39
-%39 = OpLabel
 OpStore %24 %14
 OpStore %26 %16
-%40 = OpLoad  %3  %24
-%41 = OpLoad  %3  %26
-%42 = OpLoad  %3  %24
-%43 = OpLoad  %3  %26
-%44 = OpCompositeExtract  %4  %40 0
-%45 = OpCompositeExtract  %4  %40 1
-%46 = OpCompositeExtract  %4  %40 2
-%47 = OpCompositeExtract  %4  %40 3
-%48 = OpCompositeExtract  %4  %41 0
-%49 = OpCompositeExtract  %4  %41 1
-%50 = OpCompositeExtract  %4  %41 2
-%51 = OpCompositeExtract  %4  %41 3
-%52 = OpCompositeExtract  %4  %42 0
-%53 = OpCompositeExtract  %4  %42 1
-%54 = OpCompositeExtract  %4  %42 2
-%55 = OpCompositeExtract  %4  %42 3
-%56 = OpCompositeExtract  %4  %43 0
-%57 = OpCompositeExtract  %4  %43 1
-%58 = OpCompositeExtract  %4  %43 2
-%59 = OpCompositeExtract  %4  %43 3
-%60 = OpCompositeConstruct  %3  %44 %45 %46 %47
-%61 = OpCompositeConstruct  %3  %48 %49 %50 %51
-%62 = OpCompositeConstruct  %3  %52 %53 %54 %55
-%63 = OpCompositeConstruct  %3  %56 %57 %58 %59
-%64 = OpCompositeConstruct  %5  %60 %61 %62 %63
-OpStore %27 %64
+%39 = OpLoad  %3  %24
+%40 = OpLoad  %3  %26
+%41 = OpLoad  %3  %24
+%42 = OpLoad  %3  %26
+%43 = OpCompositeExtract  %4  %39 0
+%44 = OpCompositeExtract  %4  %39 1
+%45 = OpCompositeExtract  %4  %39 2
+%46 = OpCompositeExtract  %4  %39 3
+%47 = OpCompositeExtract  %4  %40 0
+%48 = OpCompositeExtract  %4  %40 1
+%49 = OpCompositeExtract  %4  %40 2
+%50 = OpCompositeExtract  %4  %40 3
+%51 = OpCompositeExtract  %4  %41 0
+%52 = OpCompositeExtract  %4  %41 1
+%53 = OpCompositeExtract  %4  %41 2
+%54 = OpCompositeExtract  %4  %41 3
+%55 = OpCompositeExtract  %4  %42 0
+%56 = OpCompositeExtract  %4  %42 1
+%57 = OpCompositeExtract  %4  %42 2
+%58 = OpCompositeExtract  %4  %42 3
+%59 = OpCompositeConstruct  %3  %43 %44 %45 %46
+%60 = OpCompositeConstruct  %3  %47 %48 %49 %50
+%61 = OpCompositeConstruct  %3  %51 %52 %53 %54
+%62 = OpCompositeConstruct  %3  %55 %56 %57 %58
+%63 = OpCompositeConstruct  %5  %59 %60 %61 %62
+OpStore %27 %63
 OpStore %29 %17
 OpStore %31 %18
-%65 = OpLoad  %6  %29
-%66 = OpLoad  %6  %31
-%67 = OpLoad  %6  %29
-%68 = OpCompositeExtract  %4  %65 0
-%69 = OpCompositeExtract  %4  %65 1
-%70 = OpCompositeExtract  %4  %65 2
-%71 = OpCompositeExtract  %4  %66 0
-%72 = OpCompositeExtract  %4  %66 1
-%73 = OpCompositeExtract  %4  %66 2
-%74 = OpCompositeExtract  %4  %67 0
-%75 = OpCompositeExtract  %4  %67 1
-%76 = OpCompositeExtract  %4  %67 2
-%77 = OpCompositeConstruct  %6  %68 %69 %70
-%78 = OpCompositeConstruct  %6  %71 %72 %73
-%79 = OpCompositeConstruct  %6  %74 %75 %76
-%80 = OpCompositeConstruct  %7  %77 %78 %79
-OpStore %32 %80
+%64 = OpLoad  %6  %29
+%65 = OpLoad  %6  %31
+%66 = OpLoad  %6  %29
+%67 = OpCompositeExtract  %4  %64 0
+%68 = OpCompositeExtract  %4  %64 1
+%69 = OpCompositeExtract  %4  %64 2
+%70 = OpCompositeExtract  %4  %65 0
+%71 = OpCompositeExtract  %4  %65 1
+%72 = OpCompositeExtract  %4  %65 2
+%73 = OpCompositeExtract  %4  %66 0
+%74 = OpCompositeExtract  %4  %66 1
+%75 = OpCompositeExtract  %4  %66 2
+%76 = OpCompositeConstruct  %6  %67 %68 %69
+%77 = OpCompositeConstruct  %6  %70 %71 %72
+%78 = OpCompositeConstruct  %6  %73 %74 %75
+%79 = OpCompositeConstruct  %7  %76 %77 %78
+OpStore %32 %79
 OpStore %34 %23
-%81 = OpLoad  %5  %27
-%82 = OpExtInst  %5  %1 MatrixInverse %81
-OpStore %36 %82
-%83 = OpLoad  %7  %32
-%84 = OpExtInst  %7  %1 MatrixInverse %83
-OpStore %37 %84
-%85 = OpLoad  %8  %34
-%86 = OpExtInst  %8  %1 MatrixInverse %85
-OpStore %38 %86
+%80 = OpLoad  %5  %27
+%81 = OpExtInst  %5  %1 MatrixInverse %80
+OpStore %36 %81
+%82 = OpLoad  %7  %32
+%83 = OpExtInst  %7  %1 MatrixInverse %82
+OpStore %37 %83
+%84 = OpLoad  %8  %34
+%85 = OpExtInst  %8  %1 MatrixInverse %84
+OpStore %38 %85
 OpReturn
 OpFunctionEnd

@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 40
+; Bound: 39
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -22,44 +22,42 @@ OpExecutionMode %6 OriginUpperLeft
 %16 = OpConstant  %3  0.01
 %18 = OpTypePointer Function %3
 %22 = OpTypePointer Function %4
-%31 = OpTypeBool
+%30 = OpTypeBool
 %6 = OpFunction  %2  None %7
 %5 = OpLabel
 %19 = OpVariable  %18  Function
 %21 = OpVariable  %22  Function
 %17 = OpVariable  %18  Function
 %20 = OpVariable  %18  Function
-OpBranch %23
-%23 = OpLabel
 OpStore %17 %8
 OpStore %19 %9
 OpStore %20 %10
 OpStore %21 %11
 OpStore %21 %12
-%24 = OpLoad  %3  %20
-%25 = OpFSub  %3  %24 %8
-OpStore %20 %25
-OpBranch %26
-%26 = OpLabel
-OpLoopMerge %27 %29 None
+%23 = OpLoad  %3  %20
+%24 = OpFSub  %3  %23 %8
+OpStore %20 %24
+OpBranch %25
+%25 = OpLabel
+OpLoopMerge %26 %28 None
+OpBranch %27
+%27 = OpLabel
+%29 = OpLoad  %4  %21
+%31 = OpSLessThan  %30  %29 %13
+OpBranchConditional %31 %32 %26
+%32 = OpLabel
+%33 = OpLoad  %3  %17
+%34 = OpFSub  %3  %33 %14
+OpStore %17 %34
 OpBranch %28
 %28 = OpLabel
-%30 = OpLoad  %4  %21
-%32 = OpSLessThan  %31  %30 %13
-OpBranchConditional %32 %33 %27
-%33 = OpLabel
-%34 = OpLoad  %3  %17
-%35 = OpFSub  %3  %34 %14
-OpStore %17 %35
-OpBranch %29
-%29 = OpLabel
-%36 = OpLoad  %4  %21
-%37 = OpIAdd  %4  %36 %15
-OpStore %21 %37
-%38 = OpLoad  %3  %19
-%39 = OpFAdd  %3  %38 %16
-OpStore %19 %39
-OpBranch %26
-%27 = OpLabel
+%35 = OpLoad  %4  %21
+%36 = OpIAdd  %4  %35 %15
+OpStore %21 %36
+%37 = OpLoad  %3  %19
+%38 = OpFAdd  %3  %37 %16
+OpStore %19 %38
+OpBranch %25
+%26 = OpLabel
 OpReturn
 OpFunctionEnd

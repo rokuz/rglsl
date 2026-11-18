@@ -1,92 +1,82 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 54
+; Bound: 49
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %43 "main"
-OpExecutionMode %43 OriginUpperLeft
+OpEntryPoint Fragment %39 "main"
+OpExecutionMode %39 OriginUpperLeft
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %4 = OpTypeInt 32 0
 %8 = OpTypeFunction %2 %3
 %10 = OpTypePointer Function %3
-%24 = OpTypeFunction %2 %4
-%26 = OpTypePointer Function %4
-%44 = OpTypeFunction %2
-%45 = OpConstant  %3  1
-%46 = OpConstant  %3  2
-%47 = OpConstant  %4  3
-%48 = OpConstant  %3  4
+%22 = OpTypeFunction %2 %4
+%24 = OpTypePointer Function %4
+%40 = OpTypeFunction %2
+%41 = OpConstant  %3  1
+%42 = OpConstant  %3  2
+%43 = OpConstant  %4  3
+%44 = OpConstant  %3  4
 %7 = OpFunction  %2  None %8
 %6 = OpFunctionParameter  %3
 %5 = OpLabel
 %9 = OpVariable  %10  Function
-OpBranch %11
-%11 = OpLabel
 OpStore %9 %6
 OpReturn
 OpFunctionEnd
-%14 = OpFunction  %2  None %8
-%13 = OpFunctionParameter  %3
-%12 = OpLabel
-%15 = OpVariable  %10  Function
+%13 = OpFunction  %2  None %8
+%12 = OpFunctionParameter  %3
+%11 = OpLabel
+%14 = OpVariable  %10  Function
+OpStore %14 %12
+%15 = OpLoad  %3  %14
+OpSelectionMerge %16 None
+OpSwitch %15 %18 0 %17
+%17 = OpLabel
+OpBranch %16
+%18 = OpLabel
 OpBranch %16
 %16 = OpLabel
-OpStore %15 %13
-%17 = OpLoad  %3  %15
-OpSelectionMerge %18 None
-OpSwitch %17 %20 0 %19
+OpReturn
+OpFunctionEnd
+%21 = OpFunction  %2  None %22
+%20 = OpFunctionParameter  %4
 %19 = OpLabel
-OpBranch %18
-%20 = OpLabel
-OpBranch %18
-%18 = OpLabel
-OpReturn
-OpFunctionEnd
-%23 = OpFunction  %2  None %24
-%22 = OpFunctionParameter  %4
-%21 = OpLabel
-%25 = OpVariable  %26  Function
-OpBranch %27
+%23 = OpVariable  %24  Function
+OpStore %23 %20
+%25 = OpLoad  %4  %23
+OpSelectionMerge %26 None
+OpSwitch %25 %28 0 %27
 %27 = OpLabel
-OpStore %25 %22
-%28 = OpLoad  %4  %25
-OpSelectionMerge %29 None
-OpSwitch %28 %31 0 %30
-%30 = OpLabel
-OpBranch %29
-%31 = OpLabel
-OpBranch %29
+OpBranch %26
+%28 = OpLabel
+OpBranch %26
+%26 = OpLabel
+OpReturn
+OpFunctionEnd
+%31 = OpFunction  %2  None %8
+%30 = OpFunctionParameter  %3
 %29 = OpLabel
+%32 = OpVariable  %10  Function
+%33 = OpVariable  %10  Function
+OpStore %32 %30
+%34 = OpLoad  %3  %32
+OpSelectionMerge %35 None
+OpSwitch %34 %36
+%36 = OpLabel
+%37 = OpLoad  %3  %32
+OpStore %33 %37
+OpBranch %35
+%35 = OpLabel
 OpReturn
 OpFunctionEnd
-%34 = OpFunction  %2  None %8
-%33 = OpFunctionParameter  %3
-%32 = OpLabel
-%35 = OpVariable  %10  Function
-%36 = OpVariable  %10  Function
-OpBranch %37
-%37 = OpLabel
-OpStore %35 %33
-%38 = OpLoad  %3  %35
-OpSelectionMerge %39 None
-OpSwitch %38 %40
-%40 = OpLabel
-%41 = OpLoad  %3  %35
-OpStore %36 %41
-OpBranch %39
-%39 = OpLabel
-OpReturn
-OpFunctionEnd
-%43 = OpFunction  %2  None %44
-%42 = OpLabel
-OpBranch %49
-%49 = OpLabel
-%50 = OpFunctionCall  %2  %7 %45
-%51 = OpFunctionCall  %2  %14 %46
-%52 = OpFunctionCall  %2  %23 %47
-%53 = OpFunctionCall  %2  %34 %48
+%39 = OpFunction  %2  None %40
+%38 = OpLabel
+%45 = OpFunctionCall  %2  %7 %41
+%46 = OpFunctionCall  %2  %13 %42
+%47 = OpFunctionCall  %2  %21 %43
+%48 = OpFunctionCall  %2  %31 %44
 OpReturn
 OpFunctionEnd

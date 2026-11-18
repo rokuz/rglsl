@@ -1103,12 +1103,6 @@ impl Writer {
             }
         }
 
-        let next_id = context.gen_id();
-
-        context
-            .function
-            .consume(prelude, Instruction::branch(next_id));
-
         let parameter_ids: Vec<Word> = context
             .function
             .parameters
@@ -1123,7 +1117,7 @@ impl Writer {
             &context.function.variables,
         );
 
-        context.write_function_body(next_id)?;
+        context.write_function_body(prelude)?;
 
         // Consume the `BlockContext`, ending its borrows and letting the
         // `Writer` steal back its cached expression table and temp_list.

@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 47
+; Bound: 46
 OpCapability Shader
 OpCapability Float16
 OpCapability StorageBuffer16BitAccess
@@ -74,34 +74,32 @@ OpDecorate %17 BufferBlock
 %21 = OpTypePointer Uniform %17
 %20 = OpVariable  %21  Uniform
 %24 = OpTypeFunction %2
-%26 = OpTypePointer Uniform %3
-%28 = OpTypeInt 32 0
-%27 = OpConstant  %28  0
-%32 = OpTypePointer Uniform %4
-%33 = OpConstant  %28  1
-%37 = OpTypePointer Uniform %5
-%38 = OpConstant  %28  2
-%42 = OpTypePointer Uniform %6
-%43 = OpConstant  %28  3
+%25 = OpTypePointer Uniform %3
+%27 = OpTypeInt 32 0
+%26 = OpConstant  %27  0
+%31 = OpTypePointer Uniform %4
+%32 = OpConstant  %27  1
+%36 = OpTypePointer Uniform %5
+%37 = OpConstant  %27  2
+%41 = OpTypePointer Uniform %6
+%42 = OpConstant  %27  3
 %23 = OpFunction  %2  None %24
 %22 = OpLabel
-OpBranch %25
-%25 = OpLabel
-%29 = OpAccessChain  %26  %18 %27
-%30 = OpLoad  %3  %29
-%31 = OpAccessChain  %26  %20 %27
-OpStore %31 %30
-%34 = OpAccessChain  %32  %18 %33
-%35 = OpLoad  %4  %34
-%36 = OpAccessChain  %32  %20 %33
-OpStore %36 %35
-%39 = OpAccessChain  %37  %18 %38
-%40 = OpLoad  %5  %39
-%41 = OpAccessChain  %37  %20 %38
-OpStore %41 %40
-%44 = OpAccessChain  %42  %18 %43
-%45 = OpLoad  %6  %44
-%46 = OpAccessChain  %42  %20 %43
-OpStore %46 %45
+%28 = OpAccessChain  %25  %18 %26
+%29 = OpLoad  %3  %28
+%30 = OpAccessChain  %25  %20 %26
+OpStore %30 %29
+%33 = OpAccessChain  %31  %18 %32
+%34 = OpLoad  %4  %33
+%35 = OpAccessChain  %31  %20 %32
+OpStore %35 %34
+%38 = OpAccessChain  %36  %18 %37
+%39 = OpLoad  %5  %38
+%40 = OpAccessChain  %36  %20 %37
+OpStore %40 %39
+%43 = OpAccessChain  %41  %18 %42
+%44 = OpLoad  %6  %43
+%45 = OpAccessChain  %41  %20 %42
+OpStore %45 %44
 OpReturn
 OpFunctionEnd

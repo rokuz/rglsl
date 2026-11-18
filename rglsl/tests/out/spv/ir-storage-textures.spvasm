@@ -1,15 +1,15 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 39
+; Bound: 37
 OpCapability Shader
 OpCapability StorageImageExtendedFormats
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
 OpEntryPoint GLCompute %17 "csLoad"
-OpEntryPoint GLCompute %32 "csStore"
+OpEntryPoint GLCompute %31 "csStore"
 OpExecutionMode %17 LocalSize 1 1 1
-OpExecutionMode %32 LocalSize 1 1 1
+OpExecutionMode %31 LocalSize 1 1 1
 OpDecorate %7 NonWritable
 OpDecorate %7 DescriptorSet 0
 OpDecorate %7 Binding 0
@@ -47,30 +47,26 @@ OpDecorate %15 Binding 2
 %20 = OpConstant  %19  0
 %21 = OpTypeVector %19 2
 %22 = OpConstantComposite  %21  %20 %20
-%24 = OpTypeVector %4 4
-%33 = OpConstant  %4  0
-%34 = OpConstantComposite  %24  %33 %33 %33 %33
+%23 = OpTypeVector %4 4
+%32 = OpConstant  %4  0
+%33 = OpConstantComposite  %23  %32 %32 %32 %32
 %17 = OpFunction  %2  None %18
 %16 = OpLabel
-OpBranch %23
-%23 = OpLabel
-%25 = OpLoad  %3  %7
-%26 = OpImageRead  %24  %25 %22
-%27 = OpLoad  %5  %9
-%28 = OpImageRead  %24  %27 %22
-%29 = OpLoad  %6  %11
-%30 = OpImageRead  %24  %29 %22
+%24 = OpLoad  %3  %7
+%25 = OpImageRead  %23  %24 %22
+%26 = OpLoad  %5  %9
+%27 = OpImageRead  %23  %26 %22
+%28 = OpLoad  %6  %11
+%29 = OpImageRead  %23  %28 %22
 OpReturn
 OpFunctionEnd
-%32 = OpFunction  %2  None %18
-%31 = OpLabel
-OpBranch %35
-%35 = OpLabel
-%36 = OpLoad  %3  %13
-OpImageWrite %36 %22 %34
-%37 = OpLoad  %5  %14
-OpImageWrite %37 %22 %34
-%38 = OpLoad  %6  %15
-OpImageWrite %38 %22 %34
+%31 = OpFunction  %2  None %18
+%30 = OpLabel
+%34 = OpLoad  %3  %13
+OpImageWrite %34 %22 %33
+%35 = OpLoad  %5  %14
+OpImageWrite %35 %22 %33
+%36 = OpLoad  %6  %15
+OpImageWrite %36 %22 %33
 OpReturn
 OpFunctionEnd

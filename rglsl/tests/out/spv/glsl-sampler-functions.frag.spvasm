@@ -1,12 +1,12 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 66
+; Bound: 63
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %59 "main"
-OpExecutionMode %59 OriginUpperLeft
+OpEntryPoint Fragment %57 "main"
+OpExecutionMode %57 OriginUpperLeft
 OpDecorate %7 DescriptorSet 1
 OpDecorate %7 Binding 0
 OpDecorate %9 DescriptorSet 1
@@ -15,26 +15,26 @@ OpDecorate %14 RelaxedPrecision
 OpDecorate %15 RelaxedPrecision
 OpDecorate %19 RelaxedPrecision
 OpDecorate %21 RelaxedPrecision
+OpDecorate %23 RelaxedPrecision
 OpDecorate %24 RelaxedPrecision
-OpDecorate %25 RelaxedPrecision
-OpDecorate %26 RelaxedPrecision
+OpDecorate %32 RelaxedPrecision
+OpDecorate %33 RelaxedPrecision
 OpDecorate %34 RelaxedPrecision
 OpDecorate %35 RelaxedPrecision
 OpDecorate %36 RelaxedPrecision
-OpDecorate %37 RelaxedPrecision
+OpDecorate %40 RelaxedPrecision
 OpDecorate %41 RelaxedPrecision
 OpDecorate %42 RelaxedPrecision
-OpDecorate %43 RelaxedPrecision
+OpDecorate %44 RelaxedPrecision
 OpDecorate %45 RelaxedPrecision
 OpDecorate %46 RelaxedPrecision
+OpDecorate %50 RelaxedPrecision
 OpDecorate %51 RelaxedPrecision
-OpDecorate %52 RelaxedPrecision
 OpDecorate %53 RelaxedPrecision
+OpDecorate %54 RelaxedPrecision
 OpDecorate %55 RelaxedPrecision
-OpDecorate %56 RelaxedPrecision
-OpDecorate %57 RelaxedPrecision
-OpDecorate %64 RelaxedPrecision
-OpDecorate %65 RelaxedPrecision
+OpDecorate %61 RelaxedPrecision
+OpDecorate %62 RelaxedPrecision
 %2 = OpTypeVoid
 %4 = OpTypeFloat 32
 %3 = OpTypeImage %4 2D 1 0 0 1 Unknown
@@ -49,14 +49,14 @@ OpDecorate %65 RelaxedPrecision
 %18 = OpConstant  %4  0.2
 %20 = OpTypePointer Function %6
 %22 = OpTypePointer Function %4
-%28 = OpTypeVector %4 2
-%31 = OpTypeSampledImage %3
-%44 = OpTypeFunction %4 %8 %10 %6 %4
-%49 = OpTypeInt 32 0
-%48 = OpConstant  %49  2
-%60 = OpTypeFunction %2
-%61 = OpConstantComposite  %6  %17 %17 %17
-%62 = OpConstant  %4  1
+%26 = OpTypeVector %4 2
+%29 = OpTypeSampledImage %3
+%43 = OpTypeFunction %4 %8 %10 %6 %4
+%48 = OpTypeInt 32 0
+%47 = OpConstant  %48  2
+%58 = OpTypeFunction %2
+%59 = OpConstantComposite  %6  %17 %17 %17
+%60 = OpConstant  %4  1
 %15 = OpFunction  %4  None %16
 %12 = OpFunctionParameter  %8
 %13 = OpFunctionParameter  %10
@@ -64,53 +64,47 @@ OpDecorate %65 RelaxedPrecision
 %11 = OpLabel
 %19 = OpVariable  %20  Function
 %21 = OpVariable  %22  Function
-OpBranch %23
-%23 = OpLabel
 OpStore %19 %14
 OpStore %21 %17
-%24 = OpLoad  %4  %21
-%25 = OpLoad  %6  %19
-%26 = OpVectorShuffle  %6  %25 %25 0 1 2
-%27 = OpCompositeExtract  %4  %26 2
-%29 = OpVectorShuffle  %28  %26 %26 0 1
-%30 = OpLoad  %3  %12
-%32 = OpLoad  %5  %13
-%33 = OpSampledImage  %31  %30 %32
-%34 = OpImageSampleDrefImplicitLod  %4  %33 %29 %27
-%35 = OpFMul  %4  %34 %18
-%36 = OpFAdd  %4  %24 %35
-OpStore %21 %36
-%37 = OpLoad  %4  %21
-OpReturnValue %37
+%23 = OpLoad  %6  %19
+%24 = OpVectorShuffle  %6  %23 %23 0 1 2
+%25 = OpCompositeExtract  %4  %24 2
+%27 = OpVectorShuffle  %26  %24 %24 0 1
+%28 = OpLoad  %3  %12
+%30 = OpLoad  %5  %13
+%31 = OpSampledImage  %29  %28 %30
+%32 = OpImageSampleDrefImplicitLod  %4  %31 %27 %25
+%33 = OpFMul  %4  %32 %18
+%34 = OpLoad  %4  %21
+%35 = OpFAdd  %4  %34 %33
+OpStore %21 %35
+%36 = OpLoad  %4  %21
+OpReturnValue %36
 OpFunctionEnd
-%43 = OpFunction  %4  None %44
-%39 = OpFunctionParameter  %8
-%40 = OpFunctionParameter  %10
-%41 = OpFunctionParameter  %6
-%42 = OpFunctionParameter  %4
-%38 = OpLabel
-%45 = OpVariable  %20  Function
-%46 = OpVariable  %22  Function
-OpBranch %47
-%47 = OpLabel
+%42 = OpFunction  %4  None %43
+%38 = OpFunctionParameter  %8
+%39 = OpFunctionParameter  %10
+%40 = OpFunctionParameter  %6
+%41 = OpFunctionParameter  %4
+%37 = OpLabel
+%44 = OpVariable  %20  Function
+%45 = OpVariable  %22  Function
+OpStore %44 %40
 OpStore %45 %41
-OpStore %46 %42
-%50 = OpAccessChain  %22  %45 %48
-%51 = OpLoad  %4  %50
-%52 = OpLoad  %4  %46
-%53 = OpFAdd  %4  %51 %52
-%54 = OpAccessChain  %22  %45 %48
-OpStore %54 %53
-%55 = OpLoad  %6  %45
-%56 = OpVectorShuffle  %6  %55 %55 0 1 2
-%57 = OpFunctionCall  %4  %15 %39 %40 %56
-OpReturnValue %57
+%46 = OpLoad  %4  %45
+%49 = OpAccessChain  %22  %44 %47
+%50 = OpLoad  %4  %49
+%51 = OpFAdd  %4  %50 %46
+%52 = OpAccessChain  %22  %44 %47
+OpStore %52 %51
+%53 = OpLoad  %6  %44
+%54 = OpVectorShuffle  %6  %53 %53 0 1 2
+%55 = OpFunctionCall  %4  %15 %38 %39 %54
+OpReturnValue %55
 OpFunctionEnd
-%59 = OpFunction  %2  None %60
-%58 = OpLabel
-OpBranch %63
-%63 = OpLabel
-%64 = OpFunctionCall  %4  %15 %7 %9 %61
-%65 = OpFunctionCall  %4  %43 %7 %9 %61 %62
+%57 = OpFunction  %2  None %58
+%56 = OpLabel
+%61 = OpFunctionCall  %4  %15 %7 %9 %59
+%62 = OpFunctionCall  %4  %42 %7 %9 %59 %60
 OpReturn
 OpFunctionEnd

@@ -1,12 +1,12 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 55
+; Bound: 46
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %44 "main"
-OpExecutionMode %44 LocalSize 1 1 1
+OpEntryPoint GLCompute %36 "main"
+OpExecutionMode %36 LocalSize 1 1 1
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %4 = OpTypeInt 32 0
@@ -16,74 +16,56 @@ OpExecutionMode %44 LocalSize 1 1 1
 %7 = OpTypeArray %5 %8
 %11 = OpTypeFunction %3
 %12 = OpConstant  %3  1
-%16 = OpTypeFunction %4
-%17 = OpConstant  %4  1
-%21 = OpTypeFunction %5
-%22 = OpConstant  %5  1
-%29 = OpTypeFunction %6
-%30 = OpConstantComposite  %6  %22 %22
-%34 = OpTypeFunction %7
-%35 = OpConstantComposite  %7  %22 %22 %22 %22
-%45 = OpTypeFunction %2
+%15 = OpTypeFunction %4
+%16 = OpConstant  %4  1
+%19 = OpTypeFunction %5
+%20 = OpConstant  %5  1
+%25 = OpTypeFunction %6
+%26 = OpConstantComposite  %6  %20 %20
+%29 = OpTypeFunction %7
+%30 = OpConstantComposite  %7  %20 %20 %20 %20
+%37 = OpTypeFunction %2
 %10 = OpFunction  %3  None %11
 %9 = OpLabel
-OpBranch %13
-%13 = OpLabel
 OpReturnValue %12
 OpFunctionEnd
-%15 = OpFunction  %4  None %16
-%14 = OpLabel
-OpBranch %18
-%18 = OpLabel
-OpReturnValue %17
+%14 = OpFunction  %4  None %15
+%13 = OpLabel
+OpReturnValue %16
 OpFunctionEnd
-%20 = OpFunction  %5  None %21
-%19 = OpLabel
-OpBranch %23
+%18 = OpFunction  %5  None %19
+%17 = OpLabel
+OpReturnValue %20
+OpFunctionEnd
+%22 = OpFunction  %5  None %19
+%21 = OpLabel
+OpReturnValue %20
+OpFunctionEnd
+%24 = OpFunction  %6  None %25
 %23 = OpLabel
-OpReturnValue %22
+OpReturnValue %26
 OpFunctionEnd
-%25 = OpFunction  %5  None %21
-%24 = OpLabel
-OpBranch %26
-%26 = OpLabel
-OpReturnValue %22
-OpFunctionEnd
-%28 = OpFunction  %6  None %29
+%28 = OpFunction  %7  None %29
 %27 = OpLabel
-OpBranch %31
+OpReturnValue %30
+OpFunctionEnd
+%32 = OpFunction  %5  None %19
 %31 = OpLabel
-OpReturnValue %30
+OpReturnValue %20
 OpFunctionEnd
-%33 = OpFunction  %7  None %34
-%32 = OpLabel
-OpBranch %36
-%36 = OpLabel
-OpReturnValue %35
+%34 = OpFunction  %6  None %25
+%33 = OpLabel
+OpReturnValue %26
 OpFunctionEnd
-%38 = OpFunction  %5  None %21
-%37 = OpLabel
-OpBranch %39
-%39 = OpLabel
-OpReturnValue %22
-OpFunctionEnd
-%41 = OpFunction  %6  None %29
-%40 = OpLabel
-OpBranch %42
-%42 = OpLabel
-OpReturnValue %30
-OpFunctionEnd
-%44 = OpFunction  %2  None %45
-%43 = OpLabel
-OpBranch %46
-%46 = OpLabel
-%47 = OpFunctionCall  %3  %10
-%48 = OpFunctionCall  %4  %15
-%49 = OpFunctionCall  %5  %20
-%50 = OpFunctionCall  %5  %25
-%51 = OpFunctionCall  %6  %28
-%52 = OpFunctionCall  %7  %33
-%53 = OpFunctionCall  %5  %38
-%54 = OpFunctionCall  %6  %41
+%36 = OpFunction  %2  None %37
+%35 = OpLabel
+%38 = OpFunctionCall  %3  %10
+%39 = OpFunctionCall  %4  %14
+%40 = OpFunctionCall  %5  %18
+%41 = OpFunctionCall  %5  %22
+%42 = OpFunctionCall  %6  %24
+%43 = OpFunctionCall  %7  %28
+%44 = OpFunctionCall  %5  %32
+%45 = OpFunctionCall  %6  %34
 OpReturn
 OpFunctionEnd

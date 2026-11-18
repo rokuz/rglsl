@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 67
+; Bound: 66
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -53,34 +53,32 @@ OpExecutionMode %16 LocalSize 1 1 1
 %46 = OpVariable  %47  Function %29
 %40 = OpVariable  %41  Function %25
 %34 = OpVariable  %35  Function %21
-OpBranch %48
-%48 = OpLabel
-%49 = OpLoad  %3  %30
-%50 = OpBitcast  %7  %49
-OpStore %36 %50
-%51 = OpLoad  %5  %32
-%52 = OpBitcast  %9  %51
-OpStore %38 %52
-%53 = OpLoad  %6  %34
-%54 = OpBitcast  %10  %53
-OpStore %40 %54
-%55 = OpLoad  %7  %36
-%56 = OpBitcast  %3  %55
-OpStore %30 %56
-%57 = OpLoad  %9  %38
-%58 = OpBitcast  %5  %57
-OpStore %32 %58
-%59 = OpLoad  %10  %40
-%60 = OpBitcast  %6  %59
-OpStore %34 %60
-%61 = OpLoad  %3  %30
-%62 = OpBitcast  %11  %61
-OpStore %42 %62
-%63 = OpLoad  %5  %32
-%64 = OpBitcast  %13  %63
-OpStore %44 %64
-%65 = OpLoad  %6  %34
-%66 = OpBitcast  %14  %65
-OpStore %46 %66
+%48 = OpLoad  %3  %30
+%49 = OpBitcast  %7  %48
+OpStore %36 %49
+%50 = OpLoad  %5  %32
+%51 = OpBitcast  %9  %50
+OpStore %38 %51
+%52 = OpLoad  %6  %34
+%53 = OpBitcast  %10  %52
+OpStore %40 %53
+%54 = OpLoad  %7  %36
+%55 = OpBitcast  %3  %54
+OpStore %30 %55
+%56 = OpLoad  %9  %38
+%57 = OpBitcast  %5  %56
+OpStore %32 %57
+%58 = OpLoad  %10  %40
+%59 = OpBitcast  %6  %58
+OpStore %34 %59
+%60 = OpLoad  %3  %30
+%61 = OpBitcast  %11  %60
+OpStore %42 %61
+%62 = OpLoad  %5  %32
+%63 = OpBitcast  %13  %62
+OpStore %44 %63
+%64 = OpLoad  %6  %34
+%65 = OpBitcast  %14  %64
+OpStore %46 %65
 OpReturn
 OpFunctionEnd

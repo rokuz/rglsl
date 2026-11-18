@@ -1,12 +1,12 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 115
+; Bound: 103
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %71 "main"
-OpExecutionMode %71 LocalSize 1 1 1
+OpEntryPoint GLCompute %60 "main"
+OpExecutionMode %60 LocalSize 1 1 1
 %2 = OpTypeVoid
 %3 = OpTypeFloat 32
 %4 = OpTypeInt 32 1
@@ -20,139 +20,115 @@ OpExecutionMode %71 LocalSize 1 1 1
 %12 = OpTypeArray %4 %11
 %13 = OpTypeArray %5 %11
 %17 = OpTypeFunction %2 %3
-%22 = OpTypeFunction %2 %4
-%27 = OpTypeFunction %2 %5
-%32 = OpTypeFunction %2 %6
-%37 = OpTypeFunction %2 %7
-%42 = OpTypeFunction %2 %8
-%47 = OpTypeFunction %2 %9
-%52 = OpTypeFunction %2 %10
-%57 = OpTypeFunction %2 %12
-%62 = OpTypeFunction %2 %13
-%68 = OpTypeFunction %2 %3 %4
-%72 = OpTypeFunction %2
-%73 = OpConstant  %3  0
-%74 = OpConstant  %4  0
-%75 = OpConstant  %5  0
-%76 = OpConstantComposite  %6  %73 %73
-%77 = OpConstantComposite  %7  %74 %74
-%78 = OpConstantComposite  %8  %75 %75
-%79 = OpConstantComposite  %9  %76 %76
-%80 = OpConstantComposite  %10  %73 %73
-%81 = OpConstantComposite  %12  %74 %74
-%82 = OpConstantComposite  %13  %75 %75
+%21 = OpTypeFunction %2 %4
+%25 = OpTypeFunction %2 %5
+%29 = OpTypeFunction %2 %6
+%33 = OpTypeFunction %2 %7
+%37 = OpTypeFunction %2 %8
+%41 = OpTypeFunction %2 %9
+%45 = OpTypeFunction %2 %10
+%49 = OpTypeFunction %2 %12
+%53 = OpTypeFunction %2 %13
+%58 = OpTypeFunction %2 %3 %4
+%61 = OpTypeFunction %2
+%62 = OpConstant  %3  0
+%63 = OpConstant  %4  0
+%64 = OpConstant  %5  0
+%65 = OpConstantComposite  %6  %62 %62
+%66 = OpConstantComposite  %7  %63 %63
+%67 = OpConstantComposite  %8  %64 %64
+%68 = OpConstantComposite  %9  %65 %65
+%69 = OpConstantComposite  %10  %62 %62
+%70 = OpConstantComposite  %12  %63 %63
+%71 = OpConstantComposite  %13  %64 %64
 %16 = OpFunction  %2  None %17
 %15 = OpFunctionParameter  %3
 %14 = OpLabel
-OpBranch %18
+OpReturn
+OpFunctionEnd
+%20 = OpFunction  %2  None %21
+%19 = OpFunctionParameter  %4
 %18 = OpLabel
 OpReturn
 OpFunctionEnd
-%21 = OpFunction  %2  None %22
-%20 = OpFunctionParameter  %4
-%19 = OpLabel
-OpBranch %23
-%23 = OpLabel
+%24 = OpFunction  %2  None %25
+%23 = OpFunctionParameter  %5
+%22 = OpLabel
 OpReturn
 OpFunctionEnd
-%26 = OpFunction  %2  None %27
-%25 = OpFunctionParameter  %5
-%24 = OpLabel
-OpBranch %28
-%28 = OpLabel
+%28 = OpFunction  %2  None %29
+%27 = OpFunctionParameter  %6
+%26 = OpLabel
 OpReturn
 OpFunctionEnd
-%31 = OpFunction  %2  None %32
-%30 = OpFunctionParameter  %6
-%29 = OpLabel
-OpBranch %33
-%33 = OpLabel
+%32 = OpFunction  %2  None %33
+%31 = OpFunctionParameter  %7
+%30 = OpLabel
 OpReturn
 OpFunctionEnd
 %36 = OpFunction  %2  None %37
-%35 = OpFunctionParameter  %7
+%35 = OpFunctionParameter  %8
 %34 = OpLabel
-OpBranch %38
+OpReturn
+OpFunctionEnd
+%40 = OpFunction  %2  None %41
+%39 = OpFunctionParameter  %9
 %38 = OpLabel
 OpReturn
 OpFunctionEnd
-%41 = OpFunction  %2  None %42
-%40 = OpFunctionParameter  %8
-%39 = OpLabel
-OpBranch %43
-%43 = OpLabel
+%44 = OpFunction  %2  None %45
+%43 = OpFunctionParameter  %10
+%42 = OpLabel
 OpReturn
 OpFunctionEnd
-%46 = OpFunction  %2  None %47
-%45 = OpFunctionParameter  %9
-%44 = OpLabel
-OpBranch %48
-%48 = OpLabel
+%48 = OpFunction  %2  None %49
+%47 = OpFunctionParameter  %12
+%46 = OpLabel
 OpReturn
 OpFunctionEnd
-%51 = OpFunction  %2  None %52
-%50 = OpFunctionParameter  %10
-%49 = OpLabel
-OpBranch %53
-%53 = OpLabel
+%52 = OpFunction  %2  None %53
+%51 = OpFunctionParameter  %13
+%50 = OpLabel
 OpReturn
 OpFunctionEnd
-%56 = OpFunction  %2  None %57
-%55 = OpFunctionParameter  %12
+%57 = OpFunction  %2  None %58
+%55 = OpFunctionParameter  %3
+%56 = OpFunctionParameter  %4
 %54 = OpLabel
-OpBranch %58
-%58 = OpLabel
 OpReturn
 OpFunctionEnd
-%61 = OpFunction  %2  None %62
-%60 = OpFunctionParameter  %13
+%60 = OpFunction  %2  None %61
 %59 = OpLabel
-OpBranch %63
-%63 = OpLabel
-OpReturn
-OpFunctionEnd
-%67 = OpFunction  %2  None %68
-%65 = OpFunctionParameter  %3
-%66 = OpFunctionParameter  %4
-%64 = OpLabel
-OpBranch %69
-%69 = OpLabel
-OpReturn
-OpFunctionEnd
-%71 = OpFunction  %2  None %72
-%70 = OpLabel
-OpBranch %83
-%83 = OpLabel
-%84 = OpFunctionCall  %2  %16 %73
-%85 = OpFunctionCall  %2  %16 %73
-%86 = OpFunctionCall  %2  %21 %74
-%87 = OpFunctionCall  %2  %26 %75
-%88 = OpFunctionCall  %2  %16 %73
-%89 = OpFunctionCall  %2  %16 %73
-%90 = OpFunctionCall  %2  %21 %74
-%91 = OpFunctionCall  %2  %26 %75
-%92 = OpFunctionCall  %2  %31 %76
-%93 = OpFunctionCall  %2  %31 %76
-%94 = OpFunctionCall  %2  %36 %77
-%95 = OpFunctionCall  %2  %41 %78
-%96 = OpFunctionCall  %2  %31 %76
-%97 = OpFunctionCall  %2  %31 %76
-%98 = OpFunctionCall  %2  %36 %77
-%99 = OpFunctionCall  %2  %41 %78
-%100 = OpFunctionCall  %2  %46 %79
-%101 = OpFunctionCall  %2  %46 %79
-%102 = OpFunctionCall  %2  %46 %79
-%103 = OpFunctionCall  %2  %51 %80
-%104 = OpFunctionCall  %2  %51 %80
-%105 = OpFunctionCall  %2  %56 %81
-%106 = OpFunctionCall  %2  %61 %82
-%107 = OpFunctionCall  %2  %51 %80
-%108 = OpFunctionCall  %2  %51 %80
-%109 = OpFunctionCall  %2  %56 %81
-%110 = OpFunctionCall  %2  %61 %82
-%111 = OpFunctionCall  %2  %67 %73 %74
-%112 = OpFunctionCall  %2  %67 %73 %74
-%113 = OpFunctionCall  %2  %67 %73 %74
-%114 = OpFunctionCall  %2  %67 %73 %74
+%72 = OpFunctionCall  %2  %16 %62
+%73 = OpFunctionCall  %2  %16 %62
+%74 = OpFunctionCall  %2  %20 %63
+%75 = OpFunctionCall  %2  %24 %64
+%76 = OpFunctionCall  %2  %16 %62
+%77 = OpFunctionCall  %2  %16 %62
+%78 = OpFunctionCall  %2  %20 %63
+%79 = OpFunctionCall  %2  %24 %64
+%80 = OpFunctionCall  %2  %28 %65
+%81 = OpFunctionCall  %2  %28 %65
+%82 = OpFunctionCall  %2  %32 %66
+%83 = OpFunctionCall  %2  %36 %67
+%84 = OpFunctionCall  %2  %28 %65
+%85 = OpFunctionCall  %2  %28 %65
+%86 = OpFunctionCall  %2  %32 %66
+%87 = OpFunctionCall  %2  %36 %67
+%88 = OpFunctionCall  %2  %40 %68
+%89 = OpFunctionCall  %2  %40 %68
+%90 = OpFunctionCall  %2  %40 %68
+%91 = OpFunctionCall  %2  %44 %69
+%92 = OpFunctionCall  %2  %44 %69
+%93 = OpFunctionCall  %2  %48 %70
+%94 = OpFunctionCall  %2  %52 %71
+%95 = OpFunctionCall  %2  %44 %69
+%96 = OpFunctionCall  %2  %44 %69
+%97 = OpFunctionCall  %2  %48 %70
+%98 = OpFunctionCall  %2  %52 %71
+%99 = OpFunctionCall  %2  %57 %62 %63
+%100 = OpFunctionCall  %2  %57 %62 %63
+%101 = OpFunctionCall  %2  %57 %62 %63
+%102 = OpFunctionCall  %2  %57 %62 %63
 OpReturn
 OpFunctionEnd

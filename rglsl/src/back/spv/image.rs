@@ -5,8 +5,8 @@ Generating SPIR-V for image operations.
 use spirv::Word;
 
 use super::{
-    Block, BlockContext, Error, HandleLoad, HandleSource, IdGenerator, Instruction, LocalImageType,
-    LocalType, NumericType, feature, grammar,
+    Block, BlockContext, Error, HandleSource, IdGenerator, Instruction, LocalImageType, LocalType,
+    NumericType, SizeQuery, feature, grammar,
 };
 use crate::arena::Handle;
 
@@ -395,11 +395,6 @@ impl BlockContext<'_> {
     }
 
     fn load_handle(&mut self, source: HandleSource, block: &mut Block) -> Result<Word, Error> {
-        if let Some(load) = self.function.handle_loads.get(&source)
-            && load.label_id == block.label_id
-        {
-            return Ok(load.id);
-        }
         let (ty, pointer_id, relaxed_precision) = match source {
             HandleSource::Global(handle) => {
                 let var = &self.ir_module.global_variables[handle];
@@ -430,13 +425,6 @@ impl BlockContext<'_> {
             self.writer
                 .decorate(id, spirv::Decoration::RelaxedPrecision, &[]);
         }
-        self.function.handle_loads.insert(
-            source,
-            HandleLoad {
-                label_id: block.label_id,
-                id,
-            },
-        );
         Ok(id)
     }
 
@@ -957,6 +945,21 @@ impl BlockContext<'_> {
         {
             return self.write_image_query_lod(result_type_id, image, sampler, coordinate, block);
         }
+        let previous_size = self.function.size_query.take();
+        if let Iq::NumLayers = query
+            && let Some(previous) = previous_size
+            && previous.image == image
+            && previous.label_id == block.label_id
+        {
+            let extract_id = self.gen_id();
+            block.body.push(Instruction::composite_extract(
+                result_type_id,
+                extract_id,
+                previous.id,
+                &[previous.layer_index],
+            ));
+            return Ok(extract_id);
+        }
         let image_id = self.get_image_id(image, block)?;
         let (crate::TypeInner::Image {
             dim,
@@ -1030,6 +1033,15 @@ impl BlockContext<'_> {
                     inst.add_operand(expr_id);
                 }
                 block.body.push(inst);
+                if arrayed {
+                    self.function.size_query = Some(SizeQuery {
+                        image,
+                        label_id: block.label_id,
+                        id: id_extended,
+                        layer_index: u32::try_from(dim_coords)
+                            .map_err(|_| Error::Validation("image dimension"))?,
+                    });
+                }
 
                 if result_type_id != extended_size_type_id && dim_coords == 1 {
                     let id = self.gen_id();

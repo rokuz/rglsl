@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 7
+; Bound: 6
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -11,7 +11,5 @@ OpExecutionMode %4 OriginUpperLeft
 %5 = OpTypeFunction %2
 %4 = OpFunction  %2  None %5
 %3 = OpLabel
-OpBranch %6
-%6 = OpLabel
 OpReturn
 OpFunctionEnd

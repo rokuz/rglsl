@@ -201,7 +201,7 @@ struct Function {
 
     handle_pointers: crate::FastHashMap<Handle<crate::Expression>, Word>,
 
-    handle_loads: crate::FastHashMap<HandleSource, HandleLoad>,
+    size_query: Option<SizeQuery>,
 
     /// A map taking each expression to the number of [`Access`] and
     /// [`AccessIndex`] expressions that uses it as a base value. If an
@@ -629,15 +629,17 @@ struct FunctionArgument {
     instruction: Instruction,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct SizeQuery {
+    image: Handle<crate::Expression>,
+    label_id: Word,
+    id: Word,
+    layer_index: u32,
+}
+
+#[derive(Clone, Copy)]
 enum HandleSource {
     Global(Handle<crate::GlobalVariable>),
     Argument(u32),
-}
-
-struct HandleLoad {
-    label_id: Word,
-    id: Word,
 }
 
 /// Tracks the expressions for which the backend emits the following instructions:

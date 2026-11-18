@@ -1,59 +1,51 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 37
+; Bound: 33
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %28 "main"
-OpExecutionMode %28 OriginUpperLeft
+OpEntryPoint Fragment %25 "main"
+OpExecutionMode %25 OriginUpperLeft
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %4 = OpTypeFloat 32
 %5 = OpTypeVector %4 3
 %9 = OpTypeFunction %2 %3
 %11 = OpTypePointer Function %3
-%16 = OpTypeFunction %2 %4
-%18 = OpTypePointer Function %4
-%23 = OpTypeFunction %2 %5
-%25 = OpTypePointer Function %5
-%29 = OpTypeFunction %2
-%30 = OpConstant  %3  1
-%31 = OpConstant  %4  1
-%32 = OpConstantComposite  %5  %31 %31 %31
+%15 = OpTypeFunction %2 %4
+%17 = OpTypePointer Function %4
+%21 = OpTypeFunction %2 %5
+%23 = OpTypePointer Function %5
+%26 = OpTypeFunction %2
+%27 = OpConstant  %3  1
+%28 = OpConstant  %4  1
+%29 = OpConstantComposite  %5  %28 %28 %28
 %8 = OpFunction  %2  None %9
 %7 = OpFunctionParameter  %3
 %6 = OpLabel
 %10 = OpVariable  %11  Function
-OpBranch %12
-%12 = OpLabel
 OpStore %10 %7
 OpReturn
 OpFunctionEnd
-%15 = OpFunction  %2  None %16
-%14 = OpFunctionParameter  %4
-%13 = OpLabel
-%17 = OpVariable  %18  Function
-OpBranch %19
-%19 = OpLabel
-OpStore %17 %14
+%14 = OpFunction  %2  None %15
+%13 = OpFunctionParameter  %4
+%12 = OpLabel
+%16 = OpVariable  %17  Function
+OpStore %16 %13
 OpReturn
 OpFunctionEnd
-%22 = OpFunction  %2  None %23
-%21 = OpFunctionParameter  %5
-%20 = OpLabel
-%24 = OpVariable  %25  Function
-OpBranch %26
-%26 = OpLabel
-OpStore %24 %21
+%20 = OpFunction  %2  None %21
+%19 = OpFunctionParameter  %5
+%18 = OpLabel
+%22 = OpVariable  %23  Function
+OpStore %22 %19
 OpReturn
 OpFunctionEnd
-%28 = OpFunction  %2  None %29
-%27 = OpLabel
-OpBranch %33
-%33 = OpLabel
-%34 = OpFunctionCall  %2  %8 %30
-%35 = OpFunctionCall  %2  %15 %31
-%36 = OpFunctionCall  %2  %22 %32
+%25 = OpFunction  %2  None %26
+%24 = OpLabel
+%30 = OpFunctionCall  %2  %8 %27
+%31 = OpFunctionCall  %2  %14 %28
+%32 = OpFunctionCall  %2  %20 %29
 OpReturn
 OpFunctionEnd

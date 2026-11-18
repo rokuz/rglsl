@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 157
+; Bound: 156
 OpCapability Shader
 OpCapability Image1D
 OpCapability ImageQuery
@@ -56,13 +56,13 @@ OpDecorate %26 Binding 9
 %32 = OpConstantComposite  %11  %31 %31 %31 %31
 %34 = OpTypePointer Function %8
 %37 = OpTypePointer Function %11
-%48 = OpTypeFunction %2 %9
-%50 = OpTypePointer Function %9
-%52 = OpTypePointer Function %12
+%49 = OpTypeFunction %2 %9
+%51 = OpTypePointer Function %9
+%53 = OpTypePointer Function %12
 %55 = OpTypeVector %15 2
-%66 = OpTypeFunction %2 %10
-%68 = OpTypePointer Function %10
-%70 = OpTypePointer Function %13
+%68 = OpTypeFunction %2 %10
+%70 = OpTypePointer Function %10
+%72 = OpTypePointer Function %13
 %144 = OpTypeFunction %2
 %145 = OpConstant  %8  1
 %146 = OpConstant  %8  0
@@ -74,158 +74,149 @@ OpDecorate %26 Binding 9
 %33 = OpVariable  %34  Function
 %35 = OpVariable  %34  Function
 %36 = OpVariable  %37  Function
-OpBranch %38
-%38 = OpLabel
 OpStore %33 %28
-%39 = OpLoad  %3  %16
-%40 = OpImageQuerySize  %15  %39
-%41 = OpBitcast  %8  %40
-OpStore %35 %41
-%42 = OpLoad  %8  %33
-OpImageWrite %39 %42 %32
+%38 = OpLoad  %3  %16
+%39 = OpImageQuerySize  %15  %38
+%40 = OpBitcast  %8  %39
+OpStore %35 %40
+%41 = OpLoad  %8  %33
+%42 = OpLoad  %3  %16
+OpImageWrite %42 %41 %32
 %43 = OpLoad  %8  %33
-%44 = OpImageRead  %11  %39 %43
-OpStore %36 %44
+%44 = OpLoad  %3  %16
+%45 = OpImageRead  %11  %44 %43
+OpStore %36 %45
 OpReturn
 OpFunctionEnd
-%47 = OpFunction  %2  None %48
-%46 = OpFunctionParameter  %9
-%45 = OpLabel
-%49 = OpVariable  %50  Function
-%51 = OpVariable  %52  Function
-%53 = OpVariable  %37  Function
-OpBranch %54
-%54 = OpLabel
-OpStore %49 %46
+%48 = OpFunction  %2  None %49
+%47 = OpFunctionParameter  %9
+%46 = OpLabel
+%50 = OpVariable  %51  Function
+%52 = OpVariable  %53  Function
+%54 = OpVariable  %37  Function
+OpStore %50 %47
 %56 = OpLoad  %5  %18
 %57 = OpImageQuerySize  %55  %56
 %58 = OpBitcast  %9  %57
 %59 = OpConvertSToF  %12  %58
-OpStore %51 %59
-%60 = OpLoad  %9  %49
-%61 = OpImageRead  %11  %56 %60
-OpStore %53 %61
-%62 = OpLoad  %9  %49
-OpImageWrite %56 %62 %32
+OpStore %52 %59
+%60 = OpLoad  %9  %50
+%61 = OpLoad  %5  %18
+%62 = OpImageRead  %11  %61 %60
+OpStore %54 %62
+%63 = OpLoad  %9  %50
+%64 = OpLoad  %5  %18
+OpImageWrite %64 %63 %32
 OpReturn
 OpFunctionEnd
-%65 = OpFunction  %2  None %66
-%64 = OpFunctionParameter  %10
-%63 = OpLabel
-%67 = OpVariable  %68  Function
+%67 = OpFunction  %2  None %68
+%66 = OpFunctionParameter  %10
+%65 = OpLabel
 %69 = OpVariable  %70  Function
-%71 = OpVariable  %37  Function
-OpBranch %72
-%72 = OpLabel
-OpStore %67 %64
-%73 = OpLoad  %7  %22
-%74 = OpImageQuerySize  %14  %73
-%75 = OpVectorShuffle  %55  %74 %74 0 1
-%76 = OpCompositeExtract  %15  %75 0
-%77 = OpCompositeExtract  %15  %75 1
-%78 = OpImageQuerySize  %14  %73
-%79 = OpCompositeExtract  %15  %78 2
-%80 = OpCompositeConstruct  %14  %76 %77 %79
+%71 = OpVariable  %72  Function
+%73 = OpVariable  %37  Function
+OpStore %69 %66
+%74 = OpLoad  %7  %22
+%75 = OpImageQuerySize  %14  %74
+%76 = OpVectorShuffle  %55  %75 %75 0 1
+%77 = OpCompositeExtract  %15  %76 0
+%78 = OpCompositeExtract  %15  %76 1
+%79 = OpCompositeExtract  %15  %75 2
+%80 = OpCompositeConstruct  %14  %77 %78 %79
 %81 = OpBitcast  %10  %80
 %82 = OpConvertSToF  %13  %81
-OpStore %69 %82
-%83 = OpLoad  %10  %67
+OpStore %71 %82
+%83 = OpLoad  %10  %69
 %84 = OpVectorShuffle  %9  %83 %83 0 1
 %85 = OpCompositeExtract  %8  %83 2
-%86 = OpCompositeConstruct  %10  %84 %85
-%87 = OpImageRead  %11  %73 %86
-OpStore %71 %87
-%88 = OpLoad  %10  %67
-%89 = OpVectorShuffle  %9  %88 %88 0 1
-%90 = OpCompositeExtract  %8  %88 2
-%91 = OpCompositeConstruct  %10  %89 %90
-OpImageWrite %73 %91 %32
+%86 = OpLoad  %7  %22
+%87 = OpCompositeConstruct  %10  %84 %85
+%88 = OpImageRead  %11  %86 %87
+OpStore %73 %88
+%89 = OpLoad  %10  %69
+%90 = OpVectorShuffle  %9  %89 %89 0 1
+%91 = OpCompositeExtract  %8  %89 2
+%92 = OpLoad  %7  %22
+%93 = OpCompositeConstruct  %10  %90 %91
+OpImageWrite %92 %93 %32
 OpReturn
 OpFunctionEnd
-%94 = OpFunction  %2  None %66
-%93 = OpFunctionParameter  %10
-%92 = OpLabel
-%95 = OpVariable  %68  Function
-%96 = OpVariable  %70  Function
-%97 = OpVariable  %37  Function
-OpBranch %98
-%98 = OpLabel
-OpStore %95 %93
-%99 = OpLoad  %6  %20
-%100 = OpImageQuerySize  %14  %99
-%101 = OpBitcast  %10  %100
-%102 = OpConvertSToF  %13  %101
-OpStore %96 %102
-%103 = OpLoad  %10  %95
-%104 = OpImageRead  %11  %99 %103
-OpStore %97 %104
-%105 = OpLoad  %10  %95
-OpImageWrite %99 %105 %32
+%96 = OpFunction  %2  None %68
+%95 = OpFunctionParameter  %10
+%94 = OpLabel
+%97 = OpVariable  %70  Function
+%98 = OpVariable  %72  Function
+%99 = OpVariable  %37  Function
+OpStore %97 %95
+%100 = OpLoad  %6  %20
+%101 = OpImageQuerySize  %14  %100
+%102 = OpBitcast  %10  %101
+%103 = OpConvertSToF  %13  %102
+OpStore %98 %103
+%104 = OpLoad  %10  %97
+%105 = OpLoad  %6  %20
+%106 = OpImageRead  %11  %105 %104
+OpStore %99 %106
+%107 = OpLoad  %10  %97
+%108 = OpLoad  %6  %20
+OpImageWrite %108 %107 %32
 OpReturn
 OpFunctionEnd
-%108 = OpFunction  %2  None %48
-%107 = OpFunctionParameter  %9
-%106 = OpLabel
-%109 = OpVariable  %50  Function
-%110 = OpVariable  %52  Function
-%111 = OpVariable  %37  Function
-OpBranch %112
-%112 = OpLabel
-OpStore %109 %107
-%113 = OpLoad  %5  %18
-%114 = OpImageQuerySize  %55  %113
-%115 = OpBitcast  %9  %114
-%116 = OpConvertSToF  %12  %115
-OpStore %110 %116
-%117 = OpLoad  %9  %109
-%118 = OpLoad  %5  %24
-%119 = OpImageRead  %11  %118 %117
-OpStore %111 %119
+%111 = OpFunction  %2  None %49
+%110 = OpFunctionParameter  %9
+%109 = OpLabel
+%112 = OpVariable  %51  Function
+%113 = OpVariable  %53  Function
+%114 = OpVariable  %37  Function
+OpStore %112 %110
+%115 = OpLoad  %5  %18
+%116 = OpImageQuerySize  %55  %115
+%117 = OpBitcast  %9  %116
+%118 = OpConvertSToF  %12  %117
+OpStore %113 %118
+%119 = OpLoad  %9  %112
+%120 = OpLoad  %5  %24
+%121 = OpImageRead  %11  %120 %119
+OpStore %114 %121
 OpReturn
 OpFunctionEnd
-%122 = OpFunction  %2  None %48
-%121 = OpFunctionParameter  %9
-%120 = OpLabel
-%123 = OpVariable  %50  Function
-%124 = OpVariable  %52  Function
-OpBranch %125
-%125 = OpLabel
-OpStore %123 %121
-%126 = OpLoad  %5  %18
-%127 = OpImageQuerySize  %55  %126
-%128 = OpBitcast  %9  %127
-%129 = OpConvertSToF  %12  %128
-OpStore %124 %129
-%130 = OpLoad  %9  %123
-%131 = OpLoad  %5  %25
-OpImageWrite %131 %130 %32
+%124 = OpFunction  %2  None %49
+%123 = OpFunctionParameter  %9
+%122 = OpLabel
+%125 = OpVariable  %51  Function
+%126 = OpVariable  %53  Function
+OpStore %125 %123
+%127 = OpLoad  %5  %18
+%128 = OpImageQuerySize  %55  %127
+%129 = OpBitcast  %9  %128
+%130 = OpConvertSToF  %12  %129
+OpStore %126 %130
+%131 = OpLoad  %9  %125
+%132 = OpLoad  %5  %25
+OpImageWrite %132 %131 %32
 OpReturn
 OpFunctionEnd
-%134 = OpFunction  %2  None %48
-%133 = OpFunctionParameter  %9
-%132 = OpLabel
-%135 = OpVariable  %50  Function
-%136 = OpVariable  %52  Function
-OpBranch %137
-%137 = OpLabel
-OpStore %135 %133
+%135 = OpFunction  %2  None %49
+%134 = OpFunctionParameter  %9
+%133 = OpLabel
+%136 = OpVariable  %51  Function
+%137 = OpVariable  %53  Function
+OpStore %136 %134
 %138 = OpLoad  %5  %26
 %139 = OpImageQuerySize  %55  %138
 %140 = OpBitcast  %9  %139
 %141 = OpConvertSToF  %12  %140
-OpStore %136 %141
+OpStore %137 %141
 OpReturn
 OpFunctionEnd
 %143 = OpFunction  %2  None %144
 %142 = OpLabel
-OpBranch %149
-%149 = OpLabel
-%150 = OpFunctionCall  %2  %29 %145
-%151 = OpFunctionCall  %2  %47 %147
-%152 = OpFunctionCall  %2  %65 %148
-%153 = OpFunctionCall  %2  %94 %148
-%154 = OpFunctionCall  %2  %108 %147
-%155 = OpFunctionCall  %2  %122 %147
-%156 = OpFunctionCall  %2  %134 %147
+%149 = OpFunctionCall  %2  %29 %145
+%150 = OpFunctionCall  %2  %48 %147
+%151 = OpFunctionCall  %2  %67 %148
+%152 = OpFunctionCall  %2  %96 %148
+%153 = OpFunctionCall  %2  %111 %147
+%154 = OpFunctionCall  %2  %124 %147
+%155 = OpFunctionCall  %2  %135 %147
 OpReturn
 OpFunctionEnd

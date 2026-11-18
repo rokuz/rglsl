@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 85
+; Bound: 84
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
@@ -57,39 +57,37 @@ OpExecutionMode %18 OriginUpperLeft
 %51 = OpConstantComposite  %4  %20 %20 %20 %20
 %18 = OpFunction  %2  None %19
 %17 = OpLabel
-OpBranch %52
-%52 = OpLabel
-%53 = OpExtInst  %3  %1 Degrees %20
-%54 = OpExtInst  %3  %1 Radians %20
-%55 = OpExtInst  %4  %1 Degrees %22
-%56 = OpExtInst  %4  %1 Radians %22
-%57 = OpExtInst  %4  %1 Floor %22
-%58 = OpExtInst  %4  %1 Refract %22 %22 %20
-%59 = OpExtInst  %3  %1 Ldexp %20 %40
-%60 = OpExtInst  %10  %1 Ldexp %42 %45
+%52 = OpExtInst  %3  %1 Degrees %20
+%53 = OpExtInst  %3  %1 Radians %20
+%54 = OpExtInst  %4  %1 Degrees %22
+%55 = OpExtInst  %4  %1 Radians %22
+%56 = OpExtInst  %4  %1 Floor %22
+%57 = OpExtInst  %4  %1 Refract %22 %22 %20
+%58 = OpExtInst  %3  %1 Ldexp %20 %40
+%59 = OpExtInst  %10  %1 Ldexp %42 %45
+%60 = OpExtInst  %11  %1 ModfStruct %46
 %61 = OpExtInst  %11  %1 ModfStruct %46
-%62 = OpExtInst  %11  %1 ModfStruct %46
-%63 = OpCompositeExtract  %3  %62 0
-%64 = OpExtInst  %11  %1 ModfStruct %46
-%65 = OpCompositeExtract  %3  %64 1
-%66 = OpExtInst  %12  %1 ModfStruct %47
-%67 = OpExtInst  %13  %1 ModfStruct %48
-%68 = OpCompositeExtract  %4  %67 1
-%69 = OpCompositeExtract  %3  %68 0
-%70 = OpExtInst  %12  %1 ModfStruct %47
-%71 = OpCompositeExtract  %10  %70 0
-%72 = OpCompositeExtract  %3  %71 1
+%62 = OpCompositeExtract  %3  %61 0
+%63 = OpExtInst  %11  %1 ModfStruct %46
+%64 = OpCompositeExtract  %3  %63 1
+%65 = OpExtInst  %12  %1 ModfStruct %47
+%66 = OpExtInst  %13  %1 ModfStruct %48
+%67 = OpCompositeExtract  %4  %66 1
+%68 = OpCompositeExtract  %3  %67 0
+%69 = OpExtInst  %12  %1 ModfStruct %47
+%70 = OpCompositeExtract  %10  %69 0
+%71 = OpCompositeExtract  %3  %70 1
+%72 = OpExtInst  %14  %1 FrexpStruct %46
 %73 = OpExtInst  %14  %1 FrexpStruct %46
-%74 = OpExtInst  %14  %1 FrexpStruct %46
-%75 = OpCompositeExtract  %3  %74 0
-%76 = OpExtInst  %14  %1 FrexpStruct %46
-%77 = OpCompositeExtract  %5  %76 1
-%78 = OpExtInst  %15  %1 FrexpStruct %48
-%79 = OpCompositeExtract  %6  %78 1
-%80 = OpCompositeExtract  %5  %79 0
-%81 = OpExtInst  %3  %1 Floor %20
-%82 = OpExtInst  %10  %1 Floor %49
-%83 = OpExtInst  %16  %1 Floor %50
-%84 = OpExtInst  %4  %1 Floor %51
+%74 = OpCompositeExtract  %3  %73 0
+%75 = OpExtInst  %14  %1 FrexpStruct %46
+%76 = OpCompositeExtract  %5  %75 1
+%77 = OpExtInst  %15  %1 FrexpStruct %48
+%78 = OpCompositeExtract  %6  %77 1
+%79 = OpCompositeExtract  %5  %78 0
+%80 = OpExtInst  %3  %1 Floor %20
+%81 = OpExtInst  %10  %1 Floor %49
+%82 = OpExtInst  %16  %1 Floor %50
+%83 = OpExtInst  %4  %1 Floor %51
 OpReturn
 OpFunctionEnd

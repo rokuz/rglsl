@@ -1,23 +1,23 @@
 ; SPIR-V
 ; Version: 1.0
 ; Generator: rspirv
-; Bound: 32
+; Bound: 30
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint Fragment %28 "main" %26
-OpExecutionMode %28 OriginUpperLeft
+OpEntryPoint Fragment %27 "main" %25
+OpExecutionMode %27 OriginUpperLeft
 OpName %8 "Texture"
 OpName %10 "Sampler"
 OpName %13 "Passed_Texture"
 OpName %14 "Passed_Sampler"
 OpName %15 "test"
-OpName %28 "main"
+OpName %27 "main"
 OpDecorate %8 DescriptorSet 0
 OpDecorate %8 Binding 0
 OpDecorate %10 DescriptorSet 0
 OpDecorate %10 Binding 1
-OpDecorate %26 Location 0
+OpDecorate %25 Location 0
 %2 = OpTypeVoid
 %4 = OpTypeFloat 32
 %3 = OpTypeImage %4 2D 0 0 0 1 Unknown
@@ -31,27 +31,23 @@ OpDecorate %26 Location 0
 %16 = OpTypeFunction %6 %9 %11
 %17 = OpConstant  %4  0
 %18 = OpConstantComposite  %7  %17 %17
-%21 = OpTypeSampledImage %3
-%27 = OpTypePointer Output %6
-%26 = OpVariable  %27  Output
-%29 = OpTypeFunction %2
+%20 = OpTypeSampledImage %3
+%26 = OpTypePointer Output %6
+%25 = OpVariable  %26  Output
+%28 = OpTypeFunction %2
 %15 = OpFunction  %6  None %16
 %13 = OpFunctionParameter  %9
 %14 = OpFunctionParameter  %11
 %12 = OpLabel
-OpBranch %19
-%19 = OpLabel
-%20 = OpLoad  %3  %13
-%22 = OpLoad  %5  %14
-%23 = OpSampledImage  %21  %20 %22
-%24 = OpImageSampleImplicitLod  %6  %23 %18
-OpReturnValue %24
+%19 = OpLoad  %3  %13
+%21 = OpLoad  %5  %14
+%22 = OpSampledImage  %20  %19 %21
+%23 = OpImageSampleImplicitLod  %6  %22 %18
+OpReturnValue %23
 OpFunctionEnd
-%28 = OpFunction  %2  None %29
-%25 = OpLabel
-OpBranch %30
-%30 = OpLabel
-%31 = OpFunctionCall  %6  %15 %8 %10
-OpStore %26 %31
+%27 = OpFunction  %2  None %28
+%24 = OpLabel
+%29 = OpFunctionCall  %6  %15 %8 %10
+OpStore %25 %29
 OpReturn
 OpFunctionEnd

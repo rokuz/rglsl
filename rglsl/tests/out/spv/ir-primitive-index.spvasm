@@ -1,7 +1,7 @@
 ; SPIR-V
 ; Version: 1.4
 ; Generator: rspirv
-; Bound: 18
+; Bound: 17
 OpCapability Shader
 OpCapability Geometry
 %1 = OpExtInstImport "GLSL.std.450"
@@ -24,10 +24,8 @@ OpDecorate %10 Location 0
 %12 = OpFunction  %2  None %13
 %6 = OpLabel
 %9 = OpLoad  %3  %7
-OpBranch %15
-%15 = OpLabel
-%16 = OpConvertUToF  %5  %9
-%17 = OpCompositeConstruct  %4  %16 %14 %14 %14
-OpStore %10 %17
+%15 = OpConvertUToF  %5  %9
+%16 = OpCompositeConstruct  %4  %15 %14 %14 %14
+OpStore %10 %16
 OpReturn
 OpFunctionEnd
