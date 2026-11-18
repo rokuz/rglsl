@@ -111,6 +111,7 @@ struct Staged {
     stage: ShaderKind,
     checks: Vec<(Variant, Job)>,
     timed: Vec<(Variant, Job)>,
+    refused: Vec<(Variant, String)>,
 }
 
 pub fn timed_script(script: &str, runs: usize) -> String {
@@ -168,11 +169,20 @@ fn stage_unit(
         .map_err(|error| format!("harness: {error}"))?;
     let mut checks = Vec::new();
     let mut timed = Vec::new();
+    let mut refused = Vec::new();
     for variant in VARIANTS {
         let Some(path) = module(result, variant) else {
             continue;
         };
-        let mut check = Executor::stage(&plan, &dir, &harness, path, tag(variant))?;
+        let variant_plan = match variant_plan(executor, &plan, path) {
+            Ok(variant_plan) => variant_plan,
+            Err(why) if variant == Variant::Rglsl => return Err(why),
+            Err(why) => {
+                refused.push((variant, why));
+                continue;
+            }
+        };
+        let mut check = Executor::stage(&variant_plan, &dir, &harness, path, tag(variant))?;
         check.capture = Capture {
             statistics: capture,
             timing: false,
@@ -201,7 +211,25 @@ fn stage_unit(
         plan,
         checks,
         timed,
+        refused,
     })
+}
+
+fn variant_plan(executor: &Executor, plan: &Plan, path: &Path) -> Result<Plan, String> {
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let reflection = reflect::reflect_bytes(&bytes).map_err(|e| format!("reflection: {e}"))?;
+    let mut needs = exec::plan::requirements(&reflection)
+        .map_err(|refusal| format!("its module needs what the plan cannot give: {refusal:?}"))?;
+    needs.extend(exec::requirements::stage_needs(reflection.model));
+    if let Some(need) = executor.missing(&needs) {
+        return Err(format!(
+            "its module needs {}, which the device does not support",
+            need.line()
+        ));
+    }
+    let mut variant_plan = plan.clone();
+    variant_plan.needs.extend(needs);
+    Ok(variant_plan)
 }
 
 fn report_of(outputs: &Outputs) -> Option<Report> {
@@ -411,7 +439,11 @@ fn run_target(executor: &Executor, results: &[UnitResult], runs: usize) -> Targe
         for (variant, check) in checks {
             measured.insert(*variant, measure(staged.stage, check, timed.get(variant)));
         }
-        let mut equivalence = BTreeMap::new();
+        let mut equivalence: BTreeMap<Variant, Equivalence> = staged
+            .refused
+            .iter()
+            .map(|(variant, why)| (*variant, Equivalence::NotRun(why.clone())))
+            .collect();
         if let Some(reference) = checks.get(&Variant::Rglsl) {
             for variant in CHECKED {
                 let Some(result) = checks.get(&variant) else {
