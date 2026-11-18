@@ -38,7 +38,9 @@ pub enum Verdict {
     OptimizerFailed,
     InvalidSpirvOptimized,
     ExecSkipped,
+    WrongResultSpirvOpt,
     WrongResultGlslang,
+    ExecError,
     ExecFailed,
     WrongResult,
     ExecFailedOptimized,
@@ -57,7 +59,9 @@ impl Verdict {
             Self::OptimizerFailed => "optimizer-failed",
             Self::InvalidSpirvOptimized => "invalid-spirv-O",
             Self::ExecSkipped => "exec-skipped",
+            Self::WrongResultSpirvOpt => "wrong-result-spirv-opt",
             Self::WrongResultGlslang => "wrong-result-glslang",
+            Self::ExecError => "exec-error",
             Self::ExecFailed => "exec-failed",
             Self::WrongResult => "wrong-result",
             Self::ExecFailedOptimized => "exec-failed-O",
@@ -74,6 +78,7 @@ impl Verdict {
                 | Self::Crash
                 | Self::OptimizerFailed
                 | Self::InvalidSpirvOptimized
+                | Self::ExecError
                 | Self::ExecFailed
                 | Self::WrongResult
                 | Self::ExecFailedOptimized
@@ -160,6 +165,13 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         .unwrap_or_else(PoisonError::into_inner);
     outcomes.sort_by(|a, b| a.shader.cmp(&b.shader));
 
+    let optimizer = match (options.optimize, options.exec.is_empty()) {
+        (true, false) => Some(Optimizer {
+            spirv_opt: oracles::find_tool(root, "spirv-opt", "RGLSL_SPIRV_OPT")?.path,
+            timeout,
+        }),
+        _ => None,
+    };
     let executors = exec::open_executors(
         &options.exec,
         root,
@@ -174,6 +186,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
             &outcomes,
             options.exec_glslang,
             options.optimize,
+            optimizer.as_ref(),
         )
     });
     let per_target: Vec<(TargetId, Vec<Judgement>)> = executors
@@ -332,6 +345,12 @@ fn invalid(spirv_val: &Path, spirv: &Path, timeout: Duration) -> Result<Option<S
 }
 
 type RunPair = (Run, Option<Run>, Option<Run>);
+
+#[derive(Debug)]
+struct Optimizer {
+    spirv_opt: PathBuf,
+    timeout: Duration,
+}
 type StagedPair = (Staged, Option<Staged>, Option<Staged>);
 type Judgement = Option<(Verdict, String)>;
 
@@ -458,6 +477,9 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
         return Some(judged);
     }
     let (ours, _, optimized) = runs.get(&index)?;
+    if let Some(error) = not_run(&[("rglsl's -O module", optimized.as_ref())]) {
+        return Some(error);
+    }
     Some(match (ours, optimized) {
         (Run::Ran { .. }, Some(optimized)) => match differs(ours, optimized) {
             Some(Ok(difference)) => (
@@ -487,8 +509,23 @@ fn judge_unoptimized(
     let (ours, theirs, _) = runs.get(&index)?;
     let reference_index = outcomes.iter().position(|o| o.shader == reference);
     let reference_runs = reference_index.and_then(|i| runs.get(&i));
+    let mut modules = vec![
+        ("rglsl's module", Some(ours)),
+        ("glslang's module", theirs.as_ref()),
+    ];
+    if reference != outcome.shader {
+        modules.push(("the reference's rglsl module", reference_runs.map(|r| &r.0)));
+        modules.push((
+            "the reference's glslang module",
+            reference_runs.and_then(|r| r.1.as_ref()),
+        ));
+    }
+    if let Some(error) = not_run(&modules) {
+        return Some(error);
+    }
     Some(if reference == outcome.shader {
         match (ours, theirs) {
+            (Run::NotExecuted(why), _) => exec_error("rglsl's module", why),
             (Run::Refused(why), _) => (Verdict::ExecSkipped, why.clone()),
             (Run::Failed(why), Some(Run::Failed(_))) => (
                 Verdict::ExecSkipped,
@@ -506,6 +543,7 @@ fn judge_unoptimized(
         }
     } else {
         match (reference_runs, ours) {
+            (_, Run::NotExecuted(why)) => exec_error("rglsl's module", why),
             (_, Run::Refused(why)) => (Verdict::ExecSkipped, why.clone()),
             (_, Run::Failed(why)) => match theirs {
                 Some(Run::Failed(_)) => (
@@ -540,7 +578,7 @@ fn judge_unoptimized(
             (Some((reference, _, _)), Run::Ran { .. }) => (
                 Verdict::ExecSkipped,
                 match reference {
-                    Run::Refused(why) | Run::Failed(why) => {
+                    Run::Refused(why) | Run::Failed(why) | Run::NotExecuted(why) => {
                         format!("the reference did not run: {why}")
                     }
                     Run::Ran { .. } => String::new(),
@@ -552,6 +590,128 @@ fn judge_unoptimized(
             ),
         }
     })
+}
+
+fn exec_error(module: &str, why: &str) -> (Verdict, String) {
+    (
+        Verdict::ExecError,
+        format!("the target did not run {module}: {why}"),
+    )
+}
+
+fn not_run(modules: &[(&str, Option<&Run>)]) -> Judgement {
+    modules.iter().find_map(|(module, run)| match run {
+        Some(Run::NotExecuted(why)) => Some(exec_error(module, why)),
+        _ => None,
+    })
+}
+
+const fn optimizer_differs(verdict: Verdict) -> bool {
+    matches!(
+        verdict,
+        Verdict::WrongResultOptimized | Verdict::ExecFailedOptimized
+    )
+}
+
+fn judge_spirv_opt(judged: (Verdict, String), ours: &Run, spirv_opt: &Run) -> (Verdict, String) {
+    let (verdict, note) = judged;
+    if !optimizer_differs(verdict) {
+        return (verdict, note);
+    }
+    match (spirv_opt, differs(ours, spirv_opt)) {
+        (Run::Ran { .. }, Some(Ok(difference))) => (
+            Verdict::WrongResultSpirvOpt,
+            format!("{note}; spirv-opt -O of the unoptimized module differs too: {difference}"),
+        ),
+        (Run::Failed(why), _) => (
+            Verdict::WrongResultSpirvOpt,
+            format!("{note}; spirv-opt -O of the unoptimized module fails too: {why}"),
+        ),
+        (Run::Ran { .. }, _) => (
+            verdict,
+            format!("{note}; spirv-opt -O of the unoptimized module matches it"),
+        ),
+        (Run::Refused(why) | Run::NotExecuted(why), _) => (
+            verdict,
+            format!("{note}; spirv-opt -O of the unoptimized module did not run: {why}"),
+        ),
+    }
+}
+
+fn spirv_opt_module(optimizer: &Optimizer, spirv: &Path, out: &Path) -> Result<(), String> {
+    let mut command = Command::new(&optimizer.spirv_opt);
+    command
+        .args(["-O", "--skip-validation", "--target-env=vulkan1.0"])
+        .arg(spirv)
+        .arg("-o")
+        .arg(out);
+    let output = process::run(command, optimizer.timeout).map_err(|e| format!("{e:#}"))?;
+    if matches!(output.exit, Exit::Code(0)) {
+        return Ok(());
+    }
+    Err(format!(
+        "spirv-opt -O failed: {}",
+        exec::amber::first_line(&output.stderr, &output.stdout)
+    ))
+}
+
+fn check_spirv_opt(
+    executor: &Executor,
+    outcomes: &[Outcome],
+    runs: &BTreeMap<usize, RunPair>,
+    judgements: &mut [Judgement],
+    optimizer: &Optimizer,
+) {
+    let indices: Vec<usize> = judgements
+        .iter()
+        .enumerate()
+        .filter(|(_, j)| j.as_ref().is_some_and(|(v, _)| optimizer_differs(*v)))
+        .map(|(i, _)| i)
+        .collect();
+    if indices.is_empty() {
+        return;
+    }
+    eprintln!(
+        "[xtask] running spirv-opt -O of {} shaders whose -O module differs on the {} target",
+        indices.len(),
+        executor.target.label()
+    );
+    let staged: Vec<Staged> = exec::parallel_map(&indices, |index| {
+        let Some(outcome) = outcomes.get(*index) else {
+            return Staged::Refused("no shader".into());
+        };
+        let dir = executor
+            .work_dir()
+            .join("fuzz")
+            .join(format!("exec{index}"));
+        let module = dir.join("spirv-opt.O.spv");
+        if let Err(error) = spirv_opt_module(optimizer, &outcome.spirv, &module) {
+            return Staged::Refused(error);
+        }
+        let json = fuzz_exec::job_json(&outcome.shader);
+        fuzz_exec::stage_module(executor, &module, json.as_deref(), &dir, "spirv-opt-O")
+    });
+    let jobs: Vec<_> = staged
+        .iter()
+        .filter_map(|stage| match stage {
+            Staged::Ready { job, .. } => Some(job.clone()),
+            Staged::Refused(_) => None,
+        })
+        .collect();
+    let mut results = executor.confirm_jobs(&jobs).into_iter();
+    for (index, stage) in indices.into_iter().zip(&staged) {
+        let result = match stage {
+            Staged::Ready { .. } => results.next(),
+            Staged::Refused(_) => None,
+        };
+        let spirv_opt = fuzz_exec::finish(stage, result);
+        let (Some(slot), Some((ours, _, _))) = (judgements.get_mut(index), runs.get(&index)) else {
+            continue;
+        };
+        *slot = slot
+            .take()
+            .map(|judged| judge_spirv_opt(judged, ours, &spirv_opt));
+    }
 }
 
 const fn needs_confirmation(verdict: Verdict) -> bool {
@@ -571,6 +731,7 @@ fn metamorphic(
     outcomes: &[Outcome],
     glslang: bool,
     optimize: bool,
+    optimizer: Option<&Optimizer>,
 ) -> Vec<Judgement> {
     let staged = stage_all(executor, root, outcomes, glslang, optimize);
     let all: Vec<usize> = (0..outcomes.len()).collect();
@@ -614,6 +775,9 @@ fn metamorphic(
         if let Some(slot) = judgements.get_mut(index) {
             *slot = confirmed;
         }
+    }
+    if let Some(optimizer) = optimizer {
+        check_spirv_opt(executor, outcomes, &runs, &mut judgements, optimizer);
     }
     judgements
 }
@@ -772,5 +936,179 @@ mod tests {
         );
         fs::remove_dir_all(&dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn a_job_the_target_did_not_run_is_an_exec_error() -> anyhow::Result<()> {
+        let dir = std::env::temp_dir().join(format!("rglsl-not-run-{}", std::process::id()));
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("reference.frag"), "")?;
+        fs::write(dir.join("variant_000.frag"), "")?;
+        let outcome = |name: &str| Outcome {
+            shader: dir.join(name),
+            verdict: Verdict::Agree,
+            note: String::new(),
+            spirv: PathBuf::new(),
+        };
+        let outcomes = [outcome("reference.frag"), outcome("variant_000.frag")];
+        let offline = || Run::NotExecuted("remote target: ssh: connect timed out".to_string());
+        let ran = || -> anyhow::Result<Run> {
+            Ok(Run::Ran {
+                plan: Box::new(plan()?),
+                outputs: outputs(1),
+            })
+        };
+        let cases = [
+            ((offline(), Some(offline())), (offline(), Some(offline()))),
+            ((ran()?, Some(ran()?)), (offline(), Some(offline()))),
+            ((ran()?, Some(ran()?)), (ran()?, Some(offline()))),
+            ((offline(), Some(ran()?)), (ran()?, Some(ran()?))),
+        ];
+        for ((reference_ours, reference_theirs), (ours, theirs)) in cases {
+            let runs = BTreeMap::from([
+                (0, (reference_ours, reference_theirs, None)),
+                (1, (ours, theirs, None)),
+            ]);
+            let judged = judge(&outcomes, &runs, 1);
+            assert!(
+                judged.as_ref().is_some_and(|(verdict, note)| {
+                    *verdict == Verdict::ExecError
+                        && verdict.is_failure()
+                        && note.contains("did not run")
+                        && note.contains("ssh: connect timed out")
+                }),
+                "{judged:?}"
+            );
+        }
+        let runs = BTreeMap::from([
+            (0, (ran()?, Some(ran()?), None)),
+            (1, (ran()?, Some(ran()?), Some(offline()))),
+        ]);
+        assert_eq!(
+            judge(&outcomes, &runs, 1).map(|(verdict, _)| verdict),
+            Some(Verdict::ExecError)
+        );
+        let runs = BTreeMap::from([(0, (offline(), Some(offline()), None))]);
+        assert_eq!(
+            judge(&outcomes, &runs, 0).map(|(verdict, _)| verdict),
+            Some(Verdict::ExecError)
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    fn plan() -> anyhow::Result<crate::exec::plan::Plan> {
+        use crate::exec::plan::{Inputs, Plan, Target};
+        use crate::exec::reflect::{Reflection, Scalar, ScalarKind, Slot};
+        let reflection = Reflection::new(spirv::ExecutionModel::GLCompute);
+        let mut plan = Plan::new(&reflection, &Inputs::default())
+            .map_err(|refusal| anyhow::anyhow!("{refusal:?}"))?;
+        plan.targets.push(Target {
+            name: "buffer".into(),
+            buffer: "b".into(),
+            dump: "dump:0:0".into(),
+            slots: vec![Slot {
+                offset: 0,
+                scalar: Scalar {
+                    kind: ScalarKind::Uint,
+                    width: 32,
+                },
+            }],
+        });
+        Ok(plan)
+    }
+
+    fn outputs(value: u32) -> crate::exec::Outputs {
+        [("dump:0:0".to_string(), value.to_le_bytes().to_vec())]
+            .into_iter()
+            .collect()
+    }
+
+    #[test]
+    fn an_optimizer_difference_that_spirv_opt_shares_is_not_ours() -> anyhow::Result<()> {
+        let run = |value: u32| -> anyhow::Result<Run> {
+            Ok(Run::Ran {
+                plan: Box::new(plan()?),
+                outputs: outputs(value),
+            })
+        };
+        let differs = (
+            Verdict::WrongResultOptimized,
+            "-O differs from the unoptimized module: x".to_string(),
+        );
+        let fails = (
+            Verdict::ExecFailedOptimized,
+            "-O fails, the unoptimized module runs: y".to_string(),
+        );
+        let ours = run(1)?;
+        let (verdict, note) = judge_spirv_opt(differs.clone(), &ours, &run(2)?);
+        assert_eq!(verdict, Verdict::WrongResultSpirvOpt);
+        assert!(!verdict.is_failure());
+        assert!(note.contains("spirv-opt -O of the unoptimized module differs too"));
+        let failed = Run::Failed("device lost".into());
+        assert_eq!(
+            judge_spirv_opt(fails.clone(), &ours, &failed).0,
+            Verdict::WrongResultSpirvOpt
+        );
+        let (verdict, note) = judge_spirv_opt(differs.clone(), &ours, &run(1)?);
+        assert_eq!(verdict, Verdict::WrongResultOptimized);
+        assert!(note.ends_with("spirv-opt -O of the unoptimized module matches it"));
+        assert_eq!(
+            judge_spirv_opt(fails, &ours, &run(1)?).0,
+            Verdict::ExecFailedOptimized
+        );
+        for other in [Run::Refused("no".into()), Run::NotExecuted("ssh".into())] {
+            assert_eq!(
+                judge_spirv_opt(differs.clone(), &ours, &other).0,
+                Verdict::WrongResultOptimized
+            );
+        }
+        let agree = (Verdict::Agree, String::new());
+        assert_eq!(judge_spirv_opt(agree, &ours, &run(2)?).0, Verdict::Agree);
+        Ok(())
+    }
+
+    #[test]
+    fn failures_outrank_the_other_verdicts_in_a_merge() {
+        let failures = [
+            Verdict::ExecError,
+            Verdict::ExecFailed,
+            Verdict::WrongResult,
+            Verdict::ExecFailedOptimized,
+            Verdict::WrongResultOptimized,
+        ];
+        let others = [
+            Verdict::Agree,
+            Verdict::ExecSkipped,
+            Verdict::WrongResultSpirvOpt,
+            Verdict::WrongResultGlslang,
+        ];
+        for failure in failures {
+            assert!(failure.is_failure());
+            for other in others {
+                assert!(!other.is_failure());
+                assert!(failure > other, "{failure:?} vs {other:?}");
+            }
+        }
+        assert!(Verdict::WrongResult > Verdict::ExecError);
+        let mut outcomes = [Outcome {
+            shader: PathBuf::from("v.frag"),
+            verdict: Verdict::Agree,
+            note: String::new(),
+            spirv: PathBuf::new(),
+        }];
+        let per_target = [
+            (
+                TargetId::Local,
+                vec![Some((Verdict::WrongResultSpirvOpt, "spirv".to_string()))],
+            ),
+            (
+                TargetId::Remote("amd".into()),
+                vec![Some((Verdict::ExecError, "offline".to_string()))],
+            ),
+        ];
+        merge(&mut outcomes, &per_target);
+        assert_eq!(outcomes[0].verdict, Verdict::ExecError);
+        assert!(outcomes[0].note.starts_with("amd: offline"));
     }
 }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
 
-use crate::exec::batch::{Job, JobResult};
+use crate::exec::batch::{Job, JobError, JobResult};
 use crate::exec::data::Value;
 use crate::exec::plan::{Inputs, Plan};
 use crate::exec::reflect::{ScalarKind, Slot};
@@ -18,6 +18,7 @@ pub enum Run {
     Ran { plan: Box<Plan>, outputs: Outputs },
     Refused(String),
     Failed(String),
+    NotExecuted(String),
 }
 
 pub fn uniform_values(json: &str) -> Result<BTreeMap<(u32, u32), Vec<Value>>, String> {
@@ -118,8 +119,9 @@ pub fn finish(staged: &Staged, result: Option<JobResult>) -> Run {
             plan: plan.clone(),
             outputs,
         },
-        (Staged::Ready { .. }, Some(Err(error))) => Run::Failed(error),
-        (Staged::Ready { .. }, None) => Run::Failed("no result from the batch".into()),
+        (Staged::Ready { .. }, Some(Err(JobError::Failed(error)))) => Run::Failed(error),
+        (Staged::Ready { .. }, Some(Err(JobError::NotRun(error)))) => Run::NotExecuted(error),
+        (Staged::Ready { .. }, None) => Run::NotExecuted(JobError::missing("batch").to_string()),
     }
 }
 

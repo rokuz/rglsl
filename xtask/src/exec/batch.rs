@@ -7,7 +7,42 @@ use std::sync::{Mutex, PoisonError};
 use super::amber::{Amber, parse_dump};
 
 pub type Outputs = BTreeMap<String, Vec<u8>>;
-pub type JobResult = Result<Outputs, String>;
+pub type JobResult = Result<Outputs, JobError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobError {
+    Failed(String),
+    NotRun(String),
+}
+
+impl JobError {
+    pub const fn ran(&self) -> bool {
+        matches!(self, Self::Failed(_))
+    }
+
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Failed(error) => transient(error),
+            Self::NotRun(_) => true,
+        }
+    }
+
+    pub fn missing(source: &str) -> Self {
+        Self::NotRun(format!("no result from the {source}"))
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Failed(error) | Self::NotRun(error) => error,
+        }
+    }
+}
+
+impl std::fmt::Display for JobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Capture {
@@ -73,7 +108,7 @@ pub fn retry_transient(
         let lost: Vec<usize> = results
             .iter()
             .enumerate()
-            .filter(|(_, result)| result.as_ref().is_err_and(|error| transient(error)))
+            .filter(|(_, result)| result.as_ref().is_err_and(JobError::is_transient))
             .map(|(index, _)| index)
             .collect();
         if lost.is_empty() {
@@ -96,12 +131,12 @@ pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> 
                 loop {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let Some(job) = jobs.get(index) else { break };
-                    let mut result = amber.run(job);
+                    let mut result = amber.run(job).map_err(JobError::Failed);
                     for _ in 1..ATTEMPTS {
-                        if !result.as_ref().is_err_and(|e| transient(e)) {
+                        if !result.as_ref().is_err_and(JobError::is_transient) {
                             break;
                         }
-                        result = amber.run(job);
+                        result = amber.run(job).map_err(JobError::Failed);
                     }
                     results
                         .lock()
@@ -164,12 +199,12 @@ pub fn parse_result(status: &str, dump: Option<&str>, wants_dump: bool) -> JobRe
     match kind {
         "ok" => match (dump, wants_dump) {
             (_, false) => Ok(Outputs::new()),
-            (Some(text), true) => parse_dump(text),
-            (None, true) => Err("the remote run returned no dump".into()),
+            (Some(text), true) => parse_dump(text).map_err(JobError::Failed),
+            (None, true) => Err(JobError::Failed("the remote run returned no dump".into())),
         },
-        "" => Err("the remote run returned no status".into()),
-        _ if message.is_empty() => Err(kind.to_string()),
-        _ => Err(message),
+        "" => Err(JobError::NotRun("the remote run returned no status".into())),
+        _ if message.is_empty() => Err(JobError::Failed(kind.to_string())),
+        _ => Err(JobError::Failed(message)),
     }
 }
 
@@ -210,33 +245,51 @@ mod tests {
     #[test]
     fn transient_failures_are_rerun_a_bounded_number_of_times() {
         let lost = || -> JobResult {
-            Err("amber exited with 1: Unable to create vulkan device: ERROR_DEVICE_LOST".into())
+            Err(JobError::Failed(
+                "amber exited with 1: Unable to create vulkan device: ERROR_DEVICE_LOST".into(),
+            ))
         };
-        let mut results = vec![
-            Ok(Outputs::new()),
-            lost(),
-            Err("wrong value".into()),
-            lost(),
-        ];
+        let offline = || -> JobResult { Err(JobError::NotRun("remote target: ssh".into())) };
+        let wrong = || -> JobResult { Err(JobError::Failed("wrong value".into())) };
+        let mut results = vec![Ok(Outputs::new()), lost(), wrong(), lost(), offline()];
         let mut calls = Vec::new();
         retry_transient(&mut results, 2, |indices| {
             calls.push(indices.to_vec());
             indices
                 .iter()
-                .map(|&index| {
-                    if index == 1 {
-                        Ok(Outputs::new())
-                    } else {
-                        lost()
-                    }
+                .map(|&index| match index {
+                    1 => Ok(Outputs::new()),
+                    4 => offline(),
+                    _ => lost(),
                 })
                 .collect()
         });
-        assert_eq!(calls, [vec![1, 3], vec![3]]);
+        assert_eq!(calls, [vec![1, 3, 4], vec![3, 4]]);
         assert_eq!(results[0], Ok(Outputs::new()));
         assert_eq!(results[1], Ok(Outputs::new()));
-        assert_eq!(results[2], Err("wrong value".to_string()));
-        assert!(results[3].as_ref().is_err_and(|error| transient(error)));
+        assert_eq!(results[2], wrong());
+        assert!(results[3].as_ref().is_err_and(JobError::is_transient));
+        assert_eq!(results[4], offline());
+    }
+
+    #[test]
+    fn errors_tell_a_failed_run_from_a_job_that_did_not_run() {
+        let failed = JobError::Failed("amber exited with 1: bad".into());
+        let not_run = JobError::NotRun("remote target: scp: connection refused".into());
+        assert!(failed.ran());
+        assert!(!not_run.ran());
+        assert!(!failed.is_transient());
+        assert!(not_run.is_transient());
+        assert_eq!(
+            not_run.to_string(),
+            "remote target: scp: connection refused"
+        );
+        assert_eq!(failed.to_string(), "amber exited with 1: bad");
+        assert!(!JobError::missing("batch").ran());
+        assert_eq!(
+            JobError::missing("batch").to_string(),
+            "no result from the batch"
+        );
     }
 
     #[test]
@@ -265,29 +318,27 @@ mod tests {
     fn reads_remote_results() -> anyhow::Result<()> {
         let dump = "dump:0:0\n 01 02\n";
         assert_eq!(
-            parse_result("ok\n\n", Some(dump), true).map_err(anyhow::Error::msg)?["dump:0:0"],
+            parse_result("ok\n\n", Some(dump), true).map_err(|e| anyhow::anyhow!("{e}"))?["dump:0:0"],
             [1, 2]
         );
         assert!(
             parse_result("ok\n\n", None, false)
-                .map_err(anyhow::Error::msg)?
+                .map_err(|e| anyhow::anyhow!("{e}"))?
                 .is_empty()
         );
         assert_eq!(
-            parse_result("ok\n\n", None, true).err().as_deref(),
-            Some("the remote run returned no dump")
+            parse_result("ok\n\n", None, true).err(),
+            Some(JobError::Failed("the remote run returned no dump".into()))
         );
         assert_eq!(
-            parse_result("exit\namber exited with 1: bad\n", None, true)
-                .err()
-                .as_deref(),
-            Some("amber exited with 1: bad")
+            parse_result("exit\namber exited with 1: bad\n", None, true).err(),
+            Some(JobError::Failed("amber exited with 1: bad".into()))
         );
         assert_eq!(
-            parse_result("timeout\n", None, true).err().as_deref(),
-            Some("timeout")
+            parse_result("timeout\n", None, true).err(),
+            Some(JobError::Failed("timeout".into()))
         );
-        assert!(parse_result("", None, true).is_err());
+        assert!(parse_result("", None, true).is_err_and(|error| !error.ran()));
         Ok(())
     }
 

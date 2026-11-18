@@ -23,6 +23,15 @@ pub fn judge(plan: &Plan, runs: Vec<(JobResult, JobResult)>) -> Outcome {
     let mut theirs = Vec::with_capacity(runs.len());
     let mut ours = Vec::with_capacity(runs.len());
     for (run, (expected, actual)) in runs.into_iter().enumerate() {
+        if let Some(error) = [&expected, &actual]
+            .into_iter()
+            .find_map(|result| result.as_ref().err().filter(|error| !error.ran()))
+        {
+            return Outcome::Fail(format!(
+                "the target did not run the twin on run {}: {error}",
+                run + 1
+            ));
+        }
         match expected {
             Ok(outputs) => theirs.push(outputs),
             Err(error) => {
@@ -73,7 +82,7 @@ pub fn judge(plan: &Plan, runs: Vec<(JobResult, JobResult)>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exec::batch::Outputs;
+    use crate::exec::batch::{JobError, Outputs};
     use crate::exec::plan::{Inputs, Target};
     use crate::exec::reflect::{Reflection, Scalar, ScalarKind, Slot};
 
@@ -139,13 +148,20 @@ mod tests {
             &judge(&plan()?, runs),
             "glslang vs rglsl, twin, run 2"
         ));
-        let runs = vec![(outputs(1), Err("lost".into())), (outputs(1), outputs(1))];
+        let lost = || Err(JobError::Failed("lost".into()));
+        let runs = vec![(outputs(1), lost()), (outputs(1), outputs(1))];
         assert!(fails_with(
             &judge(&plan()?, runs),
             "our module of the twin fails"
         ));
-        let runs = vec![(Err("lost".into()), outputs(1))];
+        let runs = vec![(lost(), outputs(1))];
         assert!(fails_with(&judge(&plan()?, runs), "fix the twin"));
+        let offline = || Err(JobError::NotRun("remote target: scp failed".into()));
+        let runs = vec![(outputs(1), outputs(1)), (offline(), offline())];
+        assert!(fails_with(
+            &judge(&plan()?, runs),
+            "did not run the twin on run 2: remote target: scp failed"
+        ));
         Ok(())
     }
 

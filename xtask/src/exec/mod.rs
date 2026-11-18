@@ -30,7 +30,7 @@ use anyhow::{Result, anyhow, bail};
 
 use self::amber::{Amber, Device};
 pub use self::batch::Outputs;
-use self::batch::{Capture, Job, JobResult};
+use self::batch::{Capture, Job, JobError, JobResult};
 use self::compare::{Comparison, compare};
 use self::harness::ShaderKind;
 use self::plan::{Inputs, Plan, PlannedTensor, Refusal, ScriptPaths};
@@ -518,7 +518,8 @@ impl Executor {
         };
         self.confirm_jobs(&[job])
             .pop()
-            .unwrap_or_else(|| Err("no result from the probe".into()))
+            .unwrap_or_else(|| Err(JobError::missing("probe")))
+            .map_err(|error| error.to_string())
     }
 
     pub fn describe(&self) -> String {
@@ -551,10 +552,19 @@ impl Executor {
             });
         }
         let results = self.confirm_jobs(&jobs);
+        if let Some(error) = results
+            .iter()
+            .find_map(|r| r.as_ref().err().filter(|error| !error.ran()))
+        {
+            bail!(
+                "the {} target did not run the feature probes: {error}",
+                self.target.label()
+            );
+        }
         if !results.is_empty() && results.iter().all(Result::is_err) {
             let reason = results
                 .iter()
-                .find_map(|r| r.as_ref().err().cloned())
+                .find_map(|r| r.as_ref().err().map(JobError::to_string))
                 .unwrap_or_default();
             bail!(
                 "every feature probe failed on the {} target: {reason}",
@@ -562,7 +572,8 @@ impl Executor {
             );
         }
         for (need, result) in needs.iter().zip(results) {
-            self.support.insert(*need, result.err());
+            self.support
+                .insert(*need, result.err().map(|error| error.to_string()));
         }
         let missing: Vec<String> = self
             .support
@@ -990,10 +1001,10 @@ impl Executor {
                 Ok((ours, _)) => {
                     let mine = results
                         .next()
-                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                        .unwrap_or_else(|| Err(JobError::missing("batch")));
                     let reference = results
                         .next()
-                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                        .unwrap_or_else(|| Err(JobError::missing("batch")));
                     if mine.is_ok() {
                         outcomes.push(Some(Outcome::Pass { tolerated: 0 }));
                     } else {
@@ -1008,6 +1019,7 @@ impl Executor {
         for ((index, _, reference), result) in again.into_iter().zip(confirmed) {
             let outcome = match (result, reference) {
                 (Ok(_), _) => Outcome::Pass { tolerated: 0 },
+                (Err(error @ JobError::NotRun(_)), _) => not_run(&error),
                 (Err(error), Ok(_)) => Outcome::Fail(format!(
                     "the script fails with our modules (confirmed alone) and passes with glslang's: {error}"
                 )),
@@ -1050,10 +1062,10 @@ impl Executor {
                 Ok(ready) => {
                     let expected = first
                         .next()
-                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                        .unwrap_or_else(|| Err(JobError::missing("batch")));
                     let actual = first
                         .next()
-                        .unwrap_or_else(|| Err("no result from the batch".into()));
+                        .unwrap_or_else(|| Err(JobError::missing("batch")));
                     if ready.twin {
                         outcomes.push(None);
                         twins.push((index, vec![(expected, actual)]));
@@ -1084,10 +1096,10 @@ impl Executor {
             };
             let expected = confirmed
                 .next()
-                .unwrap_or_else(|| Err("no result from the confirmation".into()));
+                .unwrap_or_else(|| Err(JobError::missing("confirmation")));
             let actual = confirmed
                 .next()
-                .unwrap_or_else(|| Err("no result from the confirmation".into()));
+                .unwrap_or_else(|| Err(JobError::missing("confirmation")));
             let outcome = confirm(&ready.plan, expected_first.as_ref(), expected, actual);
             if let Some(slot) = outcomes.get_mut(index) {
                 *slot = Some(outcome);
@@ -1124,14 +1136,18 @@ impl Executor {
             for (_, runs) in twins.iter_mut() {
                 let expected = results
                     .next()
-                    .unwrap_or_else(|| Err("no result from the batch".into()));
+                    .unwrap_or_else(|| Err(JobError::missing("batch")));
                 let actual = results
                     .next()
-                    .unwrap_or_else(|| Err("no result from the batch".into()));
+                    .unwrap_or_else(|| Err(JobError::missing("batch")));
                 runs.push((expected, actual));
             }
         }
     }
+}
+
+fn not_run(error: &JobError) -> Outcome {
+    Outcome::Fail(format!("the target did not run the job: {error}"))
 }
 
 fn confirm(
@@ -1142,10 +1158,12 @@ fn confirm(
 ) -> Outcome {
     let expected = match expected {
         Ok(outputs) => outputs,
-        Err(error) => return Outcome::skip(SkipReason::ReferenceFails, error),
+        Err(error @ JobError::NotRun(_)) => return not_run(&error),
+        Err(error) => return Outcome::skip(SkipReason::ReferenceFails, error.to_string()),
     };
     let actual = match actual {
         Ok(outputs) => outputs,
+        Err(error @ JobError::NotRun(_)) => return not_run(&error),
         Err(error) => {
             return Outcome::Fail(format!(
                 "our module fails on the driver (confirmed alone): {error}"
@@ -1362,16 +1380,33 @@ mod tests {
             }
         ));
         assert!(matches!(
-            confirm(&plan, None, Err("lost".into()), Ok(outputs(2))),
+            confirm(
+                &plan,
+                None,
+                Err(JobError::Failed("lost".into())),
+                Ok(outputs(2))
+            ),
             Outcome::Skip {
                 reason: SkipReason::ReferenceFails,
                 ..
             }
         ));
         assert!(matches!(
-            confirm(&plan, None, Ok(outputs(2)), Err("lost".into())),
+            confirm(
+                &plan,
+                None,
+                Ok(outputs(2)),
+                Err(JobError::Failed("lost".into()))
+            ),
             Outcome::Fail(_)
         ));
+        let offline = || Err(JobError::NotRun("remote target: ssh: unreachable".into()));
+        for (expected, actual) in [(offline(), Ok(outputs(2))), (Ok(outputs(2)), offline())] {
+            assert!(matches!(
+                confirm(&plan, None, expected, actual),
+                Outcome::Fail(why) if why.contains("did not run the job: remote target: ssh")
+            ));
+        }
         Ok(())
     }
 

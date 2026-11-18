@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use super::{Outcome, UnitResult, Variant};
 use crate::bench::stats;
-use crate::exec::batch::{Capture, Job, JobResult, Outputs, STATISTICS, TIMING};
+use crate::exec::batch::{Capture, Job, JobError, JobResult, Outputs, STATISTICS, TIMING};
 use crate::exec::harness::ShaderKind;
 use crate::exec::plan::Plan;
 use crate::exec::statistics::Report;
@@ -219,7 +219,7 @@ fn measure(stage: ShaderKind, check: &JobResult, timed: Option<&JobResult>) -> M
                 measured.create_ms = stats::median(&report.create_times(PIPELINE));
             }
         }
-        Err(error) => measured.error = Some(error.clone()),
+        Err(error) => measured.error = Some(error.to_string()),
     }
     if let Some(Ok(outputs)) = timed {
         if let Some(stdout) = outputs.get(TIMING) {
@@ -244,9 +244,21 @@ fn judge(
     variant: &JobResult,
     again: Option<(&JobResult, &JobResult)>,
 ) -> Equivalence {
+    if let Some(error) = [
+        Some(first),
+        Some(variant),
+        again.map(|(r, _)| r),
+        again.map(|(_, v)| v),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|result| result.as_ref().err().filter(|error| !error.ran()))
+    {
+        return Equivalence::NotRun(error.to_string());
+    }
     let reference = match first {
         Ok(outputs) => outputs,
-        Err(error) => return Equivalence::ReferenceFails(error.clone()),
+        Err(error) => return Equivalence::ReferenceFails(error.to_string()),
     };
     if let Ok(actual) = variant
         && let Ok(tolerated) = exec::compare_outputs(plan, reference, actual)
@@ -326,7 +338,7 @@ fn run_target(executor: &Executor, results: &[UnitResult], runs: usize) -> Targe
                 *variant,
                 check_results
                     .next()
-                    .unwrap_or_else(|| Err("no result from the batch".into())),
+                    .unwrap_or_else(|| Err(JobError::missing("batch"))),
             );
         }
         first.push(by_variant);
@@ -336,7 +348,7 @@ fn run_target(executor: &Executor, results: &[UnitResult], runs: usize) -> Targe
                 *variant,
                 timed_results
                     .next()
-                    .unwrap_or_else(|| Err("no result from the batch".into())),
+                    .unwrap_or_else(|| Err(JobError::missing("batch"))),
             );
         }
         timing.push(by_variant);
