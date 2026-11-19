@@ -20,6 +20,9 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
                 Failure::Internal(message) => OptError::Pass { pass, message },
             })?;
     }
+    if session.context.unlinked {
+        return Ok(if changed { Changed::Yes } else { Changed::No });
+    }
     if let Some((item, _)) = session
         .specialization
         .iter()
