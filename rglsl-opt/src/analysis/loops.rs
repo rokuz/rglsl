@@ -4,8 +4,8 @@ use rglsl::{
 };
 use rglsl_types::stack::recurse;
 
+use crate::analysis::for_each_result;
 use crate::analysis::locals::{Locals, Root};
-use crate::analysis::{for_each_operand, for_each_result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IntegerKind {
@@ -84,7 +84,6 @@ pub(crate) struct LoopInfo {
     pub own: u64,
     pub indexes: bool,
     pub simple: bool,
-    pub continues: bool,
     pub exit: Option<Exit>,
     pub counter: Option<Counter>,
 }
@@ -93,7 +92,6 @@ pub(crate) struct LoopInfo {
 pub(crate) struct Loops {
     pub loops: Vec<LoopInfo>,
     pub emitted_at: Vec<u32>,
-    pub continues: FastHashMap<u32, usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,7 +117,6 @@ impl Dependence {
 struct Facts {
     breaks: u32,
     continues: bool,
-    switch_continues: bool,
     ends: bool,
     size: u64,
 }
@@ -128,7 +125,6 @@ impl Facts {
     fn nested(&mut self, inner: Self) {
         self.breaks = self.breaks.saturating_add(inner.breaks);
         self.continues |= inner.continues;
-        self.switch_continues |= inner.switch_continues;
         self.size = self.size.saturating_add(inner.size);
     }
 }
@@ -145,7 +141,6 @@ struct Walker<'a> {
     emitted_at: Vec<u32>,
     position: u32,
     loops: Vec<LoopInfo>,
-    continues: FastHashMap<u32, usize>,
     current: Option<usize>,
 }
 
@@ -161,7 +156,6 @@ impl Loops {
             emitted_at: vec![u32::MAX; function.expressions.len()],
             position: crate::analysis::locals::FIRST,
             loops: Vec::new(),
-            continues: FastHashMap::default(),
             current: None,
         };
         walker.dependences();
@@ -169,7 +163,6 @@ impl Loops {
         Self {
             loops: walker.loops,
             emitted_at: walker.emitted_at,
-            continues: walker.continues,
         }
     }
 
@@ -416,9 +409,6 @@ impl<'a> Walker<'a> {
                 Statement::Continue => {
                     facts.continues = true;
                     facts.ends = true;
-                    if let Some(current) = self.current {
-                        self.continues.insert(position, current);
-                    }
                 }
                 Statement::Block(ref inner) => {
                     let inner = recurse(|| self.block(inner));
@@ -440,7 +430,6 @@ impl<'a> Walker<'a> {
                     facts.size = facts.size.saturating_add(1);
                     for case in cases {
                         let inner = recurse(|| self.block(&case.body));
-                        facts.switch_continues |= inner.continues || inner.switch_continues;
                         facts.continues |= inner.continues;
                         facts.size = facts.size.saturating_add(inner.size);
                     }
@@ -460,7 +449,6 @@ impl<'a> Walker<'a> {
                         own: 0,
                         indexes: false,
                         simple: false,
-                        continues: false,
                         exit: None,
                         counter: None,
                     });
@@ -522,20 +510,15 @@ impl<'a> Walker<'a> {
             _ => None,
         };
         let simple = exit.is_some()
-            && !in_body.switch_continues
+            && !in_body.continues
             && !in_body.ends
             && !in_continuing.ends
             && in_body.breaks == u32::from(header.is_some() && break_if.is_none());
-        let counter = exit
-            .and_then(|(kind, condition, when)| {
-                self.counter(
-                    position, end, parent, body, continuing, kind, condition, when, siblings,
-                )
-            })
-            .filter(|counter| {
-                !in_body.continues
-                    || self.continuing_is_separate(position, body, continuing, counter)
-            });
+        let counter = exit.and_then(|(kind, condition, when)| {
+            self.counter(
+                position, end, parent, body, continuing, kind, condition, when, siblings,
+            )
+        });
         let indexes = several
             || counter.is_some_and(|counter| {
                 self.accesses.get(&counter.local).is_some_and(|positions| {
@@ -546,7 +529,6 @@ impl<'a> Walker<'a> {
         if let Some(info) = self.loops.get_mut(index) {
             info.own = in_body.size.saturating_add(in_continuing.size);
             info.simple = simple;
-            info.continues = in_body.continues;
             info.exit = exit.map(|(kind, _, _)| kind);
             info.counter = counter;
             info.indexes = indexes;
@@ -761,51 +743,6 @@ impl<'a> Walker<'a> {
             step,
             trips: u64::try_from(trips).ok()?,
         })
-    }
-
-    fn continuing_is_separate(
-        &self,
-        position: u32,
-        body: &Block,
-        continuing: &Block,
-        counter: &Counter,
-    ) -> bool {
-        let mut start = position + 1;
-        for _ in body.iter() {
-            start = self.end(start);
-        }
-        if counter.store < start {
-            return false;
-        }
-        let in_body = |operand: Handle<Expression>| {
-            let at = self
-                .emitted_at
-                .get(operand.index())
-                .copied()
-                .unwrap_or(u32::MAX);
-            at > position
-                && at < start
-                && !matches!(
-                    self.function.expressions.try_get(operand),
-                    Ok(&Expression::Load { pointer }) if self.whole_local(pointer) == Some(counter.local)
-                )
-        };
-        let mut separate = true;
-        for statement in continuing.walk() {
-            match *statement {
-                Statement::Emit(ref range) => {
-                    for handle in range.clone() {
-                        if let Ok(expression) = self.function.expressions.try_get(handle) {
-                            expression.for_each_operand(|operand| separate &= !in_body(operand));
-                        }
-                    }
-                }
-                ref other => {
-                    for_each_operand(other, |operand| separate &= !in_body(operand));
-                }
-            }
-        }
-        separate
     }
 
     fn direct_store(

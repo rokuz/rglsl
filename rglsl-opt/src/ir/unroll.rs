@@ -1,6 +1,4 @@
-use rglsl::{
-    Block, Expression, FastHashMap, Function, Handle, LoopControl, Module, Span, Statement,
-};
+use rglsl::{Block, Expression, FastHashMap, Function, Handle, Module, Span, Statement};
 use rglsl_types::stack::recurse;
 
 use crate::analysis::locals::{Locals, Root};
@@ -110,7 +108,6 @@ fn rewrite(
         loops: &loops,
         chosen: FastHashMap::default(),
         exits: FastHashMap::default(),
-        unrolled: FastHashMap::default(),
         current: vec![None; function.local_variables.len()],
     };
     for (index, (info, trips)) in loops.loops.iter().zip(&chosen).enumerate() {
@@ -118,7 +115,6 @@ fn rewrite(
             continue;
         };
         policy.chosen.insert(info.position, (index, trips));
-        policy.unrolled.insert(index, ());
         if let Some(Exit::Header(at)) = info.exit {
             policy.exits.insert(at, ());
         }
@@ -143,7 +139,6 @@ struct Unroll<'l> {
     loops: &'l Loops,
     chosen: FastHashMap<u32, (usize, u64)>,
     exits: FastHashMap<u32, ()>,
-    unrolled: FastHashMap<usize, ()>,
     current: Vec<Option<Active>>,
 }
 
@@ -190,13 +185,6 @@ impl Policy for Unroll<'_> {
             rebuild.set_position(self.locals.end(position));
             return Ok(true);
         }
-        if matches!(*statement, Statement::Continue)
-            && let Some(target) = self.loops.continues.get(&position)
-            && self.unrolled.contains_key(target)
-        {
-            rebuild.push(block, Statement::Break, span);
-            return Ok(true);
-        }
         let Some(&(index, trips)) = self.chosen.get(&position) else {
             return Ok(false);
         };
@@ -236,20 +224,7 @@ impl Policy for Unroll<'_> {
             let mut copy = recurse(|| rebuild.block(self, body))?;
             let mut tail = recurse(|| rebuild.block(self, continuing))?;
             rebuild.flush(block, span);
-            if info.continues {
-                copy.push(Statement::Break, span);
-                block.push(
-                    Statement::Loop {
-                        body: copy,
-                        continuing: Block::new(),
-                        break_if: None,
-                        control: LoopControl::default(),
-                    },
-                    span,
-                );
-            } else {
-                block.append(&mut copy);
-            }
+            block.append(&mut copy);
             block.append(&mut tail);
             now = next;
         }

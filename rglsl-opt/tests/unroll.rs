@@ -145,30 +145,13 @@ fn the_counter_keeps_its_final_value_after_the_loop() -> TestResult {
 }
 
 #[test]
-fn a_continue_leaves_one_iteration_of_the_unrolled_loop() -> TestResult {
-    let source = shader(
-        "    float b[4];
-    for (int i = 0; i < 4; i++) { b[i] = 0.0; if (inColor[i] > 0.5) continue; b[i] = inColor.x; }
-    for (int i = 0; i < 4; i++) s += b[i];",
-    );
-    let module = fragment(&source, &unrolled())?;
-    let function = entry(&module)?;
-    assert_eq!(loops(function), 4);
-    let module = fragment(&source, &cleaned())?;
-    assert_eq!(arrays(&module, entry(&module)?), 0);
-    let skipped = shader(
-        "    int i = 0;
-    while (i < 4) { a[i] = 1.0; if (inColor.x > 0.5) continue; i++; }",
-    );
-    assert_eq!(loops_after(&skipped, &unrolled())?, 1);
-    Ok(())
-}
-
-#[test]
 fn loops_that_leave_early_stay() -> TestResult {
     let broken =
         shader("    for (int i = 0; i < 4; i++) { if (inColor[i] > 0.5) break; a[i] = 1.0; }");
     assert_eq!(loops_after(&broken, &unrolled())?, 1);
+    let continued =
+        shader("    for (int i = 0; i < 4; i++) { if (inColor[i] > 0.5) continue; a[i] = 1.0; }");
+    assert_eq!(loops_after(&continued, &unrolled())?, 1);
     let switched = shader(
         "    for (int i = 0; i < 4; i++) { switch (k) { case 1: continue; default: break; } a[i] = 1.0; }",
     );
