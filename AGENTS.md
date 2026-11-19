@@ -106,6 +106,9 @@ cargo test --workspace --all-features
 cargo test --release -p rglsl-link --test nesting -- --ignored   # 100,000-level nesting
 cargo deny check
 
+                                                   # `cargo xtask` (alias in .cargo/config.toml) builds and
+                                                   # runs xtask in the `xtask-release` profile: optimized,
+                                                   # with debug assertions and overflow checks
 cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, glslang-opt, spirv-val, spirv-as,
                                                    # spirv-dis, spirv-opt (+ exec oracles)
 cargo xtask snapshots                                        # spirv-val on the SPIR-V snapshots of rglsl/tests

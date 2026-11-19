@@ -8,8 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow, bail};
 
 use super::amber::{Device, VULKAN_VERSION, add_captures, first_line, parse_device};
-use super::batch::{self, Ending, Job, JobError, JobResult, Trace, Traced};
+use super::batch::{self, Ending, Job, JobError, Trace, Traced};
 use super::events::{self, DriverEvent};
+use super::group;
 use crate::oracles::{self, ExecPins, TENSOR_LAYER_DLL, TENSOR_LAYER_TARGET};
 use crate::process::{self, Exit};
 
@@ -17,7 +18,8 @@ pub const HOST_VAR: &str = "RGLSL_EXEC_REMOTE";
 pub const DIR_VAR: &str = "RGLSL_EXEC_REMOTE_DIR";
 pub const JOBS_VAR: &str = "RGLSL_EXEC_REMOTE_JOBS";
 const DEFAULT_DIR: &str = "C:/rglsl-exec";
-const DEFAULT_JOBS: usize = 4;
+const SERIAL_VENDORS: [&str; 1] = ["nvidia"];
+const PARALLEL_VENDORS: [(&str, usize); 1] = [("amd", 4)];
 const BATCH_LIMIT: usize = 400;
 const DRIVER: &str = include_str!("driver.py");
 const CONNECT: Duration = Duration::from_secs(120);
@@ -122,8 +124,24 @@ pub struct Remote {
     pub device_name: Option<String>,
     pub dir: String,
     pub jobs: usize,
+    pub requested_jobs: Option<usize>,
     pub attempts: usize,
     pub timeout: Duration,
+}
+
+pub fn workers(vendor: &str, requested: Option<usize>) -> usize {
+    if SERIAL_VENDORS.contains(&vendor) {
+        return 1;
+    }
+    requested
+        .or_else(|| {
+            PARALLEL_VENDORS
+                .iter()
+                .find(|(name, _)| *name == vendor)
+                .map(|(_, jobs)| *jobs)
+        })
+        .unwrap_or(1)
+        .max(1)
 }
 
 #[derive(Debug, Default)]
@@ -137,15 +155,13 @@ impl Remote {
     pub fn new(spec: &RemoteSpec, timeout: Duration) -> Self {
         let dir = host_setting(DIR_VAR, &spec.host)
             .map_or_else(|| DEFAULT_DIR.to_string(), |d| d.replace('\\', "/"));
-        let jobs = host_setting(JOBS_VAR, &spec.host)
-            .and_then(|j| j.parse().ok())
-            .unwrap_or(DEFAULT_JOBS)
-            .max(1);
+        let requested_jobs = host_setting(JOBS_VAR, &spec.host).and_then(|j| j.parse().ok());
         Self {
             host: spec.host.clone(),
             device_name: spec.device.clone(),
             dir: dir.trim_end_matches('/').to_string(),
-            jobs,
+            jobs: 1,
+            requested_jobs,
             attempts: batch::ATTEMPTS,
             timeout,
         }
@@ -245,7 +261,10 @@ impl Remote {
         );
         let layer = self.tensor_layer();
         let output = self.ssh(
-            &format!("if exist \"{layer}\" ({query} --layer-library \"{layer}\") else ({query})"),
+            &format!(
+                "(if exist \"{layer}\" ({query} --layer-library \"{layer}\") else ({query})) && for %F in (\"{}\") do @echo amber-binary: %~tF %~zF",
+                self.amber()
+            ),
             CONNECT,
         )?;
         if !matches!(output.exit, Exit::Code(0)) {
@@ -321,14 +340,6 @@ impl Remote {
 
     pub fn build_key(&self) -> String {
         format!("{}-{}", slug(&self.host), slug(&self.dir))
-    }
-
-    pub fn run(&self, root: &Path, jobs: &[Job]) -> Vec<JobResult> {
-        self.run_watched(root, jobs, false)
-            .results
-            .into_iter()
-            .map(|traced| traced.result)
-            .collect()
     }
 
     pub fn run_watched(&self, root: &Path, jobs: &[Job], watch: bool) -> Watched {
@@ -414,8 +425,9 @@ impl Remote {
         let manifest_name = format!("batches/{id}/manifest.tsv");
         fs::write(local.join("manifest.tsv"), batch::manifest(root, jobs)?)
             .map_err(|e| e.to_string())?;
+        fs::write(local.join("resets.xpath"), events::reset_xpath()).map_err(|e| e.to_string())?;
         let mut list = batch::dirs(root, jobs).join("\n");
-        let _ = write!(list, "\n{manifest_name}\n");
+        let _ = write!(list, "\n{manifest_name}\nbatches/{id}/resets.xpath\n");
         fs::write(local.join("files.txt"), list).map_err(|e| e.to_string())?;
         let archive = local.join(format!("{id}.tgz"));
         let mut tar = Command::new("tar");
@@ -437,8 +449,7 @@ impl Remote {
         fs::write(&driver, DRIVER).map_err(|e| e.to_string())?;
         let transfer = CONNECT + Duration::from_secs(600);
         self.upload(&[driver.as_path(), archive.as_path()], "runs", transfer)?;
-        let rounds = u32::try_from(jobs.len().div_ceil(self.jobs)).unwrap_or(u32::MAX);
-        let budget = self.timeout.saturating_mul(rounds.saturating_add(1)) + CONNECT;
+        let budget = batch_budget(jobs, self.timeout, self.jobs) + CONNECT;
         let base = format!("runs/{id}");
         let command = format!(
             "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION} \"{}\" {}",
@@ -472,6 +483,14 @@ impl Remote {
     }
 }
 
+pub fn batch_budget(jobs: &[Job], timeout: Duration, workers: usize) -> Duration {
+    let each = |job: &Job| job.timeout.unwrap_or(timeout);
+    let total: Duration = jobs.iter().map(each).sum();
+    let longest = jobs.iter().map(each).max().unwrap_or(timeout);
+    let workers = u32::try_from(workers.max(1)).unwrap_or(u32::MAX);
+    total / workers + longest
+}
+
 fn run_field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     text.lines().find_map(|line| {
         let line = line.trim();
@@ -502,9 +521,22 @@ fn read_results(dir: &Path, jobs: &[Job]) -> Vec<Traced> {
         .map(|(index, job)| {
             let status =
                 fs::read_to_string(dir.join(format!("{index}.status"))).unwrap_or_default();
+            if let Some(code) = batch_code(&status) {
+                let run = fs::read_to_string(dir.join(format!("{index}.run"))).unwrap_or_default();
+                return Traced {
+                    result: Ok(batch_outputs(dir, index, job, code)),
+                    trace: parse_trace(&run, ""),
+                };
+            }
             let dump = fs::read_to_string(dir.join(format!("{index}.dump"))).ok();
-            let mut result = batch::parse_result(&status, dump.as_deref(), !job.dumps.is_empty());
+            let failures = batch::Failures {
+                check: fs::read_to_string(dir.join(format!("{index}.check-error"))).ok(),
+                timed: fs::read_to_string(dir.join(format!("{index}.timed-error"))).ok(),
+            };
+            let mut result =
+                batch::parse_result(&status, dump.as_deref(), !job.dumps.is_empty(), &failures);
             if let Ok(outputs) = &mut result {
+                batch::add_failures(outputs, &failures);
                 let statistics = fs::read(dir.join(format!("{index}.stats.json"))).ok();
                 let stdout =
                     fs::read_to_string(dir.join(format!("{index}.stdout"))).unwrap_or_default();
@@ -518,6 +550,31 @@ fn read_results(dir: &Path, jobs: &[Job]) -> Vec<Traced> {
             }
         })
         .collect()
+}
+
+fn batch_code(status: &str) -> Option<&str> {
+    let mut lines = status.lines();
+    (lines.next()?.trim() == "batch").then(|| lines.next().unwrap_or_default().trim())
+}
+
+fn batch_outputs(dir: &Path, index: usize, job: &Job, code: &str) -> batch::Outputs {
+    let mut raw = batch::Outputs::new();
+    raw.insert(group::EXIT.to_string(), code.as_bytes().to_vec());
+    for (key, file) in [
+        (group::STDERR, "stderr"),
+        (group::STDOUT, "stdout"),
+        (batch::STATISTICS, "stats.json"),
+    ] {
+        if let Ok(bytes) = fs::read(dir.join(format!("{index}.{file}"))) {
+            raw.insert(key.to_string(), bytes);
+        }
+    }
+    for (position, recipe) in job.scripts().iter().enumerate() {
+        if let Ok(bytes) = fs::read(dir.join(format!("{index}.dump.{position}"))) {
+            raw.insert(group::dump_key(recipe), bytes);
+        }
+    }
+    raw
 }
 
 pub fn local_dir(root: &Path) -> PathBuf {
@@ -715,6 +772,7 @@ mod tests {
             device_name: Some("RTX".into()),
             dir: "C:/work".into(),
             jobs: 2,
+            requested_jobs: None,
             attempts: 1,
             timeout: Duration::from_secs(5),
         };
@@ -762,6 +820,40 @@ mod tests {
         assert_eq!(timeout.pid, None);
         assert!(!parse_trace("", "").ran());
         assert_eq!(run_field("start 5\nend 7\n", "end"), Some("7"));
+    }
+
+    #[test]
+    fn the_batch_budget_covers_every_job_timeout() {
+        let job = |timeout: Option<u64>| Job {
+            dir: PathBuf::from("/w"),
+            script: "a.amber".into(),
+            dumps: Vec::new(),
+            tensor_layer: false,
+            capture: batch::Capture::NONE,
+            timed: None,
+            timeout: timeout.map(Duration::from_secs),
+            members: Vec::new(),
+        };
+        let jobs = [job(None), job(Some(100)), job(None), job(None)];
+        assert_eq!(
+            batch_budget(&jobs, Duration::from_secs(10), 2),
+            Duration::from_secs(165)
+        );
+        assert_eq!(
+            batch_budget(&jobs, Duration::from_secs(10), 1),
+            Duration::from_secs(230)
+        );
+    }
+
+    #[test]
+    fn nvidia_targets_run_one_job_at_a_time() {
+        assert_eq!(workers("nvidia", Some(4)), 1);
+        assert_eq!(workers("nvidia", None), 1);
+        assert_eq!(workers("amd", None), 4);
+        assert_eq!(workers("amd", Some(2)), 2);
+        assert_eq!(workers("amd", Some(0)), 1);
+        assert_eq!(workers("intel", None), 1);
+        assert_eq!(workers("intel", Some(3)), 3);
     }
 
     #[test]

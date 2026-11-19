@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use super::batch::{Capture, Ending, Job, STATISTICS, TIMING, Trace};
+use super::batch::{
+    Capture, Ending, Job, STATISTICS, TIMING, Trace, add_failures, script_failures,
+};
 use super::cooperative::{self, Support};
+use super::group;
 use crate::process::{self, Exit};
 
 pub const VULKAN_VERSION: &str = "1.3";
@@ -102,6 +105,7 @@ pub struct Device {
     pub cooperative: Support,
     pub tensors: Option<TensorSupport>,
     pub limits: Option<InterfaceLimits>,
+    pub report: String,
 }
 
 impl Device {
@@ -159,7 +163,18 @@ impl Amber {
         if !matches!(output.exit, Exit::Code(0)) {
             return Err(first_line(&output.stdout, &output.stderr));
         }
-        parse_device(&output.stdout).ok_or_else(|| {
+        let stamp = std::fs::metadata(&self.binary).map_or_else(
+            |_| String::new(),
+            |metadata| {
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |since| since.as_nanos());
+                format!("\namber-binary: {} {modified}\n", metadata.len())
+            },
+        );
+        parse_device(&format!("{}{stamp}", output.stdout)).ok_or_else(|| {
             format!(
                 "amber did not report a Vulkan device: {}",
                 first_line(&output.stdout, &output.stderr)
@@ -191,6 +206,9 @@ impl Amber {
                 String::new(),
             );
         }
+        if !job.members.is_empty() {
+            return self.run_batch(job);
+        }
         let out = job.dir.join(format!("{}.dump.txt", job.script));
         let statistics = job.dir.join(job.statistics_file());
         let _ = std::fs::remove_file(&out);
@@ -209,8 +227,8 @@ impl Amber {
         if job.capture.timing {
             command.arg("--log-execution-timing");
         }
-        command.current_dir(&job.dir).arg(&job.script);
-        let output = match process::run(command, self.timeout) {
+        command.current_dir(&job.dir).args(job.scripts());
+        let output = match process::run(command, job.timeout.unwrap_or(self.timeout)) {
             Ok(output) => output,
             Err(error) => return (Err(format!("{error:#}")), None, String::new()),
         };
@@ -220,9 +238,13 @@ impl Amber {
             Exit::Signal => Ending::Crashed(None),
             Exit::Timeout => Ending::TimedOut,
         };
-        match output.exit {
-            Exit::Code(0) => {}
-            Exit::Code(code) => {
+        let failures = match output.exit {
+            Exit::Code(1) => script_failures(&output.stderr, job),
+            _ => None,
+        };
+        match (output.exit, &failures) {
+            (Exit::Code(0), _) | (Exit::Code(1), Some(_)) => {}
+            (Exit::Code(code), _) => {
                 return (
                     Err(format!(
                         "amber exited with {code}: {}",
@@ -232,7 +254,7 @@ impl Amber {
                     tail,
                 );
             }
-            Exit::Signal => {
+            (Exit::Signal, _) => {
                 return (
                     Err(format!(
                         "amber crashed: {}",
@@ -242,9 +264,10 @@ impl Amber {
                     tail,
                 );
             }
-            Exit::Timeout => return (Err("amber timed out".into()), Some(ending), tail),
+            (Exit::Timeout, _) => return (Err("amber timed out".into()), Some(ending), tail),
         }
-        let mut outputs = if job.dumps.is_empty() {
+        let failures = failures.unwrap_or_default();
+        let mut outputs = if job.dumps.is_empty() || failures.check.is_some() {
             BTreeMap::new()
         } else {
             let text = match std::fs::read_to_string(&out) {
@@ -262,6 +285,7 @@ impl Amber {
                 Err(error) => return (Err(error), Some(ending), tail),
             }
         };
+        add_failures(&mut outputs, &failures);
         add_captures(
             &mut outputs,
             job.capture,
@@ -269,6 +293,66 @@ impl Amber {
             &output.stdout,
         );
         (Ok(outputs), Some(ending), tail)
+    }
+}
+
+impl Amber {
+    fn run_batch(&self, job: &Job) -> AmberRun {
+        let recipes = job.scripts();
+        let statistics = job.dir.join(job.statistics_file());
+        let _ = std::fs::remove_file(&statistics);
+        for recipe in &recipes {
+            let _ = std::fs::remove_file(job.dir.join(group::dump_file(recipe)));
+        }
+        let mut command = self.command(job.tensor_layer);
+        command.arg("-q");
+        if !job.dumps.is_empty() {
+            command.args(["-b", group::BATCH_DUMP]);
+            for dump in &job.dumps {
+                command.args(["-B", dump]);
+            }
+        }
+        if job.capture.statistics {
+            command.arg("--pipeline-stats").arg(job.statistics_file());
+        }
+        if job.capture.timing {
+            command.arg("--log-execution-timing");
+        }
+        command.current_dir(&job.dir).args(&recipes);
+        let output = match process::run(command, job.timeout.unwrap_or(self.timeout)) {
+            Ok(output) => output,
+            Err(error) => return (Err(format!("{error:#}")), None, String::new()),
+        };
+        let tail = last_lines(&output.stderr, &output.stdout, TAIL_LINES);
+        let code = match output.exit {
+            Exit::Code(code) => code,
+            Exit::Signal => {
+                return (
+                    Err(format!(
+                        "amber crashed: {}",
+                        first_line(&output.stderr, &output.stdout)
+                    )),
+                    Some(Ending::Crashed(None)),
+                    tail,
+                );
+            }
+            Exit::Timeout => {
+                return (Err("amber timed out".into()), Some(Ending::TimedOut), tail);
+            }
+        };
+        let mut raw = BTreeMap::new();
+        raw.insert(group::EXIT.to_string(), code.to_string().into_bytes());
+        raw.insert(group::STDERR.to_string(), output.stderr.into_bytes());
+        raw.insert(group::STDOUT.to_string(), output.stdout.into_bytes());
+        if let Ok(bytes) = std::fs::read(&statistics) {
+            raw.insert(STATISTICS.to_string(), bytes);
+        }
+        for recipe in &recipes {
+            if let Ok(bytes) = std::fs::read(job.dir.join(group::dump_file(recipe))) {
+                raw.insert(group::dump_key(recipe), bytes);
+            }
+        }
+        (Ok(raw), Some(Ending::Exited(i64::from(code))), tail)
     }
 }
 
@@ -383,6 +467,7 @@ pub fn parse_device(text: &str) -> Option<Device> {
         cooperative: cooperative::parse_support(text),
         tensors,
         limits: InterfaceLimits::parse(text),
+        report: text.to_string(),
     })
 }
 

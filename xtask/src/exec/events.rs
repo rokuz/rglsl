@@ -131,6 +131,29 @@ pub fn query_script(since_ms: u64) -> String {
     script
 }
 
+pub fn reset_xpath() -> String {
+    let sources: Vec<String> = RESET_SOURCES
+        .iter()
+        .map(|source| {
+            let provider = format!("Provider[@Name='{}']", source.provider);
+            if source.ids.is_empty() {
+                provider
+            } else {
+                let ids: Vec<String> = source
+                    .ids
+                    .iter()
+                    .map(|id| format!("EventID={id}"))
+                    .collect();
+                format!("({provider} and ({}))", ids.join(" or "))
+            }
+        })
+        .collect();
+    format!(
+        "({}) and (Level=1 or Level=2 or Level=3)",
+        sources.join(" or ")
+    )
+}
+
 fn parse_pid(text: &str) -> Option<u32> {
     let text = text.trim();
     match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
@@ -317,6 +340,14 @@ mod tests {
             provider: "nvlddmkm".into(),
             id: 153,
         }
+    }
+
+    #[test]
+    fn queries_the_reset_sources() {
+        assert_eq!(
+            reset_xpath(),
+            "((Provider[@Name='nvlddmkm'] and (EventID=13 or EventID=153)) or Provider[@Name='amdkmdag'] or Provider[@Name='amduw23g'] or (Provider[@Name='Display'] and (EventID=4101))) and (Level=1 or Level=2 or Level=3)"
+        );
     }
 
     #[test]

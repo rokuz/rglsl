@@ -83,6 +83,37 @@ fn executable(value: &Value) -> Executable {
     }
 }
 
+pub fn of_script(bytes: &[u8], script: &str) -> Result<Vec<u8>, String> {
+    let mut root: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("reading the pipeline statistics: {error}"))?;
+    let pipelines = root
+        .get_mut("pipelines")
+        .and_then(Value::as_array_mut)
+        .ok_or("the pipeline statistics have no `pipelines` list")?;
+    pipelines.retain(|pipeline| pipeline.get("script").and_then(Value::as_str) == Some(script));
+    serde_json::to_vec(&root).map_err(|error| format!("writing the pipeline statistics: {error}"))
+}
+
+pub fn renamed(bytes: &[u8], names: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let mut root: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("reading the pipeline statistics: {error}"))?;
+    let pipelines = root
+        .get_mut("pipelines")
+        .and_then(Value::as_array_mut)
+        .ok_or("the pipeline statistics have no `pipelines` list")?;
+    pipelines.retain_mut(|pipeline| {
+        let script = pipeline.get("script").and_then(Value::as_str);
+        let Some((_, name)) = names.iter().find(|(from, _)| Some(from.as_str()) == script) else {
+            return false;
+        };
+        if let Some(object) = pipeline.as_object_mut() {
+            object.insert("script".into(), Value::String(name.clone()));
+        }
+        true
+    });
+    serde_json::to_vec(&root).map_err(|error| format!("writing the pipeline statistics: {error}"))
+}
+
 impl Report {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let root: Value = serde_json::from_slice(bytes)
@@ -169,7 +200,8 @@ mod tests {
         {"name": "numUsedVgprs", "description": "", "format": "uint64", "value": 24}]}
     ]},
     {"script": "rglsl.amber", "pipeline": "main", "type": "graphics", "create_time_ms": 0.5, "executables": []},
-    {"script": "rglsl.amber", "pipeline": "dump", "type": "compute", "create_time_ms": 0.1, "executables": []}
+    {"script": "rglsl.amber", "pipeline": "dump", "type": "compute", "create_time_ms": 0.1, "executables": []},
+    {"script": "rglsl.timed.amber", "pipeline": "main", "type": "graphics", "create_time_ms": 2.5, "executables": []}
   ]
 }"#;
 
@@ -177,7 +209,14 @@ mod tests {
     fn reads_the_statistics_of_the_tested_stage() -> Result<(), String> {
         let report = Report::parse(SAMPLE.as_bytes())?;
         assert!(report.executable_properties && report.shader_info_amd);
+        assert_eq!(report.create_times("main"), [1.5, 0.5, 2.5]);
+        let timed = Report::parse(&of_script(SAMPLE.as_bytes(), "rglsl.timed.amber")?)?;
+        assert_eq!(timed.create_times("main"), [2.5]);
+        assert!(timed.shader_info_amd);
+        assert!(of_script(b"{}", "rglsl.amber").is_err());
+        let report = Report::parse(&of_script(SAMPLE.as_bytes(), "rglsl.amber")?)?;
         assert_eq!(report.create_times("main"), [1.5, 0.5]);
+        assert!(report.executable_properties);
         let values = report.values("main", "fragment");
         let expected: BTreeMap<String, f64> = [
             ("VGPRs", 24.0),
