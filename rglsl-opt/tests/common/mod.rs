@@ -47,6 +47,7 @@ pub fn compiled_at(
         passes: Some(passes.iter().map(|&name| name.to_owned()).collect()),
         target_gpu,
         validate_each: true,
+        specialization: Vec::new(),
     };
     optimize(
         &mut [StageModule {
@@ -169,4 +170,75 @@ pub fn decorations(words: &[u32], decoration: spirv::Decoration) -> usize {
         at += length;
     }
     count
+}
+
+pub struct Stage {
+    pub stage: ShaderStage,
+    pub module: Module,
+    pub words: Vec<u32>,
+}
+
+pub fn program_with(
+    sources: &[(ShaderStage, &str)],
+    options: &OptOptions,
+    context: Context,
+) -> TestResult<Vec<Stage>> {
+    let mut modules = Vec::with_capacity(sources.len());
+    for &(stage, source) in sources {
+        let module = Frontend::default()
+            .parse(&Options::from(stage), source)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let info = Validator::new(ValidationFlags::all()).validate(&module)?;
+        modules.push((stage, module, info));
+    }
+    let mut stages: Vec<StageModule<'_>> = modules
+        .iter_mut()
+        .map(|&mut (stage, ref mut module, ref mut info)| StageModule {
+            stage,
+            module,
+            info,
+        })
+        .collect();
+    optimize(&mut stages, options, context)?;
+    drop(stages);
+    let mut result = Vec::with_capacity(modules.len());
+    for (stage, module, info) in modules {
+        let options = spv::Options {
+            lang_version: if stage == ShaderStage::Mesh {
+                (1, 4)
+            } else {
+                spv::Options::default().lang_version
+            },
+            ..spv::Options::default()
+        };
+        let words = spv::write_vec(&module, &info, &options, None)?;
+        result.push(Stage {
+            stage,
+            module,
+            words,
+        });
+    }
+    Ok(result)
+}
+
+pub fn program(sources: &[(ShaderStage, &str)], passes: &[&str]) -> TestResult<Vec<Stage>> {
+    let options = OptOptions {
+        passes: Some(passes.iter().map(|&name| name.to_owned()).collect()),
+        validate_each: true,
+        ..OptOptions::default()
+    };
+    program_with(sources, &options, Context::default())
+}
+
+pub fn interface(module: &Module, space: rglsl::AddressSpace) -> Vec<String> {
+    let mut names: Vec<String> = module
+        .entry_points
+        .iter()
+        .flat_map(|entry| entry.interface.iter())
+        .filter_map(|&handle| module.global_variables.try_get(handle).ok())
+        .filter(|global| global.space == space)
+        .map(|global| global.name.clone().unwrap_or_default())
+        .collect();
+    names.sort();
+    names
 }

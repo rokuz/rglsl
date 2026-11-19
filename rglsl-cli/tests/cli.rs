@@ -277,7 +277,7 @@ fn bad_optimization_options_are_rejected() -> TestResult {
         (&["--target-gpu"], "Error: target-gpu: no <gpu> provided"),
         (
             &["--opt-passes", "inline,peel"],
-            "Error: --opt-passes: unknown optimizer pass `peel` (known passes: inline, forward, sroa, fold, dead-branch, unroll, const-array, cse, dce)",
+            "Error: --opt-passes: unknown optimizer pass `peel` (known passes: specialize, lto-io, inline, forward, sroa, fold, dead-branch, unroll, const-array, cse, dce)",
         ),
     ] {
         let mut command = vec!["-V", "shader.frag"];
@@ -289,6 +289,99 @@ fn bad_optimization_options_are_rejected() -> TestResult {
     let run = rglsl(&directory, &["--object", "-O", "shader.frag"])?;
     assert_eq!(run.code, Some(1));
     assert!(run.stderr.contains("never optimized"), "{}", run.stderr);
+    let run = rglsl(
+        &directory,
+        &["--object", "--specialize", "1:2", "shader.frag"],
+    )?;
+    assert_eq!(run.code, Some(1));
+    assert!(run.stderr.contains("never optimized"), "{}", run.stderr);
+    for (options, message) in [
+        (
+            &["--specialize"][..],
+            "Error: specialize: no <id>:<value> provided",
+        ),
+        (
+            &["--specialize", "1=2"],
+            "Error: specialize: `1=2` is not <id>:<value>",
+        ),
+        (
+            &["-l", "--lto"],
+            "Error: --lto: link time optimization is part of -O and -Os for a program linked with -l",
+        ),
+    ] {
+        let mut command = vec!["-V", "shader.frag"];
+        command.extend_from_slice(options);
+        let run = rglsl(&directory, &command)?;
+        assert_eq!(run.code, Some(1), "{options:?}");
+        assert!(run.stderr.contains(message), "{options:?}: {}", run.stderr);
+    }
+    Ok(())
+}
+
+const SPECIALIZED: &str = "#version 450
+layout(constant_id = 3) const int MODE = 1;
+layout(constant_id = 4) const bool ON = false;
+layout(location = 0) out vec4 color;
+void main() { color = vec4(float(MODE)); if (ON) color.y = 2.0; }
+";
+
+#[test]
+fn specialization_constants_get_their_values() -> TestResult {
+    let directory = work_dir("specialize")?;
+    fs::write(directory.join("shader.frag"), SPECIALIZED)?;
+    let run = rglsl(&directory, &["-V", "-o", "plain.spv", "shader.frag"])?;
+    assert_eq!(run.code, Some(0), "{}", run.stderr);
+    let plain = fs::read(directory.join("plain.spv"))?;
+    for options in [
+        &["--specialize", "3:7 4:true"][..],
+        &["--specialize", "3:7", "--specialize", "4:true"],
+        &["-O", "--specialize", "3:7,4:true"],
+    ] {
+        let mut command = vec!["-V", "-o", "specialized.spv"];
+        command.extend_from_slice(options);
+        command.push("shader.frag");
+        let run = rglsl(&directory, &command)?;
+        assert_eq!(run.code, Some(0), "{options:?}: {}", run.stderr);
+        let specialized = fs::read(directory.join("specialized.spv"))?;
+        assert_ne!(specialized, plain, "{options:?}");
+        let words: Vec<u32> = specialized
+            .chunks_exact(4)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .rev()
+                    .fold(0, |word, &byte| (word << 8) | u32::from(byte))
+            })
+            .collect();
+        let mut spec_constants = 0;
+        let mut at = 5;
+        while let Some(&first) = words.get(at) {
+            let length = (first >> 16) as usize;
+            if length == 0 {
+                break;
+            }
+            if matches!(first & 0xffff, 48..=50) {
+                spec_constants += 1;
+            }
+            at += length;
+        }
+        assert_eq!(spec_constants, 0, "{options:?}");
+    }
+    for (value, message) in [
+        (
+            "9:1",
+            "specialization constant 9 is not declared in the program",
+        ),
+        (
+            "3:x",
+            "specialization constant 3 is a signed 32-bit integer, `x` is not such a value",
+        ),
+    ] {
+        let run = rglsl(&directory, &["-V", "--specialize", value, "shader.frag"])?;
+        assert_ne!(run.code, Some(0), "{value}");
+        let output = format!("{}{}", run.stdout, run.stderr);
+        assert!(output.contains(message), "{value}: {output}");
+    }
     Ok(())
 }
 

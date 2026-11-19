@@ -9,8 +9,10 @@ static const char *const vertex_source =
     "layout(location = 0) in vec3 position;\n"
     "layout(location = 1) in vec3 normal;\n"
     "layout(location = 0) out vec3 world_normal;\n"
+    "layout(location = 1) out vec3 world_position;\n"
     "void main() {\n"
     "    world_normal = normal;\n"
+    "    world_position = position;\n"
     "    gl_Position = vec4(position, 1.0);\n"
     "}\n";
 
@@ -18,9 +20,10 @@ static const char *const fragment_source =
     "#version 450\n"
     "layout(location = 0) in vec3 world_normal;\n"
     "layout(location = 0) out vec4 color;\n"
+    "layout(constant_id = 0) const float EXPOSURE = 1.0;\n"
     "vec3 shade(vec3 normal);\n"
     "void main() {\n"
-    "    color = vec4(shade(normalize(world_normal)), 1.0);\n"
+    "    color = vec4(shade(normalize(world_normal)) * EXPOSURE, 1.0);\n"
     "}\n";
 
 static const char *const lighting_source =
@@ -187,7 +190,8 @@ static int link_program(const char *directory, rglsl_object *const *objects, siz
         rglsl_program_options_set_optimization(options, RGLSL_OPT_LEVEL_PERFORMANCE) !=
             RGLSL_RESULT_OK ||
         rglsl_program_options_set_target_gpu(options, RGLSL_TARGET_GPU_UNIVERSAL_DESKTOP) !=
-            RGLSL_RESULT_OK) {
+            RGLSL_RESULT_OK ||
+        rglsl_program_options_add_specialization(options, 0, "1.5") != RGLSL_RESULT_OK) {
         rglsl_program_options_destroy(options);
         return 1;
     }

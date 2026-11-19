@@ -35,7 +35,11 @@ Options:
               on -V
   -I<dir>     add <dir> to the include search path; includer's directory is
               searched first, followed by left-to-right order of -I
-  -O          optimizes SPIR-V for performance
+  -O          optimizes SPIR-V for performance; with -l, the linked stages are
+              one pipeline: outputs the next stage does not read, inputs no
+              stage before writes and unread built-ins are removed between
+              stages (the inputs of the first stage and the outputs of the
+              last stage stay)
   -Os         optimizes for a smaller driver code size
   -Od         disables optimization (the default)
   -P<text> | --preamble-text <text> | --P <text>
@@ -159,4 +163,12 @@ rglsl's own options:
   --target-gpu {nvidia | amd | universal-desktop | universal-mobile}
                                     the GPU that -O and -Os optimize for;
                                     defaults to universal-desktop
+  --specialize <id>:<value>[ <id>:<value>...]
+                                    replaces the specialization constant
+                                    <id> by <value> (true or false, a decimal
+                                    or 0x integer, or a float, checked against
+                                    the type of the constant) while compiling,
+                                    with or without -O; may be repeated; pairs
+                                    are separated by spaces or commas; an id
+                                    the program does not declare is an error
 ";

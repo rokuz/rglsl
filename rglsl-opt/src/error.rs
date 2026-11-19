@@ -10,6 +10,8 @@ pub enum OptError {
     MissingPreset(OptLevel),
     #[error("internal error: no optimizer profile for the target GPU {0:?}")]
     MissingProfile(TargetGpu),
+    #[error("{0}")]
+    Specialization(String),
     #[error("internal error: optimizer pass `{pass}` failed: {message}")]
     Pass { pass: &'static str, message: String },
     #[error(

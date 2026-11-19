@@ -23,6 +23,7 @@ const OPTIMIZE: &[Step] = &[
         limit: 2,
         passes: &["forward", "fold", "dead-branch", "dce"],
     },
+    Step::Run("lto-io"),
     Step::Run("const-array"),
     Step::Run("unroll"),
     Step::Run("fold"),
@@ -34,6 +35,7 @@ const OPTIMIZE: &[Step] = &[
         limit: 2,
         passes: &["cse", "forward", "fold", "dce"],
     },
+    Step::Run("lto-io"),
 ];
 
 pub static PRESETS: &[Preset] = &[

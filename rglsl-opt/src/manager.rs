@@ -22,6 +22,7 @@ struct Run<'r, 'm> {
     level: OptLevel,
     context: Context,
     validate_each: bool,
+    specialization: Vec<crate::Specialization>,
 }
 
 pub fn optimize(
@@ -63,6 +64,7 @@ fn execute(
         level: options.level,
         context,
         validate_each: options.validate_each,
+        specialization: options.specialization.clone(),
     };
     for step in plan {
         match *step {
@@ -94,13 +96,17 @@ impl OptOptions {
 }
 
 fn plan<'t>(table: &'t [Pass], options: &OptOptions) -> Result<Vec<Planned<'t>>, OptError> {
-    if let Some(ref passes) = options.passes {
-        return passes
-            .iter()
-            .map(|name| find(table, name).map(Planned::Run))
-            .collect();
+    let mut plan = Vec::new();
+    if !options.specialization.is_empty() {
+        plan.push(Planned::Run(find(table, SPECIALIZE)?));
     }
-    options
+    if let Some(ref passes) = options.passes {
+        for name in passes {
+            plan.push(Planned::Run(find(table, name)?));
+        }
+        return Ok(plan);
+    }
+    let preset: Vec<Planned<'t>> = options
         .level
         .preset()?
         .steps
@@ -117,8 +123,12 @@ fn plan<'t>(table: &'t [Pass], options: &OptOptions) -> Result<Vec<Planned<'t>>,
                 },
             })
         })
-        .collect()
+        .collect::<Result<_, OptError>>()?;
+    plan.extend(preset);
+    Ok(plan)
 }
+
+const SPECIALIZE: &str = "specialize";
 
 fn validate(module: &Module, context: Context) -> Result<ModuleInfo, String> {
     let mut validator = Validator::new(ValidationFlags::all());
@@ -172,6 +182,7 @@ impl Run<'_, '_> {
             profile: self.profile,
             level: self.level,
             context: self.context,
+            specialization: &self.specialization,
         };
         (pass.run)(&mut session)
     }

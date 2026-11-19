@@ -647,6 +647,25 @@ pub unsafe extern "C" fn rglsl_program_options_set_optimizer_passes(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_add_specialization(
+    options: *mut ProgramOptions,
+    id: u32,
+    value: *const c_char,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    let value = unsafe { c_str(value) };
+    api::program_options_add_specialization(options, id, value)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rglsl_program_options_clear_specializations(
+    options: *mut ProgramOptions,
+) -> ResultCode {
+    let options = unsafe { options.as_mut() };
+    api::program_options_set_flags(options, |options| options.optimize.specialization.clear())
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rglsl_program_options_set_optimizer_validate_each(
     options: *mut ProgramOptions,
     enabled: bool,

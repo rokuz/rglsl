@@ -1220,6 +1220,26 @@ pub(crate) fn program_options_set_optimizer_passes(
     })
 }
 
+pub(crate) fn program_options_add_specialization(
+    options: Option<&mut ProgramOptions>,
+    id: u32,
+    value: Option<&CStr>,
+) -> ResultCode {
+    program_options_change(options, |options| {
+        let value = text(value, "value")?.trim();
+        if value.is_empty() {
+            return Err(Failure::argument(format!(
+                "specialization constant {id} has no value"
+            )));
+        }
+        options
+            .optimize
+            .specialization
+            .push(rglsl_link::Specialization::new(id, value));
+        Ok(())
+    })
+}
+
 pub(crate) fn program_options_set_reflection(
     options: Option<&mut ProgramOptions>,
     enabled: bool,

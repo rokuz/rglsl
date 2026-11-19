@@ -5,6 +5,8 @@ pub(crate) mod dead_branch;
 pub(crate) mod fold;
 pub(crate) mod forward;
 pub(crate) mod inline;
+pub(crate) mod lto_io;
 pub(crate) mod rebuild;
+pub(crate) mod specialize;
 pub(crate) mod sroa;
 pub(crate) mod unroll;

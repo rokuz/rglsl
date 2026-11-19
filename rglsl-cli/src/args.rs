@@ -1,4 +1,6 @@
-use rglsl_link::{DebugInfo, Macro, OptLevel, OptOptions, ResourceClass, ShaderStage, TargetGpu};
+use rglsl_link::{
+    DebugInfo, Macro, OptLevel, OptOptions, ResourceClass, ShaderStage, Specialization, TargetGpu,
+};
 
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_USAGE: i32 = 1;
@@ -80,6 +82,7 @@ pub struct Optimization {
     pub target_gpu: Option<TargetGpu>,
     pub passes: Option<Vec<String>>,
     pub validate_each: bool,
+    pub specialization: Vec<Specialization>,
 }
 
 impl Optimization {
@@ -94,11 +97,14 @@ impl Optimization {
             target_gpu: self.target_gpu.unwrap_or(defaults.target_gpu),
             passes: self.passes.clone(),
             validate_each: self.validate_each || defaults.validate_each,
+            specialization: self.specialization.clone(),
         }
     }
 
     const fn requested(&self) -> bool {
-        matches!(self.level, Some(OptLevel::Performance | OptLevel::Size)) || self.passes.is_some()
+        matches!(self.level, Some(OptLevel::Performance | OptLevel::Size))
+            || self.passes.is_some()
+            || !self.specialization.is_empty()
     }
 }
 
@@ -410,7 +416,12 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             None => return Err(Exit::detailed("expects <text>", argument)),
         },
         "no-link" => options.no_link = true,
-        "lto" => return Err(Exit::unsupported(&argument, "link time optimization")),
+        "lto" => {
+            return Err(Exit::detailed(
+                "link time optimization is part of -O and -Os for a program linked with -l",
+                &argument,
+            ));
+        }
         "validate-io" => options.validate_io = true,
         "target-gpu" => match cursor.take_next() {
             Some(name) => match TargetGpu::from_name(&name) {
@@ -439,6 +450,16 @@ fn long_option(cursor: &mut Cursor, options: &mut Options) -> Result<(), Exit> {
             None => return Err(Exit::detailed("no <pass,...> provided", word)),
         },
         "opt-validate-each" => options.optimization.validate_each = true,
+        "specialize" => match cursor.take_next() {
+            Some(list) => match Specialization::parse_list(&list) {
+                Ok(values) if !values.is_empty() => {
+                    options.optimization.specialization.extend(values);
+                }
+                Ok(_) => return Err(Exit::detailed("no <id>:<value> provided", word)),
+                Err(error) => return Err(Exit::detailed(error, word)),
+            },
+            None => return Err(Exit::detailed("no <id>:<value> provided", word)),
+        },
         "bindings-per-resource-type" => {
             return Err(Exit::unsupported(
                 &argument,
@@ -626,7 +647,7 @@ pub fn parse(arguments: Vec<String>) -> Result<Options, Exit> {
     }
     if options.object && options.optimization.requested() {
         return Err(Exit::error(
-            "`--object` writes object modules, which are never optimized; -O, -Os and --opt-passes apply when they are linked",
+            "`--object` writes object modules, which are never optimized; -O, -Os, --opt-passes and --specialize apply when they are linked",
         ));
     }
     if options.object && options.link {

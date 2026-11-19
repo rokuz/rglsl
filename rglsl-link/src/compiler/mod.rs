@@ -177,11 +177,14 @@ pub(crate) fn optimize_modules(
 }
 
 pub(crate) fn optimizer_diagnostic(error: &rglsl_opt::OptError) -> Diagnostic {
-    Diagnostic::linking(
-        Severity::Error,
-        Origin::Program,
-        format!("cannot optimize: {error}"),
-    )
+    Diagnostic::linking(Severity::Error, Origin::Program, optimizer_message(error))
+}
+
+pub(crate) fn optimizer_message(error: &rglsl_opt::OptError) -> String {
+    match *error {
+        rglsl_opt::OptError::Specialization(ref message) => message.clone(),
+        ref other => format!("cannot optimize: {other}"),
+    }
 }
 
 fn spirv_program(

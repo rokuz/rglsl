@@ -11,7 +11,7 @@ use super::include::{Includes, Resolve};
 use super::{
     CompileOptions, Compiler, Diagnostic, Diagnostics, Emission, Origin, ProgramOptions,
     STAGE_ORDER, Severity, glslang_stage_name, link_diagnostic, link_stages, link_warnings,
-    optimize, optimize_modules, optimizer_diagnostic, write_spirv,
+    optimize, optimize_modules, optimizer_diagnostic, optimizer_message, write_spirv,
 };
 use crate::{CompileError, InvalidModule, message, reflect, rename_entry_point};
 
@@ -507,7 +507,7 @@ fn unlinked(units: Vec<Unit<'_>>, options: &ProgramOptions, build: &mut Build) {
                 options,
             )
             .map(|()| info)
-            .map_err(|error| Diagnostic::source(&unit.name, format!("cannot optimize: {error}")))
+            .map_err(|error| Diagnostic::source(&unit.name, optimizer_message(&error)))
         });
         let info = match optimized {
             Ok(info) => info,

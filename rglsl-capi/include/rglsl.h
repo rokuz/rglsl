@@ -344,6 +344,12 @@ rglsl_result rglsl_program_options_set_target_gpu(rglsl_program_options *options
 rglsl_result rglsl_program_options_set_optimizer_passes(rglsl_program_options *options,
                                                         const char *passes);
 
+rglsl_result rglsl_program_options_add_specialization(rglsl_program_options *options,
+                                                      uint32_t id,
+                                                      const char *value);
+
+rglsl_result rglsl_program_options_clear_specializations(rglsl_program_options *options);
+
 rglsl_result rglsl_program_options_set_optimizer_validate_each(rglsl_program_options *options,
                                                                bool enabled);
 

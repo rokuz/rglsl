@@ -622,3 +622,74 @@ fn optimization_options() -> TestResult {
     assert_eq!(spirv(&optimized, 0)?, spirv(&plain, 0)?);
     Ok(())
 }
+
+#[test]
+fn specialization_options() -> TestResult {
+    let compiler = compiler()?;
+    let fragment = options(c"specialized.frag", RGLSL_STAGE_FRAGMENT)?;
+    let source = c"#version 450
+layout(constant_id = 3) const int MODE = 1;
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(float(MODE));
+}
+";
+    let program_options = program_options()?;
+    let (code, plain, _) = build(&compiler, &[source], &[&fragment], &program_options);
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let plain = Owned::new(plain, rglsl_c::rglsl_program_destroy)?;
+    assert!(disassembly(&spirv(&plain, 0)?)?.contains("SpecConstant"));
+    let codes = unsafe {
+        [
+            rglsl_c::rglsl_program_options_add_specialization(
+                program_options.pointer,
+                3,
+                c"7".as_ptr(),
+            ),
+            rglsl_c::rglsl_program_options_add_specialization(
+                program_options.pointer,
+                4,
+                c"".as_ptr(),
+            ),
+            rglsl_c::rglsl_program_options_add_specialization(
+                program_options.pointer,
+                4,
+                ptr::null(),
+            ),
+        ]
+    };
+    assert_eq!(
+        codes,
+        [
+            RGLSL_RESULT_OK,
+            RGLSL_RESULT_INVALID_ARGUMENT,
+            RGLSL_RESULT_INVALID_ARGUMENT
+        ]
+    );
+    let (code, specialized, _) = build(&compiler, &[source], &[&fragment], &program_options);
+    assert_eq!(code, RGLSL_RESULT_OK);
+    let specialized = Owned::new(specialized, rglsl_c::rglsl_program_destroy)?;
+    let text = disassembly(&spirv(&specialized, 0)?)?;
+    assert!(!text.contains("SpecConstant"), "{text}");
+    let codes = unsafe {
+        [
+            rglsl_c::rglsl_program_options_clear_specializations(program_options.pointer),
+            rglsl_c::rglsl_program_options_add_specialization(
+                program_options.pointer,
+                9,
+                c"1".as_ptr(),
+            ),
+        ]
+    };
+    assert_eq!(codes, [RGLSL_RESULT_OK; 2]);
+    let (code, missing, diagnostics) = build(&compiler, &[source], &[&fragment], &program_options);
+    assert_eq!(code, rglsl_c::RGLSL_RESULT_LINK_FAILED);
+    assert!(missing.is_null());
+    let diagnostics = Owned::new(diagnostics, rglsl_c::rglsl_diagnostics_destroy)?;
+    let text = string(unsafe { rglsl_c::rglsl_diagnostics_text(diagnostics.as_const()) })?;
+    assert!(
+        text.contains("specialization constant 9 is not declared in the program"),
+        "{text}"
+    );
+    Ok(())
+}

@@ -44,7 +44,7 @@ pub use program::{
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
 pub use rglsl::proc::{BindingShifts, ResourceClass};
-pub use rglsl_opt::{OptError, OptLevel, OptOptions, TargetGpu};
+pub use rglsl_opt::{OptError, OptLevel, OptOptions, Specialization, TargetGpu};
 pub use rglsl_pp::{IncludeKind, IncludeRequest, ResolvedInclude};
 pub use rglsl_sema::{Configuration, ResourceLimits};
 

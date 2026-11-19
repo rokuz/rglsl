@@ -1,6 +1,8 @@
 use rglsl::{Module, ShaderStage};
 
-use crate::{Context, GpuProfile, OptError, OptLevel, StageModule, Summary, Unrolling};
+use crate::{
+    Context, GpuProfile, OptError, OptLevel, Specialization, StageModule, Summary, Unrolling,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -31,6 +33,32 @@ pub struct Pass {
 }
 
 pub static PASSES: &[Pass] = &[
+    Pass {
+        name: "specialize",
+        scope: Scope::Program,
+        applies: |summary| summary.overrides,
+        run: crate::ir::specialize::run,
+        debug_info: DebugRule::Preserves,
+        counterpart: &[
+            "--set-spec-const-default-value",
+            "--freeze-spec-const",
+            "--fold-spec-const-op-composite",
+        ],
+    },
+    Pass {
+        name: "lto-io",
+        scope: Scope::Program,
+        applies: |summary| !summary.unlinked && !summary.export_functions,
+        run: crate::ir::lto_io::run,
+        debug_info: DebugRule::LinesOnly,
+        counterpart: &[
+            "--lto",
+            "AnalyzeLiveInput",
+            "EliminateDeadOutputStores",
+            "--eliminate-dead-input-components",
+            "EliminateDeadOutputComponents",
+        ],
+    },
     Pass {
         name: "inline",
         scope: Scope::Function,
@@ -123,9 +151,27 @@ pub struct Session<'s, 'm> {
     pub profile: &'static GpuProfile,
     pub level: OptLevel,
     pub context: Context,
+    pub specialization: &'s [Specialization],
 }
 
 impl Session<'_, '_> {
+    pub(crate) fn run_on(
+        &mut self,
+        index: usize,
+        run: fn(&mut Session<'_, '_>) -> Result<Changed, OptError>,
+    ) -> Result<Changed, OptError> {
+        let mut session = Session {
+            pass: self.pass,
+            stages: &mut *self.stages,
+            focus: Some(index),
+            profile: self.profile,
+            level: self.level,
+            context: self.context,
+            specialization: self.specialization,
+        };
+        run(&mut session)
+    }
+
     pub fn module(&mut self) -> Result<&mut Module, OptError> {
         let pass = self.pass;
         self.focus

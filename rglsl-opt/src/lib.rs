@@ -7,6 +7,7 @@ mod ir;
 mod manager;
 mod pass;
 mod preset;
+mod specialization;
 mod summary;
 mod target;
 
@@ -17,6 +18,7 @@ pub use error::OptError;
 pub use manager::optimize;
 pub use pass::{Changed, DebugRule, PASSES, Pass, Scope, Session};
 pub use preset::{PRESETS, Preset, Step};
+pub use specialization::Specialization;
 pub use summary::Summary;
 pub use target::{
     GpuClass, GpuParameters, GpuProfile, Inlining, PROFILES, Reuse, TargetGpu, Unrolling,
@@ -40,6 +42,7 @@ pub struct OptOptions {
     pub target_gpu: TargetGpu,
     pub passes: Option<Vec<String>>,
     pub validate_each: bool,
+    pub specialization: Vec<Specialization>,
 }
 
 impl Default for OptOptions {
@@ -49,6 +52,7 @@ impl Default for OptOptions {
             target_gpu: TargetGpu::default(),
             passes: None,
             validate_each: cfg!(debug_assertions),
+            specialization: Vec::new(),
         }
     }
 }
