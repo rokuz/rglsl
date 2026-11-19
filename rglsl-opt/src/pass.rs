@@ -1,6 +1,6 @@
 use rglsl::{Module, ShaderStage};
 
-use crate::{Context, GpuProfile, OptError, StageModule, Summary};
+use crate::{Context, GpuProfile, OptError, OptLevel, StageModule, Summary, Unrolling};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -82,6 +82,22 @@ pub static PASSES: &[Pass] = &[
         counterpart: &["--eliminate-dead-branches"],
     },
     Pass {
+        name: "unroll",
+        scope: Scope::Function,
+        applies: |summary| summary.loops,
+        run: crate::ir::unroll::run,
+        debug_info: DebugRule::LinesOnly,
+        counterpart: &["--loop-unroll"],
+    },
+    Pass {
+        name: "const-array",
+        scope: Scope::Function,
+        applies: |summary| summary.local_variables,
+        run: crate::ir::const_array::run,
+        debug_info: DebugRule::LinesOnly,
+        counterpart: &["--copy-propagate-arrays"],
+    },
+    Pass {
         name: "cse",
         scope: Scope::Function,
         applies: |_| true,
@@ -105,6 +121,7 @@ pub struct Session<'s, 'm> {
     pub stages: &'s mut [StageModule<'m>],
     pub focus: Option<usize>,
     pub profile: &'static GpuProfile,
+    pub level: OptLevel,
     pub context: Context,
 }
 
@@ -122,6 +139,13 @@ impl Session<'_, '_> {
 }
 
 impl Session<'_, '_> {
+    pub const fn unrolling(&self) -> Unrolling {
+        match self.level {
+            OptLevel::Size => self.profile.parameters.unroll_for_size,
+            OptLevel::Disabled | OptLevel::Performance => self.profile.parameters.unroll,
+        }
+    }
+
     pub fn stage(&self) -> Result<ShaderStage, OptError> {
         let pass = self.pass;
         self.focus

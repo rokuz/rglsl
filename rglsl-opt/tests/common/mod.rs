@@ -4,7 +4,7 @@ use rglsl::back::spv;
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::valid::{ValidationFlags, Validator};
 use rglsl::{Expression, Function, Handle, LocalVariable, Module, ShaderStage, Statement};
-use rglsl_opt::{Context, OptOptions, StageModule, TargetGpu, optimize};
+use rglsl_opt::{Context, OptLevel, OptOptions, StageModule, TargetGpu, optimize};
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -20,15 +20,33 @@ pub fn compiled(
     target_gpu: TargetGpu,
     context: Context,
 ) -> TestResult<Compiled> {
+    compiled_at(
+        OptLevel::Disabled,
+        stage,
+        source,
+        passes,
+        target_gpu,
+        context,
+    )
+}
+
+pub fn compiled_at(
+    level: OptLevel,
+    stage: ShaderStage,
+    source: &str,
+    passes: &[&str],
+    target_gpu: TargetGpu,
+    context: Context,
+) -> TestResult<Compiled> {
     let mut module = Frontend::default()
         .parse(&Options::from(stage), source)
         .map_err(|errors| format!("{errors:?}"))?;
     let mut info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let options = OptOptions {
+        level,
         passes: Some(passes.iter().map(|&name| name.to_owned()).collect()),
         target_gpu,
         validate_each: true,
-        ..OptOptions::default()
     };
     optimize(
         &mut [StageModule {

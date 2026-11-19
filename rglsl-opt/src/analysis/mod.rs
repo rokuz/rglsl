@@ -1,4 +1,5 @@
 pub(crate) mod locals;
+pub(crate) mod loops;
 
 use rglsl::ir::visit::Visitor;
 use rglsl::proc::{ResolveContext, ResolveError, TypeResolution};
@@ -22,6 +23,57 @@ impl<'a, F: FnMut(Handle<Expression>)> Visitor<'a> for Results<F> {
 
     fn result(&mut self, handle: Handle<Expression>) -> Result<(), Self::Error> {
         (self.0)(handle);
+        Ok(())
+    }
+
+    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn ty(&mut self, _: Handle<Type>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn function(&mut self, _: Handle<Function>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn block(&mut self, _: &'a Block) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+pub(crate) fn for_each_operand(statement: &Statement, result: impl FnMut(Handle<Expression>)) {
+    let Ok(()) = statement.visit(&mut Operands(result));
+}
+
+struct Operands<F>(F);
+
+impl<'a, F: FnMut(Handle<Expression>)> Visitor<'a> for Operands<F> {
+    type Error = core::convert::Infallible;
+
+    fn expression(&mut self, handle: Handle<Expression>) -> Result<(), Self::Error> {
+        (self.0)(handle);
+        Ok(())
+    }
+
+    fn result(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
         Ok(())
     }
 

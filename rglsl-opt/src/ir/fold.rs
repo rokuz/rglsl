@@ -1,7 +1,7 @@
 use rglsl::proc::{ConstantEvaluator, Emitter, ExpressionKindTracker, Layouter, TypeResolution};
 use rglsl::{
-    Arena, BinaryOperator, Block, Expression, FastHashMap, Function, Handle, Literal, MathFunction,
-    Module, Precision, ScalarKind, Span, Type, TypeInner,
+    Arena, ArraySize, BinaryOperator, Block, Expression, FastHashMap, Function, Handle, Literal,
+    MathFunction, Module, Precision, ScalarKind, Span, Type, TypeInner,
 };
 
 use crate::analysis::resolve_types;
@@ -85,7 +85,7 @@ fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[
             && float::folds_undefined(UndefinedUse::Extract)
     };
     match *expression {
-        Expression::Access { base, index } => (is(base) && is(index)) || undefined(base),
+        Expression::Access { base, index } => is(index) || undefined(base),
         Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. } => {
             is(base) || undefined(base)
         }
@@ -389,9 +389,13 @@ impl Fold<'_> {
         block: &mut Block,
     ) -> Result<Option<Handle<Expression>>, String> {
         match *expression {
-            Expression::Access { base, .. }
-            | Expression::AccessIndex { base, .. }
-            | Expression::Swizzle { vector: base, .. } => {
+            Expression::Access { base, index } => {
+                if let Some(new) = self.extract_undefined(rebuild, handle, base)? {
+                    return Ok(Some(new));
+                }
+                self.constant_index(rebuild, handle, base, index, block)
+            }
+            Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. } => {
                 self.extract_undefined(rebuild, handle, base)
             }
             Expression::Select {
@@ -507,6 +511,68 @@ impl Fold<'_> {
             .insert(Type { name: None, inner }, Span::UNDEFINED);
         let span = rebuild.span(handle);
         Ok(Some(rebuild.undefined(ty, span)))
+    }
+
+    fn constant_index(
+        &mut self,
+        rebuild: &mut Rebuild<'_>,
+        handle: Handle<Expression>,
+        base: Handle<Expression>,
+        index: Handle<Expression>,
+        block: &mut Block,
+    ) -> Result<Option<Handle<Expression>>, String> {
+        let index = mapped(rebuild, index)?;
+        if !self.is_constant(&rebuild.out.expressions, index) {
+            return Ok(None);
+        }
+        let Some(flat) = self.flatten(&rebuild.out.expressions, index) else {
+            return Ok(None);
+        };
+        let value = match *flat.values.as_slice() {
+            [Literal::I32(value)] => i64::from(value),
+            [Literal::U32(value)] => i64::from(value),
+            [Literal::I64(value)] => value,
+            [Literal::U64(value)] => i64::try_from(value).unwrap_or(i64::MAX),
+            _ => return Ok(None),
+        };
+        let Some(inner) = self.type_inner(rebuild.source, base)? else {
+            return Ok(None);
+        };
+        let types = &self.module.types;
+        let target = match inner {
+            TypeInner::Pointer { base, .. } => match types.get_handle(base) {
+                Ok(ty) => ty.inner.clone(),
+                Err(_) => return Ok(None),
+            },
+            TypeInner::ValuePointer {
+                size: Some(size),
+                scalar,
+                ..
+            } => TypeInner::Vector { size, scalar },
+            other => other,
+        };
+        let length = match target {
+            TypeInner::Vector { size, .. } => size as i64,
+            TypeInner::Matrix { columns, .. } => columns as i64,
+            TypeInner::Array {
+                size: ArraySize::Constant(size),
+                ..
+            } => i64::from(size.get()),
+            _ => return Ok(None),
+        };
+        if value < 0 || value >= length {
+            return Ok(None);
+        }
+        let Ok(index) = u32::try_from(value) else {
+            return Ok(None);
+        };
+        let base = mapped(rebuild, base)?;
+        let span = rebuild.span(handle);
+        Ok(Some(rebuild.emit(
+            Expression::AccessIndex { base, index },
+            span,
+            block,
+        )))
     }
 
     fn zero_count(
