@@ -1,0 +1,22 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) buffer Inputs { uint seeds[64]; };
+layout(std430, set = 0, binding = 1) buffer Results { uint results[64]; };
+
+const float weights[5] = float[](0.0625, 0.25, 0.375, 0.25, 0.0625);
+
+void main() {
+  uint id = gl_LocalInvocationIndex;
+  uint s = seeds[id] * 2654435761u;
+  float v[12];
+  for (int i = 0; i < 12; i++) v[i] = float((s >> (2 * i)) & 7u);
+  float o[8];
+  for (int i = 0; i < 8; i++) {
+    float acc = 0.0;
+    for (int k = 0; k < 5; k++) acc += v[i + k] * weights[k];
+    o[i] = acc;
+  }
+  float total = 0.0;
+  for (int i = 0; i < 8; i++) total += o[i] * 16.0 * float(i + 1);
+  results[id] = uint(total);
+}
