@@ -1,5 +1,6 @@
 use crate::exec::batch::{self, Ending, Job, JobError, JobResult, Trace};
 use crate::exec::events::{self, ResetHistory};
+use crate::exec::group;
 use crate::exec::plan::Plan;
 use crate::exec::remote::Watched;
 use crate::exec::{Executor, Outputs};
@@ -341,8 +342,60 @@ impl<'a> Watch<'a> {
     }
 
     pub fn run(&mut self, jobs: &[Job], alone: bool) -> Vec<Ran> {
+        if alone {
+            return self.run_each(jobs, alone);
+        }
+        let plan = group::plan(
+            self.executor.work_dir(),
+            jobs,
+            self.executor.workers(),
+            self.executor.timeout(),
+        );
+        let batches: Vec<Job> = plan
+            .batches
+            .iter()
+            .map(|(batch, _)| batch.clone())
+            .collect();
+        let mut out: Vec<Option<Ran>> = vec![None; jobs.len()];
+        for ((batch, members), ran) in plan.batches.iter().zip(self.run_each(&batches, false)) {
+            let Ok(raw) = &ran.result else {
+                continue;
+            };
+            if !ran.resets.is_empty() || ran.crash_module.is_some() {
+                continue;
+            }
+            for (index, settled) in members.iter().zip(group::settle(batch, raw)) {
+                if let (Some(Ok(outputs)), Some(slot)) = (settled, out.get_mut(*index)) {
+                    *slot = Some(Ran {
+                        result: Ok(outputs),
+                        trace: ran.trace.clone(),
+                        resets: Vec::new(),
+                        crash_module: None,
+                    });
+                }
+            }
+        }
+        let rest: Vec<usize> = out
+            .iter()
+            .enumerate()
+            .filter(|(_, ran)| ran.is_none())
+            .map(|(index, _)| index)
+            .collect();
+        let again: Vec<Job> = rest.iter().filter_map(|&i| jobs.get(i).cloned()).collect();
+        for (index, ran) in rest.iter().zip(self.run_each(&again, false)) {
+            if let Some(slot) = out.get_mut(*index) {
+                *slot = Some(ran);
+            }
+        }
+        out.into_iter()
+            .map(|ran| ran.unwrap_or_else(|| Ran::not_run(JobError::missing("batch").to_string())))
+            .collect()
+    }
+
+    fn run_each(&mut self, jobs: &[Job], alone: bool) -> Vec<Ran> {
         let mut out = Vec::with_capacity(jobs.len());
-        for range in batch::chunks(jobs.len(), events::WATCHED_BATCH) {
+        let workers = if alone { 1 } else { self.executor.workers() };
+        for range in batch::chunks(jobs.len(), events::WATCHED_BATCH * workers) {
             let slice = jobs.get(range).unwrap_or_default();
             if let Some(why) = &self.stopped {
                 out.extend(

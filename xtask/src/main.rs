@@ -134,7 +134,8 @@ commands:
                       in target/xtask/opt-quality/modules
       --glslang-dir DIR   glslang checkout whose Test/ and gtests/ are used
       --filter TEXT       only shaders whose name contains TEXT (or one of the comma-separated TEXTs)
-      --timeout SECS      per-process timeout (default: 120)
+      --timeout SECS      per-process timeout (default: 120); an Amber run of --exec has at most
+                          30 seconds (a synthetic shader 120), a timed run twice that
       --exec              also run every shader the exec planner can execute on the Vulkan
                           targets (local and remote, as for `test`) as rglsl, rglsl -O,
                           spirv-opt -O(rglsl) and glslang -O with Amber's --pipeline-stats:
@@ -231,7 +232,9 @@ environment:
                                    skipped with a warning); a target is named after its GPU vendor
   RGLSL_EXEC_REMOTE_DIR            work directory on each machine (default C:/rglsl-exec); one
                                    value, or comma-separated ALIAS=DIR entries and a default
-  RGLSL_EXEC_REMOTE_JOBS           parallel Amber processes per machine (default 4); same syntax
+  RGLSL_EXEC_REMOTE_JOBS           parallel Amber processes per machine (default 4 on an AMD GPU, 1
+                                   on any other; an NVIDIA GPU always runs one at a time); same
+                                   syntax
 ";
 
 fn main() {

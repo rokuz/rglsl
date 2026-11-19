@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 
 TRANSIENT = (
@@ -15,7 +16,11 @@ TRANSIENT = (
 )
 ATTEMPTS = 3
 RECOVERY_SECONDS = 15
+SETTLE_SECONDS = 3
+EVENT_SLACK_MS = 3000
 TAIL_LINES = 20
+BATCH_DUMP = "{script}.batch.dump.txt"
+RECOVERY = threading.Lock()
 
 
 def first_line(*texts):
@@ -56,6 +61,23 @@ def classify(code, out, err):
     return "exit", "amber exited with %d: %s" % (code, first_line(err, out))
 
 
+def script_failures(err, script, timed):
+    def failed(name):
+        prefix = name + ": "
+        for line in err.splitlines():
+            line = line.strip()
+            if line.startswith(prefix):
+                return line[:300]
+        return None
+
+    if not timed:
+        return None
+    check, timing = failed(script), failed(timed)
+    if check is None and timing is None:
+        return None
+    return check, timing
+
+
 def run_amber(command, cwd, timeout):
     try:
         process = subprocess.Popen(
@@ -68,24 +90,63 @@ def run_amber(command, cwd, timeout):
             errors="replace",
         )
     except OSError as error:
-        return ("error", "starting amber: %s" % error), "", "", None, ""
+        return ("error", "starting amber: %s" % error), "", "", "", None, ""
     try:
         out, err = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_tree(process)
         out, err = process.communicate()
-        return ("timeout", "amber timed out"), "", last_lines(err or "", out or ""), process.pid, "timeout"
+        return ("timeout", "amber timed out"), "", "", last_lines(err or "", out or ""), process.pid, "timeout"
     code = process.returncode
-    return classify(code, out, err), out, last_lines(err, out), process.pid, str(code)
+    return classify(code, out, err), out, err, last_lines(err, out), process.pid, str(code)
 
 
 def transient(status):
     return status[0] in ("exit", "crash") and any(word in status[1] for word in TRANSIENT)
 
 
+def reset_since(query, start_ms):
+    if not query:
+        return False
+    window = max(0, now_ms() - start_ms + EVENT_SLACK_MS)
+    xpath = "*[System[(%s) and TimeCreated[timediff(@SystemTime) <= %d]]]" % (query, window)
+    try:
+        found = subprocess.run(
+            ["wevtutil", "qe", "System", "/q:" + xpath, "/c:1", "/f:text"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            errors="replace",
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return bool(found.stdout.strip())
+
+
+def recover(query, start_ms):
+    time.sleep(SETTLE_SECONDS)
+    if not reset_since(query, start_ms):
+        return False
+    with RECOVERY:
+        time.sleep(RECOVERY_SECONDS)
+    return True
+
+
+def write(path, text):
+    with open(path, "w", encoding="utf-8") as file:
+        file.write(text)
+
+
 def run_job(settings, job):
-    amber, version, timeout, base, results, device, attempts = settings
-    index, directory, script, dumps, layer, capture = job
+    amber, version, timeout, base, results, device, attempts, query = settings
+    index, directory, script, dumps, layer, capture, timed, job_timeout, recipes = job
+    if job_timeout:
+        timeout = float(job_timeout)
+    if recipes:
+        run_batch(settings, job, timeout)
+        return
     cwd = os.path.join(base, directory)
     dump = os.path.join(cwd, "batch-%s.dump.txt" % index)
     statistics = "%s.stats.json" % script
@@ -102,22 +163,37 @@ def run_job(settings, job):
         command += ["--pipeline-stats", statistics]
     if "timing" in capture:
         command.append("--log-execution-timing")
+    if timed:
+        command.append(timed)
     command.append(script)
     start = now_ms()
+    recovered = False
     for attempt in range(attempts):
-        status, out, tail, pid, code = run_amber(command, cwd, timeout)
+        with RECOVERY:
+            pass
+        status, out, err, tail, pid, code = run_amber(command, cwd, timeout)
+        failures = script_failures(err, script, timed) if code == "1" else None
+        if failures is not None:
+            status = ("ok", "")
         if not transient(status) or attempt + 1 == attempts:
             break
         time.sleep(2.0 * (attempt + 1))
     end = now_ms()
     if status[0] == "timeout" or transient(status):
-        time.sleep(RECOVERY_SECONDS)
-    with open(os.path.join(results, "%s.run" % index), "w", encoding="utf-8") as file:
-        file.write("start %d\nend %d\npid %s\ncode %s\n" % (start, end, "" if pid is None else pid, code))
-    if status[0] != "ok" and tail:
-        with open(os.path.join(results, "%s.tail" % index), "w", encoding="utf-8") as file:
-            file.write(tail)
-    if status[0] == "ok" and dumps:
+        recovered = recover(query, start)
+    write(
+        os.path.join(results, "%s.run" % index),
+        "start %d\nend %d\npid %s\ncode %s\nrecovered %d\n"
+        % (start, end, "" if pid is None else pid, code, 1 if recovered else 0),
+    )
+    if (status[0] != "ok" or failures is not None) and tail:
+        write(os.path.join(results, "%s.tail" % index), tail)
+    if failures is not None:
+        for name, failure in zip(("check-error", "timed-error"), failures):
+            if failure is not None:
+                write(os.path.join(results, "%s.%s" % (index, name)), failure)
+    check_ok = failures is None or failures[0] is None
+    if status[0] == "ok" and dumps and check_ok:
         try:
             shutil.copyfile(dump, os.path.join(results, "%s.dump" % index))
         except OSError as error:
@@ -128,10 +204,62 @@ def run_job(settings, job):
         except OSError:
             pass
     if status[0] == "ok" and "timing" in capture:
-        with open(os.path.join(results, "%s.stdout" % index), "w", encoding="utf-8") as file:
-            file.write(out)
-    with open(os.path.join(results, "%s.status" % index), "w", encoding="utf-8") as file:
-        file.write("%s\n%s\n" % status)
+        write(os.path.join(results, "%s.stdout" % index), out)
+    write(os.path.join(results, "%s.status" % index), "%s\n%s\n" % status)
+
+
+def run_batch(settings, job, timeout):
+    amber, version, _, base, results, device, _, query = settings
+    index, directory, script, dumps, layer, capture, _, _, recipes = job
+    cwd = os.path.join(base, directory)
+    statistics = "%s.stats.json" % script
+    command = [amber, "-d", "-v", version, "-q"]
+    if device:
+        command += ["--device-name", device]
+    if layer == "tensor":
+        command += ["--layer-library", os.path.join(os.path.dirname(amber), "VkLayer_Tensor.dll")]
+    if dumps:
+        command += ["-b", BATCH_DUMP]
+        for name in dumps:
+            command += ["-B", name]
+    if "statistics" in capture:
+        command += ["--pipeline-stats", statistics]
+    if "timing" in capture:
+        command.append("--log-execution-timing")
+    command += recipes
+    with RECOVERY:
+        pass
+    start = now_ms()
+    status, out, err, tail, pid, code = run_amber(command, cwd, timeout)
+    end = now_ms()
+    recovered = False
+    if status[0] == "timeout" or transient(status):
+        recovered = recover(query, start)
+    write(
+        os.path.join(results, "%s.run" % index),
+        "start %d\nend %d\npid %s\ncode %s\nrecovered %d\n"
+        % (start, end, "" if pid is None else pid, code, 1 if recovered else 0),
+    )
+    if status[0] not in ("ok", "exit"):
+        if tail:
+            write(os.path.join(results, "%s.tail" % index), tail)
+        write(os.path.join(results, "%s.status" % index), "%s\n%s\n" % status)
+        return
+    write(os.path.join(results, "%s.stderr" % index), err)
+    write(os.path.join(results, "%s.stdout" % index), out)
+    try:
+        shutil.copyfile(os.path.join(cwd, statistics), os.path.join(results, "%s.stats.json" % index))
+    except OSError:
+        pass
+    for position, recipe in enumerate(recipes):
+        try:
+            shutil.copyfile(
+                os.path.join(cwd, BATCH_DUMP.replace("{script}", recipe)),
+                os.path.join(results, "%s.dump.%d" % (index, position)),
+            )
+        except OSError:
+            pass
+    write(os.path.join(results, "%s.status" % index), "batch\n%s\n" % code)
 
 
 def read_manifest(path):
@@ -139,13 +267,23 @@ def read_manifest(path):
     with open(path, encoding="utf-8") as file:
         for line in file:
             fields = line.rstrip("\n").split("\t")
-            if len(fields) == 5:
+            while 5 <= len(fields) < 9:
                 fields.append("")
-            if len(fields) != 6:
+            if len(fields) != 9:
                 continue
-            index, directory, script, dumps, layer, capture = fields
+            index, directory, script, dumps, layer, capture, timed, timeout, recipes = fields
             jobs.append(
-                (index, directory, script, [d for d in dumps.split(",") if d], layer, capture.split(","))
+                (
+                    index,
+                    directory,
+                    script,
+                    [d for d in dumps.split(",") if d],
+                    layer,
+                    capture.split(","),
+                    timed,
+                    timeout,
+                    [r for r in recipes.split("|") if r],
+                )
             )
     return jobs
 
@@ -161,7 +299,12 @@ def main():
     results = os.path.join(workdir, "results")
     os.makedirs(results, exist_ok=True)
     jobs = read_manifest(os.path.join(workdir, manifest))
-    settings = (amber, version, float(timeout), workdir, results, device, attempts)
+    query_file = os.path.join(os.path.dirname(os.path.join(workdir, manifest)), "resets.xpath")
+    query = ""
+    if os.path.exists(query_file):
+        with open(query_file, encoding="utf-8") as file:
+            query = file.read().strip()
+    settings = (amber, version, float(timeout), workdir, results, device, attempts, query)
     start = now_ms()
     with concurrent.futures.ThreadPoolExecutor(max(1, int(workers))) as pool:
         list(pool.map(lambda job: run_job(settings, job), jobs))

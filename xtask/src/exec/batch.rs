@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 use super::amber::{Amber, parse_dump};
 
@@ -70,6 +71,8 @@ impl Capture {
 
 pub const STATISTICS: &str = "#pipeline-statistics";
 pub const TIMING: &str = "#execution-timing";
+pub const CHECK_ERROR: &str = "#check-error";
+pub const TIMED_ERROR: &str = "#timed-error";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job {
@@ -78,11 +81,63 @@ pub struct Job {
     pub dumps: Vec<String>,
     pub tensor_layer: bool,
     pub capture: Capture,
+    pub timed: Option<String>,
+    pub timeout: Option<Duration>,
+    pub members: Vec<Self>,
 }
 
 impl Job {
     pub fn statistics_file(&self) -> String {
         format!("{}.stats.json", self.script)
+    }
+
+    pub fn scripts(&self) -> Vec<String> {
+        if !self.members.is_empty() {
+            return super::group::recipes(self);
+        }
+        self.timed
+            .iter()
+            .chain(std::iter::once(&self.script))
+            .cloned()
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Failures {
+    pub check: Option<String>,
+    pub timed: Option<String>,
+}
+
+pub fn script_failures(stderr: &str, job: &Job) -> Option<Failures> {
+    let timed = job.timed.as_deref()?;
+    let failed = |script: &str| {
+        let prefix = format!("{script}: ");
+        stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&prefix))
+            .map(|line| line.chars().take(300).collect::<String>())
+    };
+    let failures = Failures {
+        check: failed(&job.script),
+        timed: failed(timed),
+    };
+    (failures.check.is_some() || failures.timed.is_some()).then_some(failures)
+}
+
+pub fn add_failures(outputs: &mut Outputs, failures: &Failures) {
+    if let Some(error) = &failures.check {
+        outputs.insert(
+            CHECK_ERROR.to_string(),
+            format!("amber exited with 1: {error}").into_bytes(),
+        );
+    }
+    if let Some(error) = &failures.timed {
+        outputs.insert(
+            TIMED_ERROR.to_string(),
+            format!("amber exited with 1: {error}").into_bytes(),
+        );
     }
 }
 
@@ -181,13 +236,6 @@ pub fn retry_transient(
     }
 }
 
-pub fn run_local(amber: &Amber, jobs: &[Job], workers: usize) -> Vec<JobResult> {
-    run_local_traced(amber, jobs, workers, ATTEMPTS)
-        .into_iter()
-        .map(|traced| traced.result)
-        .collect()
-}
-
 pub fn run_local_traced(
     amber: &Amber,
     jobs: &[Job],
@@ -250,6 +298,14 @@ pub fn manifest(root: &Path, jobs: &[Job]) -> Result<String, String> {
             job.dumps.join(","),
             if job.tensor_layer { "tensor" } else { "" }.to_string(),
             job.capture.field(),
+            job.timed.clone().unwrap_or_default(),
+            job.timeout
+                .map_or_else(String::new, |timeout| timeout.as_secs().max(1).to_string()),
+            if job.members.is_empty() {
+                String::new()
+            } else {
+                job.scripts().join("|")
+            },
         ];
         if fields.iter().any(|f| f.contains(['\t', '\n'])) {
             return Err(format!("job {index} has a tab or newline in a field"));
@@ -262,6 +318,13 @@ pub fn manifest(root: &Path, jobs: &[Job]) -> Result<String, String> {
 pub fn dirs(root: &Path, jobs: &[Job]) -> Vec<String> {
     let mut dirs: Vec<String> = jobs
         .iter()
+        .flat_map(|job| {
+            if job.members.is_empty() {
+                vec![job]
+            } else {
+                job.members.iter().collect()
+            }
+        })
         .filter_map(|job| job.dir.strip_prefix(root).ok())
         .filter_map(|dir| dir.to_str().map(str::to_string))
         .collect();
@@ -270,11 +333,17 @@ pub fn dirs(root: &Path, jobs: &[Job]) -> Vec<String> {
     dirs
 }
 
-pub fn parse_result(status: &str, dump: Option<&str>, wants_dump: bool) -> JobResult {
+pub fn parse_result(
+    status: &str,
+    dump: Option<&str>,
+    wants_dump: bool,
+    failures: &Failures,
+) -> JobResult {
     let mut lines = status.lines();
     let kind = lines.next().unwrap_or_default().trim();
     let message = lines.next().unwrap_or_default().trim().to_string();
     match kind {
+        "ok" if failures.check.is_some() => Ok(Outputs::new()),
         "ok" => match (dump, wants_dump) {
             (_, false) => Ok(Outputs::new()),
             (Some(text), true) => parse_dump(text).map_err(JobError::Failed),
@@ -305,6 +374,9 @@ mod tests {
             dumps: dumps.iter().map(|d| (*d).to_string()).collect(),
             tensor_layer: false,
             capture: Capture::NONE,
+            timed: None,
+            timeout: None,
+            members: Vec::new(),
         }
     }
 
@@ -372,7 +444,9 @@ mod tests {
 
     #[test]
     fn writes_a_manifest_relative_to_the_root() -> anyhow::Result<()> {
-        let mut timed = job("/w/a.comp", "rglsl.timed.amber", &[]);
+        let mut timed = job("/w/a.comp", "rglsl.amber", &[]);
+        timed.timed = Some("rglsl.timed.amber".into());
+        timed.timeout = Some(Duration::from_millis(75_400));
         timed.capture = Capture {
             statistics: true,
             timing: true,
@@ -385,7 +459,7 @@ mod tests {
         let text = manifest(Path::new("/w"), &jobs).map_err(anyhow::Error::msg)?;
         assert_eq!(
             text,
-            "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\t\t\n1\tprobes/x\tp.amber\t\t\t\n2\ta.comp\trglsl.timed.amber\t\t\tstatistics,timing\n"
+            "0\ta.comp\tglslang.amber\tdump:0:0,dump:0:1\t\t\t\t\t\n1\tprobes/x\tp.amber\t\t\t\t\t\t\n2\ta.comp\trglsl.amber\t\t\tstatistics,timing\trglsl.timed.amber\t75\t\n"
         );
         assert!(manifest(Path::new("/other"), &jobs).is_err());
         assert_eq!(dirs(Path::new("/w"), &jobs), ["a.comp", "probes/x"]);
@@ -396,28 +470,89 @@ mod tests {
     fn reads_remote_results() -> anyhow::Result<()> {
         let dump = "dump:0:0\n 01 02\n";
         assert_eq!(
-            parse_result("ok\n\n", Some(dump), true).map_err(|e| anyhow::anyhow!("{e}"))?["dump:0:0"],
+            parse_result("ok\n\n", Some(dump), true, &Failures::default())
+                .map_err(|e| anyhow::anyhow!("{e}"))?["dump:0:0"],
             [1, 2]
         );
         assert!(
-            parse_result("ok\n\n", None, false)
+            parse_result("ok\n\n", None, false, &Failures::default())
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .is_empty()
         );
         assert_eq!(
-            parse_result("ok\n\n", None, true).err(),
+            parse_result("ok\n\n", None, true, &Failures::default()).err(),
             Some(JobError::Failed("the remote run returned no dump".into()))
         );
         assert_eq!(
-            parse_result("exit\namber exited with 1: bad\n", None, true).err(),
+            parse_result(
+                "exit\namber exited with 1: bad\n",
+                None,
+                true,
+                &Failures::default()
+            )
+            .err(),
             Some(JobError::Failed("amber exited with 1: bad".into()))
         );
         assert_eq!(
-            parse_result("timeout\n", None, true).err(),
+            parse_result("timeout\n", None, true, &Failures::default()).err(),
             Some(JobError::Failed("timeout".into()))
         );
-        assert!(parse_result("", None, true).is_err_and(|error| !error.ran()));
+        assert!(
+            parse_result("", None, true, &Failures::default()).is_err_and(|error| !error.ran())
+        );
         Ok(())
+    }
+
+    #[test]
+    fn tells_which_script_of_a_combined_job_failed() {
+        let mut combined = job("/w/a", "rglsl.amber", &["dump:0:0"]);
+        combined.timed = Some("rglsl.timed.amber".into());
+        assert_eq!(combined.scripts(), ["rglsl.timed.amber", "rglsl.amber"]);
+        assert_eq!(
+            script_failures("rglsl.timed.amber: Line 9: timestamps missing\n", &combined),
+            Some(Failures {
+                check: None,
+                timed: Some("rglsl.timed.amber: Line 9: timestamps missing".into()),
+            })
+        );
+        assert_eq!(
+            script_failures(
+                "warning\nrglsl.timed.amber: lost\nrglsl.amber: Line 3: lost\n",
+                &combined
+            ),
+            Some(Failures {
+                check: Some("rglsl.amber: Line 3: lost".into()),
+                timed: Some("rglsl.timed.amber: lost".into()),
+            })
+        );
+        assert_eq!(
+            script_failures("Unable to create vulkan device\n", &combined),
+            None
+        );
+        let plain = job("/w/a", "rglsl.amber", &[]);
+        assert_eq!(plain.scripts(), ["rglsl.amber"]);
+        assert_eq!(script_failures("rglsl.amber: bad\n", &plain), None);
+        let mut outputs = Outputs::new();
+        add_failures(
+            &mut outputs,
+            &Failures {
+                check: None,
+                timed: Some("rglsl.timed.amber: bad".into()),
+            },
+        );
+        assert_eq!(
+            outputs.get(TIMED_ERROR).map(Vec::as_slice),
+            Some(&b"amber exited with 1: rglsl.timed.amber: bad"[..])
+        );
+        assert!(!outputs.contains_key(CHECK_ERROR));
+        let failed = Failures {
+            check: Some("x".into()),
+            timed: None,
+        };
+        assert_eq!(
+            parse_result("ok\n\n", None, true, &failed),
+            Ok(Outputs::new())
+        );
     }
 
     #[test]

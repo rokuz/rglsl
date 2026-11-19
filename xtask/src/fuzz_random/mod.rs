@@ -1,6 +1,6 @@
 pub mod classify;
 mod generate;
-mod quarantine;
+pub mod quarantine;
 mod report;
 
 use std::collections::{BTreeMap, BTreeSet};

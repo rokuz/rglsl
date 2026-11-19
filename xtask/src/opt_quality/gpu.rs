@@ -6,12 +6,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use super::{Outcome, UnitResult, Variant};
+use super::{Outcome, Set, UnitResult, Variant};
 use crate::bench::stats;
-use crate::exec::batch::{Capture, Job, JobError, JobResult, Outputs, STATISTICS, TIMING};
+use crate::exec::batch::{
+    CHECK_ERROR, Capture, Job, JobError, JobResult, Outputs, STATISTICS, TIMED_ERROR, TIMING,
+};
 use crate::exec::harness::ShaderKind;
 use crate::exec::plan::Plan;
-use crate::exec::statistics::Report;
+use crate::exec::statistics::{self, Report};
 use crate::exec::{self, Executor, TargetSpec, amber, reflect};
 use crate::oracles;
 
@@ -23,6 +25,7 @@ pub const VARIANTS: [Variant; 4] = [
 ];
 const CHECKED: [Variant; 3] = [Variant::RglslO, Variant::SpirvOptO, Variant::GlslangO];
 const PIPELINE: &str = "main";
+const SYNTHETIC_TIMEOUT: Duration = Duration::from_secs(120);
 const LISTED: usize = 60;
 
 const fn tag(variant: Variant) -> &'static str {
@@ -187,20 +190,24 @@ fn stage_unit(
             statistics: capture,
             timing: false,
         };
+        check.timeout = Some(if result.unit.set == Set::Synthetic {
+            SYNTHETIC_TIMEOUT
+        } else {
+            exec::JOB_TIMEOUT
+        });
         let script = fs::read_to_string(dir.join(&check.script)).map_err(|e| e.to_string())?;
         let name = format!("{}.timed.amber", tag(variant));
         fs::write(dir.join(&name), timed_script(&script, runs)).map_err(|e| e.to_string())?;
         timed.push((
             variant,
             Job {
-                dir: dir.clone(),
-                script: name,
-                dumps: Vec::new(),
-                tensor_layer: check.tensor_layer,
+                timed: Some(name),
                 capture: Capture {
                     statistics: capture,
                     timing: true,
                 },
+                timeout: check.timeout.map(|timeout| timeout * 2),
+                ..check.clone()
             },
         ));
         checks.push((variant, check));
@@ -236,6 +243,123 @@ fn report_of(outputs: &Outputs) -> Option<Report> {
     outputs
         .get(STATISTICS)
         .and_then(|bytes| Report::parse(bytes).ok())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Ran {
+    check: JobResult,
+    timed: JobResult,
+}
+
+fn split(combined: &Job, result: JobResult) -> (Option<JobResult>, Option<JobResult>) {
+    let Ok(outputs) = result else {
+        return (None, None);
+    };
+    let error = |key: &str| {
+        outputs
+            .get(key)
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+    };
+    let statistics = |script: &str| {
+        outputs
+            .get(STATISTICS)
+            .and_then(|bytes| statistics::of_script(bytes, script).ok())
+    };
+    let check = match error(CHECK_ERROR) {
+        Some(_) => None,
+        None => {
+            let mut check: Outputs = outputs
+                .iter()
+                .filter(|(key, _)| !key.starts_with('#'))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            if let Some(bytes) = statistics(&combined.script) {
+                check.insert(STATISTICS.to_string(), bytes);
+            }
+            Some(Ok(check))
+        }
+    };
+    let timed = match error(TIMED_ERROR) {
+        Some(message) if crate::exec::batch::transient(&message) => None,
+        Some(message) => Some(Err(JobError::Failed(message))),
+        None => {
+            let mut timed = Outputs::new();
+            if let Some(stdout) = outputs.get(TIMING) {
+                timed.insert(TIMING.to_string(), stdout.clone());
+            }
+            if let Some(bytes) = combined.timed.as_deref().and_then(statistics) {
+                timed.insert(STATISTICS.to_string(), bytes);
+            }
+            Some(Ok(timed))
+        }
+    };
+    (check, timed)
+}
+
+fn timed_alone(combined: &Job) -> Option<Job> {
+    let script = combined.timed.clone()?;
+    Some(Job {
+        script,
+        dumps: Vec::new(),
+        timed: None,
+        ..combined.clone()
+    })
+}
+
+fn check_alone(combined: &Job) -> Job {
+    Job {
+        timed: None,
+        timeout: combined.timeout.map(|timeout| timeout / 2),
+        capture: Capture {
+            timing: false,
+            ..combined.capture
+        },
+        ..combined.clone()
+    }
+}
+
+fn run_combined(executor: &Executor, combined: &[Job]) -> Vec<Ran> {
+    let mut split: Vec<(Option<JobResult>, Option<JobResult>)> = if executor.workers() == 1 {
+        combined
+            .iter()
+            .zip(executor.run_serial(combined))
+            .map(|(job, result)| self::split(job, result))
+            .collect()
+    } else {
+        vec![(None, None); combined.len()]
+    };
+    let missing = || Err(JobError::missing("batch"));
+    let checks: Vec<(usize, Job)> = split
+        .iter()
+        .enumerate()
+        .filter(|(_, (check, _))| check.is_none())
+        .filter_map(|(index, _)| Some((index, check_alone(combined.get(index)?))))
+        .collect();
+    let jobs: Vec<Job> = checks.iter().map(|(_, job)| job.clone()).collect();
+    for ((index, _), result) in checks.iter().zip(executor.run_jobs(&jobs)) {
+        if let Some((check, _)) = split.get_mut(*index) {
+            *check = Some(result);
+        }
+    }
+    let timed: Vec<(usize, Job)> = split
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, timed))| timed.is_none())
+        .filter_map(|(index, _)| Some((index, timed_alone(combined.get(index)?)?)))
+        .collect();
+    let jobs: Vec<Job> = timed.iter().map(|(_, job)| job.clone()).collect();
+    for ((index, _), result) in timed.iter().zip(executor.run_serial(&jobs)) {
+        if let Some((_, slot)) = split.get_mut(*index) {
+            *slot = Some(result);
+        }
+    }
+    split
+        .into_iter()
+        .map(|(check, timed)| Ran {
+            check: check.unwrap_or_else(missing),
+            timed: timed.unwrap_or_else(missing),
+        })
+        .collect()
 }
 
 fn measure(stage: ShaderKind, check: &JobResult, timed: Option<&JobResult>) -> Measured {
@@ -312,13 +436,13 @@ fn judge(
     }
 }
 
-fn run_target(executor: &Executor, results: &[UnitResult], runs: usize) -> TargetRun {
+fn run_target(
+    executor: &Executor,
+    results: &[UnitResult],
+    runs: usize,
+    probe: &Result<Outputs, String>,
+) -> TargetRun {
     let label = executor.target.label().to_string();
-    let wanted = Capture {
-        statistics: true,
-        timing: true,
-    };
-    let probe = executor.probe_capture(wanted);
     let (statistics, report) = match &probe {
         Ok(outputs) => (None, report_of(outputs).unwrap_or_default()),
         Err(error) => (Some(error.clone()), Report::default()),
@@ -338,48 +462,38 @@ fn run_target(executor: &Executor, results: &[UnitResult], runs: usize) -> Targe
     });
     let ready: Vec<&Staged> = staged.iter().filter_map(|s| s.as_ref().ok()).collect();
     eprintln!(
-        "[xtask] {label}: {} of {} shaders staged ({:.0}s); running the checks",
+        "[xtask] {label}: {} of {} shaders staged ({:.0}s); running the checks and timed runs",
         ready.len(),
         results.len(),
         started.elapsed().as_secs_f64()
     );
-    let checks: Vec<Job> = ready
-        .iter()
-        .flat_map(|s| s.checks.iter().map(|(_, job)| job.clone()))
-        .collect();
-    let mut check_results = executor.run_jobs(&checks).into_iter();
-    eprintln!(
-        "[xtask] {label}: checks done ({:.0}s); timed runs, one at a time",
-        started.elapsed().as_secs_f64()
-    );
-    let timed: Vec<Job> = ready
+    let combined: Vec<Job> = ready
         .iter()
         .flat_map(|s| s.timed.iter().map(|(_, job)| job.clone()))
         .collect();
-    let mut timed_results = executor.confirm_jobs(&timed).into_iter();
+    let mut ran = run_combined(executor, &combined).into_iter();
+    eprintln!(
+        "[xtask] {label}: checks and timed runs done ({:.0}s)",
+        started.elapsed().as_secs_f64()
+    );
     let mut first: Vec<BTreeMap<Variant, JobResult>> = Vec::with_capacity(ready.len());
     let mut timing: Vec<BTreeMap<Variant, JobResult>> = Vec::with_capacity(ready.len());
     for staged in &ready {
-        let mut by_variant = BTreeMap::new();
-        for (variant, _) in &staged.checks {
-            by_variant.insert(
-                *variant,
-                check_results
-                    .next()
-                    .unwrap_or_else(|| Err(JobError::missing("batch"))),
-            );
-        }
-        first.push(by_variant);
-        let mut by_variant = BTreeMap::new();
+        let mut checks = BTreeMap::new();
+        let mut timed = BTreeMap::new();
         for (variant, _) in &staged.timed {
-            by_variant.insert(
-                *variant,
-                timed_results
-                    .next()
-                    .unwrap_or_else(|| Err(JobError::missing("batch"))),
-            );
+            let Ran {
+                check,
+                timed: timing,
+            } = ran.next().unwrap_or_else(|| Ran {
+                check: Err(JobError::missing("batch")),
+                timed: Err(JobError::missing("batch")),
+            });
+            checks.insert(*variant, check);
+            timed.insert(*variant, timing);
         }
-        timing.push(by_variant);
+        first.push(checks);
+        timing.push(timed);
     }
     let mut again_jobs = Vec::new();
     let mut again_slots = Vec::new();
@@ -489,11 +603,25 @@ pub fn run(
 ) -> Result<()> {
     let glslang = oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?;
     let work = work_dir(root);
-    let executors = exec::open_executors(specs, root, &glslang.path, &work, timeout)?;
+    let executors = exec::open_executors(
+        specs,
+        root,
+        &glslang.path,
+        &work,
+        timeout.min(exec::JOB_TIMEOUT),
+    )?;
+    let wanted = Capture {
+        statistics: true,
+        timing: true,
+    };
+    let probes = exec::parallel_map(&executors, |executor| executor.probe_capture(wanted))
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
     let targets: Vec<TargetRun> = std::thread::scope(|scope| {
         let handles: Vec<_> = executors
             .iter()
-            .map(|executor| scope.spawn(|| run_target(executor, results, runs)))
+            .zip(&probes)
+            .map(|(executor, probe)| scope.spawn(|| run_target(executor, results, runs, probe)))
             .collect();
         handles
             .into_iter()
@@ -561,9 +689,16 @@ fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> Strin
          variant with the plan of rglsl's module: *rglsl*, *rglsl -O*, *spirv-opt -O(rglsl)* and *glslang -O*. A check run \
          (`amber --pipeline-stats`) gives the outputs and the driver's statistics of the tested stage of the \
          pipeline `main` (VK_KHR_pipeline_executable_properties; VK_AMD_shader_info values are prefixed `amd:`); \
-         a timed run repeats every `RUN` {runs} times as `RUN TIMED_EXECUTION` (one Amber process at a time) and \
+         a timed run repeats every `RUN` {runs} times as `RUN TIMED_EXECUTION` and \
          gives the median GPU time and the median `vkCreate*Pipelines` wall time (with the statistics capture \
-         flags when the driver has them). *Equivalence*: the outputs of rglsl -O, spirv-opt -O(rglsl) and glslang -O \
+         flags when the driver has them). Timed runs never share the GPU with another Amber process. On a target \
+         that runs one Amber process at a time, the timed script runs first, on its own buffers, and the check \
+         script after it in the same process and on the same device; a check that fails there is run again in a \
+         process of its own, and a timed run that fails or loses the device is run again alone. On a target that \
+         runs several, the checks run in parallel and the timed runs one at a time after them. Jobs with the \
+         same device requirements share an Amber process, one script after another; \
+         a job whose script fails there, or every job of a process that crashes or times out, is run again in a \
+         process of its own. *Equivalence*: the outputs of rglsl -O, spirv-opt -O(rglsl) and glslang -O \
          against rglsl's module with the comparison of `cargo xtask test`; a difference or a failure is rerun \
          alone with rglsl's module, and rglsl's module is checked to give the same outputs again. A difference \
          of rglsl -O is our bug; of the others, a spirv-opt or driver bug. Ratios are to spirv-opt -O(rglsl): statistics per shader as \
@@ -857,6 +992,99 @@ pub fn work_dir(root: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn job() -> Job {
+        Job {
+            dir: PathBuf::from("/w/a.frag"),
+            script: "rglsl.amber".into(),
+            dumps: vec!["dump:0:0".into()],
+            tensor_layer: false,
+            capture: Capture {
+                statistics: true,
+                timing: true,
+            },
+            timed: Some("rglsl.timed.amber".into()),
+            timeout: None,
+            members: Vec::new(),
+        }
+    }
+
+    const STATISTICS_JSON: &str = r#"{"pipelines": [{"script": "rglsl.timed.amber", "pipeline": "main", "create_time_ms": 2.0}, {"script": "rglsl.amber", "pipeline": "main", "create_time_ms": 1.0}]}"#;
+
+    fn combined(extra: &[(&str, &str)]) -> JobResult {
+        Ok([
+            ("dump:0:0", "x"),
+            (STATISTICS, STATISTICS_JSON),
+            (
+                TIMING,
+                "Execution timing (in script-order):\n    0.5, 0.25\n",
+            ),
+        ]
+        .iter()
+        .chain(extra)
+        .map(|(key, value)| ((*key).to_string(), value.as_bytes().to_vec()))
+        .collect())
+    }
+
+    fn create_times(result: Option<&JobResult>) -> Vec<f64> {
+        result
+            .and_then(|result| result.as_ref().ok())
+            .and_then(report_of)
+            .map(|report| report.create_times(PIPELINE))
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn splits_a_combined_run_into_its_check_and_its_timed_run() -> Result<()> {
+        let job = job();
+        let (check, timed) = split(&job, combined(&[]));
+        let outputs = check
+            .as_ref()
+            .and_then(|check| check.as_ref().ok())
+            .ok_or_else(|| anyhow::anyhow!("no check outputs"))?;
+        assert_eq!(outputs.get("dump:0:0").map(Vec::as_slice), Some(&b"x"[..]));
+        assert!(!outputs.contains_key(TIMING));
+        assert_eq!(create_times(check.as_ref()), [1.0]);
+        assert_eq!(create_times(timed.as_ref()), [2.0]);
+        let times = timed
+            .as_ref()
+            .and_then(|timed| timed.as_ref().ok())
+            .and_then(|timed| timed.get(TIMING))
+            .map(|stdout| amber::parse_timing(&String::from_utf8_lossy(stdout)))
+            .unwrap_or_default();
+        assert_eq!(times, [0.5, 0.25]);
+
+        let (check, timed) = split(&job, combined(&[(CHECK_ERROR, "amber exited with 1: x")]));
+        assert!(check.is_none());
+        assert!(timed.is_some_and(|timed| timed.is_ok()));
+
+        let (check, timed) = split(
+            &job,
+            combined(&[(TIMED_ERROR, "amber exited with 1: slow")]),
+        );
+        assert!(check.is_some_and(|check| check.is_ok()));
+        assert_eq!(
+            timed,
+            Some(Err(JobError::Failed("amber exited with 1: slow".into())))
+        );
+
+        let lost = "amber exited with 1: rglsl.timed.amber: DEVICE_LOST";
+        let (check, timed) = split(&job, combined(&[(TIMED_ERROR, lost)]));
+        assert!(check.is_some());
+        assert!(timed.is_none());
+
+        assert_eq!(
+            split(&job, Err(JobError::Failed("amber timed out".into()))),
+            (None, None)
+        );
+        assert_eq!(check_alone(&job).timed, None);
+        assert!(!check_alone(&job).capture.timing);
+        assert!(check_alone(&job).capture.statistics);
+        let alone = timed_alone(&job).ok_or_else(|| anyhow::anyhow!("no timed job"))?;
+        assert_eq!(alone.script, "rglsl.timed.amber");
+        assert!(alone.dumps.is_empty() && alone.timed.is_none());
+        Ok(())
+    }
 
     #[test]
     fn timed_scripts_repeat_every_run() {

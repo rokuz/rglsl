@@ -6,6 +6,7 @@ pub mod data;
 pub mod drivers;
 pub mod events;
 pub mod glsl;
+pub mod group;
 pub mod harness;
 pub mod known;
 pub mod mesh;
@@ -31,7 +32,7 @@ use anyhow::{Result, anyhow, bail};
 
 use self::amber::{Amber, Device, InterfaceLimits};
 pub use self::batch::Outputs;
-use self::batch::{Capture, Job, JobError, JobResult};
+use self::batch::{CHECK_ERROR, Capture, Job, JobError, JobResult, Traced};
 use self::compare::{Comparison, compare};
 use self::harness::ShaderKind;
 use self::plan::{Inputs, Plan, PlannedTensor, Refusal, ScriptPaths};
@@ -187,8 +188,10 @@ fn refusal(refusal: Refusal) -> Outcome {
     }
 }
 
+pub const JOB_TIMEOUT: Duration = Duration::from_secs(30);
 const DUMP_FILE: &str = "dump.comp.spv";
-const LOCAL_GPU_JOBS: usize = 2;
+const CAPTURE_PROBE_DUMP: &str = "p:0:0";
+const LOCAL_GPU_JOBS: usize = 8;
 const RECOVERY_ROUNDS: usize = 2;
 const RECOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -260,6 +263,78 @@ pub struct Executor {
     support: BTreeMap<Need, Option<String>>,
     pub device: Device,
     pub driver_bugs: drivers::DriverBugs,
+    durations: Mutex<Durations>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Longest {
+    pub jobs: usize,
+    pub max_ms: u64,
+    pub job: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Durations {
+    pub kinds: BTreeMap<String, Longest>,
+}
+
+impl Durations {
+    pub fn record(&mut self, job: &Job, traced: &Traced, timeout: Duration) {
+        let passed = traced
+            .result
+            .as_ref()
+            .is_ok_and(|outputs| !outputs.contains_key(CHECK_ERROR));
+        if !passed || !traced.trace.ran() {
+            return;
+        }
+        let kind = format!(
+            "{} jobs (timeout {}s)",
+            match (
+                job.members.is_empty(),
+                job.timed.is_some(),
+                job.capture.timing
+            ) {
+                (false, _, _) => "batch",
+                (true, true, _) => "combined",
+                (true, false, true) => "timed",
+                (true, false, false) => "plain",
+            },
+            job.timeout.unwrap_or(timeout).as_secs()
+        );
+        let longest = self.kinds.entry(kind).or_default();
+        let ms = traced.trace.end_ms.saturating_sub(traced.trace.start_ms);
+        longest.jobs += 1;
+        if ms >= longest.max_ms {
+            longest.max_ms = ms;
+            let scripts = job.scripts();
+            longest.job = match scripts.as_slice() {
+                [first, _, ..] if !job.members.is_empty() => format!(
+                    "{} and {} more scripts",
+                    job.dir.join(first).display(),
+                    scripts.len() - 1
+                ),
+                _ => job.dir.join(scripts.join(" + ")).display().to_string(),
+            };
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        if self.kinds.is_empty() {
+            return "no passing Amber jobs".into();
+        }
+        self.kinds
+            .iter()
+            .map(|(kind, longest)| {
+                format!(
+                    "{} passing {kind}, the longest {:.1}s ({})",
+                    longest.jobs,
+                    Duration::from_millis(longest.max_ms).as_secs_f64(),
+                    longest.job
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -351,10 +426,12 @@ pub fn open_executors(
     }
     for (executor, spec) in executors.iter().zip(specs) {
         eprintln!(
-            "[xtask] exec target `{}` ({}): {}",
+            "[xtask] exec target `{}` ({}): {}, {} Amber job{} at a time",
             executor.target.label(),
             spec.describe(),
-            executor.describe()
+            executor.describe(),
+            executor.workers(),
+            if executor.workers() == 1 { "" } else { "s" }
         );
         if executor.device.limits.is_none() {
             eprintln!(
@@ -500,6 +577,63 @@ pub fn target_labels(devices: &[(TargetId, Device)]) -> Vec<TargetId> {
         .collect()
 }
 
+fn probe_cache(root: &Path, spec: &TargetSpec) -> PathBuf {
+    root.join("target")
+        .join("xtask")
+        .join("probe-cache")
+        .join(spec.work_name())
+}
+
+fn probe_key(report: &str, needs: &[Need]) -> u64 {
+    let lines: Vec<String> = needs
+        .iter()
+        .map(|need| format!("{}\t{}", need.line(), need.tensor_layer()))
+        .collect();
+    crate::fuzz_random::quarantine::content_hash(report, &lines.join("\n"))
+}
+
+fn read_probe_cache(path: &Path, needs: &[Need]) -> Option<BTreeMap<Need, Option<String>>> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut cached: BTreeMap<&str, Option<String>> = BTreeMap::new();
+    for line in text.lines() {
+        let mut fields = line.splitn(3, '\t');
+        let (Some(name), Some(state)) = (fields.next(), fields.next()) else {
+            return None;
+        };
+        let error = match state {
+            "ok" => None,
+            "missing" => Some(fields.next().unwrap_or_default().to_string()),
+            _ => return None,
+        };
+        cached.insert(name, error);
+    }
+    needs
+        .iter()
+        .map(|need| Some((*need, cached.get(need.line().as_str())?.clone())))
+        .collect()
+}
+
+fn write_probe_cache(path: &Path, support: &BTreeMap<Need, Option<String>>) -> Result<()> {
+    let mut text = String::new();
+    for (need, error) in support {
+        let line = match error {
+            None => format!("{}\tok\n", need.line()),
+            Some(error) => format!(
+                "{}\tmissing\t{}\n",
+                need.line(),
+                error.replace(['\t', '\n', '\r'], " ")
+            ),
+        };
+        text.push_str(&line);
+    }
+    if let Some(dir) = path.parent() {
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, text)?;
+    Ok(())
+}
+
 pub fn amber_tool(root: &Path) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("RGLSL_AMBER") {
         return Some(PathBuf::from(path));
@@ -576,6 +710,10 @@ impl Executor {
                 spec.describe()
             )
         })?;
+        let mut backend = backend;
+        if let Backend::Remote(remote) = &mut backend {
+            remote.jobs = remote::workers(&device.vendor(), remote.requested_jobs);
+        }
         let target = match spec {
             TargetSpec::Local => TargetId::Local,
             TargetSpec::Remote(_) => TargetId::Remote(device.vendor()),
@@ -603,31 +741,55 @@ impl Executor {
             support: BTreeMap::new(),
             driver_bugs: drivers::DriverBugs::load(root, &device.driver)?,
             device,
+            durations: Mutex::new(Durations::default()),
         };
-        executor.probe(&requirements::probes())?;
+        executor.probe(&requirements::probes(), &probe_cache(root, spec))?;
         Ok(executor)
     }
 
-    pub fn probe_capture(&self, capture: Capture) -> Result<Outputs, String> {
+    pub fn probe_capture(&self, capture: Capture) -> Result<Result<Outputs, String>> {
         let dir = self.work.join("probes").join("capture");
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        fs::copy(&self.dump_shader, dir.join("probe.spv")).map_err(|e| e.to_string())?;
-        fs::write(
-            dir.join("probe.amber"),
-            "#!amber\nSHADER compute probe SPIRV-BIN FILE probe.spv\nPIPELINE compute p\n  ATTACH probe\nEND\nRUN TIMED_EXECUTION p 1 1 1\n",
-        )
-        .map_err(|e| e.to_string())?;
+        fs::create_dir_all(&dir)?;
+        fs::copy(&self.dump_shader, dir.join("probe.spv"))?;
+        let script = |run: &str| {
+            format!(
+                "#!amber\nSHADER compute probe SPIRV-BIN FILE probe.spv\nBUFFER b DATA_TYPE uint32 DATA 7 END\nPIPELINE compute p\n  ATTACH probe\n  BIND BUFFER b AS storage DESCRIPTOR_SET 0 BINDING 0\nEND\n{run} p 1 1 1\n"
+            )
+        };
+        for (name, run) in [
+            ("probe.amber", "RUN"),
+            ("probe.timed.amber", "RUN TIMED_EXECUTION"),
+        ] {
+            fs::write(dir.join(name), script(run))?;
+        }
         let job = Job {
             dir,
             script: "probe.amber".into(),
-            dumps: Vec::new(),
+            dumps: vec![CAPTURE_PROBE_DUMP.into()],
             tensor_layer: false,
             capture,
+            timed: Some("probe.timed.amber".into()),
+            timeout: None,
+            members: Vec::new(),
         };
-        self.confirm_jobs(&[job])
-            .pop()
-            .unwrap_or_else(|| Err(JobError::missing("probe")))
-            .map_err(|error| error.to_string())
+        let outputs = match self.confirm_jobs(&[job]).pop() {
+            Some(Ok(outputs)) => outputs,
+            Some(Err(error)) => return Ok(Err(error.to_string())),
+            None => return Ok(Err(JobError::missing("probe").to_string())),
+        };
+        if let Some(error) = [batch::CHECK_ERROR, batch::TIMED_ERROR]
+            .iter()
+            .find_map(|key| outputs.get(*key))
+        {
+            return Ok(Err(String::from_utf8_lossy(error).into_owned()));
+        }
+        match outputs.get(CAPTURE_PROBE_DUMP).map(Vec::as_slice) {
+            Some([7, 0, 0, 0]) => Ok(Ok(outputs)),
+            _ => bail!(
+                "Amber on the {} target does not dump the buffers of each script of a run on its own: build Amber from the pin (`cargo xtask oracles`, `cargo xtask oracles --remote`)",
+                self.target.label()
+            ),
+        }
     }
 
     pub fn describe(&self) -> String {
@@ -637,7 +799,21 @@ impl Executor {
         )
     }
 
-    fn probe(&mut self, needs: &[Need]) -> Result<()> {
+    pub const fn workers(&self) -> usize {
+        match &self.backend {
+            Backend::Local(_) => LOCAL_GPU_JOBS,
+            Backend::Remote(remote) => remote.jobs,
+        }
+    }
+
+    fn probe(&mut self, needs: &[Need], cache_dir: &Path) -> Result<()> {
+        let key = probe_key(&self.device.report, needs);
+        let cache = cache_dir.join(format!("{key:016x}.tsv"));
+        if let Some(support) = read_probe_cache(&cache, needs) {
+            self.support = support;
+            self.report_probes("cached");
+            return Ok(());
+        }
         let dir = self.work.join("probes");
         let mut jobs = Vec::new();
         for (index, need) in needs.iter().enumerate() {
@@ -657,9 +833,12 @@ impl Executor {
                 dumps: Vec::new(),
                 tensor_layer: need.tensor_layer(),
                 capture: Capture::NONE,
+                timed: None,
+                timeout: None,
+                members: Vec::new(),
             });
         }
-        let results = self.confirm_jobs(&jobs);
+        let results = self.run_jobs(&jobs);
         if let Some(error) = results
             .iter()
             .find_map(|r| r.as_ref().err().filter(|error| !error.ran()))
@@ -679,10 +858,24 @@ impl Executor {
                 self.target.label()
             );
         }
+        let settled = results.iter().all(|result| {
+            result
+                .as_ref()
+                .err()
+                .is_none_or(|error| !error.is_transient())
+        });
         for (need, result) in needs.iter().zip(results) {
             self.support
                 .insert(*need, result.err().map(|error| error.to_string()));
         }
+        if settled {
+            write_probe_cache(&cache, &self.support)?;
+        }
+        self.report_probes("probed");
+        Ok(())
+    }
+
+    fn report_probes(&self, how: &str) {
         let missing: Vec<String> = self
             .support
             .iter()
@@ -693,7 +886,7 @@ impl Executor {
             })
             .collect();
         eprintln!(
-            "[xtask] {} target: {} of {} probed device features and extensions available; missing: {}",
+            "[xtask] {} target: {} of {} {how} device features and extensions available; missing: {}",
             self.target.label(),
             self.support.len() - missing.len(),
             self.support.len(),
@@ -703,7 +896,6 @@ impl Executor {
                 missing.join(", ")
             }
         );
-        Ok(())
     }
 
     fn interface_limits(&self, reflection: &Reflection) -> Result<(), Outcome> {
@@ -789,11 +981,56 @@ impl Executor {
     }
 
     pub fn run_jobs(&self, jobs: &[Job]) -> Vec<JobResult> {
-        self.run_with(jobs, None)
+        self.run_grouped(jobs, None)
+    }
+
+    pub fn run_serial(&self, jobs: &[Job]) -> Vec<JobResult> {
+        self.run_grouped(jobs, Some(1))
     }
 
     pub fn confirm_jobs(&self, jobs: &[Job]) -> Vec<JobResult> {
         self.run_with(jobs, Some(1))
+    }
+
+    fn run_grouped(&self, jobs: &[Job], workers: Option<usize>) -> Vec<JobResult> {
+        let plan = group::plan(
+            &self.work,
+            jobs,
+            workers.unwrap_or_else(|| self.workers()),
+            self.timeout,
+        );
+        let mut results: Vec<Option<JobResult>> = vec![None; jobs.len()];
+        let batches: Vec<Job> = plan
+            .batches
+            .iter()
+            .map(|(batch, _)| batch.clone())
+            .collect();
+        for ((batch, members), ran) in plan.batches.iter().zip(self.run_batch(&batches, workers)) {
+            let Ok(raw) = ran else {
+                continue;
+            };
+            for (index, settled) in members.iter().zip(group::settle(batch, &raw)) {
+                if let Some(slot) = results.get_mut(*index) {
+                    *slot = settled;
+                }
+            }
+        }
+        let rest: Vec<usize> = results
+            .iter()
+            .enumerate()
+            .filter(|(_, result)| result.is_none())
+            .map(|(index, _)| index)
+            .collect();
+        let again: Vec<Job> = rest.iter().filter_map(|&i| jobs.get(i).cloned()).collect();
+        for (index, result) in rest.iter().zip(self.run_with(&again, workers)) {
+            if let Some(slot) = results.get_mut(*index) {
+                *slot = Some(result);
+            }
+        }
+        results
+            .into_iter()
+            .map(|result| result.unwrap_or_else(|| Err(JobError::missing("batch"))))
+            .collect()
     }
 
     fn run_with(&self, jobs: &[Job], workers: Option<usize>) -> Vec<JobResult> {
@@ -813,28 +1050,47 @@ impl Executor {
         if jobs.is_empty() {
             return Vec::new();
         }
-        match &self.backend {
-            Backend::Local(amber) => {
-                batch::run_local(amber, jobs, workers.unwrap_or(LOCAL_GPU_JOBS))
+        let traced = match &self.backend {
+            Backend::Local(amber) => batch::run_local_traced(
+                amber,
+                jobs,
+                workers.unwrap_or(LOCAL_GPU_JOBS),
+                batch::ATTEMPTS,
+            ),
+            Backend::Remote(remote) => {
+                let remote = Remote {
+                    jobs: workers.unwrap_or(remote.jobs),
+                    ..remote.clone()
+                };
+                remote.run_watched(&self.work, jobs, false).results
             }
-            Backend::Remote(remote) => match workers {
-                Some(workers) => {
-                    let single = Remote {
-                        jobs: workers,
-                        ..remote.clone()
-                    };
-                    single.run(&self.work, jobs)
-                }
-                None => remote.run(&self.work, jobs),
-            },
+        };
+        self.record(jobs, &traced);
+        traced.into_iter().map(|traced| traced.result).collect()
+    }
+
+    fn record(&self, jobs: &[Job], traced: &[Traced]) {
+        let mut durations = self
+            .durations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for (job, traced) in jobs.iter().zip(traced) {
+            durations.record(job, traced, self.timeout);
         }
+    }
+
+    pub fn durations(&self) -> Durations {
+        self.durations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn run_watched(&self, jobs: &[Job], alone: bool) -> remote::Watched {
         if jobs.is_empty() {
             return remote::Watched::default();
         }
-        match &self.backend {
+        let watched = match &self.backend {
             Backend::Local(amber) => remote::Watched {
                 results: batch::run_local_traced(
                     amber,
@@ -852,7 +1108,13 @@ impl Executor {
                 };
                 watched.run_watched(&self.work, jobs, true)
             }
-        }
+        };
+        self.record(jobs, &watched.results);
+        watched
+    }
+
+    pub const fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     pub fn work_dir(&self) -> &Path {
@@ -908,6 +1170,9 @@ impl Executor {
             dumps: plan.dumps().into_iter().map(str::to_string).collect(),
             tensor_layer: requirements::tensor_layer(&plan.needs),
             capture: Capture::NONE,
+            timed: None,
+            timeout: None,
+            members: Vec::new(),
         })
     }
 
@@ -1146,6 +1411,9 @@ impl Executor {
                 dumps: Vec::new(),
                 tensor_layer: requirements::tensor_layer(&needs),
                 capture: Capture::NONE,
+                timed: None,
+                timeout: None,
+                members: Vec::new(),
             })
         };
         Ok((stage("rglsl", &ours)?, stage("glslang", &theirs)?))
@@ -1281,6 +1549,16 @@ impl Executor {
             .into_iter()
             .map(|o| o.unwrap_or_else(|| Outcome::skip(SkipReason::ReferenceFails, "no result")))
             .collect()
+    }
+}
+
+impl Drop for Executor {
+    fn drop(&mut self) {
+        eprintln!(
+            "[xtask] {} target: {}",
+            self.target.label(),
+            self.durations().describe()
+        );
     }
 }
 
@@ -1577,6 +1855,34 @@ mod tests {
     }
 
     #[test]
+    fn caches_settled_probe_results() -> anyhow::Result<()> {
+        let needs = [
+            Need::Feature("Features.shaderInt64"),
+            Need::Extension("VK_KHR_shader_float16_int8"),
+        ];
+        let dir = std::env::temp_dir().join(format!("rglsl-probe-cache-{}", std::process::id()));
+        let path = dir.join("a.tsv");
+        let support: BTreeMap<Need, Option<String>> = [
+            (needs[0], None),
+            (needs[1], Some("amber exited with 1:\tmissing".to_string())),
+        ]
+        .into_iter()
+        .collect();
+        write_probe_cache(&path, &support)?;
+        let read = anyhow::Context::context(read_probe_cache(&path, &needs), "no cache")?;
+        assert_eq!(read.get(&needs[0]), Some(&None));
+        assert_eq!(
+            read.get(&needs[1]),
+            Some(&Some("amber exited with 1: missing".to_string()))
+        );
+        assert!(read_probe_cache(&path, &[Need::Feature("Features.other")]).is_none());
+        assert_ne!(probe_key("a", &needs), probe_key("b", &needs));
+        assert_ne!(probe_key("a", &needs), probe_key("a", &needs[..1]));
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
     fn targets_have_stable_labels() {
         assert_eq!(
             TargetId::parse("nvidia"),
@@ -1617,6 +1923,7 @@ mod tests {
             cooperative: cooperative::Support::default(),
             tensors: None,
             limits: None,
+            report: String::new(),
         };
         let remote = || TargetId::Remote(String::new());
         let labels = target_labels(&[
