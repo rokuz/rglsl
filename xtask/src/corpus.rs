@@ -169,7 +169,8 @@ pub enum Kind {
         dir: PathBuf,
         files: Vec<String>,
         expectation: crate::groups::Expectation,
-        reference: Option<String>,
+        references: Vec<String>,
+        script: Option<String>,
     },
     Script {
         dir: PathBuf,

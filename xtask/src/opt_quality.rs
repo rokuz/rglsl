@@ -529,10 +529,13 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
         let Kind::Own {
             ref dir,
             ref expectation,
-            reference: Some(ref reference),
+            ref references,
             ..
         } = case.kind
         else {
+            continue;
+        };
+        let [ref reference] = *references.as_slice() else {
             continue;
         };
         if expectation.accept {

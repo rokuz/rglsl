@@ -1,0 +1,37 @@
+#!amber
+SHADER vertex vert SPIRV-BIN FILE vert.spv
+SHADER fragment frag SPIRV-BIN FILE frag.spv
+SHADER vertex vert_o SPIRV-BIN FILE vert.O.spv
+SHADER fragment frag_o SPIRV-BIN FILE frag.O.spv
+BUFFER positions DATA_TYPE vec2<float> DATA
+  -1.0 -1.0
+   1.0 -1.0
+  -1.0  1.0
+   1.0 -1.0
+   1.0  1.0
+  -1.0  1.0
+END
+BUFFER fb_plain FORMAT R8G8B8A8_UNORM
+BUFFER fb_optimized FORMAT R8G8B8A8_UNORM
+PIPELINE graphics plain
+  ATTACH vert
+  ATTACH frag
+  VERTEX_DATA positions LOCATION 0
+  FRAMEBUFFER_SIZE 16 16
+  BIND BUFFER fb_plain AS color LOCATION 0
+END
+PIPELINE graphics optimized
+  ATTACH vert_o
+  ATTACH frag_o
+  VERTEX_DATA positions LOCATION 0
+  FRAMEBUFFER_SIZE 16 16
+  BIND BUFFER fb_optimized AS color LOCATION 0
+END
+CLEAR_COLOR plain 0 0 0 0
+CLEAR plain
+RUN plain DRAW_ARRAY AS TRIANGLE_LIST START_IDX 0 COUNT 6
+CLEAR_COLOR optimized 0 0 0 0
+CLEAR optimized
+RUN optimized DRAW_ARRAY AS TRIANGLE_LIST START_IDX 0 COUNT 6
+EXPECT fb_plain IDX 0 0 SIZE 16 16 EQ_RGBA 255 255 0 255
+EXPECT fb_optimized IDX 0 0 SIZE 16 16 EQ_RGBA 255 255 0 255

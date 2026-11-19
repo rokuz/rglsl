@@ -166,9 +166,7 @@ void main() {
     Ok(())
 }
 
-#[test]
-fn outputs_sharing_a_location_with_a_read_input_stay() -> TestResult {
-    let vertex = "#version 450
+const COMPONENTS: &str = "#version 450
 layout(location = 0) in vec4 p;
 layout(location = 1, component = 0) out float x;
 layout(location = 1, component = 2) out vec2 yz;
@@ -178,6 +176,9 @@ void main() {
     yz = p.yz;
 }
 ";
+
+#[test]
+fn components_the_next_stage_does_not_read_are_removed() -> TestResult {
     let fragment = "#version 450
 layout(location = 1, component = 2) in vec2 yz;
 layout(location = 0) out vec4 o;
@@ -186,7 +187,24 @@ void main() {
 }
 ";
     let stages = optimized(&[
-        (ShaderStage::Vertex, vertex),
+        (ShaderStage::Vertex, COMPONENTS),
+        (ShaderStage::Fragment, fragment),
+    ])?;
+    assert_eq!(outputs(&stages, ShaderStage::Vertex)?, ["", "yz"]);
+    Ok(())
+}
+
+#[test]
+fn outputs_sharing_components_with_a_read_input_stay() -> TestResult {
+    let fragment = "#version 450
+layout(location = 1) in vec3 xyz;
+layout(location = 0) out vec4 o;
+void main() {
+    o = vec4(xyz, 1.0);
+}
+";
+    let stages = optimized(&[
+        (ShaderStage::Vertex, COMPONENTS),
         (ShaderStage::Fragment, fragment),
     ])?;
     assert_eq!(outputs(&stages, ShaderStage::Vertex)?, ["", "x", "yz"]);

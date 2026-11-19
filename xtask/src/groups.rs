@@ -166,10 +166,16 @@ pub fn load_own(root: &Path) -> Result<Vec<Case>> {
             .filter(|name| is_module(name))
             .collect();
         files.sort();
-        let reference = fs::read_dir(&test)?
+        let mut references: Vec<String> = fs::read_dir(&test)?
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-            .find(|name| name.starts_with("reference.") && stage_of(name).is_some());
+            .filter(|name| name.starts_with("reference.") && stage_of(name).is_some())
+            .collect();
+        references.sort();
+        let script = test
+            .join(EXEC_SCRIPT)
+            .is_file()
+            .then(|| EXEC_SCRIPT.to_string());
         let stage = files
             .iter()
             .find_map(|name| stage_of(name))
@@ -198,7 +204,8 @@ pub fn load_own(root: &Path) -> Result<Vec<Case>> {
                 dir: test.clone(),
                 files,
                 expectation,
-                reference,
+                references,
+                script,
             },
         });
     }

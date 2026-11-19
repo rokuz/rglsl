@@ -753,6 +753,7 @@ fn run_group(
     let reference_dir = directory.join("glslang");
     fs::create_dir_all(&ours_dir)?;
     fs::create_dir_all(&reference_dir)?;
+    let mut program_script = None;
     let (sources, auto_map_bindings, oracle, expected) = match case.kind {
         Kind::Group {
             ref files,
@@ -783,18 +784,32 @@ fn run_group(
             ref dir,
             ref files,
             ref expectation,
-            ref reference,
+            ref references,
+            ref script,
         } => {
-            if let Some(reference) = reference {
-                let stage = groups::stage_of(reference).unwrap_or(case.stage);
-                let mut command = Command::new(&env.glslang.path);
-                command
-                    .current_dir(dir)
-                    .args(case.target.glslang_args())
-                    .arg("-o")
-                    .arg(reference_dir.join(format!("{stage}.spv")))
-                    .arg(reference);
-                let _ = process::run(command, timeout)?;
+            match references.as_slice() {
+                [] => {}
+                [reference] => {
+                    let stage = groups::stage_of(reference).unwrap_or(case.stage);
+                    let mut command = Command::new(&env.glslang.path);
+                    command
+                        .current_dir(dir)
+                        .args(case.target.glslang_args())
+                        .arg("-o")
+                        .arg(reference_dir.join(format!("{stage}.spv")))
+                        .arg(reference);
+                    let _ = process::run(command, timeout)?;
+                }
+                references => {
+                    reference_program(env, case, dir, references, &reference_dir, &[], timeout)?;
+                    let lto_dir = directory.join("glslang-lto");
+                    fs::create_dir_all(&lto_dir)?;
+                    reference_program(env, case, dir, references, &lto_dir, &["--lto"], timeout)?;
+                    program_script = script.as_ref().map(|script| ProgramScript {
+                        script: dir.join(script),
+                        lto_dir,
+                    });
+                }
             }
             let oracle = if expectation.accept {
                 OracleResult::Accepted
@@ -921,6 +936,24 @@ fn run_group(
     });
 
     let exec_input = match produced.as_slice() {
+        [_, _, ..]
+            if !env.executors.is_empty()
+                && matches!(oracle, OracleResult::Accepted)
+                && spirv_val == Some(true) =>
+        {
+            match program_script {
+                Some(program) => Some(program_exec(
+                    env,
+                    case,
+                    &directory,
+                    &produced,
+                    &reference_dir,
+                    program,
+                    timeout,
+                )?),
+                None => None,
+            }
+        }
         [module]
             if !env.executors.is_empty()
                 && matches!(oracle, OracleResult::Accepted)
@@ -957,6 +990,92 @@ fn run_group(
         debug: None,
         object: None,
         optimized,
+    })
+}
+
+fn reference_program(
+    env: &Environment,
+    case: &Case,
+    dir: &Path,
+    references: &[String],
+    out_dir: &Path,
+    options: &[&str],
+    timeout: Duration,
+) -> Result<()> {
+    let mut command = Command::new(&env.glslang.path);
+    command
+        .current_dir(out_dir)
+        .args(case.target.glslang_args())
+        .args(options)
+        .arg("-l");
+    for reference in references {
+        command.arg(dir.join(reference));
+    }
+    let _ = process::run(command, timeout)?;
+    Ok(())
+}
+
+fn spirv_modules(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut modules: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|extension| extension == "spv"))
+        .collect();
+    modules.sort();
+    Ok(modules)
+}
+
+fn gather(into: &Path, plain: &[PathBuf], optimized_dir: &Path) -> Result<()> {
+    let _ = fs::remove_dir_all(into);
+    fs::create_dir_all(into)?;
+    for module in plain {
+        let (Some(name), Some(stem)) = (module.file_name(), module.file_stem()) else {
+            continue;
+        };
+        fs::copy(module, into.join(name))?;
+        let optimized = optimized_dir.join(name);
+        if optimized.is_file() {
+            let mut renamed = stem.to_os_string();
+            renamed.push(format!(".{}.spv", crate::optimized::LEVEL));
+            fs::copy(&optimized, into.join(renamed))?;
+        }
+    }
+    Ok(())
+}
+
+struct ProgramScript {
+    script: PathBuf,
+    lto_dir: PathBuf,
+}
+
+fn program_exec(
+    env: &Environment,
+    case: &Case,
+    directory: &Path,
+    produced: &[PathBuf],
+    reference_dir: &Path,
+    program: ProgramScript,
+    timeout: Duration,
+) -> Result<ExecInput> {
+    let ours = directory.join("exec-rglsl");
+    gather(
+        &ours,
+        produced,
+        &directory.join(format!("ours-{}", crate::optimized::LEVEL)),
+    )?;
+    let theirs = directory.join("exec-glslang");
+    gather(&theirs, &spirv_modules(reference_dir)?, &program.lto_dir)?;
+    let mut invalid_reference = None;
+    for module in spirv_modules(&theirs)? {
+        if let Some(message) = validate(env, case, &module, timeout)? {
+            invalid_reference = Some(message);
+        }
+    }
+    Ok(ExecInput {
+        ours,
+        reference: theirs,
+        invalid_reference,
+        twin: None,
+        script: Some(program.script),
     })
 }
 
