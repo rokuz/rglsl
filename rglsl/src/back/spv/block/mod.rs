@@ -190,7 +190,7 @@ impl BlockContext<'_> {
             }
             crate::Expression::Override(handle) => self.writer.written_override_id(handle)?,
             crate::Expression::ZeroValue(_) => self.writer.get_constant_null(result_type_id),
-            crate::Expression::Undef(_) => self.writer.get_undef(result_type_id),
+            crate::Expression::Undef(ty) => self.writer.get_undefined(ty, result_type_id),
             crate::Expression::Compose { ty, ref components } => {
                 self.write_compose(expr_handle, ty, components, result_type_id, block)?
             }

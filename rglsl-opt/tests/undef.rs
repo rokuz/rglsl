@@ -96,7 +96,7 @@ void main() {
     assert_eq!(loads(function, "f"), 0);
     assert_eq!(loads(function, "w"), 0);
     assert_eq!(undefs(function), 2);
-    assert_eq!(spirv_undefs(source, CLEAN)?, 2);
+    assert_eq!(spirv_undefs(source, CLEAN)?, 0);
     let module = fragment(source, CLEAN)?;
     assert!(entry(&module)?.local_variables.is_empty());
     Ok(())

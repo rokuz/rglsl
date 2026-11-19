@@ -140,18 +140,21 @@ fn undefined_shader() -> Module {
 }
 
 #[test]
-fn the_backend_writes_one_undef_per_type() -> TestResult {
+fn the_backend_writes_undefined_numbers_as_one_null_constant_per_type() -> TestResult {
     let module = undefined_shader();
     let info = Validator::new(ValidationFlags::all()).validate(&module)?;
     let words = spv::write_vec(&module, &info, &spv::Options::default(), None)?;
     let parsed = dr::load_words(&words).map_err(|error| error.to_string())?;
-    let undefs: Vec<&dr::Instruction> = parsed
-        .types_global_values
-        .iter()
-        .filter(|instruction| instruction.class.opcode == Op::Undef)
-        .collect();
-    assert_eq!(undefs.len(), 1);
-    let undef = undefs.first().ok_or("no OpUndef")?;
+    let globals = |opcode: Op| {
+        parsed
+            .types_global_values
+            .iter()
+            .filter(move |instruction| instruction.class.opcode == opcode)
+    };
+    assert_eq!(globals(Op::Undef).count(), 0);
+    let nulls: Vec<&dr::Instruction> = globals(Op::ConstantNull).collect();
+    assert_eq!(nulls.len(), 1);
+    let null = nulls.first().ok_or("no OpConstantNull")?;
     let composite = parsed
         .functions
         .iter()
@@ -159,7 +162,7 @@ fn the_backend_writes_one_undef_per_type() -> TestResult {
         .flat_map(|block| &block.instructions)
         .find(|instruction| instruction.class.opcode == Op::CompositeConstruct)
         .ok_or("no OpCompositeConstruct")?;
-    let id = undef.result_id.ok_or("OpUndef without a result")?;
+    let id = null.result_id.ok_or("OpConstantNull without a result")?;
     let uses = composite
         .operands
         .iter()

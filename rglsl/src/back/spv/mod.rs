@@ -806,6 +806,7 @@ pub struct Writer {
     /// Indexed by const-expression handle indexes
     constant_ids: HandleVec<crate::Expression, Word>,
     cached_constants: crate::FastHashMap<CachedConstant, Word>,
+    nullable_types: Vec<bool>,
     override_ids: Vec<Word>,
     override_dependent: Vec<bool>,
     spec_defaults: Vec<bool>,

@@ -176,6 +176,7 @@ impl Writer {
             lookup_function_type: crate::FastHashMap::default(),
             constant_ids: HandleVec::new(),
             cached_constants: crate::FastHashMap::default(),
+            nullable_types: Vec::new(),
             override_ids: Vec::new(),
             override_dependent: Vec::new(),
             spec_defaults: Vec::new(),
@@ -330,6 +331,7 @@ impl Writer {
             lookup_function_type: take(&mut self.lookup_function_type).reclaim(),
             constant_ids: take(&mut self.constant_ids).reclaim(),
             cached_constants: take(&mut self.cached_constants).reclaim(),
+            nullable_types: take(&mut self.nullable_types),
             override_ids: take(&mut self.override_ids).reclaim(),
             override_dependent: take(&mut self.override_dependent).reclaim(),
             spec_defaults: take(&mut self.spec_defaults).reclaim(),
@@ -1088,8 +1090,8 @@ impl Writer {
         }
 
         let debug_only = debug_only_locals(ir_function);
-        let plain = super::uninitialized::plain_types(&ir_module.types);
-        let zeroed = super::uninitialized::read_before_written(ir_function, &plain);
+        let zeroed =
+            super::uninitialized::read_before_written(ir_function, &context.writer.nullable_types);
         for (handle, variable) in ir_function.local_variables.iter() {
             if debug_only.contains(&handle) {
                 continue;
@@ -2362,6 +2364,19 @@ impl Writer {
         id
     }
 
+    pub(super) fn get_undefined(&mut self, ty: Handle<crate::Type>, type_id: Word) -> Word {
+        if self
+            .nullable_types
+            .get(ty.index())
+            .copied()
+            .unwrap_or(false)
+        {
+            self.get_constant_null(type_id)
+        } else {
+            self.get_undef(type_id)
+        }
+    }
+
     pub(super) fn get_undef(&mut self, type_id: Word) -> Word {
         let undef = CachedConstant::Undef(type_id);
         if let Some(&id) = self.cached_constants.get(&undef) {
@@ -2403,7 +2418,7 @@ impl Writer {
             }
             crate::Expression::Undef(ty) => {
                 let type_id = self.get_handle_type_id(ty)?;
-                self.get_undef(type_id)
+                self.get_undefined(ty, type_id)
             }
             crate::Expression::Compose { ty, ref components } => {
                 if self.is_override_dependent(handle) {
@@ -3540,6 +3555,7 @@ impl Writer {
         mod_info: &ModuleInfo,
         ep_index: Option<usize>,
     ) -> Result<(), Error> {
+        self.nullable_types = super::uninitialized::plain_types(&ir_module.types);
         self.legacy_buffer_blocks =
             ir_module.legacy_buffer_blocks && self.physical_layout.version < 0x10300;
         self.invariant_outputs = ir_module
