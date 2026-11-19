@@ -95,3 +95,10 @@ bound = "max_depth, MAX_BLOCK_NESTING_DEPTH = 5, max_struct_nesting_depth, depth
 functions = ["rglsl_xtask::builtins::generate::Shader::constant"]
 reason = "constants of built-in prototype types"
 bound = "the types of the built-in tables"
+
+[exec-batch-jobs]
+functions = [
+    "rglsl_xtask::exec::batch::Job",
+]
+reason = "a batch job (also its drop glue and clone) groups plain jobs, whose members are empty"
+bound = "2"

@@ -134,7 +134,7 @@ pub fn recipes(batch: &Job) -> Vec<String> {
         .iter()
         .flat_map(|member| {
             member
-                .scripts()
+                .own_scripts()
                 .into_iter()
                 .filter_map(|script| relative(&batch.dir, member, &script))
                 .collect::<Vec<_>>()

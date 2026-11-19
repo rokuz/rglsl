@@ -95,6 +95,10 @@ impl Job {
         if !self.members.is_empty() {
             return super::group::recipes(self);
         }
+        self.own_scripts()
+    }
+
+    pub fn own_scripts(&self) -> Vec<String> {
         self.timed
             .iter()
             .chain(std::iter::once(&self.script))
