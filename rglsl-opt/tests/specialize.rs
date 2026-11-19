@@ -243,8 +243,12 @@ void main() {
     color = vec4(1.0);
 }
 ";
-    let Err(error) = specialized(ShaderStage::Fragment, source, OptLevel::Performance, &[(0, "1")])
-    else {
+    let Err(error) = specialized(
+        ShaderStage::Fragment,
+        source,
+        OptLevel::Performance,
+        &[(0, "1")],
+    ) else {
         return Err("specialization succeeded".into());
     };
     assert_eq!(
