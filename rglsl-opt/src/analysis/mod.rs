@@ -1,4 +1,5 @@
 pub(crate) mod locals;
+pub(crate) mod loops;
 
 use rglsl::ir::visit::Visitor;
 use rglsl::proc::{ResolveContext, ResolveError, TypeResolution};

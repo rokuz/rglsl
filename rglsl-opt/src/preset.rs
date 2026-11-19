@@ -23,6 +23,9 @@ const OPTIMIZE: &[Step] = &[
         limit: 2,
         passes: &["forward", "fold", "dead-branch", "dce"],
     },
+    Step::Run("const-array"),
+    Step::Run("unroll"),
+    Step::Run("fold"),
     Step::Repeat {
         limit: 2,
         passes: &["sroa", "forward", "fold", "dead-branch", "dce"],

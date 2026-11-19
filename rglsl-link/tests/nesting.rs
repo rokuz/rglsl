@@ -527,6 +527,20 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             " }",
         ),
         (
+            "unrolled loops",
+            "float u[2] = float[2](0.0, 1.0);",
+            "for (int i = 0; i < 2; i++) { ",
+            "u[i] = u[i] + float(c[i]); b = int(u[i]);",
+            " }",
+        ),
+        (
+            "loops unrolled on request",
+            "float x = 1.0;",
+            "[[unroll]] for (int i = 0; i < 2; i++) { ",
+            "x = x + float(c[i]); b = int(x);",
+            " }",
+        ),
+        (
             "repeated values",
             "",
             "if (b > c[0]) { b = b * c[1] + c[0]; ",
@@ -537,6 +551,16 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
     for (name, prefix, open, core, close) in cases {
         compiles_at(depth, name, nested_body(prefix, open, core, close))?;
     }
+    compiles_at(depth, "constant arrays in loops", |count| {
+        shader(
+            "const float w[2] = float[2](0.5, 1.5);",
+            &format!(
+                "{}b = b + int(w[b & 1]);{}",
+                "for (int i = 0; i < b; i++) { ".repeat(count),
+                " }".repeat(count)
+            ),
+        )
+    })?;
     compiles_at(depth, "private globals", |count| {
         shader(
             "int g = 3; vec4 h;",

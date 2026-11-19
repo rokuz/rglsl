@@ -5,8 +5,8 @@ use rglsl::valid::{ModuleInfo, ValidationFlags, ValidationMode, Validator};
 use crate::error::chain;
 use crate::pass::find;
 use crate::{
-    Changed, Context, DebugLevel, DebugRule, GpuProfile, OptError, OptOptions, PASSES, Pass, Scope,
-    Session, StageModule, Step, Summary,
+    Changed, Context, DebugLevel, DebugRule, GpuProfile, OptError, OptLevel, OptOptions, PASSES,
+    Pass, Scope, Session, StageModule, Step, Summary,
 };
 
 enum Planned<'t> {
@@ -19,6 +19,7 @@ struct Run<'r, 'm> {
     summaries: Vec<Summary>,
     changed: Vec<bool>,
     profile: &'static GpuProfile,
+    level: OptLevel,
     context: Context,
     validate_each: bool,
 }
@@ -59,6 +60,7 @@ fn execute(
         changed: vec![false; stages.len()],
         stages,
         profile,
+        level: options.level,
         context,
         validate_each: options.validate_each,
     };
@@ -168,6 +170,7 @@ impl Run<'_, '_> {
             stages: self.stages,
             focus,
             profile: self.profile,
+            level: self.level,
             context: self.context,
         };
         (pass.run)(&mut session)

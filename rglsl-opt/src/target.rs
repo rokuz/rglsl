@@ -30,22 +30,51 @@ pub enum Reuse {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Unrolling {
+    pub indexed: u32,
+    pub hinted: u32,
+    pub other: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GpuParameters {
     pub inlining: Inlining,
     pub scalar_replacement: u32,
     pub reuse: Reuse,
+    pub unroll: Unrolling,
+    pub unroll_for_size: Unrolling,
 }
 
 const DESKTOP: GpuParameters = GpuParameters {
     inlining: Inlining::Exhaustive,
     scalar_replacement: 1024,
     reuse: Reuse::Nested,
+    unroll: Unrolling {
+        indexed: 1024,
+        hinted: 16384,
+        other: 0,
+    },
+    unroll_for_size: Unrolling {
+        indexed: 256,
+        hinted: 16384,
+        other: 0,
+    },
 };
 
 const MOBILE: GpuParameters = GpuParameters {
     inlining: Inlining::NoGrowth,
     scalar_replacement: 64,
     reuse: Reuse::Block,
+    unroll: Unrolling {
+        indexed: 256,
+        hinted: 4096,
+        other: 0,
+    },
+    unroll_for_size: Unrolling {
+        indexed: 64,
+        hinted: 4096,
+        other: 0,
+    },
 };
 
 #[derive(Debug)]

@@ -1,0 +1,20 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) buffer Inputs { uint seeds[64]; };
+layout(std430, set = 0, binding = 1) buffer Results { uint results[64]; };
+
+void main() {
+  uint id = gl_LocalInvocationIndex;
+  uint s = seeds[id];
+  uint a[48];
+  for (int i = 0; i < 48; i++) {
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    a[i] = s & 65535u;
+  }
+  for (int i = 1; i < 48; i++) a[i] += a[(i * 7) % 48] >> 1;
+  uint h = 0u;
+  for (int i = 0; i < 48; i += 3) h = h * 31u + (a[i] ^ a[i + 1]) - a[i + 2];
+  results[id] = h;
+}

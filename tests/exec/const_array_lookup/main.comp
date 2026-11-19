@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) buffer Inputs { uint seeds[64]; };
+layout(std430, set = 0, binding = 1) buffer Results { uint results[64]; };
+
+const uint table[16] = uint[](3u, 141u, 59u, 26u, 535u, 89u, 79u, 323u,
+                             846u, 264u, 338u, 327u, 950u, 288u, 419u, 716u);
+
+void main() {
+  uint id = gl_LocalInvocationIndex;
+  uint s = seeds[id];
+  uint h = 5381u;
+  uint count = (s % 8u) + 8u;
+  for (uint i = 0u; i < count; i++) {
+    h = (h * 33u) ^ table[(s + i * 5u) & 15u];
+  }
+  h += table[s & 15u];
+  results[id] = h;
+}

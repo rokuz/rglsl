@@ -292,7 +292,11 @@ impl<'f> Rebuild<'f> {
         block.push(statement, span);
     }
 
-    fn block(&mut self, policy: &mut impl Policy, source: &'f Block) -> Result<Block, String> {
+    pub fn set_position(&mut self, position: u32) {
+        self.position = position;
+    }
+
+    pub fn block(&mut self, policy: &mut impl Policy, source: &Block) -> Result<Block, String> {
         let mut out = Block::with_capacity(source.len());
         for (statement, &span) in source.span_iter() {
             let position = self.position;
@@ -320,7 +324,7 @@ impl<'f> Rebuild<'f> {
     fn statement(
         &mut self,
         policy: &mut impl Policy,
-        statement: &'f Statement,
+        statement: &Statement,
     ) -> Result<Statement, String> {
         Ok(match *statement {
             Statement::Block(ref block) => Statement::Block(recurse(|| self.block(policy, block))?),
