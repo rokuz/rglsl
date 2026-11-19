@@ -219,7 +219,7 @@ fn run_module(
     }
 }
 
-fn differs(reference: &Run, variant: &Run) -> Option<bool> {
+fn differs(reference: &Run, variant: &Run, tolerance: fuzz_exec::Tolerance) -> Option<bool> {
     match (reference, variant) {
         (
             Run::Ran {
@@ -228,7 +228,12 @@ fn differs(reference: &Run, variant: &Run) -> Option<bool> {
             },
             Run::Ran { plan, outputs },
         ) => Some(
-            fuzz_exec::compare_runs((reference_plan, reference_outputs), (plan, outputs)).is_err(),
+            fuzz_exec::compare_runs(
+                (reference_plan, reference_outputs),
+                (plan, outputs),
+                tolerance,
+            )
+            .is_err(),
         ),
         _ => None,
     }
@@ -364,7 +369,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 )?;
                 match (&ours, &optimized) {
                     (Run::Ran { .. }, Run::Failed(_)) => true,
-                    _ => differs(&ours, &optimized) == Some(true),
+                    _ => differs(&ours, &optimized, fuzz_exec::Tolerance::OneLevel) == Some(true),
                 }
             }
             Interesting::OptimizerHangs | Interesting::ExecHangs => {
@@ -447,10 +452,11 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                         matches!(ours, Run::Failed(_)) && matches!(theirs, Run::Ran { .. })
                     }
                     Some(reference) => {
-                        differs(&reference.ours, &ours) == Some(true)
-                            && differs(&reference.theirs, &theirs) == Some(false)
+                        differs(&reference.ours, &ours, fuzz_exec::Tolerance::Exact) == Some(true)
+                            && differs(&reference.theirs, &theirs, fuzz_exec::Tolerance::Exact)
+                                == Some(false)
                     }
-                    None => differs(&theirs, &ours) == Some(true),
+                    None => differs(&theirs, &ours, fuzz_exec::Tolerance::Exact) == Some(true),
                 }
             }
         };

@@ -351,7 +351,11 @@ fn qualify(
             "not run: reference not qualified".into(),
         );
     };
-    match fuzz_exec::compare_runs((reference_plan, reference_outputs), (plan, outputs)) {
+    match fuzz_exec::compare_runs(
+        (reference_plan, reference_outputs),
+        (plan, outputs),
+        fuzz_exec::Tolerance::optimized(mode == Mode::Optimized),
+    ) {
         Ok(_) => (Class::Pass, String::new()),
         Err(difference) => (
             Class::GlslangWrong,
@@ -890,7 +894,11 @@ fn judge(
             "the family's reference has no expected output".into(),
         );
     };
-    match fuzz_exec::compare_runs((reference_plan, reference_outputs), (plan, outputs)) {
+    match fuzz_exec::compare_runs(
+        (reference_plan, reference_outputs),
+        (plan, outputs),
+        fuzz_exec::Tolerance::optimized(mode == Mode::Optimized),
+    ) {
         Ok(_) => (Verdict::Agree, String::new()),
         Err(difference) => (
             wrong(mode),

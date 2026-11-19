@@ -193,7 +193,7 @@ pub enum Consensus {
 pub type Image<'a> = (&'a Plan, &'a Outputs);
 
 fn difference(reference: Image<'_>, image: Image<'_>) -> Option<String> {
-    fuzz_exec::compare_runs(reference, image).err()
+    fuzz_exec::compare_runs(reference, image, fuzz_exec::Tolerance::Exact).err()
 }
 
 pub fn consensus(images: &[Option<Image<'_>>]) -> Vec<Consensus> {
@@ -279,7 +279,11 @@ pub fn judge_reference(unoptimized: Side<'_>, optimized: Option<Side<'_>>) -> Re
     if let (Side::Ran(plan, outputs), Side::Ran(optimized_plan, optimized_outputs)) =
         (unoptimized, optimized)
     {
-        return match fuzz_exec::compare_runs((plan, outputs), (optimized_plan, optimized_outputs)) {
+        return match fuzz_exec::compare_runs(
+            (plan, outputs),
+            (optimized_plan, optimized_outputs),
+            fuzz_exec::Tolerance::OneLevel,
+        ) {
             Ok(_) => ReferenceVerdict {
                 unoptimized: (Class::Pass, String::new()),
                 optimized: Some((Class::Pass, String::new())),

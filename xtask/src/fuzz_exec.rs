@@ -125,9 +125,26 @@ pub fn finish(staged: &Staged, result: Option<JobResult>) -> Run {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tolerance {
+    Exact,
+    OneLevel,
+}
+
+impl Tolerance {
+    pub const fn optimized(optimized: bool) -> Self {
+        if optimized {
+            Self::OneLevel
+        } else {
+            Self::Exact
+        }
+    }
+}
+
 pub fn compare_runs(
     reference: (&Plan, &Outputs),
     variant: (&Plan, &Outputs),
+    tolerance: Tolerance,
 ) -> Result<usize, String> {
     let (reference_plan, reference_outputs) = reference;
     let (variant_plan, variant_outputs) = variant;
@@ -141,6 +158,7 @@ pub fn compare_runs(
             reference_outputs.get(&target.dump).unwrap_or(&empty),
             variant_outputs.get(&other.dump).unwrap_or(&empty),
             &target.slots,
+            tolerance,
         );
         tolerated += near;
         match crate::exec::compare::compare(&a, &b, &target.slots) {
@@ -174,6 +192,7 @@ pub fn quantize_pair(
     reference: &[u8],
     variant: &[u8],
     slots: &[Slot],
+    tolerance: Tolerance,
 ) -> (Vec<u8>, Vec<u8>, usize) {
     let a = quantize(reference, slots);
     let mut b = quantize(variant, slots);
@@ -191,7 +210,9 @@ pub fn quantize_pair(
         ) else {
             continue;
         };
-        if crate::exec::compare::floats_match(expected, actual, 32) != Some(true) {
+        let near = crate::exec::compare::floats_match(expected, actual, 32) == Some(true)
+            || (tolerance == Tolerance::OneLevel && adjacent_levels(levels, other));
+        if !near {
             continue;
         }
         let levels = levels.to_vec();
@@ -201,6 +222,14 @@ pub fn quantize_pair(
         }
     }
     (a, b, tolerated)
+}
+
+fn adjacent_levels(a: &[u8], b: &[u8]) -> bool {
+    let level = |bytes: &[u8]| -> Option<f32> { Some(f32::from_le_bytes(bytes.try_into().ok()?)) };
+    match (level(a), level(b)) {
+        (Some(a), Some(b)) => (a - b).abs() == 1.0,
+        _ => false,
+    }
 }
 
 pub fn quantize(bytes: &[u8], slots: &[Slot]) -> Vec<u8> {
@@ -301,7 +330,7 @@ mod tests {
         let reference = bytes_of(&[0x3e6e_eef0, 0x3f00_0000]);
         let variant = bytes_of(&[0x3e6e_eeee, 0x3f00_0000]);
         assert_ne!(quantize(&reference, &slots), quantize(&variant, &slots));
-        let (a, b, tolerated) = quantize_pair(&reference, &variant, &slots);
+        let (a, b, tolerated) = quantize_pair(&reference, &variant, &slots, Tolerance::Exact);
         assert_eq!(a, b);
         assert_eq!(tolerated, 1);
         assert_eq!(
@@ -315,12 +344,29 @@ mod tests {
         let slots = float_slots(2);
         let reference = bytes_of(&[0x3e6e_eef0, 0x3f00_0000]);
         let variant = bytes_of(&[0x3e6d_0000, 0x3f00_0000]);
-        let (a, b, tolerated) = quantize_pair(&reference, &variant, &slots);
+        let (a, b, tolerated) = quantize_pair(&reference, &variant, &slots, Tolerance::Exact);
         assert_eq!(tolerated, 0);
         assert!(matches!(
             crate::exec::compare::compare(&a, &b, &slots),
             crate::exec::compare::Comparison::Differ(_)
         ));
+    }
+
+    #[test]
+    fn one_level_apart_is_tolerated_only_for_optimized_modules() {
+        let slots = float_slots(2);
+        let reference = bytes_of(&[0.5f32.to_bits(), 0.25f32.to_bits()]);
+        let one = bytes_of(&[(129.0f32 / 255.0).to_bits(), 0.25f32.to_bits()]);
+        let two = bytes_of(&[(130.0f32 / 255.0).to_bits(), 0.25f32.to_bits()]);
+        let (a, b, tolerated) = quantize_pair(&reference, &one, &slots, Tolerance::OneLevel);
+        assert_eq!(a, b);
+        assert_eq!(tolerated, 1);
+        let (a, b, tolerated) = quantize_pair(&reference, &one, &slots, Tolerance::Exact);
+        assert_ne!(a, b);
+        assert_eq!(tolerated, 0);
+        let (a, b, tolerated) = quantize_pair(&reference, &two, &slots, Tolerance::OneLevel);
+        assert_ne!(a, b);
+        assert_eq!(tolerated, 0);
     }
 
     #[test]

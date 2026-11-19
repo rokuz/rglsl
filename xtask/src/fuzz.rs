@@ -440,7 +440,11 @@ fn execute(
     runs
 }
 
-fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
+fn differs(
+    reference: &Run,
+    variant: &Run,
+    tolerance: fuzz_exec::Tolerance,
+) -> Option<Result<String, String>> {
     match (reference, variant) {
         (
             Run::Ran {
@@ -448,9 +452,13 @@ fn differs(reference: &Run, variant: &Run) -> Option<Result<String, String>> {
                 outputs: reference_outputs,
             },
             Run::Ran { plan, outputs },
-        ) => fuzz_exec::compare_runs((reference_plan, reference_outputs), (plan, outputs))
-            .err()
-            .map(Ok),
+        ) => fuzz_exec::compare_runs(
+            (reference_plan, reference_outputs),
+            (plan, outputs),
+            tolerance,
+        )
+        .err()
+        .map(Ok),
         (Run::Ran { .. }, Run::Failed(error)) => Some(Err(error.clone())),
         _ => None,
     }
@@ -466,17 +474,19 @@ fn judge(outcomes: &[Outcome], runs: &BTreeMap<usize, RunPair>, index: usize) ->
         return Some(error);
     }
     Some(match (ours, optimized) {
-        (Run::Ran { .. }, Some(optimized)) => match differs(ours, optimized) {
-            Some(Ok(difference)) => (
-                Verdict::WrongResultOptimized,
-                format!("-O differs from the unoptimized module: {difference}"),
-            ),
-            Some(Err(error)) => (
-                Verdict::ExecFailedOptimized,
-                format!("-O fails, the unoptimized module runs: {error}"),
-            ),
-            None => judged,
-        },
+        (Run::Ran { .. }, Some(optimized)) => {
+            match differs(ours, optimized, fuzz_exec::Tolerance::OneLevel) {
+                Some(Ok(difference)) => (
+                    Verdict::WrongResultOptimized,
+                    format!("-O differs from the unoptimized module: {difference}"),
+                ),
+                Some(Err(error)) => (
+                    Verdict::ExecFailedOptimized,
+                    format!("-O fails, the unoptimized module runs: {error}"),
+                ),
+                None => judged,
+            }
+        }
         _ => judged,
     })
 }
@@ -517,13 +527,15 @@ fn judge_unoptimized(
                 format!("glslang's module fails on the driver too: {why}"),
             ),
             (Run::Failed(why), _) => (Verdict::ExecFailed, why.clone()),
-            (Run::Ran { .. }, Some(theirs)) => match differs(theirs, ours) {
-                Some(Ok(difference)) => (
-                    Verdict::WrongResult,
-                    format!("differs from glslang's reference: {difference}"),
-                ),
-                _ => (Verdict::Agree, String::new()),
-            },
+            (Run::Ran { .. }, Some(theirs)) => {
+                match differs(theirs, ours, fuzz_exec::Tolerance::Exact) {
+                    Some(Ok(difference)) => (
+                        Verdict::WrongResult,
+                        format!("differs from glslang's reference: {difference}"),
+                    ),
+                    _ => (Verdict::Agree, String::new()),
+                }
+            }
             (Run::Ran { .. }, None) => (Verdict::Agree, String::new()),
         }
     } else {
@@ -540,11 +552,15 @@ fn judge_unoptimized(
             (Some((reference_ours @ Run::Ran { .. }, reference_theirs, _)), Run::Ran { .. }) => {
                 let glslang_difference = match (reference_theirs, theirs) {
                     (Some(reference_theirs), Some(theirs)) => {
-                        differs(reference_theirs, theirs).map(|d| d.unwrap_or_else(|e| e))
+                        differs(reference_theirs, theirs, fuzz_exec::Tolerance::Exact)
+                            .map(|d| d.unwrap_or_else(|e| e))
                     }
                     _ => None,
                 };
-                match (differs(reference_ours, ours), glslang_difference) {
+                match (
+                    differs(reference_ours, ours, fuzz_exec::Tolerance::Exact),
+                    glslang_difference,
+                ) {
                     (Some(Ok(difference)), None) => (
                         Verdict::WrongResult,
                         format!("differs from the reference: {difference}"),
@@ -603,7 +619,10 @@ fn judge_spirv_opt(judged: (Verdict, String), ours: &Run, spirv_opt: &Run) -> (V
     if !optimizer_differs(verdict) {
         return (verdict, note);
     }
-    match (spirv_opt, differs(ours, spirv_opt)) {
+    match (
+        spirv_opt,
+        differs(ours, spirv_opt, fuzz_exec::Tolerance::OneLevel),
+    ) {
         (Run::Ran { .. }, Some(Ok(difference))) => (
             Verdict::WrongResultSpirvOpt,
             format!("{note}; spirv-opt -O of the unoptimized module differs too: {difference}"),
