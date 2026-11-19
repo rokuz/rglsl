@@ -885,6 +885,7 @@ fn debug_info(
         structs,
         functions,
         anchors: Vec::new(),
+        inlined: Vec::new(),
     }
 }
 

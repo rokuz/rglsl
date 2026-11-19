@@ -4,8 +4,8 @@ use rglsl::compact::{KeepUnused, compact};
 use rglsl::front::glsl::{Frontend, Options};
 use rglsl::valid::{ValidationFlags, Validator};
 use rglsl_link::{
-    CompileOptions, Compiler, Input, OptLevel, OptOptions, Options as LinkOptions, ProgramOptions,
-    Source, decode, encode, link, optimize,
+    CompileOptions, Compiler, DebugInfo, Input, OptLevel, OptOptions, Options as LinkOptions,
+    ProgramOptions, Source, decode, encode, link, optimize,
 };
 use rglsl_pp::{FileId, IncludeError, IncludeKind, IncludedFile, Includer, Limits};
 
@@ -1262,9 +1262,30 @@ fn debug_pipeline(source: &str, level: spv::DebugLevel) -> Outcome {
         Ok(linked) => linked,
         Err(errors) => return Outcome::Failed(format!("link: {errors}")),
     };
+    if let Err(error) = spv::write_vec(&linked.module, &linked.info, &spv_options, None) {
+        return Outcome::Failed(format!("linked SPIR-V: {error}"));
+    }
+    let mut stages = [linked];
+    let optimized = ProgramOptions {
+        debug_info: match level {
+            spv::DebugLevel::NonSemantic => DebugInfo::NonSemanticWithSource,
+            spv::DebugLevel::None | spv::DebugLevel::FileName | spv::DebugLevel::Lines => {
+                DebugInfo::Lines
+            }
+        },
+        optimize: OptOptions {
+            level: OptLevel::Performance,
+            ..OptOptions::default()
+        },
+        ..ProgramOptions::default()
+    };
+    if let Err(error) = optimize(&mut stages, &optimized) {
+        return Outcome::Failed(format!("-O: {error}"));
+    }
+    let [linked] = stages;
     match spv::write_vec(&linked.module, &linked.info, &spv_options, None) {
         Ok(_) => Outcome::Compiled,
-        Err(error) => Outcome::Failed(format!("linked SPIR-V: {error}")),
+        Err(error) => Outcome::Failed(format!("-O SPIR-V: {error}")),
     }
 }
 
@@ -1277,7 +1298,34 @@ fn deep_debug_info_compiles_on_a_small_stack(depth: usize) -> TestResult {
         ("do while", "", "do { ", "b = 2;", " } while (b > 5);"),
         ("switch", "", "switch (b) { case 1: ", "b = 2;", " break; }"),
         ("binary chain", "b = ", "b + (", "b", ")"),
+        (
+            "forwarded stores",
+            "float x = float(b);",
+            "if (t) { ",
+            "x = x + 1.0; b = int(x) + c[1];",
+            " }",
+        ),
+        (
+            "unrolled loops",
+            "float u[2] = float[2](0.0, 1.0);",
+            "for (int i = 0; i < 2; i++) { ",
+            "u[i] = u[i] + float(c[i]); b = int(u[i]);",
+            " }",
+        ),
     ];
+    let calls = shader(
+        &chain_of(
+            "int h0(int a) { int r = a + 1; return r; }\n",
+            depth,
+            |index| {
+                format!(
+                    "int h{index}(int a) {{ int r = h{}(a) + 1; return r; }}\n",
+                    index - 1
+                )
+            },
+        ),
+        &format!("b = h{}(b);", depth - 1),
+    );
     let structs = shader(
         &struct_chain(depth),
         &format!("S{0} s; s.b = 1; S{0} r = s; b = r.b;", depth - 1),
@@ -1287,7 +1335,7 @@ fn deep_debug_info_compiles_on_a_small_stack(depth: usize) -> TestResult {
         .map(|(name, prefix, open, core, close)| {
             (name, nested_body(prefix, open, core, close)(depth))
         })
-        .chain([("struct chains", structs)]);
+        .chain([("struct chains", structs), ("inlined call chains", calls)]);
     for (name, source) in sources {
         for level in [spv::DebugLevel::NonSemantic, spv::DebugLevel::Lines] {
             let source = source.clone();

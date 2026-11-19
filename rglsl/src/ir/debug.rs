@@ -23,6 +23,48 @@ pub struct DebugInfo {
     pub structs: Vec<DebugStruct>,
     pub functions: Vec<DebugFunction>,
     pub anchors: Vec<DebugAnchor>,
+    #[cfg_attr(feature = "serialize", serde(skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = Vec::is_empty)]
+    pub inlined: Vec<DebugInlined>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
+#[cfg_attr(feature = "serialize", derive(Serialize))]
+#[cfg_attr(feature = "deserialize", derive(Deserialize))]
+#[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+pub struct DebugInlined {
+    pub start: u32,
+    pub end: u32,
+    pub origin: u32,
+    pub call: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InlineShift {
+    pub from: u32,
+    pub length: u32,
+    pub base: u32,
+}
+
+impl InlineShift {
+    pub fn span(&self, span: Span) -> Span {
+        let Some(range) = span.to_range() else {
+            return span;
+        };
+        let (Ok(start), Ok(end)) = (u32::try_from(range.start), u32::try_from(range.end)) else {
+            return span;
+        };
+        match start.checked_sub(self.from) {
+            Some(relative) if relative < self.length => {
+                let start = self.base.saturating_add(relative);
+                let length = end.saturating_sub(self.from).saturating_sub(relative);
+                Span::new(start, start.saturating_add(length))
+            }
+            _ => span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Rglo)]
@@ -128,7 +170,45 @@ pub struct DebugMember {
 }
 
 impl DebugInfo {
+    pub fn origin(&self, offset: u32) -> (u32, Option<usize>) {
+        let index = self
+            .inlined
+            .partition_point(|region| region.start <= offset);
+        match index
+            .checked_sub(1)
+            .and_then(|index| Some((index, self.inlined.get(index)?)))
+        {
+            Some((index, region)) if offset < region.end => (
+                region.origin.saturating_add(offset - region.start),
+                Some(index),
+            ),
+            _ => (offset, None),
+        }
+    }
+
+    pub fn inline(&mut self, (start, stop): (u32, u32), call: u32) -> Option<InlineShift> {
+        let length = stop.checked_sub(start)?.checked_add(1)?;
+        let base = self
+            .inlined
+            .last()
+            .map_or_else(|| self.end(), |region| region.end)
+            .checked_add(1)?;
+        let end = base.checked_add(length)?;
+        self.inlined.push(DebugInlined {
+            start: base,
+            end,
+            origin: start,
+            call,
+        });
+        Some(InlineShift {
+            from: start,
+            length,
+            base,
+        })
+    }
+
     pub fn line(&self, offset: u32) -> Option<&DebugLine> {
+        let offset = self.origin(offset).0;
         let index = self.lines.partition_point(|line| line.offset <= offset);
         index.checked_sub(1).and_then(|index| self.lines.get(index))
     }
@@ -223,6 +303,12 @@ impl DebugInfo {
             anchor.end = anchor.end.saturating_add(offset);
             anchor.at = anchor.at.saturating_add(offset);
         }
+        for region in &mut self.inlined {
+            region.start = region.start.saturating_add(offset);
+            region.end = region.end.saturating_add(offset);
+            region.origin = region.origin.saturating_add(offset);
+            region.call = region.call.saturating_add(offset);
+        }
         for structure in &mut self.structs {
             structure.at.source = structure.at.source.saturating_add(sources);
             for member in &mut structure.members {
@@ -245,18 +331,23 @@ impl DebugInfo {
         self.structs.append(&mut other.structs);
         self.functions.append(&mut other.functions);
         self.anchors.append(&mut other.anchors);
+        self.inlined.append(&mut other.inlined);
     }
 
     pub fn anchor(&self, span: Span) -> Option<u32> {
         let range = span.to_range()?;
-        let start = u32::try_from(range.start).ok()?;
-        let end = u32::try_from(range.end).ok()?;
+        let synthetic = u32::try_from(range.start).ok()?;
+        let length = u32::try_from(range.end).ok()?.saturating_sub(synthetic);
+        let start = self.origin(synthetic).0;
+        let end = start.saturating_add(length);
         let index = self
             .anchors
             .partition_point(|anchor| (anchor.start, anchor.end) < (start, end));
         match self.anchors.get(index) {
-            Some(anchor) if anchor.start == start && anchor.end == end => Some(anchor.at),
-            _ => Some(start),
+            Some(anchor) if anchor.start == start && anchor.end == end => {
+                Some(anchor.at.saturating_add(synthetic - start))
+            }
+            _ => Some(synthetic),
         }
     }
 

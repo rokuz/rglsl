@@ -12,7 +12,7 @@ use crate::{
     TessellationPrimitive, TessellationSpacing, TessellationVertexOrder,
 };
 
-pub const FORMAT_VERSION: u32 = 37;
+pub const FORMAT_VERSION: u32 = 38;
 
 #[derive(Debug, Clone, Rglo)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]

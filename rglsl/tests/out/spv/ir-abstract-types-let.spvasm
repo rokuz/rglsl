@@ -1,12 +1,12 @@
 ; SPIR-V
 ; Version: 1.1
 ; Generator: rspirv
-; Bound: 127
+; Bound: 130
 OpCapability Shader
 %1 = OpExtInstImport "GLSL.std.450"
 OpMemoryModel Logical GLSL450
-OpEntryPoint GLCompute %124 "main"
-OpExecutionMode %124 LocalSize 1 1 1
+OpEntryPoint GLCompute %127 "main"
+OpExecutionMode %127 LocalSize 1 1 1
 %2 = OpTypeVoid
 %3 = OpTypeInt 32 1
 %4 = OpTypeVector %3 2
@@ -64,77 +64,80 @@ OpExecutionMode %124 LocalSize 1 1 1
 %58 = OpConstantComposite  %14  %57
 %59 = OpConstantComposite  %16  %43 %43 %43
 %60 = OpConstantComposite  %17  %59
-%64 = OpTypePointer Function %5
-%66 = OpTypePointer Function %3
-%68 = OpTypePointer Function %7
+%64 = OpConstantNull  %5
+%65 = OpTypePointer Function %5
+%67 = OpConstantNull  %3
+%68 = OpTypePointer Function %3
+%70 = OpConstantNull  %7
+%71 = OpTypePointer Function %7
 %19 = OpFunction  %2  None %20
 %18 = OpLabel
 OpReturn
 OpFunctionEnd
 %62 = OpFunction  %2  None %20
 %61 = OpLabel
-%63 = OpVariable  %64  Function
-%65 = OpVariable  %66  Function
-%67 = OpVariable  %68  Function
-%69 = OpLoad  %5  %63
-%70 = OpCompositeConstruct  %6  %69 %34
-%71 = OpLoad  %5  %63
-%72 = OpCompositeConstruct  %6  %33 %71
-%73 = OpLoad  %7  %67
-%74 = OpCompositeConstruct  %8  %73 %28
-%75 = OpLoad  %7  %67
-%76 = OpCompositeConstruct  %8  %75 %31
-%77 = OpLoad  %5  %63
-%78 = OpCompositeConstruct  %6  %77 %34
-%79 = OpLoad  %5  %63
-%80 = OpCompositeConstruct  %6  %33 %79
-%81 = OpLoad  %7  %67
-%82 = OpCompositeConstruct  %8  %81 %44
-%83 = OpCompositeConstruct  %9  %82 %48
-%84 = OpLoad  %7  %67
-%85 = OpCompositeConstruct  %8  %43 %84
+%63 = OpVariable  %65  Function %64
+%66 = OpVariable  %68  Function %67
+%69 = OpVariable  %71  Function %70
+%72 = OpLoad  %5  %63
+%73 = OpCompositeConstruct  %6  %72 %34
+%74 = OpLoad  %5  %63
+%75 = OpCompositeConstruct  %6  %33 %74
+%76 = OpLoad  %7  %69
+%77 = OpCompositeConstruct  %8  %76 %28
+%78 = OpLoad  %7  %69
+%79 = OpCompositeConstruct  %8  %78 %31
+%80 = OpLoad  %5  %63
+%81 = OpCompositeConstruct  %6  %80 %34
+%82 = OpLoad  %5  %63
+%83 = OpCompositeConstruct  %6  %33 %82
+%84 = OpLoad  %7  %69
+%85 = OpCompositeConstruct  %8  %84 %44
 %86 = OpCompositeConstruct  %9  %85 %48
-%87 = OpLoad  %7  %67
-%88 = OpCompositeConstruct  %8  %87 %47
-%89 = OpCompositeConstruct  %9  %45 %88
-%90 = OpLoad  %7  %67
-%91 = OpCompositeConstruct  %8  %46 %90
+%87 = OpLoad  %7  %69
+%88 = OpCompositeConstruct  %8  %43 %87
+%89 = OpCompositeConstruct  %9  %88 %48
+%90 = OpLoad  %7  %69
+%91 = OpCompositeConstruct  %8  %90 %47
 %92 = OpCompositeConstruct  %9  %45 %91
-%93 = OpLoad  %7  %67
-%94 = OpCompositeConstruct  %10  %93 %44
-%95 = OpLoad  %7  %67
-%96 = OpCompositeConstruct  %10  %43 %95
-%97 = OpLoad  %7  %67
-%98 = OpCompositeConstruct  %10  %97 %44
-%99 = OpLoad  %7  %67
-%100 = OpCompositeConstruct  %10  %43 %99
-%101 = OpLoad  %3  %65
-%102 = OpCompositeConstruct  %12  %101 %55
-%103 = OpLoad  %3  %65
-%104 = OpCompositeConstruct  %12  %50 %103
-%105 = OpLoad  %7  %67
-%106 = OpCompositeConstruct  %10  %105 %44
-%107 = OpLoad  %7  %67
-%108 = OpCompositeConstruct  %10  %43 %107
-%109 = OpLoad  %7  %67
-%110 = OpCompositeConstruct  %10  %109 %44
-%111 = OpLoad  %7  %67
-%112 = OpCompositeConstruct  %10  %43 %111
-%113 = OpLoad  %3  %65
-%114 = OpCompositeConstruct  %12  %113 %55
-%115 = OpLoad  %3  %65
-%116 = OpCompositeConstruct  %12  %50 %115
-%117 = OpLoad  %3  %65
-%118 = OpCompositeConstruct  %4  %117 %117
-%119 = OpLoad  %5  %63
-%120 = OpCompositeConstruct  %6  %119 %119
-%121 = OpLoad  %7  %67
-%122 = OpCompositeConstruct  %8  %121 %121
+%93 = OpLoad  %7  %69
+%94 = OpCompositeConstruct  %8  %46 %93
+%95 = OpCompositeConstruct  %9  %45 %94
+%96 = OpLoad  %7  %69
+%97 = OpCompositeConstruct  %10  %96 %44
+%98 = OpLoad  %7  %69
+%99 = OpCompositeConstruct  %10  %43 %98
+%100 = OpLoad  %7  %69
+%101 = OpCompositeConstruct  %10  %100 %44
+%102 = OpLoad  %7  %69
+%103 = OpCompositeConstruct  %10  %43 %102
+%104 = OpLoad  %3  %66
+%105 = OpCompositeConstruct  %12  %104 %55
+%106 = OpLoad  %3  %66
+%107 = OpCompositeConstruct  %12  %50 %106
+%108 = OpLoad  %7  %69
+%109 = OpCompositeConstruct  %10  %108 %44
+%110 = OpLoad  %7  %69
+%111 = OpCompositeConstruct  %10  %43 %110
+%112 = OpLoad  %7  %69
+%113 = OpCompositeConstruct  %10  %112 %44
+%114 = OpLoad  %7  %69
+%115 = OpCompositeConstruct  %10  %43 %114
+%116 = OpLoad  %3  %66
+%117 = OpCompositeConstruct  %12  %116 %55
+%118 = OpLoad  %3  %66
+%119 = OpCompositeConstruct  %12  %50 %118
+%120 = OpLoad  %3  %66
+%121 = OpCompositeConstruct  %4  %120 %120
+%122 = OpLoad  %5  %63
+%123 = OpCompositeConstruct  %6  %122 %122
+%124 = OpLoad  %7  %69
+%125 = OpCompositeConstruct  %8  %124 %124
 OpReturn
 OpFunctionEnd
-%124 = OpFunction  %2  None %20
-%123 = OpLabel
-%125 = OpFunctionCall  %2  %19
-%126 = OpFunctionCall  %2  %62
+%127 = OpFunction  %2  None %20
+%126 = OpLabel
+%128 = OpFunctionCall  %2  %19
+%129 = OpFunctionCall  %2  %62
 OpReturn
 OpFunctionEnd

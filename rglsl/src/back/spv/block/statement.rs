@@ -251,6 +251,20 @@ impl BlockContext<'_> {
                 ref arguments,
             } => self.write_debug_printf_statement(&mut block, format, arguments)?,
             Statement::Assume { condition } => self.write_assume(condition, &mut block)?,
+            Statement::DebugValue {
+                variable,
+                value,
+                ref indices,
+            } => {
+                let value = self.cached.get(value)?;
+                self.writer.debug_value(
+                    self.ir_module,
+                    self.ir_function,
+                    &mut block,
+                    (variable, value),
+                    indices,
+                );
+            }
             Statement::SpirvInstruction {
                 ref instruction,
                 ref operands,

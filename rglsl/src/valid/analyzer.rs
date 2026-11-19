@@ -1418,7 +1418,10 @@ impl FunctionInfo {
                     exit: ExitFlags::empty(),
                 }
             }
-            S::Assume { condition } => FunctionUniformity {
+            S::Assume { condition }
+            | S::DebugValue {
+                value: condition, ..
+            } => FunctionUniformity {
                 result: Uniformity {
                     non_uniform_result: self.add_ref(condition),
                     requirements: UniformityRequirements::empty(),

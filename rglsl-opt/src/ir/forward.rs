@@ -25,9 +25,9 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
 fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<Changed, String> {
     let mut changed = false;
     let classes = classify_types(&module.types);
-    let keep_stores = context.debug == DebugLevel::Variables;
+    let debug = context.debug == DebugLevel::Variables;
     let complete = !context.unlinked && !context.export_functions;
-    if complete && !keep_stores {
+    if complete {
         changed |= private::localize(module, &classes)?;
     }
     let undefined = if complete {
@@ -66,7 +66,7 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
                 .try_get_mut(handle)
                 .map_err(|error| error.to_string())?,
         );
-        let result = rewrite(module, globals, &function, keep_stores);
+        let result = rewrite(module, globals, &function, debug);
         let slot = module
             .functions
             .try_get_mut(handle)
@@ -82,7 +82,7 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
             continue;
         };
         let function = core::mem::take(&mut entry.function);
-        let result = rewrite(module, globals, &function, keep_stores);
+        let result = rewrite(module, globals, &function, debug);
         let entry = module
             .entry_points
             .get_mut(index)
@@ -133,7 +133,7 @@ fn rewrite(
     module: &mut Module,
     globals: Globals<'_>,
     function: &Function,
-    keep_stores: bool,
+    debug: bool,
 ) -> Result<Option<Function>, String> {
     let Globals {
         readonly,
@@ -210,7 +210,6 @@ fn rewrite(
             readonly,
             undefined,
         },
-        keep_stores,
     )?
     else {
         return Ok(None);
@@ -218,7 +217,14 @@ fn rewrite(
     plan.undefined_types(module, function)?;
     let types = &module.types;
     let mut rebuild = Rebuild::new(function);
-    rebuild.body(&mut Apply { plan: &plan, types }, locals.statements())?;
+    rebuild.body(
+        &mut Apply {
+            plan: &plan,
+            types,
+            debug,
+        },
+        locals.statements(),
+    )?;
     for &(local, value) in &plan.inits {
         let value = rebuild.value(value)?;
         rebuild
@@ -347,7 +353,6 @@ struct Scan<'a> {
     locals: &'a Locals,
     access: Access<'a>,
     tracked: Tracked<'a>,
-    keep_stores: bool,
     reads: BTreeMap<(usize, Vec<u32>), Handle<Expression>>,
     plan: Plan,
     scope: Vec<Scope>,
@@ -376,7 +381,6 @@ impl<'a> Scan<'a> {
         locals: &'a Locals,
         tracked: Tracked<'a>,
         access: Access<'a>,
-        keep_stores: bool,
     ) -> Result<Option<Plan>, String> {
         let count = tracked.tracked.len();
         let mut scan = Self {
@@ -399,7 +403,6 @@ impl<'a> Scan<'a> {
             locals,
             access,
             tracked,
-            keep_stores,
             reads: BTreeMap::new(),
             plan: Plan {
                 replace: vec![Replace::Keep; function.expressions.len()],
@@ -690,9 +693,6 @@ impl<'a> Scan<'a> {
     }
 
     fn mark_dead(&mut self, position: u32) {
-        if self.keep_stores {
-            return;
-        }
         if let Some(slot) = self.plan.dead.get_mut(position as usize) {
             *slot = true;
             self.changed = true;
@@ -932,7 +932,6 @@ impl<'a> Scan<'a> {
         let value = self.canonical(value);
         if !observable
             && !touched
-            && !self.keep_stores
             && self.region == ROOT
             && let Some(handle) = self.initializer(local, value)
         {
@@ -1007,6 +1006,7 @@ impl<'a> Scan<'a> {
 struct Apply<'p> {
     plan: &'p Plan,
     types: &'p UniqueArena<Type>,
+    debug: bool,
 }
 
 impl Policy for Apply<'_> {
@@ -1083,13 +1083,34 @@ impl Policy for Apply<'_> {
 
     fn statement(
         &mut self,
-        _: &mut Rebuild<'_>,
-        _: &Statement,
-        _: Span,
+        rebuild: &mut Rebuild<'_>,
+        statement: &Statement,
+        span: Span,
         position: u32,
-        _: &mut Block,
+        block: &mut Block,
     ) -> Result<bool, String> {
-        Ok(self.plan.dead.get(position as usize) == Some(&true))
+        if self.plan.dead.get(position as usize) != Some(&true) {
+            return Ok(false);
+        }
+        if self.debug
+            && let Some(Statement::DebugValue {
+                variable,
+                value,
+                indices,
+            }) = crate::ir::debug::value_of_store(rebuild.source, statement)
+        {
+            let value = rebuild.value(value)?;
+            rebuild.push(
+                block,
+                Statement::DebugValue {
+                    variable,
+                    value,
+                    indices,
+                },
+                span,
+            );
+        }
+        Ok(true)
     }
 }
 

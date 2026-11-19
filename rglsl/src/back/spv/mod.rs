@@ -31,6 +31,7 @@ mod specialization;
 mod stage;
 mod subgroup;
 mod tensor;
+mod uninitialized;
 mod writer;
 
 pub use rglsl_types::spv::*;

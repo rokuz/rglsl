@@ -167,6 +167,7 @@ impl Locals {
     fn statement(&mut self, statement: &Statement, position: u32) {
         match *statement {
             Statement::Emit(_) => {}
+            Statement::DebugValue { value, .. } => self.escape(value),
             Statement::Store { pointer, value } => {
                 self.escape(value);
                 if let Some(target) = self.pointer(pointer)

@@ -1,6 +1,9 @@
 mod common;
 
-use common::{TestResult, compiled, decorations, entry, fragment, loads, local, optimized, stores};
+use common::{
+    TestResult, compiled, debug_values, decorations, entry, fragment, loads, local, optimized,
+    stores,
+};
 use rglsl::{AddressSpace, Expression, Module, ShaderStage, Statement};
 use rglsl_opt::{Context, DebugLevel, TargetGpu};
 
@@ -409,7 +412,7 @@ void main() {
 }
 
 #[test]
-fn debug_variables_keep_their_stores_while_loads_are_forwarded() -> TestResult {
+fn forwarded_stores_of_debug_variables_become_debug_values() -> TestResult {
     let source = "#version 450
 layout(location = 0) in vec4 inColor;
 layout(location = 0) out vec4 color;
@@ -433,8 +436,9 @@ void main() {
     )?;
     let function = entry(&module)?;
     assert_eq!(loads(function, "x"), 0);
-    assert_eq!(stores(function, "x"), 2);
-    assert_eq!(private_globals(&module), ["scratch"]);
+    assert_eq!(stores(function, "x"), 0);
+    assert_eq!(debug_values(function, "x"), 2);
+    assert!(private_globals(&module).is_empty());
     Ok(())
 }
 

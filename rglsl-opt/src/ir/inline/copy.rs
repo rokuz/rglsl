@@ -1,7 +1,7 @@
 use rglsl::ir::visit::VisitorMut;
 use rglsl::{
-    Block, Constant, Expression, Function, GlobalVariable, Handle, LocalVariable, Override, Range,
-    Span, Statement, SwitchCase, Type,
+    Block, Constant, DebugInfo, Expression, Function, GlobalVariable, Handle, InlineShift,
+    LocalVariable, Override, Range, Span, Statement, SwitchCase, Type,
 };
 use rglsl_types::stack::recurse;
 
@@ -13,6 +13,21 @@ pub(super) struct Instance<'f> {
     map: Vec<Option<Handle<Expression>>>,
     locals: Vec<Handle<LocalVariable>>,
     arguments: Option<Vec<Handle<Expression>>>,
+    shift: Option<InlineShift>,
+}
+
+impl Instance<'_> {
+    fn span(&self, span: Span) -> Span {
+        self.shift.map_or(span, |shift| shift.span(span))
+    }
+
+    fn expression_span(&self, handle: Handle<Expression>) -> Span {
+        self.span(self.source.expressions.get_span(handle))
+    }
+
+    fn local_span(&self, handle: Handle<LocalVariable>) -> Span {
+        self.span(self.source.local_variables.get_span(handle))
+    }
 }
 
 struct Call<'s> {
@@ -30,6 +45,7 @@ struct Place {
 
 pub(super) struct Builder<'p> {
     plan: &'p Plan,
+    pub debug: Option<Box<DebugInfo>>,
     out: Function,
     size: u64,
     pub inlined: bool,
@@ -37,9 +53,14 @@ pub(super) struct Builder<'p> {
 }
 
 impl<'p> Builder<'p> {
-    pub fn build(plan: &'p Plan, root: &'p Function) -> Result<Self, String> {
+    pub fn build(
+        plan: &'p Plan,
+        root: &'p Function,
+        debug: Option<Box<DebugInfo>>,
+    ) -> Result<Self, String> {
         let mut builder = Self {
             plan,
+            debug,
             out: Function {
                 name: root.name.clone(),
                 arguments: root.arguments.clone(),
@@ -57,6 +78,7 @@ impl<'p> Builder<'p> {
             map: vec![None; root.expressions.len()],
             locals: Vec::with_capacity(root.local_variables.len()),
             arguments: None,
+            shift: None,
         };
         for (handle, local) in root.local_variables.iter() {
             let new = builder.out.local_variables.append(
@@ -81,8 +103,8 @@ impl<'p> Builder<'p> {
         Ok(builder)
     }
 
-    pub fn finish(self) -> Function {
-        self.out
+    pub fn finish(self) -> (Function, Option<Box<DebugInfo>>) {
+        (self.out, self.debug)
     }
 
     fn initialize(
@@ -109,7 +131,7 @@ impl<'p> Builder<'p> {
                     };
                     let value = self.ensure_visible(instance, init, block)?;
                     let new = local_of(instance, handle)?;
-                    let span = source.local_variables.get_span(handle);
+                    let span = instance.local_span(handle);
                     let pointer = self.append(Expression::LocalVariable(new), span);
                     block.push(Statement::Store { pointer, value }, span);
                 }
@@ -183,7 +205,7 @@ impl<'p> Builder<'p> {
         let start = self.out.expressions.len();
         let new = self.ensure(instance, handle)?;
         let mut run: Option<(Handle<Expression>, Handle<Expression>)> = None;
-        let span = instance.source.expressions.get_span(handle);
+        let span = instance.expression_span(handle);
         let expressions = &self.out.expressions;
         let created: Vec<(Handle<Expression>, bool)> = expressions
             .range_from(start)
@@ -242,7 +264,7 @@ impl<'p> Builder<'p> {
         if let Expression::LocalVariable(ref mut local) = expression {
             *local = local_of(instance, *local)?;
         }
-        let new = self.append(expression, source.expressions.get_span(handle));
+        let new = self.append(expression, instance.expression_span(handle));
         if let Some(name) = source.named_expressions.get(&handle) {
             self.out.named_expressions.insert(new, name.clone());
         }
@@ -322,6 +344,7 @@ impl<'p> Builder<'p> {
         out: &mut Block,
     ) -> Result<(), String> {
         for (statement, &span) in source.span_iter() {
+            let span = instance.span(span);
             self.size = self.size.saturating_add(1);
             match *statement {
                 Statement::Emit(ref range) => self.emit(instance, range, out, span)?,
@@ -462,11 +485,13 @@ impl<'p> Builder<'p> {
             .map(|&argument| self.ensure(caller, argument))
             .collect::<Result<Vec<_>, _>>()?;
         let source = &lowered.function;
+        let shift = self.inline_shift(function, span);
         let mut callee = Instance {
             source,
             map: vec![None; source.expressions.len()],
             locals: Vec::with_capacity(source.local_variables.len()),
             arguments: Some(arguments),
+            shift,
         };
         for (handle, local) in source.local_variables.iter() {
             let new = self.out.local_variables.append(
@@ -474,7 +499,7 @@ impl<'p> Builder<'p> {
                     init: None,
                     ..local.clone()
                 },
-                source.local_variables.get_span(handle),
+                callee.local_span(handle),
             );
             callee.locals.push(new);
         }
@@ -518,6 +543,14 @@ impl<'p> Builder<'p> {
             }
         };
         set(caller, result, value)
+    }
+}
+
+impl Builder<'_> {
+    fn inline_shift(&mut self, function: Handle<Function>, call: Span) -> Option<InlineShift> {
+        let range = self.plan.debug_range(function)?;
+        let call = u32::try_from(call.to_range()?.start).ok()?;
+        self.debug.as_mut()?.inline(range, call)
     }
 }
 

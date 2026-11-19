@@ -1,0 +1,144 @@
+use alloc::{vec, vec::Vec};
+
+use rglsl_types::stack::recurse;
+
+use crate::arena::{Handle, UniqueArena};
+use crate::{Block, Expression, Function, LocalVariable, Statement, Type, TypeInner};
+
+pub(super) fn plain_types(types: &UniqueArena<Type>) -> Vec<bool> {
+    let mut plain: Vec<bool> = Vec::with_capacity(types.len());
+    for (_, ty) in types.iter() {
+        let is_plain = match ty.inner {
+            TypeInner::Scalar(_) | TypeInner::Vector { .. } | TypeInner::Matrix { .. } => true,
+            TypeInner::Struct { ref members, .. } => members
+                .iter()
+                .all(|member| plain.get(member.ty.index()).copied().unwrap_or(false)),
+            _ => false,
+        };
+        plain.push(is_plain);
+    }
+    plain
+}
+
+pub(super) fn read_before_written(function: &Function, plain: &[bool]) -> Vec<bool> {
+    let mut scan = Scan {
+        function,
+        read: vec![false; function.local_variables.len()],
+    };
+    let mut written: Vec<bool> = function
+        .local_variables
+        .iter()
+        .map(|(_, local)| {
+            local.init.is_some() || !plain.get(local.ty.index()).copied().unwrap_or(false)
+        })
+        .collect();
+    scan.block(&function.body, &mut written);
+    scan.read
+}
+
+struct Scan<'f> {
+    function: &'f Function,
+    read: Vec<bool>,
+}
+
+impl Scan<'_> {
+    fn root(&self, pointer: Handle<Expression>) -> Option<Handle<LocalVariable>> {
+        let mut current = pointer;
+        loop {
+            match *self.function.expressions.try_get(current).ok()? {
+                Expression::LocalVariable(local) => return Some(local),
+                Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => {
+                    current = base;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn use_pointer(&mut self, pointer: Handle<Expression>, written: &[bool]) {
+        if let Some(local) = self.root(pointer)
+            && written.get(local.index()) == Some(&false)
+            && let Some(slot) = self.read.get_mut(local.index())
+        {
+            *slot = true;
+        }
+    }
+
+    fn block(&mut self, block: &Block, written: &mut Vec<bool>) {
+        for statement in block.iter() {
+            self.statement(statement, written);
+        }
+    }
+
+    fn statement(&mut self, statement: &Statement, written: &mut Vec<bool>) {
+        match *statement {
+            Statement::Emit(ref range) => {
+                for handle in range.clone() {
+                    if let Ok(&Expression::Load { pointer }) =
+                        self.function.expressions.try_get(handle)
+                    {
+                        self.use_pointer(pointer, written);
+                    }
+                }
+            }
+            Statement::Store { pointer, .. } => {
+                if let Ok(&Expression::LocalVariable(local)) =
+                    self.function.expressions.try_get(pointer)
+                    && let Some(slot) = written.get_mut(local.index())
+                {
+                    *slot = true;
+                }
+            }
+            Statement::Block(ref block) => recurse(|| self.block(block, written)),
+            Statement::If {
+                ref accept,
+                ref reject,
+                ..
+            } => {
+                let mut accepted = written.clone();
+                recurse(|| self.block(accept, &mut accepted));
+                let mut rejected = written.clone();
+                recurse(|| self.block(reject, &mut rejected));
+                for ((slot, accepted), rejected) in written.iter_mut().zip(accepted).zip(rejected) {
+                    *slot = accepted && rejected;
+                }
+            }
+            Statement::Switch { ref cases, .. } => {
+                for case in cases {
+                    let mut inside = written.clone();
+                    recurse(|| self.block(&case.body, &mut inside));
+                }
+            }
+            Statement::Loop {
+                ref body,
+                ref continuing,
+                ..
+            } => {
+                let mut inside = written.clone();
+                recurse(|| self.block(body, &mut inside));
+                recurse(|| self.block(continuing, &mut inside));
+            }
+            Statement::Call { ref arguments, .. } => {
+                for &argument in arguments {
+                    if let Some(local) = self.root(argument)
+                        && let Some(slot) = written.get_mut(local.index())
+                    {
+                        *slot = true;
+                    }
+                }
+            }
+            ref other => {
+                let mut pointers = Vec::new();
+                other.for_each_operand(|operand| pointers.push(operand));
+                for pointer in pointers {
+                    if let Some(local) = self.root(pointer) {
+                        self.use_pointer(pointer, written);
+                        if let Some(slot) = written.get_mut(local.index()) {
+                            *slot = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

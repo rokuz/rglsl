@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestResult, entry, fragment, optimized, stores};
+use common::{TestResult, debug_values, entry, fragment, optimized, stores};
 use rglsl::{Function, ShaderStage, Statement};
 use rglsl_opt::{Context, DebugLevel, TargetGpu};
 
@@ -241,7 +241,7 @@ fn a_call_with_side_effects_keeps_its_loop() -> TestResult {
 }
 
 #[test]
-fn debug_variables_keep_loops_storing_locals() -> TestResult {
+fn debug_variables_keep_no_dead_code() -> TestResult {
     let source = shader(
         "",
         "    float t = 0.0;
@@ -258,7 +258,8 @@ fn debug_variables_keep_loops_storing_locals() -> TestResult {
         },
     )?;
     let function = entry(&module)?;
-    assert_eq!(shape(function).loops, 1);
-    assert_eq!(stores(function, "t"), 2);
+    assert_eq!(shape(function).loops, 0);
+    assert_eq!(stores(function, "t"), 0);
+    assert_eq!(debug_values(function, "t"), 1);
     Ok(())
 }

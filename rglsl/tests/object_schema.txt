@@ -1,4 +1,4 @@
-FORMAT_VERSION 37
+FORMAT_VERSION 38
 AddressSpace fd71764f652ff65a
 AmdBarycentric 74eb27f50e4d760c
 Arena b0a0ae77a55d57a8
@@ -34,7 +34,8 @@ CooperativeVectorMatMul 316edd5014281526
 DeadCall 77574d43b9a10768
 DebugAnchor 0bffd2bda9c23d67
 DebugFunction 339298628630df56
-DebugInfo a17a1c5bdb8cf112
+DebugInfo 6adcc1b86e2b87b2
+DebugInlined c9e78c6b880808bb
 DebugLine 5095f92f8961c46c
 DebugMember 846daf6a80ce10b2
 DebugPosition 9026d4e091d37c6f
@@ -158,7 +159,7 @@ SpirvRequirements 3dd03b59a5cc4639
 SpirvTypeOperand 3ea959b7e4e776da
 StageLayout 501f79b51350ef7d
 StageRejection dff7cbcaee6e368c
-Statement 9c63ad737757d3c1
+Statement 4f947d3a50b1ba1a
 StorageAccess 175d29a9f2170d14
 StorageFormat 5d100512eebaf4c3
 StructMember 3a2617260246cc69

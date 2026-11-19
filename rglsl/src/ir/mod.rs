@@ -242,9 +242,9 @@ use crate::{FastIndexMap, NamedExpressions, NonUniformExpressions, PrecisionExpr
 
 pub use block::{Block, Walk};
 pub use debug::{
-    DebugAnchor, DebugFunction, DebugInfo, DebugLine, DebugMember, DebugPosition, DebugScope,
-    DebugSource, DebugStruct, DebugUnit, ModuleSpans, ScopeIndex, apply_spans, collect_spans,
-    shift_module_spans, shift_span,
+    DebugAnchor, DebugFunction, DebugInfo, DebugInlined, DebugLine, DebugMember, DebugPosition,
+    DebugScope, DebugSource, DebugStruct, DebugUnit, InlineShift, ModuleSpans, ScopeIndex,
+    apply_spans, collect_spans, shift_module_spans, shift_span,
 };
 pub use rglsl_types::builtin::{BuiltIn, ShaderBallot, ShaderCore, SubgroupMask};
 pub use rglsl_types::flavor::{
@@ -3342,6 +3342,11 @@ pub enum Statement {
         instruction: SpirvInstruction,
         operands: Vec<SpirvOperand>,
         result: Option<Handle<Expression>>,
+    },
+    DebugValue {
+        variable: Handle<LocalVariable>,
+        value: Handle<Expression>,
+        indices: Vec<u32>,
     },
 }
 

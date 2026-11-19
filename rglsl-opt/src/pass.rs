@@ -50,7 +50,7 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Program,
         applies: |summary| !summary.unlinked && !summary.export_functions,
         run: crate::ir::lto_io::run,
-        debug_info: DebugRule::LinesOnly,
+        debug_info: DebugRule::Preserves,
         counterpart: &[
             "--lto",
             "AnalyzeLiveInput",
@@ -64,7 +64,7 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.calls,
         run: crate::ir::inline::run,
-        debug_info: DebugRule::LinesOnly,
+        debug_info: DebugRule::Preserves,
         counterpart: &[
             "--wrap-opkill",
             "--merge-return",
@@ -90,7 +90,7 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.local_variables,
         run: crate::ir::sroa::run,
-        debug_info: DebugRule::LinesOnly,
+        debug_info: DebugRule::Preserves,
         counterpart: &["--scalar-replacement=0", "--convert-local-access-chains"],
     },
     Pass {
@@ -106,7 +106,7 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |_| true,
         run: crate::ir::dead_branch::run,
-        debug_info: DebugRule::LinesOnly,
+        debug_info: DebugRule::Preserves,
         counterpart: &["--eliminate-dead-branches"],
     },
     Pass {
@@ -114,7 +114,7 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.loops,
         run: crate::ir::unroll::run,
-        debug_info: DebugRule::LinesOnly,
+        debug_info: DebugRule::Preserves,
         counterpart: &["--loop-unroll"],
     },
     Pass {
@@ -122,7 +122,7 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.local_variables,
         run: crate::ir::const_array::run,
-        debug_info: DebugRule::LinesOnly,
+        debug_info: DebugRule::Preserves,
         counterpart: &["--copy-propagate-arrays"],
     },
     Pass {

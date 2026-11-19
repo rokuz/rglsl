@@ -37,9 +37,12 @@ struct LoopTest {
 }
 
 fn loop_test(body: &crate::Block) -> Option<LoopTest> {
-    let index = body
-        .iter()
-        .position(|statement| !matches!(*statement, Statement::Emit(_)))?;
+    let index = body.iter().position(|statement| {
+        !matches!(
+            *statement,
+            Statement::Emit(_) | Statement::DebugValue { .. }
+        )
+    })?;
     let Statement::If {
         condition,
         ref accept,

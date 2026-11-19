@@ -2,6 +2,7 @@ pub(crate) mod const_array;
 pub(crate) mod cse;
 pub(crate) mod dce;
 pub(crate) mod dead_branch;
+pub(crate) mod debug;
 pub(crate) mod fold;
 pub(crate) mod forward;
 pub(crate) mod inline;

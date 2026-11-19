@@ -753,6 +753,14 @@ macro_rules! statement_handles {
                     $v.result($($d)? result)?;
                 }
             }
+            Statement::DebugValue {
+                ref $($m)? variable,
+                ref $($m)? value,
+                indices: _,
+            } => {
+                $v.local_variable($($d)? variable)?;
+                $v.expression($($d)? value)?;
+            }
         }
     };
 }

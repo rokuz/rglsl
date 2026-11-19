@@ -76,6 +76,10 @@ pub(super) struct DebugState {
     privates: Vec<(u32, Handle<crate::GlobalVariable>)>,
     structs: FastHashMap<String, Vec<usize>>,
     pub(super) buffer_type: bool,
+    function_scopes: FastHashMap<u32, Word>,
+    function_handles: FastHashMap<u32, Handle<crate::Function>>,
+    inlined_at: FastHashMap<usize, Word>,
+    local_variables: FastHashMap<(u32, String), Word>,
 }
 
 struct FunctionState {
@@ -85,7 +89,9 @@ struct FunctionState {
     position: Location,
     end: Option<Location>,
     declares: Vec<Declare>,
-    cursor: usize,
+    cursors: FastHashMap<Option<usize>, usize>,
+    done: Vec<bool>,
+    locals: FastHashMap<Handle<crate::LocalVariable>, Word>,
     prelude: Vec<Instruction>,
 }
 
@@ -100,6 +106,7 @@ struct Declare {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Location {
     scope: Word,
+    inlined: Word,
     source: u32,
     line: u32,
 }
@@ -275,6 +282,25 @@ fn scalar_name(scalar: crate::Scalar) -> (&'static str, Word) {
     }
 }
 
+fn declared_members(
+    record: &crate::DebugStruct,
+    members: &[crate::StructMember],
+) -> Option<Vec<usize>> {
+    let mut order = Vec::with_capacity(members.len());
+    let mut next = 0;
+    for member in members {
+        let name = member.name.as_deref()?;
+        let position = record
+            .members
+            .get(next..)?
+            .iter()
+            .position(|declared| declared.name == name)?;
+        order.push(next + position);
+        next += position + 1;
+    }
+    Some(order)
+}
+
 fn parameter_copies(function: &crate::Function) -> FastHashMap<u32, Handle<crate::LocalVariable>> {
     let mut copies = FastHashMap::default();
     for statement in function.body.iter() {
@@ -311,6 +337,15 @@ impl Writer {
             self.debug.scope_index = info.scope_index();
             self.debug.scopes = alloc::vec![0; info.scopes.len()];
             self.debug.anchors.anchors.clone_from(&info.anchors);
+            self.debug.anchors.inlined.clone_from(&info.inlined);
+            self.debug.function_handles = ir_module
+                .functions
+                .iter()
+                .filter_map(|(handle, _)| {
+                    let range = ir_module.functions.get_span(handle).to_range()?;
+                    Some((u32::try_from(range.start).ok()?, handle))
+                })
+                .collect();
             for (index, record) in info.structs.iter().enumerate() {
                 self.debug
                     .structs
@@ -954,20 +989,24 @@ impl Writer {
         reserved: Option<Word>,
     ) -> Result<Word, super::Error> {
         let candidates = self.debug.structs.get(name).cloned().unwrap_or_default();
-        let record = candidates
-            .iter()
-            .filter_map(|&index| info.structs.get(index))
-            .find(|record| {
-                record.name == name
-                    && record.members.len() == members.len()
-                    && record
-                        .members
-                        .iter()
-                        .zip(members)
-                        .all(|(declared, member)| {
-                            member.name.as_deref() == Some(declared.name.as_str())
-                        })
-            });
+        let named = || {
+            candidates
+                .iter()
+                .filter_map(|&index| info.structs.get(index))
+                .filter(|record| record.name == name)
+        };
+        let found = named()
+            .filter(|record| record.members.len() == members.len())
+            .chain(named().filter(|record| record.members.len() != members.len()))
+            .find_map(|record| Some((record, declared_members(record, members)?)));
+        let record = found.as_ref().map(|&(record, _)| record);
+        let declared = |index: usize| {
+            found.as_ref().and_then(|&(record, ref order)| {
+                order
+                    .get(index)
+                    .and_then(|&position| record.members.get(position))
+            })
+        };
         let unit = record.map_or(0, |record| record.unit);
         let unit_id = self.debug_unit(unit);
         let at = record.map_or(
@@ -980,13 +1019,9 @@ impl Writer {
         );
         let mut member_ids = Vec::with_capacity(members.len());
         for (index, member) in members.iter().enumerate() {
-            let position = record
-                .and_then(|record| record.members.get(index))
-                .map_or(at, |declared| declared.at);
+            let position = declared(index).map_or(at, |declared| declared.at);
             let name = self.debug_info_string(member.name.as_deref().unwrap_or(""));
-            let boolean = record
-                .and_then(|record| record.members.get(index))
-                .is_some_and(|declared| declared.boolean);
+            let boolean = declared(index).is_some_and(|declared| declared.boolean);
             let ty = if boolean {
                 self.debug_boolean(types, member.ty)
             } else {
@@ -1208,13 +1243,256 @@ impl Writer {
         );
     }
 
-    fn debug_location(&self, info: &crate::DebugInfo, offset: u32) -> Option<Location> {
-        let line = info.line(offset)?;
+    fn debug_location(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &crate::DebugInfo,
+        offset: u32,
+    ) -> Option<Location> {
+        let line = *info.line(offset)?;
+        let (scope, inlined) = self.debug_scope_of(ir_module, info, offset)?;
         Some(Location {
-            scope: self.debug_scope_at(offset)?,
+            scope,
+            inlined,
             source: line.source,
             line: line.line,
         })
+    }
+
+    fn debug_scope_of(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &crate::DebugInfo,
+        offset: u32,
+    ) -> Option<(Word, Word)> {
+        match info.origin(offset) {
+            (origin, None) => Some((self.debug_scope_at(origin)?, 0)),
+            (_, Some(_)) if self.debug.level != DebugLevel::NonSemantic => {
+                Some((self.debug.function.as_ref()?.scope, 0))
+            }
+            (origin, Some(region)) => {
+                let callee = info.inlined.get(region)?.origin;
+                let scope = self.debug_callee_scope(ir_module, info, callee, origin)?;
+                let inlined = self.debug_inlined_at(ir_module, info, region)?;
+                Some((scope, inlined))
+            }
+        }
+    }
+
+    fn debug_callee_scope(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &crate::DebugInfo,
+        callee: u32,
+        origin: u32,
+    ) -> Option<Word> {
+        let record = *info.function(callee)?;
+        let function = self.debug_function_scope(ir_module, info, &record, None);
+        self.debug_lexical_blocks(info, &record, function);
+        if origin < record.start || origin > record.stop {
+            return Some(function);
+        }
+        Some(
+            self.debug
+                .scope_index
+                .at(origin)
+                .and_then(|index| self.debug.scopes.get(index))
+                .copied()
+                .filter(|&id| id != 0)
+                .unwrap_or(function),
+        )
+    }
+
+    fn debug_inlined_at(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &crate::DebugInfo,
+        region: usize,
+    ) -> Option<Word> {
+        let mut chain = Vec::new();
+        let mut current = Some(region);
+        while let Some(index) = current {
+            if self.debug.inlined_at.contains_key(&index) {
+                break;
+            }
+            chain.push(index);
+            current = info.origin(info.inlined.get(index)?.call).1;
+        }
+        for &index in chain.iter().rev() {
+            let call = info.inlined.get(index)?.call;
+            let line = *info.line(call)?;
+            let (origin, parent) = info.origin(call);
+            let (scope, parent) = match parent {
+                None => (self.debug_scope_at(origin)?, None),
+                Some(parent) => {
+                    let callee = info.inlined.get(parent)?.origin;
+                    let scope = self.debug_callee_scope(ir_module, info, callee, origin)?;
+                    (scope, self.debug.inlined_at.get(&parent).copied())
+                }
+            };
+            let line_id = self.debug_line(line.source, line.line.max(1));
+            let mut operands = alloc::vec![line_id, scope];
+            operands.extend(parent);
+            let id = self.debug_ext(grammar::shader_debug_info::DebugInlinedAt, &operands);
+            self.debug.inlined_at.insert(index, id);
+        }
+        self.debug.inlined_at.get(&region).copied()
+    }
+
+    fn debug_local_variable(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &crate::DebugInfo,
+        ir_function: &crate::Function,
+        handle: Handle<crate::LocalVariable>,
+        scope: Word,
+    ) -> Option<(u32, Word)> {
+        let local = ir_function.local_variables.try_get(handle).ok()?;
+        let name = local.name.as_deref()?;
+        let range = ir_function.local_variables.get_span(handle).to_range()?;
+        let offset = u32::try_from(range.start).ok()?;
+        let line = *info.line(offset)?;
+        let (origin, region) = info.origin(offset);
+        let key = (origin, String::from(name));
+        if let Some(&variable) = self.debug.local_variables.get(&key) {
+            return Some((offset, variable));
+        }
+        let local_scope = match region.and_then(|region| info.inlined.get(region)) {
+            Some(record) => self.debug_callee_scope(ir_module, info, record.origin, origin)?,
+            None => self
+                .debug
+                .scope_index
+                .at(origin)
+                .and_then(|index| self.debug.scopes.get(index))
+                .copied()
+                .filter(|&id| id != 0)
+                .unwrap_or(scope),
+        };
+        let name = self.debug_info_string(name);
+        let ty = self.debug_type(local.ty);
+        let source = self.debug_file(line.source);
+        let line_id = self.debug_line(line.source, line.line);
+        let column = self.debug_uint(0);
+        let flags = self.debug_uint(grammar::debug_info_flags::FlagIsLocal);
+        let variable = self.debug_ext(
+            grammar::shader_debug_info::DebugLocalVariable,
+            &[name, ty, source, line_id, column, local_scope, flags],
+        );
+        self.debug.local_variables.insert(key, variable);
+        Some((offset, variable))
+    }
+
+    fn debug_function_scope(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &crate::DebugInfo,
+        record: &crate::DebugFunction,
+        written: Option<&crate::Function>,
+    ) -> Word {
+        if let Some(&id) = self.debug.function_scopes.get(&record.start) {
+            return id;
+        }
+        let ir_function = written.or_else(|| {
+            self.debug
+                .function_handles
+                .get(&record.start)
+                .and_then(|&handle| ir_module.functions.try_get(handle).ok())
+        });
+        let return_type = match ir_function.and_then(|function| function.result.as_ref()) {
+            Some(result) => self.debug_type(result.ty),
+            None => self.void_type,
+        };
+        let mut signature = alloc::vec![return_type];
+        for argument in ir_function.iter().flat_map(|function| &function.arguments) {
+            signature.push(self.debug_type(argument.ty));
+        }
+        let function_type = match self.debug.function_types.get(&signature) {
+            Some(&id) => id,
+            None => {
+                let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
+                let mut operands = alloc::vec![flags];
+                operands.extend(signature.iter().copied());
+                let id = self.debug_ext(grammar::shader_debug_info::DebugTypeFunction, &operands);
+                self.debug.function_types.insert(signature, id);
+                id
+            }
+        };
+        let unit = info
+            .unit_of(record.start)
+            .and_then(|unit| u32::try_from(unit).ok())
+            .unwrap_or(0);
+        let name = self.debug_info_string(
+            ir_function
+                .and_then(|function| function.name.as_deref())
+                .unwrap_or(""),
+        );
+        let source_index = record.at.source;
+        let source = self.debug_file(source_index);
+        let line = self.debug_line(source_index, record.at.line);
+        let column = self.debug_uint(0);
+        let unit_id = self.debug_unit(unit);
+        let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
+        let scope = self.debug_ext(
+            grammar::shader_debug_info::DebugFunction,
+            &[
+                name,
+                function_type,
+                source,
+                line,
+                column,
+                unit_id,
+                name,
+                flags,
+                line,
+            ],
+        );
+        self.debug.function_scopes.insert(record.start, scope);
+        scope
+    }
+
+    fn debug_lexical_blocks(
+        &mut self,
+        info: &crate::DebugInfo,
+        record: &crate::DebugFunction,
+        scope: Word,
+    ) {
+        let first = info
+            .scopes
+            .partition_point(|scope_record| scope_record.start < record.start);
+        for (position, scope_record) in info
+            .scopes
+            .get(first..)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            let index = first + position;
+            if scope_record.start > record.stop {
+                break;
+            }
+            if self.debug.scopes.get(index).is_some_and(|&id| id != 0) {
+                continue;
+            }
+            let parent = self
+                .debug
+                .scope_index
+                .parent(index)
+                .and_then(|parent| self.debug.scopes.get(parent))
+                .copied()
+                .filter(|&id| id != 0)
+                .unwrap_or(scope);
+            let source_index = scope_record.at.source;
+            let source = self.debug_file(source_index);
+            let line = self.debug_line(source_index, scope_record.at.line);
+            let column = self.debug_column(scope_record.at);
+            let id = self.debug_ext(
+                grammar::shader_debug_info::DebugLexicalBlock,
+                &[source, line, column, parent],
+            );
+            if let Some(slot) = self.debug.scopes.get_mut(index) {
+                *slot = id;
+            }
+        }
     }
 
     fn debug_scope_at(&self, offset: u32) -> Option<Word> {
@@ -1258,11 +1536,13 @@ impl Writer {
             .unwrap_or(0);
         let position = Location {
             scope: 0,
+            inlined: 0,
             source: record.at.source,
             line: record.at.line,
         };
         let end = record.end.map(|end| Location {
             scope: 0,
+            inlined: 0,
             source: end.source,
             line: end.line,
         });
@@ -1273,52 +1553,15 @@ impl Writer {
             position,
             end,
             declares: Vec::new(),
-            cursor: 0,
+            cursors: FastHashMap::default(),
+            done: Vec::new(),
+            locals: FastHashMap::default(),
             prelude: Vec::new(),
         };
         if self.debug.level == DebugLevel::NonSemantic {
             let copies = parameter_copies(ir_function);
-            let return_type = match ir_function.result {
-                Some(ref result) => self.debug_type(result.ty),
-                None => self.void_type,
-            };
-            let mut signature = alloc::vec![return_type];
-            for argument in &ir_function.arguments {
-                signature.push(self.debug_type(argument.ty));
-            }
-            let function_type = match self.debug.function_types.get(&signature) {
-                Some(&id) => id,
-                None => {
-                    let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
-                    let mut operands = alloc::vec![flags];
-                    operands.extend(signature.iter().copied());
-                    let id =
-                        self.debug_ext(grammar::shader_debug_info::DebugTypeFunction, &operands);
-                    self.debug.function_types.insert(signature, id);
-                    id
-                }
-            };
-            let name = self.debug_info_string(ir_function.name.as_deref().unwrap_or(""));
-            let source_index = record.at.source;
-            let source = self.debug_file(source_index);
-            let line = self.debug_line(source_index, record.at.line);
-            let column = self.debug_uint(0);
+            let scope = self.debug_function_scope(ir_module, info, &record, Some(ir_function));
             let unit_id = self.debug_unit(unit);
-            let flags = self.debug_uint(grammar::debug_info_flags::FlagIsPublic);
-            let scope = self.debug_ext(
-                grammar::shader_debug_info::DebugFunction,
-                &[
-                    name,
-                    function_type,
-                    source,
-                    line,
-                    column,
-                    unit_id,
-                    name,
-                    flags,
-                    line,
-                ],
-            );
             let is_entry = info
                 .units
                 .iter()
@@ -1340,40 +1583,7 @@ impl Writer {
             if let Some(ref mut end) = state.end {
                 end.scope = scope;
             }
-            let first = info
-                .scopes
-                .partition_point(|scope_record| scope_record.start < record.start);
-            for (position, scope_record) in info
-                .scopes
-                .get(first..)
-                .unwrap_or_default()
-                .iter()
-                .enumerate()
-            {
-                let index = first + position;
-                if scope_record.start > record.stop {
-                    break;
-                }
-                let parent = self
-                    .debug
-                    .scope_index
-                    .parent(index)
-                    .and_then(|parent| self.debug.scopes.get(parent))
-                    .copied()
-                    .filter(|&id| id != 0)
-                    .unwrap_or(scope);
-                let source_index = scope_record.at.source;
-                let source = self.debug_file(source_index);
-                let line = self.debug_line(source_index, scope_record.at.line);
-                let column = self.debug_column(scope_record.at);
-                let id = self.debug_ext(
-                    grammar::shader_debug_info::DebugLexicalBlock,
-                    &[source, line, column, parent],
-                );
-                if let Some(slot) = self.debug.scopes.get_mut(index) {
-                    *slot = id;
-                }
-            }
+            self.debug_lexical_blocks(info, &record, scope);
             let expression = self.debug_expression();
             let mut copied = crate::FastHashSet::default();
             for (index, argument) in ir_function.arguments.iter().enumerate() {
@@ -1428,45 +1638,19 @@ impl Writer {
                 definition,
                 &[scope, function_id],
             ));
-            for (handle, local) in ir_function.local_variables.iter() {
+            for (handle, _) in ir_function.local_variables.iter() {
                 if copied.contains(&handle) {
                     continue;
                 }
-                let Some(ref name) = local.name else {
-                    continue;
-                };
                 let Some(found) = variables.get(&handle) else {
                     continue;
                 };
-                let span = ir_function.local_variables.get_span(handle);
-                let Some(offset) = span
-                    .to_range()
-                    .and_then(|range| u32::try_from(range.start).ok())
+                let Some((offset, variable)) =
+                    self.debug_local_variable(ir_module, info, ir_function, handle, scope)
                 else {
                     continue;
                 };
-                let Some(line) = info.line(offset).copied() else {
-                    continue;
-                };
-                let local_scope = self
-                    .debug
-                    .scope_index
-                    .at(offset)
-                    .and_then(|index| self.debug.scopes.get(index))
-                    .copied()
-                    .filter(|&id| id != 0)
-                    .unwrap_or(scope);
-                let name = self.debug_info_string(name);
-                let ty = self.debug_type(local.ty);
-                let source_index = line.source;
-                let source = self.debug_file(source_index);
-                let line_id = self.debug_line(source_index, line.line);
-                let column = self.debug_uint(0);
-                let flags = self.debug_uint(grammar::debug_info_flags::FlagIsLocal);
-                let variable = self.debug_ext(
-                    grammar::shader_debug_info::DebugLocalVariable,
-                    &[name, ty, source, line_id, column, local_scope, flags],
-                );
+                state.locals.insert(handle, variable);
                 state.declares.push(Declare {
                     offset,
                     variable,
@@ -1571,6 +1755,7 @@ impl Writer {
                 });
             }
             state.declares.sort_by_key(|declare| declare.offset);
+            state.done = alloc::vec![false; state.declares.len()];
         }
         self.debug.function = Some(state);
     }
@@ -1582,22 +1767,75 @@ impl Writer {
         let Some(offset) = self.debug.anchors.anchor(span) else {
             return;
         };
+        let inlined = &self.debug.anchors.inlined;
+        let region = self.debug.anchors.origin(offset).1;
+        let (from, to) = match region.and_then(|index| inlined.get(index)) {
+            Some(record) => (record.start, record.end),
+            None => (0, inlined.first().map_or(u32::MAX, |record| record.start)),
+        };
         if let Some(ref mut state) = self.debug.function {
-            while let Some(declared) = state
+            let low = state
                 .declares
-                .get(state.cursor)
-                .map(|declare| declare.offset)
-            {
+                .partition_point(|declare| declare.offset < from);
+            let high = state
+                .declares
+                .partition_point(|declare| declare.offset < to);
+            let cursor = state.cursors.entry(region).or_insert(low);
+            while *cursor < high {
+                let Some(declared) = state.declares.get(*cursor).map(|declare| declare.offset)
+                else {
+                    break;
+                };
                 if declared > offset {
                     break;
                 }
-                let index = u32::try_from(state.cursor).unwrap_or(u32::MAX);
+                let index = u32::try_from(*cursor).unwrap_or(u32::MAX);
                 block.body.push(marker(MARK_LOCATION, declared));
                 block.body.push(marker(MARK_DECLARE, index));
-                state.cursor += 1;
+                if let Some(slot) = state.done.get_mut(*cursor) {
+                    *slot = true;
+                }
+                *cursor += 1;
             }
         }
         block.body.push(marker(MARK_LOCATION, offset));
+    }
+
+    pub(super) fn debug_value(
+        &mut self,
+        ir_module: &crate::Module,
+        ir_function: &crate::Function,
+        block: &mut Block,
+        (variable, value): (Handle<crate::LocalVariable>, Word),
+        indices: &[u32],
+    ) {
+        if !self.debug.tracking() || self.debug.level != DebugLevel::NonSemantic {
+            return;
+        }
+        let Some(info) = ir_module.debug_info.as_deref() else {
+            return;
+        };
+        let Some(state) = self.debug.function.as_ref() else {
+            return;
+        };
+        let scope = state.scope;
+        let known = state.locals.get(&variable).copied();
+        let Some(local) = known.or_else(|| {
+            self.debug_local_variable(ir_module, info, ir_function, variable, scope)
+                .map(|(_, local)| local)
+        }) else {
+            return;
+        };
+        if let Some(ref mut state) = self.debug.function {
+            state.locals.insert(variable, local);
+        }
+        let expression = self.debug_expression();
+        let mut operands = alloc::vec![local, value, expression];
+        for &index in indices {
+            operands.push(self.debug_uint(index));
+        }
+        let instruction = self.debug_local_ext(grammar::shader_debug_info::DebugValue, &operands);
+        block.body.push(instruction);
     }
 
     pub(super) fn debug_mark_scope(&mut self, block: &mut Block, span: crate::Span) {
@@ -1628,9 +1866,11 @@ impl Writer {
         };
         let leftover: Vec<Declare> = state
             .declares
-            .get(state.cursor..)
-            .unwrap_or_default()
-            .to_vec();
+            .iter()
+            .zip(&state.done)
+            .filter(|&(_, &done)| !done)
+            .map(|(&declare, _)| declare)
+            .collect();
         for declare in leftover {
             let instruction = self.debug_declare(declare);
             state.prelude.push(instruction);
@@ -1643,7 +1883,7 @@ impl Writer {
         for block in function.blocks.iter_mut() {
             let body = core::mem::take(&mut block.body);
             let mut out = Vec::with_capacity(body.len() + 4);
-            let mut emitted_scope: Option<Word> = None;
+            let mut emitted_scope: Option<(Word, Word)> = None;
             let mut emitted_line: Option<(u32, u32)> = None;
             if let Some(prelude) = prelude.take() {
                 self.debug_emit_location(&mut out, current, &mut emitted_scope, &mut emitted_line);
@@ -1660,14 +1900,17 @@ impl Writer {
                     let payload = instruction.operands.get(1).copied().unwrap_or(0);
                     match kind {
                         MARK_LOCATION => {
-                            if let Some(location) = self.debug_location(info, payload) {
+                            if let Some(location) = self.debug_location(ir_module, info, payload) {
                                 current = location;
                             }
                             continue;
                         }
                         MARK_SCOPE => {
-                            if let Some(scope) = self.debug_scope_at(payload) {
+                            if let Some((scope, inlined)) =
+                                self.debug_scope_of(ir_module, info, payload)
+                            {
                                 current.scope = scope;
+                                current.inlined = inlined;
                             }
                             continue;
                         }
@@ -1727,7 +1970,7 @@ impl Writer {
         &mut self,
         out: &mut Vec<Instruction>,
         location: Location,
-        emitted_scope: &mut Option<Word>,
+        emitted_scope: &mut Option<(Word, Word)>,
         emitted_line: &mut Option<(u32, u32)>,
     ) {
         match self.debug.level {
@@ -1740,11 +1983,21 @@ impl Writer {
                 }
             }
             DebugLevel::NonSemantic => {
-                if *emitted_scope != Some(location.scope) {
-                    let instruction = self
-                        .debug_local_ext(grammar::shader_debug_info::DebugScope, &[location.scope]);
+                let scope = (location.scope, location.inlined);
+                if *emitted_scope != Some(scope) {
+                    let instruction = if location.inlined == 0 {
+                        self.debug_local_ext(
+                            grammar::shader_debug_info::DebugScope,
+                            &[location.scope],
+                        )
+                    } else {
+                        self.debug_local_ext(
+                            grammar::shader_debug_info::DebugScope,
+                            &[location.scope, location.inlined],
+                        )
+                    };
                     out.push(instruction);
-                    *emitted_scope = Some(location.scope);
+                    *emitted_scope = Some(scope);
                 }
                 if *emitted_line != Some((location.source, location.line)) {
                     let source_index = location.source;

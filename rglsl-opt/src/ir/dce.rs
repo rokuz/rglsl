@@ -365,6 +365,7 @@ impl<'m> Marker<'m> {
                         roots.push(id);
                     }
                 }
+                Statement::DebugValue { .. } => {}
                 Statement::Store { pointer, value } => {
                     let root = live.root(pointer);
                     if removable(root, &self.tracked) && self.undefined_store(index, value) {
@@ -399,7 +400,7 @@ impl<'m> Marker<'m> {
     }
 }
 
-fn sweep_functions(module: &mut Module, complete: bool, keep_locals: bool) -> Result<bool, String> {
+fn sweep_functions(module: &mut Module, complete: bool, debug: bool) -> Result<bool, String> {
     let tracked: Vec<bool> = module
         .global_variables
         .iter()
@@ -426,19 +427,14 @@ fn sweep_functions(module: &mut Module, complete: bool, keep_locals: bool) -> Re
     for index in 0..marker.functions.len() {
         marker.roots(index);
     }
-    if keep_locals {
-        for index in 0..marker.functions.len() {
-            let Some(&function) = marker.functions.get(index) else {
-                continue;
-            };
-            for (local, _) in function.local_variables.iter() {
-                marker.local(index, function, local);
-            }
-        }
-    }
     marker.run();
-    let plans: Vec<Option<Plan>> = (0..marker.functions.len())
-        .map(|index| Plan::of(&marker, index))
+    let debug_values: Vec<Vec<DebugValue>> = (0..marker.functions.len())
+        .map(|index| marker.debug_values(index, debug))
+        .collect();
+    let plans: Vec<Option<Plan>> = debug_values
+        .into_iter()
+        .enumerate()
+        .map(|(index, values)| Plan::of(&marker, index, values))
         .collect();
     drop(marker);
     let mut changed = false;
@@ -471,15 +467,90 @@ fn removable(root: Root, tracked: &[bool]) -> bool {
     }
 }
 
+struct DebugValue {
+    id: u32,
+    variable: Handle<LocalVariable>,
+    value: Handle<Expression>,
+    indices: Vec<u32>,
+}
+
+impl Marker<'_> {
+    fn debug_values(&mut self, index: usize, debug: bool) -> Vec<DebugValue> {
+        let Some(&function) = self.functions.get(index) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        let Some(live) = self.live.get(index) else {
+            return found;
+        };
+        for (id, node) in live.tree.nodes.iter().enumerate() {
+            let Ok(id) = u32::try_from(id) else {
+                break;
+            };
+            let candidate = match *node.statement {
+                Statement::DebugValue {
+                    variable,
+                    value,
+                    ref indices,
+                } => Some((variable, value, indices.clone())),
+                Statement::Store { pointer, value }
+                    if debug && live.statements.get(id as usize) != Some(&true) =>
+                {
+                    crate::ir::debug::stored_variable(function, pointer)
+                        .map(|(variable, indices)| (variable, value, indices))
+                }
+                _ => None,
+            };
+            if let Some((variable, value, indices)) = candidate {
+                found.push(DebugValue {
+                    id,
+                    variable,
+                    value,
+                    indices,
+                });
+            }
+        }
+        for value in &found {
+            if function
+                .expressions
+                .try_get(value.value)
+                .is_ok_and(|value| {
+                    matches!(
+                        *value,
+                        Expression::Literal(_) | Expression::Constant(_) | Expression::ZeroValue(_)
+                    )
+                })
+            {
+                self.mark(index, value.value);
+            }
+        }
+        self.run();
+        let Some(live) = self.live.get(index) else {
+            return Vec::new();
+        };
+        found.retain(|value| {
+            let parent = live
+                .tree
+                .nodes
+                .get(value.id as usize)
+                .map_or(NONE, |node| node.parent);
+            live.expressions.get(value.value.index()) == Some(&true)
+                && (parent == NONE || live.statements.get(parent as usize) == Some(&true))
+        });
+        found
+    }
+}
+
 struct Plan {
     expressions: Vec<bool>,
     locals: Vec<bool>,
     statements: Vec<bool>,
     ends: Vec<u32>,
+    debug_values: Vec<DebugValue>,
 }
 
 impl Plan {
-    fn of(marker: &Marker<'_>, index: usize) -> Option<Self> {
+    fn of(marker: &Marker<'_>, index: usize, debug_values: Vec<DebugValue>) -> Option<Self> {
         let live = marker.live.get(index)?;
         let any_dead = live.expressions.iter().any(|&live| !live)
             || live.locals.iter().any(|&live| !live)
@@ -489,14 +560,29 @@ impl Plan {
             locals: live.locals.clone(),
             statements: live.statements.clone(),
             ends: live.tree.nodes.iter().map(|node| node.end).collect(),
+            debug_values,
         })
     }
 
+    fn debug_value(&self, id: u32) -> Option<&DebugValue> {
+        let index = self.debug_values.partition_point(|value| value.id < id);
+        self.debug_values.get(index).filter(|value| value.id == id)
+    }
+
     fn apply(self, function: &mut Function) -> Result<(), String> {
+        let mut described = vec![false; self.locals.len()];
+        for value in &self.debug_values {
+            if let Some(slot) = described.get_mut(value.variable.index()) {
+                *slot = true;
+            }
+        }
         let mut locals = Vec::with_capacity(self.locals.len());
         let mut kept_locals = Arena::new();
-        for (handle, local, span) in function.local_variables.drain() {
+        for (handle, mut local, span) in function.local_variables.drain() {
             if self.locals.get(handle.index()) == Some(&true) {
+                locals.push(Some(kept_locals.append(local, span)));
+            } else if described.get(handle.index()) == Some(&true) {
+                local.init = None;
                 locals.push(Some(kept_locals.append(local, span)));
             } else {
                 locals.push(None);
@@ -542,7 +628,11 @@ impl Plan {
             .tables()
             .remap(|handle| map.get(handle.index()).copied().flatten());
         let mut next = 0;
-        self.rebuild(&mut function.body, &map, &mut next)?;
+        let maps = Maps {
+            expressions: &map,
+            locals: &locals,
+        };
+        self.rebuild(&mut function.body, maps, &mut next)?;
         if next as usize != self.statements.len() {
             return Err(format!(
                 "the rebuilt body has {next} statements, the analysis counted {}",
@@ -552,12 +642,8 @@ impl Plan {
         Ok(())
     }
 
-    fn rebuild(
-        &self,
-        block: &mut Block,
-        map: &[Option<Handle<Expression>>],
-        next: &mut u32,
-    ) -> Result<(), String> {
+    fn rebuild(&self, block: &mut Block, maps: Maps<'_>, next: &mut u32) -> Result<(), String> {
+        let map = maps.expressions;
         let statements = core::mem::take(block);
         for (mut statement, span) in statements.span_into_iter() {
             let id = *next;
@@ -579,13 +665,16 @@ impl Plan {
             }
             if self.statements.get(id as usize) != Some(&true) {
                 *next = end;
+                if let Some(value) = self.debug_value(id) {
+                    block.push(maps.debug_value(value)?, span);
+                }
                 continue;
             }
             *next = id.saturating_add(1);
             let mut result = Ok(());
             statement.for_each_child_block_mut(|child| {
                 if result.is_ok() {
-                    result = recurse(|| self.rebuild(child, map, next));
+                    result = recurse(|| self.rebuild(child, maps, next));
                 }
             });
             result?;
@@ -593,6 +682,32 @@ impl Plan {
             block.push(statement, span);
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Maps<'a> {
+    expressions: &'a [Option<Handle<Expression>>],
+    locals: &'a [Option<Handle<LocalVariable>>],
+}
+
+impl Maps<'_> {
+    fn debug_value(&self, value: &DebugValue) -> Result<Statement, String> {
+        Ok(Statement::DebugValue {
+            variable: self
+                .locals
+                .get(value.variable.index())
+                .copied()
+                .flatten()
+                .ok_or("a debug value names a removed local variable")?,
+            value: self
+                .expressions
+                .get(value.value.index())
+                .copied()
+                .flatten()
+                .ok_or("a debug value uses a dead expression")?,
+            indices: value.indices.clone(),
+        })
     }
 }
 

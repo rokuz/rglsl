@@ -4,9 +4,10 @@ use rglsl::{
 use rglsl_types::stack::recurse;
 
 use crate::analysis::locals::{Locals, Root};
-use crate::{Changed, OptError, Session};
+use crate::{Changed, DebugLevel, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
+    let debug = session.context.debug == DebugLevel::Variables;
     let module = session.module()?;
     let mut changed = false;
     let functions = module
@@ -20,7 +21,7 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
                 .map(|entry| &mut entry.function),
         );
     for function in functions {
-        changed |= constant_arrays(function);
+        changed |= constant_arrays(function, debug);
     }
     Ok(if changed { Changed::Yes } else { Changed::No })
 }
@@ -54,7 +55,7 @@ fn whole_local(locals: &Locals, pointer: Handle<Expression>) -> Option<Handle<Lo
     }
 }
 
-fn constant_arrays(function: &mut Function) -> bool {
+fn constant_arrays(function: &mut Function, debug: bool) -> bool {
     let locals = Locals::of(function, 0);
     let mut stored = vec![Stored::Nothing; function.local_variables.len()];
     for statement in function.body.walk() {
@@ -127,6 +128,9 @@ fn constant_arrays(function: &mut Function) -> bool {
         }
     }
     let removed = remove_stores(&mut function.body, &locals, &constant);
+    if debug {
+        describe_merged(function, &merged);
+    }
     let mut retargeted = false;
     for (_, expression) in function.expressions.iter_mut() {
         if let Expression::LocalVariable(local) = *expression
@@ -137,6 +141,34 @@ fn constant_arrays(function: &mut Function) -> bool {
         }
     }
     removed || retargeted
+}
+
+fn describe_merged(function: &mut Function, merged: &[Option<Handle<LocalVariable>>]) {
+    let mut values = Block::new();
+    for (handle, variable) in function.local_variables.iter() {
+        if variable.name.is_none() || merged.get(handle.index()).copied().flatten().is_none() {
+            continue;
+        }
+        let Some(value) = variable.init else {
+            continue;
+        };
+        values.push(
+            Statement::DebugValue {
+                variable: handle,
+                value,
+                indices: Vec::new(),
+            },
+            function.local_variables.get_span(handle),
+        );
+    }
+    if values.is_empty() {
+        return;
+    }
+    let body = core::mem::take(&mut function.body);
+    for (statement, span) in body.span_into_iter() {
+        values.push(statement, span);
+    }
+    function.body = values;
 }
 
 fn remove_stores(block: &mut Block, locals: &Locals, constant: &[Option<Key>]) -> bool {

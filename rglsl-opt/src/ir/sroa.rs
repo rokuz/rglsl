@@ -6,16 +6,17 @@ use rglsl::{
 use crate::analysis::locals::{Locals, Root};
 use crate::analysis::{Class, classify_types};
 use crate::ir::rebuild::{Policy, Rebuild};
-use crate::{Changed, OptError, Session};
+use crate::{Changed, DebugLevel, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
     let pass = session.pass;
     let limit = session.profile.parameters.scalar_replacement;
+    let debug = session.context.debug == DebugLevel::Variables;
     let module = session.module()?;
-    sroa(module, limit).map_err(|message| OptError::Pass { pass, message })
+    sroa(module, limit, debug).map_err(|message| OptError::Pass { pass, message })
 }
 
-fn sroa(module: &mut Module, limit: u32) -> Result<Changed, String> {
+fn sroa(module: &mut Module, limit: u32, debug: bool) -> Result<Changed, String> {
     let types = &module.types;
     let classes = classify_types(types);
     let mut changed = false;
@@ -30,7 +31,7 @@ fn sroa(module: &mut Module, limit: u32) -> Result<Changed, String> {
                 .map(|entry| &mut entry.function),
         );
     for function in functions {
-        if let Some(split) = split(types, &classes, function, limit)? {
+        if let Some(split) = split(types, &classes, function, (limit, debug))? {
             *function = split;
             changed = true;
         }
@@ -91,7 +92,7 @@ fn split(
     types: &UniqueArena<Type>,
     classes: &[Class],
     function: &Function,
-    limit: u32,
+    (limit, debug): (u32, bool),
 ) -> Result<Option<Function>, String> {
     let locals = Locals::of(function, 0);
     let mut plans: Vec<Option<Vec<Piece>>> = Vec::with_capacity(function.local_variables.len());
@@ -116,6 +117,7 @@ fn split(
         locals: &locals,
         pieces: Vec::with_capacity(plans.len()),
         pointers: Vec::new(),
+        debug,
     };
     for plan in &plans {
         split.pieces.push(plan.as_ref().map(|pieces| {
@@ -173,9 +175,23 @@ struct Split<'l> {
     locals: &'l Locals,
     pieces: Vec<Option<Pieces>>,
     pointers: Vec<Option<Handle<Expression>>>,
+    debug: bool,
 }
 
 impl Split<'_> {
+    fn member(
+        &self,
+        rebuild: &Rebuild<'_>,
+        pointer: Handle<Expression>,
+    ) -> Option<(Handle<LocalVariable>, u32, Handle<LocalVariable>)> {
+        let Ok(&Expression::AccessIndex { base, index }) = rebuild.expression(pointer) else {
+            return None;
+        };
+        let (local, pieces) = self.whole(base)?;
+        let &(piece, _) = pieces.get(index as usize)?;
+        Some((local, index, piece))
+    }
+
     fn whole(&self, pointer: Handle<Expression>) -> Option<(Handle<LocalVariable>, &Pieces)> {
         let target = self.locals.pointer(pointer)?;
         let Root::Local(local) = target.root else {
@@ -259,7 +275,31 @@ impl Policy for Split<'_> {
         let Statement::Store { pointer, value } = *statement else {
             return Ok(false);
         };
-        let Some(pieces) = self.whole(pointer).map(|(_, pieces)| pieces.clone()) else {
+        if self.debug
+            && let Some((local, index, piece)) = self.member(rebuild, pointer)
+        {
+            let value = rebuild.value(value)?;
+            let pointer = self.pointer(rebuild, piece);
+            rebuild.push(block, Statement::Store { pointer, value }, span);
+            if rebuild
+                .source
+                .local_variables
+                .try_get(local)
+                .is_ok_and(|variable| variable.name.is_some())
+            {
+                let debug_value = Statement::DebugValue {
+                    variable: local,
+                    value,
+                    indices: vec![index],
+                };
+                rebuild.push(block, debug_value, span);
+            }
+            return Ok(true);
+        }
+        let Some((local, pieces)) = self
+            .whole(pointer)
+            .map(|(local, pieces)| (local, pieces.clone()))
+        else {
             return Ok(false);
         };
         let source = rebuild.expression(value)?;
@@ -293,6 +333,21 @@ impl Policy for Split<'_> {
         }
         for store in stores {
             rebuild.push(block, store, span);
+        }
+        if self.debug
+            && rebuild
+                .source
+                .local_variables
+                .try_get(local)
+                .is_ok_and(|variable| variable.name.is_some())
+        {
+            let value = rebuild.value(value)?;
+            let debug_value = Statement::DebugValue {
+                variable: local,
+                value,
+                indices: Vec::new(),
+            };
+            rebuild.push(block, debug_value, span);
         }
         Ok(true)
     }

@@ -83,6 +83,7 @@ pub(super) mod shader_debug_info {
     pub(in crate::back::spv) const DebugLexicalBlock: Word = 21;
     pub(in crate::back::spv) const DebugScope: Word = 23;
     pub(in crate::back::spv) const DebugNoScope: Word = 24;
+    pub(in crate::back::spv) const DebugInlinedAt: Word = 25;
     pub(in crate::back::spv) const DebugLocalVariable: Word = 26;
     pub(in crate::back::spv) const DebugDeclare: Word = 28;
     pub(in crate::back::spv) const DebugValue: Word = 29;

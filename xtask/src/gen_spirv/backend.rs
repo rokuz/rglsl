@@ -118,6 +118,7 @@ pub const SECTIONS: &[Section] = &[
             "DebugLexicalBlock",
             "DebugScope",
             "DebugNoScope",
+            "DebugInlinedAt",
             "DebugLocalVariable",
             "DebugDeclare",
             "DebugValue",

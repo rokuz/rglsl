@@ -990,6 +990,9 @@ impl super::Validator {
                 ..
             } => self.validate_spirv_instruction(operands, result, &context)?,
             S::Assume { condition } => self.validate_condition(condition, &context)?,
+            S::DebugValue { value, .. } => {
+                context.resolve_type_inner(value, &self.valid_expression_set)?;
+            }
             S::MeshFunction(ref function) => {
                 stages &= self.validate_mesh_function(function, &context)?;
             }

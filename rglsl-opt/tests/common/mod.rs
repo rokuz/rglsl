@@ -154,6 +154,19 @@ pub fn stores(function: &Function, name: &str) -> usize {
         .count()
 }
 
+pub fn debug_values(function: &Function, name: &str) -> usize {
+    let Some(target) = local(function, name) else {
+        return 0;
+    };
+    function
+        .body
+        .walk()
+        .filter(|statement| {
+            matches!(**statement, Statement::DebugValue { variable, .. } if variable == target)
+        })
+        .count()
+}
+
 pub fn decorations(words: &[u32], decoration: spirv::Decoration) -> usize {
     let mut count = 0;
     let mut at = 5;

@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestResult, fragment, optimized};
+use common::{TestResult, debug_values, fragment, optimized};
 use rglsl::{AddressSpace, Module, ShaderStage, Statement};
 use rglsl_opt::{Context, DebugLevel, TargetGpu};
 
@@ -192,7 +192,7 @@ fn dce_keeps_the_interface_of_an_unlinked_module() -> TestResult {
 }
 
 #[test]
-fn dce_keeps_local_variables_for_debug_variables() -> TestResult {
+fn dce_keeps_debug_variables_only_for_their_debug_values() -> TestResult {
     let module = optimized(
         ShaderStage::Fragment,
         INTERFACE,
@@ -205,6 +205,7 @@ fn dce_keeps_local_variables_for_debug_variables() -> TestResult {
     )?;
     let entry = module.entry_points.first().ok_or("no entry point")?;
     assert_eq!(entry.function.local_variables.len(), 1);
+    assert_eq!(debug_values(&entry.function, "dead"), 1);
     assert!(!globals(&module).iter().any(|name| name == "unused"));
     Ok(())
 }

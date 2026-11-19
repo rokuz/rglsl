@@ -91,6 +91,7 @@ impl BlockContext<'_> {
         handle: Handle<crate::LocalVariable>,
         variable: &crate::LocalVariable,
         prelude: &mut Block,
+        zeroed: bool,
     ) -> Result<(), Error> {
         let id = self.gen_id();
         self.writer
@@ -122,6 +123,7 @@ impl BlockContext<'_> {
                 None
             }
             Some(constant) => Some(self.cached.get(constant)?),
+            None if zeroed && !converted => Some(self.writer.get_constant_null(type_id)),
             None => None,
         };
         let pointer_type_id = self
@@ -1085,8 +1087,15 @@ impl Writer {
             }
         }
 
+        let debug_only = debug_only_locals(ir_function);
+        let plain = super::uninitialized::plain_types(&ir_module.types);
+        let zeroed = super::uninitialized::read_before_written(ir_function, &plain);
         for (handle, variable) in ir_function.local_variables.iter() {
-            context.write_local_variable(handle, variable, &mut prelude)?;
+            if debug_only.contains(&handle) {
+                continue;
+            }
+            let zeroed = zeroed.get(handle.index()).copied().unwrap_or(false);
+            context.write_local_variable(handle, variable, &mut prelude, zeroed)?;
         }
 
         super::atomic::collect_texel_images(&ir_function.body, &mut context.function.texel_images);
@@ -4186,4 +4195,24 @@ fn reachable_functions(module: &crate::Module) -> Vec<&crate::Function> {
         calls(&function.body, &mut pending);
     }
     reached
+}
+
+fn debug_only_locals(
+    function: &crate::Function,
+) -> crate::FastHashSet<Handle<crate::LocalVariable>> {
+    let mut locals = crate::FastHashSet::default();
+    for statement in function.body.walk() {
+        if let crate::Statement::DebugValue { variable, .. } = *statement {
+            locals.insert(variable);
+        }
+    }
+    if locals.is_empty() {
+        return locals;
+    }
+    for (_, expression) in function.expressions.iter() {
+        if let crate::Expression::LocalVariable(local) = *expression {
+            locals.remove(&local);
+        }
+    }
+    locals
 }

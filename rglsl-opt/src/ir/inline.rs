@@ -20,6 +20,7 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
 
 pub(crate) struct Plan {
     inlining: Inlining,
+    ranges: Vec<Option<(u32, u32)>>,
     lowered: Vec<Option<Lowered>>,
     sites: Vec<usize>,
     pinned: Vec<bool>,
@@ -29,6 +30,10 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
+    fn debug_range(&self, function: Handle<Function>) -> Option<(u32, u32)> {
+        self.ranges.get(function.index()).copied().flatten()
+    }
+
     fn lowered(&self, function: Handle<Function>) -> Option<&Lowered> {
         self.lowered.get(function.index())?.as_ref()
     }
@@ -152,8 +157,19 @@ fn inline(module: &mut Module, inlining: Inlining, context: Context) -> Result<C
     if lowered.iter().all(Option::is_none) {
         return Ok(Changed::No);
     }
+    let ranges = module
+        .functions
+        .iter()
+        .map(|(handle, _)| {
+            let info = module.debug_info.as_deref()?;
+            let start = u32::try_from(module.functions.get_span(handle).to_range()?.start).ok()?;
+            let record = info.function(start)?;
+            Some((record.start, record.stop))
+        })
+        .collect();
     let plan = Plan {
         inlining,
+        ranges,
         lowered,
         sites,
         pinned,
@@ -161,6 +177,7 @@ fn inline(module: &mut Module, inlining: Inlining, context: Context) -> Result<C
         full,
         limit: total.saturating_mul(GROWTH).max(FLOOR),
     };
+    let mut debug = module.debug_info.take();
     let mut entries = Vec::with_capacity(module.entry_points.len());
     let mut rooted = vec![false; count];
     let mut pending: Vec<Handle<Function>> = Vec::new();
@@ -173,7 +190,13 @@ fn inline(module: &mut Module, inlining: Inlining, context: Context) -> Result<C
         }
     }
     for entry in &module.entry_points {
-        entries.push(rebuild(&plan, &entry.function, &mut rooted, &mut pending)?);
+        entries.push(rebuild(
+            &plan,
+            &entry.function,
+            &mut rooted,
+            &mut pending,
+            &mut debug,
+        )?);
     }
     let mut functions = Vec::new();
     while let Some(handle) = pending.pop() {
@@ -184,11 +207,12 @@ fn inline(module: &mut Module, inlining: Inlining, context: Context) -> Result<C
         if !function.linkage.is_definition() {
             continue;
         }
-        if let Some(function) = rebuild(&plan, function, &mut rooted, &mut pending)? {
+        if let Some(function) = rebuild(&plan, function, &mut rooted, &mut pending, &mut debug)? {
             functions.push((handle, function));
         }
     }
     drop(plan);
+    module.debug_info = debug;
     let changed = !functions.is_empty() || entries.iter().any(Option::is_some);
     for (handle, function) in functions {
         *module.functions.get_mut(handle) = function;
@@ -206,6 +230,7 @@ fn rebuild(
     function: &Function,
     rooted: &mut [bool],
     pending: &mut Vec<Handle<Function>>,
+    debug: &mut Option<Box<rglsl::DebugInfo>>,
 ) -> Result<Option<Function>, String> {
     let mut called = Vec::new();
     for statement in function.body.walk() {
@@ -217,9 +242,15 @@ fn rebuild(
         enqueue(&called, rooted, pending);
         return Ok(None);
     }
-    let builder = Builder::build(plan, function)?;
+    let mut builder = Builder::build(plan, function, debug.take())?;
     enqueue(&builder.kept, rooted, pending);
-    Ok(builder.inlined.then(|| builder.finish()))
+    if !builder.inlined {
+        *debug = builder.debug.take();
+        return Ok(None);
+    }
+    let (function, info) = builder.finish();
+    *debug = info;
+    Ok(Some(function))
 }
 
 fn enqueue(kept: &[Handle<Function>], rooted: &mut [bool], pending: &mut Vec<Handle<Function>>) {
