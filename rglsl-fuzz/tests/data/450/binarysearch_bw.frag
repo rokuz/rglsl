@@ -57,7 +57,7 @@ vec2 brick(vec2 uv) {
 
 float patternize(vec2 uv) {
     vec2 size = vec2(0.45);
-    vec2 st = smoothstep(size, size, uv);
+    vec2 st = step(size, uv);
      switch (int(mod(gl_FragCoord.y, 5.0))) {
         case 0:
             return mix(pow(st.x, injectionSwitch.y), st.x, size.y);
