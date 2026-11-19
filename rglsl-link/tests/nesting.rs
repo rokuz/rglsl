@@ -1436,6 +1436,104 @@ fn deep_reflection_on_a_small_stack(depth: usize) -> TestResult {
     Ok(())
 }
 
+fn program_compiles(
+    name: &str,
+    sources: Vec<(ShaderStage, String)>,
+    specialization: &str,
+) -> TestResult {
+    let name = name.to_owned();
+    let specialization = rglsl_link::Specialization::parse_list(specialization)?;
+    let outcome = on_small_stack(move || {
+        let units: Vec<(&str, CompileOptions)> = sources
+            .iter()
+            .map(|(stage, source)| {
+                (
+                    source.as_str(),
+                    CompileOptions::new(format!("program.{}", stage.extension()), *stage),
+                )
+            })
+            .collect();
+        let options = ProgramOptions {
+            optimize: OptOptions {
+                level: OptLevel::Performance,
+                specialization,
+                ..OptOptions::default()
+            },
+            ..ProgramOptions::default()
+        };
+        Compiler::new()
+            .compile_and_link(&units, &options)
+            .map(|program| program.stages.len())
+            .map_err(|diagnostics| diagnostics.to_string())
+    })?;
+    match outcome {
+        Ok(stages) if stages > 1 => Ok(()),
+        Ok(stages) => Err(format!("{name}: {stages} stage").into()),
+        Err(message) => Err(format!("{name}: {message}").into()),
+    }
+}
+
+fn deep_pipelines_compile_on_a_small_stack(depth: usize) -> TestResult {
+    let dimensions = "[1]".repeat(depth);
+    let indices = "[0]".repeat(depth);
+    program_compiles(
+        "array-of-array varyings between stages",
+        Vec::from([
+            (
+                ShaderStage::Vertex,
+                format!(
+                    "#version 450\nlayout(location = 0) in vec4 p;\n\
+                     layout(location = 0) out float x{dimensions};\n\
+                     layout(location = 1) out float dead{dimensions};\n\
+                     void main() {{ gl_Position = p; x{indices} = p.x; dead{indices} = p.y; }}\n"
+                ),
+            ),
+            (
+                ShaderStage::Fragment,
+                format!(
+                    "#version 450\nlayout(location = 0) in float x{dimensions};\n\
+                     layout(location = 0) out vec4 color;\n\
+                     void main() {{ color = vec4(x{indices}); }}\n"
+                ),
+            ),
+        ]),
+        "",
+    )?;
+    let chain = chain_of(
+        "layout(constant_id = 0) const int S = 2;\n",
+        depth,
+        |level| {
+            let previous = if level == 1 {
+                String::from("S")
+            } else {
+                format!("T{}", level - 1)
+            };
+            format!("const int T{level} = {previous} + 1;\n")
+        },
+    );
+    let sum = format!("const int SUM = S{};\n", " + 1".repeat(depth));
+    program_compiles(
+        "specialized constant chains",
+        Vec::from([
+            (
+                ShaderStage::Vertex,
+                String::from(
+                    "#version 450\nlayout(location = 0) in vec4 p;\nvoid main() { gl_Position = p; }\n",
+                ),
+            ),
+            (
+                ShaderStage::Fragment,
+                format!(
+                    "#version 450\n{chain}{sum}layout(location = 0) out vec4 color;\n\
+                     void main() {{ color = vec4(float(T{} + SUM)); }}\n",
+                    depth - 1
+                ),
+            ),
+        ]),
+        "0:5",
+    )
+}
+
 type Group = (fn(usize) -> TestResult, usize);
 
 fn every_kind(depth: usize) -> Vec<Group> {
@@ -1461,6 +1559,7 @@ fn every_kind(depth: usize) -> Vec<Group> {
         (deep_debug_info_compiles_on_a_small_stack, depth),
         (auto_sampled_textures_on_a_small_stack, depth),
         (deep_reflection_on_a_small_stack, depth),
+        (deep_pipelines_compile_on_a_small_stack, depth),
     ])
 }
 

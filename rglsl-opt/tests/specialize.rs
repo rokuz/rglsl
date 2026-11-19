@@ -236,6 +236,25 @@ fn an_unknown_id_is_an_error() -> TestResult {
 }
 
 #[test]
+fn a_value_for_a_program_without_constants_is_an_error() -> TestResult {
+    let source = "#version 450
+layout(location = 0) out vec4 color;
+void main() {
+    color = vec4(1.0);
+}
+";
+    let Err(error) = specialized(ShaderStage::Fragment, source, OptLevel::Performance, &[(0, "1")])
+    else {
+        return Err("specialization succeeded".into());
+    };
+    assert_eq!(
+        error.to_string(),
+        "specialization constant 0 is not declared in the program"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_value_of_the_wrong_type_is_an_error() -> TestResult {
     assert_eq!(
         error(&[(2, "1.5")])?,

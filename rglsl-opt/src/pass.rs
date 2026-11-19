@@ -36,7 +36,7 @@ pub static PASSES: &[Pass] = &[
     Pass {
         name: "specialize",
         scope: Scope::Program,
-        applies: |summary| summary.overrides,
+        applies: |_| true,
         run: crate::ir::specialize::run,
         debug_info: DebugRule::Preserves,
         counterpart: &[
