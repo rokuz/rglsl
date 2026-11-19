@@ -244,33 +244,31 @@ const fn swapped(op: BinaryOperator) -> Option<BinaryOperator> {
     })
 }
 
+fn below(start: i128, step: i128, bound: i128) -> Option<i128> {
+    if start < bound {
+        Some(0)
+    } else if step < 0 {
+        start
+            .checked_sub(bound)?
+            .checked_div(step.checked_neg()?)?
+            .checked_add(1)
+    } else {
+        None
+    }
+}
+
 fn first(start: i128, step: i128, op: BinaryOperator, bound: i128) -> Option<i128> {
     match op {
-        BinaryOperator::Less => {
-            if start < bound {
-                Some(0)
-            } else if step < 0 {
-                start
-                    .checked_sub(bound)?
-                    .checked_div(step.checked_neg()?)?
-                    .checked_add(1)
-            } else {
-                None
-            }
-        }
-        BinaryOperator::LessEqual => {
-            first(start, step, BinaryOperator::Less, bound.checked_add(1)?)
-        }
-        BinaryOperator::Greater => first(
+        BinaryOperator::Less => below(start, step, bound),
+        BinaryOperator::LessEqual => below(start, step, bound.checked_add(1)?),
+        BinaryOperator::Greater => below(
             start.checked_neg()?,
             step.checked_neg()?,
-            BinaryOperator::Less,
             bound.checked_neg()?,
         ),
-        BinaryOperator::GreaterEqual => first(
+        BinaryOperator::GreaterEqual => below(
             start.checked_neg()?,
             step.checked_neg()?,
-            BinaryOperator::Less,
             bound.checked_neg()?.checked_add(1)?,
         ),
         BinaryOperator::Equal => {
