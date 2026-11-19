@@ -10,7 +10,7 @@ layout(location = 6) out vec4 after_pair;
 
 vec4 shade(vec2 p)
 {
-    return vec4(0.0, 1.0, 0.0, 1.0) + vec4(p, 0.0, 0.0) * 0.0;
+    return vec4(0.0, 1.0, 0.0, 1.0) + vec4(p.x * p.x, 0.0, 0.0, 0.0);
 }
 
 void main()

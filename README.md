@@ -45,6 +45,10 @@ rglsl -V shader.frag                                  # writes frag.spv
 rglsl -V --target-env vulkan1.3 -g -Iinclude -o out.spv shader.comp
 rglsl -V main.frag lighting.glsl -o shader.spv        # compile and link
 rglsl --object lighting.glsl                          # object module lighting.rglo
+rglsl -V -l -O main.vert main.frag                    # optimized; the linked stages are one
+                                                      # pipeline (glslang's --lto is part of -O)
+rglsl -V --specialize "3:16 4:true" shader.comp       # specialization constants 3 and 4 get
+                                                      # these values while compiling
 ```
 
 Options, exit codes and messages are `glslangValidator`'s.
