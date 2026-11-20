@@ -84,41 +84,7 @@ fn specialize(
                 if let Some(slot) = declared.get_mut(index) {
                     *slot = true;
                 }
-                let TypeInner::Scalar(scalar) = module
-                    .types
-                    .get_handle(item.ty)
-                    .map_err(|error| Failure::Internal(error.to_string()))?
-                    .inner
-                else {
-                    return Err(Failure::Value(format!(
-                        "specialization constant {id} is not a scalar"
-                    )));
-                };
-                let literal = specialization.literal(scalar).map_err(Failure::Value)?;
-                let init = item.init.ok_or_else(|| {
-                    Failure::Internal(format!("specialization constant {id} has no default value"))
-                })?;
-                if references.get(init.index()).copied().unwrap_or(0) != 1
-                    || !matches!(
-                        module.global_expressions.try_get(init),
-                        Ok(Expression::Literal(_) | Expression::ZeroValue(_))
-                    )
-                {
-                    return Err(Failure::Internal(format!(
-                        "the default value of specialization constant {id} is not its own literal"
-                    )));
-                }
-                *module
-                    .global_expressions
-                    .try_get_mut(init)
-                    .map_err(|error| Failure::Internal(error.to_string()))? =
-                    Expression::Literal(literal);
-                let slot = module
-                    .overrides
-                    .try_get_mut(handle)
-                    .map_err(|error| Failure::Internal(error.to_string()))?;
-                slot.id = None;
-                init
+                set_value(module, handle, &item, specialization, &references)?
             }
             None => {
                 let Some(init) = item.init else {
@@ -158,6 +124,50 @@ fn specialize(
         }
     }
     Ok(true)
+}
+
+fn set_value(
+    module: &mut Module,
+    handle: Handle<Override>,
+    item: &Override,
+    specialization: &Specialization,
+    references: &[u32],
+) -> Result<Handle<Expression>, Failure> {
+    let id = specialization.id;
+    let TypeInner::Scalar(scalar) = module
+        .types
+        .get_handle(item.ty)
+        .map_err(|error| Failure::Internal(error.to_string()))?
+        .inner
+    else {
+        return Err(Failure::Value(format!(
+            "specialization constant {id} is not a scalar"
+        )));
+    };
+    let literal = specialization.literal(scalar).map_err(Failure::Value)?;
+    let init = item.init.ok_or_else(|| {
+        Failure::Internal(format!("specialization constant {id} has no default value"))
+    })?;
+    if references.get(init.index()).copied().unwrap_or(0) != 1
+        || !matches!(
+            module.global_expressions.try_get(init),
+            Ok(Expression::Literal(_) | Expression::ZeroValue(_))
+        )
+    {
+        return Err(Failure::Internal(format!(
+            "the default value of specialization constant {id} is not its own literal"
+        )));
+    }
+    *module
+        .global_expressions
+        .try_get_mut(init)
+        .map_err(|error| Failure::Internal(error.to_string()))? = Expression::Literal(literal);
+    module
+        .overrides
+        .try_get_mut(handle)
+        .map_err(|error| Failure::Internal(error.to_string()))?
+        .id = None;
+    Ok(init)
 }
 
 fn evaluated(

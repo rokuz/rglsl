@@ -29,7 +29,7 @@ fn sroa(module: &mut Module, limit: u32, debug: bool) -> Result<bool, String> {
                 .map(|entry| &mut entry.function),
         );
     for function in functions {
-        if let Some(split) = split(types, &classes, function, (limit, debug))? {
+        if let Some(split) = split(types, &classes, function, limit, debug)? {
             *function = split;
             changed = true;
         }
@@ -86,26 +86,41 @@ fn pieces(types: &UniqueArena<Type>, variable: &LocalVariable, limit: u32) -> Op
     (!pieces.is_empty()).then_some(pieces)
 }
 
+fn plans(
+    types: &UniqueArena<Type>,
+    classes: &[Class],
+    function: &Function,
+    locals: &Locals,
+    limit: u32,
+) -> Vec<Option<Vec<Piece>>> {
+    function
+        .local_variables
+        .iter()
+        .zip(&locals.locals)
+        .map(|((_, variable), usage)| {
+            let candidate = !usage.escaped
+                && !usage.dynamic
+                && classes.get(variable.ty.index()) == Some(&Class::Plain)
+                && usage.partial()
+                && variable.init.is_none_or(|init| {
+                    function.expressions.try_get(init).is_ok_and(|init| {
+                        matches!(*init, Expression::ZeroValue(_) | Expression::Compose { .. })
+                    })
+                });
+            candidate.then(|| pieces(types, variable, limit)).flatten()
+        })
+        .collect()
+}
+
 fn split(
     types: &UniqueArena<Type>,
     classes: &[Class],
     function: &Function,
-    (limit, debug): (u32, bool),
+    limit: u32,
+    debug: bool,
 ) -> Result<Option<Function>, String> {
     let locals = Locals::of(function, 0);
-    let mut plans: Vec<Option<Vec<Piece>>> = Vec::with_capacity(function.local_variables.len());
-    for ((_, variable), usage) in function.local_variables.iter().zip(&locals.locals) {
-        let candidate = !usage.escaped
-            && !usage.dynamic
-            && classes.get(variable.ty.index()) == Some(&Class::Plain)
-            && usage.partial()
-            && variable.init.is_none_or(|init| {
-                function.expressions.try_get(init).is_ok_and(|init| {
-                    matches!(*init, Expression::ZeroValue(_) | Expression::Compose { .. })
-                })
-            });
-        plans.push(candidate.then(|| pieces(types, variable, limit)).flatten());
-    }
+    let plans = plans(types, classes, function, &locals, limit);
     if plans.iter().all(Option::is_none) {
         return Ok(None);
     }

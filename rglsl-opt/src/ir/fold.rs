@@ -22,23 +22,34 @@ fn fold(module: &mut Module) -> Result<bool, String> {
     rewrite_functions(module, |module, function| rewrite(module, function, floats))
 }
 
-fn constant_flags(expressions: &Arena<Expression>) -> Vec<bool> {
-    let mut flags: Vec<bool> = Vec::with_capacity(expressions.len());
-    for (_, expression) in expressions.iter() {
-        let flag = constant(expression, &flags);
-        flags.push(flag);
+fn constant_parts(expression: &Expression) -> Option<&[Handle<Expression>]> {
+    match *expression {
+        Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => Some(&[]),
+        Expression::Compose { ref components, .. } => Some(components),
+        Expression::Splat { ref value, .. } => Some(core::slice::from_ref(value)),
+        _ => None,
     }
-    flags
 }
 
-fn constant(expression: &Expression, flags: &[bool]) -> bool {
-    let is = |handle: Handle<Expression>| flags.get(handle.index()) == Some(&true);
-    match *expression {
-        Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => true,
-        Expression::Compose { ref components, .. } => components.iter().all(|&part| is(part)),
-        Expression::Splat { value, .. } => is(value),
-        _ => false,
+fn extend_constant_flags(flags: &mut Vec<bool>, expressions: &Arena<Expression>) {
+    for handle in expressions.range_from(flags.len()) {
+        let flag = expressions
+            .try_get(handle)
+            .ok()
+            .and_then(constant_parts)
+            .is_some_and(|parts| {
+                parts
+                    .iter()
+                    .all(|part| flags.get(part.index()) == Some(&true))
+            });
+        flags.push(flag);
     }
+}
+
+fn constant_flags(expressions: &Arena<Expression>) -> Vec<bool> {
+    let mut flags = Vec::with_capacity(expressions.len());
+    extend_constant_flags(&mut flags, expressions);
+    flags
 }
 
 fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[bool]) -> bool {
@@ -241,13 +252,7 @@ fn mapped(rebuild: &Rebuild<'_>, handle: Handle<Expression>) -> Result<Handle<Ex
 impl Fold<'_> {
     fn is_constant(&mut self, arena: &Arena<Expression>, handle: Handle<Expression>) -> bool {
         if self.out_constant.len() < arena.len() {
-            let start = self.out_constant.len();
-            for added in arena.range_from(start) {
-                let flag = arena
-                    .try_get(added)
-                    .is_ok_and(|expression| constant(expression, &self.out_constant));
-                self.out_constant.push(flag);
-            }
+            extend_constant_flags(&mut self.out_constant, arena);
         }
         self.out_constant.get(handle.index()) == Some(&true)
     }
@@ -939,13 +944,9 @@ impl Fold<'_> {
 fn constant_tree(arena: &Arena<Expression>, root: Handle<Expression>) -> bool {
     let mut pending = vec![root];
     while let Some(handle) = pending.pop() {
-        match arena.try_get(handle) {
-            Ok(Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_)) => {}
-            Ok(Expression::Compose { components, .. }) => {
-                pending.extend(components.iter().copied());
-            }
-            Ok(&Expression::Splat { value, .. }) => pending.push(value),
-            _ => return false,
+        match arena.try_get(handle).ok().and_then(constant_parts) {
+            Some(parts) => pending.extend_from_slice(parts),
+            None => return false,
         }
     }
     true
@@ -963,15 +964,7 @@ fn copy_tree(
             continue;
         }
         let expression = from.try_get(handle).ok()?;
-        let mut operands = Vec::new();
-        match *expression {
-            Expression::Literal(_) | Expression::ZeroValue(_) | Expression::Constant(_) => {}
-            Expression::Compose { ref components, .. } => {
-                operands.extend(components.iter().copied());
-            }
-            Expression::Splat { value, .. } => operands.push(value),
-            _ => return None,
-        }
+        let operands = constant_parts(expression)?;
         if !ready {
             pending.push((handle, true));
             pending.extend(operands.iter().map(|&operand| (operand, false)));

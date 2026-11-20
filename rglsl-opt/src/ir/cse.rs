@@ -1,7 +1,8 @@
 use core::mem::Discriminant;
 
+use rglsl::proc::HashableLiteral;
 use rglsl::{
-    Block, Expression, FastHashMap, Function, Handle, Literal, Module, NonUniform, Precision, Span,
+    Block, Expression, FastHashMap, Function, Handle, Module, NonUniform, Precision, Span,
     Statement, Type, TypeInner,
 };
 use rglsl_types::stack::recurse;
@@ -98,34 +99,9 @@ const fn eligible(expression: &Expression) -> bool {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Value {
-    Literal(Discriminant<Literal>, u64),
+    Literal(HashableLiteral),
     Zero(Handle<Type>),
     Undef(Handle<Type>),
-}
-
-fn bits(literal: Literal) -> u64 {
-    match literal {
-        Literal::F64(value) => value.to_bits(),
-        Literal::F32(value) => u64::from(value.to_bits()),
-        Literal::F16(value) => u64::from(value.to_bits()),
-        Literal::U8(value) => u64::from(value),
-        Literal::I8(value) => u64::from(value.cast_unsigned()),
-        Literal::U16(value) => u64::from(value),
-        Literal::I16(value) => u64::from(value.cast_unsigned()),
-        Literal::U32(value) => u64::from(value),
-        Literal::I32(value) => u64::from(value.cast_unsigned()),
-        Literal::U64(value) => value,
-        Literal::I64(value) => value.cast_unsigned(),
-        Literal::Bool(value) => u64::from(value),
-        Literal::BF16(value) => u64::from(value),
-        Literal::FE4M3(value)
-        | Literal::FE5M2(value)
-        | Literal::FE2M1(value)
-        | Literal::FE3M2(value)
-        | Literal::FE2M3(value)
-        | Literal::FUE8M0(value)
-        | Literal::FMXINT8(value) => u64::from(value),
-    }
 }
 
 fn constants(function: &Function) -> Vec<Handle<Expression>> {
@@ -135,9 +111,7 @@ fn constants(function: &Function) -> Vec<Handle<Expression>> {
         .iter()
         .map(|(handle, expression)| {
             let value = match *expression {
-                Expression::Literal(literal) => {
-                    Value::Literal(core::mem::discriminant(&literal), bits(literal))
-                }
+                Expression::Literal(literal) => Value::Literal(literal.into()),
                 Expression::ZeroValue(ty) => Value::Zero(ty),
                 Expression::Undef(ty) => Value::Undef(ty),
                 _ => return handle,
