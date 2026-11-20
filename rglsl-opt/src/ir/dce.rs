@@ -1,13 +1,13 @@
 use rglsl::compact::{KeepUnused, compact};
-use rglsl::ir::visit::VisitorMut;
 use rglsl::{
     AddressSpace, Arena, Binding, Block, BuiltIn, Expression, Function, GlobalVariable, Handle,
-    LocalVariable, Module, Range, Sampling, ShaderStage, Statement, Type, TypeInner, UniqueArena,
+    LocalVariable, Module, Sampling, ShaderStage, Span, Statement, Type, TypeInner, UniqueArena,
 };
-use rglsl_types::stack::recurse;
 
 use crate::analysis::for_each_result;
+use crate::analysis::locals::FIRST;
 use crate::float::{self, UndefinedUse};
+use crate::ir::rebuild::{Policy, Rebuild};
 use crate::{Changed, Context, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
@@ -586,7 +586,7 @@ fn sweep_functions(module: &mut Module, complete: bool, debug: bool) -> Result<b
                 .map(|entry| &mut entry.function)
         };
         let function = function.ok_or_else(|| format!("no function {index}"))?;
-        plan.apply(function)?;
+        *function = plan.apply(function)?;
         changed = true;
     }
     Ok(changed)
@@ -713,7 +713,7 @@ impl Plan {
         self.debug_values.get(index).filter(|value| value.id == id)
     }
 
-    fn apply(self, function: &mut Function) -> Result<(), String> {
+    fn apply(&self, function: &Function) -> Result<Function, String> {
         let mut described = vec![false; self.locals.len()];
         for value in &self.debug_values {
             if let Some(slot) = described.get_mut(value.variable.index()) {
@@ -721,176 +721,83 @@ impl Plan {
             }
         }
         let mut locals = Vec::with_capacity(self.locals.len());
-        let mut kept_locals = Arena::new();
-        for (handle, mut local, span) in function.local_variables.drain() {
-            if self.locals.get(handle.index()) == Some(&true) {
-                locals.push(Some(kept_locals.append(local, span)));
-            } else if described.get(handle.index()) == Some(&true) {
-                local.init = None;
-                locals.push(Some(kept_locals.append(local, span)));
-            } else {
-                locals.push(None);
-            }
-        }
-        let mut map: Vec<Option<Handle<Expression>>> = Vec::with_capacity(self.expressions.len());
         let mut kept = Arena::new();
-        for (handle, mut expression, span) in function.expressions.drain() {
-            if self.expressions.get(handle.index()) != Some(&true) {
-                map.push(None);
-                continue;
-            }
-            let mut failed = false;
-            expression.for_each_operand_mut(|operand| {
-                match map.get(operand.index()).copied().flatten() {
-                    Some(new) => *operand = new,
-                    None => failed = true,
-                }
+        for (handle, local) in function.local_variables.iter() {
+            let span = function.local_variables.get_span(handle);
+            let index = handle.index();
+            locals.push(if self.locals.get(index) == Some(&true) {
+                Some(kept.append(local.clone(), span))
+            } else if described.get(index) == Some(&true) {
+                let local = LocalVariable {
+                    init: None,
+                    ..local.clone()
+                };
+                Some(kept.append(local, span))
+            } else {
+                None
             });
-            if let Expression::LocalVariable(ref mut local) = expression {
-                match locals.get(local.index()).copied().flatten() {
-                    Some(new) => *local = new,
-                    None => failed = true,
-                }
-            }
-            if failed {
-                return Err(format!("a live expression {handle:?} uses a dead one"));
-            }
-            map.push(Some(kept.append(expression, span)));
         }
-        function.expressions = kept;
-        for (_, local) in kept_locals.iter_mut() {
-            if let Some(ref mut init) = local.init {
-                *init = map
-                    .get(init.index())
-                    .copied()
-                    .flatten()
-                    .ok_or("a live local variable has a dead initializer")?;
+        let mut rebuild = Rebuild::with_locals(function, kept, locals);
+        for (handle, _) in function.expressions.iter() {
+            if self.expressions.get(handle.index()) == Some(&true) {
+                rebuild.define(handle)?;
             }
         }
-        function.local_variables = kept_locals;
-        function
-            .tables()
-            .remap(|handle| map.get(handle.index()).copied().flatten());
-        let mut next = 0;
-        let maps = Maps {
-            expressions: &map,
-            locals: &locals,
-        };
-        self.rebuild(&mut function.body, maps, &mut next)?;
-        if next as usize != self.statements.len() {
-            return Err(format!(
-                "the rebuilt body has {next} statements, the analysis counted {}",
-                self.statements.len()
-            ));
-        }
-        Ok(())
-    }
-
-    fn rebuild(&self, block: &mut Block, maps: Maps<'_>, next: &mut u32) -> Result<(), String> {
-        let map = maps.expressions;
-        let statements = core::mem::take(block);
-        for (mut statement, span) in statements.span_into_iter() {
-            let id = *next;
-            let end = self
-                .ends
-                .get(id as usize)
-                .copied()
-                .ok_or_else(|| format!("statement {id} is not in the analysis"))?;
-            if let Statement::Emit(ref range) = statement {
-                *next = end;
-                let mut kept = range
-                    .clone()
-                    .filter_map(|handle| map.get(handle.index()).copied().flatten());
-                if let Some(first) = kept.next() {
-                    let last = kept.next_back().unwrap_or(first);
-                    block.push(Statement::Emit(Range::new_from_bounds(first, last)), span);
-                }
-                continue;
-            }
-            if self.statements.get(id as usize) != Some(&true) {
-                *next = end;
-                if let Some(value) = self.debug_value(id) {
-                    block.push(maps.debug_value(value)?, span);
-                }
-                if self.endless.binary_search(&id).is_ok() {
-                    block.push(Statement::Return { value: None }, span);
-                }
-                continue;
-            }
-            *next = id.saturating_add(1);
-            let mut result = Ok(());
-            statement.for_each_child_block_mut(|child| {
-                if result.is_ok() {
-                    result = recurse(|| self.rebuild(child, maps, next));
-                }
-            });
-            result?;
-            statement.visit_mut(&mut Renumber { map })?;
-            block.push(statement, span);
-        }
-        Ok(())
+        let statements = u32::try_from(self.statements.len()).map_err(|error| error.to_string())?;
+        rebuild.body(
+            &mut Sweep { plan: self },
+            Some(statements.saturating_add(FIRST)),
+        )?;
+        Ok(rebuild.finish())
     }
 }
 
-#[derive(Clone, Copy)]
-struct Maps<'a> {
-    expressions: &'a [Option<Handle<Expression>>],
-    locals: &'a [Option<Handle<LocalVariable>>],
+struct Sweep<'p> {
+    plan: &'p Plan,
 }
 
-impl Maps<'_> {
-    fn debug_value(&self, value: &DebugValue) -> Result<Statement, String> {
-        Ok(Statement::DebugValue {
-            variable: self
-                .locals
-                .get(value.variable.index())
-                .copied()
-                .flatten()
-                .ok_or("a debug value names a removed local variable")?,
-            value: self
-                .expressions
-                .get(value.value.index())
-                .copied()
-                .flatten()
-                .ok_or("a debug value uses a dead expression")?,
-            indices: value.indices.clone(),
-        })
-    }
-}
-
-struct Renumber<'a> {
-    map: &'a [Option<Handle<Expression>>],
-}
-
-impl Renumber<'_> {
-    fn renumber(&self, handle: &mut Handle<Expression>) -> Result<(), String> {
-        *handle = self
-            .map
-            .get(handle.index())
+impl<'f> Policy<'f> for Sweep<'_> {
+    fn statement(
+        &mut self,
+        rebuild: &mut Rebuild<'f>,
+        statement: &Statement,
+        span: Span,
+        position: u32,
+        block: &mut Block,
+    ) -> Result<bool, String> {
+        if let Statement::Emit(ref range) = *statement {
+            for handle in range.clone() {
+                if let Some(new) = rebuild.mapped(handle) {
+                    rebuild.emitted(new, block, span);
+                }
+            }
+            return Ok(true);
+        }
+        let id = position.saturating_sub(FIRST);
+        let plan = self.plan;
+        if plan.statements.get(id as usize) == Some(&true) {
+            return Ok(false);
+        }
+        let end = plan
+            .ends
+            .get(id as usize)
             .copied()
-            .flatten()
-            .ok_or_else(|| format!("a statement uses the dead expression {handle:?}"))?;
-        Ok(())
-    }
-}
-
-impl<'a> VisitorMut<'a> for Renumber<'_> {
-    type Error = String;
-
-    fn expression(&mut self, handle: &mut Handle<Expression>) -> Result<(), String> {
-        self.renumber(handle)
-    }
-
-    fn result(&mut self, handle: &mut Handle<Expression>) -> Result<(), String> {
-        self.renumber(handle)
-    }
-
-    fn emitted(&mut self, _: &mut Range<Expression>) -> Result<(), String> {
-        Err(String::from("an Emit statement inside another statement"))
-    }
-
-    fn local_variable(&mut self, _: &mut Handle<LocalVariable>) -> Result<(), String> {
-        Err(String::from("a statement names a local variable"))
+            .ok_or_else(|| format!("statement {id} is not in the analysis"))?;
+        rebuild.set_position(end.saturating_add(FIRST));
+        if let Some(value) = plan.debug_value(id) {
+            let debug_value = Statement::DebugValue {
+                variable: rebuild.local(value.variable)?,
+                value: rebuild
+                    .mapped(value.value)
+                    .ok_or("a debug value uses a dead expression")?,
+                indices: value.indices.clone(),
+            };
+            rebuild.push(block, debug_value, span);
+        }
+        if plan.endless.binary_search(&id).is_ok() {
+            rebuild.push(block, Statement::Return { value: None }, span);
+        }
+        Ok(true)
     }
 }
 
