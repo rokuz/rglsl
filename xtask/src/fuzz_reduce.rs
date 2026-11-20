@@ -26,6 +26,7 @@ pub enum Interesting {
     DiffersFromReference,
     ExecFails,
     OptimizerDiffers,
+    OptimizerFails,
     OptimizerHangs,
     ExecHangs,
 }
@@ -41,6 +42,7 @@ impl Interesting {
             "differs-from-reference" => Some(Self::DiffersFromReference),
             "exec-fails" => Some(Self::ExecFails),
             "optimizer-differs" => Some(Self::OptimizerDiffers),
+            "optimizer-fails" => Some(Self::OptimizerFails),
             "optimizer-hangs" => Some(Self::OptimizerHangs),
             "exec-hangs" => Some(Self::ExecHangs),
             _ => None,
@@ -54,13 +56,17 @@ impl Interesting {
                 | Self::DiffersFromReference
                 | Self::ExecFails
                 | Self::OptimizerDiffers
+                | Self::OptimizerFails
                 | Self::OptimizerHangs
                 | Self::ExecHangs
         )
     }
 
     const fn optimizes(self) -> bool {
-        matches!(self, Self::OptimizerDiffers | Self::OptimizerHangs)
+        matches!(
+            self,
+            Self::OptimizerDiffers | Self::OptimizerFails | Self::OptimizerHangs
+        )
     }
 }
 
@@ -351,7 +357,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 Verdict::Agree | Verdict::InvalidSpirv => tools.linked_alone_fails(&shader)?,
                 _ => false,
             },
-            Interesting::OptimizerDiffers => {
+            Interesting::OptimizerDiffers | Interesting::OptimizerFails => {
                 let Some(executor) = &executor else {
                     return Ok(false);
                 };
@@ -369,6 +375,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 )?;
                 match (&ours, &optimized) {
                     (Run::Ran { .. }, Run::Failed(_)) => true,
+                    _ if options.interesting == Interesting::OptimizerFails => false,
                     _ => differs(&ours, &optimized, fuzz_exec::Tolerance::OneLevel) == Some(true),
                 }
             }

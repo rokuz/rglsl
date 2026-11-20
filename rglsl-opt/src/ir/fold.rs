@@ -86,9 +86,12 @@ fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[
     };
     match *expression {
         Expression::Access { base, index } => is(index) || undefined(base),
-        Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. } => {
-            is(base) || undefined(base)
+        Expression::AccessIndex { base, .. } => {
+            is(base)
+                || undefined(base)
+                || matches!(expressions.try_get(base), Ok(Expression::Binary { .. }))
         }
+        Expression::Swizzle { vector: base, .. } => is(base) || undefined(base),
         Expression::Unary { expr, .. } => {
             is(expr) || matches!(expressions.try_get(expr), Ok(Expression::Unary { .. }))
         }
@@ -395,7 +398,13 @@ impl Fold<'_> {
                 }
                 self.constant_index(rebuild, handle, base, index, block)
             }
-            Expression::AccessIndex { base, .. } | Expression::Swizzle { vector: base, .. } => {
+            Expression::AccessIndex { base, index } => {
+                if let Some(new) = self.extract_undefined(rebuild, handle, base)? {
+                    return Ok(Some(new));
+                }
+                self.extract_component(rebuild, handle, base, index, block)
+            }
+            Expression::Swizzle { vector: base, .. } => {
                 self.extract_undefined(rebuild, handle, base)
             }
             Expression::Select {
@@ -483,6 +492,71 @@ impl Fold<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn component(
+        &self,
+        arena: &Arena<Expression>,
+        operand: Handle<Expression>,
+        (index, size): (u32, usize),
+    ) -> Option<Literal> {
+        if let Ok(Expression::Compose { components, .. }) = arena.try_get(operand) {
+            if components.len() != size {
+                return None;
+            }
+            let &component = components.get(index as usize)?;
+            let flat = self.flatten(arena, component)?;
+            return match flat.values.as_slice() {
+                &[value] => Some(value),
+                _ => None,
+            };
+        }
+        let flat = self.flatten(arena, operand)?;
+        match (flat.shape, flat.values.as_slice()) {
+            (Shape::Scalar, &[value]) => Some(value),
+            (Shape::Vector, values) => values.get(index as usize).copied(),
+            _ => None,
+        }
+    }
+
+    fn extract_component(
+        &mut self,
+        rebuild: &mut Rebuild<'_>,
+        handle: Handle<Expression>,
+        base: Handle<Expression>,
+        index: u32,
+        block: &mut Block,
+    ) -> Result<Option<Handle<Expression>>, String> {
+        let Ok(&Expression::Binary { op, left, right }) = rebuild.source.expressions.try_get(base)
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            op,
+            BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide
+        ) || rebuild.source.precision.contains_key(&base)
+        {
+            return Ok(None);
+        }
+        let Some(TypeInner::Vector { size, .. }) = self.type_inner(rebuild.source, base)? else {
+            return Ok(None);
+        };
+        let at = (index, size as usize);
+        let out = &rebuild.out.expressions;
+        let (Some(left), Some(right)) = (
+            self.component(out, mapped(rebuild, left)?, at),
+            self.component(out, mapped(rebuild, right)?, at),
+        ) else {
+            return Ok(None);
+        };
+        let span = rebuild.span(handle);
+        let left = rebuild.constant(Expression::Literal(left), span);
+        let right = rebuild.constant(Expression::Literal(right), span);
+        let expression = Expression::Binary { op, left, right };
+        self.evaluate_expression(rebuild, &expression, &[left, right], span, block)
     }
 
     fn extract_undefined(

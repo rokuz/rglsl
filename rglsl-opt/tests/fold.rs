@@ -250,3 +250,26 @@ fn bitfields_with_a_zero_count_fold() -> TestResult {
     assert_eq!(maths(entry(&module)?, MathFunction::ExtractBits), 2);
     Ok(())
 }
+
+#[test]
+fn a_component_of_a_vector_operation_with_constant_components_folds() -> TestResult {
+    let source = shader(
+        "",
+        "    vec2 s = vec2(5.0, 3.0) + vec2(inColor.x, 1.0);
+    vec3 m = vec3(inColor.y, 2.0, 0.5) * 4.0;
+    color = vec4(s.y, m.y, m.z, s.x);",
+    );
+    let module = optimized(&source)?;
+    let function = entry(&module)?;
+    let extracts = emitted(function)
+        .into_iter()
+        .filter(|&handle| {
+            matches!(
+                function.expressions[handle],
+                Expression::AccessIndex { index: 1 | 2, .. }
+            )
+        })
+        .count();
+    assert_eq!(extracts, 0);
+    Ok(())
+}
