@@ -564,10 +564,11 @@ fn sweep_functions(module: &mut Module, complete: bool, debug: bool) -> Result<b
     let debug_values: Vec<Vec<DebugValue>> = (0..marker.functions.len())
         .map(|index| marker.debug_values(index, debug))
         .collect();
-    let plans: Vec<Option<Plan>> = debug_values
-        .into_iter()
-        .enumerate()
-        .map(|(index, values)| Plan::of(&marker, index, values))
+    let plans: Vec<Option<Plan>> = marker
+        .live
+        .iter_mut()
+        .zip(debug_values)
+        .map(|(live, values)| Plan::of(live, values))
         .collect();
     drop(marker);
     let mut changed = false;
@@ -684,8 +685,7 @@ struct Plan {
 }
 
 impl Plan {
-    fn of(marker: &Marker<'_>, index: usize, debug_values: Vec<DebugValue>) -> Option<Self> {
-        let live = marker.live.get(index)?;
+    fn of(live: &mut Live<'_>, debug_values: Vec<DebugValue>) -> Option<Self> {
         let any_dead = live.expressions.iter().any(|&live| !live)
             || live
                 .locals
@@ -694,16 +694,16 @@ impl Plan {
                 .any(|(&whole, &components)| !whole && components == 0)
             || live.statements.iter().any(|&live| !live);
         any_dead.then(|| Self {
-            expressions: live.expressions.clone(),
+            expressions: core::mem::take(&mut live.expressions),
             locals: live
                 .locals
                 .iter()
                 .zip(&live.components)
                 .map(|(&whole, &components)| whole || components != 0)
                 .collect(),
-            statements: live.statements.clone(),
+            statements: core::mem::take(&mut live.statements),
             ends: live.tree.nodes.iter().map(|node| node.end).collect(),
-            endless: live.endless.clone(),
+            endless: core::mem::take(&mut live.endless),
             debug_values,
         })
     }

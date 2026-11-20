@@ -385,14 +385,13 @@ impl<'f> Rebuild<'f> {
         block: &mut Block,
         span: Span,
     ) -> Result<Handle<Expression>, String> {
-        let mut operands = Vec::new();
-        self.expression(handle)?
-            .for_each_operand(|operand| operands.push(operand));
-        for operand in operands {
-            if self.mapped(operand).is_none() {
-                self.value(operand)?;
+        let mut copied = Ok(());
+        self.expression(handle)?.for_each_operand(|operand| {
+            if copied.is_ok() && self.mapped(operand).is_none() {
+                copied = self.value(operand).map(drop);
             }
-        }
+        });
+        copied?;
         let new = self.define(handle)?;
         self.emitted(new, block, span);
         Ok(new)
