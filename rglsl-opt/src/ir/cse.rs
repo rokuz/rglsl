@@ -65,6 +65,7 @@ struct Entry {
     precision: Option<Precision>,
     non_uniform: Option<NonUniform>,
     depth: u32,
+    loops: u32,
 }
 
 struct Scan<'f> {
@@ -75,6 +76,7 @@ struct Scan<'f> {
     table: FastHashMap<Key, Vec<usize>>,
     entries: Vec<Entry>,
     scopes: Vec<Vec<Key>>,
+    loops: u32,
     changed: bool,
 }
 
@@ -128,6 +130,7 @@ fn rewrite(function: &Function, reuse: Reuse, values: &[bool]) -> Result<Option<
         table: FastHashMap::default(),
         entries: Vec::new(),
         scopes: Vec::new(),
+        loops: 0,
         changed: false,
     };
     scan.block(&function.body)?;
@@ -178,8 +181,10 @@ impl Scan<'_> {
                     ref continuing,
                     ..
                 } => {
+                    self.loops += 1;
                     recurse(|| self.block(body))?;
                     recurse(|| self.block(continuing))?;
+                    self.loops -= 1;
                 }
                 _ => {}
             }
@@ -234,7 +239,8 @@ impl Scan<'_> {
                 (entry.canonical == canonical
                     && entry.precision == precision
                     && entry.non_uniform == non_uniform
-                    && (self.reuse == Reuse::Nested || entry.depth == depth))
+                    && ((self.reuse == Reuse::Nested && entry.loops == self.loops)
+                        || entry.depth == depth))
                     .then_some(entry.handle)
             })
         });
@@ -252,6 +258,7 @@ impl Scan<'_> {
             precision,
             non_uniform,
             depth,
+            loops: self.loops,
         });
         self.table.entry(key).or_default().push(index);
         if let Some(scope) = self.scopes.last_mut() {

@@ -117,3 +117,14 @@ void main() {
     assert_eq!(multiplies(entry(&module)?), 2);
     Ok(())
 }
+
+#[test]
+fn an_outer_value_is_not_reused_inside_a_loop() -> TestResult {
+    let source = shader(
+        "    color = vec4(c.x * c.y);
+    for (int i = 0; i < int(c.w); i++) { color.x += c.x * c.y; }",
+    );
+    let module = fragment(&source, &["forward", "dce", "cse", "dce"])?;
+    assert_eq!(multiplies(entry(&module)?), 2);
+    Ok(())
+}
