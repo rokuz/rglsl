@@ -98,6 +98,80 @@ fn nested_dead_loops_are_removed() -> TestResult {
     Ok(())
 }
 
+fn returns(function: &Function) -> usize {
+    function
+        .body
+        .walk()
+        .filter(|statement| matches!(**statement, Statement::Return { .. }))
+        .count()
+}
+
+#[test]
+fn a_dead_loop_without_an_exit_becomes_a_return() -> TestResult {
+    let source = shader(
+        "",
+        "    if (k > 2) {
+        while (true) { }
+    }
+    color = vec4(4.0);",
+    );
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(shape(function).loops, 0);
+    assert_eq!(shape(function).ifs, 1);
+    assert_eq!(
+        returns(function),
+        returns(entry(&fragment(&source, &[])?)?) + 1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_loop_without_an_exit_writing_an_output_is_kept() -> TestResult {
+    let source = shader("", "    while (true) { color.x += 1.0; }");
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(shape(function).loops, 1);
+    assert_eq!(returns(function), returns(entry(&fragment(&source, &[])?)?));
+    Ok(())
+}
+
+#[test]
+fn stores_to_unread_vector_components_are_removed() -> TestResult {
+    let source = shader(
+        "",
+        "    ivec3 v = ivec3(0);
+    v.x += k * 3;
+    v.y += k;
+    v.z += k * 5;
+    if (inColor.x > 0.5) {
+        v.x += 1;
+    }
+    color.x = float(v.y);",
+    );
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(stores(function, "v"), 2);
+    assert_eq!(shape(function).ifs, 0);
+    Ok(())
+}
+
+#[test]
+fn a_whole_load_keeps_every_component_store() -> TestResult {
+    let source = shader(
+        "",
+        "    ivec3 v = ivec3(0);
+    v.x += k * 3;
+    v.y += k;
+    v.z += k * 5;
+    color.xyz = vec3(v);",
+    );
+    let before = fragment(&source, &[])?;
+    let module = fragment(&source, DCE)?;
+    assert_eq!(stores(entry(&module)?, "v"), stores(entry(&before)?, "v"));
+    Ok(())
+}
+
 #[test]
 fn a_loop_writing_an_output_is_kept() -> TestResult {
     let source = shader("", "    for (int i = 0; i < k; i++) color.x += 1.0;");

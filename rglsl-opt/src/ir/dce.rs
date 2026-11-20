@@ -116,17 +116,22 @@ impl<'m> Tree<'m> {
     }
 }
 
+const WHOLE: u8 = u8::MAX;
+
 struct Live<'m> {
     expressions: Vec<bool>,
     locals: Vec<bool>,
-    stores: Vec<Vec<u32>>,
+    widths: Vec<u8>,
+    components: Vec<u8>,
+    stores: Vec<Vec<(u32, u8)>>,
     roots: Vec<Root>,
     tree: Tree<'m>,
     statements: Vec<bool>,
+    endless: Vec<u32>,
 }
 
 impl<'m> Live<'m> {
-    fn new(function: &'m Function) -> Self {
+    fn new(function: &'m Function, types: &UniqueArena<Type>) -> Self {
         let mut roots: Vec<Root> = Vec::with_capacity(function.expressions.len());
         for (_, expression) in function.expressions.iter() {
             let root = match *expression {
@@ -143,6 +148,17 @@ impl<'m> Live<'m> {
         Self {
             expressions: vec![false; function.expressions.len()],
             locals: vec![false; function.local_variables.len()],
+            widths: function
+                .local_variables
+                .iter()
+                .map(
+                    |(_, local)| match types.get_handle(local.ty).map(|ty| &ty.inner) {
+                        Ok(&TypeInner::Vector { size, .. }) => size as u8,
+                        _ => 0,
+                    },
+                )
+                .collect(),
+            components: vec![0; function.local_variables.len()],
             stores: vec![Vec::new(); function.local_variables.len()],
             roots,
             statements: tree
@@ -151,7 +167,29 @@ impl<'m> Live<'m> {
                 .map(|node| matches!(*node.statement, Statement::Emit(_)))
                 .collect(),
             tree,
+            endless: Vec::new(),
         }
+    }
+
+    fn component(
+        &self,
+        function: &Function,
+        pointer: Handle<Expression>,
+    ) -> Option<(Handle<LocalVariable>, u32)> {
+        let Ok(&Expression::AccessIndex { base, index }) = function.expressions.try_get(pointer)
+        else {
+            return None;
+        };
+        let Ok(&Expression::LocalVariable(local)) = function.expressions.try_get(base) else {
+            return None;
+        };
+        let width = self.widths.get(local.index()).copied().unwrap_or(0);
+        (index < u32::from(width)).then_some((local, index))
+    }
+
+    fn written(&self, function: &Function, pointer: Handle<Expression>) -> u8 {
+        self.component(function, pointer)
+            .map_or(WHOLE, |(_, index)| 1 << index)
     }
 
     fn root(&self, pointer: Handle<Expression>) -> Root {
@@ -225,9 +263,96 @@ impl<'m> Marker<'m> {
         match *expression {
             Expression::LocalVariable(local) => self.local(index, function, local),
             Expression::GlobalVariable(global) => self.global(global),
+            Expression::AccessIndex { base, .. } => {
+                if let Some((local, component)) = self
+                    .live
+                    .get(index)
+                    .and_then(|live| live.component(function, handle))
+                {
+                    self.address(index, base);
+                    self.component(index, function, local, component);
+                    return;
+                }
+            }
             _ => {}
         }
         expression.for_each_operand(|operand| self.mark(index, operand));
+    }
+
+    fn address(&mut self, function: usize, handle: Handle<Expression>) {
+        if let Some(slot) = self
+            .live
+            .get_mut(function)
+            .and_then(|live| live.expressions.get_mut(handle.index()))
+        {
+            *slot = true;
+        }
+    }
+
+    fn stored_through(&mut self, index: usize, pointer: Handle<Expression>) {
+        let Some(&function) = self.functions.get(index) else {
+            return;
+        };
+        let tracked = self.live.get(index).is_some_and(|live| {
+            live.component(function, pointer).is_some()
+                || function
+                    .expressions
+                    .try_get(pointer)
+                    .is_ok_and(|expression| {
+                        matches!(*expression, Expression::LocalVariable(local)
+                        if live.widths.get(local.index()).is_some_and(|&width| width > 0))
+                    })
+        });
+        if !tracked {
+            self.mark(index, pointer);
+            return;
+        }
+        self.address(index, pointer);
+        if let Ok(&Expression::AccessIndex { base, .. }) = function.expressions.try_get(pointer) {
+            self.address(index, base);
+        }
+    }
+
+    fn component(
+        &mut self,
+        index: usize,
+        function: &Function,
+        local: Handle<LocalVariable>,
+        component: u32,
+    ) {
+        let Some(live) = self.live.get_mut(index) else {
+            return;
+        };
+        let bit = 1_u8 << component;
+        let whole = live.locals.get(local.index()) == Some(&true);
+        let Some(mask) = live.components.get_mut(local.index()) else {
+            return;
+        };
+        if whole || *mask & bit != 0 {
+            return;
+        }
+        let first = *mask == 0;
+        *mask |= bit;
+        let mut kept = Vec::new();
+        if let Some(stores) = live.stores.get_mut(local.index()) {
+            stores.retain(|&(id, written)| {
+                if written & bit != 0 {
+                    kept.push(id);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        for store in kept {
+            self.keep(index, store);
+        }
+        if first
+            && let Ok(variable) = function.local_variables.try_get(local)
+            && let Some(init) = variable.init
+        {
+            self.mark(index, init);
+        }
     }
 
     fn statement(&mut self, index: usize, id: u32) {
@@ -253,7 +378,7 @@ impl<'m> Marker<'m> {
                 self.exits(index, id);
             }
             Statement::Store { pointer, value } => {
-                self.mark(index, pointer);
+                self.stored_through(index, pointer);
                 self.mark(index, value);
             }
             ref other => {
@@ -295,7 +420,7 @@ impl<'m> Marker<'m> {
             .get_mut(local.index())
             .map(core::mem::take)
             .unwrap_or_default();
-        for store in stores {
+        for (store, _) in stores {
             self.keep(index, store);
         }
         if let Ok(variable) = function.local_variables.try_get(local)
@@ -339,7 +464,12 @@ impl<'m> Marker<'m> {
         let Some(live) = self.live.get(index) else {
             return;
         };
+        let Some(&function) = self.functions.get(index) else {
+            return;
+        };
+        let returns_nothing = function.result.is_none();
         let mut roots = Vec::new();
+        let mut endless = Vec::new();
         let mut local_stores = Vec::new();
         let mut global_stores = Vec::new();
         for (id, node) in live.tree.nodes.iter().enumerate() {
@@ -362,7 +492,14 @@ impl<'m> Marker<'m> {
                             })
                         })
                     {
-                        roots.push(id);
+                        if returns_nothing {
+                            endless.push(id);
+                            if node.parent != NONE {
+                                roots.push(node.parent);
+                            }
+                        } else {
+                            roots.push(id);
+                        }
                     }
                 }
                 Statement::DebugValue { .. } => {}
@@ -372,7 +509,9 @@ impl<'m> Marker<'m> {
                         continue;
                     }
                     match root {
-                        Root::Local(local) => local_stores.push((local, id)),
+                        Root::Local(local) => {
+                            local_stores.push((local, id, live.written(function, pointer)));
+                        }
                         Root::Global(global) if self.tracked.get(global.index()) == Some(&true) => {
                             global_stores.push((global, id));
                         }
@@ -383,9 +522,10 @@ impl<'m> Marker<'m> {
             }
         }
         if let Some(live) = self.live.get_mut(index) {
-            for (local, id) in local_stores {
+            live.endless = endless;
+            for (local, id, written) in local_stores {
                 if let Some(stores) = live.stores.get_mut(local.index()) {
-                    stores.push(id);
+                    stores.push((id, written));
                 }
             }
         }
@@ -415,7 +555,7 @@ fn sweep_functions(module: &mut Module, complete: bool, debug: bool) -> Result<b
     let mut marker = Marker {
         live: functions
             .iter()
-            .map(|function| Live::new(function))
+            .map(|function| Live::new(function, &module.types))
             .collect(),
         global_stores: vec![Vec::new(); tracked.len()],
         globals: vec![false; tracked.len()],
@@ -546,6 +686,7 @@ struct Plan {
     locals: Vec<bool>,
     statements: Vec<bool>,
     ends: Vec<u32>,
+    endless: Vec<u32>,
     debug_values: Vec<DebugValue>,
 }
 
@@ -553,13 +694,23 @@ impl Plan {
     fn of(marker: &Marker<'_>, index: usize, debug_values: Vec<DebugValue>) -> Option<Self> {
         let live = marker.live.get(index)?;
         let any_dead = live.expressions.iter().any(|&live| !live)
-            || live.locals.iter().any(|&live| !live)
+            || live
+                .locals
+                .iter()
+                .zip(&live.components)
+                .any(|(&whole, &components)| !whole && components == 0)
             || live.statements.iter().any(|&live| !live);
         any_dead.then(|| Self {
             expressions: live.expressions.clone(),
-            locals: live.locals.clone(),
+            locals: live
+                .locals
+                .iter()
+                .zip(&live.components)
+                .map(|(&whole, &components)| whole || components != 0)
+                .collect(),
             statements: live.statements.clone(),
             ends: live.tree.nodes.iter().map(|node| node.end).collect(),
+            endless: live.endless.clone(),
             debug_values,
         })
     }
@@ -667,6 +818,9 @@ impl Plan {
                 *next = end;
                 if let Some(value) = self.debug_value(id) {
                     block.push(maps.debug_value(value)?, span);
+                }
+                if self.endless.binary_search(&id).is_ok() {
+                    block.push(Statement::Return { value: None }, span);
                 }
                 continue;
             }
