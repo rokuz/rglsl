@@ -357,7 +357,29 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 Verdict::Agree | Verdict::InvalidSpirv => tools.linked_alone_fails(&shader)?,
                 _ => false,
             },
-            Interesting::OptimizerDiffers | Interesting::OptimizerFails => {
+            Interesting::OptimizerFails => {
+                let Some(executor) = &executor else {
+                    return Ok(false);
+                };
+                if verdict != Verdict::Agree {
+                    return Ok(false);
+                }
+                let _ = fs::remove_dir_all(&stage_dir);
+                if run_alone(executor, &spirv, &candidate_json, &stage_dir, "rglsl")?
+                    != Outcome::Ran
+                {
+                    return Ok(false);
+                }
+                let optimized = run_alone(
+                    executor,
+                    &crate::fuzz::optimized_module(&spirv),
+                    &candidate_json,
+                    &stage_dir,
+                    "rglsl-O",
+                )?;
+                matches!(optimized, Outcome::Failed(_))
+            }
+            Interesting::OptimizerDiffers => {
                 let Some(executor) = &executor else {
                     return Ok(false);
                 };
@@ -375,7 +397,6 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
                 )?;
                 match (&ours, &optimized) {
                     (Run::Ran { .. }, Run::Failed(_)) => true,
-                    _ if options.interesting == Interesting::OptimizerFails => false,
                     _ => differs(&ours, &optimized, fuzz_exec::Tolerance::OneLevel) == Some(true),
                 }
             }

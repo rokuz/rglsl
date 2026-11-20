@@ -191,7 +191,8 @@ commands:
                           exec-fails (rglsl's module fails on the driver, glslang's runs),
                           optimizer-differs (rglsl -O renders differently from rglsl or fails
                           on the driver while rglsl's module runs), optimizer-fails (rglsl -O
-                          fails on the driver while rglsl's module runs), optimizer-hangs (rglsl's
+                          fails on the driver, not by hanging, while rglsl's module runs; each
+                          module runs alone), optimizer-hangs (rglsl's
                           unoptimized module runs, then rglsl -O's module hangs) or exec-hangs
                           (glslang's module runs, then rglsl's module hangs); each module of the
                           hang criteria runs alone, and it hangs when Amber times out, the device
