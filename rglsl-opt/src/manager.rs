@@ -18,6 +18,7 @@ struct Run<'r, 'm> {
     stages: &'r mut [StageModule<'m>],
     summaries: Vec<Summary>,
     changed: Vec<bool>,
+    settled: Vec<Vec<&'static str>>,
     profile: &'static GpuProfile,
     level: OptLevel,
     context: Context,
@@ -59,6 +60,7 @@ fn execute(
             .map(|stage| Summary::of(stage.module, context))
             .collect(),
         changed: vec![false; stages.len()],
+        settled: vec![Vec::new(); stages.len()],
         stages,
         profile,
         level: options.level,
@@ -148,27 +150,52 @@ impl Run<'_, '_> {
         match pass.scope {
             Scope::Function => {
                 for index in 0..self.stages.len() {
-                    if !self.summaries.get(index).is_some_and(pass.applies) {
+                    if !self.summaries.get(index).is_some_and(pass.applies)
+                        || self.is_settled(pass, index)
+                    {
                         continue;
                     }
                     if self.session(pass, Some(index))? == Changed::Yes {
                         result = Changed::Yes;
                         self.after_change(pass, index)?;
+                    } else {
+                        self.settle(pass, index);
                     }
                 }
             }
             Scope::Program => {
-                if self.summaries.iter().any(pass.applies)
-                    && self.session(pass, None)? == Changed::Yes
+                if !self.summaries.iter().any(pass.applies)
+                    || (0..self.stages.len()).all(|index| self.is_settled(pass, index))
                 {
+                    return Ok(result);
+                }
+                if self.session(pass, None)? == Changed::Yes {
                     result = Changed::Yes;
                     for index in 0..self.stages.len() {
                         self.after_change(pass, index)?;
+                    }
+                } else {
+                    for index in 0..self.stages.len() {
+                        self.settle(pass, index);
                     }
                 }
             }
         }
         Ok(result)
+    }
+
+    fn is_settled(&self, pass: &Pass, index: usize) -> bool {
+        self.settled
+            .get(index)
+            .is_some_and(|settled| settled.contains(&pass.name))
+    }
+
+    fn settle(&mut self, pass: &Pass, index: usize) {
+        if let Some(settled) = self.settled.get_mut(index)
+            && !settled.contains(&pass.name)
+        {
+            settled.push(pass.name);
+        }
     }
 
     fn session(&mut self, pass: &Pass, focus: Option<usize>) -> Result<Changed, OptError> {
@@ -190,6 +217,9 @@ impl Run<'_, '_> {
         };
         if let Some(changed) = self.changed.get_mut(index) {
             *changed = true;
+        }
+        if let Some(settled) = self.settled.get_mut(index) {
+            settled.clear();
         }
         if let Some(summary) = self.summaries.get_mut(index) {
             *summary = Summary::of(stage.module, self.context);

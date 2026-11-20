@@ -308,3 +308,38 @@ fn repeat_stops_when_nothing_changes() -> TestResult {
     assert_eq!(fixture.module.functions.len(), 2);
     Ok(())
 }
+
+static IDLE: AtomicUsize = AtomicUsize::new(0);
+
+fn idle(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
+    IDLE.fetch_add(1, Ordering::Relaxed);
+    keep(session)
+}
+
+static IDLE_PASS: Pass = pass("idle", idle);
+static CHANGING_PASS: Pass = pass("add", add_function);
+
+#[test]
+fn a_pass_that_changed_nothing_is_not_rerun_until_the_module_changes() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let plan = [
+        Planned::Run(&IDLE_PASS),
+        Planned::Run(&IDLE_PASS),
+        Planned::Repeat {
+            limit: 3,
+            passes: vec![&IDLE_PASS],
+        },
+        Planned::Run(&CHANGING_PASS),
+        Planned::Run(&IDLE_PASS),
+        Planned::Run(&IDLE_PASS),
+    ];
+    execute(
+        &plan,
+        &mut fixture.stages(),
+        &OptOptions::default(),
+        Context::default(),
+    )?;
+    assert_eq!(IDLE.load(Ordering::Relaxed), 2);
+    assert_eq!(fixture.module.functions.len(), 1);
+    Ok(())
+}
