@@ -6,10 +6,11 @@ layout(location = 1) out vec4 done;
 
 void main()
 {
-    color = vec4(0.0);
+    vec4 sum = vec4(0.0);
     for (int i = 0; i < 4; i++) {
         vec2 coord = vec2(1.0) + pow(-3.8, 4.4);
-        color += texture(tex, coord + vec2(float(i), 1.0));
+        sum += texture(tex, coord + vec2(float(i), 1.0));
     }
+    color = step(vec4(-1.0), sum);
     done = vec4(1.0, 0.0, 0.0, 1.0);
 }
