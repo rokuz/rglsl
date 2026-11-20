@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use super::{Outcome, Set, UnitResult, Variant};
 use crate::bench::stats;
@@ -24,6 +24,7 @@ pub const VARIANTS: [Variant; 4] = [
     Variant::GlslangO,
 ];
 const CHECKED: [Variant; 3] = [Variant::RglslO, Variant::SpirvOptO, Variant::GlslangO];
+const REFERENCES: [Variant; 2] = [Variant::Rglsl, Variant::GlslangO];
 const PIPELINE: &str = "main";
 const SYNTHETIC_TIMEOUT: Duration = Duration::from_secs(120);
 const LISTED: usize = 60;
@@ -112,6 +113,7 @@ struct Staged {
     unit: usize,
     plan: Plan,
     stage: ShaderKind,
+    reference: Variant,
     checks: Vec<(Variant, Job)>,
     timed: Vec<(Variant, Job)>,
     refused: Vec<(Variant, String)>,
@@ -177,6 +179,13 @@ fn stage_unit(
         let Some(path) = module(result, variant) else {
             continue;
         };
+        if let Some(why) = executor
+            .driver_bugs
+            .variant(&result.unit.case, tag(variant))
+        {
+            refused.push((variant, format!("not run on this driver: {why}")));
+            continue;
+        }
         let variant_plan = match variant_plan(executor, &plan, path) {
             Ok(variant_plan) => variant_plan,
             Err(why) if variant == Variant::Rglsl => return Err(why),
@@ -212,9 +221,14 @@ fn stage_unit(
         ));
         checks.push((variant, check));
     }
+    let reference = REFERENCES
+        .into_iter()
+        .find(|reference| checks.iter().any(|(variant, _)| variant == reference))
+        .ok_or("neither rglsl's module nor glslang -O's runs as the reference")?;
     Ok(Staged {
         unit: index,
         stage: plan.stage,
+        reference,
         plan,
         checks,
         timed,
@@ -501,7 +515,7 @@ fn run_target(
         let Some(results) = first.get(position) else {
             continue;
         };
-        let Some(Ok(reference)) = results.get(&Variant::Rglsl) else {
+        let Some(Ok(reference)) = results.get(&staged.reference) else {
             continue;
         };
         let job = |variant: Variant| {
@@ -512,6 +526,9 @@ fn run_target(
                 .map(|(_, job)| job.clone())
         };
         for variant in CHECKED {
+            if variant == staged.reference {
+                continue;
+            }
             let Some(result) = results.get(&variant) else {
                 continue;
             };
@@ -521,7 +538,8 @@ fn run_target(
             if same {
                 continue;
             }
-            if let (Some(reference_job), Some(variant_job)) = (job(Variant::Rglsl), job(variant)) {
+            if let (Some(reference_job), Some(variant_job)) = (job(staged.reference), job(variant))
+            {
                 again_slots.push((position, variant, again_jobs.len()));
                 again_jobs.push(reference_job);
                 again_jobs.push(variant_job);
@@ -558,8 +576,11 @@ fn run_target(
             .iter()
             .map(|(variant, why)| (*variant, Equivalence::NotRun(why.clone())))
             .collect();
-        if let Some(reference) = checks.get(&Variant::Rglsl) {
+        if let Some(reference) = checks.get(&staged.reference) {
             for variant in CHECKED {
+                if variant == staged.reference {
+                    continue;
+                }
                 let Some(result) = checks.get(&variant) else {
                     continue;
                 };
@@ -610,6 +631,19 @@ pub fn run(
         &work,
         timeout.min(exec::JOB_TIMEOUT),
     )?;
+    for executor in &executors {
+        for (name, listed) in executor.driver_bugs.variant_tags() {
+            if !Variant::ALL
+                .into_iter()
+                .any(|variant| tag(variant) == listed)
+            {
+                bail!(
+                    "{}: `{name}` lists the unknown variant `{listed}`",
+                    exec::drivers::DIR
+                );
+            }
+        }
+    }
     let wanted = Capture {
         statistics: true,
         timing: true,
@@ -700,7 +734,9 @@ fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> Strin
          a job whose script fails there, or every job of a process that crashes or times out, is run again in a \
          process of its own. *Equivalence*: the outputs of rglsl -O, spirv-opt -O(rglsl) and glslang -O \
          against rglsl's module with the comparison of `cargo xtask test`; a difference or a failure is rerun \
-         alone with rglsl's module, and rglsl's module is checked to give the same outputs again. A difference \
+         alone with rglsl's module, and rglsl's module is checked to give the same outputs again. A variant \
+         listed for a shader in `xtask/exec-drivers` (`variants`) is not run on that driver; when it is rglsl's module, \
+         glslang -O's is the reference instead. A difference \
          of rglsl -O is our bug; of the others, a spirv-opt or driver bug. Ratios are to spirv-opt -O(rglsl): statistics per shader as \
          (value + 1) / (reference + 1), times as plain ratios; below 1: smaller than spirv-opt -O.\n"
     );

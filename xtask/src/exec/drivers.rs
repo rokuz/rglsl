@@ -9,6 +9,7 @@ pub const DIR: &str = "xtask/exec-drivers";
 #[derive(Debug, Clone, Default)]
 pub struct DriverBugs {
     shaders: BTreeMap<String, String>,
+    variants: BTreeMap<String, (Vec<String>, String)>,
 }
 
 impl DriverBugs {
@@ -16,6 +17,7 @@ impl DriverBugs {
         let dir = root.join(DIR);
         let driver = driver.to_lowercase();
         let mut shaders = BTreeMap::new();
+        let mut variants = BTreeMap::new();
         for entry in fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))? {
             let path = entry?.path();
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -38,14 +40,49 @@ impl DriverBugs {
                     .and_then(toml::Value::as_str)
                     .filter(|why| !why.trim().is_empty())
                     .ok_or_else(|| anyhow!("{}: `{name}` needs a string `why`", path.display()))?;
-                shaders.insert(name, format!("{stem}: {why}"));
+                let why = format!("{stem}: {why}");
+                match entry.get("variants") {
+                    None => {
+                        shaders.insert(name, why);
+                    }
+                    Some(list) => {
+                        let tags = list
+                            .as_array()
+                            .filter(|list| !list.is_empty())
+                            .and_then(|list| {
+                                list.iter()
+                                    .map(|tag| tag.as_str().map(str::to_string))
+                                    .collect::<Option<Vec<_>>>()
+                            })
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "{}: `{name}`: `variants` must be a non-empty list of strings",
+                                    path.display()
+                                )
+                            })?;
+                        variants.insert(name, (tags, why));
+                    }
+                }
             }
         }
-        Ok(Self { shaders })
+        Ok(Self { shaders, variants })
     }
 
     pub fn get(&self, name: &str) -> Option<&str> {
         self.shaders.get(name).map(String::as_str)
+    }
+
+    pub fn variant(&self, name: &str, tag: &str) -> Option<&str> {
+        self.variants
+            .get(name)
+            .filter(|(tags, _)| tags.iter().any(|listed| listed == tag))
+            .map(|(_, why)| why.as_str())
+    }
+
+    pub fn variant_tags(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.variants
+            .iter()
+            .flat_map(|(name, (tags, _))| tags.iter().map(move |tag| (name.as_str(), tag.as_str())))
     }
 }
 
@@ -81,6 +118,17 @@ mod tests {
                 .is_some_and(|why| why.starts_with("nvidia: "))
         );
         assert!(amd.get(barycentric).is_none());
+        let heavy = "synthetic/many_functions.comp";
+        assert!(amd.get(heavy).is_none());
+        assert!(
+            amd.variant(heavy, "rglsl")
+                .is_some_and(|why| why.starts_with("amd: "))
+        );
+        assert!(amd.variant(heavy, "rglsl-O").is_none());
+        assert!(
+            amd.variant_tags()
+                .any(|(name, tag)| name == heavy && tag == "rglsl")
+        );
         Ok(())
     }
 }

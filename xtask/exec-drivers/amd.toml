@@ -9,3 +9,7 @@ why = "the AMD proprietary driver returns garbage for gl_BaryCoordSmoothCentroid
 
 ["synthetic/many_uniforms.frag"]
 why = "the AMD proprietary driver crashes (0xC0000005 in Amber's process) inside vkCreateGraphicsPipelines after 80-120 s for a fragment shader with 2,000 uniform buffers and 500 combined image samplers in 21 descriptor sets, for glslang's -O module, spirv-opt's and ours alike; the device limits (maxPerStage*, maxDescriptorSet* = 4294967295, maxBoundDescriptorSets = 32) allow it. NVIDIA (14 s) and KosmicKrisp (1.8 s) run it and the modules agree there; compute pipelines with 2,000 uniform buffers or 500 combined image samplers alone run on AMD in 2.3 s and 1.1 s"
+
+["synthetic/many_functions.comp"]
+variants = ["rglsl"]
+why = "the unoptimized modules of a 5,000-deep chain of calls are too heavy for the AMD proprietary driver: glslang's crashes it after 2.5 s (0xC00000FD, a stack overflow in Amber's process) and rglsl's runs for more than 300 s. The optimized variants (rglsl -O, spirv-opt -O, glslang -O) have one function, run, and are compared with glslang -O's module"
