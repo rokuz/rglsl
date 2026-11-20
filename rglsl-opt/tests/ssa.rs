@@ -256,6 +256,19 @@ fn promotion_follows_the_other_passes() -> TestResult {
 }
 
 #[test]
+fn a_function_with_discard_keeps_its_variables() -> TestResult {
+    let source = shader(
+        "",
+        "    float x;
+    if (inColor.x > 0.5) { x = inColor.y; } else if (inColor.y > 0.5) { x = inColor.z; } else { discard; }
+    color = vec4(x);",
+    );
+    let after = fragment(&source, &["ssa"])?;
+    assert_eq!((after.variables, after.phis), (1, 0));
+    Ok(())
+}
+
+#[test]
 fn matrices_stay_variables() -> TestResult {
     let source = shader(
         "",

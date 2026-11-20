@@ -21,6 +21,13 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
 }
 
 fn promoted(module: &Module, function: &Function) -> Vec<bool> {
+    if function
+        .body
+        .walk()
+        .any(|statement| matches!(*statement, Statement::Kill))
+    {
+        return vec![false; function.local_variables.len()];
+    }
     let mut in_loops = vec![false; function.local_variables.len()];
     stored_in_loops(function, &function.body, false, &mut in_loops);
     function
