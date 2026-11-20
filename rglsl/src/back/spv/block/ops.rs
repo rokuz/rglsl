@@ -102,15 +102,6 @@ const fn binary_scalar_op(
 
 const NON_FINITE_SEARCH: usize = 64;
 
-const fn non_finite(literal: crate::Literal) -> bool {
-    match literal {
-        crate::Literal::F64(value) => !value.is_finite(),
-        crate::Literal::F32(value) => !value.is_finite(),
-        crate::Literal::F16(value) => !value.is_finite(),
-        _ => false,
-    }
-}
-
 const fn per_component(op: spirv::Op) -> bool {
     matches!(
         op,
@@ -394,7 +385,7 @@ impl BlockContext<'_> {
                 continue;
             };
             match *expression {
-                crate::Expression::Literal(literal) if non_finite(literal) => return true,
+                crate::Expression::Literal(literal) if literal.is_non_finite() => return true,
                 crate::Expression::Constant(constant) => {
                     if let Ok(constant) = self.ir_module.constants.try_get(constant) {
                         pending.push((constant.init, true));

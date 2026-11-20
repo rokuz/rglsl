@@ -981,6 +981,12 @@ impl Writer {
             None => self.void_type,
         };
 
+        if interface.is_some()
+            && let Some(nan) = super::nan::nan_literal(ir_module)
+        {
+            self.write_nan_test(nan, &mut prelude);
+        }
+
         let lookup_function_type = LookupFunctionType {
             parameter_type_ids,
             return_type_id,
@@ -1142,6 +1148,18 @@ impl Writer {
         function.to_words(&mut self.logical_layout.function_definitions)?;
 
         Ok(function_id)
+    }
+
+    fn write_nan_test(&mut self, nan: crate::Literal, block: &mut Block) {
+        let bool_type_id = self.get_bool_type_id();
+        let nan_id = self.get_constant_scalar(nan);
+        let id = self.id_gen.next();
+        block.body.push(Instruction::relational(
+            spirv::Op::IsNan,
+            bool_type_id,
+            id,
+            nan_id,
+        ));
     }
 
     fn write_execution_mode(

@@ -20,6 +20,7 @@ mod intrinsics;
 mod layout;
 mod message;
 mod microscaling;
+mod nan;
 mod physical;
 mod plain_types;
 mod qcom;

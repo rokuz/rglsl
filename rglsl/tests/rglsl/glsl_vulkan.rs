@@ -12700,3 +12700,23 @@ void main() {{
     assert_eq!(vector_adds(&finite), 1);
     Ok(())
 }
+
+#[test]
+fn an_entry_point_tests_a_nan_constant_of_its_module() -> crate::TestResult {
+    let source = |exponent: &str| {
+        format!(
+            "#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer B {{ vec2 position; float time; vec2 square; }};
+void main() {{
+    square = vec2(pow(-3.8, {exponent})) + vec2(time, 1.0);
+}}
+"
+        )
+    };
+    let nan = compile(ShaderStage::Compute, &source("4.4"))?;
+    assert_eq!(instructions(&nan, Op::IsNan).len(), 1);
+    let finite = compile(ShaderStage::Compute, &source("4.0"))?;
+    assert!(instructions(&finite, Op::IsNan).is_empty());
+    Ok(())
+}

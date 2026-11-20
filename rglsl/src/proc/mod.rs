@@ -139,6 +139,24 @@ impl From<crate::Literal> for HashableLiteral {
 }
 
 impl crate::Literal {
+    pub const fn is_nan(self) -> bool {
+        match self {
+            Self::F64(value) => value.is_nan(),
+            Self::F32(value) => value.is_nan(),
+            Self::F16(value) => value.is_nan(),
+            _ => false,
+        }
+    }
+
+    pub const fn is_non_finite(self) -> bool {
+        match self {
+            Self::F64(value) => !value.is_finite(),
+            Self::F32(value) => !value.is_finite(),
+            Self::F16(value) => !value.is_finite(),
+            _ => false,
+        }
+    }
+
     pub fn encoded_float_value(self) -> Option<f64> {
         Some(match self {
             Self::BF16(bits) => small_float::bf16_to_f64(bits),
