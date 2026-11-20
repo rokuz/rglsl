@@ -86,6 +86,7 @@ pub(crate) struct LoopInfo {
     pub simple: bool,
     pub exit: Option<Exit>,
     pub counter: Option<Counter>,
+    pub never_entered: bool,
 }
 
 #[derive(Debug)]
@@ -242,6 +243,31 @@ const fn swapped(op: BinaryOperator) -> Option<BinaryOperator> {
         BinaryOperator::GreaterEqual => BinaryOperator::LessEqual,
         BinaryOperator::Equal => BinaryOperator::Equal,
         BinaryOperator::NotEqual => BinaryOperator::NotEqual,
+        _ => return None,
+    })
+}
+
+fn compare(op: BinaryOperator, left: Literal, right: Literal) -> Option<bool> {
+    let ordering = match (left, right) {
+        (Literal::F64(a), Literal::F64(b)) => a.partial_cmp(&b)?,
+        (Literal::F32(a), Literal::F32(b)) => a.partial_cmp(&b)?,
+        (Literal::F16(a), Literal::F16(b)) => a.partial_cmp(&b)?,
+        (left, right) => {
+            let (left_kind, a) = IntegerKind::of(left)?;
+            let (right_kind, b) = IntegerKind::of(right)?;
+            if left_kind != right_kind {
+                return None;
+            }
+            a.cmp(&b)
+        }
+    };
+    Some(match op {
+        BinaryOperator::Less => ordering.is_lt(),
+        BinaryOperator::LessEqual => ordering.is_le(),
+        BinaryOperator::Greater => ordering.is_gt(),
+        BinaryOperator::GreaterEqual => ordering.is_ge(),
+        BinaryOperator::Equal => ordering.is_eq(),
+        BinaryOperator::NotEqual => ordering.is_ne(),
         _ => return None,
     })
 }
@@ -488,6 +514,7 @@ impl<'a> Walker<'a> {
                         simple: false,
                         exit: None,
                         counter: None,
+                        never_entered: false,
                     });
                     self.several.push(false);
                     let saved = self.current.replace(index);
@@ -556,6 +583,12 @@ impl<'a> Walker<'a> {
                 position, end, parent, body, continuing, kind, condition, when, siblings,
             )
         });
+        let never_entered = simple
+            && counter.is_none()
+            && exit.is_some_and(|(kind, condition, when)| {
+                matches!(kind, Exit::Header(_))
+                    && self.exits_on_entry(position, parent, condition, when, siblings)
+            });
         let indexes = several
             || counter.is_some_and(|counter| {
                 self.accesses.get(&counter.local).is_some_and(|positions| {
@@ -568,6 +601,7 @@ impl<'a> Walker<'a> {
             info.simple = simple;
             info.exit = exit.map(|(kind, _, _)| kind);
             info.counter = counter;
+            info.never_entered = never_entered;
             info.indexes = indexes;
         }
     }
@@ -668,6 +702,62 @@ impl<'a> Walker<'a> {
         parent: Option<usize>,
         siblings: &Siblings,
     ) -> Option<(IntegerKind, i128)> {
+        let value = self.entry_value(local, position, parent, siblings)?;
+        integer(self.module, self.function, value)
+    }
+
+    fn exits_on_entry(
+        &self,
+        position: u32,
+        parent: Option<usize>,
+        condition: Handle<Expression>,
+        exit_when: bool,
+        siblings: &Siblings,
+    ) -> bool {
+        let mut condition = condition;
+        let mut exit_when = exit_when;
+        while let Ok(&Expression::Unary {
+            op: UnaryOperator::LogicalNot,
+            expr,
+        }) = self.function.expressions.try_get(condition)
+        {
+            condition = expr;
+            exit_when = !exit_when;
+        }
+        let Ok(&Expression::Binary { op, left, right }) =
+            self.function.expressions.try_get(condition)
+        else {
+            return false;
+        };
+        let operand = |handle: Handle<Expression>| {
+            if let Some(value) = literal(self.module, self.function, handle) {
+                return Some(value);
+            }
+            let Ok(&Expression::Load { pointer }) = self.function.expressions.try_get(handle)
+            else {
+                return None;
+            };
+            let local = self.whole_local(pointer)?;
+            let usage = self.locals.locals.get(local.index())?;
+            if usage.escaped || usage.partial_stores > 0 {
+                return None;
+            }
+            let value = self.entry_value(local, position, parent, siblings)?;
+            literal(self.module, self.function, value)
+        };
+        let (Some(left), Some(right)) = (operand(left), operand(right)) else {
+            return false;
+        };
+        compare(op, left, right) == Some(exit_when)
+    }
+
+    fn entry_value(
+        &self,
+        local: Handle<LocalVariable>,
+        position: u32,
+        parent: Option<usize>,
+        siblings: &Siblings,
+    ) -> Option<Handle<Expression>> {
         let usage = self.locals.locals.get(local.index())?;
         let before = usage.stores.partition_point(|&at| at < position);
         let value = match before
@@ -681,7 +771,7 @@ impl<'a> Walker<'a> {
             None if parent.is_none() => self.function.local_variables.try_get(local).ok()?.init?,
             None => return None,
         };
-        integer(self.module, self.function, value)
+        Some(value)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -184,6 +184,31 @@ fn a_loop_that_never_runs_disappears() -> TestResult {
 }
 
 #[test]
+fn a_loop_whose_first_check_fails_disappears_without_a_counter() -> TestResult {
+    let source = shader(
+        "    float h = 1.0;
+    while (h < 1.0) { h = inColor.x * h; s += h; }
+    int n = 7;
+    while (n != 7) { n = k; s += 1.0; }",
+    );
+    assert_eq!(loops_after(&source, &unrolled())?, 0);
+    Ok(())
+}
+
+#[test]
+fn a_loop_whose_first_check_passes_or_is_unknown_stays() -> TestResult {
+    let source = shader(
+        "    float h = 0.5;
+    while (h < 1.0) { h = inColor.x + h; s += h; }
+    float g = inColor.y;
+    while (g < 1.0) { g = g * 2.0 + 0.1; }
+    s += g;",
+    );
+    assert_eq!(loops_after(&source, &unrolled())?, 2);
+    Ok(())
+}
+
+#[test]
 fn nested_loops_are_unrolled_from_the_inside() -> TestResult {
     let source = shader(
         "    float m[3][3];

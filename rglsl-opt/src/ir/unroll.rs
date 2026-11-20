@@ -62,7 +62,12 @@ fn plan(loops: &Loops, limits: Unrolling) -> Vec<Option<u64>> {
             .saturating_add(inner.get(index).copied().unwrap_or(0))
             .max(1);
         let mut contribution = size;
-        if let Some(counter) = info.counter
+        if info.never_entered && !info.control.dont_unroll {
+            if let Some(slot) = chosen.get_mut(index) {
+                *slot = Some(0);
+            }
+            contribution = 0;
+        } else if let Some(counter) = info.counter
             && info.simple
             && !info.control.dont_unroll
         {
@@ -201,6 +206,10 @@ impl Policy for Unroll<'_> {
             .loops
             .get(index)
             .ok_or("an unrolled loop is missing from the loop tree")?;
+        if trips == 0 {
+            rebuild.set_position(info.end);
+            return Ok(true);
+        }
         let counter = info.counter.ok_or("an unrolled loop has no counter")?;
         let end = info.end;
         let slot = counter.local.index();
