@@ -541,6 +541,27 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             " }",
         ),
         (
+            "phis at nested merges",
+            "float x = float(c[1]);",
+            "if (b > c[0]) { float y = x + 1.0; if (b > 2) { x = y; } else { x = y * 2.0; } ",
+            "b = int(x);",
+            " } x = x + float(b);",
+        ),
+        (
+            "phis of nested loops",
+            "float x = 0.0;",
+            "for (int i = 0; i < b; i++) { x = x + 1.0; if (x > 3.0) { continue; } ",
+            "b = int(x);",
+            " x = x * 0.5; }",
+        ),
+        (
+            "promoted vector components",
+            "vec4 w = v;",
+            "if (b > c[0]) { w.x = w.y + 1.0; ",
+            "w.z = float(b); b = int(w.z);",
+            " } w.y = w.x;",
+        ),
+        (
             "repeated values",
             "",
             "if (b > c[0]) { b = b * c[1] + c[0]; ",
@@ -557,6 +578,16 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             &format!(
                 "{}b = b + int(w[b & 1]);{}",
                 "for (int i = 0; i < b; i++) { ".repeat(count),
+                " }".repeat(count)
+            ),
+        )
+    })?;
+    compiles_at(depth, "breaks out of nested branches", |count| {
+        shader(
+            "",
+            &format!(
+                "float x = 0.0; while (b < 100) {{ {}b = int(x); break;{} b = b + 1; }} b = b + int(x);",
+                "if (b > c[0]) { x = x + 1.0; if (x > 3.0) { break; } ".repeat(count),
                 " }".repeat(count)
             ),
         )
