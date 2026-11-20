@@ -254,3 +254,36 @@ fn promotion_follows_the_other_passes() -> TestResult {
     assert!(after.phis >= 3);
     Ok(())
 }
+
+#[test]
+fn matrices_stay_variables() -> TestResult {
+    let source = shader(
+        "",
+        "    mat2 m = mat2(inColor);
+    if (inColor.x > 0.5) { m = mat2(inColor.wzyx); }
+    color = vec4(m[0], m[1]);",
+    );
+    let after = fragment(&source, &["ssa"])?;
+    assert_eq!((after.variables, after.phis), (1, 0));
+    Ok(())
+}
+
+#[test]
+fn booleans_stored_in_loops_stay_variables() -> TestResult {
+    let source = shader(
+        "",
+        "    bool positive = true;
+    bool first = inColor.x > 0.0;
+    if (inColor.y > 0.0) { first = !first; }
+    float s = 0.0;
+    for (int i = 0; i < count; i++) {
+        positive = positive && inColor[i & 3] > 0.0;
+        s += float(i);
+    }
+    color = vec4(s, positive ? 1.0 : 0.0, first ? 1.0 : 0.0, 1.0);",
+    );
+    let after = fragment(&source, &["ssa"])?;
+    assert!(after.variables >= 1);
+    assert!(after.phis >= 3);
+    Ok(())
+}

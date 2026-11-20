@@ -274,9 +274,6 @@ pub(super) struct Ssa {
 
 impl Ssa {
     pub(super) fn new(function: &Function, candidates: &[bool], observed: &[bool]) -> Self {
-        if !candidates.iter().any(|&candidate| candidate) {
-            return Self::default();
-        }
         let roots = roots(function, candidates);
         let mut walk = Walk {
             function,
@@ -557,6 +554,9 @@ impl BlockContext<'_> {
                     .needs_layout_conversion(type_id, spirv::StorageClass::Function)
             };
             candidates.push(candidate);
+        }
+        if !candidates.contains(&true) {
+            return Ok(());
         }
         let observed =
             super::uninitialized::initial_value_observed(function, &self.writer.nullable_types);

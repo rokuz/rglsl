@@ -266,6 +266,33 @@ void main() {
 }
 
 #[test]
+fn promoted_variables_are_described_at_stores_and_merges() -> TestResult {
+    let source = "#version 450
+layout(location = 0) in vec4 inColor;
+layout(location = 0) out vec4 color;
+void main() {
+    float x = inColor.z;
+    if (inColor.x > 0.5) {
+        x = inColor.y;
+    }
+    color = vec4(x);
+}
+";
+    let output = compile(
+        ShaderStage::Fragment,
+        source,
+        Some(&["ssa"]),
+        spv::DebugLevel::NonSemantic,
+    )?;
+    assert_eq!(function_variables(&output.words), 0);
+    assert_eq!(count(&output.words, PHI), 1);
+    assert_eq!(debug_count(&output.words, DEBUG_DECLARE), 0);
+    assert_eq!(debug_count(&output.words, DEBUG_VALUE), 3);
+    assert_eq!(debug_count(&output.words, DEBUG_LOCAL_VARIABLE), 1);
+    Ok(())
+}
+
+#[test]
 fn dead_stores_of_constants_become_debug_values() -> TestResult {
     let source = "#version 450
 layout(location = 0) out vec4 color;
