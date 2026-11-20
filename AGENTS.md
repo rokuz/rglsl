@@ -19,6 +19,7 @@ Adding a GLSL extension: `EXTENSIONS.md`.
 | `rglsl-dis/` | text forms of SPIR-V: glslang's `-H` disassembly (`src/glslang`), SPIRV-Tools' `spirv-dis` form (`src/standard`, `--spirv-dis`) and hexadecimal text (`-x`, `--vn`) |
 | `tests/link/` | link tests: modules, `expect`, optional single-file `reference.*` for exec |
 | `tests/exec/` | exec tests with expected values (cooperative matrices and vectors, tensors, barycentrics, code generation options); an optional `options` file holds command-line options for glslang and rglsl |
+| `tests/perf/` | GPU workloads for the GPU time of `cargo xtask opt-quality --exec`: one shader per directory and a `size` file (`groups X Y Z` or `framebuffer N`) |
 | `rglsl-fuzz/` | port of GraphicsFuzz's variant generator and reducer (Apache-2.0) |
 | `tests/fuzz-quarantine/` | shaders of `cargo xtask fuzz --random` whose glslang module hangs, resets or crashes a driver, per exec target and mode (`O0`, `O`), each with its job and `reason.toml`; rglsl does not run them there |
 | `rglsl-fuzz/fuzz/` | the cargo-fuzz targets (crate `rglsl-libfuzzer`): `glsl_parser`, `ir`, `object`, `glsl_variant` |
@@ -156,7 +157,11 @@ cargo xtask opt-quality [--filter NAME]                      # SPIR-V counts of 
 cargo xtask opt-quality --exec [--exec-target T] [--runs N]  # and on the Vulkan targets: driver statistics (Amber
                                                    # --pipeline-stats), GPU and pipeline creation time,
                                                    # exec equivalence of rglsl -O, spirv-opt -O(rglsl) and glslang -O
-                                                   # with rglsl (shaders of xtask/exec-ub run as their twins):
+                                                   # with rglsl (shaders of xtask/exec-ub run as their twins);
+                                                   # tests/perf: 3 rounds of 20 timed repeats, each in its own
+                                                   # Amber process, fastest repeat and spread of the rounds;
+                                                   # a variant listed in xtask/exec-drivers (`variants`) is
+                                                   # not run on that driver:
                                                    # target/xtask/opt-quality-exec.md, .tsv
 
 cargo xtask fuzz --shaders DIR [--exec] [--opt]              # differential fuzzing against glslang (+ exec, + -O)
