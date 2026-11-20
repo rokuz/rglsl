@@ -375,8 +375,22 @@ impl<'a> Scan<'a> {
         tracked: Tracked<'a>,
         access: Access<'a>,
     ) -> Result<Option<Plan>, String> {
+        let mut scan = Self::new(types, function, locals, tracked, access);
+        scan.seed_initializers();
+        let mut position = FIRST;
+        scan.block(&function.body, &mut position)?;
+        Ok(scan.finish())
+    }
+
+    fn new(
+        types: &'a UniqueArena<Type>,
+        function: &'a Function,
+        locals: &'a Locals,
+        tracked: Tracked<'a>,
+        access: Access<'a>,
+    ) -> Self {
         let count = tracked.tracked.len();
-        let mut scan = Self {
+        Self {
             function,
             handles: function
                 .local_variables
@@ -428,17 +442,20 @@ impl<'a> Scan<'a> {
             exits: 0,
             changed: false,
             twice: false,
-        };
-        for (handle, local) in function.local_variables.iter() {
-            if !scan.tracked(handle.index()) {
+        }
+    }
+
+    fn seed_initializers(&mut self) {
+        for (handle, local) in self.function.local_variables.iter() {
+            if !self.tracked(handle.index()) {
                 continue;
             }
             let known = match local.init {
                 None => Known::Undef,
-                Some(init) if scan.scope(init) == Scope::Always => Known::Whole(init),
+                Some(init) if self.scope(init) == Scope::Always => Known::Whole(init),
                 Some(_) => continue,
             };
-            if let Some(slot) = scan.known.get_mut(handle.index()) {
+            if let Some(slot) = self.known.get_mut(handle.index()) {
                 *slot = Some(Record {
                     known,
                     position: 0,
@@ -446,9 +463,10 @@ impl<'a> Scan<'a> {
                 });
             }
         }
-        let mut position = FIRST;
-        scan.block(&function.body, &mut position)?;
-        let unread: Vec<u32> = scan
+    }
+
+    fn finish(mut self) -> Option<Plan> {
+        let unread: Vec<u32> = self
             .pending
             .iter()
             .flatten()
@@ -456,12 +474,9 @@ impl<'a> Scan<'a> {
             .map(|pending| pending.position)
             .collect();
         for position in unread {
-            scan.mark_dead(position);
+            self.mark_dead(position);
         }
-        if scan.twice || !scan.changed {
-            return Ok(None);
-        }
-        Ok(Some(scan.plan))
+        (!self.twice && self.changed).then_some(self.plan)
     }
 
     fn slot(&self, root: Root) -> Option<usize> {

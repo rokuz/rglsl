@@ -1,7 +1,7 @@
 use rglsl::proc::{ConstantEvaluator, Emitter, ExpressionKindTracker, Layouter, TypeResolution};
 use rglsl::{
     Arena, ArraySize, BinaryOperator, Block, Expression, FastHashMap, Function, Handle, Literal,
-    MathFunction, Module, Precision, ScalarKind, Span, Type, TypeInner,
+    MathFunction, Module, Precision, ScalarKind, Span, Type, TypeInner, UnaryOperator,
 };
 
 use crate::analysis::resolve_types;
@@ -387,51 +387,9 @@ impl Fold<'_> {
                 condition,
                 accept,
                 reject,
-            } => {
-                let accept = mapped(rebuild, accept)?;
-                let reject = mapped(rebuild, reject)?;
-                if accept == reject {
-                    return Ok(Some(accept));
-                }
-                let condition = mapped(rebuild, condition)?;
-                if !self.is_constant(&rebuild.out.expressions, condition) {
-                    return Ok(None);
-                }
-                let Some(values) = self.numbers(&rebuild.out.expressions, condition) else {
-                    return Ok(None);
-                };
-                if float::rule(Operation::Select, Domain::Any).map(|rule| rule.class)
-                    != Some(Class::Exact)
-                {
-                    return Ok(None);
-                }
-                Ok(if values.iter().all(|&value| value == Number::Bool(true)) {
-                    Some(accept)
-                } else if values.iter().all(|&value| value == Number::Bool(false)) {
-                    Some(reject)
-                } else {
-                    None
-                })
-            }
+            } => self.select(rebuild, condition, accept, reject),
             Expression::Unary { op, expr } if precision.is_empty() => {
-                let inner = mapped(rebuild, expr)?;
-                let Ok(&Expression::Unary {
-                    op: inner_op,
-                    expr: value,
-                }) = rebuild.out.expressions.try_get(inner)
-                else {
-                    return Ok(None);
-                };
-                if inner_op != op || rebuild.out.precision.contains_key(&inner) {
-                    return Ok(None);
-                }
-                let domain = self
-                    .type_inner(rebuild.source, expr)?
-                    .and_then(|inner| inner.scalar_kind())
-                    .and_then(domain_of);
-                Ok(domain
-                    .filter(|&domain| float::involution(op, domain))
-                    .map(|_| value))
+                self.involution(rebuild, op, expr)
             }
             Expression::Binary { op, left, right } if precision.is_empty() => {
                 self.binary(rebuild, handle, op, left, right, block)
@@ -468,6 +426,64 @@ impl Fold<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn select(
+        &mut self,
+        rebuild: &Rebuild<'_>,
+        condition: Handle<Expression>,
+        accept: Handle<Expression>,
+        reject: Handle<Expression>,
+    ) -> Result<Option<Handle<Expression>>, String> {
+        let accept = mapped(rebuild, accept)?;
+        let reject = mapped(rebuild, reject)?;
+        if accept == reject {
+            return Ok(Some(accept));
+        }
+        let condition = mapped(rebuild, condition)?;
+        if !self.is_constant(&rebuild.out.expressions, condition) {
+            return Ok(None);
+        }
+        let Some(values) = self.numbers(&rebuild.out.expressions, condition) else {
+            return Ok(None);
+        };
+        if float::rule(Operation::Select, Domain::Any).map(|rule| rule.class) != Some(Class::Exact)
+        {
+            return Ok(None);
+        }
+        Ok(if values.iter().all(|&value| value == Number::Bool(true)) {
+            Some(accept)
+        } else if values.iter().all(|&value| value == Number::Bool(false)) {
+            Some(reject)
+        } else {
+            None
+        })
+    }
+
+    fn involution(
+        &mut self,
+        rebuild: &Rebuild<'_>,
+        op: UnaryOperator,
+        expr: Handle<Expression>,
+    ) -> Result<Option<Handle<Expression>>, String> {
+        let inner = mapped(rebuild, expr)?;
+        let Ok(&Expression::Unary {
+            op: inner_op,
+            expr: value,
+        }) = rebuild.out.expressions.try_get(inner)
+        else {
+            return Ok(None);
+        };
+        if inner_op != op || rebuild.out.precision.contains_key(&inner) {
+            return Ok(None);
+        }
+        let domain = self
+            .type_inner(rebuild.source, expr)?
+            .and_then(|inner| inner.scalar_kind())
+            .and_then(domain_of);
+        Ok(domain
+            .filter(|&domain| float::involution(op, domain))
+            .map(|_| value))
     }
 
     fn component(
