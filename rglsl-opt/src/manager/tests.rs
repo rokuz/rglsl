@@ -6,8 +6,8 @@ use rglsl::{Expression, Function, Literal, Module, ShaderStage, Span, Statement}
 
 use super::{Planned, execute, run};
 use crate::{
-    Changed, Context, DebugLevel, DebugRule, OptError, OptLevel, OptOptions, PASSES, PRESETS,
-    PROFILES, Pass, Scope, Session, StageModule, Step, TargetGpu,
+    Changed, Context, OptError, OptLevel, OptOptions, PASSES, PRESETS, PROFILES, Pass, Scope,
+    Session, StageModule, Step, TargetGpu,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -57,7 +57,6 @@ const fn pass(
         scope: Scope::Function,
         applies: everywhere,
         run,
-        debug_info: DebugRule::Preserves,
         counterpart: &[],
     }
 }
@@ -69,10 +68,6 @@ static TABLE: &[Pass] = &[
     Pass {
         applies: nowhere,
         ..pass("never", break_ir)
-    },
-    Pass {
-        debug_info: DebugRule::LinesOnly,
-        ..pass("lines-only", break_ir)
     },
     Pass {
         scope: Scope::Program,
@@ -258,43 +253,6 @@ fn passes_that_do_not_apply_are_skipped() -> TestResult {
         Context::default(),
     )?;
     assert!(fixture.module.functions.is_empty());
-    Ok(())
-}
-
-#[test]
-fn lines_only_passes_are_skipped_with_debug_variables() -> TestResult {
-    let mut fixture = Fixture::new()?;
-    let variables = Context {
-        debug: DebugLevel::Variables,
-        ..Context::default()
-    };
-    run(
-        TABLE,
-        &mut fixture.stages(),
-        &options(&["lines-only"], true),
-        variables,
-    )?;
-    assert!(fixture.module.functions.is_empty());
-    let lines = Context {
-        debug: DebugLevel::Lines,
-        ..variables
-    };
-    let result = run(
-        TABLE,
-        &mut fixture.stages(),
-        &options(&["lines-only"], true),
-        lines,
-    );
-    assert!(
-        matches!(
-            result,
-            Err(OptError::InvalidIr {
-                pass: "lines-only",
-                ..
-            })
-        ),
-        "{result:?}"
-    );
     Ok(())
 }
 

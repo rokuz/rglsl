@@ -21,7 +21,7 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
             })?;
     }
     if session.context.unlinked {
-        return Ok(if changed { Changed::Yes } else { Changed::No });
+        return Ok(changed.into());
     }
     if let Some((item, _)) = session
         .specialization
@@ -34,7 +34,7 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
             item.id
         )));
     }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    Ok(changed.into())
 }
 
 enum Failure {

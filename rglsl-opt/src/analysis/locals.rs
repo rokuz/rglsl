@@ -1,8 +1,5 @@
 use rglsl::ir::visit::Visitor;
-use rglsl::{
-    Block, Constant, Expression, Function, GlobalVariable, Handle, LocalVariable, Override, Range,
-    Statement, Type,
-};
+use rglsl::{Block, Expression, Function, GlobalVariable, Handle, LocalVariable, Statement};
 use rglsl_types::stack::recurse;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +60,17 @@ impl Locals {
 
     pub fn pointer(&self, handle: Handle<Expression>) -> Option<Pointer> {
         self.pointers.get(handle.index()).copied().flatten()
+    }
+
+    pub fn whole_local(&self, pointer: Handle<Expression>) -> Option<Handle<LocalVariable>> {
+        match self.pointer(pointer)? {
+            Pointer {
+                root: Root::Local(local),
+                whole: true,
+                ..
+            } => Some(local),
+            _ => None,
+        }
     }
 
     pub fn usage(&self, root: Root) -> Option<&Usage> {
@@ -198,26 +206,6 @@ impl<'a> Visitor<'a> for Escapes<'_> {
         Ok(())
     }
 
-    fn result(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<Type>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn global_variable(&mut self, handle: Handle<GlobalVariable>) -> Result<(), Self::Error> {
         if let Some(usage) = self.0.globals.get_mut(handle.index()) {
             usage.escaped = true;
@@ -229,14 +217,6 @@ impl<'a> Visitor<'a> for Escapes<'_> {
         if let Some(usage) = self.0.locals.get_mut(handle.index()) {
             usage.escaped = true;
         }
-        Ok(())
-    }
-
-    fn function(&mut self, _: Handle<rglsl::Function>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a Block) -> Result<(), Self::Error> {
         Ok(())
     }
 }

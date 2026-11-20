@@ -126,14 +126,6 @@ fn levels(function: &Function, block: &BlockVariable) -> Vec<Option<Level>> {
     levels
 }
 
-fn functions(module: &Module) -> impl Iterator<Item = &Function> {
-    module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|entry| &entry.function))
-}
-
 fn members(module: &Module, block: &BlockVariable) -> Members {
     let count = block.members.len();
     let mut members = Members {
@@ -146,7 +138,7 @@ fn members(module: &Module, block: &BlockVariable) -> Members {
             *slot = true;
         }
     };
-    for function in functions(module) {
+    for function in module.all_functions() {
         let levels = levels(function, block);
         let at = |handle: Handle<Expression>| levels.get(handle.index()).copied().flatten();
         for (handle, expression) in function.expressions.iter() {
@@ -249,16 +241,7 @@ pub(super) fn remove_stores(producer: &mut StageModule<'_>, removed: &[BuiltIn])
         if dropped.is_empty() {
             continue;
         }
-        let bodies = module
-            .functions
-            .iter_mut()
-            .map(|(_, function)| function)
-            .chain(
-                module
-                    .entry_points
-                    .iter_mut()
-                    .map(|entry| &mut entry.function),
-            );
+        let bodies = module.all_functions_mut();
         for function in bodies {
             let levels = levels(function, &block);
             changed |= remove(&mut function.body, &levels, &dropped);
@@ -390,16 +373,7 @@ pub(super) fn retype(
             .try_get_mut(block.global)
             .map_err(|error| error.to_string())?
             .ty = ty;
-        let bodies = module
-            .functions
-            .iter_mut()
-            .map(|(_, function)| function)
-            .chain(
-                module
-                    .entry_points
-                    .iter_mut()
-                    .map(|entry| &mut entry.function),
-            );
+        let bodies = module.all_functions_mut();
         for function in bodies {
             let levels = levels(function, &block);
             let outer = if block.arrayed {

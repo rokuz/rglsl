@@ -239,11 +239,7 @@ pub(super) fn never_written(module: &Module, classes: &[Class]) -> Vec<bool> {
     if !undefined.contains(&true) {
         return undefined;
     }
-    let functions = module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    let functions = module.all_functions();
     for function in functions {
         let locals = Locals::of(function, count);
         for (slot, usage) in undefined.iter_mut().zip(&locals.globals) {

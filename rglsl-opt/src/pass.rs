@@ -16,10 +16,10 @@ pub enum Changed {
     Yes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DebugRule {
-    Preserves,
-    LinesOnly,
+impl From<bool> for Changed {
+    fn from(changed: bool) -> Self {
+        if changed { Self::Yes } else { Self::No }
+    }
 }
 
 #[derive(Debug)]
@@ -28,7 +28,6 @@ pub struct Pass {
     pub scope: Scope,
     pub applies: fn(&Summary) -> bool,
     pub run: fn(&mut Session<'_, '_>) -> Result<Changed, OptError>,
-    pub debug_info: DebugRule,
     pub counterpart: &'static [&'static str],
 }
 
@@ -38,7 +37,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Program,
         applies: |_| true,
         run: crate::ir::specialize::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &[
             "--set-spec-const-default-value",
             "--freeze-spec-const",
@@ -48,9 +46,8 @@ pub static PASSES: &[Pass] = &[
     Pass {
         name: "lto-io",
         scope: Scope::Program,
-        applies: |summary| !summary.unlinked && !summary.export_functions,
+        applies: |summary| summary.whole_program,
         run: crate::ir::lto_io::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &[
             "--lto",
             "AnalyzeLiveInput",
@@ -64,7 +61,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.calls,
         run: crate::ir::inline::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &[
             "--wrap-opkill",
             "--merge-return",
@@ -77,7 +73,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |_| true,
         run: crate::ir::forward::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &[
             "--eliminate-local-single-block",
             "--eliminate-local-single-store",
@@ -90,7 +85,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.local_variables,
         run: crate::ir::sroa::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--scalar-replacement=0", "--convert-local-access-chains"],
     },
     Pass {
@@ -98,7 +92,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |_| true,
         run: crate::ir::fold::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--ccp", "--simplify-instructions"],
     },
     Pass {
@@ -106,7 +99,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |_| true,
         run: crate::ir::dead_branch::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--eliminate-dead-branches"],
     },
     Pass {
@@ -114,7 +106,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.loops,
         run: crate::ir::unroll::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--loop-unroll"],
     },
     Pass {
@@ -122,7 +113,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |summary| summary.local_variables,
         run: crate::ir::const_array::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--copy-propagate-arrays"],
     },
     Pass {
@@ -130,7 +120,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |_| true,
         run: crate::ir::cse::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--redundancy-elimination"],
     },
     Pass {
@@ -138,7 +127,6 @@ pub static PASSES: &[Pass] = &[
         scope: Scope::Function,
         applies: |_| true,
         run: crate::ir::dce::run,
-        debug_info: DebugRule::Preserves,
         counterpart: &["--eliminate-dead-code-aggressive"],
     },
 ];
@@ -170,6 +158,16 @@ impl Session<'_, '_> {
             specialization: self.specialization,
         };
         run(&mut session)
+    }
+
+    pub(crate) fn rewrite(
+        &mut self,
+        rewrite: impl FnOnce(&mut Module) -> Result<bool, String>,
+    ) -> Result<Changed, OptError> {
+        let pass = self.pass;
+        rewrite(self.module()?)
+            .map(Changed::from)
+            .map_err(|message| OptError::Pass { pass, message })
     }
 
     pub fn module(&mut self) -> Result<&mut Module, OptError> {

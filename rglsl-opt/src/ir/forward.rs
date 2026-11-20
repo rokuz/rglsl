@@ -12,21 +12,20 @@ use rglsl_types::stack::recurse;
 use crate::analysis::locals::{FIRST, Locals, Root, Usage};
 use crate::analysis::{Class, classify_types, elements, for_each_result, resolve_types};
 use crate::ir::rebuild::{Policy, Rebuild};
-use crate::{Changed, Context, DebugLevel, OptError, Session};
+use crate::ir::rewrite_functions;
+use crate::{Changed, Context, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let pass = session.pass;
     let context = session.context;
     let stage = session.stage()?;
-    let module = session.module()?;
-    forward(module, stage, context).map_err(|message| OptError::Pass { pass, message })
+    session.rewrite(|module| forward(module, stage, context))
 }
 
-fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<Changed, String> {
+fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<bool, String> {
     let mut changed = false;
     let classes = classify_types(&module.types);
-    let debug = context.debug == DebugLevel::Variables;
-    let complete = !context.unlinked && !context.export_functions;
+    let debug = context.keeps_variables();
+    let complete = context.whole_program();
     if complete {
         changed |= private::localize(module, &classes)?;
     }
@@ -57,43 +56,10 @@ fn forward(module: &mut Module, stage: ShaderStage, context: Context) -> Result<
         global_types: &global_types,
         undefined: &undefined,
     };
-    let handles: Vec<Handle<Function>> =
-        module.functions.iter().map(|(handle, _)| handle).collect();
-    for handle in handles {
-        let function = core::mem::take(
-            module
-                .functions
-                .try_get_mut(handle)
-                .map_err(|error| error.to_string())?,
-        );
-        let result = rewrite(module, globals, &function, debug);
-        let slot = module
-            .functions
-            .try_get_mut(handle)
-            .map_err(|error| error.to_string())?;
-        *slot = function;
-        if let Some(rewritten) = result? {
-            *slot = rewritten;
-            changed = true;
-        }
-    }
-    for index in 0..module.entry_points.len() {
-        let Some(entry) = module.entry_points.get_mut(index) else {
-            continue;
-        };
-        let function = core::mem::take(&mut entry.function);
-        let result = rewrite(module, globals, &function, debug);
-        let entry = module
-            .entry_points
-            .get_mut(index)
-            .ok_or("an entry point disappeared while forwarding")?;
-        entry.function = function;
-        if let Some(rewritten) = result? {
-            entry.function = rewritten;
-            changed = true;
-        }
-    }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    changed |= rewrite_functions(module, |module, function| {
+        rewrite(module, globals, function, debug)
+    })?;
+    Ok(changed)
 }
 
 #[derive(Clone, Copy)]
@@ -135,106 +101,105 @@ fn rewrite(
     function: &Function,
     debug: bool,
 ) -> Result<Option<Function>, String> {
-    let Globals {
-        readonly,
-        outputs,
-        classes,
-        global_types,
-        undefined,
-    } = globals;
-    let types = &module.types;
-    let locals = Locals::of(function, readonly.len());
-    let class = |local: &LocalVariable| {
-        classes
-            .get(local.ty.index())
-            .copied()
-            .unwrap_or(Class::Opaque)
-    };
-    let calls = function
-        .body
-        .walk()
-        .any(|statement| matches!(*statement, Statement::Call { .. }));
-    let global_class = |ty: Handle<Type>| classes.get(ty.index()).copied().unwrap_or(Class::Opaque);
-    let mut tracked: Vec<bool> = function
-        .local_variables
-        .iter()
-        .zip(&locals.locals)
-        .map(|((_, variable), usage)| !usage.escaped && class(variable) != Class::Opaque)
-        .collect();
-    let mut references: Vec<bool> = function
-        .local_variables
-        .iter()
-        .map(|(_, variable)| class(variable) == Class::References)
-        .collect();
-    let mut slot_types: Vec<Handle<Type>> = function
-        .local_variables
-        .iter()
-        .map(|(_, variable)| variable.ty)
-        .collect();
-    for ((usage, &output), &ty) in locals.globals.iter().zip(outputs).zip(global_types) {
-        tracked.push(output && !calls && !usage.escaped && global_class(ty) == Class::Plain);
-        references.push(false);
-        slot_types.push(ty);
-    }
-    let loaded = |usage: &Usage| usage.whole_loads + usage.partial_loads;
-    if locals
-        .locals
-        .iter()
-        .chain(&locals.globals)
-        .zip(&tracked)
-        .all(|(usage, &tracked)| !tracked || (loaded(usage) == 0 && usage.stores.len() < 2))
-        && locals
-            .globals
-            .iter()
-            .zip(readonly)
-            .all(|(usage, &readonly)| !readonly || loaded(usage) < 2)
-        && locals
-            .globals
-            .iter()
-            .zip(undefined)
-            .all(|(usage, &undefined)| !undefined || loaded(usage) == 0)
-    {
+    let locals = Locals::of(function, globals.readonly.len());
+    let slots = Slots::of(function, &locals, globals);
+    if slots.idle(&locals, globals) {
         return Ok(None);
     }
     let Some(mut plan) = Scan::run(
-        types,
+        &module.types,
         function,
         &locals,
         Tracked {
             locals: function.local_variables.len(),
-            tracked: &tracked,
-            references: &references,
-            types: &slot_types,
+            tracked: &slots.tracked,
+            references: &slots.references,
+            types: &slots.types,
         },
         Access {
-            readonly,
-            undefined,
+            readonly: globals.readonly,
+            undefined: globals.undefined,
         },
     )?
     else {
         return Ok(None);
     };
     plan.undefined_types(module, function)?;
-    let types = &module.types;
-    let mut rebuild = Rebuild::new(function);
-    rebuild.body(
-        &mut Apply {
-            plan: &plan,
-            types,
-            debug,
-        },
-        locals.statements(),
-    )?;
-    for &(local, value) in &plan.inits {
-        let value = rebuild.value(value)?;
-        rebuild
-            .out
-            .local_variables
-            .try_get_mut(local)
-            .map_err(|error| error.to_string())?
-            .init = Some(value);
+    plan.apply(&module.types, function, &locals, debug)
+        .map(Some)
+}
+
+struct Slots {
+    tracked: Vec<bool>,
+    references: Vec<bool>,
+    types: Vec<Handle<Type>>,
+}
+
+impl Slots {
+    fn of(function: &Function, locals: &Locals, globals: Globals<'_>) -> Self {
+        let class = |ty: Handle<Type>| {
+            globals
+                .classes
+                .get(ty.index())
+                .copied()
+                .unwrap_or(Class::Opaque)
+        };
+        let calls = function
+            .body
+            .walk()
+            .any(|statement| matches!(*statement, Statement::Call { .. }));
+        let mut slots = Self {
+            tracked: function
+                .local_variables
+                .iter()
+                .zip(&locals.locals)
+                .map(|((_, variable), usage)| !usage.escaped && class(variable.ty) != Class::Opaque)
+                .collect(),
+            references: function
+                .local_variables
+                .iter()
+                .map(|(_, variable)| class(variable.ty) == Class::References)
+                .collect(),
+            types: function
+                .local_variables
+                .iter()
+                .map(|(_, variable)| variable.ty)
+                .collect(),
+        };
+        for ((usage, &output), &ty) in locals
+            .globals
+            .iter()
+            .zip(globals.outputs)
+            .zip(globals.global_types)
+        {
+            slots
+                .tracked
+                .push(output && !calls && !usage.escaped && class(ty) == Class::Plain);
+            slots.references.push(false);
+            slots.types.push(ty);
+        }
+        slots
     }
-    Ok(Some(rebuild.finish()))
+
+    fn idle(&self, locals: &Locals, globals: Globals<'_>) -> bool {
+        let loaded = |usage: &Usage| usage.whole_loads + usage.partial_loads;
+        locals
+            .locals
+            .iter()
+            .chain(&locals.globals)
+            .zip(&self.tracked)
+            .all(|(usage, &tracked)| !tracked || (loaded(usage) == 0 && usage.stores.len() < 2))
+            && locals
+                .globals
+                .iter()
+                .zip(globals.readonly)
+                .all(|(usage, &readonly)| !readonly || loaded(usage) < 2)
+            && locals
+                .globals
+                .iter()
+                .zip(globals.undefined)
+                .all(|(usage, &undefined)| !undefined || loaded(usage) == 0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,6 +274,34 @@ struct Plan {
 }
 
 impl Plan {
+    fn apply(
+        &self,
+        types: &UniqueArena<Type>,
+        function: &Function,
+        locals: &Locals,
+        debug: bool,
+    ) -> Result<Function, String> {
+        let mut rebuild = Rebuild::new(function);
+        rebuild.body(
+            &mut Apply {
+                plan: self,
+                types,
+                debug,
+            },
+            locals.statements(),
+        )?;
+        for &(local, value) in &self.inits {
+            let value = rebuild.value(value)?;
+            rebuild
+                .out
+                .local_variables
+                .try_get_mut(local)
+                .map_err(|error| error.to_string())?
+                .init = Some(value);
+        }
+        Ok(rebuild.finish())
+    }
+
     fn undefined_types(&mut self, module: &mut Module, function: &Function) -> Result<(), String> {
         if !self.replace.contains(&Replace::Undef) {
             return Ok(());

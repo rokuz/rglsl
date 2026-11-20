@@ -4,52 +4,14 @@ use rglsl_types::stack::recurse;
 use crate::analysis::locals::{Locals, Root};
 use crate::analysis::loops::{Exit, Loops};
 use crate::ir::rebuild::{Policy, Rebuild};
+use crate::ir::rewrite_functions;
 use crate::{Changed, OptError, Session, Unrolling};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let pass = session.pass;
     let limits = session.unrolling();
-    let module = session.module()?;
-    unroll(module, limits).map_err(|message| OptError::Pass { pass, message })
-}
-
-fn unroll(module: &mut Module, limits: Unrolling) -> Result<Changed, String> {
-    let mut changed = false;
-    let handles: Vec<_> = module.functions.iter().map(|(handle, _)| handle).collect();
-    for handle in handles {
-        let function = core::mem::take(
-            module
-                .functions
-                .try_get_mut(handle)
-                .map_err(|error| error.to_string())?,
-        );
-        let result = rewrite(module, &function, limits);
-        let slot = module
-            .functions
-            .try_get_mut(handle)
-            .map_err(|error| error.to_string())?;
-        *slot = function;
-        if let Some(rewritten) = result? {
-            *slot = rewritten;
-            changed = true;
-        }
-    }
-    for index in 0..module.entry_points.len() {
-        let Some(entry) = module.entry_points.get_mut(index) else {
-            continue;
-        };
-        let function = core::mem::take(&mut entry.function);
-        let result = rewrite(module, &function, limits);
-        let Some(entry) = module.entry_points.get_mut(index) else {
-            return Err(String::from("an entry point disappeared while unrolling"));
-        };
-        entry.function = function;
-        if let Some(rewritten) = result? {
-            entry.function = rewritten;
-            changed = true;
-        }
-    }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    session.rewrite(|module| {
+        rewrite_functions(module, |module, function| rewrite(module, function, limits))
+    })
 }
 
 fn plan(loops: &Loops, limits: Unrolling) -> Vec<Option<u64>> {

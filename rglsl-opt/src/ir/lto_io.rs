@@ -17,9 +17,6 @@ const VERTEX_PIPELINE: [ShaderStage; 5] = [
 ];
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    if session.context.unlinked || session.context.export_functions {
-        return Ok(Changed::No);
-    }
     let Some(chain) = chain(session.stages) else {
         return Ok(Changed::No);
     };
@@ -75,7 +72,7 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
         }
         changed |= stage_changed;
     }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    Ok(changed.into())
 }
 
 fn stage<'a, 'm>(
@@ -143,11 +140,7 @@ struct Use {
 fn uses(module: &Module) -> Vec<Use> {
     let count = module.global_variables.len();
     let mut uses = vec![Use::default(); count];
-    let functions = module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    let functions = module.all_functions();
     for function in functions {
         let locals = Locals::of(function, count);
         for (index, slot) in uses.iter_mut().enumerate() {

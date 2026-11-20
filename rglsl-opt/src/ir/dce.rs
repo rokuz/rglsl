@@ -1,30 +1,27 @@
 use rglsl::compact::{KeepUnused, compact};
-use rglsl::ir::visit::{Visitor, VisitorMut};
+use rglsl::ir::visit::VisitorMut;
 use rglsl::{
-    AddressSpace, Arena, Binding, Block, BuiltIn, Constant, Expression, Function, GlobalVariable,
-    Handle, LocalVariable, Module, Override, Range, Sampling, ShaderStage, Statement, Type,
-    TypeInner, UniqueArena,
+    AddressSpace, Arena, Binding, Block, BuiltIn, Expression, Function, GlobalVariable, Handle,
+    LocalVariable, Module, Range, Sampling, ShaderStage, Statement, Type, TypeInner, UniqueArena,
 };
 use rglsl_types::stack::recurse;
 
+use crate::analysis::for_each_result;
 use crate::float::{self, UndefinedUse};
-use crate::{Changed, Context, DebugLevel, OptError, Session};
+use crate::{Changed, Context, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let pass = session.pass;
     let context = session.context;
-    let module = session.module()?;
-    dce(module, context).map_err(|message| OptError::Pass { pass, message })
+    session.rewrite(|module| dce(module, context))
 }
 
-fn dce(module: &mut Module, context: Context) -> Result<Changed, String> {
-    let complete = !context.unlinked && !context.export_functions;
-    let mut changed = false;
-    changed |= sweep_functions(module, complete, context.debug == DebugLevel::Variables)?;
+fn dce(module: &mut Module, context: Context) -> Result<bool, String> {
+    let complete = context.whole_program();
+    let mut changed = sweep_functions(module, complete, context.keeps_variables())?;
     if complete {
         changed |= sweep_module(module)?;
     }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    Ok(changed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,7 +381,7 @@ impl<'m> Marker<'m> {
             ref other => {
                 other.for_each_operand(|operand| self.mark(index, operand));
                 let mut results = Vec::new();
-                let Ok(()) = other.visit(&mut Collect(&mut results));
+                for_each_result(other, |result| results.push(result));
                 for result in results {
                     self.mark(index, result);
                 }
@@ -546,12 +543,7 @@ fn sweep_functions(module: &mut Module, complete: bool, debug: bool) -> Result<b
         .iter()
         .map(|(_, global)| complete && global.space == AddressSpace::Private)
         .collect();
-    let functions: Vec<&Function> = module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|entry| &entry.function))
-        .collect();
+    let functions: Vec<&Function> = module.all_functions().collect();
     let mut marker = Marker {
         live: functions
             .iter()
@@ -865,53 +857,6 @@ impl Maps<'_> {
     }
 }
 
-struct Collect<'a>(&'a mut Vec<Handle<Expression>>);
-
-impl<'a> Visitor<'a> for Collect<'_> {
-    type Error = core::convert::Infallible;
-
-    fn expression(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn result(&mut self, handle: Handle<Expression>) -> Result<(), Self::Error> {
-        self.0.push(handle);
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<Type>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: Handle<Function>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a Block) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
 struct Renumber<'a> {
     map: &'a [Option<Handle<Expression>>],
 }
@@ -943,32 +888,8 @@ impl<'a> VisitorMut<'a> for Renumber<'_> {
         Err(String::from("an Emit statement inside another statement"))
     }
 
-    fn ty(&mut self, _: &mut Handle<Type>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: &mut Handle<GlobalVariable>) -> Result<(), String> {
-        Ok(())
-    }
-
     fn local_variable(&mut self, _: &mut Handle<LocalVariable>) -> Result<(), String> {
         Err(String::from("a statement names a local variable"))
-    }
-
-    fn function(&mut self, _: &mut Handle<Function>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a mut Block) -> Result<(), String> {
-        Ok(())
     }
 }
 
@@ -1011,22 +932,19 @@ fn sweep_module(module: &mut Module) -> Result<bool, String> {
 }
 
 fn uses(function: &Function, reachable: &mut [bool], used: &mut [bool]) {
-    for (_, expression) in function.expressions.iter() {
-        if let Expression::GlobalVariable(global) = *expression
-            && let Some(slot) = used.get_mut(global.index())
-        {
+    let set = |slots: &mut [bool], index: usize| {
+        if let Some(slot) = slots.get_mut(index) {
             *slot = true;
         }
+    };
+    for (_, expression) in function.expressions.iter() {
+        if let Expression::GlobalVariable(global) = *expression {
+            set(used, global.index());
+        }
+        expression.for_each_callee(|callee| set(reachable, callee.index()));
     }
     for statement in function.body.walk() {
-        statement.for_each_callee(|callee| {
-            if let Some(slot) = reachable.get_mut(callee.index()) {
-                *slot = true;
-            }
-        });
-    }
-    for (_, expression) in function.expressions.iter() {
-        let Ok(()) = expression.visit(&mut Callees(reachable));
+        statement.for_each_callee(|callee| set(reachable, callee.index()));
     }
 }
 
@@ -1087,53 +1005,4 @@ fn sizes(module: &Module) -> Vec<usize> {
             ),
     );
     sizes
-}
-
-struct Callees<'a>(&'a mut [bool]);
-
-impl<'a> Visitor<'a> for Callees<'_> {
-    type Error = core::convert::Infallible;
-
-    fn expression(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn result(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<Type>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn function(&mut self, handle: Handle<Function>) -> Result<(), Self::Error> {
-        if let Some(slot) = self.0.get_mut(handle.index()) {
-            *slot = true;
-        }
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a Block) -> Result<(), Self::Error> {
-        Ok(())
-    }
 }

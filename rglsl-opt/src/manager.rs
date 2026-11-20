@@ -5,8 +5,8 @@ use rglsl::valid::{ModuleInfo, ValidationFlags, ValidationMode, Validator};
 use crate::error::chain;
 use crate::pass::find;
 use crate::{
-    Changed, Context, DebugLevel, DebugRule, GpuProfile, OptError, OptLevel, OptOptions, PASSES,
-    Pass, Scope, Session, StageModule, Step, Summary,
+    Changed, Context, GpuProfile, OptError, OptLevel, OptOptions, PASSES, Pass, Scope, Session,
+    StageModule, Step, Summary,
 };
 
 enum Planned<'t> {
@@ -56,7 +56,7 @@ fn execute(
     let mut run = Run {
         summaries: stages
             .iter()
-            .map(|stage| Summary::of(stage.stage, stage.module, context))
+            .map(|stage| Summary::of(stage.module, context))
             .collect(),
         changed: vec![false; stages.len()],
         stages,
@@ -144,9 +144,6 @@ fn validate(module: &Module, context: Context) -> Result<ModuleInfo, String> {
 
 impl Run<'_, '_> {
     fn pass(&mut self, pass: &Pass) -> Result<Changed, OptError> {
-        if pass.debug_info == DebugRule::LinesOnly && self.context.debug == DebugLevel::Variables {
-            return Ok(Changed::No);
-        }
         let mut result = Changed::No;
         match pass.scope {
             Scope::Function => {
@@ -195,7 +192,7 @@ impl Run<'_, '_> {
             *changed = true;
         }
         if let Some(summary) = self.summaries.get_mut(index) {
-            *summary = Summary::of(stage.stage, stage.module, self.context);
+            *summary = Summary::of(stage.module, self.context);
         }
         if self.validate_each {
             validate(stage.module, self.context).map_err(|message| OptError::InvalidIr {

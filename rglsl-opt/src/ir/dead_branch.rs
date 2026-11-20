@@ -1,22 +1,24 @@
 use rglsl::{
-    Arena, Block, Constant, Expression, Handle, Literal, Module, SelectionControl, Span, Statement,
-    SwitchCase, SwitchValue, Type, TypeInner, UniqueArena,
+    Arena, Block, Expression, Handle, Literal, LoopControl, Module, SelectionControl, Span,
+    Statement, SwitchCase, SwitchValue,
 };
 use rglsl_types::stack::recurse;
+
+use crate::analysis::Constants;
 
 use crate::{Changed, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let module = session.module()?;
-    Ok(if dead_branch(module) {
-        Changed::Yes
-    } else {
-        Changed::No
-    })
+    session.rewrite(|module| Ok(dead_branch(module)))
 }
 
 fn dead_branch(module: &mut Module) -> bool {
     let mut changed = false;
+    let constants = Constants {
+        types: &module.types,
+        constants: &module.constants,
+        global_expressions: &module.global_expressions,
+    };
     let functions = module
         .functions
         .iter_mut()
@@ -30,9 +32,7 @@ fn dead_branch(module: &mut Module) -> bool {
     for function in functions {
         let mut prune = Prune {
             expressions: &function.expressions,
-            constants: &module.constants,
-            global_expressions: &module.global_expressions,
-            types: &module.types,
+            constants,
             changed: false,
         };
         prune.block(&mut function.body);
@@ -43,9 +43,7 @@ fn dead_branch(module: &mut Module) -> bool {
 
 struct Prune<'a> {
     expressions: &'a Arena<Expression>,
-    constants: &'a Arena<Constant>,
-    global_expressions: &'a Arena<Expression>,
-    types: &'a UniqueArena<Type>,
+    constants: Constants<'a>,
     changed: bool,
 }
 
@@ -89,22 +87,7 @@ impl Pruned {
 
 impl Prune<'_> {
     fn literal(&self, handle: Handle<Expression>) -> Option<Literal> {
-        let mut arena = self.expressions;
-        let mut current = handle;
-        loop {
-            match *arena.try_get(current).ok()? {
-                Expression::Literal(literal) => return Some(literal),
-                Expression::ZeroValue(ty) => match self.types.get_handle(ty).ok()?.inner {
-                    TypeInner::Scalar(scalar) => return Literal::zero(scalar),
-                    _ => return None,
-                },
-                Expression::Constant(constant) => {
-                    current = self.constants.try_get(constant).ok()?.init;
-                    arena = self.global_expressions;
-                }
-                _ => return None,
-            }
-        }
+        self.constants.literal(self.expressions, handle)
     }
 
     fn boolean(&self, handle: Handle<Expression>) -> Option<bool> {
@@ -134,43 +117,136 @@ impl Prune<'_> {
         out.exits
     }
 
-    fn statement(&mut self, statement: Statement, span: Span, out: &mut Pruned) {
-        match statement {
+    fn prune_if(
+        &mut self,
+        condition: Handle<Expression>,
+        [mut accept, mut reject]: [Block; 2],
+        control: SelectionControl,
+        span: Span,
+        out: &mut Pruned,
+    ) {
+        if let Some(value) = self.boolean(condition) {
+            self.changed = true;
+            let mut taken = if value { accept } else { reject };
+            let exits = recurse(|| self.block(&mut taken));
+            out.splice(taken, exits);
+            return;
+        }
+        let accepted = Exits::of(&recurse(|| self.block(&mut accept)));
+        let rejected = Exits::of(&recurse(|| self.block(&mut reject)));
+        if accept.is_empty() && reject.is_empty() {
+            self.changed = true;
+            return;
+        }
+        let exits = Exits {
+            breaks: accepted.breaks + rejected.breaks,
+            continues: accepted.continues || rejected.continues,
+            ends: false,
+        };
+        out.push(
             Statement::If {
                 condition,
-                mut accept,
-                mut reject,
+                accept,
+                reject,
                 control,
-            } => {
-                if let Some(value) = self.boolean(condition) {
-                    self.changed = true;
-                    let mut taken = if value { accept } else { reject };
-                    let exits = recurse(|| self.block(&mut taken));
-                    out.splice(taken, exits);
-                    return;
+            },
+            span,
+            exits,
+        );
+    }
+
+    fn prune_loop(
+        &mut self,
+        [mut body, mut continuing]: [Block; 2],
+        mut break_if: Option<Handle<Expression>>,
+        control: LoopControl,
+        span: Span,
+        out: &mut Pruned,
+    ) {
+        let mut body_exits = recurse(|| self.block(&mut body));
+        let summary = Exits::of(&body_exits);
+        if summary.ends && !summary.continues {
+            if summary.breaks == 0 {
+                self.changed = true;
+                out.splice(body, body_exits);
+                return;
+            }
+            if summary.breaks == 1
+                && let Some((at, condition, exit_on)) = header_check(&body)
+            {
+                self.changed = true;
+                let mut rest = Block::with_capacity(body.len().saturating_sub(at + 1));
+                for (index, (statement, span)) in body.span_into_iter().enumerate() {
+                    if index < at {
+                        out.push(statement, span, Exits::default());
+                    } else if index > at {
+                        rest.push(statement, span);
+                    }
                 }
-                let accepted = Exits::of(&recurse(|| self.block(&mut accept)));
-                let rejected = Exits::of(&recurse(|| self.block(&mut reject)));
-                if accept.is_empty() && reject.is_empty() {
-                    self.changed = true;
-                    return;
-                }
-                let exits = Exits {
-                    breaks: accepted.breaks + rejected.breaks,
-                    continues: accepted.continues || rejected.continues,
-                    ends: false,
+                let (accept, reject) = if exit_on {
+                    (Block::new(), rest)
+                } else {
+                    (rest, Block::new())
                 };
                 out.push(
                     Statement::If {
                         condition,
                         accept,
                         reject,
-                        control,
+                        control: SelectionControl::None,
                     },
                     span,
-                    exits,
+                    Exits::default(),
                 );
+                return;
             }
+        }
+        let continuing_exits = recurse(|| self.block(&mut continuing));
+        if let Some(condition) = break_if
+            && let Some(value) = self.boolean(condition)
+        {
+            let summary = Exits::of(&body_exits);
+            if !value {
+                break_if = None;
+                self.changed = true;
+            } else if !summary.leaves() && !summary.ends {
+                self.changed = true;
+                out.splice(body, body_exits);
+                out.splice(continuing, continuing_exits);
+                return;
+            }
+        }
+        if let Some(exit) = body
+            .iter()
+            .position(|statement| matches!(*statement, Statement::Break))
+            && !Exits::of(body_exits.get(..exit).unwrap_or_default()).leaves()
+        {
+            self.changed = true;
+            body.cull(exit..);
+            body_exits.truncate(exit);
+            out.splice(body, body_exits);
+            return;
+        }
+        out.push(
+            Statement::Loop {
+                body,
+                continuing,
+                break_if,
+                control,
+            },
+            span,
+            Exits::default(),
+        );
+    }
+
+    fn statement(&mut self, statement: Statement, span: Span, out: &mut Pruned) {
+        match statement {
+            Statement::If {
+                condition,
+                accept,
+                reject,
+                control,
+            } => self.prune_if(condition, [accept, reject], control, span, out),
             Statement::Switch {
                 selector,
                 mut cases,
@@ -198,86 +274,11 @@ impl Prune<'_> {
                 );
             }
             Statement::Loop {
-                mut body,
-                mut continuing,
-                mut break_if,
+                body,
+                continuing,
+                break_if,
                 control,
-            } => {
-                let mut body_exits = recurse(|| self.block(&mut body));
-                let summary = Exits::of(&body_exits);
-                if summary.ends && !summary.continues {
-                    if summary.breaks == 0 {
-                        self.changed = true;
-                        out.splice(body, body_exits);
-                        return;
-                    }
-                    if summary.breaks == 1
-                        && let Some((at, condition, exit_on)) = header_check(&body)
-                    {
-                        self.changed = true;
-                        let mut rest = Block::with_capacity(body.len().saturating_sub(at + 1));
-                        for (index, (statement, span)) in body.span_into_iter().enumerate() {
-                            if index < at {
-                                out.push(statement, span, Exits::default());
-                            } else if index > at {
-                                rest.push(statement, span);
-                            }
-                        }
-                        let (accept, reject) = if exit_on {
-                            (Block::new(), rest)
-                        } else {
-                            (rest, Block::new())
-                        };
-                        out.push(
-                            Statement::If {
-                                condition,
-                                accept,
-                                reject,
-                                control: SelectionControl::None,
-                            },
-                            span,
-                            Exits::default(),
-                        );
-                        return;
-                    }
-                }
-                let continuing_exits = recurse(|| self.block(&mut continuing));
-                if let Some(condition) = break_if
-                    && let Some(value) = self.boolean(condition)
-                {
-                    let summary = Exits::of(&body_exits);
-                    if !value {
-                        break_if = None;
-                        self.changed = true;
-                    } else if !summary.leaves() && !summary.ends {
-                        self.changed = true;
-                        out.splice(body, body_exits);
-                        out.splice(continuing, continuing_exits);
-                        return;
-                    }
-                }
-                if let Some(exit) = body
-                    .iter()
-                    .position(|statement| matches!(*statement, Statement::Break))
-                    && !Exits::of(body_exits.get(..exit).unwrap_or_default()).leaves()
-                {
-                    self.changed = true;
-                    body.cull(exit..);
-                    body_exits.truncate(exit);
-                    out.splice(body, body_exits);
-                    return;
-                }
-                out.push(
-                    Statement::Loop {
-                        body,
-                        continuing,
-                        break_if,
-                        control,
-                    },
-                    span,
-                    Exits::default(),
-                );
-            }
+            } => self.prune_loop([body, continuing], break_if, control, span, out),
             Statement::Block(mut inner) => {
                 let exits = Exits::of(&recurse(|| self.block(&mut inner)));
                 if !inner.is_empty() {

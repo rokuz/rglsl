@@ -11,42 +11,23 @@ use crate::ir::rebuild::{Policy, Rebuild, statements};
 use crate::{Changed, OptError, Reuse, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let pass = session.pass;
     let reuse = session.profile.parameters.reuse;
-    let module = session.module()?;
-    cse(module, reuse).map_err(|message| OptError::Pass { pass, message })
+    session.rewrite(|module| cse(module, reuse))
 }
 
-fn cse(module: &mut Module, reuse: Reuse) -> Result<Changed, String> {
+fn cse(module: &mut Module, reuse: Reuse) -> Result<bool, String> {
+    let values = module
+        .all_functions()
+        .map(|function| value_flags(module, function))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut changed = false;
-    let mut values = Vec::new();
-    {
-        let functions = module
-            .functions
-            .iter()
-            .map(|(_, function)| function)
-            .chain(module.entry_points.iter().map(|entry| &entry.function));
-        for function in functions {
-            values.push(value_flags(module, function)?);
-        }
-    }
-    let functions = module
-        .functions
-        .iter_mut()
-        .map(|(_, function)| function)
-        .chain(
-            module
-                .entry_points
-                .iter_mut()
-                .map(|entry| &mut entry.function),
-        );
-    for (function, values) in functions.zip(&values) {
+    for (function, values) in module.all_functions_mut().zip(&values) {
         if let Some(rewritten) = rewrite(function, reuse, values)? {
             *function = rewritten;
             changed = true;
         }
     }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    Ok(changed)
 }
 
 fn value_flags(module: &Module, function: &Function) -> Result<Vec<bool>, String> {

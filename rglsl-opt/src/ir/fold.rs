@@ -7,56 +7,19 @@ use rglsl::{
 use crate::analysis::resolve_types;
 use crate::float::{self, Class, Domain, Number, Operation, Pattern, UndefinedUse, Yields};
 use crate::ir::rebuild::{Policy, Rebuild, statements};
+use crate::ir::rewrite_functions;
 use crate::{Changed, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let pass = session.pass;
-    let module = session.module()?;
-    fold(module).map_err(|message| OptError::Pass { pass, message })
+    session.rewrite(fold)
 }
 
-fn fold(module: &mut Module) -> Result<Changed, String> {
+fn fold(module: &mut Module) -> Result<bool, String> {
     let floats = module
         .entry_points
         .iter()
         .all(|entry| entry.spirv_execution_modes.is_empty());
-    let mut changed = false;
-    let handles: Vec<Handle<Function>> =
-        module.functions.iter().map(|(handle, _)| handle).collect();
-    for handle in handles {
-        let function = core::mem::take(
-            module
-                .functions
-                .try_get_mut(handle)
-                .map_err(|error| error.to_string())?,
-        );
-        let result = rewrite(module, &function, floats);
-        let slot = module
-            .functions
-            .try_get_mut(handle)
-            .map_err(|error| error.to_string())?;
-        *slot = function;
-        if let Some(rewritten) = result? {
-            *slot = rewritten;
-            changed = true;
-        }
-    }
-    for index in 0..module.entry_points.len() {
-        let Some(entry) = module.entry_points.get_mut(index) else {
-            continue;
-        };
-        let function = core::mem::take(&mut entry.function);
-        let result = rewrite(module, &function, floats);
-        let Some(entry) = module.entry_points.get_mut(index) else {
-            return Err(String::from("an entry point disappeared while folding"));
-        };
-        entry.function = function;
-        if let Some(rewritten) = result? {
-            entry.function = rewritten;
-            changed = true;
-        }
-    }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    rewrite_functions(module, |module, function| rewrite(module, function, floats))
 }
 
 fn constant_flags(expressions: &Arena<Expression>) -> Vec<bool> {

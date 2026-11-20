@@ -1,7 +1,7 @@
 use rglsl::ir::visit::VisitorMut;
 use rglsl::{
-    Block, Constant, DebugInfo, Expression, Function, GlobalVariable, Handle, InlineShift,
-    LocalVariable, Override, Range, Span, Statement, SwitchCase, Type,
+    Block, DebugInfo, Expression, Function, Handle, InlineShift, LocalVariable, Range, Span,
+    Statement, SwitchCase,
 };
 use rglsl_types::stack::recurse;
 
@@ -609,28 +609,8 @@ impl<'a> VisitorMut<'a> for Remap<'_, '_, '_, '_> {
         Err(String::from("an Emit statement inside another statement"))
     }
 
-    fn ty(&mut self, _: &mut Handle<Type>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: &mut Handle<GlobalVariable>) -> Result<(), String> {
-        Ok(())
-    }
-
     fn local_variable(&mut self, local: &mut Handle<LocalVariable>) -> Result<(), String> {
         *local = local_of(self.instance, *local)?;
-        Ok(())
-    }
-
-    fn function(&mut self, _: &mut Handle<Function>) -> Result<(), String> {
         Ok(())
     }
 

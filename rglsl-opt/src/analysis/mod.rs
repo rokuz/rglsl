@@ -4,8 +4,8 @@ pub(crate) mod loops;
 use rglsl::ir::visit::Visitor;
 use rglsl::proc::{ResolveContext, ResolveError, TypeResolution};
 use rglsl::{
-    AddressSpace, ArraySize, Block, Constant, Expression, Function, GlobalVariable, Handle,
-    LocalVariable, Module, Override, Range, Statement, Type, TypeInner, UniqueArena,
+    AddressSpace, Arena, ArraySize, Constant, Expression, Function, Handle, Literal, Module,
+    Statement, Type, TypeInner, UniqueArena,
 };
 
 pub(crate) fn for_each_result(statement: &Statement, result: impl FnMut(Handle<Expression>)) {
@@ -17,44 +17,8 @@ struct Results<F>(F);
 impl<'a, F: FnMut(Handle<Expression>)> Visitor<'a> for Results<F> {
     type Error = core::convert::Infallible;
 
-    fn expression(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn result(&mut self, handle: Handle<Expression>) -> Result<(), Self::Error> {
         (self.0)(handle);
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<Type>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: Handle<Function>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a Block) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -135,4 +99,44 @@ pub(crate) fn resolve_types(
         resolved.push(resolution);
     }
     Ok(resolved)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Constants<'a> {
+    pub types: &'a UniqueArena<Type>,
+    pub constants: &'a Arena<Constant>,
+    pub global_expressions: &'a Arena<Expression>,
+}
+
+impl<'a> Constants<'a> {
+    pub const fn of(module: &'a Module) -> Self {
+        Self {
+            types: &module.types,
+            constants: &module.constants,
+            global_expressions: &module.global_expressions,
+        }
+    }
+
+    pub fn literal(
+        self,
+        expressions: &'a Arena<Expression>,
+        handle: Handle<Expression>,
+    ) -> Option<Literal> {
+        let mut arena = expressions;
+        let mut current = handle;
+        loop {
+            match *arena.try_get(current).ok()? {
+                Expression::Literal(literal) => return Some(literal),
+                Expression::ZeroValue(ty) => match self.types.get_handle(ty).ok()?.inner {
+                    TypeInner::Scalar(scalar) => return Literal::zero(scalar),
+                    _ => return None,
+                },
+                Expression::Constant(constant) => {
+                    current = self.constants.try_get(constant).ok()?.init;
+                    arena = self.global_expressions;
+                }
+                _ => return None,
+            }
+        }
+    }
 }

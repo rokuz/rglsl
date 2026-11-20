@@ -3,20 +3,18 @@ use rglsl::{
     TypeInner, UniqueArena,
 };
 
-use crate::analysis::locals::{Locals, Root};
+use crate::analysis::locals::Locals;
 use crate::analysis::{Class, classify_types};
 use crate::ir::rebuild::{Policy, Rebuild};
-use crate::{Changed, DebugLevel, OptError, Session};
+use crate::{Changed, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let pass = session.pass;
     let limit = session.profile.parameters.scalar_replacement;
-    let debug = session.context.debug == DebugLevel::Variables;
-    let module = session.module()?;
-    sroa(module, limit, debug).map_err(|message| OptError::Pass { pass, message })
+    let debug = session.context.keeps_variables();
+    session.rewrite(|module| sroa(module, limit, debug))
 }
 
-fn sroa(module: &mut Module, limit: u32, debug: bool) -> Result<Changed, String> {
+fn sroa(module: &mut Module, limit: u32, debug: bool) -> Result<bool, String> {
     let types = &module.types;
     let classes = classify_types(types);
     let mut changed = false;
@@ -36,7 +34,7 @@ fn sroa(module: &mut Module, limit: u32, debug: bool) -> Result<Changed, String>
             changed = true;
         }
     }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    Ok(changed)
 }
 
 struct Piece {
@@ -193,13 +191,7 @@ impl Split<'_> {
     }
 
     fn whole(&self, pointer: Handle<Expression>) -> Option<(Handle<LocalVariable>, &Pieces)> {
-        let target = self.locals.pointer(pointer)?;
-        let Root::Local(local) = target.root else {
-            return None;
-        };
-        if !target.whole {
-            return None;
-        }
+        let local = self.locals.whole_local(pointer)?;
         Some((local, self.pieces.get(local.index())?.as_ref()?))
     }
 

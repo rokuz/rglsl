@@ -16,7 +16,7 @@ use rglsl::{Module, ShaderStage};
 
 pub use error::OptError;
 pub use manager::optimize;
-pub use pass::{Changed, DebugRule, PASSES, Pass, Scope, Session};
+pub use pass::{Changed, PASSES, Pass, Scope, Session};
 pub use preset::{PRESETS, Preset, Step};
 pub use specialization::Specialization;
 pub use summary::Summary;
@@ -70,6 +70,16 @@ pub struct Context {
     pub debug: DebugLevel,
     pub export_functions: bool,
     pub unlinked: bool,
+}
+
+impl Context {
+    pub const fn whole_program(self) -> bool {
+        !self.unlinked && !self.export_functions
+    }
+
+    pub const fn keeps_variables(self) -> bool {
+        matches!(self.debug, DebugLevel::Variables)
+    }
 }
 
 #[derive(Debug)]

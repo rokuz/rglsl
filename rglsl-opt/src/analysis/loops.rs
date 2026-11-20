@@ -4,8 +4,8 @@ use rglsl::{
 };
 use rglsl_types::stack::recurse;
 
-use crate::analysis::for_each_result;
 use crate::analysis::locals::{Locals, Root};
+use crate::analysis::{Constants, for_each_result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IntegerKind {
@@ -189,22 +189,7 @@ pub(crate) fn literal(
     function: &Function,
     handle: Handle<Expression>,
 ) -> Option<Literal> {
-    let mut arena = &function.expressions;
-    let mut current = handle;
-    loop {
-        match *arena.try_get(current).ok()? {
-            Expression::Literal(literal) => return Some(literal),
-            Expression::ZeroValue(ty) => match module.types.get_handle(ty).ok()?.inner {
-                TypeInner::Scalar(scalar) => return Literal::zero(scalar),
-                _ => return None,
-            },
-            Expression::Constant(constant) => {
-                current = module.constants.try_get(constant).ok()?.init;
-                arena = &module.global_expressions;
-            }
-            _ => return None,
-        }
-    }
+    Constants::of(module).literal(&function.expressions, handle)
 }
 
 fn integer(
@@ -634,18 +619,10 @@ impl<'a> Walker<'a> {
         None
     }
 
-    fn whole_local(&self, pointer: Handle<Expression>) -> Option<Handle<LocalVariable>> {
-        let target = self.locals.pointer(pointer)?;
-        match target.root {
-            Root::Local(local) if target.whole => Some(local),
-            _ => None,
-        }
-    }
-
     fn term(&self, handle: Handle<Expression>) -> Option<Term> {
         let load_of =
             |handle: Handle<Expression>| match *self.function.expressions.try_get(handle).ok()? {
-                Expression::Load { pointer } => self.whole_local(pointer),
+                Expression::Load { pointer } => self.locals.whole_local(pointer),
                 _ => None,
             };
         let kind_of = |local: Handle<LocalVariable>| {
@@ -737,7 +714,7 @@ impl<'a> Walker<'a> {
             else {
                 return None;
             };
-            let local = self.whole_local(pointer)?;
+            let local = self.locals.whole_local(pointer)?;
             let usage = self.locals.locals.get(local.index())?;
             if usage.escaped || usage.partial_stores > 0 {
                 return None;
@@ -885,7 +862,7 @@ impl<'a> Walker<'a> {
             if at == store {
                 return match *statement {
                     Statement::Store { pointer, value }
-                        if self.whole_local(pointer) == Some(local) =>
+                        if self.locals.whole_local(pointer) == Some(local) =>
                     {
                         Some(value)
                     }

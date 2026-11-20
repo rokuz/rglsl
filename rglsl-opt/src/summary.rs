@@ -1,44 +1,24 @@
-use rglsl::{AddressSpace, Function, Module, ShaderStage, Statement};
+use rglsl::{Function, Module, Statement};
 
-use crate::{Context, DebugLevel};
+use crate::Context;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Summary {
-    pub stage: ShaderStage,
-    pub functions: usize,
     pub calls: bool,
     pub loops: bool,
     pub local_variables: bool,
-    pub private_globals: bool,
-    pub overrides: bool,
-    pub debug: DebugLevel,
-    pub export_functions: bool,
-    pub unlinked: bool,
+    pub whole_program: bool,
 }
 
 impl Summary {
-    pub fn of(stage: ShaderStage, module: &Module, context: Context) -> Self {
+    pub fn of(module: &Module, context: Context) -> Self {
         let mut summary = Self {
-            stage,
-            functions: module.functions.len() + module.entry_points.len(),
             calls: false,
             loops: false,
             local_variables: false,
-            private_globals: module
-                .global_variables
-                .iter()
-                .any(|(_, global)| global.space == AddressSpace::Private),
-            overrides: !module.overrides.is_empty(),
-            debug: context.debug,
-            export_functions: context.export_functions,
-            unlinked: context.unlinked,
+            whole_program: context.whole_program(),
         };
-        let functions = module
-            .functions
-            .iter()
-            .map(|(_, function)| function)
-            .chain(module.entry_points.iter().map(|entry| &entry.function));
-        for function in functions {
+        for function in module.all_functions() {
             summary.add(function);
         }
         summary

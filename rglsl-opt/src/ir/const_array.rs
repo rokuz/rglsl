@@ -3,27 +3,18 @@ use rglsl::{
 };
 use rglsl_types::stack::recurse;
 
-use crate::analysis::locals::{Locals, Root};
-use crate::{Changed, DebugLevel, OptError, Session};
+use crate::analysis::locals::Locals;
+use crate::{Changed, OptError, Session};
 
 pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
-    let debug = session.context.debug == DebugLevel::Variables;
-    let module = session.module()?;
-    let mut changed = false;
-    let functions = module
-        .functions
-        .iter_mut()
-        .map(|(_, function)| function)
-        .chain(
-            module
-                .entry_points
-                .iter_mut()
-                .map(|entry| &mut entry.function),
-        );
-    for function in functions {
-        changed |= constant_arrays(function, debug);
-    }
-    Ok(if changed { Changed::Yes } else { Changed::No })
+    let debug = session.context.keeps_variables();
+    session.rewrite(|module| {
+        let mut changed = false;
+        for function in module.all_functions_mut() {
+            changed |= constant_arrays(function, debug);
+        }
+        Ok(changed)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,14 +38,6 @@ fn key(function: &Function, handle: Handle<Expression>) -> Option<Key> {
     }
 }
 
-fn whole_local(locals: &Locals, pointer: Handle<Expression>) -> Option<Handle<LocalVariable>> {
-    let target = locals.pointer(pointer)?;
-    match target.root {
-        Root::Local(local) if target.whole => Some(local),
-        _ => None,
-    }
-}
-
 fn constant_arrays(function: &mut Function, debug: bool) -> bool {
     let locals = Locals::of(function, 0);
     let mut stored = vec![Stored::Nothing; function.local_variables.len()];
@@ -62,7 +45,7 @@ fn constant_arrays(function: &mut Function, debug: bool) -> bool {
         let Statement::Store { pointer, value } = *statement else {
             continue;
         };
-        let Some(local) = whole_local(&locals, pointer) else {
+        let Some(local) = locals.whole_local(pointer) else {
             continue;
         };
         let Some(slot) = stored.get_mut(local.index()) else {
@@ -177,7 +160,8 @@ fn remove_stores(block: &mut Block, locals: &Locals, constant: &[Option<Key>]) -
     let mut removed = false;
     for (mut statement, span) in old.span_into_iter() {
         if let Statement::Store { pointer, .. } = statement
-            && whole_local(locals, pointer)
+            && locals
+                .whole_local(pointer)
                 .is_some_and(|local| constant.get(local.index()).is_some_and(Option::is_some))
         {
             removed = true;

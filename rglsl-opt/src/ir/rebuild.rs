@@ -1,7 +1,7 @@
 use rglsl::ir::visit::VisitorMut;
 use rglsl::{
-    Arena, Block, Constant, Expression, FastHashMap, Function, GlobalVariable, Handle,
-    LocalVariable, Override, Range, Span, Statement, SwitchCase, Type, UniqueArena,
+    Arena, Block, Expression, FastHashMap, Function, Handle, LocalVariable, Range, Span, Statement,
+    SwitchCase, Type, UniqueArena,
 };
 use rglsl_types::stack::recurse;
 
@@ -410,30 +410,6 @@ impl<'a> VisitorMut<'a> for Remap<'_, '_> {
 
     fn emitted(&mut self, _: &mut Range<Expression>) -> Result<(), String> {
         Err(String::from("an Emit statement inside another statement"))
-    }
-
-    fn ty(&mut self, _: &mut Handle<Type>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: &mut Handle<GlobalVariable>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: &mut Handle<LocalVariable>) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: &mut Handle<Function>) -> Result<(), String> {
-        Ok(())
     }
 
     fn block(&mut self, _: &'a mut Block) -> Result<(), String> {
