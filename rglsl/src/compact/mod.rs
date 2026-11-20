@@ -326,6 +326,12 @@ pub fn compact(module: &mut crate::Module, keep_unused: KeepUnused) -> Result<()
     // the corresponding `Handle`s that will refer to the same items
     // in the compacted module.
     let module_map = ModuleMap::from(module_tracer);
+    if module_map.is_identity()
+        && entry_point_maps.iter().all(FunctionMap::is_identity)
+        && function_maps.values().all(FunctionMap::is_identity)
+    {
+        return Ok(());
+    }
 
     // Drop unused types from the type arena.
     //
@@ -745,6 +751,15 @@ impl From<ModuleTracer<'_>> for ModuleMap {
 }
 
 impl ModuleMap {
+    fn is_identity(&self) -> bool {
+        self.functions.is_identity()
+            && self.types.is_identity()
+            && self.globals.is_identity()
+            && self.constants.is_identity()
+            && self.overrides.is_identity()
+            && self.global_expressions.is_identity()
+    }
+
     fn adjust_special_types(&self, special: &mut crate::SpecialTypes) -> Result<(), BadHandle> {
         let crate::SpecialTypes {
             ref mut ray_vertex_return,
@@ -765,6 +780,12 @@ impl ModuleMap {
 #[derive(Debug)]
 struct FunctionMap {
     expressions: HandleMap<crate::Expression>,
+}
+
+impl FunctionMap {
+    fn is_identity(&self) -> bool {
+        self.expressions.is_identity()
+    }
 }
 
 impl From<FunctionTracer<'_>> for FunctionMap {

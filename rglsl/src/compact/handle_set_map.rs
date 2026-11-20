@@ -33,6 +33,10 @@ impl<T, U> HandleMap<T, U> {
         self.new_index.get(handle.index()).unwrap_or(&None).as_ref()
     }
 
+    pub fn values(&self) -> impl Iterator<Item = &U> {
+        self.new_index.iter().flatten()
+    }
+
     pub fn insert(&mut self, handle: Handle<T>, value: U) -> Option<U> {
         if self.new_index.len() <= handle.index() {
             self.new_index.resize_with(handle.index() + 1, || None);
@@ -60,6 +64,10 @@ impl<T: 'static> HandleMap<T> {
                 .collect(),
             as_keys: core::marker::PhantomData,
         }
+    }
+
+    pub fn is_identity(&self) -> bool {
+        self.new_index.iter().all(Option::is_some)
     }
 
     /// Return true if `old` is used in the compacted module.
