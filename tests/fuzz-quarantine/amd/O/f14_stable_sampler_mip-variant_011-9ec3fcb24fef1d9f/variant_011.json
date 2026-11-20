@@ -1,0 +1,15 @@
+{
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "tex": {
+    "binding": 0,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  }
+}
