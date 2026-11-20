@@ -11,6 +11,9 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
             .collect();
         let mut changed = false;
         for (function, plan) in module.all_functions_mut().zip(plans) {
+            if plan.contains(&true) {
+                changed |= hoist_past_kills(&mut function.body);
+            }
             for ((_, local), promote) in function.local_variables.iter_mut().zip(plan) {
                 changed |= local.ssa != promote;
                 local.ssa = promote;
@@ -20,14 +23,41 @@ pub(crate) fn run(session: &mut Session<'_, '_>) -> Result<Changed, OptError> {
     })
 }
 
-fn promoted(module: &Module, function: &Function) -> Vec<bool> {
-    if function
-        .body
-        .walk()
-        .any(|statement| matches!(*statement, Statement::Kill))
-    {
-        return vec![false; function.local_variables.len()];
+fn ends_in_kill(block: &Block) -> bool {
+    matches!(block.last(), Some(&Statement::Kill))
+}
+
+fn hoist_past_kills(block: &mut Block) -> bool {
+    let mut changed = false;
+    let statements = core::mem::take(block);
+    let mut out = Block::with_capacity(statements.len());
+    for (mut statement, span) in statements.span_into_iter() {
+        statement.for_each_child_block_mut(|child| {
+            changed |= recurse(|| hoist_past_kills(child));
+        });
+        let hoisted = match statement {
+            Statement::If {
+                ref mut accept,
+                ref mut reject,
+                ..
+            } => match (ends_in_kill(accept), ends_in_kill(reject)) {
+                (false, true) if !accept.is_empty() => Some(core::mem::take(accept)),
+                (true, false) if !reject.is_empty() => Some(core::mem::take(reject)),
+                _ => None,
+            },
+            _ => None,
+        };
+        out.push(statement, span);
+        if let Some(hoisted) = hoisted {
+            out.extend_block(hoisted);
+            changed = true;
+        }
     }
+    *block = out;
+    changed
+}
+
+fn promoted(module: &Module, function: &Function) -> Vec<bool> {
     let mut in_loops = vec![false; function.local_variables.len()];
     stored_in_loops(function, &function.body, false, &mut in_loops);
     function

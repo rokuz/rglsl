@@ -255,16 +255,51 @@ fn promotion_follows_the_other_passes() -> TestResult {
     Ok(())
 }
 
+fn selections_branching_to_their_merge(words: &[u32]) -> usize {
+    const SELECTION_MERGE: u32 = 247;
+    const BRANCH_CONDITIONAL: u32 = 250;
+    let mut merge = None;
+    let mut found = 0;
+    let mut at = 5;
+    while let Some(&first) = words.get(at) {
+        let length = (first >> 16) as usize;
+        if length == 0 {
+            break;
+        }
+        match first & 0xffff {
+            SELECTION_MERGE => merge = words.get(at + 1).copied(),
+            BRANCH_CONDITIONAL => {
+                let targets = [words.get(at + 2).copied(), words.get(at + 3).copied()];
+                if merge.is_some() && targets.contains(&merge) {
+                    found += 1;
+                }
+                merge = None;
+            }
+            _ => {}
+        }
+        at += length;
+    }
+    found
+}
+
 #[test]
-fn a_function_with_discard_keeps_its_variables() -> TestResult {
+fn the_branch_beside_a_discard_follows_its_selection() -> TestResult {
     let source = shader(
         "",
         "    float x;
     if (inColor.x > 0.5) { x = inColor.y; } else if (inColor.y > 0.5) { x = inColor.z; } else { discard; }
     color = vec4(x);",
     );
-    let after = fragment(&source, &["ssa"])?;
-    assert_eq!((after.variables, after.phis), (1, 0));
+    let compiled = compiled(
+        ShaderStage::Fragment,
+        &source,
+        &["ssa"],
+        TargetGpu::default(),
+        Context::default(),
+    )?;
+    let after = counts(&compiled.words);
+    assert_eq!((after.variables, after.phis), (0, 1));
+    assert_eq!(selections_branching_to_their_merge(&compiled.words), 1);
     Ok(())
 }
 

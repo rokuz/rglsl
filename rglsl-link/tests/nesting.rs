@@ -562,6 +562,13 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             " } w.y = w.x;",
         ),
         (
+            "branches beside discards",
+            "float x = float(c[1]);",
+            "if (b > c[0]) { x = x + 1.0; if (x > 2.0) { ",
+            "b = int(x);",
+            " } else { discard; } x = x * 2.0; }",
+        ),
+        (
             "repeated values",
             "",
             "if (b > c[0]) { b = b * c[1] + c[0]; ",
