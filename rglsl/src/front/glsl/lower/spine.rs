@@ -222,6 +222,33 @@ impl FunctionLowerer<'_, '_> {
         )
     }
 
+    fn taken_at_most(
+        &mut self,
+        taken: Handle<LocalVariable>,
+        level: u32,
+        at: Span,
+    ) -> Result<Handle<Expression>> {
+        let pointer = self.local_pointer(taken, at)?;
+        let current = self.add(Expression::Load { pointer }, at)?;
+        let level = self.literal(Literal::U32(level), at)?;
+        self.add(
+            Expression::Binary {
+                op: BinaryOperator::LessEqual,
+                left: current,
+                right: level,
+            },
+            at,
+        )
+    }
+
+    fn converts(&self, expression: &AstExpression) -> Result<bool> {
+        let info = self.info(expression)?;
+        Ok(info
+            .conversion
+            .as_deref()
+            .is_some_and(|target| *target != info.ty))
+    }
+
     fn set_taken(&mut self, taken: Handle<LocalVariable>, level: u32, at: Span) -> Result<()> {
         let pointer = self.local_pointer(taken, at)?;
         let value = self.literal(Literal::U32(level), at)?;
@@ -243,14 +270,20 @@ impl FunctionLowerer<'_, '_> {
         let none = u32::try_from(links.len()).map_err(|_| internal(outer))?;
         let taken = self.local(&GlslType::UINT, None, outer)?;
         self.set_taken(taken, none, outer)?;
-        let mut results = Vec::with_capacity(links.len());
+        let mut results: Vec<Option<Handle<LocalVariable>>> = Vec::with_capacity(links.len());
         for &node in links {
-            results.push(if valued {
-                let ty = &self.info(node)?.ty;
-                let at = self.at(node.span);
-                Some(self.local(ty, None, at)?)
-            } else {
-                None
+            let shared = match results.last() {
+                Some(&previous) if !self.converts(node)? => previous,
+                _ => None,
+            };
+            results.push(match shared {
+                Some(local) => Some(local),
+                None if valued => {
+                    let ty = &self.info(node)?.ty;
+                    let at = self.at(node.span);
+                    Some(self.local(ty, None, at)?)
+                }
+                None => None,
             });
         }
         for (level, (&node, &result)) in (0u32..).zip(links.iter().zip(&results)) {
@@ -294,8 +327,11 @@ impl FunctionLowerer<'_, '_> {
             let (&[_, inner], &[Some(result), Some(inner_result)]) = pair else {
                 return Err(internal(outer));
             };
+            if result == inner_result {
+                continue;
+            }
             let at = self.at(inner.span);
-            let skip = self.taken_is(taken, level, at)?;
+            let skip = self.taken_at_most(taken, level, at)?;
             let reject = self.block(|this| {
                 let pointer = this.local_pointer(inner_result, at)?;
                 let loaded = this.add(Expression::Load { pointer }, at)?;
