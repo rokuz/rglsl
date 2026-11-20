@@ -301,7 +301,9 @@ fn declared_members(
     Some(order)
 }
 
-fn parameter_copies(function: &crate::Function) -> FastHashMap<u32, Handle<crate::LocalVariable>> {
+pub(super) fn parameter_copies(
+    function: &crate::Function,
+) -> FastHashMap<u32, Handle<crate::LocalVariable>> {
     let mut copies = FastHashMap::default();
     for statement in function.body.iter() {
         if matches!(*statement, crate::Statement::Emit(_)) {
@@ -1518,8 +1520,10 @@ impl Writer {
         ir_function: &crate::Function,
         start: Option<u32>,
         (function_id, parameters): (Word, &[Word]),
-        variables: &FastHashMap<Handle<crate::LocalVariable>, super::LocalVariable>,
+        function: &Function,
     ) {
+        let variables = &function.variables;
+        let argument_locals = &function.argument_locals;
         self.debug.function = None;
         if !self.debug.active {
             return;
@@ -1612,9 +1616,13 @@ impl Writer {
                         argument_number,
                     ],
                 );
-                let copy = copies
-                    .get(&number)
-                    .and_then(|local| variables.get(local).map(|found| (*local, found.id)));
+                let copy = copies.get(&number).and_then(|local| {
+                    variables
+                        .get(local)
+                        .map(|found| found.id)
+                        .or_else(|| argument_locals.get(local).copied())
+                        .map(|id| (*local, id))
+                });
                 let instruction = match copy {
                     Some((local, pointer)) => {
                         copied.insert(local);

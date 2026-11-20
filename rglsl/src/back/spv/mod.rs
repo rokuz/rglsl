@@ -26,6 +26,7 @@ mod plain_types;
 mod qcom;
 mod ray;
 mod reclaimable;
+mod reference;
 mod replicate;
 mod small_types;
 mod specialization;
@@ -176,6 +177,8 @@ struct Function {
     signature: Option<Instruction>,
     parameters: Vec<FunctionArgument>,
     variables: crate::FastHashMap<Handle<crate::LocalVariable>, LocalVariable>,
+    argument_locals: crate::FastHashMap<Handle<crate::LocalVariable>, Word>,
+    argument_copies: Vec<LocalVariable>,
     /// List of local variables used as a counters to ensure that all loops are bounded.
 
     /// A map from a rglsl expression to the temporary SPIR-V variable we have
@@ -234,6 +237,16 @@ impl Function {
             label_id: block.label_id,
             body: block.body,
         });
+    }
+
+    fn local_id(&self, local: Handle<crate::LocalVariable>) -> Result<Word, Error> {
+        if let Some(&id) = self.argument_locals.get(&local) {
+            return Ok(id);
+        }
+        self.variables
+            .get(&local)
+            .map(|variable| variable.id)
+            .ok_or(Error::Validation("local variable is not written"))
     }
 
     fn parameter_id(&self, index: u32) -> Result<Word, Error> {
@@ -806,6 +819,7 @@ pub struct Writer {
     //TODO: convert most of these into vectors, addressable by handle indices
     lookup_type: crate::FastHashMap<LookupType, Word>,
     lookup_function: crate::FastHashMap<Handle<crate::Function>, Word>,
+    reference_arguments: crate::FastHashMap<Word, Vec<bool>>,
     lookup_function_type: crate::FastHashMap<LookupFunctionType, Word>,
     /// Indexed by const-expression handle indexes
     constant_ids: HandleVec<crate::Expression, Word>,

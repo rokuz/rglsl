@@ -46,6 +46,7 @@ impl Function {
             + self
                 .spilled_composites
                 .values()
+                .chain(self.argument_copies.iter())
                 .map(|var| var.instruction.wc as usize)
                 .sum::<usize>()
             + self
@@ -72,6 +73,9 @@ impl Function {
                 }
                 for internal_var in self.spilled_composites.values() {
                     internal_var.instruction.to_words(sink);
+                }
+                for copy in self.argument_copies.iter() {
+                    copy.instruction.to_words(sink);
                 }
             }
             for instruction in block.body.iter() {
@@ -173,6 +177,7 @@ impl Writer {
             void_type,
             lookup_type: crate::FastHashMap::default(),
             lookup_function: crate::FastHashMap::default(),
+            reference_arguments: crate::FastHashMap::default(),
             lookup_function_type: crate::FastHashMap::default(),
             constant_ids: HandleVec::new(),
             cached_constants: crate::FastHashMap::default(),
@@ -328,6 +333,7 @@ impl Writer {
             annotations: take(&mut self.annotations).reclaim(),
             lookup_type: take(&mut self.lookup_type).reclaim(),
             lookup_function: take(&mut self.lookup_function).reclaim(),
+            reference_arguments: take(&mut self.reference_arguments).reclaim(),
             lookup_function_type: take(&mut self.lookup_function_type).reclaim(),
             constant_ids: take(&mut self.constant_ids).reclaim(),
             cached_constants: take(&mut self.cached_constants).reclaim(),
@@ -933,8 +939,15 @@ impl Writer {
         };
 
         let mut parameter_type_ids = Vec::with_capacity(ir_function.arguments.len());
+        let references =
+            if interface.is_none() && !self.flags.contains(WriterFlags::EXPORT_FUNCTIONS) {
+                super::reference::reference_arguments(ir_function, info, &ir_module.types)
+            } else {
+                vec![None; ir_function.arguments.len()]
+            };
+        let mut argument_locals = Vec::new();
 
-        for argument in ir_function.arguments.iter() {
+        for (index, argument) in ir_function.arguments.iter().enumerate() {
             let handle_ty = ir_module.types[argument.ty].inner.is_handle();
             let binding_array = matches!(
                 ir_module.types[argument.ty].inner,
@@ -956,8 +969,19 @@ impl Writer {
                 )?;
                 ep_context.argument_ids.push(id);
             } else {
+                let mut argument_type_id = argument_type_id;
+                let reference = references.get(index).copied().flatten().filter(|_| {
+                    !self.needs_layout_conversion(argument_type_id, spirv::StorageClass::Function)
+                });
+                if reference.is_some() {
+                    argument_type_id = self
+                        .get_handle_pointer_type_id(argument.ty, spirv::StorageClass::Function)?;
+                }
                 let parameter =
                     self.write_function_parameter(ir_module, argument, argument_type_id)?;
+                if let (Some(local), Some(id)) = (reference, parameter.instruction.result_id) {
+                    argument_locals.push((local, id));
+                }
                 function.parameters.push(parameter);
                 parameter_type_ids.push(argument_type_id);
             };
@@ -998,6 +1022,19 @@ impl Writer {
         {
             self.debugs.push(Instruction::name(function_id, name));
         }
+
+        if !argument_locals.is_empty() {
+            let referenced = references
+                .iter()
+                .map(|reference: &Option<Handle<crate::LocalVariable>>| {
+                    reference.is_some_and(|local| {
+                        argument_locals.iter().any(|&(written, _)| written == local)
+                    })
+                })
+                .collect();
+            self.reference_arguments.insert(function_id, referenced);
+        }
+        function.argument_locals = argument_locals.iter().copied().collect();
 
         let function_type = self.get_function_type(lookup_function_type);
         if ir_function
@@ -1101,7 +1138,10 @@ impl Writer {
             super::uninitialized::read_before_written(ir_function, &context.writer.nullable_types);
         context.promote_locals()?;
         for (handle, variable) in ir_function.local_variables.iter() {
-            if debug_only.contains(&handle) || context.ssa.promotes(handle) {
+            if debug_only.contains(&handle)
+                || context.ssa.promotes(handle)
+                || context.function.argument_locals.contains_key(&handle)
+            {
                 continue;
             }
             let zeroed = zeroed.get(handle.index()).copied().unwrap_or(false);
@@ -1133,7 +1173,7 @@ impl Writer {
             ir_function,
             debug_start,
             (function_id, &parameter_ids),
-            &context.function.variables,
+            context.function,
         );
 
         context.write_function_body(prelude)?;

@@ -294,6 +294,7 @@ impl BlockContext<'_> {
             Statement::MemoryBarrier(flags) => {
                 self.writer.write_memory_barrier(flags, &mut block);
             }
+            Statement::Store { pointer, value } if self.is_argument_copy(pointer, value) => {}
             Statement::Store { pointer, value } => match self.ssa.pointer_slot(pointer) {
                 Some(slot) => self.write_ssa_store((pointer, slot), value, &mut block)?,
                 None => self.write_store(pointer, value, &mut block)?,
@@ -531,6 +532,21 @@ impl BlockContext<'_> {
         Ok(())
     }
 
+    fn is_argument_copy(
+        &self,
+        pointer: Handle<crate::Expression>,
+        value: Handle<crate::Expression>,
+    ) -> bool {
+        let expressions = &self.ir_function.expressions;
+        matches!(
+            (&expressions[pointer], &expressions[value]),
+            (
+                &crate::Expression::LocalVariable(local),
+                &crate::Expression::FunctionArgument(_),
+            ) if self.function.argument_locals.contains_key(&local)
+        )
+    }
+
     fn write_call(
         &mut self,
         local_function: Handle<crate::Function>,
@@ -563,6 +579,36 @@ impl BlockContext<'_> {
             };
             argument_ids.push(argument_id);
         }
+        let callee = self.writer.lookup_function[&local_function];
+        if let Some(referenced) = self.writer.reference_arguments.get(&callee).cloned() {
+            for ((&argument, argument_id), referenced) in arguments
+                .iter()
+                .zip(argument_ids.iter_mut())
+                .zip(referenced)
+            {
+                if !referenced {
+                    continue;
+                }
+                let pointer_type_id = self.writer.get_resolution_pointer_id(
+                    &self.fun_info[argument].ty,
+                    spirv::StorageClass::Function,
+                )?;
+                let id = self.writer.id_gen.next();
+                self.function
+                    .argument_copies
+                    .push(super::super::LocalVariable {
+                        id,
+                        instruction: Instruction::variable(
+                            pointer_type_id,
+                            id,
+                            spirv::StorageClass::Function,
+                            None,
+                        ),
+                    });
+                block.body.push(Instruction::store(id, *argument_id, None));
+                *argument_id = id;
+            }
+        }
         self.temp_list.clear();
         self.temp_list.extend(argument_ids);
 
@@ -583,7 +629,7 @@ impl BlockContext<'_> {
         block.body.push(Instruction::function_call(
             type_id,
             id,
-            self.writer.lookup_function[&local_function],
+            callee,
             &self.temp_list,
         ));
         Ok(())

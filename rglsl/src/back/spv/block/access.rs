@@ -398,8 +398,7 @@ impl BlockContext<'_> {
                     break self.cached.get(expr_handle)?;
                 }
                 crate::Expression::LocalVariable(variable) => {
-                    let local_var = &self.function.variables[&variable];
-                    break local_var.id;
+                    break self.function.local_id(variable)?;
                 }
                 crate::Expression::FunctionArgument(index) => {
                     break self.function.parameter_id(index)?;

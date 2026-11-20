@@ -227,7 +227,7 @@ impl BlockContext<'_> {
                 arg2,
                 arg3,
             } => self.write_math(fun, arg, [arg1, arg2, arg3], result_type_id, block)?,
-            crate::Expression::LocalVariable(variable) => self.function.variables[&variable].id,
+            crate::Expression::LocalVariable(variable) => self.function.local_id(variable)?,
             crate::Expression::Load { pointer } => match self.ssa.pointer_slot(pointer) {
                 Some(slot) => {
                     self.write_ssa_load(expr_handle, (pointer, slot), result_type_id, block)?

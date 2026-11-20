@@ -12715,3 +12715,65 @@ void main() {{
     assert!(instructions(&finite, Op::IsNan).is_empty());
     Ok(())
 }
+
+#[test]
+fn aggregate_in_parameters_are_passed_by_pointer_like_glslang() -> crate::TestResult {
+    let source = "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) flat in int k;
+struct S { int values[4]; };
+int find(S s, int x) {
+    for (int i = 0; i < 4; i++) {
+        if (s.values[i] == x) {
+            return i;
+        }
+    }
+    return -1;
+}
+float pick(float values[3], int i, vec2 v) {
+    values[0] = v.x;
+    return values[i];
+}
+void main() {
+    S s = S(int[4](1, 2, 3, 4));
+    float a[3] = float[3](1.0, 2.0, 3.0);
+    o = vec4(float(find(s, k)), pick(a, k, vec2(0.5)), a[0], float(find(s, 2)));
+}
+";
+    let module = compile(ShaderStage::Fragment, source)?;
+    let pointer_types: Vec<u32> = module
+        .types_global_values
+        .iter()
+        .filter(|inst| inst.class.opcode == Op::TypePointer)
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let parameters = instructions(&module, Op::FunctionParameter);
+    let by_pointer = parameters
+        .iter()
+        .filter(|inst| {
+            inst.result_type
+                .is_some_and(|ty| pointer_types.contains(&ty))
+        })
+        .count();
+    assert_eq!(parameters.len(), 5);
+    assert_eq!(by_pointer, 2);
+    let variables: Vec<u32> = instructions(&module, Op::Variable)
+        .iter()
+        .filter_map(|inst| inst.result_id)
+        .collect();
+    let calls = instructions(&module, Op::FunctionCall);
+    assert_eq!(calls.len(), 3);
+    let copies: Vec<u32> = calls
+        .iter()
+        .filter_map(|call| match call.operands.get(1) {
+            Some(&Operand::IdRef(id)) if variables.contains(&id) => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(copies.len(), 3);
+    let mut distinct = copies;
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 3);
+    Ok(())
+}
