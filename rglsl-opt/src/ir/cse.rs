@@ -32,13 +32,11 @@ fn cse(module: &mut Module, reuse: Reuse) -> Result<bool, String> {
 }
 
 fn value_flags(module: &Module, function: &Function) -> Result<Vec<bool>, String> {
-    let accesses = function.expressions.iter().any(|(_, expression)| {
-        matches!(
-            *expression,
-            Expression::Access { .. } | Expression::AccessIndex { .. }
-        )
-    });
-    if !accesses {
+    if !function
+        .expressions
+        .iter()
+        .any(|(_, expression)| expression.is_access())
+    {
         return Ok(vec![true; function.expressions.len()]);
     }
     Ok(resolve_types(module, function)?

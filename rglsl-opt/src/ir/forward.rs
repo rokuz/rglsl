@@ -600,10 +600,11 @@ impl<'a> Scan<'a> {
                 Known::Whole(value)
                     if whole
                         && self.visible(value)
-                        && !matches!(
-                            self.function.expressions.try_get(value),
-                            Ok(Expression::Access { .. } | Expression::AccessIndex { .. })
-                        ) =>
+                        && !self
+                            .function
+                            .expressions
+                            .try_get(value)
+                            .is_ok_and(Expression::is_access) =>
                 {
                     Some(Replace::Value(value))
                 }

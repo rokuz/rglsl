@@ -493,6 +493,10 @@ impl crate::Expression {
             Self::Literal(_) | Self::ZeroValue(_) | Self::Constant(_)
         )
     }
+
+    pub const fn is_access(&self) -> bool {
+        matches!(*self, Self::Access { .. } | Self::AccessIndex { .. })
+    }
 }
 
 impl crate::Function {
