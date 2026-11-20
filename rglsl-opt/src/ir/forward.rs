@@ -288,7 +288,7 @@ impl Plan {
                 types,
                 debug,
             },
-            locals.statements(),
+            Some(locals.statements()),
         )?;
         for &(local, value) in &self.inits {
             let value = rebuild.value(value)?;
@@ -1018,10 +1018,10 @@ struct Apply<'p> {
     debug: bool,
 }
 
-impl Policy for Apply<'_> {
+impl<'f> Policy<'f> for Apply<'_> {
     fn expression(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         handle: Handle<Expression>,
         block: &mut Block,
     ) -> Result<bool, String> {
@@ -1050,7 +1050,7 @@ impl Policy for Apply<'_> {
                 pointer,
                 skip,
             }) => {
-                let mut indices = path(&rebuild.source.expressions, pointer)?;
+                let mut indices = path(&rebuild.source().expressions, pointer)?;
                 if skip {
                     indices.pop();
                 }
@@ -1092,7 +1092,7 @@ impl Policy for Apply<'_> {
 
     fn statement(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         statement: &Statement,
         span: Span,
         position: u32,
@@ -1106,7 +1106,7 @@ impl Policy for Apply<'_> {
                 variable,
                 value,
                 indices,
-            }) = crate::ir::debug::value_of_store(rebuild.source, statement)
+            }) = crate::ir::debug::value_of_store(rebuild.source(), statement)
         {
             let value = rebuild.value(value)?;
             rebuild.push(

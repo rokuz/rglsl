@@ -4,7 +4,7 @@ mod returns;
 use rglsl::{Expression, Function, FunctionControl, Handle, Module, Statement};
 
 use crate::{Changed, Context, Inlining, OptError, Session};
-use copy::Builder;
+use copy::Inliner;
 use returns::{Lowered, lower};
 
 const GROWTH: u64 = 8;
@@ -281,15 +281,10 @@ fn rebuild(
         enqueue(&called, rooted, pending);
         return Ok(None);
     }
-    let mut builder = Builder::build(plan, function, debug.take())?;
-    enqueue(&builder.kept, rooted, pending);
-    if !builder.inlined {
-        *debug = builder.debug.take();
-        return Ok(None);
-    }
-    let (function, info) = builder.finish();
-    *debug = info;
-    Ok(Some(function))
+    let (inliner, function) = Inliner::build(plan, function, debug.take())?;
+    enqueue(&inliner.kept, rooted, pending);
+    *debug = inliner.debug;
+    Ok(inliner.inlined.then_some(function))
 }
 
 fn enqueue(kept: &[Handle<Function>], rooted: &mut [bool], pending: &mut Vec<Handle<Function>>) {

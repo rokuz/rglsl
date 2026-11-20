@@ -155,7 +155,7 @@ fn split(
         }));
     }
     split.pointers = vec![None; rebuild.out.local_variables.len()];
-    rebuild.body(&mut split, locals.statements())?;
+    rebuild.body(&mut split, Some(locals.statements()))?;
     for ((_, variable), pieces) in function.local_variables.iter().zip(&split.pieces) {
         let (Some(init), Some(pieces)) = (variable.init, pieces) else {
             continue;
@@ -227,10 +227,10 @@ impl Split<'_> {
     }
 }
 
-impl Policy for Split<'_> {
+impl<'f> Policy<'f> for Split<'_> {
     fn expression(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         handle: Handle<Expression>,
         block: &mut Block,
     ) -> Result<bool, String> {
@@ -252,7 +252,7 @@ impl Policy for Split<'_> {
                 };
                 let pieces = pieces.clone();
                 let ty = rebuild
-                    .source
+                    .source()
                     .local_variables
                     .try_get(local)
                     .map_err(|error| error.to_string())?
@@ -274,7 +274,7 @@ impl Policy for Split<'_> {
 
     fn statement(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         statement: &Statement,
         span: Span,
         _: u32,
@@ -290,7 +290,7 @@ impl Policy for Split<'_> {
             let pointer = self.pointer(rebuild, piece);
             rebuild.push(block, Statement::Store { pointer, value }, span);
             if rebuild
-                .source
+                .source()
                 .local_variables
                 .try_get(local)
                 .is_ok_and(|variable| variable.name.is_some())
@@ -344,7 +344,7 @@ impl Policy for Split<'_> {
         }
         if self.debug
             && rebuild
-                .source
+                .source()
                 .local_variables
                 .try_get(local)
                 .is_ok_and(|variable| variable.name.is_some())

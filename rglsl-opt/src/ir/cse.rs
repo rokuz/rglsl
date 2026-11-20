@@ -2,8 +2,8 @@ use core::mem::Discriminant;
 
 use rglsl::proc::HashableLiteral;
 use rglsl::{
-    Block, Expression, FastHashMap, Function, Handle, Module, NonUniform, Precision, Span,
-    Statement, Type, TypeInner,
+    Block, Expression, FastHashMap, Function, Handle, Module, NonUniform, Precision, Statement,
+    Type, TypeInner,
 };
 use rglsl_types::stack::recurse;
 
@@ -143,7 +143,7 @@ fn rewrite(function: &Function, reuse: Reuse, values: &[bool]) -> Result<Option<
         &mut Apply {
             representative: &scan.representative,
         },
-        count,
+        Some(count),
     )?;
     Ok(Some(rebuild.finish()))
 }
@@ -272,10 +272,10 @@ struct Apply<'s> {
     representative: &'s [Handle<Expression>],
 }
 
-impl Policy for Apply<'_> {
+impl<'f> Policy<'f> for Apply<'_> {
     fn expression(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         handle: Handle<Expression>,
         _: &mut Block,
     ) -> Result<bool, String> {
@@ -287,16 +287,5 @@ impl Policy for Apply<'_> {
             }
             _ => Ok(false),
         }
-    }
-
-    fn statement(
-        &mut self,
-        _: &mut Rebuild<'_>,
-        _: &Statement,
-        _: Span,
-        _: u32,
-        _: &mut Block,
-    ) -> Result<bool, String> {
-        Ok(false)
     }
 }

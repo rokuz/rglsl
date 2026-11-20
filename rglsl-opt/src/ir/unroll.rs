@@ -90,7 +90,7 @@ fn rewrite(
         return Ok(None);
     }
     let mut rebuild = Rebuild::new(function);
-    rebuild.body(&mut policy, locals.statements())?;
+    rebuild.body(&mut policy, Some(locals.statements()))?;
     Ok(Some(rebuild.finish()))
 }
 
@@ -109,10 +109,10 @@ struct Unroll<'l> {
     current: Vec<Option<Active>>,
 }
 
-impl Policy for Unroll<'_> {
+impl<'f> Policy<'f> for Unroll<'_> {
     fn expression(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         handle: Handle<Expression>,
         _: &mut Block,
     ) -> Result<bool, String> {
@@ -142,7 +142,7 @@ impl Policy for Unroll<'_> {
 
     fn statement(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         statement: &Statement,
         span: Span,
         position: u32,
@@ -192,6 +192,8 @@ impl Policy for Unroll<'_> {
                 });
             }
             rebuild.set_position(position + 1);
+            rebuild.forget(body);
+            rebuild.forget(continuing);
             let mut copy = recurse(|| rebuild.block(self, body))?;
             let mut tail = recurse(|| rebuild.block(self, continuing))?;
             rebuild.flush(block, span);

@@ -126,7 +126,7 @@ fn rewrite(
         changed: false,
     };
     let mut rebuild = Rebuild::new(function);
-    rebuild.body(&mut policy, count)?;
+    rebuild.body(&mut policy, Some(count))?;
     Ok(policy.changed.then(|| rebuild.finish()))
 }
 
@@ -151,10 +151,10 @@ struct Flat {
     shape: Shape,
 }
 
-impl Policy for Fold<'_> {
+impl<'f> Policy<'f> for Fold<'_> {
     fn expression(
         &mut self,
-        rebuild: &mut Rebuild<'_>,
+        rebuild: &mut Rebuild<'f>,
         handle: Handle<Expression>,
         block: &mut Block,
     ) -> Result<bool, String> {
@@ -169,7 +169,7 @@ impl Policy for Fold<'_> {
             operands.push(rebuild.value(source)?);
         }
         let precision = rebuild
-            .source
+            .source()
             .precision
             .get(&handle)
             .copied()
@@ -193,17 +193,6 @@ impl Policy for Fold<'_> {
         rebuild.set(handle, new)?;
         self.changed = true;
         Ok(true)
-    }
-
-    fn statement(
-        &mut self,
-        _: &mut Rebuild<'_>,
-        _: &rglsl::Statement,
-        _: Span,
-        _: u32,
-        _: &mut Block,
-    ) -> Result<bool, String> {
-        Ok(false)
     }
 }
 
@@ -403,7 +392,7 @@ impl Fold<'_> {
                 if !self.zero_count(rebuild, count)? {
                     return Ok(None);
                 }
-                let Some(inner) = self.type_inner(rebuild.source, arg)? else {
+                let Some(inner) = self.type_inner(rebuild.source(), arg)? else {
                     return Ok(None);
                 };
                 let ty = self
@@ -478,7 +467,7 @@ impl Fold<'_> {
             return Ok(None);
         }
         let domain = self
-            .type_inner(rebuild.source, expr)?
+            .type_inner(rebuild.source(), expr)?
             .and_then(|inner| inner.scalar_kind())
             .and_then(domain_of);
         Ok(domain
@@ -519,7 +508,8 @@ impl Fold<'_> {
         index: u32,
         block: &mut Block,
     ) -> Result<Option<Handle<Expression>>, String> {
-        let Ok(&Expression::Binary { op, left, right }) = rebuild.source.expressions.try_get(base)
+        let Ok(&Expression::Binary { op, left, right }) =
+            rebuild.source().expressions.try_get(base)
         else {
             return Ok(None);
         };
@@ -529,11 +519,11 @@ impl Fold<'_> {
                 | BinaryOperator::Subtract
                 | BinaryOperator::Multiply
                 | BinaryOperator::Divide
-        ) || rebuild.source.precision.contains_key(&base)
+        ) || rebuild.source().precision.contains_key(&base)
         {
             return Ok(None);
         }
-        let Some(TypeInner::Vector { size, .. }) = self.type_inner(rebuild.source, base)? else {
+        let Some(TypeInner::Vector { size, .. }) = self.type_inner(rebuild.source(), base)? else {
             return Ok(None);
         };
         let at = (index, size as usize);
@@ -565,7 +555,7 @@ impl Fold<'_> {
         {
             return Ok(None);
         }
-        let Some(inner) = self.type_inner(rebuild.source, handle)? else {
+        let Some(inner) = self.type_inner(rebuild.source(), handle)? else {
             return Ok(None);
         };
         if inner.pointer_space().is_some() {
@@ -601,7 +591,7 @@ impl Fold<'_> {
             [Literal::U64(value)] => i64::try_from(value).unwrap_or(i64::MAX),
             _ => return Ok(None),
         };
-        let Some(inner) = self.type_inner(rebuild.source, base)? else {
+        let Some(inner) = self.type_inner(rebuild.source(), base)? else {
             return Ok(None);
         };
         let types = &self.module.types;
@@ -703,12 +693,12 @@ impl Fold<'_> {
                 Yields::Other => (other, other_source),
                 Yields::Constant => (constant, constant_source),
             };
-            if self.same_type(rebuild.source, source, handle)? {
+            if self.same_type(rebuild.source(), source, handle)? {
                 return Ok(Some(result));
             }
         }
         if !float::reassociates(op, domain)
-            || !self.same_type(rebuild.source, other_source, handle)?
+            || !self.same_type(rebuild.source(), other_source, handle)?
         {
             return Ok(None);
         }
@@ -766,7 +756,7 @@ impl Fold<'_> {
         } else {
             op
         };
-        let components = match self.type_inner(rebuild.source, handle)? {
+        let components = match self.type_inner(rebuild.source(), handle)? {
             Some(TypeInner::Scalar(_)) => 1,
             Some(TypeInner::Vector { size, .. }) => size as usize,
             _ => return Ok(None),
