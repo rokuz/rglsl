@@ -1,0 +1,35 @@
+{
+  "GLF_live10tex": {
+    "binding": 3,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_live11injectionSwitch": {
+    "args": [
+      0.23713434,
+      0.20994383
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "GLF_live9one": {
+    "args": [
+      0.016257286
+    ],
+    "binding": 2,
+    "func": "glUniform1f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "tex": {
+    "binding": 0,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  }
+}

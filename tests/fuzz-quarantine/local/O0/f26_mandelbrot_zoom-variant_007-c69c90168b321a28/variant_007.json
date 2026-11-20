@@ -1,0 +1,67 @@
+{
+  "GLF_dead10polynomial": {
+    "args": [
+      0.360245,
+      0.09298289,
+      0.6143424
+    ],
+    "binding": 5,
+    "func": "glUniform3f"
+  },
+  "GLF_dead15injectionSwitch": {
+    "args": [
+      0.9429361,
+      0.7397737
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "GLF_dead8tex": {
+    "binding": 6,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_live21one": {
+    "args": [
+      0.27706426
+    ],
+    "binding": 2,
+    "func": "glUniform1f"
+  },
+  "GLF_live22tex": {
+    "binding": 3,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_live3resolution": {
+    "args": [
+      0.610537,
+      0.056401074
+    ],
+    "binding": 8,
+    "func": "glUniform2f"
+  },
+  "GLF_live3time": {
+    "args": [
+      0.39543563
+    ],
+    "binding": 7,
+    "func": "glUniform1f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  }
+}
