@@ -21,27 +21,16 @@ pub(super) fn plain_types(types: &UniqueArena<Type>) -> Vec<bool> {
 }
 
 pub(super) fn read_before_written(function: &Function, plain: &[bool]) -> Vec<bool> {
-    let count = function.local_variables.len();
-    let mut scan = Scan {
-        function,
-        read: vec![false; count],
-        written: function
-            .local_variables
-            .iter()
-            .map(|(_, local)| {
-                local.init.is_some() || !plain.get(local.ty.index()).copied().unwrap_or(false)
-            })
-            .collect(),
-        trail: Vec::new(),
-        stamps: vec![0; count],
-        stamp: 0,
-    };
-    scan.block(&function.body);
-    scan.read
+    Scan::new(function, plain, false).run()
+}
+
+pub(super) fn initial_value_observed(function: &Function, plain: &[bool]) -> Vec<bool> {
+    Scan::new(function, plain, true).run()
 }
 
 struct Scan<'f> {
     function: &'f Function,
+    strict: bool,
     read: Vec<bool>,
     written: Vec<bool>,
     trail: Vec<usize>,
@@ -49,7 +38,33 @@ struct Scan<'f> {
     stamp: u32,
 }
 
-impl Scan<'_> {
+impl<'f> Scan<'f> {
+    fn new(function: &'f Function, plain: &[bool], strict: bool) -> Self {
+        let count = function.local_variables.len();
+        Scan {
+            function,
+            strict,
+            read: vec![false; count],
+            written: function
+                .local_variables
+                .iter()
+                .map(|(_, local)| {
+                    (local.init.is_some() && !strict)
+                        || !plain.get(local.ty.index()).copied().unwrap_or(false)
+                })
+                .collect(),
+            trail: Vec::new(),
+            stamps: vec![0; count],
+            stamp: 0,
+        }
+    }
+
+    fn run(mut self) -> Vec<bool> {
+        let function = self.function;
+        self.block(&function.body);
+        self.read
+    }
+
     fn root(&self, pointer: Handle<Expression>) -> Option<Handle<LocalVariable>> {
         let mut current = pointer;
         loop {
@@ -154,6 +169,9 @@ impl Scan<'_> {
             } => {
                 let start = self.trail.len();
                 recurse(|| self.block(body));
+                if self.strict {
+                    self.undo(start);
+                }
                 recurse(|| self.block(continuing));
                 self.undo(start);
             }

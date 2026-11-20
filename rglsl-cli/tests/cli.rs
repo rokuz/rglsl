@@ -277,7 +277,7 @@ fn bad_optimization_options_are_rejected() -> TestResult {
         (&["--target-gpu"], "Error: target-gpu: no <gpu> provided"),
         (
             &["--opt-passes", "inline,peel"],
-            "Error: --opt-passes: unknown optimizer pass `peel` (known passes: specialize, lto-io, inline, forward, sroa, fold, dead-branch, unroll, const-array, cse, dce)",
+            "Error: --opt-passes: unknown optimizer pass `peel` (known passes: specialize, lto-io, inline, forward, sroa, fold, dead-branch, unroll, const-array, cse, ssa, dce)",
         ),
     ] {
         let mut command = vec!["-V", "shader.frag"];

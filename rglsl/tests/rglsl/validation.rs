@@ -527,6 +527,7 @@ fn make_zero_value_local_variable(fun: &mut Function, ty: rglsl::Handle<ir::Type
             ty,
             init: Some(ex_zero),
             relaxed_precision: false,
+            ssa: false,
         },
         span,
     );
@@ -586,6 +587,7 @@ fn local_var_override_sized_array() -> crate::TestResult {
             ty: ty_array,
             init: Some(ex_load),
             relaxed_precision: false,
+            ssa: false,
         },
         span,
     );
@@ -783,6 +785,7 @@ fn invalid_constructor_runtime_array() -> crate::TestResult {
             ty: ty_array,
             init: Some(ex_compose),
             relaxed_precision: false,
+            ssa: false,
         },
         span,
     );

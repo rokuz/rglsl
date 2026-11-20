@@ -169,12 +169,8 @@ impl BlockContext<'_> {
             } => {
                 return self.write_loop(
                     block,
-                    (
-                        body,
-                        self.reachability
-                            .continuing_reachable(statement)
-                            .then_some(continuing),
-                    ),
+                    (body, continuing),
+                    self.reachability.continuing_reachable(statement),
                     break_if,
                     control,
                 );
@@ -192,15 +188,14 @@ impl BlockContext<'_> {
                 let Some(break_id) = loop_context.break_id else {
                     return Err(Error::Validation("break outside of a loop or switch"));
                 };
-                self.function.consume(block, Instruction::branch(break_id));
+                self.consume(block, Instruction::branch(break_id));
                 return Ok(None);
             }
             Statement::Continue => {
                 let Some(continuing_id) = loop_context.continuing_id else {
                     return Err(Error::Validation("continue outside of a loop"));
                 };
-                self.function
-                    .consume(block, Instruction::branch(continuing_id));
+                self.consume(block, Instruction::branch(continuing_id));
                 return Ok(None);
             }
             Statement::Return { value: Some(value) } => {
@@ -299,9 +294,10 @@ impl BlockContext<'_> {
             Statement::MemoryBarrier(flags) => {
                 self.writer.write_memory_barrier(flags, &mut block);
             }
-            Statement::Store { pointer, value } => {
-                self.write_store(pointer, value, &mut block)?;
-            }
+            Statement::Store { pointer, value } => match self.ssa.pointer_slot(pointer) {
+                Some(slot) => self.write_ssa_store((pointer, slot), value, &mut block)?,
+                None => self.write_store(pointer, value, &mut block)?,
+            },
             Statement::ImageStore {
                 image,
                 coordinate,

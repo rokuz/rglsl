@@ -1516,6 +1516,13 @@ pub struct LocalVariable {
     #[cfg_attr(feature = "deserialize", serde(default))]
     #[rglo(skip_if = core::ops::Not::not)]
     pub relaxed_precision: bool,
+    #[cfg_attr(
+        feature = "serialize",
+        serde(skip_serializing_if = "core::ops::Not::not")
+    )]
+    #[cfg_attr(feature = "deserialize", serde(default))]
+    #[rglo(skip_if = core::ops::Not::not)]
+    pub ssa: bool,
 }
 
 /// Operation that can be applied on a single value.

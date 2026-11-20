@@ -82,9 +82,11 @@ impl BlockContext<'_> {
         loop_context: LoopContext,
     ) -> Result<BlockExitDisposition, Error> {
         let nested = !core::ptr::eq(ir, &self.ir_function.body);
-        let Some(block) =
-            self.write_statements(Block::new(label_id), ir.span_iter(), nested, loop_context)?
-        else {
+        let block = self.begin_block(label_id)?;
+        let previous = self.ssa.enter(ir);
+        let written = self.write_statements(block, ir.span_iter(), nested, loop_context);
+        self.ssa.leave(previous);
+        let Some(block) = written? else {
             return Ok(BlockExitDisposition::Discarded);
         };
         self.finish_block(block, exit, loop_context, nested)?;
@@ -103,8 +105,7 @@ impl BlockContext<'_> {
             self.mark_statement_span(&mut block, statement, *span, nested);
             match self.write_statement(block, statement, loop_context)? {
                 Some(next) if !self.reachability.completes(statement) => {
-                    self.function
-                        .consume(next, Instruction::new(spirv::Op::Unreachable));
+                    self.consume(next, Instruction::new(spirv::Op::Unreachable));
                     return Ok(None);
                 }
                 Some(following) => block = following,
@@ -182,7 +183,7 @@ impl BlockContext<'_> {
             }
         };
 
-        self.function.consume(block, termination);
+        self.consume(block, termination);
         Ok(())
     }
 
@@ -193,7 +194,7 @@ impl BlockContext<'_> {
         loop_context: LoopContext,
     ) -> Result<Option<Block>, Error> {
         let scope_id = self.gen_id();
-        self.function.consume(block, Instruction::branch(scope_id));
+        self.consume(block, Instruction::branch(scope_id));
 
         let merge_id = self.gen_id();
         let disposition = recurse(|| {
@@ -205,7 +206,7 @@ impl BlockContext<'_> {
             )
         })?;
         Ok(match disposition {
-            BlockExitDisposition::Used => Some(Block::new(merge_id)),
+            BlockExitDisposition::Used => Some(self.begin_block(merge_id)?),
             BlockExitDisposition::Discarded => None,
         })
     }
@@ -230,6 +231,7 @@ impl BlockContext<'_> {
             merge_id,
             selection_control(control),
         ));
+        self.ssa.open(merge_id, self.ssa.node());
 
         let accept_id = if accept.is_empty() && !empty {
             None
@@ -242,7 +244,7 @@ impl BlockContext<'_> {
             Some(self.gen_id())
         };
 
-        self.function.consume(
+        self.consume(
             block,
             Instruction::branch_conditional(
                 condition_id,
@@ -254,6 +256,7 @@ impl BlockContext<'_> {
         recurse(|| {
             for (label_id, ir) in [(accept_id, accept), (reject_id, reject)] {
                 if let Some(label_id) = label_id {
+                    self.ssa.restart();
                     let _ = self.write_block(
                         label_id,
                         ir,
@@ -262,7 +265,7 @@ impl BlockContext<'_> {
                     )?;
                 }
             }
-            Ok(Some(Block::new(merge_id)))
+            Ok(Some(self.begin_block(merge_id)?))
         })
     }
 
@@ -317,7 +320,8 @@ impl BlockContext<'_> {
             return Err(Error::Validation("switch has no default case"));
         };
 
-        self.function.consume(
+        self.ssa.open(merge_id, self.ssa.node());
+        self.consume(
             block,
             Instruction::switch(selector_id, default_id, &raw_cases),
         );
@@ -339,6 +343,7 @@ impl BlockContext<'_> {
                 } else {
                     merge_id
                 };
+                self.ssa.restart();
                 let _ = self.write_block(
                     *label_id,
                     &case.body,
@@ -348,32 +353,35 @@ impl BlockContext<'_> {
                     inner_context,
                 )?;
             }
-            Ok(Some(Block::new(merge_id)))
+            Ok(Some(self.begin_block(merge_id)?))
         })
     }
 
     pub(super) fn write_loop(
         &mut self,
         block: Block,
-        (body, continuing): (&crate::Block, Option<&crate::Block>),
+        (body, continuing): (&crate::Block, &crate::Block),
+        continuing_reachable: bool,
         break_if: Option<Handle<crate::Expression>>,
         control: crate::LoopControl,
     ) -> Result<Option<Block>, Error> {
-        let mut block = block;
         let preamble_id = self.gen_id();
-        self.function
-            .consume(block, Instruction::branch(preamble_id));
+        self.open_loop_header(preamble_id, body);
+        self.consume(block, Instruction::branch(preamble_id));
 
         let merge_id = self.gen_id();
         let body_id = self.gen_id();
         let continuing_id = self.gen_id();
 
-        block = Block::new(preamble_id);
+        let mut block = self.begin_block(preamble_id)?;
+        self.write_loop_header_phis(preamble_id, &mut block)?;
         block
             .body
             .push(self.loop_merge(merge_id, continuing_id, control));
 
-        self.function.consume(block, Instruction::branch(body_id));
+        self.consume(block, Instruction::branch(body_id));
+        self.ssa.open(merge_id, self.ssa.node());
+        self.ssa.open(continuing_id, self.ssa.node_of(continuing));
 
         let body_context = LoopContext {
             continuing_id: Some(continuing_id),
@@ -395,31 +403,30 @@ impl BlockContext<'_> {
                     )?;
                 }
             }
-            match continuing {
-                None => self
-                    .function
-                    .consume(Block::new(continuing_id), Instruction::branch(preamble_id)),
-                Some(continuing) => {
-                    let _ = self.write_block(
-                        continuing_id,
-                        continuing,
-                        match break_if {
-                            Some(condition) => BlockExit::BreakIf {
-                                condition,
-                                preamble_id,
-                            },
-                            None => BlockExit::Branch {
-                                target: preamble_id,
-                            },
+            if continuing_reachable {
+                let _ = self.write_block(
+                    continuing_id,
+                    continuing,
+                    match break_if {
+                        Some(condition) => BlockExit::BreakIf {
+                            condition,
+                            preamble_id,
                         },
-                        LoopContext {
-                            continuing_id: None,
-                            break_id: Some(merge_id),
+                        None => BlockExit::Branch {
+                            target: preamble_id,
                         },
-                    )?;
-                }
+                    },
+                    LoopContext {
+                        continuing_id: None,
+                        break_id: Some(merge_id),
+                    },
+                )?;
+            } else {
+                let block = self.begin_block(continuing_id)?;
+                self.consume(block, Instruction::branch(preamble_id));
             }
-            Ok(Some(Block::new(merge_id)))
+            self.close_loop_header(preamble_id)?;
+            Ok(Some(self.begin_block(merge_id)?))
         })
     }
 
@@ -431,12 +438,10 @@ impl BlockContext<'_> {
         merge_id: Word,
         body_context: LoopContext,
     ) -> Result<(), Error> {
-        let Some(mut block) = self.write_statements(
-            Block::new(label_id),
-            body.span_iter().take(test.index),
-            true,
-            body_context,
-        )?
+        let block = self.begin_block(label_id)?;
+        let previous = self.ssa.enter(body);
+        let Some(mut block) =
+            self.write_statements(block, body.span_iter().take(test.index), true, body_context)?
         else {
             return Err(Error::Validation("loop condition does not complete"));
         };
@@ -451,19 +456,22 @@ impl BlockContext<'_> {
         } else {
             (rest_id, merge_id)
         };
-        self.function.consume(
+        self.consume(
             block,
             Instruction::branch_conditional(condition_id, accept_id, reject_id),
         );
         let Some(continuing_id) = body_context.continuing_id else {
             return Err(Error::Validation("loop without a continuing block"));
         };
-        if let Some(block) = self.write_statements(
-            Block::new(rest_id),
+        let rest = self.begin_block(rest_id)?;
+        let written = self.write_statements(
+            rest,
             body.span_iter().skip(test.index + 1),
             true,
             body_context,
-        )? {
+        );
+        self.ssa.leave(previous);
+        if let Some(block) = written? {
             self.finish_block(
                 block,
                 BlockExit::Branch {
@@ -479,11 +487,16 @@ impl BlockContext<'_> {
     pub(in super::super) fn write_function_body(&mut self, entry: Block) -> Result<(), Error> {
         let function = self.ir_function;
         let loop_context = LoopContext::default();
+        self.ssa.enter(&function.body);
         if let Some(block) =
             self.write_statements(entry, function.body.span_iter(), false, loop_context)?
         {
             self.finish_block(block, BlockExit::Return, loop_context, false)?;
         }
-        Ok(())
+        if self.ssa.is_balanced() {
+            Ok(())
+        } else {
+            Err(Error::Internal("unclosed merge of a promoted local"))
+        }
     }
 }

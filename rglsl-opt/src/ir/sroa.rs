@@ -144,6 +144,7 @@ fn split(
                                 ty: piece.ty,
                                 init: None,
                                 relaxed_precision: piece.relaxed_precision,
+                                ssa: false,
                             },
                             Span::UNDEFINED,
                         ),

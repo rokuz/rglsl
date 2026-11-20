@@ -50,6 +50,7 @@ pub(super) fn lower(source: &Function, types: &mut UniqueArena<Type>) -> Option<
                 ty: result.ty,
                 init,
                 relaxed_precision: false,
+                ssa: false,
             },
             Span::UNDEFINED,
         )
@@ -217,6 +218,7 @@ impl Lowering<'_> {
                 ty,
                 init: Some(init),
                 relaxed_precision: false,
+                ssa: false,
             },
             Span::UNDEFINED,
         );

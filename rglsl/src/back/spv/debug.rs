@@ -1623,10 +1623,15 @@ impl Writer {
                             &[variable, pointer, expression],
                         )
                     }
-                    None => self.debug_local_ext(
-                        grammar::shader_debug_info::DebugValue,
-                        &[variable, parameter, expression],
-                    ),
+                    None => {
+                        if let Some(&local) = copies.get(&number) {
+                            state.locals.insert(local, variable);
+                        }
+                        self.debug_local_ext(
+                            grammar::shader_debug_info::DebugValue,
+                            &[variable, parameter, expression],
+                        )
+                    }
                 };
                 state.prelude.push(instruction);
             }

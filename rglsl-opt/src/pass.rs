@@ -77,7 +77,6 @@ pub static PASSES: &[Pass] = &[
             "--eliminate-local-single-block",
             "--eliminate-local-single-store",
             "--private-to-local",
-            "--ssa-rewrite",
         ],
     },
     Pass {
@@ -121,6 +120,13 @@ pub static PASSES: &[Pass] = &[
         applies: |_| true,
         run: crate::ir::cse::run,
         counterpart: &["--redundancy-elimination"],
+    },
+    Pass {
+        name: "ssa",
+        scope: Scope::Function,
+        applies: |summary| summary.local_variables,
+        run: crate::ir::ssa::run,
+        counterpart: &["--ssa-rewrite"],
     },
     Pass {
         name: "dce",

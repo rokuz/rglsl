@@ -29,6 +29,7 @@ mod reclaimable;
 mod replicate;
 mod small_types;
 mod specialization;
+mod ssa;
 mod stage;
 mod subgroup;
 mod tensor;
@@ -732,6 +733,8 @@ struct BlockContext<'w> {
     physical_component_load: bool,
 
     reachability: crate::proc::Reachability,
+
+    ssa: ssa::Ssa,
 }
 
 impl BlockContext<'_> {

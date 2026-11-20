@@ -36,6 +36,7 @@ const OPTIMIZE: &[Step] = &[
         passes: &["cse", "forward", "fold", "dce"],
     },
     Step::Run("lto-io"),
+    Step::Run("ssa"),
 ];
 
 pub static PRESETS: &[Preset] = &[

@@ -262,6 +262,7 @@ impl super::Validator {
                     ty,
                     init,
                     relaxed_precision: _,
+                    ssa: _,
                 } = local_variable;
                 validate_type(ty)?;
                 if let Some(init) = init {

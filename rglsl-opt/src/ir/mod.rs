@@ -10,6 +10,7 @@ pub(crate) mod lto_io;
 pub(crate) mod rebuild;
 pub(crate) mod specialize;
 pub(crate) mod sroa;
+pub(crate) mod ssa;
 pub(crate) mod unroll;
 
 use rglsl::{Function, Handle, Module};

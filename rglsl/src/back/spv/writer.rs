@@ -1083,6 +1083,7 @@ impl Writer {
             ),
             physical_component_load: false,
             reachability: crate::proc::Reachability::new(&ir_function.body),
+            ssa: super::ssa::Ssa::default(),
         };
 
         // fill up the pre-emitted and const expressions
@@ -1098,8 +1099,9 @@ impl Writer {
         let debug_only = debug_only_locals(ir_function);
         let zeroed =
             super::uninitialized::read_before_written(ir_function, &context.writer.nullable_types);
+        context.promote_locals()?;
         for (handle, variable) in ir_function.local_variables.iter() {
-            if debug_only.contains(&handle) {
+            if debug_only.contains(&handle) || context.ssa.promotes(handle) {
                 continue;
             }
             let zeroed = zeroed.get(handle.index()).copied().unwrap_or(false);

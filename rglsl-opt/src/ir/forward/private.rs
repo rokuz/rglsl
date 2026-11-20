@@ -194,6 +194,7 @@ fn localized(
             ty: variable.ty,
             init,
             relaxed_precision: variable.relaxed_precision,
+            ssa: false,
         },
         span,
     )))

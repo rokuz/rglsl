@@ -818,6 +818,39 @@ impl super::Instruction {
         instruction
     }
 
+    pub(super) fn composite_insert(
+        result_type_id: Word,
+        id: Word,
+        object_id: Word,
+        composite_id: Word,
+        indices: &[Word],
+    ) -> Self {
+        let mut instruction = Self::new(Op::CompositeInsert);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(object_id);
+        instruction.add_operand(composite_id);
+        for &index in indices {
+            instruction.add_operand(index);
+        }
+        instruction
+    }
+
+    pub(super) fn copy_object(result_type_id: Word, id: Word, operand_id: Word) -> Self {
+        let mut instruction = Self::new(Op::CopyObject);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction.add_operand(operand_id);
+        instruction
+    }
+
+    pub(super) const fn phi(result_type_id: Word, id: Word) -> Self {
+        let mut instruction = Self::new(Op::Phi);
+        instruction.set_type(result_type_id);
+        instruction.set_result(id);
+        instruction
+    }
+
     pub(super) fn vector_extract_dynamic(
         result_type_id: Word,
         id: Word,

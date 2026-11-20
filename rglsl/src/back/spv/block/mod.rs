@@ -177,6 +177,9 @@ impl BlockContext<'_> {
         if self.fun_info[expr_handle].ref_count == 0 && !is_named_expression {
             return Ok(());
         }
+        if self.ssa.pointer_slot(expr_handle).is_some() {
+            return Ok(());
+        }
 
         if let Some(id) = self.returned_array_element(expr_handle, block)? {
             return self.cached.set(expr_handle, id);
@@ -225,17 +228,22 @@ impl BlockContext<'_> {
                 arg3,
             } => self.write_math(fun, arg, [arg1, arg2, arg3], result_type_id, block)?,
             crate::Expression::LocalVariable(variable) => self.function.variables[&variable].id,
-            crate::Expression::Load { pointer } => {
-                self.physical_component_load = self.loaded_by_swizzle(expr_handle);
-                let id = self.write_checked_load(
-                    pointer,
-                    block,
-                    AccessTypeAdjustment::None,
-                    result_type_id,
-                )?;
-                self.physical_component_load = false;
-                id
-            }
+            crate::Expression::Load { pointer } => match self.ssa.pointer_slot(pointer) {
+                Some(slot) => {
+                    self.write_ssa_load(expr_handle, (pointer, slot), result_type_id, block)?
+                }
+                None => {
+                    self.physical_component_load = self.loaded_by_swizzle(expr_handle);
+                    let id = self.write_checked_load(
+                        pointer,
+                        block,
+                        AccessTypeAdjustment::None,
+                        result_type_id,
+                    )?;
+                    self.physical_component_load = false;
+                    id
+                }
+            },
             crate::Expression::FunctionArgument(index) => self.function.parameter_id(index)?,
             crate::Expression::CallResult(_)
             | crate::Expression::AtomicResult { .. }

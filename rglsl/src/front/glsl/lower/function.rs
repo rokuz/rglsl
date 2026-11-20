@@ -392,6 +392,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
                 ty: ir,
                 init: None,
                 relaxed_precision: false,
+                ssa: false,
             },
             span,
         ))
@@ -409,6 +410,7 @@ impl<'l, 'a> FunctionLowerer<'l, 'a> {
                 ty,
                 init: None,
                 relaxed_precision: false,
+                ssa: false,
             },
             span,
         )
