@@ -170,19 +170,21 @@ impl Session<'_, '_> {
             .map_err(|message| OptError::Pass { pass, message })
     }
 
+    fn unfocused(pass: &'static str, what: &str) -> OptError {
+        OptError::Pass {
+            pass,
+            message: format!("a program-wide pass asked for the {what}"),
+        }
+    }
+
     pub fn module(&mut self) -> Result<&mut Module, OptError> {
         let pass = self.pass;
         self.focus
             .and_then(|index| self.stages.get_mut(index))
             .map(|stage| &mut *stage.module)
-            .ok_or_else(|| OptError::Pass {
-                pass,
-                message: String::from("a program-wide pass asked for the module of one stage"),
-            })
+            .ok_or_else(|| Self::unfocused(pass, "module of one stage"))
     }
-}
 
-impl Session<'_, '_> {
     pub const fn unrolling(&self) -> Unrolling {
         match self.level {
             OptLevel::Size => self.profile.parameters.unroll_for_size,
@@ -191,14 +193,10 @@ impl Session<'_, '_> {
     }
 
     pub fn stage(&self) -> Result<ShaderStage, OptError> {
-        let pass = self.pass;
         self.focus
             .and_then(|index| self.stages.get(index))
             .map(|stage| stage.stage)
-            .ok_or_else(|| OptError::Pass {
-                pass,
-                message: String::from("a program-wide pass asked for the stage of one module"),
-            })
+            .ok_or_else(|| Self::unfocused(self.pass, "stage of one module"))
     }
 }
 
