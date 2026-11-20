@@ -21,24 +21,32 @@ pub(super) fn plain_types(types: &UniqueArena<Type>) -> Vec<bool> {
 }
 
 pub(super) fn read_before_written(function: &Function, plain: &[bool]) -> Vec<bool> {
+    let count = function.local_variables.len();
     let mut scan = Scan {
         function,
-        read: vec![false; function.local_variables.len()],
+        read: vec![false; count],
+        written: function
+            .local_variables
+            .iter()
+            .map(|(_, local)| {
+                local.init.is_some() || !plain.get(local.ty.index()).copied().unwrap_or(false)
+            })
+            .collect(),
+        trail: Vec::new(),
+        stamps: vec![0; count],
+        stamp: 0,
     };
-    let mut written: Vec<bool> = function
-        .local_variables
-        .iter()
-        .map(|(_, local)| {
-            local.init.is_some() || !plain.get(local.ty.index()).copied().unwrap_or(false)
-        })
-        .collect();
-    scan.block(&function.body, &mut written);
+    scan.block(&function.body);
     scan.read
 }
 
 struct Scan<'f> {
     function: &'f Function,
     read: Vec<bool>,
+    written: Vec<bool>,
+    trail: Vec<usize>,
+    stamps: Vec<u32>,
+    stamp: u32,
 }
 
 impl Scan<'_> {
@@ -55,58 +63,88 @@ impl Scan<'_> {
         }
     }
 
-    fn use_pointer(&mut self, pointer: Handle<Expression>, written: &[bool]) {
+    fn use_pointer(&mut self, pointer: Handle<Expression>) {
         if let Some(local) = self.root(pointer)
-            && written.get(local.index()) == Some(&false)
+            && self.written.get(local.index()) == Some(&false)
             && let Some(slot) = self.read.get_mut(local.index())
         {
             *slot = true;
         }
     }
 
-    fn block(&mut self, block: &Block, written: &mut Vec<bool>) {
-        for statement in block.iter() {
-            self.statement(statement, written);
+    fn write(&mut self, index: usize) {
+        if let Some(slot) = self.written.get_mut(index)
+            && !*slot
+        {
+            *slot = true;
+            self.trail.push(index);
         }
     }
 
-    fn statement(&mut self, statement: &Statement, written: &mut Vec<bool>) {
+    fn undo(&mut self, start: usize) -> Vec<usize> {
+        let undone: Vec<usize> = self.trail.drain(start..).collect();
+        for &index in &undone {
+            if let Some(slot) = self.written.get_mut(index) {
+                *slot = false;
+            }
+        }
+        undone
+    }
+
+    fn scoped(&mut self, block: &Block) -> Vec<usize> {
+        let start = self.trail.len();
+        recurse(|| self.block(block));
+        self.undo(start)
+    }
+
+    fn block(&mut self, block: &Block) {
+        for statement in block.iter() {
+            self.statement(statement);
+        }
+    }
+
+    fn statement(&mut self, statement: &Statement) {
         match *statement {
             Statement::Emit(ref range) => {
                 for handle in range.clone() {
                     if let Ok(&Expression::Load { pointer }) =
                         self.function.expressions.try_get(handle)
                     {
-                        self.use_pointer(pointer, written);
+                        self.use_pointer(pointer);
                     }
                 }
             }
             Statement::Store { pointer, .. } => {
                 if let Ok(&Expression::LocalVariable(local)) =
                     self.function.expressions.try_get(pointer)
-                    && let Some(slot) = written.get_mut(local.index())
                 {
-                    *slot = true;
+                    self.write(local.index());
                 }
             }
-            Statement::Block(ref block) => recurse(|| self.block(block, written)),
+            Statement::Block(ref block) => recurse(|| self.block(block)),
             Statement::If {
                 ref accept,
                 ref reject,
                 ..
             } => {
-                let mut accepted = written.clone();
-                recurse(|| self.block(accept, &mut accepted));
-                let mut rejected = written.clone();
-                recurse(|| self.block(reject, &mut rejected));
-                for ((slot, accepted), rejected) in written.iter_mut().zip(accepted).zip(rejected) {
-                    *slot = accepted && rejected;
+                let accepted = self.scoped(accept);
+                let rejected = self.scoped(reject);
+                self.stamp = self.stamp.wrapping_add(1);
+                let stamp = self.stamp;
+                for &index in &accepted {
+                    if let Some(slot) = self.stamps.get_mut(index) {
+                        *slot = stamp;
+                    }
+                }
+                for index in rejected {
+                    if self.stamps.get(index) == Some(&stamp) {
+                        self.write(index);
+                    }
                 }
             }
             Statement::Switch { ref cases, .. } => {
                 for case in cases {
-                    let mut inside = written.clone();
-                    recurse(|| self.block(&case.body, &mut inside));
+                    self.scoped(&case.body);
                 }
             }
             Statement::Loop {
@@ -114,16 +152,15 @@ impl Scan<'_> {
                 ref continuing,
                 ..
             } => {
-                let mut inside = written.clone();
-                recurse(|| self.block(body, &mut inside));
-                recurse(|| self.block(continuing, &mut inside));
+                let start = self.trail.len();
+                recurse(|| self.block(body));
+                recurse(|| self.block(continuing));
+                self.undo(start);
             }
             Statement::Call { ref arguments, .. } => {
                 for &argument in arguments {
-                    if let Some(local) = self.root(argument)
-                        && let Some(slot) = written.get_mut(local.index())
-                    {
-                        *slot = true;
+                    if let Some(local) = self.root(argument) {
+                        self.write(local.index());
                     }
                 }
             }
@@ -132,10 +169,8 @@ impl Scan<'_> {
                 other.for_each_operand(|operand| pointers.push(operand));
                 for pointer in pointers {
                     if let Some(local) = self.root(pointer) {
-                        self.use_pointer(pointer, written);
-                        if let Some(slot) = written.get_mut(local.index()) {
-                            *slot = true;
-                        }
+                        self.use_pointer(pointer);
+                        self.write(local.index());
                     }
                 }
             }
