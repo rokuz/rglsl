@@ -198,6 +198,29 @@ fn nested_loops_are_unrolled_from_the_inside() -> TestResult {
 }
 
 #[test]
+fn a_loop_that_indexes_only_vector_components_stays() -> TestResult {
+    let local = shader("    vec4 w = inColor * 2.0;\n    for (int i = 0; i < 4; i++) s += w[i];");
+    assert_eq!(loops_after(&local, &unrolled())?, 1);
+    let member = shader(
+        "    struct P { vec4 v; float f; };
+    P p = P(inColor, 1.0);
+    for (int i = 0; i < 4; i++) s += p.v[i] * p.f;",
+    );
+    assert_eq!(loops_after(&member, &unrolled())?, 1);
+    let column = shader(
+        "    mat4 m = mat4(inColor, inColor, inColor, inColor);
+    for (int i = 0; i < 4; i++) s += m[1][i];",
+    );
+    assert_eq!(loops_after(&column, &unrolled())?, 1);
+    let matrix = shader(
+        "    mat4 m = mat4(inColor, inColor.yzwx, inColor.zwxy, inColor.wxyz);
+    for (int i = 0; i < 4; i++) s += m[i].x;",
+    );
+    assert_eq!(loops_after(&matrix, &unrolled())?, 0);
+    Ok(())
+}
+
+#[test]
 fn an_outer_loop_that_does_not_index_stays() -> TestResult {
     let source = shader(
         "    for (int i = 0; i < 4; i++) a[i] = inColor[i];

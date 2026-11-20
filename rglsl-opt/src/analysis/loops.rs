@@ -1,6 +1,6 @@
 use rglsl::{
     AddressSpace, BinaryOperator, Block, Expression, FastHashMap, Function, Handle, Literal,
-    LocalVariable, LoopControl, Module, Statement, TypeInner, UnaryOperator,
+    LocalVariable, LoopControl, Module, Statement, Type, TypeInner, UnaryOperator,
 };
 use rglsl_types::stack::recurse;
 
@@ -131,11 +131,19 @@ impl Facts {
 
 type Siblings = FastHashMap<Handle<LocalVariable>, (u32, Handle<Expression>)>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pointee {
+    Type(Handle<Type>),
+    Column,
+    Unknown,
+}
+
 struct Walker<'a> {
     module: &'a Module,
     function: &'a Function,
     locals: &'a Locals,
     dependence: Vec<Dependence>,
+    pointees: Vec<Pointee>,
     accesses: FastHashMap<Handle<LocalVariable>, Vec<u32>>,
     several: Vec<bool>,
     emitted_at: Vec<u32>,
@@ -151,6 +159,7 @@ impl Loops {
             function,
             locals,
             dependence: Vec::with_capacity(function.expressions.len()),
+            pointees: Vec::with_capacity(function.expressions.len()),
             accesses: FastHashMap::default(),
             several: Vec::new(),
             emitted_at: vec![u32::MAX; function.expressions.len()],
@@ -323,25 +332,53 @@ impl<'a> Walker<'a> {
                 }
             };
             self.dependence.push(dependence);
+            let pointee = self.pointee_of(expression);
+            self.pointees.push(pointee);
+        }
+    }
+
+    fn pointee_of(&self, expression: &Expression) -> Pointee {
+        let element = |base: Handle<Expression>, member: Option<u32>| {
+            let Some(&Pointee::Type(ty)) = self.pointees.get(base.index()) else {
+                return Pointee::Unknown;
+            };
+            match self.module.types.get_handle(ty).map(|ty| &ty.inner) {
+                Ok(&TypeInner::Array { base, .. }) => Pointee::Type(base),
+                Ok(&TypeInner::Matrix { .. }) => Pointee::Column,
+                Ok(TypeInner::Struct { members, .. }) => member
+                    .and_then(|member| members.get(member as usize))
+                    .map_or(Pointee::Unknown, |member| Pointee::Type(member.ty)),
+                _ => Pointee::Unknown,
+            }
+        };
+        match *expression {
+            Expression::LocalVariable(local) => self
+                .function
+                .local_variables
+                .try_get(local)
+                .map_or(Pointee::Unknown, |variable| Pointee::Type(variable.ty)),
+            Expression::GlobalVariable(global) => self
+                .module
+                .global_variables
+                .try_get(global)
+                .map_or(Pointee::Unknown, |variable| Pointee::Type(variable.ty)),
+            Expression::AccessIndex { base, index } => element(base, Some(index)),
+            Expression::Access { base, .. } => element(base, None),
+            _ => Pointee::Unknown,
+        }
+    }
+
+    fn indexes_memory(&self, base: Handle<Expression>) -> bool {
+        match self.pointees.get(base.index()) {
+            Some(&Pointee::Type(ty)) => self.module.types.get_handle(ty).is_ok_and(|ty| {
+                matches!(ty.inner, TypeInner::Array { .. } | TypeInner::Matrix { .. })
+            }),
+            _ => false,
         }
     }
 
     fn end(&self, position: u32) -> u32 {
         self.locals.end(position)
-    }
-
-    fn aggregate_local(&self, local: Handle<LocalVariable>) -> bool {
-        self.function
-            .local_variables
-            .try_get(local)
-            .ok()
-            .and_then(|variable| self.module.types.get_handle(variable.ty).ok())
-            .is_some_and(|ty| {
-                matches!(
-                    ty.inner,
-                    TypeInner::Array { .. } | TypeInner::Matrix { .. } | TypeInner::Struct { .. }
-                )
-            })
     }
 
     fn indexed(&mut self, handle: Handle<Expression>, position: u32) {
@@ -353,14 +390,14 @@ impl<'a> Walker<'a> {
             return;
         };
         let memory = match pointer.root {
-            Root::Local(local) => self.aggregate_local(local),
+            Root::Local(_) => true,
             Root::Global(global) => self
                 .module
                 .global_variables
                 .try_get(global)
                 .is_ok_and(|variable| variable.space == AddressSpace::Private),
         };
-        if !memory {
+        if !memory || !self.indexes_memory(base) {
             return;
         }
         match self.dependence.get(index.index()).copied() {
