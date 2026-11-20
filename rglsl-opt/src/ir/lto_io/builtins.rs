@@ -310,96 +310,115 @@ pub(super) fn retype(
                 next += 1;
             }
         }
-        let global_ty = module
-            .global_variables
-            .try_get(block.global)
-            .map_err(|error| error.to_string())?
-            .ty;
-        let element = slots::element(&module.types, global_ty, block.arrayed);
-        let old = module
-            .types
-            .get_handle(element)
-            .map_err(|error| error.to_string())?
-            .clone();
-        let span = module.types.get_span(element);
-        let TypeInner::Struct {
-            members: ref old_members,
-            span: size,
-        } = old.inner
-        else {
-            return Err(String::from("a built-in block is not a struct"));
-        };
-        let kept_members = old_members
-            .iter()
-            .zip(&keep)
-            .filter(|&(_, &kept)| kept)
-            .map(|(member, _)| member.clone())
-            .collect();
-        let structure = module.types.insert(
-            Type {
-                name: old.name.clone(),
-                inner: TypeInner::Struct {
-                    members: kept_members,
-                    span: size,
-                },
-            },
-            span,
-        );
-        let ty = if block.arrayed {
-            let outer = module
-                .types
-                .get_handle(global_ty)
-                .map_err(|error| error.to_string())?
-                .clone();
-            let TypeInner::Array { size, stride, .. } = outer.inner else {
-                return Err(String::from("an arrayed built-in block is not an array"));
-            };
-            module.types.insert(
-                Type {
-                    name: outer.name,
-                    inner: TypeInner::Array {
-                        base: structure,
-                        size,
-                        stride,
-                    },
-                },
-                module.types.get_span(global_ty),
-            )
-        } else {
-            structure
-        };
+        let ty = kept_type(module, &block, &keep)?;
         module
             .global_variables
             .try_get_mut(block.global)
             .map_err(|error| error.to_string())?
             .ty = ty;
-        let bodies = module.all_functions_mut();
-        for function in bodies {
-            let levels = levels(function, &block);
-            let outer = if block.arrayed {
-                Level::Element
-            } else {
-                Level::Variable
-            };
-            for (handle, expression) in function.expressions.iter_mut() {
-                let Expression::AccessIndex {
-                    base,
-                    ref mut index,
-                } = *expression
-                else {
-                    continue;
-                };
-                if levels.get(base.index()).copied().flatten() != Some(outer)
-                    || levels.get(handle.index()).copied().flatten() != Some(Level::Member(*index))
-                {
-                    continue;
-                }
-                *index =
-                    map.get(*index as usize).copied().flatten().ok_or_else(|| {
-                        String::from("a removed built-in member is still accessed")
-                    })?;
-            }
-        }
+        renumber_members(module, &block, &map)?;
     }
     Ok(removed)
+}
+
+fn kept_type(
+    module: &mut Module,
+    block: &BlockVariable,
+    keep: &[bool],
+) -> Result<Handle<Type>, String> {
+    let global_ty = module
+        .global_variables
+        .try_get(block.global)
+        .map_err(|error| error.to_string())?
+        .ty;
+    let element = slots::element(&module.types, global_ty, block.arrayed);
+    let old = module
+        .types
+        .get_handle(element)
+        .map_err(|error| error.to_string())?
+        .clone();
+    let span = module.types.get_span(element);
+    let TypeInner::Struct {
+        members: ref old_members,
+        span: size,
+    } = old.inner
+    else {
+        return Err(String::from("a built-in block is not a struct"));
+    };
+    let kept_members = old_members
+        .iter()
+        .zip(keep)
+        .filter(|&(_, &kept)| kept)
+        .map(|(member, _)| member.clone())
+        .collect();
+    let structure = module.types.insert(
+        Type {
+            name: old.name.clone(),
+            inner: TypeInner::Struct {
+                members: kept_members,
+                span: size,
+            },
+        },
+        span,
+    );
+    let ty = if block.arrayed {
+        let outer = module
+            .types
+            .get_handle(global_ty)
+            .map_err(|error| error.to_string())?
+            .clone();
+        let TypeInner::Array { size, stride, .. } = outer.inner else {
+            return Err(String::from("an arrayed built-in block is not an array"));
+        };
+        module.types.insert(
+            Type {
+                name: outer.name,
+                inner: TypeInner::Array {
+                    base: structure,
+                    size,
+                    stride,
+                },
+            },
+            module.types.get_span(global_ty),
+        )
+    } else {
+        structure
+    };
+    Ok(ty)
+}
+
+fn renumber_members(
+    module: &mut Module,
+    block: &BlockVariable,
+    map: &[Option<u32>],
+) -> Result<(), String> {
+    let bodies = module.all_functions_mut();
+    for function in bodies {
+        let levels = levels(function, block);
+        let outer = if block.arrayed {
+            Level::Element
+        } else {
+            Level::Variable
+        };
+        for (handle, expression) in function.expressions.iter_mut() {
+            let Expression::AccessIndex {
+                base,
+                ref mut index,
+            } = *expression
+            else {
+                continue;
+            };
+            if levels.get(base.index()).copied().flatten() != Some(outer)
+                || levels.get(handle.index()).copied().flatten() != Some(Level::Member(*index))
+            {
+                continue;
+            }
+            *index = map
+                .get(*index as usize)
+                .copied()
+                .flatten()
+                .ok_or_else(|| String::from("a removed built-in member is still accessed"))?;
+        }
+    }
+    Ok(())
 }

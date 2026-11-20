@@ -269,32 +269,7 @@ impl Lowering<'_> {
                 matches!(statement, Statement::Loop { .. } | Statement::Switch { .. });
             let nested = match statement {
                 Statement::Return { value } => {
-                    let tail = place.tail && source.is_empty();
-                    if let (Some(value), Some(ret)) = (value, self.ret) {
-                        out.push(
-                            Statement::Store {
-                                pointer: ret,
-                                value,
-                            },
-                            span,
-                        );
-                    }
-                    if !tail {
-                        let flag = self.flag();
-                        let value = self.truth();
-                        out.push(
-                            Statement::Store {
-                                pointer: flag,
-                                value,
-                            },
-                            span,
-                        );
-                        if place.breakable {
-                            out.push(Statement::Break, span);
-                        }
-                        returned = true;
-                    }
-                    source.clear();
+                    returned |= self.lower_return(value, source, place, &mut out, span);
                     false
                 }
                 Statement::If {
@@ -303,40 +278,7 @@ impl Lowering<'_> {
                     reject,
                     control,
                 } => {
-                    let accept_exits = ends_in_return(&accept);
-                    let reject_exits = ends_in_return(&reject);
-                    if accept_exits && reject_exits {
-                        source.clear();
-                    }
-                    let inner = Place {
-                        tail: place.tail && source.is_empty(),
-                        breakable: place.breakable,
-                    };
-                    let ((accept, accept_returned), (reject, reject_returned)) =
-                        if accept_exits != reject_exits && !source.is_empty() {
-                            let rest = Place {
-                                tail: place.tail,
-                                breakable: place.breakable,
-                            };
-                            let (exits, continues) = if accept_exits {
-                                (accept, reject)
-                            } else {
-                                (reject, accept)
-                            };
-                            let exits = recurse(|| self.block(&mut Source::new(exits), rest));
-                            source.push(continues);
-                            let continues = recurse(|| self.block(source, rest));
-                            if accept_exits {
-                                (exits, continues)
-                            } else {
-                                (continues, exits)
-                            }
-                        } else {
-                            (
-                                recurse(|| self.block(&mut Source::new(accept), inner)),
-                                recurse(|| self.block(&mut Source::new(reject), inner)),
-                            )
-                        };
+                    let (accept, reject, nested) = self.lower_if([accept, reject], source, place);
                     out.push(
                         Statement::If {
                             condition,
@@ -346,32 +288,14 @@ impl Lowering<'_> {
                         },
                         span,
                     );
-                    accept_returned || reject_returned
+                    nested
                 }
                 Statement::Switch {
                     selector,
                     cases,
                     control,
                 } => {
-                    let rest_empty = source.is_empty();
-                    let mut any = false;
-                    let cases = cases
-                        .into_iter()
-                        .map(|case| {
-                            let inner = Place {
-                                tail: place.tail && rest_empty && !case.fall_through,
-                                breakable: true,
-                            };
-                            let (body, returned) =
-                                recurse(|| self.block(&mut Source::new(case.body), inner));
-                            any |= returned;
-                            SwitchCase {
-                                value: case.value,
-                                body,
-                                fall_through: case.fall_through,
-                            }
-                        })
-                        .collect();
+                    let (cases, nested) = self.lower_cases(cases, source.is_empty(), place);
                     out.push(
                         Statement::Switch {
                             selector,
@@ -380,7 +304,7 @@ impl Lowering<'_> {
                         },
                         span,
                     );
-                    any
+                    nested
                 }
                 Statement::Loop {
                     body,
@@ -433,23 +357,14 @@ impl Lowering<'_> {
             };
             if nested {
                 returned = true;
-                if place.breakable && absorbs_breaks {
-                    let condition = self.flag_is(true, &mut out, span);
-                    let mut exit = Block::new();
-                    exit.push(Statement::Break, span);
-                    out.push(
-                        Statement::If {
-                            condition,
-                            accept: exit,
-                            reject: Block::new(),
-                            control: Default::default(),
-                        },
-                        span,
-                    );
-                } else if !place.breakable && !source.is_empty() {
-                    let condition = self.flag_is(false, &mut out, span);
-                    guards.push((core::mem::take(&mut out), condition, span));
-                }
+                self.after_nested_return(
+                    absorbs_breaks,
+                    source,
+                    place,
+                    &mut out,
+                    &mut guards,
+                    span,
+                );
             }
         }
         while let Some((mut outer, condition, span)) = guards.pop() {
@@ -465,5 +380,134 @@ impl Lowering<'_> {
             out = outer;
         }
         (out, returned)
+    }
+
+    fn lower_return(
+        &mut self,
+        value: Option<Handle<Expression>>,
+        source: &mut Source,
+        place: Place,
+        out: &mut Block,
+        span: Span,
+    ) -> bool {
+        let tail = place.tail && source.is_empty();
+        if let (Some(value), Some(ret)) = (value, self.ret) {
+            out.push(
+                Statement::Store {
+                    pointer: ret,
+                    value,
+                },
+                span,
+            );
+        }
+        if !tail {
+            let flag = self.flag();
+            let value = self.truth();
+            out.push(
+                Statement::Store {
+                    pointer: flag,
+                    value,
+                },
+                span,
+            );
+            if place.breakable {
+                out.push(Statement::Break, span);
+            }
+        }
+        source.clear();
+        !tail
+    }
+
+    fn lower_if(
+        &mut self,
+        [accept, reject]: [Block; 2],
+        source: &mut Source,
+        place: Place,
+    ) -> (Block, Block, bool) {
+        let accept_exits = ends_in_return(&accept);
+        let reject_exits = ends_in_return(&reject);
+        if accept_exits && reject_exits {
+            source.clear();
+        }
+        let inner = Place {
+            tail: place.tail && source.is_empty(),
+            breakable: place.breakable,
+        };
+        let ((accept, accept_returned), (reject, reject_returned)) =
+            if accept_exits != reject_exits && !source.is_empty() {
+                let (exits, continues) = if accept_exits {
+                    (accept, reject)
+                } else {
+                    (reject, accept)
+                };
+                let exits = recurse(|| self.block(&mut Source::new(exits), place));
+                source.push(continues);
+                let continues = recurse(|| self.block(source, place));
+                if accept_exits {
+                    (exits, continues)
+                } else {
+                    (continues, exits)
+                }
+            } else {
+                (
+                    recurse(|| self.block(&mut Source::new(accept), inner)),
+                    recurse(|| self.block(&mut Source::new(reject), inner)),
+                )
+            };
+        (accept, reject, accept_returned || reject_returned)
+    }
+
+    fn lower_cases(
+        &mut self,
+        cases: Vec<SwitchCase>,
+        rest_empty: bool,
+        place: Place,
+    ) -> (Vec<SwitchCase>, bool) {
+        let mut any = false;
+        let cases = cases
+            .into_iter()
+            .map(|case| {
+                let inner = Place {
+                    tail: place.tail && rest_empty && !case.fall_through,
+                    breakable: true,
+                };
+                let (body, returned) = recurse(|| self.block(&mut Source::new(case.body), inner));
+                any |= returned;
+                SwitchCase {
+                    value: case.value,
+                    body,
+                    fall_through: case.fall_through,
+                }
+            })
+            .collect();
+        (cases, any)
+    }
+
+    fn after_nested_return(
+        &mut self,
+        absorbs_breaks: bool,
+        source: &Source,
+        place: Place,
+        out: &mut Block,
+        guards: &mut Vec<(Block, Handle<Expression>, Span)>,
+        span: Span,
+    ) {
+        if place.breakable && absorbs_breaks {
+            let condition = self.flag_is(true, out, span);
+            let mut exit = Block::new();
+            exit.push(Statement::Break, span);
+            out.push(
+                Statement::If {
+                    condition,
+                    accept: exit,
+                    reject: Block::new(),
+                    control: Default::default(),
+                },
+                span,
+            );
+        } else if !place.breakable && !source.is_empty() {
+            let condition = self.flag_is(false, out, span);
+            guards.push((core::mem::take(out), condition, span));
+        }
     }
 }

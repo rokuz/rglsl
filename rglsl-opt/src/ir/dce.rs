@@ -45,6 +45,16 @@ struct Tree<'m> {
 }
 
 impl<'m> Tree<'m> {
+    fn breaks_out(&self, id: u32) -> bool {
+        self.exits.get(id as usize).is_some_and(|exits| {
+            exits.iter().any(|&exit| {
+                self.nodes
+                    .get(exit as usize)
+                    .is_some_and(|node| matches!(*node.statement, Statement::Break))
+            })
+        })
+    }
+
     fn of(body: &'m Block) -> Self {
         struct Frame<'m> {
             statements: core::slice::Iter<'m, Statement>,
@@ -479,16 +489,7 @@ impl<'m> Marker<'m> {
                 | Statement::Break
                 | Statement::Continue => {}
                 Statement::Loop { break_if, .. } => {
-                    if break_if.is_none()
-                        && live.tree.exits.get(id as usize).is_none_or(|exits| {
-                            !exits.iter().any(|&exit| {
-                                live.tree
-                                    .nodes
-                                    .get(exit as usize)
-                                    .is_some_and(|node| matches!(*node.statement, Statement::Break))
-                            })
-                        })
-                    {
+                    if break_if.is_none() && !live.tree.breaks_out(id) {
                         if returns_nothing {
                             endless.push(id);
                             if node.parent != NONE {
