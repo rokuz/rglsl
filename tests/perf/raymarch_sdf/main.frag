@@ -8,7 +8,7 @@ layout(std140, set = 0, binding = 0) uniform Camera {
     vec4 time;
 };
 
-const int SAMPLES = 24;
+const int SAMPLES = 36;
 
 struct Hit {
     float distance;
