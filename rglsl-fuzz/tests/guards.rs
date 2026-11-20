@@ -264,7 +264,11 @@ fn a_function_that_can_fall_off_its_end_returns_zero() -> TestResult {
         }
         let again = add_guards(&guarded, ShaderStage::Fragment, bound)?.ok_or("no guarded unit")?;
         let again = emit(&again)?;
-        assert_eq!(again.matches("return vec2(0.0, 0.0);").count(), 1, "{again}");
+        assert_eq!(
+            again.matches("return vec2(0.0, 0.0);").count(),
+            1,
+            "{again}"
+        );
     }
     Ok(())
 }

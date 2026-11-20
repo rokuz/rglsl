@@ -2,8 +2,8 @@ use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, BasicType, BinaryOperator, Condition, Declaration,
     DeclarationKind, Dimension, Expression, ExpressionKind, ExternalDeclaration, Initializer,
-    JumpStatement, NodeId, PostfixOperator, Scalar, Spanned, Statement, StatementKind, TranslationUnit,
-    TypeSpecifier, TypeSpecifierNonArray,
+    JumpStatement, NodeId, PostfixOperator, Scalar, Spanned, Statement, StatementKind,
+    TranslationUnit, TypeSpecifier, TypeSpecifierNonArray,
 };
 use rglsl_sema::scope::{Origin, Storage};
 use rglsl_sema::types::ArraySize;
@@ -294,11 +294,7 @@ fn ends_in_return(statements: &[Statement]) -> bool {
     })
 }
 
-fn terminate_functions(
-    unit: &mut TranslationUnit,
-    analysis: &Analysis,
-    builder: &mut Builder,
-) {
+fn terminate_functions(unit: &mut TranslationUnit, analysis: &Analysis, builder: &mut Builder) {
     for external in &mut unit.external_declarations {
         let ExternalDeclaration::FunctionDefinition(definition) = external else {
             continue;
