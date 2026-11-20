@@ -443,10 +443,7 @@ impl<'a> Walker<'a> {
                 }
                 Statement::Store { pointer, value } => {
                     facts.size = facts.size.saturating_add(1);
-                    if let Some(target) = self.locals.pointer(pointer)
-                        && target.whole
-                        && let Root::Local(local) = target.root
-                    {
+                    if let Some(local) = self.locals.whole_local(pointer) {
                         siblings.insert(local, (position, value));
                     }
                 }
@@ -487,35 +484,7 @@ impl<'a> Walker<'a> {
                     ref continuing,
                     break_if,
                     control,
-                } => {
-                    let index = self.loops.len();
-                    self.loops.push(LoopInfo {
-                        position,
-                        end: self.end(position),
-                        parent: self.current,
-                        control,
-                        own: 0,
-                        indexes: false,
-                        simple: false,
-                        exit: None,
-                        counter: None,
-                        never_entered: false,
-                    });
-                    self.several.push(false);
-                    let saved = self.current.replace(index);
-                    let in_body = recurse(|| self.block(body));
-                    let in_continuing = recurse(|| self.block(continuing));
-                    self.current = saved;
-                    self.finish(
-                        index,
-                        body,
-                        continuing,
-                        break_if,
-                        in_body,
-                        in_continuing,
-                        &siblings,
-                    );
-                }
+                } => self.walk_loop(position, [body, continuing], break_if, control, &siblings),
                 ref other => {
                     facts.size = facts.size.saturating_add(1);
                     facts.ends |= other.is_terminator();
@@ -529,6 +498,43 @@ impl<'a> Walker<'a> {
             }
         }
         facts
+    }
+
+    fn walk_loop(
+        &mut self,
+        position: u32,
+        [body, continuing]: [&'a Block; 2],
+        break_if: Option<Handle<Expression>>,
+        control: LoopControl,
+        siblings: &Siblings,
+    ) {
+        let index = self.loops.len();
+        self.loops.push(LoopInfo {
+            position,
+            end: self.end(position),
+            parent: self.current,
+            control,
+            own: 0,
+            indexes: false,
+            simple: false,
+            exit: None,
+            counter: None,
+            never_entered: false,
+        });
+        self.several.push(false);
+        let saved = self.current.replace(index);
+        let in_body = recurse(|| self.block(body));
+        let in_continuing = recurse(|| self.block(continuing));
+        self.current = saved;
+        self.finish(
+            index,
+            body,
+            continuing,
+            break_if,
+            in_body,
+            in_continuing,
+            siblings,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
