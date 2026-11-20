@@ -215,6 +215,9 @@ pub fn settle(batch: &Job, raw: &Outputs) -> Vec<Option<JobResult>> {
                     format!("amber exited with 1: {script}: {message}").into_bytes(),
                 );
             }
+            let timing_recipe = timed
+                .as_ref()
+                .map_or_else(|| check.clone(), |(_, recipe)| recipe.clone());
             if member.capture.statistics
                 && let Some(bytes) = raw.get(STATISTICS)
             {
@@ -227,10 +230,7 @@ pub fn settle(batch: &Job, raw: &Outputs) -> Vec<Option<JobResult>> {
                 }
             }
             if member.capture.timing {
-                let block = timed
-                    .as_ref()
-                    .and_then(|(_, recipe)| timing_block(&stdout, recipe))
-                    .unwrap_or_default();
+                let block = timing_block(&stdout, &timing_recipe).unwrap_or_default();
                 outputs.insert(TIMING.to_string(), block.into_bytes());
             }
             Some(Ok(outputs))
@@ -297,6 +297,49 @@ mod tests {
             [0]
         );
         fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_timed_script_run_alone_in_a_batch_keeps_its_timing() -> anyhow::Result<()> {
+        let root = PathBuf::from("/w");
+        let mut first = job(&root.join("a"), "rglsl.timed.amber", None);
+        first.dumps = Vec::new();
+        first.capture = Capture {
+            statistics: false,
+            timing: true,
+        };
+        let mut second = first.clone();
+        second.dir = root.join("b");
+        let batch = Job {
+            dir: root.clone(),
+            script: "batch-1".into(),
+            members: vec![first, second],
+            ..job(&root, "batch-1", None)
+        };
+        let raw: Outputs = [
+            (EXIT, "0".to_string()),
+            (
+                STDOUT,
+                format!(
+                    "{TIMING_HEADER} a/rglsl.timed.amber\n    0.5, 0.25\n\n{TIMING_HEADER} b/rglsl.timed.amber\n    2.0, 3.0\n"
+                ),
+            ),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.into_bytes()))
+        .collect();
+        let settled = settle(&batch, &raw);
+        let [Some(Ok(a)), Some(Ok(b))] = settled.as_slice() else {
+            anyhow::bail!("unexpected settlement: {settled:?}");
+        };
+        let times = |outputs: &Outputs| {
+            amber::parse_timing(&String::from_utf8_lossy(
+                outputs.get(TIMING).map_or(&[][..], Vec::as_slice),
+            ))
+        };
+        assert_eq!(times(a), [0.5, 0.25]);
+        assert_eq!(times(b), [2.0, 3.0]);
         Ok(())
     }
 
