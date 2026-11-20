@@ -100,6 +100,24 @@ const fn binary_scalar_op(
     })
 }
 
+const NON_FINITE_SEARCH: usize = 64;
+
+const fn non_finite(literal: crate::Literal) -> bool {
+    match literal {
+        crate::Literal::F64(value) => !value.is_finite(),
+        crate::Literal::F32(value) => !value.is_finite(),
+        crate::Literal::F16(value) => !value.is_finite(),
+        _ => false,
+    }
+}
+
+const fn per_component(op: spirv::Op) -> bool {
+    matches!(
+        op,
+        spirv::Op::FAdd | spirv::Op::FSub | spirv::Op::FMul | spirv::Op::FDiv | spirv::Op::FMod
+    )
+}
+
 struct BinaryOperands {
     id: Word,
     result_type_id: Word,
@@ -292,6 +310,12 @@ impl BlockContext<'_> {
         let left_dimension = get_dimension(left_ty_inner)?;
         let right_dimension = get_dimension(right_ty_inner)?;
         let left_scalar_kind = left_ty_inner.scalar_kind();
+        let vector_pair = match (left_ty_inner, right_ty_inner) {
+            (&crate::TypeInner::Vector { size, scalar }, &crate::TypeInner::Vector { .. }) => {
+                Some((size, scalar))
+            }
+            _ => None,
+        };
 
         let operands = BinaryOperands {
             id,
@@ -331,7 +355,13 @@ impl BlockContext<'_> {
             _ => Some((binary_scalar_op(op, left_scalar_kind)?, false)),
         };
 
-        if let Some((spirv_op, reverse_operands)) = emitted {
+        if let Some((spirv_op, false)) = emitted
+            && per_component(spirv_op)
+            && let Some(shape) = vector_pair
+            && (self.non_finite_constant(left) || self.non_finite_constant(right))
+        {
+            self.write_per_component(expr_handle, spirv_op, &operands, shape, block)?;
+        } else if let Some((spirv_op, reverse_operands)) = emitted {
             block.body.push(Instruction::binary(
                 spirv_op,
                 result_type_id,
@@ -342,6 +372,94 @@ impl BlockContext<'_> {
         }
 
         Ok(id)
+    }
+
+    fn non_finite_constant(&self, handle: Handle<crate::Expression>) -> bool {
+        if !self.expression_constness.is_const(handle) {
+            return false;
+        }
+        let mut pending = alloc::vec![(handle, false)];
+        let mut visited = 0;
+        while let Some((handle, global)) = pending.pop() {
+            visited += 1;
+            if visited > NON_FINITE_SEARCH {
+                return false;
+            }
+            let arena = if global {
+                &self.ir_module.global_expressions
+            } else {
+                &self.ir_function.expressions
+            };
+            let Ok(expression) = arena.try_get(handle) else {
+                continue;
+            };
+            match *expression {
+                crate::Expression::Literal(literal) if non_finite(literal) => return true,
+                crate::Expression::Constant(constant) => {
+                    if let Ok(constant) = self.ir_module.constants.try_get(constant) {
+                        pending.push((constant.init, true));
+                    }
+                }
+                crate::Expression::Compose { ref components, .. } => {
+                    pending.extend(components.iter().map(|&component| (component, global)));
+                }
+                crate::Expression::Splat { value, .. } => pending.push((value, global)),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn write_per_component(
+        &mut self,
+        expr_handle: Handle<crate::Expression>,
+        op: spirv::Op,
+        operands: &BinaryOperands,
+        (size, scalar): (crate::VectorSize, crate::Scalar),
+        block: &mut Block,
+    ) -> Result<(), Error> {
+        let precision = self
+            .ir_function
+            .precision
+            .get(&expr_handle)
+            .copied()
+            .unwrap_or_default();
+        let non_uniform = self
+            .non_uniform(expr_handle)
+            .contains(crate::NonUniform::VALUE);
+        let scalar_type_id = self.get_numeric_type_id(NumericType::Scalar(scalar));
+        let mut components = ArrayVec::<Word, 4>::new();
+        for index in 0..size as u32 {
+            let left = self.gen_id();
+            let right = self.gen_id();
+            let result = self.gen_id();
+            block.body.push(Instruction::composite_extract(
+                scalar_type_id,
+                left,
+                operands.left_id,
+                &[index],
+            ));
+            block.body.push(Instruction::composite_extract(
+                scalar_type_id,
+                right,
+                operands.right_id,
+                &[index],
+            ));
+            block
+                .body
+                .push(Instruction::binary(op, scalar_type_id, result, left, right));
+            self.writer.decorate_precision(result, precision);
+            if non_uniform {
+                self.writer.decorate_non_uniform(result)?;
+            }
+            components.push(result);
+        }
+        block.body.push(Instruction::composite_construct(
+            operands.result_type_id,
+            operands.id,
+            &components,
+        ));
+        Ok(())
     }
 
     fn write_matrix_matrix_column_op(

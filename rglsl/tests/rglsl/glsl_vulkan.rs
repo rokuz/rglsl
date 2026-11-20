@@ -12659,3 +12659,36 @@ void main() {}
     );
     Ok(())
 }
+
+#[test]
+fn vector_arithmetic_with_a_non_finite_constant_is_written_per_component() -> crate::TestResult {
+    let source = |constant: &str| {
+        format!(
+            "#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) buffer B {{ vec2 position; float time; vec2 square; }};
+void main() {{
+    square = {constant} + vec2(time, 1.0);
+}}
+"
+        )
+    };
+    let vector_adds = |module: &dr::Module| {
+        instructions(module, Op::FAdd)
+            .into_iter()
+            .filter(|inst| {
+                inst.result_type.is_some_and(|ty| {
+                    module.types_global_values.iter().any(|declared| {
+                        declared.result_id == Some(ty) && declared.class.opcode == Op::TypeVector
+                    })
+                })
+            })
+            .count()
+    };
+    let infinite = compile(ShaderStage::Compute, &source("exp2(vec2(7.6, 400.863))"))?;
+    assert_eq!(vector_adds(&infinite), 0);
+    assert_eq!(instructions(&infinite, Op::FAdd).len(), 2);
+    let finite = compile(ShaderStage::Compute, &source("exp2(vec2(7.6, 40.863))"))?;
+    assert_eq!(vector_adds(&finite), 1);
+    Ok(())
+}

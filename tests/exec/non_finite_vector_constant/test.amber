@@ -1,0 +1,9 @@
+#!amber
+SHADER compute main SPIRV-BIN FILE main.spv
+BUFFER data DATA_TYPE float DATA 0.5 0.5 0.25 0.0 0.0 0.0 0.0 0.0 END
+PIPELINE compute p
+  ATTACH main
+  BIND BUFFER data AS storage DESCRIPTOR_SET 0 BINDING 0
+END
+RUN p 1 1 1
+EXPECT data IDX 16 EQ 1.0 1.0 1.0 2.0
