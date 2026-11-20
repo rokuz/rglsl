@@ -11,6 +11,9 @@ void main()
         vec2 coord = vec2(1.0) + pow(-3.8, 4.4);
         sum += texture(tex, coord + vec2(float(i), 1.0));
     }
-    color = step(vec4(-1.0), sum);
+    color = vec4(1.0);
+    if (gl_FragCoord.x < 0.0) {
+        color = sum;
+    }
     done = vec4(1.0, 0.0, 0.0, 1.0);
 }
