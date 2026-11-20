@@ -15,31 +15,71 @@ use crate::{
 pub trait Visitor<'a> {
     type Error;
 
-    fn expression(&mut self, handle: Handle<Expression>) -> Result<(), Self::Error>;
-    fn result(&mut self, handle: Handle<Expression>) -> Result<(), Self::Error>;
-    fn emitted(&mut self, range: &Range<Expression>) -> Result<(), Self::Error>;
-    fn ty(&mut self, handle: Handle<Type>) -> Result<(), Self::Error>;
-    fn constant(&mut self, handle: Handle<Constant>) -> Result<(), Self::Error>;
-    fn r#override(&mut self, handle: Handle<Override>) -> Result<(), Self::Error>;
-    fn global_variable(&mut self, handle: Handle<GlobalVariable>) -> Result<(), Self::Error>;
-    fn local_variable(&mut self, handle: Handle<LocalVariable>) -> Result<(), Self::Error>;
-    fn function(&mut self, handle: Handle<Function>) -> Result<(), Self::Error>;
-    fn block(&mut self, block: &'a Block) -> Result<(), Self::Error>;
+    fn expression(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn result(&mut self, _: Handle<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn ty(&mut self, _: Handle<Type>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn function(&mut self, _: Handle<Function>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn block(&mut self, _: &'a Block) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 pub trait VisitorMut<'a> {
     type Error;
 
-    fn expression(&mut self, handle: &mut Handle<Expression>) -> Result<(), Self::Error>;
-    fn result(&mut self, handle: &mut Handle<Expression>) -> Result<(), Self::Error>;
-    fn emitted(&mut self, range: &mut Range<Expression>) -> Result<(), Self::Error>;
-    fn ty(&mut self, handle: &mut Handle<Type>) -> Result<(), Self::Error>;
-    fn constant(&mut self, handle: &mut Handle<Constant>) -> Result<(), Self::Error>;
-    fn r#override(&mut self, handle: &mut Handle<Override>) -> Result<(), Self::Error>;
-    fn global_variable(&mut self, handle: &mut Handle<GlobalVariable>) -> Result<(), Self::Error>;
-    fn local_variable(&mut self, handle: &mut Handle<LocalVariable>) -> Result<(), Self::Error>;
-    fn function(&mut self, handle: &mut Handle<Function>) -> Result<(), Self::Error>;
-    fn block(&mut self, block: &'a mut Block) -> Result<(), Self::Error>;
+    fn expression(&mut self, _: &mut Handle<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn result(&mut self, _: &mut Handle<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn emitted(&mut self, _: &mut Range<Expression>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn ty(&mut self, _: &mut Handle<Type>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn global_variable(&mut self, _: &mut Handle<GlobalVariable>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn local_variable(&mut self, _: &mut Handle<LocalVariable>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn function(&mut self, _: &mut Handle<Function>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn block(&mut self, _: &'a mut Block) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 macro_rules! visitable {
@@ -78,6 +118,14 @@ macro_rules! visitable {
                     operand,
                     block: |_| {},
                     function: |_: &mut Handle<Function>| {},
+                });
+            }
+
+            pub fn for_each_callee(&self, function: impl FnMut(Handle<Function>)) {
+                let Ok(()) = self.visit(&mut Parts {
+                    operand: |_| {},
+                    block: |_| {},
+                    function,
                 });
             }
         }
@@ -1479,42 +1527,6 @@ impl<'a, E, O: FnMut(Handle<Expression>) -> Result<(), E>> Visitor<'a> for TryOp
     fn expression(&mut self, handle: Handle<Expression>) -> Result<(), E> {
         (self.0)(handle)
     }
-
-    fn result(&mut self, _: Handle<Expression>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<Type>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: Handle<Constant>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: Handle<Override>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: Handle<Function>) -> Result<(), E> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a Block) -> Result<(), E> {
-        Ok(())
-    }
 }
 
 struct Parts<O, B, F> {
@@ -1533,34 +1545,6 @@ where
 
     fn expression(&mut self, handle: Handle<Expression>) -> Result<(), Infallible> {
         (self.operand)(handle);
-        Ok(())
-    }
-
-    fn result(&mut self, _: Handle<Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &Range<Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<Type>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: Handle<Constant>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: Handle<Override>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: Handle<GlobalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<LocalVariable>) -> Result<(), Infallible> {
         Ok(())
     }
 
@@ -1585,34 +1569,6 @@ where
 
     fn expression(&mut self, handle: &mut Handle<Expression>) -> Result<(), Infallible> {
         (self.operand)(handle);
-        Ok(())
-    }
-
-    fn result(&mut self, _: &mut Handle<Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn emitted(&mut self, _: &mut Range<Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: &mut Handle<Type>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: &mut Handle<GlobalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: &mut Handle<LocalVariable>) -> Result<(), Infallible> {
         Ok(())
     }
 
@@ -1641,14 +1597,6 @@ impl Statement {
             operand: |_: &mut Handle<Expression>| {},
             block,
             function: |_: &mut Handle<Function>| {},
-        });
-    }
-
-    pub fn for_each_callee(&self, function: impl FnMut(Handle<Function>)) {
-        let Ok(()) = self.visit(&mut Parts {
-            operand: |_| {},
-            block: |_| {},
-            function,
         });
     }
 }

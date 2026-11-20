@@ -499,34 +499,6 @@ impl<'a> VisitorMut<'a> for StatementRemap<'_> {
         }
         Ok(())
     }
-
-    fn ty(&mut self, _: &mut Handle<crate::Type>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn constant(&mut self, _: &mut Handle<Constant>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn r#override(&mut self, _: &mut Handle<Override>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: &mut Handle<crate::GlobalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: &mut Handle<crate::LocalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: &mut Handle<Function>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a mut Block) -> Result<(), Infallible> {
-        Ok(())
-    }
 }
 
 fn filter_emits_in_block(block: &mut Block, expressions: &Arena<Expression>) {

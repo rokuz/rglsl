@@ -627,6 +627,24 @@ impl crate::Module {
     pub fn compare_types(&self, lhs: &TypeResolution, rhs: &TypeResolution) -> bool {
         compare_types(lhs, rhs, &self.types)
     }
+
+    pub fn all_functions(&self) -> impl Iterator<Item = &crate::Function> {
+        self.functions
+            .iter()
+            .map(|(_, function)| function)
+            .chain(self.entry_points.iter().map(|entry| &entry.function))
+    }
+
+    pub fn all_functions_mut(&mut self) -> impl Iterator<Item = &mut crate::Function> {
+        self.functions
+            .iter_mut()
+            .map(|(_, function)| function)
+            .chain(
+                self.entry_points
+                    .iter_mut()
+                    .map(|entry| &mut entry.function),
+            )
+    }
 }
 
 #[derive(Debug)]

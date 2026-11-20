@@ -144,14 +144,6 @@ impl<'a, F: FnMut(Handle<Expression>)> Visitor<'a> for Dependencies<'_, F> {
         Ok(())
     }
 
-    fn emitted(&mut self, _: &crate::arena::Range<Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn ty(&mut self, _: Handle<crate::Type>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
     fn constant(&mut self, handle: Handle<crate::Constant>) -> Result<(), Infallible> {
         (self.visit)(self.module.constants[handle].init);
         Ok(())
@@ -162,22 +154,6 @@ impl<'a, F: FnMut(Handle<Expression>)> Visitor<'a> for Dependencies<'_, F> {
         if let (None, Some(init)) = (item.id, item.init) {
             (self.visit)(init);
         }
-        Ok(())
-    }
-
-    fn global_variable(&mut self, _: Handle<crate::GlobalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<crate::LocalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: Handle<crate::Function>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a crate::Block) -> Result<(), Infallible> {
         Ok(())
     }
 }

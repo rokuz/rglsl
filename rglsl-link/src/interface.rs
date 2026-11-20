@@ -373,11 +373,7 @@ pub(crate) fn match_locations(from: StageIo, to: StageIo) {
 }
 
 fn live_globals(module: &Module) -> BTreeSet<Handle<GlobalVariable>> {
-    let functions = module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    let functions = module.all_functions();
     let mut live = BTreeSet::new();
     for function in functions {
         for (_, expression) in function.expressions.iter() {

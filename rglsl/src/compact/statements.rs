@@ -4,7 +4,7 @@ use core::convert::Infallible;
 use super::expressions::Adjuster;
 use super::functions::FunctionTracer;
 use super::{FunctionMap, ModuleMap};
-use crate::arena::{BadHandle, Handle, Range};
+use crate::arena::{BadHandle, Handle};
 use crate::visit::Visitor;
 
 struct StatementTracer<'a, 't, 'f> {
@@ -25,10 +25,6 @@ impl<'a> Visitor<'a> for StatementTracer<'a, '_, '_> {
         Ok(())
     }
 
-    fn emitted(&mut self, _: &Range<crate::Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
     fn ty(&mut self, handle: Handle<crate::Type>) -> Result<(), Infallible> {
         self.tracer.types_used.insert(handle);
         Ok(())
@@ -44,10 +40,6 @@ impl<'a> Visitor<'a> for StatementTracer<'a, '_, '_> {
 
     fn global_variable(&mut self, handle: Handle<crate::GlobalVariable>) -> Result<(), Infallible> {
         self.tracer.global_variables_used.insert(handle);
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<crate::LocalVariable>) -> Result<(), Infallible> {
         Ok(())
     }
 

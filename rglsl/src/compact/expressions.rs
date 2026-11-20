@@ -95,10 +95,6 @@ impl<'a> Visitor<'a> for ExpressionTracer<'_> {
         Ok(())
     }
 
-    fn emitted(&mut self, _: &Range<crate::Expression>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
     fn ty(&mut self, handle: Handle<crate::Type>) -> Result<(), Infallible> {
         self.types_used.insert(handle);
         Ok(())
@@ -130,18 +126,6 @@ impl<'a> Visitor<'a> for ExpressionTracer<'_> {
 
     fn global_variable(&mut self, handle: Handle<crate::GlobalVariable>) -> Result<(), Infallible> {
         self.global_variables_used.insert(handle);
-        Ok(())
-    }
-
-    fn local_variable(&mut self, _: Handle<crate::LocalVariable>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn function(&mut self, _: Handle<crate::Function>) -> Result<(), Infallible> {
-        Ok(())
-    }
-
-    fn block(&mut self, _: &'a crate::Block) -> Result<(), Infallible> {
         Ok(())
     }
 }
@@ -188,10 +172,6 @@ impl<'a> VisitorMut<'a> for Adjuster<'a, '_> {
         handle: &mut Handle<crate::GlobalVariable>,
     ) -> Result<(), BadHandle> {
         self.module.globals.adjust(handle)
-    }
-
-    fn local_variable(&mut self, _: &mut Handle<crate::LocalVariable>) -> Result<(), BadHandle> {
-        Ok(())
     }
 
     fn function(&mut self, handle: &mut Handle<crate::Function>) -> Result<(), BadHandle> {

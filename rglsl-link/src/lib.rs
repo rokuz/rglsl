@@ -565,11 +565,7 @@ fn arena_sizes(module: &Module) -> Vec<usize> {
         module.global_variables.len(),
         module.functions.len(),
     ]);
-    let functions = module
-        .functions
-        .iter()
-        .map(|(_, function)| function)
-        .chain(module.entry_points.iter().map(|entry| &entry.function));
+    let functions = module.all_functions();
     for function in functions {
         sizes.push(function.expressions.len());
         sizes.push(function.local_variables.len());
