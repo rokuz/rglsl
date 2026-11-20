@@ -11017,7 +11017,11 @@ fn long_chains_lower_in_order_to_flat_control_flow() -> crate::TestResult {
     let (depth, ifs) = block_shape(&function.body);
     assert!(depth <= base + 2, "{depth}");
     assert!(ifs >= 2 * links - 1, "{ifs}");
-    assert!(function.local_variables.len() <= 4, "{}", function.local_variables.len());
+    assert!(
+        function.local_variables.len() <= 4,
+        "{}",
+        function.local_variables.len()
+    );
 
     let function = main("float f = b > 2 ? 1.5 : b > 3 ? b++ : b > 4 ? b-- : 7;")?;
     assert_eq!(function.local_variables.len(), 6);
