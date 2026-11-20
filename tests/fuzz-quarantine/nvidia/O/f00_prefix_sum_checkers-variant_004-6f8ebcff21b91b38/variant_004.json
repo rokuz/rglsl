@@ -1,0 +1,40 @@
+{
+  "GLF_dead10one": {
+    "args": [
+      0.6965562
+    ],
+    "binding": 2,
+    "func": "glUniform1f"
+  },
+  "GLF_dead2injectionSwitch": {
+    "args": [
+      0.44536984,
+      0.8789191
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "GLF_dead5time": {
+    "args": [
+      0.7242248
+    ],
+    "binding": 3,
+    "func": "glUniform1f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  }
+}
