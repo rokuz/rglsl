@@ -265,6 +265,8 @@ impl Lowering<'_> {
         let mut out = Block::new();
         let mut returned = false;
         while let Some((statement, span)) = source.next() {
+            let absorbs_breaks =
+                matches!(statement, Statement::Loop { .. } | Statement::Switch { .. });
             let nested = match statement {
                 Statement::Return { value } => {
                     let tail = place.tail && source.is_empty();
@@ -431,7 +433,7 @@ impl Lowering<'_> {
             };
             if nested {
                 returned = true;
-                if place.breakable {
+                if place.breakable && absorbs_breaks {
                     let condition = self.flag_is(true, &mut out, span);
                     let mut exit = Block::new();
                     exit.push(Statement::Break, span);
@@ -444,7 +446,7 @@ impl Lowering<'_> {
                         },
                         span,
                     );
-                } else if !source.is_empty() {
+                } else if !place.breakable && !source.is_empty() {
                     let condition = self.flag_is(false, &mut out, span);
                     guards.push((core::mem::take(&mut out), condition, span));
                 }
