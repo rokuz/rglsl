@@ -52,7 +52,138 @@ fn constant_flags(expressions: &Arena<Expression>) -> Vec<bool> {
     flags
 }
 
-fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[bool]) -> bool {
+fn flatten(module: &Module, arena: &Arena<Expression>, root: Handle<Expression>) -> Option<Flat> {
+    let shape_of = |ty| match module.types.get_handle(ty).ok()?.inner {
+        TypeInner::Scalar(_) => Some(Shape::Scalar),
+        TypeInner::Vector { .. } => Some(Shape::Vector),
+        TypeInner::Matrix { .. } => Some(Shape::Matrix),
+        _ => Some(Shape::Other),
+    };
+    let shape = match *arena.try_get(root).ok()? {
+        Expression::Literal(_) => Shape::Scalar,
+        Expression::Splat { .. } => Shape::Vector,
+        Expression::Compose { ty, .. } | Expression::ZeroValue(ty) => shape_of(ty)?,
+        Expression::Constant(constant) => shape_of(module.constants.try_get(constant).ok()?.ty)?,
+        _ => return None,
+    };
+    let mut values = Vec::new();
+    let mut pending = vec![(false, root, 1_usize)];
+    while let Some((global, handle, repeat)) = pending.pop() {
+        let source = if global {
+            &module.global_expressions
+        } else {
+            arena
+        };
+        match *source.try_get(handle).ok()? {
+            Expression::Literal(literal) => {
+                values.extend(core::iter::repeat_n(literal, repeat));
+            }
+            Expression::ZeroValue(ty) => {
+                let (scalar, count) = match module.types.get_handle(ty).ok()?.inner {
+                    TypeInner::Scalar(scalar) => (scalar, 1),
+                    TypeInner::Vector { size, scalar } => (scalar, size as usize),
+                    TypeInner::Matrix {
+                        columns,
+                        rows,
+                        scalar,
+                    } => (scalar, columns as usize * rows as usize),
+                    _ => return None,
+                };
+                let zero = Literal::zero(scalar)?;
+                values.extend(core::iter::repeat_n(zero, count * repeat));
+            }
+            Expression::Compose { ref components, .. } => {
+                for _ in 0..repeat {
+                    for &component in components.iter().rev() {
+                        pending.push((global, component, 1));
+                    }
+                }
+            }
+            Expression::Splat { size, value } => {
+                pending.push((global, value, repeat * size as usize));
+            }
+            Expression::Constant(constant) => {
+                let init = module.constants.try_get(constant).ok()?.init;
+                pending.push((true, init, repeat));
+            }
+            _ => return None,
+        }
+    }
+    Some(Flat { values, shape })
+}
+
+fn numbers(
+    module: &Module,
+    arena: &Arena<Expression>,
+    handle: Handle<Expression>,
+) -> Option<Vec<Number>> {
+    flatten(module, arena, handle)?
+        .values
+        .into_iter()
+        .map(Number::of)
+        .collect()
+}
+
+const PATTERNS: [Pattern; 5] = [
+    Pattern::Zero,
+    Pattern::One,
+    Pattern::AllOnes,
+    Pattern::True,
+    Pattern::False,
+];
+
+fn simplifies(
+    module: &Module,
+    expressions: &Arena<Expression>,
+    op: BinaryOperator,
+    (constant, other): (Handle<Expression>, Handle<Expression>),
+    constant_right: bool,
+) -> bool {
+    let Some(values) = numbers(module, expressions, constant) else {
+        return false;
+    };
+    let Some(domain) = values.first().map(|value| value.domain()) else {
+        return false;
+    };
+    let identity = PATTERNS.into_iter().any(|pattern| {
+        values.iter().all(|value| value.matches(pattern))
+            && float::identity_rule(op, domain, pattern, constant_right).is_some()
+    });
+    identity
+        || (float::reassociates(op, domain)
+            && matches!(expressions.try_get(other), Ok(Expression::Binary { .. })))
+}
+
+fn componentwise(expressions: &Arena<Expression>, base: Handle<Expression>) -> bool {
+    let shaped = |handle: Handle<Expression>| {
+        matches!(
+            expressions.try_get(handle),
+            Ok(Expression::Literal(_)
+                | Expression::Splat { .. }
+                | Expression::Compose { .. }
+                | Expression::ZeroValue(_)
+                | Expression::Constant(_))
+        )
+    };
+    matches!(
+        expressions.try_get(base),
+        Ok(&Expression::Binary {
+            op: BinaryOperator::Add
+                | BinaryOperator::Subtract
+                | BinaryOperator::Multiply
+                | BinaryOperator::Divide,
+            left,
+            right,
+        }) if shaped(left) && shaped(right)
+    )
+}
+
+fn candidate(
+    module: &Module,
+    expressions: &Arena<Expression>,
+    expression: &Expression,
+    flags: &[bool],
+) -> bool {
     let is = |handle: Handle<Expression>| flags.get(handle.index()) == Some(&true);
     let undefined = |handle: Handle<Expression>| {
         matches!(expressions.try_get(handle), Ok(Expression::Undef(_)))
@@ -61,15 +192,18 @@ fn candidate(expressions: &Arena<Expression>, expression: &Expression, flags: &[
     match *expression {
         Expression::Access { base, index } => is(index) || undefined(base),
         Expression::AccessIndex { base, .. } => {
-            is(base)
-                || undefined(base)
-                || matches!(expressions.try_get(base), Ok(Expression::Binary { .. }))
+            is(base) || undefined(base) || componentwise(expressions, base)
         }
         Expression::Swizzle { vector: base, .. } => is(base) || undefined(base),
         Expression::Unary { expr, .. } => {
             is(expr) || matches!(expressions.try_get(expr), Ok(Expression::Unary { .. }))
         }
-        Expression::Binary { left, right, .. } => is(left) || is(right),
+        Expression::Binary { op, left, right } => match (is(left), is(right)) {
+            (true, true) => true,
+            (false, false) => false,
+            (true, false) => simplifies(module, expressions, op, (left, right), false),
+            (false, true) => simplifies(module, expressions, op, (right, left), true),
+        },
         Expression::Math {
             fun: MathFunction::ExtractBits,
             arg2: Some(count),
@@ -110,7 +244,9 @@ fn rewrite(
             function
                 .expressions
                 .try_get(handle)
-                .is_ok_and(|expression| candidate(&function.expressions, expression, &flags))
+                .is_ok_and(|expression| {
+                    candidate(module, &function.expressions, expression, &flags)
+                })
         }),
         _ => false,
     });
@@ -274,66 +410,7 @@ impl Fold<'_> {
     }
 
     fn flatten(&self, arena: &Arena<Expression>, root: Handle<Expression>) -> Option<Flat> {
-        let module = &*self.module;
-        let shape_of = |ty| match module.types.get_handle(ty).ok()?.inner {
-            TypeInner::Scalar(_) => Some(Shape::Scalar),
-            TypeInner::Vector { .. } => Some(Shape::Vector),
-            TypeInner::Matrix { .. } => Some(Shape::Matrix),
-            _ => Some(Shape::Other),
-        };
-        let shape = match *arena.try_get(root).ok()? {
-            Expression::Literal(_) => Shape::Scalar,
-            Expression::Splat { .. } => Shape::Vector,
-            Expression::Compose { ty, .. } | Expression::ZeroValue(ty) => shape_of(ty)?,
-            Expression::Constant(constant) => {
-                shape_of(module.constants.try_get(constant).ok()?.ty)?
-            }
-            _ => return None,
-        };
-        let mut values = Vec::new();
-        let mut pending = vec![(false, root, 1_usize)];
-        while let Some((global, handle, repeat)) = pending.pop() {
-            let source = if global {
-                &module.global_expressions
-            } else {
-                arena
-            };
-            match *source.try_get(handle).ok()? {
-                Expression::Literal(literal) => {
-                    values.extend(core::iter::repeat_n(literal, repeat));
-                }
-                Expression::ZeroValue(ty) => {
-                    let (scalar, count) = match module.types.get_handle(ty).ok()?.inner {
-                        TypeInner::Scalar(scalar) => (scalar, 1),
-                        TypeInner::Vector { size, scalar } => (scalar, size as usize),
-                        TypeInner::Matrix {
-                            columns,
-                            rows,
-                            scalar,
-                        } => (scalar, columns as usize * rows as usize),
-                        _ => return None,
-                    };
-                    let zero = Literal::zero(scalar)?;
-                    values.extend(core::iter::repeat_n(zero, count * repeat));
-                }
-                Expression::Compose { ref components, .. } => {
-                    for _ in 0..repeat {
-                        for &component in components.iter().rev() {
-                            pending.push((global, component, 1));
-                        }
-                    }
-                }
-                Expression::Splat { size, value } => {
-                    pending.push((global, value, repeat * size as usize));
-                }
-                Expression::Constant(constant) => {
-                    let init = module.constants.try_get(constant).ok()?.init;
-                    pending.push((true, init, repeat));
-                }
-                _ => return None,
-            }
-        }
-        Some(Flat { values, shape })
+        flatten(self.module, arena, root)
     }
 
     fn numbers(
@@ -341,11 +418,7 @@ impl Fold<'_> {
         arena: &Arena<Expression>,
         handle: Handle<Expression>,
     ) -> Option<Vec<Number>> {
-        self.flatten(arena, handle)?
-            .values
-            .into_iter()
-            .map(Number::of)
-            .collect()
+        numbers(self.module, arena, handle)
     }
 
     fn simplify(
@@ -675,14 +748,7 @@ impl Fold<'_> {
             return Ok(None);
         };
         let domain = first.domain();
-        let patterns = [
-            Pattern::Zero,
-            Pattern::One,
-            Pattern::AllOnes,
-            Pattern::True,
-            Pattern::False,
-        ];
-        for pattern in patterns {
+        for pattern in PATTERNS {
             if !values.iter().all(|&value| value.matches(pattern)) {
                 continue;
             }
