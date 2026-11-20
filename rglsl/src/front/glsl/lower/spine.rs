@@ -13,10 +13,7 @@ use super::expression::{Chain, Place};
 use super::function::FunctionLowerer;
 use super::specialization::is_direct;
 use super::{Result, internal};
-use crate::{
-    BinaryOperator, Block, Expression, Handle, Literal, LocalVariable, SelectionControl, Span,
-    Statement,
-};
+use crate::{Expression, Handle};
 
 type Typed = (Handle<Expression>, GlslType);
 
@@ -30,16 +27,6 @@ enum Mode {
 struct Pending<'e> {
     node: &'e AstExpression,
     place: Place,
-}
-
-struct FlatLevel<'b> {
-    condition: &'b AstExpression,
-    then_expression: &'b AstExpression,
-    tail: Option<&'b AstExpression>,
-    result: Option<Handle<LocalVariable>>,
-    taken: Handle<LocalVariable>,
-    level: u32,
-    at: Span,
 }
 
 impl FunctionLowerer<'_, '_> {
@@ -114,7 +101,7 @@ impl FunctionLowerer<'_, '_> {
         self.typed_value(expression, flagged)
     }
 
-    fn conditional_mode(&self, node: &AstExpression, pure_reject: bool) -> Result<Mode> {
+    fn conditional_mode(&self, node: &AstExpression, reject: &AstExpression) -> Result<Mode> {
         let ty = &self.info(node)?.ty;
         let ExpressionKind::Conditional {
             ref then_expression,
@@ -125,50 +112,16 @@ impl FunctionLowerer<'_, '_> {
         };
         Ok(if ty.is_void() {
             Mode::Effect
-        } else if (ty.is_scalar() || ty.is_vector()) && pure_reject && self.pure(then_expression) {
+        } else if (ty.is_scalar() || ty.is_vector())
+            && self.pure(reject)
+            && self.pure(then_expression)
+            && !self.nested_conditional(reject)?
+            && !self.nested_conditional(then_expression)?
+        {
             Mode::Select
         } else {
             Mode::Local
         })
-    }
-
-    fn conditional_modes(
-        &self,
-        links: &[&AstExpression],
-        head: &AstExpression,
-    ) -> Result<Vec<Mode>> {
-        let mut modes = Vec::with_capacity(links.len());
-        let mut rest = self.pure(head);
-        for node in links.iter().rev() {
-            modes.push(self.conditional_mode(node, rest)?);
-            if let ExpressionKind::Conditional {
-                ref condition,
-                ref then_expression,
-                ..
-            } = node.kind
-            {
-                rest = rest && self.pure(condition) && self.pure(then_expression);
-            }
-        }
-        modes.reverse();
-        Ok(modes)
-    }
-
-    fn conditional_spine<'e>(&self, expression: &'e AstExpression) -> Result<Spine<'e>> {
-        let mut links = SpineLinks::new();
-        let mut head = expression;
-        while let ExpressionKind::Conditional {
-            ref else_expression,
-            ..
-        } = head.kind
-        {
-            if !links.is_empty() && (self.folds(head)? || self.constant_choice(head).is_some()) {
-                break;
-            }
-            links.push(head);
-            head = else_expression;
-        }
-        Ok(Spine { links, head })
     }
 
     fn constant_choice<'e>(&self, node: &'e AstExpression) -> Option<&'e AstExpression> {
@@ -203,192 +156,6 @@ impl FunctionLowerer<'_, '_> {
         }
     }
 
-    fn taken_is(
-        &mut self,
-        taken: Handle<LocalVariable>,
-        level: u32,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let pointer = self.local_pointer(taken, at)?;
-        let current = self.add(Expression::Load { pointer }, at)?;
-        let level = self.literal(Literal::U32(level), at)?;
-        self.add(
-            Expression::Binary {
-                op: BinaryOperator::Equal,
-                left: current,
-                right: level,
-            },
-            at,
-        )
-    }
-
-    fn taken_at_most(
-        &mut self,
-        taken: Handle<LocalVariable>,
-        level: u32,
-        at: Span,
-    ) -> Result<Handle<Expression>> {
-        let pointer = self.local_pointer(taken, at)?;
-        let current = self.add(Expression::Load { pointer }, at)?;
-        let level = self.literal(Literal::U32(level), at)?;
-        self.add(
-            Expression::Binary {
-                op: BinaryOperator::LessEqual,
-                left: current,
-                right: level,
-            },
-            at,
-        )
-    }
-
-    fn converts(&self, expression: &AstExpression) -> Result<bool> {
-        let info = self.info(expression)?;
-        Ok(info
-            .conversion
-            .as_deref()
-            .is_some_and(|target| *target != info.ty))
-    }
-
-    fn set_taken(&mut self, taken: Handle<LocalVariable>, level: u32, at: Span) -> Result<()> {
-        let pointer = self.local_pointer(taken, at)?;
-        let value = self.literal(Literal::U32(level), at)?;
-        self.push(Statement::Store { pointer, value }, at);
-        Ok(())
-    }
-
-    fn flat_conditionals(
-        &mut self,
-        links: &[&AstExpression],
-        valued: bool,
-        tail: &AstExpression,
-    ) -> Result<Option<Handle<Expression>>> {
-        let outer_span = links.first().map_or(tail.span, |node| node.span);
-        let outer = self.at(outer_span);
-        if links.is_empty() {
-            return Err(internal(outer));
-        }
-        let none = u32::try_from(links.len()).map_err(|_| internal(outer))?;
-        let taken = self.local(&GlslType::UINT, None, outer)?;
-        self.set_taken(taken, none, outer)?;
-        let mut results: Vec<Option<Handle<LocalVariable>>> = Vec::with_capacity(links.len());
-        for &node in links {
-            let shared = match results.last() {
-                Some(&previous) if !self.converts(node)? => previous,
-                _ => None,
-            };
-            results.push(match shared {
-                Some(local) => Some(local),
-                None if valued => {
-                    let ty = &self.info(node)?.ty;
-                    let at = self.at(node.span);
-                    Some(self.local(ty, None, at)?)
-                }
-                None => None,
-            });
-        }
-        for (level, (&node, &result)) in (0u32..).zip(links.iter().zip(&results)) {
-            let at = self.at(node.span);
-            let last = level.checked_add(1) == Some(none);
-            let (condition, then_expression) = self.conditional_parts(node)?;
-            let chosen = FlatLevel {
-                condition,
-                then_expression,
-                tail: last.then_some(tail),
-                result,
-                taken,
-                level,
-                at,
-            };
-            if level == 0 {
-                let chosen = recurse(|| self.flat_level(chosen));
-                chosen?;
-            } else {
-                let pending = self.taken_is(taken, none, at)?;
-                let accept = self.block(|this| this.flat_level(chosen));
-                let accept = accept?;
-                self.push(
-                    Statement::If {
-                        condition: pending,
-                        accept,
-                        reject: Block::new(),
-                        control: SelectionControl::None,
-                    },
-                    at,
-                );
-            }
-        }
-        if !valued {
-            return Ok(None);
-        }
-        let ascents: Vec<_> = (0u32..)
-            .zip(links.windows(2).zip(results.windows(2)))
-            .collect();
-        for (level, pair) in ascents.into_iter().rev() {
-            let (&[_, inner], &[Some(result), Some(inner_result)]) = pair else {
-                return Err(internal(outer));
-            };
-            if result == inner_result {
-                continue;
-            }
-            let at = self.at(inner.span);
-            let skip = self.taken_at_most(taken, level, at)?;
-            let reject = self.block(|this| {
-                let pointer = this.local_pointer(inner_result, at)?;
-                let loaded = this.add(Expression::Load { pointer }, at)?;
-                let (value, _) = this.typed_value(inner, Some(loaded))?;
-                let pointer = this.local_pointer(result, at)?;
-                this.push(Statement::Store { pointer, value }, at);
-                Ok(())
-            })?;
-            self.push(
-                Statement::If {
-                    condition: skip,
-                    accept: Block::new(),
-                    reject,
-                    control: SelectionControl::None,
-                },
-                at,
-            );
-        }
-        let result = results
-            .first()
-            .copied()
-            .flatten()
-            .ok_or_else(|| internal(outer))?;
-        let pointer = self.local_pointer(result, outer)?;
-        self.add(Expression::Load { pointer }, outer).map(Some)
-    }
-
-    fn flat_level(&mut self, level: FlatLevel<'_>) -> Result<()> {
-        let FlatLevel {
-            condition,
-            then_expression,
-            tail,
-            result,
-            taken,
-            level,
-            at,
-        } = level;
-        let condition = recurse(|| self.rvalue(condition))?;
-        let accept = self.block(|this| {
-            recurse(|| this.branch(then_expression, result, at))?;
-            this.set_taken(taken, level, at)
-        })?;
-        let reject = match tail {
-            Some(tail) => self.block(|this| this.branch(tail, result, at))?,
-            None => Block::new(),
-        };
-        self.push(
-            Statement::If {
-                condition,
-                accept,
-                reject,
-                control: SelectionControl::None,
-            },
-            at,
-        );
-        Ok(())
-    }
     pub(super) fn access_chain(&mut self, expression: &AstExpression) -> Result<Chain> {
         let mut links = SpineLinks::new();
         let mut current = expression;
@@ -566,54 +333,47 @@ impl FunctionLowerer<'_, '_> {
             let result = recurse(|| self.rvalue(chosen));
             return result.map(Some);
         }
-        let spine = self.conditional_spine(expression)?;
-        let modes = self.conditional_modes(&spine.links, spine.head)?;
-        let first = modes
-            .first()
-            .copied()
-            .ok_or(internal(self.at(expression.span)))?;
-        let run = modes.iter().take_while(|mode| **mode == first).count();
-        let links = spine
-            .links
-            .get(..run)
-            .ok_or(internal(self.at(expression.span)))?;
-        let tail = spine.links.get(run).copied().unwrap_or(spine.head);
-        match (first, links) {
-            (Mode::Select, _) => recurse(|| self.select_chain(links, tail)).map(Some),
-            (_, &[node]) => recurse(|| self.single_conditional(node, first, tail)),
-            _ => recurse(|| self.flat_conditionals(links, first == Mode::Local, tail)),
+        let tail = self.else_part(expression)?;
+        let mode = self.conditional_mode(expression, tail)?;
+        if mode == Mode::Select {
+            return recurse(|| self.select(expression, tail)).map(Some);
+        }
+        recurse(|| self.single_conditional(expression, mode, tail))
+    }
+
+    fn else_part<'e>(&self, node: &'e AstExpression) -> Result<&'e AstExpression> {
+        match node.kind {
+            ExpressionKind::Conditional {
+                ref else_expression,
+                ..
+            } => Ok(else_expression),
+            _ => Err(internal(self.at(node.span))),
         }
     }
 
-    fn select_chain(
-        &mut self,
-        links: &[&AstExpression],
-        tail: &AstExpression,
-    ) -> Result<Handle<Expression>> {
-        let mut parts = Vec::with_capacity(links.len());
-        for &node in links {
-            let (condition, then_expression) = self.conditional_parts(node)?;
-            let condition = recurse(|| self.rvalue(condition))?;
-            let accept = recurse(|| self.rvalue(then_expression))?;
-            parts.push((node, condition, accept));
+    fn select(&mut self, node: &AstExpression, tail: &AstExpression) -> Result<Handle<Expression>> {
+        let (condition, then_expression) = self.conditional_parts(node)?;
+        let condition = recurse(|| self.rvalue(condition))?;
+        let accept = recurse(|| self.rvalue(then_expression))?;
+        let reject = recurse(|| self.rvalue(tail))?;
+        self.add(
+            Expression::Select {
+                condition,
+                accept,
+                reject,
+            },
+            self.at(node.span),
+        )
+    }
+
+    fn nested_conditional(&self, expression: &AstExpression) -> Result<bool> {
+        let mut node = expression;
+        while let ExpressionKind::Parenthesized(ref inner) = node.kind {
+            node = inner;
         }
-        let mut reject = recurse(|| self.rvalue(tail))?;
-        while let Some((node, condition, accept)) = parts.pop() {
-            let at = self.at(node.span);
-            let value = (self.add(
-                Expression::Select {
-                    condition,
-                    accept,
-                    reject,
-                },
-                at,
-            ))?;
-            if parts.is_empty() {
-                return Ok(value);
-            }
-            reject = self.passed_on(node, Some(value))?.0;
-        }
-        Err(internal(self.at(tail.span)))
+        Ok(matches!(node.kind, ExpressionKind::Conditional { .. })
+            && !self.folds(node)?
+            && self.constant_choice(node).is_none())
     }
 
     fn single_conditional(
@@ -630,17 +390,5 @@ impl FunctionLowerer<'_, '_> {
         }
         let ty = &self.info(node)?.ty;
         recurse(|| self.conditional_local(ty, condition, [then_expression, tail], at))
-    }
-
-    fn branch(
-        &mut self,
-        expression: &AstExpression,
-        result: Option<Handle<LocalVariable>>,
-        at: Span,
-    ) -> Result<()> {
-        match result {
-            Some(local) => recurse(|| self.stored(expression, local, at)),
-            None => recurse(|| self.effect(expression)),
-        }
     }
 }

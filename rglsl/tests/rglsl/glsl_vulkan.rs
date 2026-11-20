@@ -10980,7 +10980,7 @@ fn left_operands(function: &rglsl::Function, root: rglsl::Handle<rglsl::Expressi
 }
 
 #[test]
-fn long_chains_lower_in_order_to_flat_control_flow() -> crate::TestResult {
+fn long_chains_lower_in_order() -> crate::TestResult {
     let links = 2000;
     let shader = |body: &str| {
         format!(
@@ -11015,25 +11015,20 @@ fn long_chains_lower_in_order_to_flat_control_flow() -> crate::TestResult {
 
     let function = main(&format!("result = {}b;", "b > 2 ? b++ : ".repeat(links)))?;
     let (depth, ifs) = block_shape(&function.body);
-    assert!(depth <= base + 2, "{depth}");
-    assert!(ifs >= 2 * links - 1, "{ifs}");
-    assert!(
-        function.local_variables.len() <= 4,
-        "{}",
-        function.local_variables.len()
-    );
+    assert_eq!((depth, ifs), (base + links, links));
+    assert_eq!(function.local_variables.len(), 2 + links);
 
     let function = main("float f = b > 2 ? 1.5 : b > 3 ? b++ : b > 4 ? b-- : 7;")?;
     assert_eq!(function.local_variables.len(), 6);
 
     let function = main(&format!("result = {}b;", "t ? b : ".repeat(links)))?;
-    assert_eq!(block_shape(&function.body), (base, 0));
+    assert_eq!(block_shape(&function.body), (base + links - 1, links - 1));
     let selects = function
         .expressions
         .iter()
         .filter(|(_, expression)| matches!(expression, rglsl::Expression::Select { .. }))
         .count();
-    assert_eq!(selects, links);
+    assert_eq!(selects, 1);
 
     let function = main("result = t ? b++ : b > 2 ? b-- : 7;")?;
     assert_eq!(block_shape(&function.body).0, base + 2);
