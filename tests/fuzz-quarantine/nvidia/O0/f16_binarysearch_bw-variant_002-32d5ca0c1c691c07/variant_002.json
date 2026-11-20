@@ -1,0 +1,43 @@
+{
+  "GLF_live6injectionSwitch": {
+    "args": [
+      0.5213503,
+      0.04295671
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "GLF_live8injectionSwitch": {
+    "args": [
+      0.3318774,
+      0.8756568
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "GLF_live9polynomial": {
+    "args": [
+      0.12445688,
+      0.2738868,
+      0.760823
+    ],
+    "binding": 2,
+    "func": "glUniform3f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  }
+}

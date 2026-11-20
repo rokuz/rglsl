@@ -1,0 +1,30 @@
+{
+  "GLF_live2one": {
+    "args": [
+      0.31633002
+    ],
+    "binding": 2,
+    "func": "glUniform1f"
+  },
+  "GLF_live3tex": {
+    "binding": 3,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  }
+}

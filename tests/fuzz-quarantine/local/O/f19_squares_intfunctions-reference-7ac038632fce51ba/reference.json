@@ -1,0 +1,17 @@
+{
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "time": {
+    "args": [
+      0.0
+    ],
+    "binding": 0,
+    "func": "glUniform1f"
+  }
+}
