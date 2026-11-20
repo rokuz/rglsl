@@ -210,3 +210,61 @@ fn a_failure_that_needs_undefined_behaviour_is_an_error() -> TestResult {
     assert!(shader_text(&reduction.job)?.contains("vec3 data[16];"));
     Ok(())
 }
+
+const FALLING_OFF: &str = "#version 450
+precision highp float;
+layout(location = 0) out vec4 _GLF_color;
+layout(set = 0, binding = 0) uniform Buf {
+    vec2 injectionSwitch;
+};
+struct Pair {
+    float f;
+    ivec2 v;
+};
+vec2 loose(vec2 coord) {
+    for (int i = 1; i != int(injectionSwitch.x); i--) {
+        return coord;
+    }
+}
+Pair pair(int k) {
+    if (k > 0) {
+        return Pair(1.0, ivec2(k));
+    }
+}
+float ended(float x) {
+    return x;
+}
+void nothing() {
+}
+void main() {
+    nothing();
+    _GLF_color = vec4(loose(vec2(1.0)), pair(1).f, ended(1.0));
+}
+";
+
+#[test]
+fn a_function_that_can_fall_off_its_end_returns_zero() -> TestResult {
+    let unit = parse_shader(FALLING_OFF)?;
+    for bound in [None, Some(100)] {
+        let guarded = add_guards(&unit, ShaderStage::Fragment, bound)?.ok_or("no guarded unit")?;
+        let text = emit(&guarded)?;
+        let analysis = analyze_shader(&guarded, ShaderStage::Fragment, false, None);
+        assert!(
+            analysis.diagnostics.is_empty(),
+            "{:?}\n{text}",
+            analysis.diagnostics
+        );
+        for expected in [
+            "    }\n    return vec2(0.0, 0.0);\n}",
+            "return Pair(0.0, ivec2(0, 0));\n}",
+            "float ended(float x) {\n    return x;\n}",
+            "void nothing() {\n}",
+        ] {
+            assert!(text.contains(expected), "no `{expected}` in\n{text}");
+        }
+        let again = add_guards(&guarded, ShaderStage::Fragment, bound)?.ok_or("no guarded unit")?;
+        let again = emit(&again)?;
+        assert_eq!(again.matches("return vec2(0.0, 0.0);").count(), 1, "{again}");
+    }
+    Ok(())
+}

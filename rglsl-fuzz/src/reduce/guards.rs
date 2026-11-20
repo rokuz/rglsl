@@ -2,7 +2,7 @@ use rglsl_ast::Span;
 use rglsl_ast::ast::{
     ArrayDimension, ArraySpecifier, BasicType, BinaryOperator, Condition, Declaration,
     DeclarationKind, Dimension, Expression, ExpressionKind, ExternalDeclaration, Initializer,
-    NodeId, PostfixOperator, Scalar, Spanned, Statement, StatementKind, TranslationUnit,
+    JumpStatement, NodeId, PostfixOperator, Scalar, Spanned, Statement, StatementKind, TranslationUnit,
     TypeSpecifier, TypeSpecifierNonArray,
 };
 use rglsl_sema::scope::{Origin, Storage};
@@ -285,6 +285,47 @@ pub(crate) fn initialise(unit: &mut TranslationUnit, analysis: &Analysis, builde
     });
 }
 
+fn ends_in_return(statements: &[Statement]) -> bool {
+    statements.last().is_some_and(|last| {
+        matches!(
+            last.kind,
+            StatementKind::Jump(JumpStatement::Return(Some(_)))
+        )
+    })
+}
+
+fn terminate_functions(
+    unit: &mut TranslationUnit,
+    analysis: &Analysis,
+    builder: &mut Builder,
+) {
+    for external in &mut unit.external_declarations {
+        let ExternalDeclaration::FunctionDefinition(definition) = external else {
+            continue;
+        };
+        let Some(function) = analysis
+            .function_declarations
+            .get(&definition.id)
+            .and_then(|id| analysis.function(*id))
+        else {
+            continue;
+        };
+        let statements = &mut definition.kind.body.node.statements;
+        if function.return_type.kind == TypeKind::Void || ends_in_return(statements) {
+            continue;
+        }
+        let mut zeroes = Zeroes {
+            analysis,
+            builder: &mut *builder,
+            budget: MAX_INITIALISER_VALUES,
+        };
+        let Some(value) = zeroes.zero(&function.return_type) else {
+            continue;
+        };
+        statements.push(builder.jump(JumpStatement::Return(Some(value))));
+    }
+}
+
 fn declares_counter(unit: &TranslationUnit) -> bool {
     unit.external_declarations
         .iter()
@@ -307,6 +348,7 @@ pub fn add_guards(
     let mut result = in_bounds(unit, &analysis);
     let mut builder = Builder::new(result.next_id());
     initialise(&mut result, &analysis, &mut builder);
+    terminate_functions(&mut result, &analysis, &mut builder);
     let Some(bound) = bound else {
         return Ok(parse_unit("guards", &emit(&result)?).ok());
     };
