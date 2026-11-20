@@ -715,6 +715,18 @@ pub static REASSOCIATIONS: &[Reassociation] = &[
         reason: WRAPS,
     },
     Reassociation {
+        op: B::Subtract,
+        domain: Signed,
+        class: Class::Exact,
+        reason: WRAPS,
+    },
+    Reassociation {
+        op: B::Subtract,
+        domain: Unsigned,
+        class: Class::Exact,
+        reason: WRAPS,
+    },
+    Reassociation {
         op: B::Multiply,
         domain: Signed,
         class: Class::Exact,
@@ -764,6 +776,12 @@ pub static REASSOCIATIONS: &[Reassociation] = &[
     },
     Reassociation {
         op: B::Add,
+        domain: Float,
+        class: Class::Never,
+        reason: REASSOCIATE,
+    },
+    Reassociation {
+        op: B::Subtract,
         domain: Float,
         class: Class::Never,
         reason: REASSOCIATE,

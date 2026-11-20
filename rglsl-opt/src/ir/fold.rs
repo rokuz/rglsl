@@ -233,6 +233,14 @@ impl Policy for Fold<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Outer {
+    op: BinaryOperator,
+    constant: Handle<Expression>,
+    constant_right: bool,
+    width: usize,
+}
+
 const fn foldable(expression: &Expression) -> bool {
     matches!(
         *expression,
@@ -720,20 +728,29 @@ impl Fold<'_> {
         {
             return Ok(None);
         }
-        self.reassociate(rebuild, handle, op, other, constant, values.len(), block)
+        let outer = Outer {
+            op,
+            constant,
+            constant_right: right_constant,
+            width: values.len(),
+        };
+        self.reassociate(rebuild, handle, outer, other, block)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn reassociate(
         &mut self,
         rebuild: &mut Rebuild<'_>,
         handle: Handle<Expression>,
-        op: BinaryOperator,
+        outer: Outer,
         inner: Handle<Expression>,
-        outer_constant: Handle<Expression>,
-        width: usize,
         block: &mut Block,
     ) -> Result<Option<Handle<Expression>>, String> {
+        let Outer {
+            op,
+            constant: outer_constant,
+            constant_right,
+            width,
+        } = outer;
         let Ok(&Expression::Binary {
             op: inner_op,
             left,
@@ -742,7 +759,12 @@ impl Fold<'_> {
         else {
             return Ok(None);
         };
-        if inner_op != op || rebuild.out.precision.contains_key(&inner) {
+        let additive = |op| matches!(op, BinaryOperator::Add | BinaryOperator::Subtract);
+        let mixed = additive(op) && additive(inner_op);
+        if (inner_op != op && !mixed)
+            || (op == BinaryOperator::Subtract && !constant_right)
+            || rebuild.out.precision.contains_key(&inner)
+        {
             return Ok(None);
         }
         let (value, inner_constant) = match (
@@ -750,8 +772,15 @@ impl Fold<'_> {
             self.is_constant(&rebuild.out.expressions, right),
         ) {
             (false, true) => (left, right),
-            (true, false) => (right, left),
+            (true, false) if inner_op != BinaryOperator::Subtract => (right, left),
             _ => return Ok(None),
+        };
+        let combine = if mixed && op != inner_op {
+            BinaryOperator::Subtract
+        } else if mixed {
+            BinaryOperator::Add
+        } else {
+            op
         };
         let components = match self.type_inner(rebuild.source, handle)? {
             Some(TypeInner::Scalar(_)) => 1,
@@ -765,7 +794,7 @@ impl Fold<'_> {
             return Ok(None);
         }
         let combined = Expression::Binary {
-            op,
+            op: combine,
             left: inner_constant,
             right: outer_constant,
         };
@@ -780,9 +809,16 @@ impl Fold<'_> {
         else {
             return Ok(None);
         };
+        if mixed
+            && self
+                .numbers(&rebuild.out.expressions, constant)
+                .is_some_and(|values| values.iter().all(|value| value.matches(Pattern::Zero)))
+        {
+            return Ok(Some(value));
+        }
         let new = rebuild.emit(
             Expression::Binary {
-                op,
+                op: inner_op,
                 left: value,
                 right: constant,
             },

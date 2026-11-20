@@ -193,6 +193,25 @@ fn integer_constants_reassociate_and_floats_do_not() -> TestResult {
 }
 
 #[test]
+fn integer_additions_and_subtractions_of_constants_combine() -> TestResult {
+    let source = shader(
+        "",
+        "    int a = (k + 1) - 1;
+    int b = (k - 3) + 5;
+    int c = (k - 2) - 4;
+    int d = 7 - (k + 1);
+    color = vec4(float(a), float(b), float(c), float(d));",
+    );
+    let module = optimized(&source)?;
+    let function = entry(&module)?;
+    assert_eq!(
+        binaries(function, BinaryOperator::Add) + binaries(function, BinaryOperator::Subtract),
+        4
+    );
+    Ok(())
+}
+
+#[test]
 fn a_select_with_a_constant_condition_picks_its_operand() -> TestResult {
     let source = shader(
         "",
