@@ -204,6 +204,43 @@ impl Prune<'_> {
                 control,
             } => {
                 let mut body_exits = recurse(|| self.block(&mut body));
+                let summary = Exits::of(&body_exits);
+                if summary.ends && !summary.continues {
+                    if summary.breaks == 0 {
+                        self.changed = true;
+                        out.splice(body, body_exits);
+                        return;
+                    }
+                    if summary.breaks == 1
+                        && let Some((at, condition, exit_on)) = header_check(&body)
+                    {
+                        self.changed = true;
+                        let mut rest = Block::with_capacity(body.len().saturating_sub(at + 1));
+                        for (index, (statement, span)) in body.span_into_iter().enumerate() {
+                            if index < at {
+                                out.push(statement, span, Exits::default());
+                            } else if index > at {
+                                rest.push(statement, span);
+                            }
+                        }
+                        let (accept, reject) = if exit_on {
+                            (Block::new(), rest)
+                        } else {
+                            (rest, Block::new())
+                        };
+                        out.push(
+                            Statement::If {
+                                condition,
+                                accept,
+                                reject,
+                                control: SelectionControl::None,
+                            },
+                            span,
+                            Exits::default(),
+                        );
+                        return;
+                    }
+                }
                 let continuing_exits = recurse(|| self.block(&mut continuing));
                 if let Some(condition) = break_if
                     && let Some(value) = self.boolean(condition)
@@ -330,5 +367,29 @@ impl Prune<'_> {
         }
         self.changed = true;
         out.splice(body, exits);
+    }
+}
+
+fn header_check(body: &Block) -> Option<(usize, Handle<Expression>, bool)> {
+    let at = body
+        .iter()
+        .position(|statement| !matches!(*statement, Statement::Emit(_)))?;
+    let Some(&Statement::If {
+        condition,
+        ref accept,
+        ref reject,
+        ..
+    }) = body.get(at)
+    else {
+        return None;
+    };
+    let only_break =
+        |block: &Block| block.len() == 1 && matches!(block.first(), Some(Statement::Break));
+    if accept.is_empty() && only_break(reject) {
+        Some((at, condition, false))
+    } else if reject.is_empty() && only_break(accept) {
+        Some((at, condition, true))
+    } else {
+        None
     }
 }

@@ -164,3 +164,38 @@ fn code_after_a_taken_return_is_removed() -> TestResult {
     assert_eq!(stores, 2);
     Ok(())
 }
+
+#[test]
+fn a_loop_whose_body_always_returns_runs_once() -> TestResult {
+    let source = shader(
+        "",
+        "    for (int i = 0; i < k; ++i, color.w = 9.0) {
+        color.x = 2.0;
+        return;
+    }
+    color.y = 4.0;",
+    );
+    let module = fragment(&source, &["dead-branch"])?;
+    assert_eq!(
+        shape(entry(&module)?),
+        Shape {
+            ifs: 1,
+            ..Shape::default()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn a_loop_whose_body_always_discards_without_a_check_disappears() -> TestResult {
+    let source = shader(
+        "",
+        "    while (true) {
+        color.x = 2.0;
+        discard;
+    }",
+    );
+    let module = fragment(&source, &["dead-branch"])?;
+    assert_eq!(shape(entry(&module)?), Shape::default());
+    Ok(())
+}
