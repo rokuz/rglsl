@@ -63,6 +63,8 @@ commands:
                           exec results of the last run that had them
       --no-local-exec     do not run shaders on KosmicKrisp on this Mac
       --no-remote-exec    do not run shaders on the remote Windows targets
+      --opt-level LEVEL   build the `-O` modules and column with -LEVEL (O or Os; default: O);
+                          the modules keep their names (*.O.spv, ours-O)
   snapshots           assemble the SPIR-V snapshots in rglsl/tests/out/spv with spirv-as and
                       validate them with spirv-val for the Vulkan version of their SPIR-V
   recursion           build the workspace's LLVM IR (opt-level 0, one codegen unit) into
@@ -287,6 +289,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 jobs: args.parsed("--jobs")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
                 write_progress: !args.flag("--no-progress-file"),
+                opt_level: optimized::level(args.value("--opt-level")?.as_deref())?,
                 targets: {
                     let none = args.flag("--no-exec");
                     let local = !args.flag("--no-local-exec");

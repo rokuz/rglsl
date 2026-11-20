@@ -28,6 +28,7 @@ pub struct Options {
     pub jobs: Option<usize>,
     pub timeout_secs: u64,
     pub write_progress: bool,
+    pub opt_level: &'static str,
     pub targets: Vec<TargetSpec>,
 }
 
@@ -173,6 +174,7 @@ pub struct Environment {
     pub known: Known,
     pub renamed: Renamings,
     pub interface_expected: interface::Expected,
+    pub opt_level: &'static str,
 }
 
 pub fn run(root: &Path, options: Options) -> Result<()> {
@@ -195,6 +197,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         known: Known::load(root)?,
         renamed: Renamings::load(root)?,
         interface_expected: interface::Expected::load(root)?,
+        opt_level: options.opt_level,
         glslang_dir,
         pins,
     };

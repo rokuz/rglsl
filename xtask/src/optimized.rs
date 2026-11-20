@@ -11,6 +11,14 @@ use crate::worker::{EXIT_ACCEPTED, EXIT_BACKEND_FAILED, EXIT_REJECTED};
 
 pub const LEVEL: &str = "O";
 
+pub fn level(name: Option<&str>) -> Result<&'static str> {
+    match name {
+        None | Some("O") => Ok("O"),
+        Some("Os") => Ok("Os"),
+        Some(other) => anyhow::bail!("--opt-level {other}: expected O or Os"),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub passed: bool,
@@ -37,7 +45,7 @@ pub fn check_file(
 ) -> Result<Outcome> {
     let out = unoptimized.with_extension(format!("{LEVEL}.spv"));
     let mut command = crate::runner::ours_command(env, self_exe, case, &case.path, &out);
-    command.arg(format!("--opt={LEVEL}"));
+    command.arg(format!("--opt={}", env.opt_level));
     check(
         env,
         case,
@@ -54,7 +62,7 @@ pub fn check_group(
     modules: &[(PathBuf, PathBuf)],
     timeout: Duration,
 ) -> Result<Outcome> {
-    command.arg(format!("--opt={LEVEL}"));
+    command.arg(format!("--opt={}", env.opt_level));
     check(env, case, command, modules, timeout)
 }
 
