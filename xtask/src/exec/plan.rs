@@ -49,6 +49,7 @@ pub struct Inputs {
     pub seed: String,
     pub values: BTreeMap<(u32, u32), Vec<Value>>,
     pub framebuffer: Option<u32>,
+    pub groups: Option<[u32; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +73,7 @@ pub struct Plan {
     pub attachments: Vec<Attachment>,
     pub unwritten_attachments: BTreeSet<u32>,
     pub framebuffer: u32,
+    pub groups: [u32; 3],
     pub views: u32,
     pub placeholder: bool,
     pub draw: Draw,
@@ -834,6 +836,7 @@ impl Plan {
             attachments: Vec::new(),
             unwritten_attachments: BTreeSet::new(),
             framebuffer: inputs.framebuffer.unwrap_or(FRAMEBUFFER),
+            groups: inputs.groups.unwrap_or([1, 1, 1]),
             views: 0,
             placeholder: false,
             draw: Draw::Dispatch,
@@ -1873,7 +1876,10 @@ impl Plan {
             out.push_str("END\n");
         }
         match self.draw {
-            Draw::Dispatch => out.push_str("RUN main 1 1 1\n"),
+            Draw::Dispatch => {
+                let [x, y, z] = self.groups;
+                let _ = writeln!(out, "RUN main {x} {y} {z}");
+            }
             Draw::Rect => {
                 let _ = writeln!(
                     out,

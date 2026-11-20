@@ -1,0 +1,46 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+const uint N = 256u;
+const uint GROUP = 16u;
+const uint BLOCK = 32u;
+const uint PASSES = 128u;
+
+layout(std430, set = 0, binding = 0) readonly buffer Left { float left[N * N]; };
+layout(std430, set = 0, binding = 1) readonly buffer Right { float right[N * N]; };
+layout(std430, set = 0, binding = 2) writeonly buffer Product { float product[N * N]; };
+
+shared float leftTile[BLOCK][GROUP];
+shared float rightTile[GROUP][BLOCK];
+
+void main() {
+    uvec2 local = gl_LocalInvocationID.xy;
+    uint rowBase = gl_WorkGroupID.y * BLOCK;
+    uint columnBase = gl_WorkGroupID.x * BLOCK;
+    vec2 top = vec2(0.0);
+    vec2 bottom = vec2(0.0);
+    for (uint pass = 0u; pass < PASSES; pass++) {
+        for (uint step = 0u; step < N / GROUP; step++) {
+            for (uint half_ = 0u; half_ < 2u; half_++) {
+                leftTile[local.y + half_ * GROUP][local.x] =
+                    left[(rowBase + local.y + half_ * GROUP) * N + step * GROUP + local.x];
+                uint column = (columnBase + local.x + half_ * GROUP + pass * 3u) & (N - 1u);
+                rightTile[local.y][local.x + half_ * GROUP] = right[(step * GROUP + local.y) * N + column];
+            }
+            barrier();
+            for (uint k = 0u; k < GROUP; k++) {
+                vec2 a = vec2(leftTile[local.y][k], leftTile[local.y + GROUP][k]);
+                vec2 b = vec2(rightTile[k][local.x], rightTile[k][local.x + GROUP]);
+                top += a.x * b;
+                bottom += a.y * b;
+            }
+            barrier();
+        }
+    }
+    uint row = rowBase + local.y;
+    uint column = columnBase + local.x;
+    product[row * N + column] = top.x;
+    product[row * N + column + GROUP] = top.y;
+    product[(row + GROUP) * N + column] = bottom.x;
+    product[(row + GROUP) * N + column + GROUP] = bottom.y;
+}

@@ -1,0 +1,51 @@
+#version 450
+layout(local_size_x = 64) in;
+
+const uint VERTICES = 32768u;
+const uint BONES = 64u;
+const uint LAYERS = 2048u;
+const uint SOURCES = 256u;
+
+struct Vertex {
+    vec4 position;
+    vec4 normal;
+    uvec4 joints;
+    vec4 weights;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer Vertices { Vertex vertices[SOURCES]; };
+layout(std430, set = 0, binding = 1) readonly buffer Bones { mat4 bones[BONES]; };
+
+shared mat4 cached[BONES];
+layout(std430, set = 0, binding = 2) writeonly buffer Skinned { vec4 skinned[VERTICES * 2u]; };
+layout(std140, set = 0, binding = 3) uniform Frame { mat4 viewProjection; vec4 morph; };
+
+mat4 boneMatrix(uint joint, uint frame) {
+    mat4 bone = cached[(joint + frame) % BONES];
+    return mat4(abs(bone[0]) + 0.5, abs(bone[1]) + 0.5, abs(bone[2]) + 0.5, vec4(abs(bone[3].xyz), 1.0));
+}
+
+void main() {
+    cached[gl_LocalInvocationIndex] = bones[gl_LocalInvocationIndex];
+    barrier();
+    uint index = gl_GlobalInvocationID.x;
+    Vertex vertex = vertices[index % SOURCES];
+    vec4 weights = abs(vertex.weights) + vec4(0.25);
+    weights /= weights.x + weights.y + weights.z + weights.w;
+    precise vec4 position = vec4(0.0);
+    precise vec3 normal = vec3(0.0);
+    for (uint layer = 0u; layer < LAYERS; layer++) {
+        uint frame = layer * 7u;
+        precise mat4 skin = boneMatrix(vertex.joints.x, frame) * weights.x
+                          + boneMatrix(vertex.joints.y, frame) * weights.y
+                          + boneMatrix(vertex.joints.z, frame) * weights.z
+                          + boneMatrix(vertex.joints.w, frame) * weights.w;
+        vec4 base = vec4(abs(vertex.position.xyz) + abs(morph.xyz) * float(layer) * 0.01, 1.0);
+        position += skin * base;
+        normal += mat3(skin) * (abs(vertex.normal.xyz) + 0.125);
+    }
+    mat4 projection = mat4(abs(viewProjection[0]), abs(viewProjection[1]), abs(viewProjection[2]), abs(viewProjection[3]) + 1.0);
+    vec4 clip = projection * (position / float(LAYERS));
+    skinned[index * 2u] = clip;
+    skinned[index * 2u + 1u] = vec4(normalize(normal), clip.w);
+}

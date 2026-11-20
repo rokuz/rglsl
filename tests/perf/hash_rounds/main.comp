@@ -1,0 +1,36 @@
+#version 450
+layout(local_size_x = 64) in;
+
+const uint COUNT = 65536u;
+const uint ROUNDS = 512u;
+
+layout(std430, set = 0, binding = 0) readonly buffer Inputs { uvec4 inputs[COUNT]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Digests { uvec4 digests[COUNT]; };
+
+uint rotate(uint value, uint amount) {
+    return (value << amount) | (value >> (32u - amount));
+}
+
+void quarter(inout uvec4 state) {
+    state.x += state.y; state.w ^= state.x; state.w = rotate(state.w, 16u);
+    state.z += state.w; state.y ^= state.z; state.y = rotate(state.y, 12u);
+    state.x += state.y; state.w ^= state.x; state.w = rotate(state.w, 8u);
+    state.z += state.w; state.y ^= state.z; state.y = rotate(state.y, 7u);
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uvec4 a = inputs[index] + uvec4(index, index * 3u, index * 5u, index * 7u);
+    uvec4 b = uvec4(0x61707865u, 0x3320646eu, 0x79622d32u, 0x6b206574u);
+    for (uint round = 0u; round < ROUNDS; round++) {
+        quarter(a);
+        quarter(b);
+        uvec4 mixed = a.yzwx ^ b;
+        b = a.wxyz + b;
+        a = mixed;
+        if ((round & 63u) == 63u) {
+            a ^= uvec4(round);
+        }
+    }
+    digests[index] = a ^ b;
+}

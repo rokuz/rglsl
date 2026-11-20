@@ -1,0 +1,48 @@
+#version 450
+layout(local_size_x = 64) in;
+
+const uint COUNT = 32768u;
+const int KEYS = 32;
+
+layout(std430, set = 0, binding = 0) readonly buffer Seeds { uint seeds[COUNT]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Results { uvec4 results[COUNT]; };
+
+uint hash(uint value) {
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    uint state = hash(seeds[index] + index * 2654435761u);
+    uint keys[KEYS];
+    for (int i = 0; i < KEYS; i++) {
+        state = hash(state + uint(i));
+        keys[i] = state >> 8u;
+    }
+    for (int size = 2; size <= KEYS; size <<= 1) {
+        for (int stride = size >> 1; stride > 0; stride >>= 1) {
+            for (int i = 0; i < KEYS; i++) {
+                int partner = i ^ stride;
+                if (partner > i) {
+                    bool ascending = (i & size) == 0;
+                    uint a = keys[i];
+                    uint b = keys[partner];
+                    if ((a > b) == ascending) {
+                        keys[i] = b;
+                        keys[partner] = a;
+                    }
+                }
+            }
+        }
+    }
+    uint checksum = 0u;
+    for (int i = 0; i < KEYS; i++) {
+        checksum = checksum * 31u + keys[i];
+    }
+    results[index] = uvec4(keys[0], keys[KEYS / 2], keys[KEYS - 1], checksum);
+}

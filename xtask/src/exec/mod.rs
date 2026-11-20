@@ -989,6 +989,10 @@ impl Executor {
     }
 
     pub fn confirm_jobs(&self, jobs: &[Job]) -> Vec<JobResult> {
+        self.run_alone(jobs)
+    }
+
+    pub fn run_alone(&self, jobs: &[Job]) -> Vec<JobResult> {
         self.run_with(jobs, Some(1))
     }
 
@@ -1177,6 +1181,16 @@ impl Executor {
     }
 
     pub fn plan_module(&self, name: &str, reflection: &Reflection) -> Result<Plan, Outcome> {
+        self.plan_sized(name, reflection, None, None)
+    }
+
+    pub fn plan_sized(
+        &self,
+        name: &str,
+        reflection: &Reflection,
+        groups: Option<[u32; 3]>,
+        framebuffer: Option<u32>,
+    ) -> Result<Plan, Outcome> {
         let stage_needs = requirements::stage_needs(reflection.model);
         if let Some(need) = stage_needs.into_iter().find(|n| !self.supports(*n)) {
             return Err(Outcome::skip(
@@ -1187,6 +1201,8 @@ impl Executor {
         self.interface_limits(reflection)?;
         let inputs = Inputs {
             seed: name.to_string(),
+            groups,
+            framebuffer,
             ..Inputs::default()
         };
         let mut plan = Plan::new(reflection, &inputs).map_err(refusal)?;

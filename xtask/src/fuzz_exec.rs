@@ -91,6 +91,7 @@ pub fn stage_module(
         seed: SEED.to_string(),
         values,
         framebuffer: Some(FRAMEBUFFER),
+        groups: None,
     };
     let plan = match Plan::new(&reflection, &inputs) {
         Ok(plan) => plan,

@@ -1,0 +1,40 @@
+#version 450
+layout(local_size_x = 128) in;
+
+const uint BODIES = 8192u;
+const uint TILE = 128u;
+
+layout(std430, set = 0, binding = 0) readonly buffer Bodies { vec4 bodies[BODIES]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Accelerations { vec4 accelerations[BODIES]; };
+layout(std140, set = 0, binding = 2) uniform Parameters { vec4 softening; };
+
+shared vec4 tile[TILE];
+
+vec3 interact(vec3 position, vec4 other, vec3 acceleration, float epsilon) {
+    vec3 delta = other.xyz - position;
+    float distanceSquared = dot(delta, delta) + epsilon;
+    float inverse = inversesqrt(distanceSquared);
+    float strength = other.w * inverse * inverse * inverse;
+    return acceleration + delta * strength;
+}
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    vec4 body = bodies[index];
+    vec3 position = body.xyz * 16.0 + vec3(float(index & 31u), float((index >> 5u) & 31u), float(index >> 10u));
+    float epsilon = 0.01 + abs(softening.x);
+    vec3 acceleration = vec3(0.0);
+    for (uint start = 0u; start < BODIES; start += TILE) {
+        uint other = start + gl_LocalInvocationID.x;
+        vec4 loaded = bodies[other];
+        tile[gl_LocalInvocationID.x] = vec4(
+            loaded.xyz * 16.0 + vec3(float(other & 31u), float((other >> 5u) & 31u), float(other >> 10u)),
+            abs(loaded.w) + 0.5);
+        barrier();
+        for (uint j = 0u; j < TILE; j++) {
+            acceleration = interact(position, tile[j], acceleration, epsilon);
+        }
+        barrier();
+    }
+    accelerations[index] = vec4(acceleration, length(acceleration));
+}

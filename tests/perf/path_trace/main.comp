@@ -1,0 +1,115 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+
+const int SIZE = 256;
+const int SPHERES = 9;
+const int BOUNCES = 4;
+const int SAMPLES = 8;
+
+layout(std430, set = 0, binding = 0) writeonly buffer Image { vec4 image[SIZE * SIZE]; };
+layout(std140, set = 0, binding = 1) uniform Scene { vec4 jitter; vec4 sky; };
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Sphere {
+    vec3 center;
+    float radius;
+    vec3 albedo;
+    float emission;
+};
+
+struct HitRecord {
+    float t;
+    vec3 normal;
+    int index;
+};
+
+const Sphere spheres[SPHERES] = Sphere[](
+    Sphere(vec3(0.0, -1000.0, 0.0), 999.0, vec3(0.7, 0.7, 0.7), 0.0),
+    Sphere(vec3(-2.2, 0.0, 4.0), 1.0, vec3(0.9, 0.2, 0.2), 0.0),
+    Sphere(vec3(0.0, 0.0, 5.0), 1.0, vec3(0.2, 0.9, 0.2), 0.0),
+    Sphere(vec3(2.2, 0.0, 4.0), 1.0, vec3(0.2, 0.2, 0.9), 0.0),
+    Sphere(vec3(-1.1, -0.6, 2.6), 0.4, vec3(0.9, 0.9, 0.2), 0.0),
+    Sphere(vec3(1.1, -0.6, 2.6), 0.4, vec3(0.9, 0.5, 0.9), 0.0),
+    Sphere(vec3(0.0, 4.0, 4.0), 1.5, vec3(1.0, 1.0, 1.0), 6.0),
+    Sphere(vec3(-4.0, 1.0, 7.0), 2.0, vec3(0.8, 0.8, 0.6), 0.0),
+    Sphere(vec3(4.0, 1.0, 7.0), 2.0, vec3(0.6, 0.8, 0.8), 0.0));
+
+uint state;
+
+float random() {
+    state = state * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return float((word >> 22u) ^ word) / 4294967296.0;
+}
+
+vec3 randomDirection(vec3 normal) {
+    float z = random() * 2.0 - 1.0;
+    float angle = random() * 6.2831853;
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    vec3 direction = vec3(r * cos(angle), r * sin(angle), z);
+    return normalize(normal + direction);
+}
+
+bool intersect(Ray ray, Sphere sphere, float far, out float t) {
+    vec3 oc = ray.origin - sphere.center;
+    float b = dot(oc, ray.direction);
+    float c = dot(oc, oc) - sphere.radius * sphere.radius;
+    float discriminant = b * b - c;
+    if (discriminant < 0.0) {
+        return false;
+    }
+    float root = sqrt(discriminant);
+    t = -b - root;
+    if (t < 0.001) {
+        t = -b + root;
+    }
+    return t > 0.001 && t < far;
+}
+
+HitRecord trace(Ray ray) {
+    HitRecord hit = HitRecord(1e30, vec3(0.0), -1);
+    for (int i = 0; i < SPHERES; i++) {
+        float t;
+        if (intersect(ray, spheres[i], hit.t, t)) {
+            hit.t = t;
+            hit.index = i;
+            hit.normal = normalize(ray.origin + ray.direction * t - spheres[i].center);
+        }
+    }
+    return hit;
+}
+
+vec3 radiance(Ray ray) {
+    vec3 throughput = vec3(1.0);
+    vec3 light = vec3(0.0);
+    for (int bounce = 0; bounce < BOUNCES; bounce++) {
+        HitRecord hit = trace(ray);
+        if (hit.index < 0) {
+            light += throughput * (abs(sky.rgb) * 0.1 + vec3(0.3, 0.4, 0.6));
+            break;
+        }
+        Sphere sphere = spheres[hit.index];
+        light += throughput * sphere.albedo * sphere.emission;
+        throughput *= sphere.albedo;
+        ray.origin = ray.origin + ray.direction * hit.t + hit.normal * 0.001;
+        ray.direction = randomDirection(hit.normal);
+    }
+    return light;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    state = uint(pixel.y * SIZE + pixel.x) * 9781u + 1u;
+    vec3 sum = vec3(0.0);
+    for (int s = 0; s < SAMPLES; s++) {
+        vec2 offset = vec2(random(), random()) + jitter.xy * 0.01;
+        vec2 uv = (vec2(pixel) + offset) / float(SIZE) * 2.0 - 1.0;
+        Ray ray = Ray(vec3(0.0, 0.5, -1.0), normalize(vec3(uv.x, -uv.y, 1.5)));
+        sum += radiance(ray);
+    }
+    image[pixel.y * SIZE + pixel.x] = vec4(sum / float(SAMPLES), 1.0);
+}

@@ -27,6 +27,8 @@ const CHECKED: [Variant; 3] = [Variant::RglslO, Variant::SpirvOptO, Variant::Gls
 const REFERENCES: [Variant; 2] = [Variant::Rglsl, Variant::GlslangO];
 const PIPELINE: &str = "main";
 const SYNTHETIC_TIMEOUT: Duration = Duration::from_secs(120);
+const PERF_RUNS: usize = 20;
+const PERF_ROUNDS: usize = 3;
 const LISTED: usize = 60;
 
 const fn tag(variant: Variant) -> &'static str {
@@ -88,7 +90,29 @@ pub struct Measured {
     pub error: Option<String>,
     pub statistics: BTreeMap<String, f64>,
     pub gpu_ms: Option<f64>,
+    pub gpu_times: Vec<f64>,
+    pub round_minima: Vec<f64>,
     pub create_ms: Option<f64>,
+}
+
+impl Measured {
+    pub fn spread(&self) -> Option<f64> {
+        if self.round_minima.len() < 2 {
+            return spread(&self.gpu_times);
+        }
+        let fastest = stats::minimum(&self.round_minima)?;
+        let slowest = self.round_minima.iter().copied().reduce(f64::max)?;
+        stats::ratio(slowest - fastest, fastest)
+    }
+}
+
+fn spread(times: &[f64]) -> Option<f64> {
+    if times.len() < 2 {
+        return None;
+    }
+    let (first, second) = times.split_at(times.len() / 2);
+    let (first, second) = (stats::minimum(first)?, stats::minimum(second)?);
+    stats::ratio((first - second).abs(), first.min(second))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +138,7 @@ struct Staged {
     plan: Plan,
     stage: ShaderKind,
     reference: Variant,
+    alone: bool,
     checks: Vec<(Variant, Job)>,
     timed: Vec<(Variant, Job)>,
     refused: Vec<(Variant, String)>,
@@ -162,7 +187,12 @@ fn stage_unit(
     let bytes = fs::read(rglsl).map_err(|e| e.to_string())?;
     let reflection = reflect::reflect_bytes(&bytes).map_err(|e| format!("reflection: {e}"))?;
     let plan = executor
-        .plan_module(result.unit.seed(), &reflection)
+        .plan_sized(
+            result.unit.seed(),
+            &reflection,
+            result.unit.size.groups,
+            result.unit.size.framebuffer,
+        )
         .map_err(|outcome| match outcome {
             exec::Outcome::Skip { reason, detail } => format!("{}: {detail}", reason.code()),
             exec::Outcome::Fail(detail) => detail,
@@ -206,7 +236,12 @@ fn stage_unit(
         });
         let script = fs::read_to_string(dir.join(&check.script)).map_err(|e| e.to_string())?;
         let name = format!("{}.timed.amber", tag(variant));
-        fs::write(dir.join(&name), timed_script(&script, runs)).map_err(|e| e.to_string())?;
+        let repeats = if result.unit.set == Set::Perf {
+            runs.max(PERF_RUNS)
+        } else {
+            runs
+        };
+        fs::write(dir.join(&name), timed_script(&script, repeats)).map_err(|e| e.to_string())?;
         timed.push((
             variant,
             Job {
@@ -229,6 +264,7 @@ fn stage_unit(
         unit: index,
         stage: plan.stage,
         reference,
+        alone: result.unit.set == Set::Perf,
         plan,
         checks,
         timed,
@@ -332,11 +368,57 @@ fn check_alone(combined: &Job) -> Job {
     }
 }
 
-fn run_combined(executor: &Executor, combined: &[Job]) -> Vec<Ran> {
+fn serially(executor: &Executor, jobs: &[Job], alone: &[bool]) -> Vec<JobResult> {
+    let pick = |wanted: bool| -> (Vec<usize>, Vec<Job>) {
+        jobs.iter()
+            .enumerate()
+            .filter(|(index, _)| alone.get(*index).copied().unwrap_or(false) == wanted)
+            .map(|(index, job)| (index, job.clone()))
+            .unzip()
+    };
+    let (shared_at, shared) = pick(false);
+    let (alone_at, own) = pick(true);
+    let mut results: Vec<Option<JobResult>> = vec![None; jobs.len()];
+    let ran = executor
+        .run_serial(&shared)
+        .into_iter()
+        .zip(shared_at)
+        .chain(executor.run_alone(&own).into_iter().zip(alone_at));
+    for (result, index) in ran {
+        if let Some(slot) = results.get_mut(index) {
+            *slot = Some(result);
+        }
+    }
+    results
+        .into_iter()
+        .map(|result| result.unwrap_or_else(|| Err(JobError::missing("batch"))))
+        .collect()
+}
+
+fn more_rounds(executor: &Executor, combined: &[Job], alone: &[bool]) -> Vec<Vec<JobResult>> {
+    let mut rounds: Vec<Vec<JobResult>> = vec![Vec::new(); combined.len()];
+    let jobs: Vec<(usize, Job)> = combined
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| alone.get(*index).copied().unwrap_or(false))
+        .filter_map(|(index, job)| Some((index, timed_alone(job)?)))
+        .collect();
+    let list: Vec<Job> = jobs.iter().map(|(_, job)| job.clone()).collect();
+    for _ in 1..PERF_ROUNDS {
+        for ((index, _), result) in jobs.iter().zip(executor.run_alone(&list)) {
+            if let Some(slot) = rounds.get_mut(*index) {
+                slot.push(result);
+            }
+        }
+    }
+    rounds
+}
+
+fn run_combined(executor: &Executor, combined: &[Job], alone: &[bool]) -> Vec<Ran> {
     let mut split: Vec<(Option<JobResult>, Option<JobResult>)> = if executor.workers() == 1 {
         combined
             .iter()
-            .zip(executor.run_serial(combined))
+            .zip(serially(executor, combined, alone))
             .map(|(job, result)| self::split(job, result))
             .collect()
     } else {
@@ -362,7 +444,14 @@ fn run_combined(executor: &Executor, combined: &[Job]) -> Vec<Ran> {
         .filter_map(|(index, _)| Some((index, timed_alone(combined.get(index)?)?)))
         .collect();
     let jobs: Vec<Job> = timed.iter().map(|(_, job)| job.clone()).collect();
-    for ((index, _), result) in timed.iter().zip(executor.run_serial(&jobs)) {
+    let timed_alone_flags: Vec<bool> = timed
+        .iter()
+        .map(|(index, _)| alone.get(*index).copied().unwrap_or(false))
+        .collect();
+    for ((index, _), result) in timed
+        .iter()
+        .zip(serially(executor, &jobs, &timed_alone_flags))
+    {
         if let Some((_, slot)) = split.get_mut(*index) {
             *slot = Some(result);
         }
@@ -376,7 +465,7 @@ fn run_combined(executor: &Executor, combined: &[Job]) -> Vec<Ran> {
         .collect()
 }
 
-fn measure(stage: ShaderKind, check: &JobResult, timed: Option<&JobResult>) -> Measured {
+fn measure(stage: ShaderKind, check: &JobResult, rounds: &[JobResult]) -> Measured {
     let mut measured = Measured::default();
     match check {
         Ok(outputs) => {
@@ -387,18 +476,24 @@ fn measure(stage: ShaderKind, check: &JobResult, timed: Option<&JobResult>) -> M
         }
         Err(error) => measured.error = Some(error.to_string()),
     }
-    if let Some(Ok(outputs)) = timed {
+    for outputs in rounds.iter().filter_map(|round| round.as_ref().ok()) {
         if let Some(stdout) = outputs.get(TIMING) {
             let times = amber::parse_timing(&String::from_utf8_lossy(stdout));
-            if times.iter().any(|time| *time > 0.0) {
-                measured.gpu_ms = stats::median(&times);
+            if times.iter().any(|time| *time > 0.0)
+                && let Some(fastest) = stats::minimum(&times)
+            {
+                measured.round_minima.push(fastest);
+                measured.gpu_times.extend(times);
             }
         }
-        if let Some(report) = report_of(outputs) {
-            let times = report.create_times(PIPELINE);
-            if !times.is_empty() {
-                measured.create_ms = stats::median(&times);
-            }
+    }
+    measured.gpu_ms = stats::minimum(&measured.round_minima);
+    if let Some(Ok(outputs)) = rounds.first()
+        && let Some(report) = report_of(outputs)
+    {
+        let times = report.create_times(PIPELINE);
+        if !times.is_empty() {
+            measured.create_ms = stats::median(&times);
         }
     }
     measured
@@ -485,13 +580,18 @@ fn run_target(
         .iter()
         .flat_map(|s| s.timed.iter().map(|(_, job)| job.clone()))
         .collect();
-    let mut ran = run_combined(executor, &combined).into_iter();
+    let alone: Vec<bool> = ready
+        .iter()
+        .flat_map(|s| s.timed.iter().map(|_| s.alone))
+        .collect();
+    let mut ran = run_combined(executor, &combined, &alone).into_iter();
+    let mut extra = more_rounds(executor, &combined, &alone).into_iter();
     eprintln!(
         "[xtask] {label}: checks and timed runs done ({:.0}s)",
         started.elapsed().as_secs_f64()
     );
     let mut first: Vec<BTreeMap<Variant, JobResult>> = Vec::with_capacity(ready.len());
-    let mut timing: Vec<BTreeMap<Variant, JobResult>> = Vec::with_capacity(ready.len());
+    let mut timing: Vec<BTreeMap<Variant, Vec<JobResult>>> = Vec::with_capacity(ready.len());
     for staged in &ready {
         let mut checks = BTreeMap::new();
         let mut timed = BTreeMap::new();
@@ -503,8 +603,10 @@ fn run_target(
                 check: Err(JobError::missing("batch")),
                 timed: Err(JobError::missing("batch")),
             });
+            let mut rounds = vec![timing];
+            rounds.extend(extra.next().unwrap_or_default());
             checks.insert(*variant, check);
-            timed.insert(*variant, timing);
+            timed.insert(*variant, rounds);
         }
         first.push(checks);
         timing.push(timed);
@@ -565,11 +667,13 @@ fn run_target(
         let position = ready_position;
         ready_position += 1;
         let empty = BTreeMap::new();
+        let no_rounds = BTreeMap::new();
         let checks = first.get(position).unwrap_or(&empty);
-        let timed = timing.get(position).unwrap_or(&empty);
+        let timed = timing.get(position).unwrap_or(&no_rounds);
         let mut measured = BTreeMap::new();
         for (variant, check) in checks {
-            measured.insert(*variant, measure(staged.stage, check, timed.get(variant)));
+            let rounds = timed.get(variant).map_or(&[][..], Vec::as_slice);
+            measured.insert(*variant, measure(staged.stage, check, rounds));
         }
         let mut equivalence: BTreeMap<Variant, Equivalence> = staged
             .refused
@@ -724,7 +828,7 @@ fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> Strin
          (`amber --pipeline-stats`) gives the outputs and the driver's statistics of the tested stage of the \
          pipeline `main` (VK_KHR_pipeline_executable_properties; VK_AMD_shader_info values are prefixed `amd:`); \
          a timed run repeats every `RUN` {runs} times as `RUN TIMED_EXECUTION` and \
-         gives the median GPU time and the median `vkCreate*Pipelines` wall time (with the statistics capture \
+         gives the GPU time (the fastest repeat: clock and scheduling noise only adds time) and the median `vkCreate*Pipelines` wall time (with the statistics capture \
          flags when the driver has them). Timed runs never share the GPU with another Amber process. On a target \
          that runs one Amber process at a time, the timed script runs first, on its own buffers, and the check \
          script after it in the same process and on the same device; a check that fails there is run again in a \
@@ -861,7 +965,7 @@ fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> Strin
         }
 
         out.push_str(
-            "\n### Times\n\n| measure | rglsl | glslang -O | shaders |\n|---|--:|--:|--:|\n",
+            "\n### Times\n\n| measure | rglsl | rglsl -O | glslang -O | shaders |\n|---|--:|--:|--:|--:|\n",
         );
         for (label, value) in [
             (
@@ -878,14 +982,17 @@ fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> Strin
                 (stats::geometric_mean(&ratios), ratios.len())
             };
             let (rglsl, count) = geomean(Variant::Rglsl);
+            let (optimized, _) = geomean(Variant::RglslO);
             let (glslang, _) = geomean(Variant::GlslangO);
             let _ = writeln!(
                 out,
-                "| {label} | {} | {} | {count} |",
+                "| {label} | {} | {} | {} | {count} |",
                 format_ratio(rglsl),
+                format_ratio(optimized),
                 format_ratio(glslang)
             );
         }
+        gpu_time_sections(&mut out, results, target);
 
         let names = statistic_names(target);
         if names.is_empty() {
@@ -964,9 +1071,102 @@ fn markdown(results: &[UnitResult], targets: &[TargetRun], runs: usize) -> Strin
     out
 }
 
+fn set_of(results: &[UnitResult], run: &UnitRun) -> Option<Set> {
+    results.get(run.unit).map(|result| result.unit.set)
+}
+
+fn gpu_ratio(run: &UnitRun, variant: Variant) -> Option<f64> {
+    let reference = run.measured.get(&Variant::SpirvOptO)?.gpu_ms?;
+    let own = run.measured.get(&variant)?.gpu_ms?;
+    stats::ratio(own, reference).filter(|ratio| *ratio > 0.0)
+}
+
+fn gpu_time_sections(out: &mut String, results: &[UnitResult], target: &TargetRun) {
+    out.push_str(
+        "\n### GPU time per set (ratio to spirv-opt -O(rglsl), geometric mean)\n\n| set | shaders | rglsl | rglsl -O | glslang -O |\n|---|--:|--:|--:|--:|\n",
+    );
+    for set in Set::ALL {
+        let runs: Vec<&UnitRun> = target
+            .runs
+            .iter()
+            .filter(|run| set_of(results, run) == Some(set))
+            .collect();
+        let ratios = |variant: Variant| -> Vec<f64> {
+            runs.iter()
+                .filter_map(|run| gpu_ratio(run, variant))
+                .collect()
+        };
+        let optimized = ratios(Variant::RglslO);
+        if optimized.is_empty() {
+            continue;
+        }
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {} |",
+            set.label(),
+            optimized.len(),
+            format_ratio(stats::geometric_mean(&ratios(Variant::Rglsl))),
+            format_ratio(stats::geometric_mean(&optimized)),
+            format_ratio(stats::geometric_mean(&ratios(Variant::GlslangO))),
+        );
+    }
+    let perf: Vec<&UnitRun> = target
+        .runs
+        .iter()
+        .filter(|run| set_of(results, run) == Some(Set::Perf) && run.skipped.is_none())
+        .collect();
+    if perf.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "\n### {}: GPU time of {PERF_ROUNDS} rounds of {PERF_RUNS} or more repeats, each round in an Amber process of its own and the variants in turn (ms, the fastest repeat), ratios to spirv-opt -O(rglsl), spread = (slowest − fastest) / fastest of the rounds' fastest repeats\n\n| shader | spirv-opt -O ms | rglsl | rglsl -O | glslang -O | largest spread |\n|---|--:|--:|--:|--:|--:|",
+        Set::Perf.label()
+    );
+    let mut spreads = Vec::new();
+    for run in &perf {
+        let spread = run.measured.values().filter_map(Measured::spread).fold(
+            None,
+            |largest: Option<f64>, spread| {
+                Some(largest.map_or(spread, |largest| largest.max(spread)))
+            },
+        );
+        spreads.extend(spread);
+        let reference = run
+            .measured
+            .get(&Variant::SpirvOptO)
+            .and_then(|measured| measured.gpu_ms);
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} | {} |",
+            unit_name(results, run.unit),
+            reference.map_or_else(|| "-".into(), |ms| format!("{ms:.3}")),
+            format_ratio(gpu_ratio(run, Variant::Rglsl)),
+            format_ratio(gpu_ratio(run, Variant::RglslO)),
+            format_ratio(gpu_ratio(run, Variant::GlslangO)),
+            spread.map_or_else(|| "-".into(), |spread| format!("{:.2} %", spread * 100.0)),
+        );
+    }
+    let optimized: Vec<f64> = perf
+        .iter()
+        .filter_map(|run| gpu_ratio(run, Variant::RglslO))
+        .collect();
+    let _ = writeln!(
+        out,
+        "\nrglsl -O / spirv-opt -O(rglsl): {} (geometric mean of {}); largest spread {}\n",
+        format_ratio(stats::geometric_mean(&optimized)),
+        optimized.len(),
+        spreads
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .map_or_else(|| "-".into(), |spread| format!("{:.2} %", spread * 100.0)),
+    );
+}
+
 fn tsv(results: &[UnitResult], targets: &[TargetRun]) -> String {
     let mut out = String::from(
-        "target\tshader\tset\tvariant\tstatus\tequivalence\tgpu_ms\tcreate_ms\tstatistics\tdetail\n",
+        "target\tshader\tset\tvariant\tstatus\tequivalence\tgpu_ms\tgpu_spread\tcreate_ms\tstatistics\tdetail\n",
     );
     let number = |value: Option<f64>| value.map_or_else(String::new, |v| format!("{v:.6}"));
     for target in targets {
@@ -978,7 +1178,7 @@ fn tsv(results: &[UnitResult], targets: &[TargetRun]) -> String {
             if let Some(why) = &run.skipped {
                 let _ = writeln!(
                     out,
-                    "{}\t{name}\t{set}\t\tskipped\t\t\t\t\t{}",
+                    "{}\t{name}\t{set}\t\tskipped\t\t\t\t\t\t{}",
                     target.label,
                     why.replace(['\t', '\n'], " ")
                 );
@@ -999,7 +1199,7 @@ fn tsv(results: &[UnitResult], targets: &[TargetRun]) -> String {
                     .replace(['\t', '\n'], " ");
                 let _ = writeln!(
                     out,
-                    "{}\t{name}\t{set}\t{}\t{}\t{}\t{}\t{}\t{}\t{detail}",
+                    "{}\t{name}\t{set}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{detail}",
                     target.label,
                     tag(*variant),
                     if measured.error.is_some() {
@@ -1009,6 +1209,7 @@ fn tsv(results: &[UnitResult], targets: &[TargetRun]) -> String {
                     },
                     equivalence.map_or("", Equivalence::code),
                     number(measured.gpu_ms),
+                    number(measured.spread()),
                     number(measured.create_ms),
                     statistics.join(";").replace(['\t', '\n'], " "),
                 );
@@ -1148,6 +1349,24 @@ mod tests {
     }
 
     #[test]
+    fn spread_compares_the_fastest_repeats_of_both_halves() {
+        assert_eq!(spread(&[]), None);
+        assert_eq!(spread(&[2.0]), None);
+        let times = [9.0, 2.0, 2.2, 1.8, 2.0];
+        assert!(spread(&times).is_some_and(|value| (value - 0.2 / 1.8).abs() < 1e-9));
+        let rounds = Measured {
+            gpu_times: times.to_vec(),
+            round_minima: vec![2.0, 2.04, 2.02],
+            ..Measured::default()
+        };
+        assert!(
+            rounds
+                .spread()
+                .is_some_and(|value| (value - 0.02).abs() < 1e-9)
+        );
+    }
+
+    #[test]
     fn report_lists_driver_differences() {
         let target = TargetRun {
             label: "amd".into(),
@@ -1161,6 +1380,14 @@ mod tests {
                     skipped: None,
                     measured: [
                         (Variant::Rglsl, measured(&[("VGPRs", 31.0)])),
+                        (
+                            Variant::RglslO,
+                            Measured {
+                                gpu_ms: Some(0.5),
+                                gpu_times: vec![0.5, 0.6, 0.5, 0.7, 0.5],
+                                ..measured(&[("VGPRs", 15.0)])
+                            },
+                        ),
                         (Variant::SpirvOptO, measured(&[("VGPRs", 15.0)])),
                         (Variant::GlslangO, measured(&[("VGPRs", 15.0)])),
                     ]
@@ -1186,10 +1413,11 @@ mod tests {
         assert!(report.contains("| spirv-opt -O(rglsl) | 1 | 0 | 0 | 0 | 0 | 0 |"));
         assert!(report.contains("- `#0`: differs: byte 0"));
         assert!(report.contains("- `#0` (2.00): VGPRs 31 → 15"));
-        assert!(report.contains("| GPU time | 1.000 | 1.000 | 1 |"));
+        assert!(report.contains("| GPU time | 1.000 | 0.500 | 1.000 | 1 |"));
         assert!(report.contains("Not staged: stage 1."));
         let table = tsv(&[], &[target]);
-        assert_eq!(table.lines().count(), 5);
-        assert!(table.contains("amd\t\t\tspirv-opt-O\tok\tsame\t1.000000\t2.000000\tVGPRs=15\t"));
+        assert_eq!(table.lines().count(), 6);
+        assert!(table.contains("amd\t\t\tspirv-opt-O\tok\tsame\t1.000000\t\t2.000000\tVGPRs=15\t"));
+        assert!(table.contains("amd\t\t\trglsl-O\tok\t\t0.500000\t0.000000\t2.000000\t"));
     }
 }

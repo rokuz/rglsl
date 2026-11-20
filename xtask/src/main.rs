@@ -127,7 +127,7 @@ commands:
                           the Vulkan and gl-as-vulkan corpus shaders and the synthetic ones;
                           report in target/xtask/bench-in-process.md and .tsv
   opt-quality         build every shader rglsl compiles (glslang corpus, tests/link references,
-                      tests/exec, synthetic) as rglsl, rglsl -O and -Os, spirv-opt -O and -Os of
+                      tests/exec, synthetic, tests/perf) as rglsl, rglsl -O and -Os, spirv-opt -O and -Os of
                       rglsl's module and glslang -O (target/oracles/bin/glslang-opt), validate each with spirv-val and
                       count SPIR-V instructions, Function variables, loads, stores, blocks,
                       functions and words; report in target/xtask/opt-quality.md and .tsv, modules
@@ -146,7 +146,9 @@ commands:
                           locally built Amber)
       --exec-target T     with --exec, run on these targets only: local, remote or an entry of
                           RGLSL_EXEC_REMOTE
-      --runs N            with --exec, timed runs of each shader (default 10)
+      --runs N            with --exec, timed runs of each shader (default 10; tests/perf at
+                          least 20, dispatched or drawn at the size in its `size` file, with the
+                          GPU time per set, per tests/perf shader and the spread of its repeats)
   fuzz                compare rglsl with glslang on a directory of shaders
                       (accepted or not, valid SPIR-V, crashes); findings go to
                       target/xtask/fuzz/differential/report.tsv

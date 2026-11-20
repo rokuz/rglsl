@@ -1,0 +1,45 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+const int SIZE = 480;
+const int RADIUS = 6;
+const int GROUP = 16;
+const int TILE = GROUP + 2 * RADIUS;
+const int PASSES = 16;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source { vec4 source[SIZE * SIZE]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Destination { vec4 destination[SIZE * SIZE]; };
+
+const float weights[RADIUS + 1] = float[](0.1964825501511404, 0.17469680, 0.12245834, 0.06690632, 0.02847902, 0.00944049, 0.00243644);
+
+shared vec4 tile[TILE * TILE];
+
+vec4 fetch(ivec2 position) {
+    ivec2 clamped = clamp(position, ivec2(0), ivec2(SIZE - 1));
+    return abs(source[clamped.y * SIZE + clamped.x]) + vec4(0.25);
+}
+
+void main() {
+    int local = int(gl_LocalInvocationIndex);
+    ivec2 center = ivec2(gl_LocalInvocationID.xy) + RADIUS;
+    precise vec4 total = vec4(0.0);
+    for (int pass = 0; pass < PASSES; pass++) {
+        ivec2 origin = ivec2(gl_WorkGroupID.xy) * GROUP - RADIUS + ivec2(pass, pass / 4);
+        for (int i = local; i < TILE * TILE; i += GROUP * GROUP) {
+            tile[i] = fetch(origin + ivec2(i % TILE, i / TILE));
+        }
+        barrier();
+        precise vec4 sum = vec4(0.0);
+        for (int y = -RADIUS; y <= RADIUS; y++) {
+            precise vec4 row = vec4(0.0);
+            for (int x = -RADIUS; x <= RADIUS; x++) {
+                row += tile[(center.y + y) * TILE + center.x + x] * weights[abs(x)];
+            }
+            sum += row * weights[abs(y)];
+        }
+        total += sum;
+        barrier();
+    }
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    destination[pixel.y * SIZE + pixel.x] = total / float(PASSES);
+}

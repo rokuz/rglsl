@@ -31,15 +31,17 @@ pub enum Set {
     Link,
     Exec,
     Synthetic,
+    Perf,
 }
 
 impl Set {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Vulkan,
         Self::OpenGlAsVulkan,
         Self::Link,
         Self::Exec,
         Self::Synthetic,
+        Self::Perf,
     ];
 
     const fn key(self) -> &'static str {
@@ -49,6 +51,7 @@ impl Set {
             Self::Link => "link",
             Self::Exec => "exec",
             Self::Synthetic => "synthetic",
+            Self::Perf => "perf",
         }
     }
 
@@ -59,6 +62,7 @@ impl Set {
             Self::Link => "tests/link single-file references",
             Self::Exec => "tests/exec shaders",
             Self::Synthetic => "synthetic large shaders",
+            Self::Perf => "tests/perf GPU workloads",
         }
     }
 }
@@ -136,6 +140,31 @@ pub struct Unit {
     pub target_env: String,
     pub validator: Vec<String>,
     pub role: Role,
+    pub size: Size,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Size {
+    pub groups: Option<[u32; 3]>,
+    pub framebuffer: Option<u32>,
+}
+
+impl Size {
+    fn parse(text: &str) -> Option<Self> {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let number = |word: &&str| word.parse::<u32>().ok().filter(|value| *value > 0);
+        match words.as_slice() {
+            ["groups", x, y, z] => Some(Self {
+                groups: Some([number(x)?, number(y)?, number(z)?]),
+                framebuffer: None,
+            }),
+            ["framebuffer", edge] => Some(Self {
+                groups: None,
+                framebuffer: Some(number(edge)?),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -507,6 +536,7 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
             case: case.name.clone(),
             name: case.name.clone(),
             role: Role::Measured,
+            size: Size::default(),
         };
         match known.get(&case.name) {
             Some(undefined) => {
@@ -571,6 +601,66 @@ pub fn units(root: &Path, glslang_dir: &Path, work: &Path) -> Result<Vec<Unit>> 
             target_env: "vulkan1.0".into(),
             validator: vec!["--target-env".into(), "vulkan1.0".into()],
             role: Role::Measured,
+            size: Size::default(),
+        });
+    }
+    units.extend(perf_units(root)?);
+    Ok(units)
+}
+
+pub const PERF_DIR: &str = "tests/perf";
+const PERF_SIZE: &str = "size";
+
+fn perf_units(root: &Path) -> Result<Vec<Unit>> {
+    let dir = root.join(PERF_DIR);
+    let mut tests: Vec<PathBuf> = fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_dir())
+        .collect();
+    tests.sort();
+    let mut units = Vec::new();
+    for test in tests {
+        let name = test
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("a test directory name that is not UTF-8")?
+            .to_string();
+        let mut shaders: Vec<String> = fs::read_dir(&test)?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .filter(|file| groups::stage_of(file).is_some())
+            .collect();
+        shaders.sort();
+        let [shader] = shaders.as_slice() else {
+            bail!(
+                "{}: one shader expected, found {}",
+                test.display(),
+                shaders.len()
+            );
+        };
+        let size_path = test.join(PERF_SIZE);
+        let text = fs::read_to_string(&size_path)
+            .with_context(|| format!("reading {}", size_path.display()))?;
+        let size = Size::parse(&text).with_context(|| {
+            format!(
+                "{}: `groups <x> <y> <z>` or `framebuffer <edge>` expected",
+                size_path.display()
+            )
+        })?;
+        let case = format!("perf/{name}");
+        units.push(Unit {
+            name: format!("{case}/{shader}"),
+            case,
+            set: Set::Perf,
+            dir: test.clone(),
+            rglsl_args: vec!["-V".into()],
+            glslang_args: vec!["-V".into()],
+            input: shader.clone(),
+            target_env: "vulkan1.0".into(),
+            validator: vec!["--target-env".into(), "vulkan1.0".into()],
+            role: Role::Measured,
+            size,
         });
     }
     Ok(units)
@@ -593,6 +683,7 @@ fn file_unit(case: &Case, dir: &Path, file: &str, set: Set, options: &[String]) 
         target_env: case.target.spirv_val_env(),
         validator: runner::validator_args(case, &dir.join(file)),
         role: Role::Measured,
+        size: Size::default(),
     }
 }
 
@@ -1089,6 +1180,37 @@ mod tests {
     }
 
     #[test]
+    fn perf_sizes_are_groups_or_a_framebuffer() {
+        assert_eq!(
+            Size::parse("groups 64 1 8\n"),
+            Some(Size {
+                groups: Some([64, 1, 8]),
+                framebuffer: None,
+            })
+        );
+        assert_eq!(
+            Size::parse("framebuffer 512"),
+            Some(Size {
+                groups: None,
+                framebuffer: Some(512),
+            })
+        );
+        assert_eq!(Size::parse("groups 64 0 1"), None);
+        assert_eq!(Size::parse("framebuffer"), None);
+        assert_eq!(Size::parse("pixels 4"), None);
+    }
+
+    #[test]
+    fn every_perf_test_has_one_shader_and_a_size() -> Result<()> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let units = perf_units(&root)?;
+        assert!(units.len() >= 10);
+        assert!(units.iter().all(|unit| unit.set == Set::Perf
+            && (unit.size.groups.is_some() || unit.size.framebuffer.is_some())));
+        Ok(())
+    }
+
+    #[test]
     fn counts_function_contents() -> Result<()> {
         use spirv::Op;
         let mut words = vec![spirv::MAGIC_NUMBER, 0x0001_0000, 0, 100, 0];
@@ -1163,6 +1285,7 @@ mod tests {
                 target_env: "vulkan1.0".into(),
                 validator: Vec::new(),
                 role: Role::Measured,
+                size: Size::default(),
             },
             outcomes,
         }
