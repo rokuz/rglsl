@@ -3,4 +3,4 @@ why = "the NVIDIA driver returns the value of vertex 0 in every element of a Per
 
 ["synthetic/many_functions.comp"]
 variants = ["rglsl"]
-why = "the unoptimized modules of a 5,000-deep chain of calls run on no GPU, so that the shader has the same reference (glslang -O's module) on every target: they crash the AMD proprietary driver or take it and KosmicKrisp minutes. NVIDIA compiles and runs glslang's unoptimized module in about 1 s. The optimized variants (rglsl -O, spirv-opt -O, glslang -O) have one function, run, and are compared with glslang -O's module"
+why = "the unoptimized modules of a 5,000-deep chain of calls are too heavy for the NVIDIA driver: Amber with glslang's does not finish within 300 s (rglsl's module is larger). The optimized variants (rglsl -O, spirv-opt -O, glslang -O) have one function, run, and are compared with glslang -O's module"
