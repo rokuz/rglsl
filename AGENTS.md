@@ -173,6 +173,14 @@ cargo xtask fuzz --random [--seed N] [--families K] [--variants V] [--exec] [--o
                                                    # tests/fuzz-quarantine/<target>/<mode>/; rglsl runs on
                                                    # the qualified shaders and every failure is ours:
                                                    # target/xtask/fuzz/random/<seed>/report.md, .tsv
+cargo xtask fuzz --recheck-quarantine [--exec-target T] [--filter TEXT] [--pause SECS] [--max-resets N]
+                                                   # every quarantine entry again on its target, each
+                                                   # module alone: still hangs, resets or crashes ->
+                                                   # kept (reason.toml `rechecked`); runs -> removed,
+                                                   # and rglsl must render the reference's image; a
+                                                   # reference-differs entry is decided by the targets'
+                                                   # consensus (one level tolerated):
+                                                   # target/xtask/fuzz/recheck/report.tsv
 cargo xtask fuzz --libfuzzer TARGET [--time SECS] [--jobs N] # cargo +nightly fuzz run
 cargo xtask fuzz --decode INPUT                              # glsl_variant input -> shader family
 cargo xtask fuzz --reduce JOB.json --interesting K           # GraphicsFuzz reducer (K = optimizer-differs: -O vs rglsl;

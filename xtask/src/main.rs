@@ -170,6 +170,20 @@ commands:
                           are read from the System log after every batch, and a target with
                           too many of them is stopped; report in
                           target/xtask/fuzz/random/<seed>/report.md and report.tsv
+      --recheck-quarantine
+                          instead of --shaders: run every entry of tests/fuzz-quarantine/<target>/
+                          <mode>/ again on its exec target (every target, or --exec-target T),
+                          each module alone: glslang's module of the entry's mode, the family's
+                          reference and rglsl's module; an entry whose glslang module still hangs,
+                          resets or crashes the driver is kept and its reason.toml refreshed
+                          (`rechecked`), one whose module now runs is removed (rglsl must then
+                          render the reference's image; a glslang module that does not is
+                          reported as glslang-wrong), any other failure leaves it unchanged; the
+                          reference of a reference-differs entry is also run on the other targets
+                          and compared; --filter TEXT picks entries whose <target>/<mode>/<name>
+                          contains TEXT (comma-separated), --pause SECS waits between runs,
+                          --max-resets N stops a target after N driver resets (default 3); report
+                          in target/xtask/fuzz/recheck/report.tsv
       --seed N            with --random: the generator's seed (default: from the clock, printed)
       --families K        with --random: shader families to generate (default 29)
       --variants V        with --random: variants per family (default 16)
@@ -416,6 +430,27 @@ fn run(args: Vec<String>) -> Result<i32> {
             args.finish()?;
             fuzz_libfuzzer::decode_artifact(&workspace_root()?, Path::new(&input), output)?;
             Ok(0)
+        }
+        "fuzz" if args.has("--recheck-quarantine") => {
+            let _ = args.flag("--recheck-quarantine");
+            let options = fuzz_random::recheck::Options {
+                exec: match args.value("--exec-target")? {
+                    None => exec::select_targets(true, true)?,
+                    Some(name) => exec::named_targets(&name)?,
+                },
+                filter: args.value("--filter")?,
+                timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
+                pause_secs: args.parsed("--pause")?.unwrap_or(0),
+                max_resets: args.parsed("--max-resets")?.unwrap_or(3),
+            };
+            args.finish()?;
+            Ok(
+                if fuzz_random::recheck::run(&workspace_root()?, &options)? {
+                    0
+                } else {
+                    1
+                },
+            )
         }
         "fuzz" if args.has("--random") => {
             let command_line = std::iter::once("cargo xtask fuzz".to_string())

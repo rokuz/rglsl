@@ -78,7 +78,7 @@ pub fn mode_dir(root: &Path, target: &str, mode: Mode) -> PathBuf {
     root.join(DIR).join(target).join(mode.label())
 }
 
-fn entry_shader(entry: &Path) -> Result<Option<PathBuf>> {
+pub fn entry_shader(entry: &Path) -> Result<Option<PathBuf>> {
     let mut found = None;
     for file in fs::read_dir(entry).with_context(|| format!("reading {}", entry.display()))? {
         let path = file?.path();

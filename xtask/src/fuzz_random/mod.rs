@@ -1,6 +1,7 @@
 pub mod classify;
 mod generate;
 pub mod quarantine;
+pub mod recheck;
 mod report;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -613,7 +614,7 @@ impl Qualification<'_, '_> {
         for reference in references {
             let verdict = self.verdict(reference);
             let key = (Mode::Unoptimized, reference);
-            if verdict.qualified()
+            if verdict.qualified(Mode::Unoptimized)
                 && let (
                     Some((plan, _)),
                     Some(Ran {
@@ -688,7 +689,7 @@ impl Qualification<'_, '_> {
                 continue;
             }
             let why = match reference.and_then(|r| self.verdicts.get(&r)) {
-                Some(verdict) if verdict.qualified() => {
+                Some(verdict) if verdict.qualified(key.0) => {
                     variants.push(key);
                     continue;
                 }

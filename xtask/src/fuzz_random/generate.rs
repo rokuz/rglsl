@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use rglsl_fuzz::{Donor, FamilyOptions, Random, STAGE_EXTENSIONS, ShaderJob, generate_family};
+use rglsl_fuzz::{
+    Donor, FamilyOptions, Random, STAGE_EXTENSIONS, ShaderJob, generate_family, prepare_reference,
+};
 use serde_json::{Map, Value};
 
 use crate::exec;
@@ -141,6 +143,19 @@ pub fn pick(count: usize, available: usize, random: &mut Random) -> Vec<usize> {
     picked
 }
 
+pub fn write_reference(root: &Path, family: &str, out: &Path) -> Result<PathBuf> {
+    let reference = read_job(&root.join(REFERENCES).join(format!("{family}.json")))?;
+    let max_uniforms = FamilyOptions::default().generator.max_uniforms;
+    let prepared = prepare_reference(&reference, max_uniforms.saturating_sub(1), true)?;
+    fs::create_dir_all(out)?;
+    let json = out.join("reference.json");
+    write_job(&prepared, &json)?;
+    stage_files(out)?
+        .into_iter()
+        .find(|path| path.file_stem().is_some_and(|stem| stem == "reference"))
+        .with_context(|| format!("{family} has no reference shader"))
+}
+
 struct Planned {
     name: String,
     reference: PathBuf,
@@ -253,6 +268,36 @@ mod tests {
             pick(4, 44, &mut Random::new(1)),
             pick(4, 44, &mut Random::new(1))
         );
+    }
+
+    #[test]
+    fn a_written_reference_is_the_reference_of_a_generated_family() -> Result<()> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let out = std::env::temp_dir().join(format!("rglsl-reference-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        let shader = write_reference(&root, "muller", &out)?;
+        let options = FamilyOptions {
+            variants: 1,
+            ..FamilyOptions::default()
+        };
+        let family = generate_family(
+            &read_job(&root.join(REFERENCES).join("muller.json"))?,
+            &options,
+            &mut Random::new(3),
+        )?;
+        let emitted = family.reference.emit()?;
+        assert_eq!(
+            fs::read_to_string(out.join("reference.json"))?,
+            emitted.json
+        );
+        let text = emitted
+            .shaders
+            .iter()
+            .find(|(extension, _)| shader.extension().is_some_and(|e| e == extension.as_str()))
+            .map(|(_, text)| text.clone());
+        assert_eq!(Some(fs::read_to_string(&shader)?), text);
+        fs::remove_dir_all(&out)?;
+        Ok(())
     }
 
     #[test]
