@@ -1,0 +1,30 @@
+{
+  "GLF_dead8tex": {
+    "binding": 3,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_live15one": {
+    "args": [
+      0.37344164
+    ],
+    "binding": 2,
+    "func": "glUniform1f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  }
+}
