@@ -1,0 +1,34 @@
+{
+  "GLF_live3injectionSwitch": {
+    "args": [
+      0.17901832,
+      0.3002439
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "GLF_live9injectionSwitch": {
+    "args": [
+      0.9159661,
+      0.57272863
+    ],
+    "binding": 2,
+    "func": "glUniform2f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  }
+}

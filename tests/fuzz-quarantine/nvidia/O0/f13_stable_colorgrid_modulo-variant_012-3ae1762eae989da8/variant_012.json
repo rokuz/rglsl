@@ -1,0 +1,72 @@
+{
+  "GLF_dead13resolution": {
+    "args": [
+      0.8675424,
+      0.34845477
+    ],
+    "binding": 5,
+    "func": "glUniform2f"
+  },
+  "GLF_live10resolution": {
+    "args": [
+      0.55956644,
+      0.4387809
+    ],
+    "binding": 7,
+    "func": "glUniform2f"
+  },
+  "GLF_live14injectionSwitch": {
+    "args": [
+      0.103177965,
+      0.05727893
+    ],
+    "binding": 2,
+    "func": "glUniform2f"
+  },
+  "GLF_live16time": {
+    "args": [
+      0.22325873
+    ],
+    "binding": 4,
+    "func": "glUniform1f"
+  },
+  "GLF_live17injectionSwitch": {
+    "args": [
+      0.22392428,
+      0.07719326
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "GLF_live7one": {
+    "args": [
+      0.7484392
+    ],
+    "binding": 6,
+    "func": "glUniform1f"
+  },
+  "GLF_live8injectionSwitch": {
+    "args": [
+      0.44240814,
+      0.76794785
+    ],
+    "binding": 8,
+    "func": "glUniform2f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  }
+}
