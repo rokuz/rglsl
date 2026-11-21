@@ -1,11 +1,13 @@
 #[path = "support/samples.rs"]
 mod samples;
 
+use std::collections::BTreeMap;
+use std::error::Error;
 use std::path::Path;
 
 use rglsl_fuzz::{
     Donor, EnabledTransformations, GeneratorOptions, Random, ShaderJob, Transformation,
-    analyze_shader, generate_variant_with_donors, parse_shader,
+    analyze_shader, generate_variant_with_donors, parse_shader, reduce::add_guards_to_job,
 };
 use rglsl_types::ShaderStage;
 use samples::{TestResult, glslang, glslang_accepts, sample_donors, sample_jobs};
@@ -109,40 +111,64 @@ fn live_code_donation() -> TestResult {
     run(Transformation::DonateLiveCode, "GLF_live")
 }
 
-fn uninitialised_donated_variables(text: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut aggregate = false;
+fn donated_initialised_declarations(text: &str) -> BTreeMap<String, usize> {
+    let mut found = BTreeMap::new();
     for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("struct ")
-            || (trimmed.contains('{')
-                && (trimmed.contains("uniform ") || trimmed.contains("buffer ")))
-        {
-            aggregate = true;
-        }
-        if aggregate {
-            if trimmed.contains('}') {
-                aggregate = false;
-            }
-            continue;
-        }
-        let Some(declaration) = trimmed.strip_suffix(';') else {
+        let Some((head, _)) = line.trim().split_once(" = ") else {
             continue;
         };
-        let words: Vec<&str> = declaration.split_whitespace().collect();
-        let [ty, name] = words.as_slice() else {
+        let mut words = head.split_whitespace();
+        let (Some(ty), Some(name)) = (words.next(), words.next()) else {
             continue;
         };
-        let name = name.split('[').next().unwrap_or(name);
         let identifier = |word: &str| word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        let donated = (name.starts_with("GLF_live") || name.starts_with("GLF_dead"))
-            && identifier(ty)
-            && identifier(name);
-        if donated && !matches!(*ty, "return" | "uniform" | "layout") {
-            found.push(trimmed.to_owned());
+        let donated = name.starts_with("GLF_live") || name.starts_with("GLF_dead");
+        if donated && identifier(ty) && !head.contains('(') {
+            *found.entry(head.to_owned()).or_insert(0) += 1;
         }
     }
     found
+}
+
+fn uninitialised_donated_variables(job: &ShaderJob) -> Result<Vec<String>, Box<dyn Error>> {
+    let guarded = add_guards_to_job(job, None)?.ok_or("the guards do not apply")?;
+    let mut found = Vec::new();
+    for ((_, text), (_, guarded)) in job
+        .emit()?
+        .shaders
+        .iter()
+        .zip(guarded.emit()?.shaders.iter())
+    {
+        let before = donated_initialised_declarations(text);
+        for (head, count) in donated_initialised_declarations(guarded) {
+            if before.get(&head).copied().unwrap_or(0) < count {
+                found.push(head);
+            }
+        }
+    }
+    Ok(found)
+}
+
+#[test]
+fn uninitialised_donated_variables_are_found() -> TestResult {
+    let source = "#version 450\nlayout(location = 0) out vec4 _GLF_color;\n\
+        struct GLF_live4BST {\n    int data;\n    int leftIndex;\n    int rightIndex;\n};\n\
+        GLF_live4BST GLF_live4tree[10];\n\
+        int GLF_live1map[16 * 16];\n\
+        void main() {\n    GLF_live4BST GLF_live4currentNode;\n    float GLF_live2x = 1.0;\n\
+        _GLF_color = vec4(float(GLF_live4tree[1].data + GLF_live1map[2] + GLF_live4currentNode.data) + GLF_live2x);\n}\n";
+    let job = ShaderJob::parse("{}", &[("frag".to_owned(), source.to_owned())])?;
+    let mut found = uninitialised_donated_variables(&job)?;
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "GLF_live4BST GLF_live4currentNode",
+            "GLF_live4BST GLF_live4tree[10]",
+            "int GLF_live1map[16 * 16]"
+        ]
+    );
+    Ok(())
 }
 
 #[test]
@@ -164,12 +190,12 @@ fn donated_variables_are_always_initialised() -> TestResult {
             generate_variant_with_donors(reference, &options, &donors, &mut Random::new(seed))?;
         for (_, text) in variant.emit()?.shaders {
             donated += text.matches("GLF_live").count() + text.matches("GLF_dead").count();
-            let uninitialised = uninitialised_donated_variables(&text);
-            assert!(
-                uninitialised.is_empty(),
-                "{name}: donated variables without an initializer: {uninitialised:?}"
-            );
         }
+        let uninitialised = uninitialised_donated_variables(&variant)?;
+        assert!(
+            uninitialised.is_empty(),
+            "{name}: donated variables without an initializer: {uninitialised:?}"
+        );
     }
     assert!(donated > 0, "nothing was donated");
     Ok(())
