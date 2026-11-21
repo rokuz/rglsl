@@ -1121,6 +1121,7 @@ impl Writer {
             physical_component_load: false,
             reachability: crate::proc::Reachability::new(&ir_function.body),
             ssa: super::ssa::Ssa::default(),
+            loop_merges: crate::FastHashSet::default(),
         };
 
         // fill up the pre-emitted and const expressions

@@ -12777,3 +12777,54 @@ void main() {
     assert_eq!(distinct.len(), 3);
     Ok(())
 }
+
+#[test]
+fn discard_after_a_loop_is_not_in_the_loop_merge_block() -> crate::TestResult {
+    let source = "#version 450
+layout(location = 0) out vec4 o;
+layout(location = 0) flat in int k;
+void main() {
+    o = vec4(0.0);
+    do {
+        if (gl_FragCoord.y < 30.0) {
+            o.x = 1.0;
+            break;
+        } else if (gl_FragCoord.y < 60.0) {
+            for (int i = 1; i != k; i--) {
+                o.y += 1.0;
+            }
+            discard;
+        } else {
+            o.z = 1.0;
+            break;
+        }
+    } while (k == 0);
+    o.w = 1.0;
+}
+";
+    let module = compile(ShaderStage::Fragment, source)?;
+    let merges: Vec<u32> = instructions(&module, Op::LoopMerge)
+        .iter()
+        .filter_map(|inst| inst.operands.first().and_then(Operand::id_ref_any))
+        .collect();
+    assert_eq!(merges.len(), 2);
+    let mut kills = 0;
+    for block in module.functions.iter().flat_map(|f| f.blocks.iter()) {
+        let Some(label) = block.label.as_ref().and_then(|l| l.result_id) else {
+            return Err("a block without a label".into());
+        };
+        let killing = block
+            .instructions
+            .last()
+            .is_some_and(|inst| inst.class.opcode == Op::Kill);
+        if killing {
+            kills += 1;
+            assert!(
+                !merges.contains(&label),
+                "OpKill terminates the merge block %{label} of a loop"
+            );
+        }
+    }
+    assert_eq!(kills, 1);
+    Ok(())
+}

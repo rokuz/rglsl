@@ -207,6 +207,11 @@ impl BlockContext<'_> {
                 return Ok(None);
             }
             Statement::Kill => {
+                if self.loop_merges.contains(&block.label_id) {
+                    let kill_id = self.gen_id();
+                    self.consume(block, Instruction::branch(kill_id));
+                    block = self.begin_block(kill_id)?;
+                }
                 self.function.consume(block, Instruction::kill());
                 return Ok(None);
             }

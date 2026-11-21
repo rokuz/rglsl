@@ -748,6 +748,8 @@ struct BlockContext<'w> {
     reachability: crate::proc::Reachability,
 
     ssa: ssa::Ssa,
+
+    loop_merges: crate::FastHashSet<Word>,
 }
 
 impl BlockContext<'_> {

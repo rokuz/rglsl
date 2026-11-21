@@ -372,6 +372,7 @@ impl BlockContext<'_> {
         let merge_id = self.gen_id();
         let body_id = self.gen_id();
         let continuing_id = self.gen_id();
+        self.loop_merges.insert(merge_id);
 
         let mut block = self.begin_block(preamble_id)?;
         self.write_loop_header_phis(preamble_id, &mut block)?;
