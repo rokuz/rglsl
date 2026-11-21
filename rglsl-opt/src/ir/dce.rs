@@ -127,6 +127,7 @@ const WHOLE: u8 = u8::MAX;
 
 struct Live<'m> {
     expressions: Vec<bool>,
+    addressed: Vec<bool>,
     locals: Vec<bool>,
     widths: Vec<u8>,
     components: Vec<u8>,
@@ -154,6 +155,7 @@ impl<'m> Live<'m> {
         let tree = Tree::of(&function.body);
         Self {
             expressions: vec![false; function.expressions.len()],
+            addressed: vec![false; function.expressions.len()],
             locals: vec![false; function.local_variables.len()],
             widths: function
                 .local_variables
@@ -290,7 +292,7 @@ impl<'m> Marker<'m> {
         if let Some(slot) = self
             .live
             .get_mut(function)
-            .and_then(|live| live.expressions.get_mut(handle.index()))
+            .and_then(|live| live.addressed.get_mut(handle.index()))
         {
             *slot = true;
         }
@@ -686,6 +688,9 @@ struct Plan {
 
 impl Plan {
     fn of(live: &mut Live<'_>, debug_values: Vec<DebugValue>) -> Option<Self> {
+        for (kept, &addressed) in live.expressions.iter_mut().zip(&live.addressed) {
+            *kept |= addressed;
+        }
         let any_dead = live.expressions.iter().any(|&live| !live)
             || live
                 .locals

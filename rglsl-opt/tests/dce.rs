@@ -337,3 +337,29 @@ fn debug_variables_keep_no_dead_code() -> TestResult {
     assert_eq!(debug_values(function, "t"), 1);
     Ok(())
 }
+
+#[test]
+fn a_vector_read_whole_after_one_component_keeps_its_component_stores() -> TestResult {
+    let source = shader(
+        "struct Pair { int tag; vec4 value; };
+int steps = 0;
+void walk(float start) {
+    for (int i = 0; i < k; i++) {
+        steps++;
+        if (start > 1.0) continue;
+    }
+}",
+        "    Pair pair = Pair(k, vec4(1.0));
+    if (k > 2) pair.value.x = 2.0;
+    walk(pair.value.x);
+    pair.value.yzw = vec3(0.0);
+    color = vec4(pair.value.yzw, 1.0);
+    if (steps > 1) color.x = 0.5;",
+    );
+    let split = fragment(&source, &["inline", "sroa"])?;
+    let before = stores(entry(&split)?, "pair_value");
+    assert!(before >= 4);
+    let module = fragment(&source, &["inline", "sroa", "dce"])?;
+    assert_eq!(stores(entry(&module)?, "pair_value"), before);
+    Ok(())
+}
