@@ -144,24 +144,6 @@ struct Staged {
     refused: Vec<(Variant, String)>,
 }
 
-pub fn timed_script(script: &str, runs: usize) -> String {
-    let mut out = String::with_capacity(script.len());
-    for line in script.lines() {
-        match line.strip_prefix("RUN ") {
-            Some(rest) => {
-                for _ in 0..runs.max(1) {
-                    let _ = writeln!(out, "RUN TIMED_EXECUTION {rest}");
-                }
-            }
-            None => {
-                out.push_str(line);
-                out.push('\n');
-            }
-        }
-    }
-    out
-}
-
 fn module(result: &UnitResult, variant: Variant) -> Option<&Path> {
     match result.outcome(variant) {
         Outcome::Module {
@@ -241,7 +223,8 @@ fn stage_unit(
         } else {
             runs
         };
-        fs::write(dir.join(&name), timed_script(&script, repeats)).map_err(|e| e.to_string())?;
+        fs::write(dir.join(&name), amber::timed_script(&script, repeats))
+            .map_err(|e| e.to_string())?;
         timed.push((
             variant,
             Job {
@@ -725,6 +708,7 @@ pub fn run(
     specs: &[TargetSpec],
     runs: usize,
     timeout: Duration,
+    max_resets: usize,
 ) -> Result<()> {
     let glslang = oracles::find_tool(root, "glslang", "RGLSL_GLSLANG")?;
     let work = work_dir(root);
@@ -734,6 +718,7 @@ pub fn run(
         &glslang.path,
         &work,
         timeout.min(exec::JOB_TIMEOUT),
+        max_resets,
     )?;
     for executor in &executors {
         for (name, listed) in executor.driver_bugs.variant_tags() {
@@ -1327,11 +1312,11 @@ mod tests {
     fn timed_scripts_repeat_every_run() {
         let script = "#!amber\nCLEAR main\nRUN main DRAW_RECT POS 0 0 SIZE 4 4\n";
         assert_eq!(
-            timed_script(script, 2),
+            amber::timed_script(script, 2),
             "#!amber\nCLEAR main\nRUN TIMED_EXECUTION main DRAW_RECT POS 0 0 SIZE 4 4\nRUN TIMED_EXECUTION main DRAW_RECT POS 0 0 SIZE 4 4\n"
         );
         assert_eq!(
-            timed_script("RUN p 1 1 1", 0),
+            amber::timed_script("RUN p 1 1 1", 0),
             "RUN TIMED_EXECUTION p 1 1 1\n"
         );
     }

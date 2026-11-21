@@ -177,6 +177,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         &glslang.path,
         &work.join("exec"),
         timeout,
+        exec::events::DEFAULT_MAX_RESETS,
     )?;
     let judgements = exec::parallel_map(&executors, |executor| {
         metamorphic(

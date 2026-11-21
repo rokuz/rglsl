@@ -354,6 +354,7 @@ pub fn parse_result(
             (None, true) => Err(JobError::Failed("the remote run returned no dump".into())),
         },
         "" => Err(JobError::NotRun("the remote run returned no status".into())),
+        "stopped" => Err(JobError::NotRun(message)),
         _ if message.is_empty() => Err(JobError::Failed(kind.to_string())),
         _ => Err(JobError::Failed(message)),
     }
@@ -503,6 +504,18 @@ mod tests {
         );
         assert!(
             parse_result("", None, true, &Failures::default()).is_err_and(|error| !error.ran())
+        );
+        assert_eq!(
+            parse_result(
+                "stopped\nthe target was stopped: 2 driver resets\n",
+                None,
+                true,
+                &Failures::default()
+            )
+            .err(),
+            Some(JobError::NotRun(
+                "the target was stopped: 2 driver resets".into()
+            ))
         );
         Ok(())
     }

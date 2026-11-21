@@ -17,7 +17,7 @@ use self::classify::{
     judge_reference,
 };
 use self::quarantine::Mode;
-use crate::exec::batch::Job;
+use crate::exec::batch::{Capture, Job, TIMING};
 use crate::exec::plan::Plan;
 use crate::exec::{self, Executor, Outputs, TargetSpec};
 use crate::fuzz::{self, Verdict};
@@ -27,6 +27,8 @@ use crate::process::{self, Exit};
 
 pub const DEFAULT_FAMILIES: usize = 29;
 pub const DEFAULT_VARIANTS: u32 = 16;
+pub const SERIAL_PAUSE: Duration = Duration::from_secs(20);
+const TIMED_RUNS: usize = 3;
 
 #[derive(Debug)]
 pub struct Options {
@@ -36,6 +38,8 @@ pub struct Options {
     pub timeout_secs: u64,
     pub exec: Vec<TargetSpec>,
     pub optimize: bool,
+    pub max_resets: usize,
+    pub pause_secs: Option<u64>,
     pub args: String,
 }
 
@@ -107,6 +111,7 @@ struct Run<'a> {
     modes: &'a [Mode],
     seed: u64,
     generator: &'a str,
+    pause: Option<Duration>,
 }
 
 fn clock_seed() -> u64 {
@@ -158,6 +163,7 @@ pub fn run(root: &Path, options: &Options) -> Result<bool> {
         &glslang.path,
         &dir.join("exec"),
         timeout,
+        options.max_resets,
     )?;
     let context = Run {
         root,
@@ -165,6 +171,7 @@ pub fn run(root: &Path, options: &Options) -> Result<bool> {
         modes: &modes,
         seed,
         generator: &generator,
+        pause: options.pause_secs.map(Duration::from_secs),
     };
     let context = &context;
     let mut targets = std::thread::scope(|scope| {
@@ -182,7 +189,9 @@ pub fn run(root: &Path, options: &Options) -> Result<bool> {
             .collect::<Result<Vec<_>>>()
     })?;
     apply_consensus(&mut targets)?;
-    let runs = finish_targets(targets)?;
+    let mut runs = finish_targets(targets)?;
+    time_new_entries(context, &executors, &mut runs)?;
+    compare_rglsl_failures(&mut runs);
 
     let report = report::Report {
         seed,
@@ -424,7 +433,7 @@ fn start_target<'a, 'b>(
         context,
         executor,
         label,
-        watch: Watch::new(executor),
+        watch: Watch::new(executor, pause_on(executor, context.pause)),
         ready,
         cells,
         runs: BTreeMap::new(),
@@ -434,6 +443,13 @@ fn start_target<'a, 'b>(
     };
     qualification.references()?;
     Ok(qualification)
+}
+
+fn pause_on(executor: &Executor, pause: Option<Duration>) -> Duration {
+    pause.unwrap_or(match executor.target {
+        exec::TargetId::Remote(_) if executor.workers() == 1 => SERIAL_PAUSE,
+        _ => Duration::ZERO,
+    })
 }
 
 fn references_of(shaders: &[Shader]) -> BTreeSet<usize> {
@@ -719,7 +735,7 @@ impl Qualification<'_, '_> {
                 self.executor.device.driver, self.executor.device.name
             ),
             cells: self.cells,
-            stopped: self.watch.stopped.clone(),
+            stopped: self.watch.stopped(),
             problems: self.watch.problems.clone(),
             resets: self.watch.resets(),
         })
@@ -828,6 +844,139 @@ fn add_to_quarantine(
     Ok(entry
         .strip_prefix(context.root)
         .map_or(entry.clone(), Path::to_path_buf))
+}
+
+fn time_new_entries(
+    context: &Run<'_>,
+    executors: &[Executor],
+    runs: &mut [TargetRun],
+) -> Result<()> {
+    let entries: Vec<(usize, Key, PathBuf)> = runs
+        .iter()
+        .enumerate()
+        .flat_map(|(owner, run)| {
+            run.cells
+                .iter()
+                .filter(|(_, cell)| cell.class.hangs_the_driver())
+                .filter_map(move |(key, cell)| Some((owner, *key, cell.entry.clone()?)))
+        })
+        .collect();
+    for (owner, key, entry) in entries {
+        let Some(shader) = context.shaders.get(key.1) else {
+            continue;
+        };
+        let timings: Vec<String> = executors
+            .iter()
+            .zip(runs.iter())
+            .enumerate()
+            .filter(|(target, _)| *target != owner)
+            .map(|(_, (executor, run))| other_target_time(executor, run, shader, key))
+            .collect();
+        if timings.is_empty() {
+            continue;
+        }
+        let text = timings.join("; ");
+        quarantine::annotate(&context.root.join(&entry), "other_targets", &text)?;
+        if let Some(cell) = runs.get_mut(owner).and_then(|run| run.cells.get_mut(&key)) {
+            cell.note = format!("{}; other targets: {text}", cell.note);
+        }
+    }
+    Ok(())
+}
+
+fn compare_rglsl_failures(runs: &mut [TargetRun]) {
+    let failures: Vec<(usize, Key)> = runs
+        .iter()
+        .enumerate()
+        .flat_map(|(owner, run)| {
+            run.cells
+                .iter()
+                .filter(|(_, cell)| {
+                    cell.rglsl
+                        .as_ref()
+                        .is_some_and(|(verdict, _)| verdict.is_failure())
+                })
+                .map(move |(key, _)| (owner, *key))
+        })
+        .collect();
+    for (owner, key) in failures {
+        let others: Vec<String> = runs
+            .iter()
+            .enumerate()
+            .filter(|(target, _)| *target != owner)
+            .map(|(_, run)| {
+                let outcome = match run.cells.get(&key) {
+                    Some(Cell {
+                        rglsl: Some((verdict, _)),
+                        ..
+                    }) => verdict.label().to_string(),
+                    Some(cell) => format!("not run ({})", cell.class.label()),
+                    None => "not run".to_string(),
+                };
+                format!("{}: {outcome}", run.label)
+            })
+            .collect();
+        if others.is_empty() {
+            continue;
+        }
+        if let Some((_, note)) = runs
+            .get_mut(owner)
+            .and_then(|run| run.cells.get_mut(&key))
+            .and_then(|cell| cell.rglsl.as_mut())
+        {
+            note.push_str(&format!(
+                "; rglsl's module on the other targets: {}",
+                others.join(", ")
+            ));
+        }
+    }
+}
+
+fn other_target_time(executor: &Executor, run: &TargetRun, shader: &Shader, key: Key) -> String {
+    let label = &run.label;
+    let class = run.cells.get(&key).map(|cell| cell.class);
+    if !matches!(class, Some(Class::Pass | Class::GlslangWrong)) {
+        return format!("{label}: {}", class.map_or("not run", Class::label));
+    }
+    match draw_time(executor, shader, key) {
+        Ok(ms) => format!("{label}: renders in {ms:.3} ms"),
+        Err(why) => format!("{label}: not timed ({why})"),
+    }
+}
+
+fn draw_time(executor: &Executor, shader: &Shader, key: Key) -> Result<f64, String> {
+    let (mode, index) = key;
+    let (_, job) =
+        stage(executor, shader, index, Compiler::Glslang, mode).map_err(|(_, why)| why)?;
+    let script = fs::read_to_string(job.dir.join(&job.script)).map_err(|e| e.to_string())?;
+    let name = format!("{}.timed.amber", job.script.trim_end_matches(".amber"));
+    fs::write(
+        job.dir.join(&name),
+        exec::amber::timed_script(&script, TIMED_RUNS),
+    )
+    .map_err(|e| e.to_string())?;
+    let timed = Job {
+        script: name,
+        dumps: Vec::new(),
+        timed: None,
+        capture: Capture {
+            statistics: false,
+            timing: true,
+        },
+        ..job
+    };
+    let (ran, _) = classify::run_alone(executor, &timed);
+    if let Some((class, note)) = failure(&ran) {
+        return Err(format!("{}: {note}", class.label()));
+    }
+    let outputs = ran.result.map_err(|error| error.to_string())?;
+    let stdout = outputs.get(TIMING).map_or(&[][..], Vec::as_slice);
+    let mut times = exec::amber::parse_timing(&String::from_utf8_lossy(stdout));
+    times.sort_by(f64::total_cmp);
+    times
+        .get(times.len() / 2)
+        .copied()
+        .ok_or_else(|| "Amber reported no execution time".into())
 }
 
 fn exit_of(note: &str) -> String {
@@ -992,6 +1141,51 @@ fn run_rglsl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_rglsl_failure_names_what_rglsl_did_on_the_other_targets() {
+        let key = (Mode::Optimized, 3);
+        let target = |label: &str, cell: Option<Cell>| TargetRun {
+            label: label.into(),
+            driver: String::new(),
+            cells: cell.into_iter().map(|cell| (key, cell)).collect(),
+            stopped: None,
+            problems: Vec::new(),
+            resets: 0,
+        };
+        let judged = |verdict: Verdict| Cell {
+            rglsl: Some((verdict, "differs".into())),
+            ..Cell::new(Class::Pass, String::new())
+        };
+        let mut runs = [
+            target("local", Some(judged(Verdict::WrongResultOptimized))),
+            target("amd", Some(judged(Verdict::Agree))),
+            target(
+                "nvidia",
+                Some(Cell::new(Class::Quarantined, "in tests".into())),
+            ),
+        ];
+        compare_rglsl_failures(&mut runs);
+        let note = runs
+            .first()
+            .and_then(|run| run.cells.get(&key))
+            .and_then(|cell| cell.rglsl.as_ref())
+            .map(|(_, note)| note.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            note,
+            format!(
+                "differs; rglsl's module on the other targets: amd: {}, nvidia: not run (quarantined)",
+                Verdict::Agree.label()
+            )
+        );
+        let untouched = runs
+            .get(1)
+            .and_then(|run| run.cells.get(&key))
+            .and_then(|cell| cell.rglsl.as_ref())
+            .map(|(_, note)| note.clone());
+        assert_eq!(untouched.as_deref(), Some("differs"));
+    }
 
     #[test]
     fn reads_the_exit_from_a_note() {

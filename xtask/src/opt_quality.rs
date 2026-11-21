@@ -22,6 +22,7 @@ pub struct Options {
     pub timeout_secs: u64,
     pub exec: Vec<exec::TargetSpec>,
     pub runs: usize,
+    pub max_resets: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -753,6 +754,7 @@ pub fn run(root: &Path, options: &Options) -> Result<i32> {
             &options.exec,
             options.runs,
             Duration::from_secs(options.timeout_secs),
+            options.max_resets,
         )?;
     }
     Ok(0)

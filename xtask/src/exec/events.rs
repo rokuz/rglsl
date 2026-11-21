@@ -3,8 +3,7 @@ use std::fmt::Write as _;
 
 use super::batch::Trace;
 
-pub const RESET_LIMIT: usize = 10;
-pub const RESET_WINDOW_MS: u64 = 5 * 60 * 1000;
+pub const DEFAULT_MAX_RESETS: usize = 3;
 pub const RESET_MERGE_MS: u64 = 5_000;
 pub const EVENT_SLACK_MS: u64 = 3_000;
 pub const EVENT_LATE_MS: u64 = 30_000;
@@ -272,13 +271,34 @@ pub fn crashes_by_job(events: &[DriverEvent], traces: &[Trace]) -> BTreeMap<usiz
     jobs
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct ResetHistory {
+#[derive(Debug, Clone)]
+pub struct ResetGuard {
     resets: Vec<u64>,
+    limit: usize,
+    stopped: Option<String>,
 }
 
-impl ResetHistory {
-    pub fn record(&mut self, events: &[DriverEvent]) -> usize {
+impl Default for ResetGuard {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_RESETS)
+    }
+}
+
+impl ResetGuard {
+    pub const fn new(limit: usize) -> Self {
+        Self {
+            resets: Vec::new(),
+            limit,
+            stopped: None,
+        }
+    }
+
+    pub fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+        self.check();
+    }
+
+    pub fn observe(&mut self, events: &[DriverEvent]) -> usize {
         let mut added = 0;
         for event in events {
             let DriverEvent::Reset { at_ms, .. } = event else {
@@ -294,29 +314,30 @@ impl ResetHistory {
             }
         }
         self.resets.sort_unstable();
+        self.check();
         added
     }
 
-    pub fn len(&self) -> usize {
+    fn check(&mut self) {
+        if self.stopped.is_none() && self.resets.len() >= self.limit {
+            self.stopped = Some(format!(
+                "{} driver resets observed (limit {}, --max-resets)",
+                self.resets.len(),
+                self.limit
+            ));
+        }
+    }
+
+    pub fn resets(&self) -> usize {
         self.resets.len()
     }
 
-    pub fn exceeded(&self) -> Option<String> {
-        self.resets.iter().enumerate().find_map(|(first, start)| {
-            let count = self
-                .resets
-                .get(first..)
-                .unwrap_or_default()
-                .iter()
-                .take_while(|at| **at - start <= RESET_WINDOW_MS)
-                .count();
-            (count > RESET_LIMIT).then(|| {
-                format!(
-                    "{count} driver resets within {} minutes (limit {RESET_LIMIT})",
-                    RESET_WINDOW_MS / 60_000
-                )
-            })
-        })
+    pub fn remaining(&self) -> usize {
+        self.limit.saturating_sub(self.resets.len())
+    }
+
+    pub fn stopped(&self) -> Option<&str> {
+        self.stopped.as_deref()
     }
 }
 
@@ -430,26 +451,35 @@ mod tests {
     }
 
     #[test]
-    fn stops_after_too_many_resets_in_the_window() {
-        let mut history = ResetHistory::default();
-        let spaced: Vec<DriverEvent> = (0..=RESET_LIMIT as u64)
+    fn stops_once_the_reset_limit_is_reached() {
+        let mut guard = ResetGuard::new(3);
+        let spaced: Vec<DriverEvent> = (0..3_u64)
             .map(|i| reset(i * (RESET_MERGE_MS + 1_000)))
             .collect();
-        let (first, last) = spaced.split_at(RESET_LIMIT);
-        assert_eq!(history.record(first), RESET_LIMIT);
-        assert_eq!(history.exceeded(), None);
-        assert_eq!(history.record(first), 0);
-        assert_eq!(history.record(&[reset(100)]), 0);
-        assert_eq!(history.exceeded(), None);
-        assert_eq!(history.record(last), 1);
-        assert!(history.exceeded().is_some());
+        let (first, last) = spaced.split_at(2);
+        assert_eq!(guard.observe(first), 2);
+        assert_eq!(guard.stopped(), None);
+        assert_eq!(guard.remaining(), 1);
+        assert_eq!(guard.observe(first), 0);
+        assert_eq!(guard.observe(&[reset(100)]), 0);
+        assert_eq!(guard.stopped(), None);
+        assert_eq!(guard.observe(last), 1);
+        assert_eq!(guard.resets(), 3);
+        assert_eq!(guard.remaining(), 0);
+        assert!(
+            guard
+                .stopped()
+                .is_some_and(|why| why.contains("3 driver resets"))
+        );
 
-        let mut slow = ResetHistory::default();
-        let apart: Vec<DriverEvent> = (0..=RESET_LIMIT as u64)
-            .map(|i| reset(i * (RESET_WINDOW_MS / RESET_LIMIT as u64 + 1)))
-            .collect();
-        slow.record(&apart);
-        assert_eq!(slow.len(), RESET_LIMIT + 1);
-        assert_eq!(slow.exceeded(), None);
+        let mut raised = ResetGuard::default();
+        assert_eq!(raised.remaining(), DEFAULT_MAX_RESETS);
+        raised.observe(&spaced);
+        assert!(raised.stopped().is_some());
+        let mut lowered = ResetGuard::new(10);
+        lowered.observe(first);
+        assert_eq!(lowered.stopped(), None);
+        lowered.set_limit(1);
+        assert!(lowered.stopped().is_some());
     }
 }

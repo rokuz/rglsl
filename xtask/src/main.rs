@@ -63,6 +63,9 @@ commands:
                           exec results of the last run that had them
       --no-local-exec     do not run shaders on KosmicKrisp on this Mac
       --no-remote-exec    do not run shaders on the remote Windows targets
+      --max-resets N      stop a remote target after N driver resets (Windows System log:
+                          nvlddmkm 13/153, amdkmdag, Display 4101) observed in this run; its
+                          batch driver stops within a batch too (default 3)
       --opt-level LEVEL   build the `-O` modules and column with -LEVEL (O or Os; default: O);
                           the modules keep their names (*.O.spv, ours-O)
   snapshots           assemble the SPIR-V snapshots in rglsl/tests/out/spv with spirv-as and
@@ -148,6 +151,7 @@ commands:
                           locally built Amber)
       --exec-target T     with --exec, run on these targets only: local, remote or an entry of
                           RGLSL_EXEC_REMOTE
+      --max-resets N      with --exec, stop a remote target after N driver resets (default 3)
       --runs N            with --exec, timed runs of each shader (default 10; tests/perf at
                           least 20, dispatched or drawn at the size in its `size` file, with the
                           GPU time per set, per tests/perf shader and the spread of its repeats)
@@ -167,8 +171,10 @@ commands:
                           wrong results are reported to fix or analyse; rglsl (with -O in mode
                           O) then runs on the qualified shaders not in quarantine, and every
                           failure of rglsl fails the run; driver resets of the Windows targets
-                          are read from the System log after every batch, and a target with
-                          too many of them is stopped; report in
+                          are read from the System log after every batch, and a target is
+                          stopped after --max-resets of them; a new quarantine entry records
+                          in reason.toml (`other_targets`) how long the same module draws on
+                          the targets where it runs; report in
                           target/xtask/fuzz/random/<seed>/report.md and report.tsv
       --recheck-quarantine
                           instead of --shaders: run every entry of tests/fuzz-quarantine/<target>/
@@ -187,6 +193,10 @@ commands:
       --seed N            with --random: the generator's seed (default: from the clock, printed)
       --families K        with --random: shader families to generate (default 29)
       --variants V        with --random: variants per family (default 16)
+      --max-resets N      with --random or --recheck-quarantine: stop a remote target after N
+                          driver resets observed in this run (default 3)
+      --pause SECS        with --random: wait between the modules confirmed alone on a target
+                          (default 20 on a serial remote target such as NVIDIA, else 0)
       --exec              also run every shader family of rglsl-fuzz on the Vulkan targets
                           (local and remote, as for `test`): a variant whose image differs
                           from its reference is a wrong result; failures are rerun alone
@@ -314,6 +324,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                         exec::select_targets(local, remote)?
                     }
                 },
+                max_resets: max_resets(&mut args)?,
             };
             args.finish()?;
             runner::run(&workspace_root()?, options)?;
@@ -404,6 +415,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                     }
                 },
                 runs: args.parsed("--runs")?.unwrap_or(10),
+                max_resets: max_resets(&mut args)?,
             };
             args.finish()?;
             opt_quality::run(&workspace_root()?, &options)
@@ -441,7 +453,7 @@ fn run(args: Vec<String>) -> Result<i32> {
                 filter: args.value("--filter")?,
                 timeout_secs: args.parsed("--timeout")?.unwrap_or(30),
                 pause_secs: args.parsed("--pause")?.unwrap_or(0),
-                max_resets: args.parsed("--max-resets")?.unwrap_or(3),
+                max_resets: max_resets(&mut args)?,
             };
             args.finish()?;
             Ok(
@@ -478,6 +490,8 @@ fn run(args: Vec<String>) -> Result<i32> {
                     }
                 },
                 optimize: args.flag("--opt"),
+                max_resets: max_resets(&mut args)?,
+                pause_secs: args.parsed("--pause")?,
                 args: command_line,
             };
             args.finish()?;
@@ -645,6 +659,14 @@ fn run(args: Vec<String>) -> Result<i32> {
             Ok(0)
         }
         other => bail!("unknown command `{other}`\n\n{USAGE}"),
+    }
+}
+
+fn max_resets(args: &mut Args) -> Result<usize> {
+    match args.parsed::<usize>("--max-resets")? {
+        Some(0) => bail!("--max-resets must be at least 1"),
+        Some(limit) => Ok(limit),
+        None => Ok(exec::events::DEFAULT_MAX_RESETS),
     }
 }
 

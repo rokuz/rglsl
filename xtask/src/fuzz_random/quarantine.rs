@@ -146,6 +146,17 @@ pub fn add(
     Ok(entry)
 }
 
+pub fn annotate(entry: &Path, key: &str, value: &str) -> Result<()> {
+    let path = entry.join("reason.toml");
+    let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut table: toml::Table = text
+        .parse()
+        .with_context(|| format!("parsing {}", path.display()))?;
+    table.insert(key.to_string(), toml::Value::String(value.to_string()));
+    fs::write(&path, table.to_string()).with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
 pub fn utc_date(seconds: u64) -> String {
     let days = i64::try_from(seconds / 86_400).unwrap_or_default();
     let rest = seconds % 86_400;
@@ -228,6 +239,16 @@ mod tests {
             Some("amber exited with 1: \"DEVICE_LOST\"")
         );
         assert_eq!(table.get("seed").and_then(toml::Value::as_str), Some("42"));
+        annotate(&entry, "other_targets", "amd: renders in 0.050 ms")?;
+        let table: toml::Table = fs::read_to_string(entry.join("reason.toml"))?.parse()?;
+        assert_eq!(
+            table.get("other_targets").and_then(toml::Value::as_str),
+            Some("amd: renders in 0.050 ms")
+        );
+        assert_eq!(
+            table.get("verdict").and_then(toml::Value::as_str),
+            Some("hang")
+        );
 
         let loaded = load(&root, "nvidia", Mode::Unoptimized)?;
         assert!(loaded.contains(&hash));

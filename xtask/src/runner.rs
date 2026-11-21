@@ -30,6 +30,7 @@ pub struct Options {
     pub write_progress: bool,
     pub opt_level: &'static str,
     pub targets: Vec<TargetSpec>,
+    pub max_resets: usize,
 }
 
 /// What glslang did with a shader.
@@ -207,6 +208,7 @@ pub fn run(root: &Path, options: Options) -> Result<()> {
         &env.glslang.path,
         &root.join("target").join("xtask").join("exec"),
         Duration::from_secs(options.timeout_secs),
+        options.max_resets,
     )?;
     if env.glslang_commit.as_deref() != Some(env.pins.glslang.commit.as_str()) {
         eprintln!(

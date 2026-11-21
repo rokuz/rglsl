@@ -264,6 +264,7 @@ pub struct Executor {
     pub device: Device,
     pub driver_bugs: drivers::DriverBugs,
     durations: Mutex<Durations>,
+    resets: Mutex<events::ResetGuard>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -411,12 +412,16 @@ pub fn open_executors(
     glslang: &Path,
     work: &Path,
     timeout: Duration,
+    max_resets: usize,
 ) -> Result<Vec<Executor>> {
     let opened = parallel_map(specs, |spec| {
         Executor::new(spec, root, glslang, work, timeout)
             .map_err(|error| error.context(format!("the {} exec target", spec.describe())))
     });
     let mut executors = opened.into_iter().collect::<Result<Vec<_>>>()?;
+    for executor in &executors {
+        executor.limit_resets(max_resets);
+    }
     let devices: Vec<(TargetId, Device)> = executors
         .iter()
         .map(|e| (e.target.clone(), e.device.clone()))
@@ -742,6 +747,7 @@ impl Executor {
             driver_bugs: drivers::DriverBugs::load(root, &device.driver)?,
             device,
             durations: Mutex::new(Durations::default()),
+            resets: Mutex::new(events::ResetGuard::default()),
         };
         executor.probe(&requirements::probes(), &probe_cache(root, spec))?;
         Ok(executor)
@@ -1066,11 +1072,69 @@ impl Executor {
                     jobs: workers.unwrap_or(remote.jobs),
                     ..remote.clone()
                 };
-                remote.run_watched(&self.work, jobs, false).results
+                self.run_remote(&remote, jobs).results
             }
         };
         self.record(jobs, &traced);
         traced.into_iter().map(|traced| traced.result).collect()
+    }
+
+    fn run_remote(&self, remote: &Remote, jobs: &[Job]) -> remote::Watched {
+        let mut watched = remote::Watched::default();
+        for range in batch::chunks(jobs.len(), remote::BATCH_LIMIT) {
+            let slice = jobs.get(range).unwrap_or_default();
+            let (stopped, resets_left) = {
+                let guard = self.resets.lock().unwrap_or_else(PoisonError::into_inner);
+                (guard.stopped().map(str::to_string), guard.remaining())
+            };
+            if let Some(why) = stopped {
+                watched.results.extend(slice.iter().map(|_| {
+                    Traced::not_run(JobError::NotRun(format!("the target was stopped: {why}")))
+                }));
+                continue;
+            }
+            let remote = Remote {
+                resets_left,
+                ..remote.clone()
+            };
+            let mut part = remote.run_watched(&self.work, slice);
+            self.observe(&part.events);
+            watched.results.append(&mut part.results);
+            watched.events.append(&mut part.events);
+            watched.problems.append(&mut part.problems);
+        }
+        watched
+    }
+
+    fn observe(&self, found: &[events::DriverEvent]) {
+        let mut guard = self.resets.lock().unwrap_or_else(PoisonError::into_inner);
+        let before = guard.stopped().is_some();
+        guard.observe(found);
+        if let (false, Some(why)) = (before, guard.stopped()) {
+            eprintln!("[xtask] stopping the {} target: {why}", self.target.label());
+        }
+    }
+
+    pub fn limit_resets(&self, limit: usize) {
+        self.resets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_limit(limit);
+    }
+
+    pub fn stopped(&self) -> Option<String> {
+        self.resets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopped()
+            .map(str::to_string)
+    }
+
+    pub fn resets(&self) -> usize {
+        self.resets
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .resets()
     }
 
     fn record(&self, jobs: &[Job], traced: &[Traced]) {
@@ -1110,7 +1174,7 @@ impl Executor {
                     attempts: 1,
                     ..remote.clone()
                 };
-                watched.run_watched(&self.work, jobs, true)
+                self.run_remote(&watched, jobs)
             }
         };
         self.record(jobs, &watched.results);

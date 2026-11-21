@@ -1,6 +1,8 @@
 use super::quarantine::Mode;
 use crate::exec::batch::{self, Ending, Job, JobError, JobResult, Trace};
-use crate::exec::events::{self, ResetHistory};
+use std::time::Duration;
+
+use crate::exec::events;
 use crate::exec::group;
 use crate::exec::plan::Plan;
 use crate::exec::remote::Watched;
@@ -79,6 +81,8 @@ impl Ran {
     }
 }
 
+const STACK_OVERFLOW: i64 = 0xC000_00FD;
+
 fn with_exit(message: &str, trace: &Trace) -> String {
     let mut note = message.to_string();
     if let Some(ending) = trace.ending {
@@ -116,6 +120,17 @@ pub fn failure(ran: &Ran) -> Option<(Class, String)> {
         return Some((Class::Hang, message.clone()));
     }
     let crashed = ending.is_some_and(Ending::crashed) || message.starts_with("amber crashed");
+    if ending == Some(Ending::Exited(STACK_OVERFLOW)) {
+        return Some((
+            Class::DriverCrash,
+            with_exit(
+                &format!(
+                    "stack overflow in Amber's process while the driver builds the pipeline: {message}"
+                ),
+                &ran.trace,
+            ),
+        ));
+    }
     if crashed {
         return Some(match &ran.crash_module {
             Some(module) if events::is_driver_module(module) => (
@@ -324,23 +339,27 @@ pub fn judge_reference(unoptimized: Side<'_>, optimized: Option<Side<'_>>) -> Re
 #[derive(Debug)]
 pub struct Watch<'a> {
     executor: &'a Executor,
-    history: ResetHistory,
-    pub stopped: Option<String>,
+    pause: Duration,
+    ran_alone: bool,
     pub problems: Vec<String>,
 }
 
 impl<'a> Watch<'a> {
-    pub fn new(executor: &'a Executor) -> Self {
+    pub const fn new(executor: &'a Executor, pause: Duration) -> Self {
         Self {
             executor,
-            history: ResetHistory::default(),
-            stopped: None,
+            pause,
+            ran_alone: false,
             problems: Vec::new(),
         }
     }
 
     pub fn resets(&self) -> usize {
-        self.history.len()
+        self.executor.resets()
+    }
+
+    pub fn stopped(&self) -> Option<String> {
+        self.executor.stopped()
     }
 
     pub fn run(&mut self, jobs: &[Job], alone: bool) -> Vec<Ran> {
@@ -396,10 +415,17 @@ impl<'a> Watch<'a> {
 
     fn run_each(&mut self, jobs: &[Job], alone: bool) -> Vec<Ran> {
         let mut out = Vec::with_capacity(jobs.len());
-        let workers = if alone { 1 } else { self.executor.workers() };
-        for range in batch::chunks(jobs.len(), events::WATCHED_BATCH * workers) {
+        let paused = alone && !self.pause.is_zero();
+        let size = if paused {
+            1
+        } else if alone {
+            events::WATCHED_BATCH
+        } else {
+            events::WATCHED_BATCH * self.executor.workers()
+        };
+        for range in batch::chunks(jobs.len(), size) {
             let slice = jobs.get(range).unwrap_or_default();
-            if let Some(why) = &self.stopped {
+            if let Some(why) = self.executor.stopped() {
                 out.extend(
                     slice
                         .iter()
@@ -407,16 +433,12 @@ impl<'a> Watch<'a> {
                 );
                 continue;
             }
-            let mut watched = self.executor.run_watched(slice, alone);
-            self.history.record(&watched.events);
-            self.problems.append(&mut watched.problems);
-            if let Some(why) = self.history.exceeded() {
-                eprintln!(
-                    "[xtask] stopping the {} target: {why}",
-                    self.executor.target.label()
-                );
-                self.stopped = Some(why);
+            if paused && self.ran_alone {
+                std::thread::sleep(self.pause);
             }
+            self.ran_alone |= alone;
+            let mut watched = self.executor.run_watched(slice, alone);
+            self.problems.append(&mut watched.problems);
             out.extend(attributed(watched, slice.len()));
         }
         out
@@ -518,6 +540,14 @@ mod tests {
             ..crash
         };
         assert_eq!(class(&in_amber), Some(Class::AmberCrash));
+        let overflow = Ran {
+            crash_module: Some("ntdll.dll".into()),
+            ..ran(
+                failed("amber crashed (0xC00000FD): no output"),
+                Some(Ending::Exited(0xC000_00FD)),
+            )
+        };
+        assert_eq!(class(&overflow), Some(Class::DriverCrash));
         assert_eq!(
             class(&ran(
                 failed("amber crashed: signal"),

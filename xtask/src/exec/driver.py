@@ -21,6 +21,8 @@ EVENT_SLACK_MS = 3000
 TAIL_LINES = 20
 BATCH_DUMP = "{script}.batch.dump.txt"
 RECOVERY = threading.Lock()
+RESETS = {"count": 0, "limit": 0}
+STOPPED = threading.Event()
 
 
 def first_line(*texts):
@@ -130,7 +132,21 @@ def recover(query, start_ms):
     if not reset_since(query, start_ms):
         return False
     with RECOVERY:
+        RESETS["count"] += 1
+        if RESETS["limit"] and RESETS["count"] >= RESETS["limit"]:
+            STOPPED.set()
         time.sleep(RECOVERY_SECONDS)
+    return True
+
+
+def stopped(results, index):
+    if not STOPPED.is_set():
+        return False
+    write(
+        os.path.join(results, "%s.status" % index),
+        "stopped\nthe target was stopped: %d driver resets in this batch (limit %d, --max-resets)\n"
+        % (RESETS["count"], RESETS["limit"]),
+    )
     return True
 
 
@@ -144,6 +160,8 @@ def run_job(settings, job):
     index, directory, script, dumps, layer, capture, timed, job_timeout, recipes = job
     if job_timeout:
         timeout = float(job_timeout)
+    if stopped(results, index):
+        return
     if recipes:
         run_batch(settings, job, timeout)
         return
@@ -171,15 +189,20 @@ def run_job(settings, job):
     for attempt in range(attempts):
         with RECOVERY:
             pass
+        if attempt > 0 and stopped(results, index):
+            return
         status, out, err, tail, pid, code = run_amber(command, cwd, timeout)
         failures = script_failures(err, script, timed) if code == "1" else None
         if failures is not None:
             status = ("ok", "")
         if not transient(status) or attempt + 1 == attempts:
             break
+        if recover(query, start):
+            recovered = True
+            break
         time.sleep(2.0 * (attempt + 1))
     end = now_ms()
-    if status[0] == "timeout" or transient(status):
+    if not recovered and (status[0] == "timeout" or transient(status)):
         recovered = recover(query, start)
     write(
         os.path.join(results, "%s.run" % index),
@@ -292,6 +315,7 @@ def main():
     archive, workdir, manifest, output, amber, workers, timeout, version = sys.argv[1:9]
     device = sys.argv[9] if len(sys.argv) > 9 else ""
     attempts = max(1, int(sys.argv[10])) if len(sys.argv) > 10 else ATTEMPTS
+    RESETS["limit"] = max(0, int(sys.argv[11])) if len(sys.argv) > 11 else 0
     os.makedirs(workdir, exist_ok=True)
     with tarfile.open(archive) as tar:
         tar.extractall(workdir, filter="data")

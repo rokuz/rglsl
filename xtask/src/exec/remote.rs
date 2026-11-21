@@ -20,7 +20,7 @@ pub const JOBS_VAR: &str = "RGLSL_EXEC_REMOTE_JOBS";
 const DEFAULT_DIR: &str = "C:/rglsl-exec";
 const SERIAL_VENDORS: [&str; 1] = ["nvidia"];
 const PARALLEL_VENDORS: [(&str, usize); 1] = [("amd", 4)];
-const BATCH_LIMIT: usize = 400;
+pub const BATCH_LIMIT: usize = 400;
 const DRIVER: &str = include_str!("driver.py");
 const CONNECT: Duration = Duration::from_secs(120);
 const BUILD: Duration = Duration::from_secs(3 * 3600);
@@ -126,6 +126,7 @@ pub struct Remote {
     pub jobs: usize,
     pub requested_jobs: Option<usize>,
     pub attempts: usize,
+    pub resets_left: usize,
     pub timeout: Duration,
 }
 
@@ -163,6 +164,7 @@ impl Remote {
             jobs: 1,
             requested_jobs,
             attempts: batch::ATTEMPTS,
+            resets_left: 0,
             timeout,
         }
     }
@@ -342,13 +344,13 @@ impl Remote {
         format!("{}-{}", slug(&self.host), slug(&self.dir))
     }
 
-    pub fn run_watched(&self, root: &Path, jobs: &[Job], watch: bool) -> Watched {
+    pub fn run_watched(&self, root: &Path, jobs: &[Job]) -> Watched {
         let mut watched = Watched::default();
         for range in batch::chunks(jobs.len(), BATCH_LIMIT) {
             let slice = jobs.get(range.clone()).unwrap_or_default();
             match self.run_batch(root, slice) {
                 Ok((results, since)) => {
-                    if watch && let Some(since) = since {
+                    if let Some(since) = since {
                         match self.driver_events(since) {
                             Ok(found) => watched.events.extend(found),
                             Err(error) => watched
@@ -452,7 +454,7 @@ impl Remote {
         let budget = batch_budget(jobs, self.timeout, self.jobs) + CONNECT;
         let base = format!("runs/{id}");
         let command = format!(
-            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION} \"{}\" {}",
+            "python \"{}.py\" \"{}.tgz\" \"{}\" \"{manifest_name}\" \"{}.out.tgz\" \"{}\" {} {} {VULKAN_VERSION} \"{}\" {} {}",
             self.windows(&base),
             self.windows(&base),
             self.windows(&base),
@@ -461,7 +463,8 @@ impl Remote {
             self.jobs,
             self.timeout.as_secs().max(1),
             self.device_name.as_deref().unwrap_or_default(),
-            self.attempts.max(1)
+            self.attempts.max(1),
+            self.resets_left
         );
         self.ssh_ok(&command, budget, "the batch driver")?;
         let out = local.join("out.tgz");
@@ -774,6 +777,7 @@ mod tests {
             jobs: 2,
             requested_jobs: None,
             attempts: 1,
+            resets_left: 0,
             timeout: Duration::from_secs(5),
         };
         assert_eq!(remote.windows("runs/b1"), "C:\\work\\runs\\b1");

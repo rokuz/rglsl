@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
@@ -393,6 +394,24 @@ pub fn add_captures(
     if capture.timing {
         outputs.insert(TIMING.to_string(), stdout.as_bytes().to_vec());
     }
+}
+
+pub fn timed_script(script: &str, runs: usize) -> String {
+    let mut out = String::with_capacity(script.len());
+    for line in script.lines() {
+        match line.strip_prefix("RUN ") {
+            Some(rest) => {
+                for _ in 0..runs.max(1) {
+                    let _ = writeln!(out, "RUN TIMED_EXECUTION {rest}");
+                }
+            }
+            None => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out
 }
 
 pub fn parse_timing(stdout: &str) -> Vec<f64> {

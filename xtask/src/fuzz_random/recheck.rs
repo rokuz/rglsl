@@ -193,19 +193,13 @@ type Image = (Box<Plan>, Outputs);
 struct Runner<'a> {
     executor: &'a Executor,
     watch: Watch<'a>,
-    pause: Duration,
-    max_resets: usize,
-    runs: usize,
 }
 
 impl<'a> Runner<'a> {
     fn new(executor: &'a Executor, options: &Options) -> Self {
         Self {
             executor,
-            watch: Watch::new(executor),
-            pause: Duration::from_secs(options.pause_secs),
-            max_resets: options.max_resets,
-            runs: 0,
+            watch: Watch::new(executor, Duration::from_secs(options.pause_secs)),
         }
     }
 
@@ -214,26 +208,10 @@ impl<'a> Runner<'a> {
     }
 
     fn stopped(&self) -> Option<String> {
-        if let Some(why) = &self.watch.stopped {
-            return Some(why.clone());
-        }
-        (self.watch.resets() >= self.max_resets).then(|| {
-            format!(
-                "{} driver resets on this target (limit {})",
-                self.watch.resets(),
-                self.max_resets
-            )
-        })
+        self.watch.stopped()
     }
 
     fn run(&mut self, job: &Job) -> Ran {
-        if let Some(why) = self.stopped() {
-            return Ran::not_run(format!("the target was stopped: {why}"));
-        }
-        if self.runs > 0 && !self.pause.is_zero() {
-            std::thread::sleep(self.pause);
-        }
-        self.runs += 1;
         self.watch
             .run(std::slice::from_ref(job), true)
             .into_iter()
@@ -713,6 +691,7 @@ pub fn run(root: &Path, options: &Options) -> Result<bool> {
         &tools.glslang,
         &work.join("exec"),
         tools.timeout,
+        options.max_resets,
     )?;
     let mut runners: Vec<Runner<'_>> = executors
         .iter()

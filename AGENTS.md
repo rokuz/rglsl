@@ -113,7 +113,9 @@ cargo deny check
 cargo xtask oracles [--glslang-dir ../glslang] [--no-exec]   # pinned glslang, glslang-opt, spirv-val, spirv-as,
                                                    # spirv-dis, spirv-opt (+ exec oracles)
 cargo xtask snapshots                                        # spirv-val on the SPIR-V snapshots of rglsl/tests
-cargo xtask test [--glslang-dir ../glslang] [--no-exec]      # glslang's corpus (+ exec on the local GPU)
+cargo xtask test [--glslang-dir ../glslang] [--no-exec] [--max-resets N]
+                                                   # glslang's corpus (+ exec on the local GPU); a
+                                                   # remote target stops after N driver resets (default 3)
 cargo xtask test --filter NAME --no-progress-file            # quick check of some shaders
 cargo xtask cli [--glslang-dir ../glslang]                   # glslangValidator command lines: rglsl vs glslang
 cargo xtask builtins [--filter NAME] [--version N] [--stage EXT] [--all-overloads]
@@ -154,7 +156,8 @@ cargo xtask bench --in-process [--runs N] [--filter NAME] [--debug-info g|gVS]
 cargo xtask opt-quality [--filter NAME]                      # SPIR-V counts of rglsl, rglsl -O/-Os, spirv-opt -O/-Os of rglsl's
                                                    # module and glslang -O on every shader rglsl compiles,
                                                    # spirv-val on each: target/xtask/opt-quality.md, .tsv
-cargo xtask opt-quality --exec [--exec-target T] [--runs N]  # and on the Vulkan targets: driver statistics (Amber
+cargo xtask opt-quality --exec [--exec-target T] [--runs N] [--max-resets N]
+                                                   # and on the Vulkan targets: driver statistics (Amber
                                                    # --pipeline-stats), GPU and pipeline creation time,
                                                    # exec equivalence of rglsl -O, spirv-opt -O(rglsl) and glslang -O
                                                    # with rglsl (shaders of xtask/exec-ub run as their twins);
@@ -166,12 +169,19 @@ cargo xtask opt-quality --exec [--exec-target T] [--runs N]  # and on the Vulkan
 
 cargo xtask fuzz --shaders DIR [--exec] [--opt]              # differential fuzzing against glslang (+ exec, + -O)
 cargo xtask fuzz --random [--seed N] [--families K] [--variants V] [--exec] [--opt]
+                 [--max-resets N] [--pause SECS]
                                                    # a fresh set of rglsl-fuzz families (seed from the
                                                    # clock by default), qualified on every exec target
                                                    # and mode (O0: glslang, O: glslang -O); a hang, driver
                                                    # reset or driver crash confirmed alone goes to
-                                                   # tests/fuzz-quarantine/<target>/<mode>/; rglsl runs on
-                                                   # the qualified shaders and every failure is ours:
+                                                   # tests/fuzz-quarantine/<target>/<mode>/ (reason.toml:
+                                                   # `other_targets`, the module's draw time where it
+                                                   # runs); rglsl runs on the qualified shaders and every
+                                                   # failure is ours; a remote target stops after N driver
+                                                   # resets (default 3), confirmations on a serial target
+                                                   # (NVIDIA) wait SECS apart (default 20); templates in
+                                                   # rglsl-fuzz/tests/data/450 keep to
+                                                   # rglsl-fuzz/tests/templates.rs:
                                                    # target/xtask/fuzz/random/<seed>/report.md, .tsv
 cargo xtask fuzz --recheck-quarantine [--exec-target T] [--filter TEXT] [--pause SECS] [--max-resets N]
                                                    # every quarantine entry again on its target, each
