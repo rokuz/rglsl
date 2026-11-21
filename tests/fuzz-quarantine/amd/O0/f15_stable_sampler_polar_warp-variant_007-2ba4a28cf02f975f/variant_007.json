@@ -1,0 +1,68 @@
+{
+  "GLF_dead10resolution": {
+    "args": [
+      0.67071396,
+      0.44702733
+    ],
+    "binding": 2,
+    "func": "glUniform2f"
+  },
+  "GLF_dead11resolution": {
+    "args": [
+      0.9690683,
+      0.35558087
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "GLF_dead12one": {
+    "args": [
+      0.22635359
+    ],
+    "binding": 3,
+    "func": "glUniform1f"
+  },
+  "GLF_dead5tex": {
+    "binding": 8,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_dead6resolution": {
+    "args": [
+      0.70402104,
+      0.9953722
+    ],
+    "binding": 5,
+    "func": "glUniform2f"
+  },
+  "GLF_dead8injectionSwitch": {
+    "args": [
+      0.64003104,
+      0.5567959
+    ],
+    "binding": 7,
+    "func": "glUniform2f"
+  },
+  "GLF_dead9polynomial": {
+    "args": [
+      0.6168865,
+      0.74282354,
+      0.8235087
+    ],
+    "binding": 6,
+    "func": "glUniform3f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "tex": {
+    "binding": 0,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  }
+}
