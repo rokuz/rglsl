@@ -301,6 +301,51 @@ mod tests {
     }
 
     #[test]
+    fn quarantined_references_are_the_current_templates() -> Result<()> {
+        use super::super::quarantine;
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let out = std::env::temp_dir().join(format!("rglsl-quarantined-{}", std::process::id()));
+        let mut stale = Vec::new();
+        let dirs = |dir: &Path| -> Result<Vec<PathBuf>> {
+            let mut found = Vec::new();
+            for entry in fs::read_dir(dir)? {
+                let path = entry?.path();
+                if path.is_dir() {
+                    found.push(path);
+                }
+            }
+            Ok(found)
+        };
+        for target in dirs(&root.join(quarantine::DIR))? {
+            for mode in dirs(&target)? {
+                for entry in dirs(&mode)? {
+                    let Some(name) = entry.file_name().and_then(|name| name.to_str()) else {
+                        continue;
+                    };
+                    let Some((family, _)) = name.rsplit_once("-reference-") else {
+                        continue;
+                    };
+                    let template = family.split_once('_').map_or(family, |(_, rest)| rest);
+                    let Some(shader) = quarantine::entry_shader(&entry)? else {
+                        continue;
+                    };
+                    let _ = fs::remove_dir_all(&out);
+                    let written = write_reference(&root, template, &out)?;
+                    if quarantine::shader_hash(&written)? != quarantine::shader_hash(&shader)? {
+                        stale.push(entry.display().to_string());
+                    }
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(&out);
+        assert!(
+            stale.is_empty(),
+            "quarantined references that the templates no longer generate (remove them): {stale:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn references_and_donors_come_from_the_repository() -> Result<()> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let references = references(&root)?;
