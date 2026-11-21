@@ -27,7 +27,7 @@ uniform vec3 initial_xvalues;
 
 float fx(float x)
 {
-    return polynomial.x * pow(x, 2.0) + polynomial.y * x + polynomial.z;
+    return polynomial.x * (x * x) + polynomial.y * x + polynomial.z;
 }
 
 void main()
@@ -45,8 +45,9 @@ void main()
     float A = 0.0;
     float B = 0.0;
     float C = 0.0;
+    int iterations = 0;
 
-    while(abs(x2 - x1) >= .000000000000001)
+    while(abs(x2 - x1) >= .00001 && iterations < 64)
     {
         float h0 = x0 - x2;
         float h1 = x1 - x2;
@@ -54,16 +55,17 @@ void main()
         float k1 = fx(x1) - fx(x2);
         temp = x2;
         A = (((h1) * (k0)) - ((h0) * (k1))) / 
-            ((pow((h0), 2.0) * (h1)) - (pow((h1), 2.0) * (h0)));
-        B = (((k0) - (A * (pow((h0), 2.0)))) / (h0));
+            ((((h0) * (h0)) * (h1)) - (((h1) * (h1)) * (h0)));
+        B = (((k0) - (A * (((h0) * (h0))))) / (h0));
         C = fx(x2);
 
         // get the new root
-        x2 = x2 - ((2.0 * C) / (B + sign(B) * sqrt(pow(B, 2.0) - (4.0 * A * C))));
+        x2 = x2 - ((2.0 * C) / (B + sign(B) * sqrt(max((B * B) - (4.0 * A * C), 0.0))));
         
         // move up in the sequence.
         x0 = x1;
         x1 = temp; // x1 = original x2;
+        iterations++;
     }
     if(x2 <= -0.9 && x2 >= -1.1)
     {

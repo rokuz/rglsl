@@ -27,7 +27,7 @@ int msb8 = 256;
 
 float nb_mod(float limit, float ref) {
     int msb8 = 256;
-    float s = float(bitfieldExtract(int(resolution.x), 0, 0));
+    float s = float(bitfieldExtract(int(resolution.x), 0, 1));
     int i = bitCount(msb8);
     while(i < bitfieldInsert(800, i, 0, 0)) {
         if (mod(float(i), ref) <= 0.01) {

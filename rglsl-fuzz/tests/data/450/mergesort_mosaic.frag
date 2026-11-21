@@ -151,7 +151,7 @@ void main() {
             break;
         } else if (int(gl_FragCoord[1]) < 240) {
             color = fract(asinh(vecCoor.yx - trunc(float(data[6]))));
-            color.y -= isnan(float(i)) ? tanh(gl_FragCoord.x): atanh(gl_FragCoord.y);
+            color.y -= isnan(float(i)) ? tanh(gl_FragCoord.x): atanh(gl_FragCoord.y / resolution.y);
             break;
         } else if (int(gl_FragCoord[1]) < 270) {
             color = fract(sin(vecCoor.yx - trunc(float(data[7]))));

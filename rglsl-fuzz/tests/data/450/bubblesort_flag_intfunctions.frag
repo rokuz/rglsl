@@ -39,10 +39,10 @@ void main()
     {
         data[i] = float(usubBorrow(uint(10), uint(i), uselessOutVariable)) * injectionSwitch.y;
     }
-    int i = bitfieldExtract(int(injectionSwitch.x), bitCount(0), int(injectionSwitch.x));
+    int i = bitfieldExtract(int(injectionSwitch.x), bitCount(0), int(injectionSwitch.y));
     do
     {
-        for(int j = bitfieldExtract(int(injectionSwitch.x), 0, 0); j < findLSB(msb10); j++)
+        for(int j = bitfieldExtract(int(injectionSwitch.x), 0, 1); j < findLSB(msb10); j++)
         {
             if(uint(j) < uaddCarry(uint(i), 1u, uselessOutVariable))
             {

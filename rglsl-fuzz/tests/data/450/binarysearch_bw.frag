@@ -32,7 +32,7 @@ vec2 brick(vec2 uv) {
     int a = 4;
     do {
         uv.y -= step(injectionSwitch.y, uv.x);
-        uv.x -= fract(tanh(uv.x)) / ldexp(injectionSwitch.y, findMSB(a));
+        uv.x -= tanh(uv.x * 0.25) / ldexp(injectionSwitch.y, findMSB(a));
         a--;
     } while (a > int(injectionSwitch.x));
     int b = 3;

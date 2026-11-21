@@ -32,7 +32,7 @@ void doConvert()
 {
     int msb8 = 256;
     vec3 temp;
-    temp = b_b * (float(bitCount(msb8)) - s_g) + (b_b - b_b * (float(bitCount(msb8)) - s_g)) * clamp(abs(abs(6.0 * (h_r - vec3(bitfieldReverse(0), bitCount(msb8), 2) / 3.0)) - 3.0) - float(bitCount(msb8)), float(bitfieldExtract(int(resolution.x), 0, 0)), float(bitCount(int(resolution.x))));
+    temp = b_b * (float(bitCount(msb8)) - s_g) + (b_b - b_b * (float(bitCount(msb8)) - s_g)) * clamp(abs(abs(6.0 * (h_r - vec3(bitfieldReverse(0), bitCount(msb8), 2) / 3.0)) - 3.0) - float(bitCount(msb8)), float(bitfieldExtract(int(resolution.x), 0, 1)), float(bitCount(int(resolution.x))));
     h_r = temp.x;
     s_g = temp.y;
     b_b = temp.z;
@@ -48,13 +48,13 @@ vec3 computeColor(float c, vec2 position)
     s_g *= float(bitCount(msb8)) / position.y;
     h_r *= float(bitCount(msb8)) / position.x;
     if (abs(position.y - position.x) < 0.5) {
-      b_b = clamp(float(bitfieldExtract(int(resolution.x), 0, 0)), float(bitCount(msb8)), b_b * float(bitCount(msb8)) * 3.0);
+      b_b = clamp(b_b * float(bitCount(msb8)) * 3.0, float(bitfieldExtract(int(resolution.x), 0, 1)), float(bitCount(msb8)));
     }
     return vec3(h_r, s_g, b_b);
 }
 
 vec3 defaultColor() {
-  return vec3(float(bitfieldExtract(int(resolution.y), 0, 0)));
+  return vec3(float(bitfieldExtract(int(resolution.y), 0, 1)));
 }
 
 vec3 drawShape(vec2 pos, vec2 square, vec3 setting)
@@ -108,11 +108,11 @@ vec3 computePoint(mat2 rotationMatrix)
     position *= rotationMatrix;
     center *= rotationMatrix;
     vec3 result = vec3(0.0);
-    for(int i = bitfieldInsert(35, 0, 0, bitfieldExtract(int(resolution.x), 0, 0)); i >= bitfieldReverse(bitfieldExtract(int(resolution.x), 0, 0)); i --)
+    for(int i = bitfieldInsert(35, 0, 0, bitfieldExtract(int(resolution.x), 0, 1)); i >= bitfieldReverse(bitfieldExtract(int(resolution.x), 0, 1)); i --)
         {
             vec3 d;
-            d = drawShape(position, center + vec2(sin(float(i) / (float(bitCount(msb8)) * 10.0) + time) / 4.0 * float(bitCount(msb8)), float(bitfieldExtract(int(resolution.x), 0, 0))), vec3(0.01 + sin(float(i) / 100.0 * float(bitCount(msb8))), 0.01, float(i)));
-            if(length(d) <= float(bitfieldExtract(int(resolution.x), 0, 0))) {
+            d = drawShape(position, center + vec2(sin(float(i) / (float(bitCount(msb8)) * 10.0) + time) / 4.0 * float(bitCount(msb8)), float(bitfieldExtract(int(resolution.x), 0, 1))), vec3(0.01 + sin(float(i) / 100.0 * float(bitCount(msb8))), 0.01, float(i)));
+            if(length(d) <= float(bitfieldExtract(int(resolution.x), 0, 1))) {
               continue;
             }
             result = vec3(d);

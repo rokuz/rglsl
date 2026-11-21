@@ -46,7 +46,7 @@ vec3 computeColor(float c, vec2 position)
     s_g *= 1.0 / position.y;
     h_r *= 1.0 / position.x;
     if (abs(position.y - position.x) < 0.5) {
-      b_b = clamp(0.0, 1.0, b_b * 3.0);
+      b_b = clamp(b_b * 3.0, 0.0, 1.0);
     }
     return vec3(h_r, s_g, b_b);
 }

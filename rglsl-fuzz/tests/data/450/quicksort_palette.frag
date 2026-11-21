@@ -82,7 +82,9 @@ vec3 palette(vec3 a, vec3 b, vec3 c, vec3 d) {
 
 float randomize(vec2 co)
 {
-    return float(floor(fract(sin(dot(co.xy ,vec2(12.5, 3.))) * 4250. + 0.02) + 0.5));
+    uint h = uint(co.x) * 1103515245u + uint(co.y) * 12345u;
+    h = (h ^ (h >> 16u)) * 2654435769u;
+    return float((h >> 28u) & 1u);
 }
 
 bool puzzlelize(vec2 pos)

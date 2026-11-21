@@ -44,7 +44,7 @@ void main()
         // creating our U vector at the same time we create X magnitude.
         for(int x = MATRIX_N - 1; x >= k; x--) // start from the bottom and go up.
         {
-            magnitudeX += pow(matrix_a[x][k], 2.0);
+            magnitudeX += matrix_a[x][k] * matrix_a[x][k];
             matrix_u[x] = matrix_a[x][k];
         }
         magnitudeX = sqrt(magnitudeX);
@@ -55,7 +55,7 @@ void main()
         // alpha1 = U(T) * U gives us the dot product
         for(int u = MATRIX_N - 1; u >= k; u--)
         {
-            alpha1 += pow(matrix_u[u], 2.0);
+            alpha1 += matrix_u[u] * matrix_u[u];
         }
 
         // alpha2 = 2.0 / (U(T) * U) = 2.0 / alpha1
@@ -113,7 +113,7 @@ void main()
         // final operation, using the diagonal; matrix_b becomes the solution matrix x
         matrix_b[i] /= matrix_a[i][i];
     }
-    _GLF_color = tan(matrix_b);
+    _GLF_color = 0.5 + 0.5 * tan(matrix_b * 0.002);
     _GLF_color.a = 1.0;
 }
 

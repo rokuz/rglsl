@@ -24,8 +24,8 @@ layout(location = 0) out vec4 color;
 
 void main() {
   // Chessboard row and column corresponding to the current fragment.
-  float row = float(int(gl_FragCoord.x) / 16 + 1);
-  float column = float(int(gl_FragCoord.y) / 16 + 1);
+  float row = float(int(gl_FragCoord.x) / 64 + 1);
+  float column = float(int(gl_FragCoord.y) / 64 + 1);
 
   // Scalar, vectors and matrices used in the linear algebra instructions.
   float scalar = 1.0;
@@ -43,22 +43,26 @@ void main() {
 
   // OpMatrixTimesScalar
   color.rgb *= scalar++ * matrix_1;
+  color.rgb = vec3(ivec3(color.rgb) % 61);
 
   // OpVectorTimesMatrix
   color.rgb += vector_1 * matrix_1;
 
   // OpMatrixTimesVector
   color.rgb += matrix_1 * vector_1;
+  color.rgb = vec3(ivec3(color.rgb) % 61);
 
   // OpMatrixTimesMatrix
   color.rgb *= matrix_1 * matrix_2;
+  color.rgb = vec3(ivec3(color.rgb) % 61);
 
   // OpOuterProduct
   color.rgb *= outerProduct(vector_1, vector_2);
+  color.rgb = vec3(ivec3(color.rgb) % 61);
 
   // OpDot
   color.rgb *= dot(vector_1, vector_2);
 
   // Final color
-  color = vec4(sin(color.rgb), 1.0);
+  color = vec4(vec3(ivec3(color.rgb) % 61) / 64.0, 1.0);
 }
