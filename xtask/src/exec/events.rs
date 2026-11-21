@@ -128,6 +128,7 @@ pub fn query_script(since_ms: u64) -> String {
         script,
         "Get-WinEvent -FilterHashtable @{{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $since }} -ErrorAction SilentlyContinue | ForEach-Object {{ $p = $_.Properties; \"crash`t{{0}}`t{{1}}`t{{2}}`t{{3}}`t{{4}}\" -f @(([DateTimeOffset]$_.TimeCreated).ToUnixTimeMilliseconds(), $p[0].Value, $p[3].Value, $p[8].Value, $p[6].Value) }}"
     );
+    let _ = writeln!(script, "exit 0");
     script
 }
 
@@ -375,7 +376,8 @@ mod tests {
         let script = query_script(1234);
         assert!(script.contains("FromUnixTimeMilliseconds(1234)"));
         assert!(script.contains("'nvlddmkm', 'amdkmdag', 'amduw23g', 'Display'"));
-        assert_eq!(script.lines().count(), 4);
+        assert_eq!(script.lines().count(), 5);
+        assert_eq!(script.lines().last(), Some("exit 0"));
         assert!(!script.to_ascii_lowercase().contains("bypass"));
         assert!(!script.to_ascii_lowercase().contains("executionpolicy"));
     }
