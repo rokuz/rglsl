@@ -4,3 +4,6 @@ why = "the NVIDIA driver returns the value of vertex 0 in every element of a Per
 ["synthetic/many_functions.comp"]
 variants = ["rglsl"]
 why = "the unoptimized modules of a 5,000-deep chain of calls are too heavy for the NVIDIA driver: Amber with glslang's does not finish within 300 s (rglsl's module is larger). The optimized variants (rglsl -O, spirv-opt -O, glslang -O) have one function, run, and are compared with glslang -O's module"
+
+["spv.coopvecloadstore.comp"]
+why = "glslang's module of this cooperative vector load/store shader loses the NVIDIA device (VK_ERROR_DEVICE_LOST) and the driver resets: in the stage 14 corpus run it was the batch of a burst of nvlddmkm resets, while the same rglsl output had run without resets the day before"
