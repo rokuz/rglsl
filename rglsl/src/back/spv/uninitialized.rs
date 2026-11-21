@@ -20,17 +20,23 @@ pub(super) fn plain_types(types: &UniqueArena<Type>) -> Vec<bool> {
     plain
 }
 
-pub(super) fn read_before_written(function: &Function, plain: &[bool]) -> Vec<bool> {
-    Scan::new(function, plain, false).run()
+pub(super) fn read_unwritten(function: &Function, plain: &[bool]) -> Vec<bool> {
+    Scan::new(function, plain, Mode::AnyWrite).run()
 }
 
 pub(super) fn initial_value_observed(function: &Function, plain: &[bool]) -> Vec<bool> {
-    Scan::new(function, plain, true).run()
+    Scan::new(function, plain, Mode::Strict).run()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    AnyWrite,
+    Strict,
 }
 
 struct Scan<'f> {
     function: &'f Function,
-    strict: bool,
+    mode: Mode,
     read: Vec<bool>,
     written: Vec<bool>,
     trail: Vec<usize>,
@@ -39,17 +45,17 @@ struct Scan<'f> {
 }
 
 impl<'f> Scan<'f> {
-    fn new(function: &'f Function, plain: &[bool], strict: bool) -> Self {
+    fn new(function: &'f Function, plain: &[bool], mode: Mode) -> Self {
         let count = function.local_variables.len();
         Scan {
             function,
-            strict,
+            mode,
             read: vec![false; count],
             written: function
                 .local_variables
                 .iter()
                 .map(|(_, local)| {
-                    (local.init.is_some() && !strict)
+                    (local.init.is_some() && mode == Mode::AnyWrite)
                         || !plain.get(local.ty.index()).copied().unwrap_or(false)
                 })
                 .collect(),
@@ -144,6 +150,12 @@ impl<'f> Scan<'f> {
             } => {
                 let accepted = self.scoped(accept);
                 let rejected = self.scoped(reject);
+                if self.mode == Mode::AnyWrite {
+                    for index in accepted.into_iter().chain(rejected) {
+                        self.write(index);
+                    }
+                    return;
+                }
                 self.stamp = self.stamp.wrapping_add(1);
                 let stamp = self.stamp;
                 for &index in &accepted {
@@ -158,8 +170,14 @@ impl<'f> Scan<'f> {
                 }
             }
             Statement::Switch { ref cases, .. } => {
+                let mut written = Vec::new();
                 for case in cases {
-                    self.scoped(&case.body);
+                    written.extend(self.scoped(&case.body));
+                }
+                if self.mode == Mode::AnyWrite {
+                    for index in written {
+                        self.write(index);
+                    }
                 }
             }
             Statement::Loop {
@@ -169,11 +187,13 @@ impl<'f> Scan<'f> {
             } => {
                 let start = self.trail.len();
                 recurse(|| self.block(body));
-                if self.strict {
+                if self.mode == Mode::Strict {
                     self.undo(start);
                 }
                 recurse(|| self.block(continuing));
-                self.undo(start);
+                if self.mode == Mode::Strict {
+                    self.undo(start);
+                }
             }
             Statement::Call { ref arguments, .. } => {
                 for &argument in arguments {

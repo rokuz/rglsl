@@ -170,17 +170,28 @@ fn component_stores_become_inserts() -> TestResult {
 }
 
 #[test]
-fn a_local_read_before_written_starts_as_null() -> TestResult {
-    let source = shader(
+fn a_promoted_local_starts_as_its_variable_would() -> TestResult {
+    let maybe = shader(
         "",
         "    float x;
     if (inColor.x > 0.5) { x = inColor.y; }
     color = vec4(x);",
     );
-    let before = fragment(&source, &[])?;
-    let after = fragment(&source, &["ssa"])?;
+    let before = fragment(&maybe, &[])?;
+    let after = fragment(&maybe, &["ssa"])?;
     assert_eq!((after.variables, after.phis), (0, 1));
     assert_eq!(after.nulls, before.nulls);
+    let never = shader(
+        "",
+        "    float x;
+    float y = x;
+    if (inColor.x > 0.5) { y = inColor.y; }
+    color = vec4(y);",
+    );
+    let before = fragment(&never, &[])?;
+    let after = fragment(&never, &["ssa"])?;
+    assert_eq!(after.nulls, before.nulls);
+    assert!(before.nulls > 0);
     Ok(())
 }
 

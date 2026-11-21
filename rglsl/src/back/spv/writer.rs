@@ -1136,7 +1136,7 @@ impl Writer {
 
         let debug_only = debug_only_locals(ir_function);
         let zeroed =
-            super::uninitialized::read_before_written(ir_function, &context.writer.nullable_types);
+            super::uninitialized::read_unwritten(ir_function, &context.writer.nullable_types);
         context.promote_locals()?;
         for (handle, variable) in ir_function.local_variables.iter() {
             if debug_only.contains(&handle)

@@ -12828,3 +12828,39 @@ void main() {
     assert_eq!(kills, 1);
     Ok(())
 }
+
+#[test]
+fn only_locals_read_before_any_write_are_zero_initialized() -> crate::TestResult {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+layout(set = 0, binding = 0) uniform B { vec2 s; };
+layout(location = 0) out vec4 o;
+void main() {
+    vec4 never;
+    vec4 maybe;
+    vec4 looped;
+    if (s.x < s.y) {
+        maybe = o;
+    }
+    o = vec4(1.0);
+    o = maybe + never;
+    for (int i = 0; i < int(s.y); i++) {
+        o += looped;
+        looped = vec4(2.0);
+    }
+}
+",
+    )?;
+    let initialized: Vec<String> = instructions(&module, Op::Variable)
+        .into_iter()
+        .filter(|inst| {
+            inst.operands.first() == Some(&Operand::StorageClass(spirv::StorageClass::Function))
+                && inst.operands.len() > 1
+        })
+        .filter_map(|inst| inst.result_id)
+        .map(|id| name_of(&module, id))
+        .collect();
+    assert_eq!(initialized, ["never", "looped"]);
+    Ok(())
+}

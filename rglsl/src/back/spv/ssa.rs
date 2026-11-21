@@ -270,6 +270,7 @@ pub(super) struct Ssa {
     targets: FastHashMap<Word, usize>,
     headers: FastHashMap<Word, Header>,
     node: u32,
+    zeroed: Vec<bool>,
 }
 
 impl Ssa {
@@ -561,6 +562,8 @@ impl BlockContext<'_> {
         let observed =
             super::uninitialized::initial_value_observed(function, &self.writer.nullable_types);
         self.ssa = Ssa::new(function, &candidates, &observed);
+        self.ssa.zeroed =
+            super::uninitialized::read_unwritten(function, &self.writer.nullable_types);
         for (handle, local) in function.local_variables.iter() {
             if let Some(init) = local.init
                 && self.ssa.promotes(handle)
@@ -713,7 +716,18 @@ impl BlockContext<'_> {
             return Ok(value);
         }
         let type_id = self.ssa_type(slot)?;
-        Ok(self.writer.get_constant_null(type_id))
+        let zeroed = self
+            .ssa
+            .locals
+            .get(slot as usize)
+            .and_then(|local| self.ssa.zeroed.get(local.index()))
+            .copied()
+            .unwrap_or(true);
+        Ok(if zeroed {
+            self.writer.get_constant_null(type_id)
+        } else {
+            self.writer.get_undef(type_id)
+        })
     }
 
     fn ssa_current(&mut self, slot: u32) -> Result<Word, Error> {
