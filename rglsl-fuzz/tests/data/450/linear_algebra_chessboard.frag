@@ -39,7 +39,7 @@ void main() {
                            scalar++ * row, scalar++ * column, scalar++ * row * column);
 
   // OpVectorTimesScalar
-  color.rgb = scalar++ * vector_1;
+  color = vec4(scalar++ * vector_1, 1.0);
 
   // OpMatrixTimesScalar
   color.rgb *= scalar++ * matrix_1;
