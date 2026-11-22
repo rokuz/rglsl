@@ -1,0 +1,49 @@
+{
+  "GLF_dead0resolution": {
+    "args": [
+      0.12863272,
+      0.5206075
+    ],
+    "binding": 2,
+    "func": "glUniform2f"
+  },
+  "GLF_dead2resolution": {
+    "args": [
+      0.34684408,
+      0.16036278
+    ],
+    "binding": 5,
+    "func": "glUniform2f"
+  },
+  "GLF_dead2time": {
+    "args": [
+      0.3946886
+    ],
+    "binding": 4,
+    "func": "glUniform1f"
+  },
+  "GLF_dead3resolution": {
+    "args": [
+      0.3096683,
+      0.5009467
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 0,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  }
+}
