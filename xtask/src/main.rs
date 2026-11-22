@@ -24,6 +24,7 @@ mod object_path;
 mod opt_quality;
 mod optimized;
 mod oracles;
+mod package;
 mod process;
 mod recursion;
 mod renamed;
@@ -82,6 +83,26 @@ commands:
       --verbose           also list the allowed cycles
   capi-header         generate rglsl-capi/include/rglsl.h with cbindgen
       --check             only check that the committed header is up to date
+  package-c           build the C API (shared and static library, header) and the rglsl
+                      command-line tool in the dist profile for a target and pack them with the
+                      licenses, a README for C users, a CMake package and pkg-config files into
+                      rglsl-c-VERSION-PLATFORM.tar.gz (.zip on Windows); then, when the host runs
+                      the target, build samples/c against the package with CMake and pkg-config,
+                      run it and compile a shader with the packaged tool
+      --target T          x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, aarch64-apple-darwin
+                          or aarch64-linux-android (Android NDK from ANDROID_NDK_HOME or the
+                          Android SDK, API level 24)
+      --out-dir DIR       where the archive goes (default: target/dist)
+      --no-smoke          do not build and run the samples against the package
+  capi-cmake          build rglsl-capi on the host and write a CMake package (rglsl-config.cmake,
+                      rglsl-config-version.cmake) for that build tree into
+                      target/PROFILE/cmake/rglsl, the same as the one in the C archives; prints
+                      its directory (for -Drglsl_DIR=..., samples/c/run.sh)
+      --profile P         the cargo profile (default: dev)
+  package-crates      cargo package every publishable crate of the workspace and copy the
+                      .crate files to the output directory
+      --out-dir DIR       where the .crate files go (default: target/dist)
+      --allow-dirty       package a working tree with uncommitted changes
   gen-spirv           generate the SPIR-V tables from the pinned sources in target/oracles:
                       rglsl/src/back/spv/grammar.rs (enumerants the `spirv` crate lacks, from
                       SPIRV-Headers' grammar, else glslang's headers),
@@ -346,6 +367,28 @@ fn run(args: Vec<String>) -> Result<i32> {
             let check = args.flag("--check");
             args.finish()?;
             capi::run(&workspace_root()?, check)
+        }
+        "package-c" => {
+            let options = package::COptions {
+                target: args.value("--target")?.context("--target is required")?,
+                out_dir: args.value("--out-dir")?.map(PathBuf::from),
+                smoke: !args.flag("--no-smoke"),
+            };
+            args.finish()?;
+            package::package_c(&workspace_root()?, &options)
+        }
+        "capi-cmake" => {
+            let profile = args
+                .value("--profile")?
+                .unwrap_or_else(|| "dev".to_string());
+            args.finish()?;
+            package::capi_cmake(&workspace_root()?, &profile)
+        }
+        "package-crates" => {
+            let out_dir = args.value("--out-dir")?.map(PathBuf::from);
+            let allow_dirty = args.flag("--allow-dirty");
+            args.finish()?;
+            package::package_crates(&workspace_root()?, out_dir.as_deref(), allow_dirty)
         }
         "gen-spirv" => {
             let glslang_dir = args.value("--glslang-dir")?.map(PathBuf::from);

@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: rglsl-static
+Description: Vulkan GLSL to SPIR-V compiler, C API, static library
+URL: https://github.com/rokuz/rglsl
+Version: @VERSION@
+Cflags: -I${includedir}
+Libs: ${libdir}/librglsl_c.a @NATIVE_LIBS@
