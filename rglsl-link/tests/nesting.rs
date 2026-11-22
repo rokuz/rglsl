@@ -587,6 +587,13 @@ fn deep_optimizer_walks_compile_on_a_small_stack(depth: usize) -> TestResult {
             " } else { discard; } x = x * 2.0; }",
         ),
         (
+            "stores read in other branches",
+            "int n = 1;",
+            "if (b > c[0]) { b = b + n; } else { for (int i = 0; i < b; i++) { n++; } ",
+            "b = b + c[1];",
+            " }",
+        ),
+        (
             "repeated values",
             "",
             "if (b > c[0]) { b = b * c[1] + c[0]; ",

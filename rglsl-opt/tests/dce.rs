@@ -363,3 +363,101 @@ void walk(float start) {
     assert_eq!(stores(entry(&module)?, "pair_value"), before);
     Ok(())
 }
+
+#[test]
+fn a_loop_writing_a_local_read_only_in_an_earlier_branch_is_removed() -> TestResult {
+    let source = shader(
+        "",
+        "    int n = 2;
+    if (inColor.x > 0.5) {
+        color.x = float(n);
+    } else if (inColor.y > 0.5) {
+        for (int i = 0; i < k; i++) {
+            if (inColor.z > float(i)) n++;
+        }
+        color.y = 1.0;
+    }",
+    );
+    let before = fragment(&source, &[])?;
+    assert_eq!(shape(entry(&before)?).loops, 1);
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(shape(function).loops, 0);
+    assert_eq!(stores(function, "n"), stores(entry(&before)?, "n") - 1);
+    Ok(())
+}
+
+#[test]
+fn a_store_reaching_a_read_through_a_loop_back_edge_is_kept() -> TestResult {
+    let source = shader(
+        "",
+        "    int n = 2;
+    for (int i = 0; i < k; i++) {
+        if (inColor.x > float(i)) {
+            color.x += float(n);
+        } else {
+            n++;
+        }
+    }",
+    );
+    let before = fragment(&source, &[])?;
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(shape(function).loops, 1);
+    assert_eq!(stores(function, "n"), stores(entry(&before)?, "n"));
+    Ok(())
+}
+
+#[test]
+fn a_store_after_the_last_read_is_removed() -> TestResult {
+    let source = shader(
+        "",
+        "    float t = inColor.x;
+    if (k > 1) t += inColor.y;
+    color.x = t;
+    if (k > 2) t = inColor.z;
+    t *= 2.0;",
+    );
+    let before = fragment(&source, &[])?;
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(stores(function, "t"), stores(entry(&before)?, "t") - 2);
+    assert_eq!(shape(function).ifs, 1);
+    Ok(())
+}
+
+#[test]
+fn a_store_falling_through_into_the_reading_case_is_kept() -> TestResult {
+    let source = shader(
+        "",
+        "    float t = 0.0;
+    switch (k) {
+    case 0: t = 1.0; break;
+    case 1: t = 2.0;
+    case 2: color.x = t; break;
+    default: t = 3.0; break;
+    }",
+    );
+    let before = fragment(&source, &[])?;
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(stores(function, "t"), stores(entry(&before)?, "t") - 2);
+    Ok(())
+}
+
+#[test]
+fn a_component_store_after_its_last_read_is_removed() -> TestResult {
+    let source = shader(
+        "",
+        "    vec2 v = inColor.xy;
+    color.x = v.x;
+    v.x = 3.0;
+    v.y += 1.0;
+    color.y = v.y;",
+    );
+    let before = fragment(&source, &[])?;
+    let module = fragment(&source, DCE)?;
+    let function = entry(&module)?;
+    assert_eq!(stores(function, "v"), stores(entry(&before)?, "v") - 1);
+    Ok(())
+}

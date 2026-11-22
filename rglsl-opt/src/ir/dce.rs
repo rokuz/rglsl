@@ -1,7 +1,10 @@
 use rglsl::compact::{KeepUnused, compact};
+use std::collections::BTreeSet;
+
 use rglsl::{
-    AddressSpace, Arena, Binding, Block, BuiltIn, Expression, Function, GlobalVariable, Handle,
-    LocalVariable, Module, Sampling, ShaderStage, Span, Statement, Type, TypeInner, UniqueArena,
+    AddressSpace, Arena, Binding, Block, BuiltIn, Expression, FastHashMap, FastHashSet, Function,
+    GlobalVariable, Handle, LocalVariable, Module, Sampling, ShaderStage, Span, Statement, Type,
+    TypeInner, UniqueArena,
 };
 
 use crate::analysis::for_each_result;
@@ -37,6 +40,8 @@ struct Node<'m> {
     statement: &'m Statement,
     parent: u32,
     end: u32,
+    first: u32,
+    outer: u32,
 }
 
 struct Tree<'m> {
@@ -61,6 +66,9 @@ impl<'m> Tree<'m> {
             parent: u32,
             breaks: u32,
             continues: u32,
+            first: u32,
+            outer: u32,
+            falls: bool,
         }
         let mut tree = Self {
             nodes: Vec::new(),
@@ -71,18 +79,40 @@ impl<'m> Tree<'m> {
             parent: NONE,
             breaks: NONE,
             continues: NONE,
+            first: NONE,
+            outer: NONE,
+            falls: false,
         }]);
         while let Some(frame) = pending.last_mut() {
+            let id = u32::try_from(tree.nodes.len()).unwrap_or(NONE);
             let Some(statement) = frame.statements.next() else {
+                let (parent, first, falls) = (frame.parent, frame.first, frame.falls);
                 pending.pop();
+                if let Some(next) = pending.last_mut()
+                    && falls
+                    && next.parent == parent
+                    && next.first == NONE
+                {
+                    next.first = first;
+                }
                 continue;
             };
-            let (parent, breaks, continues) = (frame.parent, frame.breaks, frame.continues);
-            let id = u32::try_from(tree.nodes.len()).unwrap_or(NONE);
+            if frame.first == NONE {
+                frame.first = id;
+            }
+            let (parent, breaks, continues, first, outer) = (
+                frame.parent,
+                frame.breaks,
+                frame.continues,
+                frame.first,
+                frame.outer,
+            );
             tree.nodes.push(Node {
                 statement,
                 parent,
                 end: id.saturating_add(1),
+                first,
+                outer,
             });
             tree.exits.push(Vec::new());
             let target = match *statement {
@@ -98,13 +128,27 @@ impl<'m> Tree<'m> {
                 Statement::Switch { .. } => (id, continues),
                 _ => (breaks, continues),
             };
+            let outer = match *statement {
+                Statement::Loop { .. } if outer == NONE => id,
+                _ => outer,
+            };
             let start = pending.len();
+            let mut falls = match *statement {
+                Statement::Switch { ref cases, .. } => {
+                    cases.iter().map(|case| case.fall_through).collect()
+                }
+                _ => Vec::new(),
+            }
+            .into_iter();
             statement.for_each_child_block(|child| {
                 pending.push(Frame {
                     statements: child.iter(),
                     parent: id,
                     breaks,
                     continues,
+                    first: NONE,
+                    outer,
+                    falls: falls.next().unwrap_or(false),
                 });
             });
             if let Some(children) = pending.get_mut(start..) {
@@ -125,13 +169,35 @@ impl<'m> Tree<'m> {
 
 const WHOLE: u8 = u8::MAX;
 
+type Lane = (u32, u32, u8);
+
+fn covers(mask: u8, lane: usize) -> bool {
+    u32::try_from(lane)
+        .ok()
+        .and_then(|lane| mask.checked_shr(lane))
+        .is_some_and(|bits| bits & 1 != 0)
+}
+
+fn take(stores: &mut BTreeSet<u32>, start: u32, end: u32, kept: &mut Vec<u32>) {
+    if start >= end {
+        return;
+    }
+    let found: Vec<u32> = stores.range(start..end).copied().collect();
+    for id in found {
+        stores.remove(&id);
+        kept.push(id);
+    }
+}
+
 struct Live<'m> {
     expressions: Vec<bool>,
     addressed: Vec<bool>,
-    locals: Vec<bool>,
+    used: Vec<bool>,
     widths: Vec<u8>,
-    components: Vec<u8>,
-    stores: Vec<Vec<(u32, u8)>>,
+    emitted: Vec<u32>,
+    pending: Vec<Vec<BTreeSet<u32>>>,
+    climbed: FastHashMap<Lane, u32>,
+    looped: FastHashSet<Lane>,
     roots: Vec<Root>,
     tree: Tree<'m>,
     statements: Vec<bool>,
@@ -153,10 +219,21 @@ impl<'m> Live<'m> {
             roots.push(root);
         }
         let tree = Tree::of(&function.body);
+        let mut emitted = vec![NONE; function.expressions.len()];
+        for (id, node) in tree.nodes.iter().enumerate() {
+            if let Statement::Emit(ref range) = *node.statement {
+                let id = u32::try_from(id).unwrap_or(NONE);
+                for handle in range.clone() {
+                    if let Some(slot) = emitted.get_mut(handle.index()) {
+                        *slot = id;
+                    }
+                }
+            }
+        }
         Self {
             expressions: vec![false; function.expressions.len()],
             addressed: vec![false; function.expressions.len()],
-            locals: vec![false; function.local_variables.len()],
+            used: vec![false; function.local_variables.len()],
             widths: function
                 .local_variables
                 .iter()
@@ -167,8 +244,10 @@ impl<'m> Live<'m> {
                     },
                 )
                 .collect(),
-            components: vec![0; function.local_variables.len()],
-            stores: vec![Vec::new(); function.local_variables.len()],
+            emitted,
+            pending: vec![Vec::new(); function.local_variables.len()],
+            climbed: FastHashMap::default(),
+            looped: FastHashSet::default(),
             roots,
             statements: tree
                 .nodes
@@ -206,6 +285,88 @@ impl<'m> Live<'m> {
             .get(pointer.index())
             .copied()
             .unwrap_or(Root::Value)
+    }
+
+    fn store(&mut self, local: Handle<LocalVariable>, id: u32, written: u8) {
+        let lanes = usize::from(self.widths.get(local.index()).copied().unwrap_or(0).max(1));
+        let Some(sets) = self.pending.get_mut(local.index()) else {
+            return;
+        };
+        if sets.len() < lanes {
+            sets.resize_with(lanes, BTreeSet::new);
+        }
+        for (lane, set) in sets.iter_mut().enumerate() {
+            if covers(written, lane) {
+                set.insert(id);
+            }
+        }
+    }
+
+    fn escape(&mut self, local: Handle<LocalVariable>, mask: u8, kept: &mut Vec<u32>) {
+        if let Some(slot) = self.used.get_mut(local.index()) {
+            *slot = true;
+        }
+        let Some(sets) = self.pending.get_mut(local.index()) else {
+            return;
+        };
+        for (lane, set) in sets.iter_mut().enumerate() {
+            if covers(mask, lane) {
+                kept.extend(core::mem::take(set));
+            }
+        }
+    }
+
+    fn read(&mut self, local: Handle<LocalVariable>, mask: u8, at: u32, kept: &mut Vec<u32>) {
+        if let Some(slot) = self.used.get_mut(local.index()) {
+            *slot = true;
+        }
+        let Ok(variable) = u32::try_from(local.index()) else {
+            return;
+        };
+        let Some(sets) = self.pending.get_mut(local.index()) else {
+            return;
+        };
+        let nodes = &self.tree.nodes;
+        let outer = nodes.get(at as usize).map_or(NONE, |node| node.outer);
+        for (lane, stores) in sets.iter_mut().enumerate() {
+            if !covers(mask, lane) || stores.is_empty() {
+                continue;
+            }
+            let Ok(lane) = u8::try_from(lane) else {
+                continue;
+            };
+            if let Some(looping) = nodes.get(outer as usize)
+                && self.looped.insert((outer, variable, lane))
+            {
+                take(stores, outer, looping.end, kept);
+            }
+            let mut current = at;
+            while let Some(node) = nodes.get(current as usize)
+                && !stores.is_empty()
+            {
+                let done = self
+                    .climbed
+                    .entry((node.first, variable, lane))
+                    .or_insert(NONE);
+                let (start, seen) = match *done {
+                    NONE => (node.first, false),
+                    reached if reached >= current => break,
+                    reached => (reached, true),
+                };
+                *done = current;
+                take(stores, start, current, kept);
+                let Some(parent) = nodes.get(node.parent as usize) else {
+                    break;
+                };
+                let (Some(&first), Some(&last)) = (stores.first(), stores.last()) else {
+                    break;
+                };
+                if seen || (node.parent <= first && last < parent.end) {
+                    break;
+                }
+                current = node.parent;
+            }
+        }
     }
 }
 
@@ -270,7 +431,10 @@ impl<'m> Marker<'m> {
             return;
         };
         match *expression {
-            Expression::LocalVariable(local) => self.local(index, function, local),
+            Expression::LocalVariable(local) => {
+                self.escape(index, function, local, WHOLE);
+                return;
+            }
             Expression::GlobalVariable(global) => self.global(global),
             Expression::AccessIndex { base, .. } => {
                 if let Some((local, component)) = self
@@ -279,7 +443,20 @@ impl<'m> Marker<'m> {
                     .and_then(|live| live.component(function, handle))
                 {
                     self.address(index, base);
-                    self.component(index, function, local, component);
+                    self.escape(index, function, local, 1 << component);
+                    return;
+                }
+            }
+            Expression::Load { pointer } => {
+                if let Some((local, mask, at)) = self.live.get(index).and_then(|live| {
+                    let Root::Local(local) = live.root(pointer) else {
+                        return None;
+                    };
+                    let at = live.emitted.get(handle.index()).copied().unwrap_or(NONE);
+                    Some((local, live.written(function, pointer), at))
+                }) {
+                    self.place(index, function, pointer);
+                    self.read(index, function, local, mask, at);
                     return;
                 }
             }
@@ -298,66 +475,83 @@ impl<'m> Marker<'m> {
         }
     }
 
+    fn place(&mut self, index: usize, function: &Function, pointer: Handle<Expression>) {
+        let mut current = pointer;
+        loop {
+            self.address(index, current);
+            match function.expressions.try_get(current) {
+                Ok(&Expression::Access {
+                    base,
+                    index: offset,
+                }) => {
+                    self.mark(index, offset);
+                    current = base;
+                }
+                Ok(&Expression::AccessIndex { base, .. }) => current = base,
+                _ => return,
+            }
+        }
+    }
+
     fn stored_through(&mut self, index: usize, pointer: Handle<Expression>) {
         let Some(&function) = self.functions.get(index) else {
             return;
         };
-        let tracked = self.live.get(index).is_some_and(|live| {
-            live.component(function, pointer).is_some()
-                || function
-                    .expressions
-                    .try_get(pointer)
-                    .is_ok_and(|expression| {
-                        matches!(*expression, Expression::LocalVariable(local)
-                        if live.widths.get(local.index()).is_some_and(|&width| width > 0))
-                    })
-        });
-        if !tracked {
+        if self
+            .live
+            .get(index)
+            .is_some_and(|live| matches!(live.root(pointer), Root::Local(_)))
+        {
+            self.place(index, function, pointer);
+        } else {
             self.mark(index, pointer);
-            return;
-        }
-        self.address(index, pointer);
-        if let Ok(&Expression::AccessIndex { base, .. }) = function.expressions.try_get(pointer) {
-            self.address(index, base);
         }
     }
 
-    fn component(
+    fn escape(
         &mut self,
         index: usize,
         function: &Function,
         local: Handle<LocalVariable>,
-        component: u32,
+        mask: u8,
     ) {
-        let Some(live) = self.live.get_mut(index) else {
-            return;
-        };
-        let bit = 1_u8 << component;
-        let whole = live.locals.get(local.index()) == Some(&true);
-        let Some(mask) = live.components.get_mut(local.index()) else {
-            return;
-        };
-        if whole || *mask & bit != 0 {
-            return;
-        }
-        let first = *mask == 0;
-        *mask |= bit;
         let mut kept = Vec::new();
-        if let Some(stores) = live.stores.get_mut(local.index()) {
-            stores.retain(|&(id, written)| {
-                if written & bit != 0 {
-                    kept.push(id);
-                    false
-                } else {
-                    true
-                }
-            });
+        if let Some(live) = self.live.get_mut(index) {
+            live.escape(local, mask, &mut kept);
         }
+        self.reached(index, function, local, kept);
+    }
+
+    fn read(
+        &mut self,
+        index: usize,
+        function: &Function,
+        local: Handle<LocalVariable>,
+        mask: u8,
+        at: u32,
+    ) {
+        let mut kept = Vec::new();
+        if let Some(live) = self.live.get_mut(index) {
+            if at == NONE {
+                live.escape(local, mask, &mut kept);
+            } else {
+                live.read(local, mask, at, &mut kept);
+            }
+        }
+        self.reached(index, function, local, kept);
+    }
+
+    fn reached(
+        &mut self,
+        index: usize,
+        function: &Function,
+        local: Handle<LocalVariable>,
+        kept: Vec<u32>,
+    ) {
         for store in kept {
             self.keep(index, store);
         }
-        if first
-            && let Ok(variable) = function.local_variables.try_get(local)
+        if let Ok(variable) = function.local_variables.try_get(local)
             && let Some(init) = variable.init
         {
             self.mark(index, init);
@@ -410,32 +604,6 @@ impl<'m> Marker<'m> {
             .unwrap_or_default();
         for exit in exits {
             self.keep(index, exit);
-        }
-    }
-
-    fn local(&mut self, index: usize, function: &Function, local: Handle<LocalVariable>) {
-        let Some(live) = self.live.get_mut(index) else {
-            return;
-        };
-        let Some(slot) = live.locals.get_mut(local.index()) else {
-            return;
-        };
-        if *slot {
-            return;
-        }
-        *slot = true;
-        let stores = live
-            .stores
-            .get_mut(local.index())
-            .map(core::mem::take)
-            .unwrap_or_default();
-        for (store, _) in stores {
-            self.keep(index, store);
-        }
-        if let Ok(variable) = function.local_variables.try_get(local)
-            && let Some(init) = variable.init
-        {
-            self.mark(index, init);
         }
     }
 
@@ -524,9 +692,7 @@ impl<'m> Marker<'m> {
         if let Some(live) = self.live.get_mut(index) {
             live.endless = endless;
             for (local, id, written) in local_stores {
-                if let Some(stores) = live.stores.get_mut(local.index()) {
-                    stores.push((id, written));
-                }
+                live.store(local, id, written);
             }
         }
         for (global, id) in global_stores {
@@ -692,20 +858,11 @@ impl Plan {
             *kept |= addressed;
         }
         let any_dead = live.expressions.iter().any(|&live| !live)
-            || live
-                .locals
-                .iter()
-                .zip(&live.components)
-                .any(|(&whole, &components)| !whole && components == 0)
+            || live.used.iter().any(|&used| !used)
             || live.statements.iter().any(|&live| !live);
         any_dead.then(|| Self {
             expressions: core::mem::take(&mut live.expressions),
-            locals: live
-                .locals
-                .iter()
-                .zip(&live.components)
-                .map(|(&whole, &components)| whole || components != 0)
-                .collect(),
+            locals: core::mem::take(&mut live.used),
             statements: core::mem::take(&mut live.statements),
             ends: live.tree.nodes.iter().map(|node| node.end).collect(),
             endless: core::mem::take(&mut live.endless),
