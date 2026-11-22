@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: false
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Workspace version matches the tag
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "rglsl-capi") | .version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME does not match the workspace version $version"
+            exit 1
+          fi
+
+  c:
+    name: C archive ${{ matrix.target }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: aarch64-linux-android
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml) and the target
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build, package and smoke-test
+        run: cargo xtask package-c --target ${{ matrix.target }} --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  crates:
+    name: crate archives
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Package and verify the publishable crates
+        run: cargo xtask package-crates --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crates
+          path: dist/*.crate
+          if-no-files-found: error
+
+  release:
+    name: draft release
+    needs: [version, c, crates]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and release notes
+        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          sed "s/@VERSION@/$VERSION/g" .github/release-notes.md > release-notes.md
+      - name: Keep the release files (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.version.outputs.version }}
+          path: |
+            dist
+            release-notes.md
+      - name: Create the draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --draft --verify-tag --title "rglsl $VERSION" --notes-file release-notes.md
