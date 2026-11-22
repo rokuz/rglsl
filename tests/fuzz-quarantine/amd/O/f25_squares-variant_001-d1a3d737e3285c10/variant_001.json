@@ -1,0 +1,54 @@
+{
+  "GLF_dead17injectionSwitch": {
+    "args": [
+      0.60887796,
+      0.91726446
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "GLF_dead8tex": {
+    "binding": 6,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_live11injectionSwitch": {
+    "args": [
+      0.24322653,
+      0.7269008
+    ],
+    "binding": 5,
+    "func": "glUniform2f"
+  },
+  "GLF_live12injectionSwitch": {
+    "args": [
+      0.9616659,
+      0.0052238107
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 2,
+    "func": "glUniform2f"
+  },
+  "resolution": {
+    "args": [
+      256.0,
+      256.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "time": {
+    "args": [
+      0.0
+    ],
+    "binding": 0,
+    "func": "glUniform1f"
+  }
+}

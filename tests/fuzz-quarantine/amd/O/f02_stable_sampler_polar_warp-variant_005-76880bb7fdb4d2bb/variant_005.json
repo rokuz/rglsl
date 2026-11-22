@@ -1,0 +1,33 @@
+{
+  "GLF_dead0tex": {
+    "binding": 4,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_dead11tex": {
+    "binding": 2,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_dead5injectionSwitch": {
+    "args": [
+      0.21171159,
+      0.38930398
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "tex": {
+    "binding": 0,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  }
+}
