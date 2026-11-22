@@ -53,6 +53,38 @@ rglsl -V --specialize "3:16 4:true" shader.comp       # specialization constants
 
 Options, exit codes and messages are `glslangValidator`'s.
 
+### Optimizer
+
+`-O` and `-Os` run rglsl's own optimizer (`rglsl-opt`) on the linked program instead of
+SPIRV-Tools: inlining, forwarding of local values, scalar replacement of aggregates, constant
+folding, dead branch and dead code elimination, common subexpression elimination, loop unrolling,
+and SSA form with `OpPhi` for promoted locals.
+
+- **Same results.** Only exact folds: an optimized shader computes bit for bit what the
+  unoptimized one does on the GPU (no reassociation, no fast-math, infinities and NaNs are not
+  folded away).
+- **One pipeline.** With `-l`, the linked stages are optimized together: outputs the next stage
+  does not read, inputs no earlier stage writes and unread built-ins are removed; the inputs of
+  the first stage and the outputs of the last stay. Unused inputs, descriptors and push constants
+  are removed, as `spirv-opt -O` does, so the reflection of an optimized program can differ.
+- **`-Os`** minimizes the size of the driver's machine code, not of the SPIR-V.
+- **`--target-gpu nvidia|amd|universal-desktop|universal-mobile`** selects the profile the passes
+  are tuned for (default `universal-desktop`).
+- **`--specialize`** substitutes specialization constant values while compiling, with or without
+  `-O`.
+- **Debug information** survives: `-g` keeps line information, `-gV`/`-gVS` keep variables
+  through `DebugValue` and inlined calls through `DebugInlinedAt`.
+
+Measured against `glslang -O` (glslang followed by `spirv-opt`'s performance passes) with
+`cargo xtask opt-quality --exec` and `cargo xtask bench --in-process`:
+
+- driver statistics (registers, scratch, machine code size from Amber's `--pipeline-stats`) on
+  AMD and NVIDIA are no worse than `spirv-opt -O` on the corpus, with a few shaders a register
+  apart in either direction;
+- GPU time of the `tests/perf` workloads equals `spirv-opt -O`'s within noise on Apple
+  (KosmicKrisp), AMD and NVIDIA;
+- `rglsl -O` compiles in about a sixth of the time `glslang -O` takes.
+
 From Rust, `rglsl-link` compiles GLSL strings into object modules, links them and returns SPIR-V
 words or diagnostics:
 
@@ -99,7 +131,24 @@ C and C++ samples: [samples/c](samples/README.md#c-and-c).
 cargo test --workspace --all-features
 cargo xtask oracles --glslang-dir ../glslang          # pinned glslang, spirv-val, Amber
 cargo xtask test --glslang-dir ../glslang             # glslang's corpus
+cargo xtask test --opt-level O                        # the same with -O
+cargo xtask opt-quality --exec                        # optimizer against spirv-opt -O and glslang -O:
+                                                      # SPIR-V counts, driver statistics, GPU time
+cargo xtask fuzz --random --exec --opt                # differential fuzzing against glslang
 ```
+
+Every compiled shader is checked with `spirv-val` and, where it can run, executed on GPUs through
+Amber and compared with glslang's module: on Apple hardware through KosmicKrisp and, through SSH
+targets, on AMD and NVIDIA under Windows. A remote run stops after `--max-resets` driver resets
+(default 3).
+
+The fuzzer (`rglsl-fuzz`, a port of GraphicsFuzz) generates semantics-preserving variants of
+template shaders, qualifies glslang's modules (and `glslang -O`'s) on every GPU, and then
+requires rglsl's module (and `rglsl -O`'s) to render the same image. Shaders whose glslang
+module hangs or crashes a driver are kept in `tests/fuzz-quarantine`, per GPU and mode, with
+the evidence; `cargo xtask fuzz --recheck-quarantine` checks them again. Driver bugs found on
+the way that need a particular SPIR-V form are worked around in the backend and pinned by tests
+in `tests/exec` and `xtask/exec-regressions`.
 
 Rules for contributors: [AGENTS.md](AGENTS.md).
 
