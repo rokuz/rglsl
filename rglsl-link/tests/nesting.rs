@@ -472,6 +472,24 @@ fn deep_statements_compile_on_a_small_stack(depth: usize) -> TestResult {
     for (name, open, close) in cases {
         compiles_at(depth, name, nested_body("", open, "b = 2;", close))?;
     }
+    for (name, open, close) in [
+        (
+            "return inside loops",
+            "for (int i = 0; i < 2; i++) { ",
+            " }",
+        ),
+        (
+            "return inside switches in loops",
+            "while (t) { switch (b) { case 1: ",
+            " break; } }",
+        ),
+    ] {
+        compiles_at(
+            depth,
+            name,
+            nested_body("", open, "if (t) return; b = 2;", close),
+        )?;
+    }
     Ok(())
 }
 

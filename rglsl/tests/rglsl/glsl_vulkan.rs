@@ -12864,3 +12864,35 @@ void main() {
     assert_eq!(initialized, ["never", "looped"]);
     Ok(())
 }
+
+#[test]
+fn a_return_inside_a_loop_leaves_the_loop_first() -> crate::TestResult {
+    let module = compile(
+        ShaderStage::Fragment,
+        "#version 450
+layout(set = 0, binding = 0) uniform B { int n[10]; int key; };
+layout(location = 0) out vec4 o;
+int find(int x) {
+    for (int i = 0; i < 10; i++) {
+        switch (i) {
+        case 3:
+            if (n[i] == x) {
+                return i;
+            }
+            break;
+        default:
+            if (n[i] == x) {
+                return -i;
+            }
+        }
+    }
+    return -1;
+}
+void main() {
+    o = vec4(float(find(key)));
+}
+",
+    )?;
+    assert_eq!(instructions(&module, Op::ReturnValue).len(), 2);
+    Ok(())
+}

@@ -3965,6 +3965,21 @@ impl Writer {
         pipeline_options: Option<&PipelineOptions>,
         words: &mut Vec<Word>,
     ) -> Result<(), Error> {
+        match crate::proc::single_exit_module(ir_module)
+            .map_err(|_| Error::Validation("a function left its loops before returning"))?
+        {
+            Some((module, info)) => self.write_module(&module, &info, pipeline_options, words),
+            None => self.write_module(ir_module, info, pipeline_options, words),
+        }
+    }
+
+    fn write_module(
+        &mut self,
+        ir_module: &crate::Module,
+        info: &ModuleInfo,
+        pipeline_options: Option<&PipelineOptions>,
+        words: &mut Vec<Word>,
+    ) -> Result<(), Error> {
         self.reset();
 
         let exporting = self.flags.contains(WriterFlags::EXPORT_FUNCTIONS);

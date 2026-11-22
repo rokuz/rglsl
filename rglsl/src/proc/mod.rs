@@ -11,6 +11,7 @@ mod reachability;
 mod resource;
 mod shared_blocks;
 pub use rglsl_types::small_float;
+mod single_exit;
 mod subgroup;
 mod terminator;
 mod type_methods;
@@ -27,6 +28,9 @@ pub use overloads::{Conclusion, MissingSpecialType, OverloadSet, Rule};
 pub use reachability::Reachability;
 pub use resource::{BindingShifts, ResourceClass, free_binding};
 pub use shared_blocks::{SharedBlockConflict, SharedBlocks};
+pub use single_exit::{
+    ExitTypes, leave_loops_before_returning, returns_inside_exiting_loops, single_exit_module,
+};
 pub use terminator::ensure_block_returns;
 use thiserror::Error;
 pub use type_methods::{
