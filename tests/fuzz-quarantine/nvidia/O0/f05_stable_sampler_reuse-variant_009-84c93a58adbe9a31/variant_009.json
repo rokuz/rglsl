@@ -1,0 +1,72 @@
+{
+  "GLF_dead10one": {
+    "args": [
+      0.8883691
+    ],
+    "binding": 6,
+    "func": "glUniform1f"
+  },
+  "GLF_dead20injectionSwitch": {
+    "args": [
+      0.27825773,
+      0.7237542
+    ],
+    "binding": 4,
+    "func": "glUniform2f"
+  },
+  "GLF_dead21injectionSwitch": {
+    "args": [
+      0.6086914,
+      0.9296367
+    ],
+    "binding": 5,
+    "func": "glUniform2f"
+  },
+  "GLF_dead25injectionSwitch": {
+    "args": [
+      0.780153,
+      0.36314183
+    ],
+    "binding": 2,
+    "func": "glUniform2f"
+  },
+  "GLF_dead25resolution": {
+    "args": [
+      0.28780258,
+      0.1842041
+    ],
+    "binding": 3,
+    "func": "glUniform2f"
+  },
+  "GLF_dead6tex": {
+    "binding": 9,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_dead8tex": {
+    "binding": 8,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  },
+  "GLF_dead9injectionSwitch": {
+    "args": [
+      0.6366297,
+      0.50802356
+    ],
+    "binding": 7,
+    "func": "glUniform2f"
+  },
+  "injectionSwitch": {
+    "args": [
+      0.0,
+      1.0
+    ],
+    "binding": 1,
+    "func": "glUniform2f"
+  },
+  "tex": {
+    "binding": 0,
+    "func": "sampler2D",
+    "texture": "DEFAULT"
+  }
+}
