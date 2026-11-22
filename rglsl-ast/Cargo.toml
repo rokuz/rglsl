@@ -8,6 +8,9 @@ description = "Syntax tree, parser and printer for Vulkan GLSL"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories.workspace = true
+readme = "README.md"
+exclude = ["tests", "examples", "benches"]
 
 [lib]
 name = "rglsl_ast"

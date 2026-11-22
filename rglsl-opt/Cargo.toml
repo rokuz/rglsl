@@ -7,6 +7,9 @@ description = "Optimizer of rglsl's linked IR"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories.workspace = true
+readme.workspace = true
+exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
 
 [dependencies]

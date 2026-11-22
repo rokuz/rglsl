@@ -3,10 +3,13 @@ name = "rglsl-link"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
-description = "Linker of rglsl object modules"
+description = "Compiler API and linker of rglsl, a Vulkan GLSL to SPIR-V compiler"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories.workspace = true
+readme.workspace = true
+exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
 
 [dependencies]

@@ -8,6 +8,9 @@ description = "Derive macro for the rglsl object module format"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories = ["development-tools::procedural-macro-helpers"]
+readme.workspace = true
+exclude = ["tests", "examples", "benches"]
 
 [lib]
 proc-macro = true

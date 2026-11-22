@@ -7,6 +7,8 @@ description = "C API of the rglsl Vulkan GLSL to SPIR-V compiler"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories.workspace = true
+exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
 readme = "README.md"
 

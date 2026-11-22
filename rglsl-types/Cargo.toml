@@ -8,6 +8,9 @@ description = "Common types for rglsl"
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories.workspace = true
+readme = "README.md"
+exclude = ["tests", "examples", "benches"]
 
 [package.metadata.docs.rs]
 all-features = true
