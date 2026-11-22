@@ -6,11 +6,41 @@ compiler API of `rglsl-link` (`Compiler::compile_unit`, `preprocess`, `build`, `
 `write_object`, `read_object`, diagnostics formatting, resource limits, depfiles) and the text
 forms of `rglsl-dis` (disassembly, hexadecimal text): everything the `rglsl` command line does.
 
+## CMake
+
+Every [release](https://github.com/rokuz/rglsl/releases) has an archive per platform
+(`rglsl-c-VERSION-linux-x86_64.tar.gz`, `-windows-x86_64.zip`, `-macos-arm64.tar.gz`,
+`-android-arm64-v8a.tar.gz`) with the header, both libraries and a CMake package:
+
+```cmake
+find_package(rglsl CONFIG REQUIRED)
+target_link_libraries(app PRIVATE rglsl::rglsl_c)
+target_link_libraries(tool PRIVATE rglsl::rglsl_c_static)
+```
+
+```sh
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/rglsl-c-VERSION-PLATFORM
+```
+
+`rglsl::rglsl_c` is the shared library (on Windows the DLL in `bin/` and its import library),
+`rglsl::rglsl_c_static` the static library with the system libraries rustc lists for it
+(`--print native-static-libs`). On macOS the shared library's install name is
+`@rpath/librglsl_c.dylib`, on Linux and Android its `SONAME` is `librglsl_c.so`. Android
+projects pass `-Drglsl_DIR=.../lib/cmake/rglsl`, since the NDK toolchain file searches packages
+only in the sysroot. The archive's `README.md` also lists the link flags without CMake and its
+pkg-config files.
+
+From a checkout, `cargo xtask capi-cmake` builds the library and writes the same package for the
+build tree (`target/debug/cmake/rglsl`, passed as `-Drglsl_DIR`), and `cargo xtask package-c
+--target T` builds a release archive:
+
 ```sh
 cargo build --release -p rglsl-capi          # target/release/librglsl_c.{so,dylib,a}, rglsl_c.dll
+cargo xtask capi-cmake                       # target/debug/cmake/rglsl/rglsl-config.cmake
+cargo xtask package-c --target aarch64-apple-darwin   # target/dist/rglsl-c-VERSION-macos-arm64.tar.gz
 cargo xtask capi-header                      # regenerate include/rglsl.h with cbindgen
 cargo xtask capi-header --check              # CI: the committed header is up to date
-sh samples/c/run.sh                          # the C and C++ samples
+sh samples/c/run.sh                          # the C and C++ samples, through CMake and CTest
 ```
 
 ## Library name

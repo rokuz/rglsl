@@ -53,24 +53,42 @@ format version is rejected with a diagnostic.
 
 ## C and C++
 
-`samples/c` uses the C API of `rglsl-capi` (`rglsl-capi/include/rglsl.h`, library `rglsl_c`).
-`main.c` compiles a vertex shader, a fragment shader and a lighting library from strings; the
-library gets a define, an in-memory include and an include callback that supplies
-`<material.h>`. It writes the library to object file bytes and reads it back, links the three
-objects for SPIR-V 1.3, writes `vert.spv` and `frag.spv`, and shows a compile error and a link
-error with their diagnostics. `main.cpp` compiles a compute shader and a library with
-`std::unique_ptr` deleters and an include callback over a `std::map`, and writes `blur.comp.spv`.
+`samples/c` is a CMake project on the C API of `rglsl-capi` (`rglsl-capi/include/rglsl.h`,
+library `rglsl_c`). `main.c` compiles a vertex shader, a fragment shader and a lighting library
+from strings; the library gets a define, an in-memory include and an include callback that
+supplies `<material.h>`. It writes the library to object file bytes and reads it back, links the
+three objects for SPIR-V 1.3, writes `vert.spv` and `frag.spv`, and shows a compile error and a
+link error with their diagnostics. `main.cpp` compiles a compute shader and a library with
+`std::unique_ptr` deleters and an include callback over a `std::map`, and writes
+`blur.comp.spv`.
+
+`CMakeLists.txt` finds the library with `find_package(rglsl CONFIG)`, links `main.c` (C99) to the
+shared library `rglsl::rglsl_c` and `main.cpp` (C++17) to the static library
+`rglsl::rglsl_c_static`, and registers both as CTest tests that write into the build directory.
+The package config comes from an unpacked release archive or from the build tree:
+
+```sh
+cmake -S samples/c -B build -DCMAKE_PREFIX_PATH=/path/to/rglsl-c-0.1.0-linux-x86_64
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+`cargo xtask capi-cmake` builds `rglsl-capi` and writes the package config of the build tree into
+`target/debug/cmake/rglsl` (`--profile` for another profile); `samples/c/run.sh` does that,
+configures `samples/c` with it into `target/samples/c` with `-Wall -Wextra -pedantic -Werror`,
+builds it and runs CTest:
 
 ```sh
 sh samples/c/run.sh
-SPIRV_VAL=target/oracles/bin/spirv-val sh samples/c/run.sh
-SANITIZE=address,undefined sh samples/c/run.sh   # AddressSanitizer (LeakSanitizer on Linux), UBSan
-LEAKS=1 sh samples/c/run.sh                      # macOS: leaks --atExit
+SPIRV_VAL=target/oracles/bin/spirv-val sh samples/c/run.sh   # + a spirv-val test of every .spv
+SANITIZE=address,undefined sh samples/c/run.sh               # AddressSanitizer (LeakSanitizer on Linux), UBSan
+LEAKS=1 sh samples/c/run.sh                                  # macOS: each sample under leaks --atExit
 ```
 
-The script builds `rglsl-capi`, compiles `main.c` as C99 against the shared library and
-`main.cpp` as C++17 against the static library (with `-Wall -Wextra -pedantic -Werror`), and
-runs both into `target/samples/c`. `CC` and `CXX` choose the compilers.
+The cache variables behind them are `RGLSL_SAMPLES_SANITIZE`, `RGLSL_SAMPLES_LAUNCHER`,
+`RGLSL_SAMPLES_SPIRV_VAL` and `RGLSL_SAMPLES_WARNINGS_AS_ERRORS`; `CC` and `CXX` choose the
+compilers as for any CMake project. The release workflow builds and runs the same project against
+every C archive it can run (`cargo xtask package-c`).
 
 ## Running in CI
 

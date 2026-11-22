@@ -36,10 +36,35 @@ files and the `glslangValidator`-compatible CLI.
 - **Dead code** under constant conditions is not emitted.
 - **Extension keywords** are always reserved.
 
+## Download
+
+[Releases](https://github.com/rokuz/rglsl/releases) carry, for every version:
+
+- C archives `rglsl-c-VERSION-PLATFORM` for `linux-x86_64`, `windows-x86_64`, `macos-arm64`
+  (`.tar.gz`, `.zip` on Windows) and `android-arm64-v8a`: the header, the shared and the static
+  library, a CMake package, pkg-config files, the `rglsl` command-line tool (not on Android) and
+  a README with the link flags of the platform;
+- the `cargo package` archives (`.crate`) of the library crates and `SHA256SUMS`.
+
+Rust projects depend on the tag of a release:
+
+```toml
+[dependencies]
+rglsl-link = { git = "https://github.com/rokuz/rglsl", tag = "v0.1.0" }
+rglsl-dis = { git = "https://github.com/rokuz/rglsl", tag = "v0.1.0" }   # SPIR-V as text
+```
+
+C and C++ projects unpack an archive and use its CMake package:
+
+```cmake
+find_package(rglsl CONFIG REQUIRED)                      # -DCMAKE_PREFIX_PATH=/path/to/archive
+target_link_libraries(app PRIVATE rglsl::rglsl_c)        # or rglsl::rglsl_c_static
+```
+
 ## Usage
 
 ```sh
-cargo install --path rglsl-cli
+cargo install --path rglsl-cli                        # or bin/rglsl of a C archive
 
 rglsl -V shader.frag                                  # writes frag.spv
 rglsl -V --target-env vulkan1.3 -g -Iinclude -o out.spv shader.comp
@@ -120,7 +145,11 @@ if (rglsl_compile(source, options, &main_object, &diagnostics) != RGLSL_RESULT_O
 
 ```sh
 cargo build --release -p rglsl-capi     # target/release/librglsl_c.{so,dylib,a}, rglsl_c.dll
+cargo xtask capi-cmake                  # CMake package of the build tree: target/debug/cmake/rglsl
 ```
+
+Release archives ship the libraries with a CMake package (`rglsl::rglsl_c`,
+`rglsl::rglsl_c_static`); see [Download](#download).
 
 Conventions, ownership, threads and the include callback: [rglsl-capi](rglsl-capi/README.md);
 C and C++ samples: [samples/c](samples/README.md#c-and-c).
