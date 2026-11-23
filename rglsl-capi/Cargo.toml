@@ -11,6 +11,7 @@ categories.workspace = true
 exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
 readme = "README.md"
+publish = false
 
 [lib]
 name = "rglsl_c"

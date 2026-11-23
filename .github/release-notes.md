@@ -10,7 +10,7 @@ linker of object modules, a Rust API and a C API.
 | `rglsl-c-@VERSION@-windows-x86_64.zip` | C API (`bin/rglsl_c.dll`, its import library `lib/rglsl_c.dll.lib`, the static library `lib/rglsl_c.lib`, dynamic CRT) and `rglsl.exe` for x86_64 Windows |
 | `rglsl-c-@VERSION@-macos-arm64.tar.gz` | C API (`librglsl_c.dylib` with the install name `@rpath/librglsl_c.dylib`, `librglsl_c.a`) and `rglsl` for macOS 11 or newer on Apple silicon |
 | `rglsl-c-@VERSION@-android-arm64-v8a.tar.gz` | C API (`librglsl_c.so`, `librglsl_c.a`) for Android arm64-v8a, API level 24 or newer |
-| `*.crate` | `cargo package` archives of the library crates (`rglsl-link` is the API, the others are its parts) |
+| `*.crate` | `cargo package` archives of the crates published to crates.io: the library crates (`rglsl-link` is the API, the others are its parts) and `rglsl-cli` |
 | `SHA256SUMS` | SHA-256 of every file: `sha256sum -c SHA256SUMS` |
 
 Every C archive has `include/rglsl.h`, `lib/` with the shared and the static library, a CMake
@@ -20,10 +20,12 @@ library.
 
 ## Rust
 
+The crates are on [crates.io](https://crates.io/crates/rglsl-link):
+
 ```toml
 [dependencies]
-rglsl-link = { git = "https://github.com/rokuz/rglsl", tag = "v@VERSION@" }
-rglsl-dis = { git = "https://github.com/rokuz/rglsl", tag = "v@VERSION@" }
+rglsl-link = "@VERSION@"
+rglsl-dis = "@VERSION@"
 ```
 
 ```rust
@@ -62,6 +64,7 @@ program against an archive.
 ## Command line
 
 ```sh
+cargo install rglsl-cli                               # or bin/rglsl of a C archive
 rglsl -V shader.frag                                  # writes frag.spv
 rglsl -V main.frag lighting.glsl -o shader.spv        # compile and link
 rglsl -V -l -O main.vert main.frag                    # optimized

@@ -222,13 +222,28 @@ the tag is `v` + the workspace version, runs `cargo xtask package-c` for
 `x86_64-unknown-linux-gnu` (Ubuntu 22.04, for an old glibc), `x86_64-pc-windows-msvc`,
 `aarch64-apple-darwin` and `aarch64-linux-android` (NDK, API level 24) with the smoke test where
 the runner can run the target, `cargo xtask package-crates`, writes `SHA256SUMS` and creates a
-draft GitHub release with the notes of `.github/release-notes.md` (`@VERSION@` replaced). To cut
-a release:
+draft GitHub release with the notes of `.github/release-notes.md` (`@VERSION@` replaced).
+
+Publishing that draft release runs `.github/workflows/publish-crates.yml` (its only trigger):
+it checks out the release's tag, checks that the tag is `v` + the workspace version and runs
+`cargo publish --locked` for every crate without `publish = false`, in dependency order; a crate
+whose version is already on crates.io is skipped, so a failed run can be rerun. Published are the
+library crates (`rglsl-derive`, `rglsl-types`, `rglsl-ast`, `rglsl-pp`, `rglsl-sema`, `rglsl`,
+`rglsl-dis`, `rglsl-opt`, `rglsl-link`) and `rglsl-cli` (`cargo install rglsl-cli` installs
+`rglsl`); `rglsl-capi` (C users take the release archives), `rglsl-fuzz`, `rglsl-test`, the
+fuzz targets, `xtask` and the samples have `publish = false`. The `.crate` files of the release
+are the same crates (`cargo xtask package-crates` takes every crate without `publish = false`).
+The workflow needs the repository secret `CARGO_REGISTRY_TOKEN` (Settings → Secrets and
+variables → Actions): a crates.io API token with the `publish-new` and `publish-update` scopes.
+
+To cut a release:
 
 1. Set `version` in `[workspace.package]` and in `[workspace.dependencies]` of `Cargo.toml`,
    update `Cargo.lock` (`cargo check`), the version in the README snippets and in
    `find_package` of `samples/c/CMakeLists.txt`; commit on `main`.
-2. Run the release workflow with `workflow_dispatch` on that commit and check its artifact.
-3. `git tag vX.Y.Z && git push origin vX.Y.Z`; review the draft release and publish it.
-
-Crates are not published to crates.io; Rust users depend on the tag with `git`.
+2. Run the release workflow with `workflow_dispatch` on that commit and check its artifact;
+   `cargo publish --workspace --dry-run` checks the crates locally.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z`; review the draft release.
+4. Publish the draft release: `publish-crates.yml` publishes the crates to crates.io. Check its
+   run; if it fails, fix the cause (a crates.io version cannot be replaced, only yanked) and
+   rerun it from the Actions tab: crates already published are skipped.

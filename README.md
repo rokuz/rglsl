@@ -22,15 +22,21 @@ A Vulkan GLSL (`#version 450`/`460`) to SPIR-V compiler in Rust, derived from
   (`.tar.gz`, `.zip` on Windows) and `android-arm64-v8a`: the header, the shared and the static
   library, a CMake package, pkg-config files, the `rglsl` command-line tool (not on Android) and
   a README with the link flags of the platform;
-- the `cargo package` archives (`.crate`) of the library crates and `SHA256SUMS`.
+- the `cargo package` archives (`.crate`) of the crates published to crates.io and
+  `SHA256SUMS`.
 
-Rust projects depend on the tag of a release:
+Rust projects depend on the crates of [crates.io](https://crates.io/crates/rglsl-link):
 
 ```toml
 [dependencies]
-rglsl-link = { git = "https://github.com/rokuz/rglsl", tag = "v0.1.0" }
-rglsl-dis = { git = "https://github.com/rokuz/rglsl", tag = "v0.1.0" }   # SPIR-V as text
+rglsl-link = "0.1"
+rglsl-dis = "0.1"                                        # SPIR-V as text
 ```
+
+Code that is not released yet comes from git:
+`rglsl-link = { git = "https://github.com/rokuz/rglsl" }`.
+
+The command-line tool `rglsl` is installed with `cargo install rglsl-cli`.
 
 C and C++ projects unpack an archive and use its CMake package:
 
@@ -42,7 +48,7 @@ target_link_libraries(app PRIVATE rglsl::rglsl_c)        # or rglsl::rglsl_c_sta
 ## Usage
 
 ```sh
-cargo install --path rglsl-cli                        # or bin/rglsl of a C archive
+cargo install rglsl-cli                               # or bin/rglsl of a C archive
 
 rglsl -V shader.frag                                  # writes frag.spv
 rglsl -V --target-env vulkan1.3 -g -Iinclude -o out.spv shader.comp

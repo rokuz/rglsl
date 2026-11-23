@@ -7,8 +7,10 @@ description = "Command-line interface of the rglsl Vulkan GLSL to SPIR-V compile
 repository.workspace = true
 keywords.workspace = true
 license.workspace = true
+categories = ["command-line-utilities", "compilers", "graphics", "rendering::graphics-api"]
+readme = "README.md"
+exclude = ["tests", "examples", "benches"]
 rust-version.workspace = true
-publish = false
 
 [[bin]]
 name = "rglsl"
