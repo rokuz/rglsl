@@ -30,7 +30,7 @@ Rust projects depend on the crates of [crates.io](https://crates.io/crates/rglsl
 ```toml
 [dependencies]
 rglsl-link = "0.1"
-rglsl-dis = "0.1"                                        # SPIR-V as text
+rglsl-dis = "0.1"                                        # SPIR-V as text, reflection
 ```
 
 Code that is not released yet comes from git:
@@ -88,6 +88,27 @@ let library = compile(LIBRARY, &CompileOptions::library("library.glsl"))?;
 let program = link_spirv(&[main, library], &ProgramOptions::default())?;
 for binary in &program.stages {
     upload(binary.stage, &binary.words);
+}
+```
+
+Every stage binary carries its reflection (`binary.reflection`), read from the final SPIR-V
+words: stage, entry point and local size (with specialization constant ids), descriptor bindings
+sorted by set and binding (Vulkan descriptor type, count, name, buffer block size and runtime
+array stride), push constant blocks (offset and size), stage inputs and outputs by location and
+component with their format, and specialization constants with their ids, types and defaults.
+`Program::pipeline_layout()` merges the stages into descriptor set layouts with the stages of
+every binding and push constant ranges per stage; a binding whose type or count differs between
+stages is an error. `rglsl_link::reflection::reflect(words)` reflects any SPIR-V module with one
+entry point, glslang's too, and returns an error, never a panic, for malformed words. (`-q`'s
+glslang-style reflection of the GLSL source is a different thing: `rglsl_link::reflect`.)
+
+```rust
+let layout = program.pipeline_layout()?;
+for set in &layout.sets {
+    for binding in &set.bindings {
+        add_binding(set.set, binding.binding, binding.descriptor_type.vulkan(), binding.count,
+                    binding.stages.bits());
+    }
 }
 ```
 

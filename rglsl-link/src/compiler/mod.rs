@@ -9,6 +9,7 @@ use std::sync::Arc;
 use rglsl::ShaderStage;
 use rglsl::back::spv;
 use rglsl::object::ObjectModule;
+use rglsl_dis::reflection::{self, LayoutError, PipelineLayout, ReflectError, Reflection};
 
 use crate::cache::BuiltinCache;
 use crate::{LinkError, Linked, file, group_by_stage, group_objects_by_stage, message};
@@ -124,9 +125,24 @@ pub struct StageBinary {
     pub stage: ShaderStage,
     pub entry_point: String,
     pub words: Vec<u32>,
+    pub reflection: Reflection,
 }
 
 impl StageBinary {
+    pub fn new(
+        stage: ShaderStage,
+        entry_point: String,
+        words: Vec<u32>,
+    ) -> Result<Self, ReflectError> {
+        let reflection = reflection::reflect(&words)?;
+        Ok(Self {
+            stage,
+            entry_point,
+            words,
+            reflection,
+        })
+    }
+
     pub fn bytes(&self) -> Vec<u8> {
         self.words
             .iter()
@@ -144,6 +160,21 @@ pub struct Program {
 impl Program {
     pub fn stage(&self, stage: ShaderStage) -> Option<&StageBinary> {
         self.stages.iter().find(|binary| binary.stage == stage)
+    }
+
+    pub fn reflections(&self) -> Vec<&Reflection> {
+        self.stages
+            .iter()
+            .map(|binary| &binary.reflection)
+            .collect()
+    }
+
+    pub fn pipeline_layout(&self) -> Result<PipelineLayout, LayoutError> {
+        PipelineLayout::new(&self.reflections())
+    }
+
+    pub fn reflection_json(&self) -> Result<String, LayoutError> {
+        reflection::program_json(&self.reflections())
     }
 }
 
@@ -261,18 +292,17 @@ fn stage_binary(stage: &Linked, options: &ProgramOptions) -> Result<StageBinary,
             &LinkError::MissingEntryPoint,
         ));
     };
-    let words = write_spirv(&Emission::linked(stage, None), options).map_err(|error| {
+    let failure = |what: &str, error: &dyn std::error::Error| {
         Diagnostic::linking(
             Severity::Error,
             Origin::Stage(stage.stage),
-            format!("cannot generate SPIR-V: {}", message(&error)),
+            format!("cannot {what}: {}", message(error)),
         )
-    })?;
-    Ok(StageBinary {
-        stage: stage.stage,
-        entry_point: entry_point.name.clone(),
-        words,
-    })
+    };
+    let words = write_spirv(&Emission::linked(stage, None), options)
+        .map_err(|error| failure("generate SPIR-V", &error))?;
+    StageBinary::new(stage.stage, entry_point.name.clone(), words)
+        .map_err(|error| failure("reflect the SPIR-V", &error))
 }
 
 pub(crate) fn link_diagnostic(stage: Option<ShaderStage>, error: &LinkError) -> Diagnostic {

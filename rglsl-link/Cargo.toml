@@ -16,6 +16,7 @@ rust-version.workspace = true
 rglsl.workspace = true
 rglsl-pp = { workspace = true, features = ["std"] }
 rglsl-ast.workspace = true
+rglsl-dis.workspace = true
 rglsl-opt.workspace = true
 rglsl-types.workspace = true
 rglsl-sema.workspace = true

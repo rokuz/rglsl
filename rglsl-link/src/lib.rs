@@ -43,6 +43,8 @@ pub use program::{
 };
 pub use rglsl::ShaderStage;
 pub use rglsl::object::ObjectModule;
+pub use rglsl_dis::reflection;
+pub use rglsl_dis::reflection::{PipelineLayout, Reflection};
 pub use rglsl_opt::{OptError, OptLevel, OptOptions, Specialization, TargetGpu};
 pub use rglsl_pp::{IncludeKind, IncludeRequest, ResolvedInclude};
 pub use rglsl_sema::{Configuration, ResourceLimits};

@@ -72,6 +72,34 @@ fn describe(program: &Program) {
             binary.words.len(),
             binary.bytes().len()
         );
+        let reflection = &binary.reflection;
+        for binding in &reflection.descriptor_bindings {
+            println!(
+                "    set {} binding {}: {} x{} `{}`",
+                binding.set,
+                binding.binding,
+                binding.descriptor_type.name(),
+                binding.count,
+                binding.name.as_deref().unwrap_or_default()
+            );
+        }
+        for (direction, variables) in [("in", &reflection.inputs), ("out", &reflection.outputs)] {
+            for variable in variables {
+                println!(
+                    "    {direction} location {}: `{}`",
+                    variable.location,
+                    variable.name.as_deref().unwrap_or_default()
+                );
+            }
+        }
+    }
+    match program.pipeline_layout() {
+        Ok(layout) => println!(
+            "  pipeline layout: {} descriptor sets, {} push constant ranges",
+            layout.sets.len(),
+            layout.push_constant_ranges.len()
+        ),
+        Err(error) => println!("  no pipeline layout: {error}"),
     }
     for warning in program.warnings.iter() {
         println!("  {warning}");

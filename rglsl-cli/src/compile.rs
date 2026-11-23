@@ -410,7 +410,7 @@ impl<'a> Session<'a> {
     fn emit(&mut self, build: &Build) -> Result<i32, Exit> {
         for stage in &build.stages {
             let words = match stage.result {
-                Ok(ref words) => words,
+                Ok(ref binary) => &binary.words,
                 Err(ref diagnostic) => {
                     if !self.options.suppress_info {
                         output::err!("{}\n", diagnostic.format(DiagnosticFormat::default()));

@@ -845,10 +845,10 @@ fn built(build: rglsl_link::Build) -> Result<Program, Failure> {
     let mut errors = Vec::new();
     for output in build.stages {
         match output.result {
-            Ok(words) => stages.push(StageBinary {
-                stage: Stage::of(output.stage),
-                entry_point: c_string(&output.entry_point),
-                words,
+            Ok(binary) => stages.push(StageBinary {
+                stage: Stage::of(binary.stage),
+                entry_point: c_string(&binary.entry_point),
+                words: binary.words,
             }),
             Err(diagnostic) => errors.push(diagnostic),
         }

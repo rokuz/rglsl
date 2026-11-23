@@ -9,8 +9,8 @@ use rglsl::object::ObjectModule;
 use super::include::{Includes, Resolve};
 use super::{
     CompileOptions, Compiler, Diagnostic, Diagnostics, Emission, Origin, ProgramOptions,
-    STAGE_ORDER, Severity, glslang_stage_name, link_diagnostic, link_stages, link_warnings,
-    optimize, optimizer_diagnostic, write_spirv,
+    STAGE_ORDER, Severity, StageBinary, glslang_stage_name, link_diagnostic, link_stages,
+    link_warnings, optimize, optimizer_diagnostic, write_spirv,
 };
 use crate::{CompileError, InvalidModule, message, reflect};
 
@@ -50,8 +50,7 @@ pub struct UnitReport {
 pub struct StageOutput {
     pub stage: ShaderStage,
     pub name: String,
-    pub entry_point: String,
-    pub result: Result<Vec<u32>, Diagnostic>,
+    pub result: Result<StageBinary, Diagnostic>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -458,25 +457,31 @@ fn stage_output(
     emission: &Emission<'_>,
     options: &ProgramOptions,
 ) -> StageOutput {
+    let entry_point = emission
+        .module
+        .entry_points
+        .first()
+        .map(|entry| entry.name.clone())
+        .unwrap_or_default();
+    let failure = |what: &str, error: &dyn std::error::Error| {
+        Diagnostic::source(
+            name,
+            format!(
+                "cannot {what} for the {} stage: {}",
+                glslang_stage_name(stage),
+                message(error)
+            ),
+        )
+    };
     StageOutput {
         stage,
         name: name.to_owned(),
-        entry_point: emission
-            .module
-            .entry_points
-            .first()
-            .map(|entry| entry.name.clone())
-            .unwrap_or_default(),
-        result: write_spirv(emission, options).map_err(|error| {
-            Diagnostic::source(
-                name,
-                format!(
-                    "cannot generate SPIR-V for the {} stage: {}",
-                    glslang_stage_name(stage),
-                    message(&error)
-                ),
-            )
-        }),
+        result: write_spirv(emission, options)
+            .map_err(|error| failure("generate SPIR-V", &error))
+            .and_then(|words| {
+                StageBinary::new(stage, entry_point, words)
+                    .map_err(|error| failure("reflect the SPIR-V", &error))
+            }),
     }
 }
 

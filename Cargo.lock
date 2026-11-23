@@ -480,6 +480,7 @@ version = "0.1.1"
 dependencies = [
  "rglsl",
  "rglsl-ast",
+ "rglsl-dis",
  "rglsl-opt",
  "rglsl-pp",
  "rglsl-sema",

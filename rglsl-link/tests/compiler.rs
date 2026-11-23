@@ -312,8 +312,9 @@ fn builds_programs_like_the_command_line() -> TestResult {
     assert_eq!(build.stages.len(), 2);
     let fragment = build.stages.get(1).ok_or("no fragment stage")?;
     assert_eq!(fragment.stage, ShaderStage::Fragment);
-    assert_eq!(fragment.entry_point, "shade");
-    assert!(fragment.result.is_ok());
+    let binary = fragment.result.as_ref().map_err(ToString::to_string)?;
+    assert_eq!(binary.entry_point, "shade");
+    assert_eq!(binary.reflection.entry_point, "shade");
     let reflection = build.reflection.ok_or("no reflection")?;
     assert!(reflection.contains("image:"), "{reflection}");
     assert!(reflection.contains("binding 1"), "{reflection}");
