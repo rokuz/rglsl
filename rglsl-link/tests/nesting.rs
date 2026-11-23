@@ -251,10 +251,12 @@ fn struct_chain(count: usize) -> String {
 }
 
 fn struct_constructor(count: usize) -> String {
-    let mut constructor = String::from("S0(2)");
-    for level in 1..count {
-        constructor = format!("S{level}({constructor}, 0)");
+    let mut constructor = String::new();
+    for level in (1..count).rev() {
+        constructor.push_str(&format!("S{level}("));
     }
+    constructor.push_str("S0(2)");
+    constructor.push_str(&", 0)".repeat(count.saturating_sub(1)));
     constructor
 }
 
@@ -771,10 +773,8 @@ fn deep_types_compile_on_a_small_stack(depth: usize) -> TestResult {
 
 fn deep_initializers_compile_on_a_small_stack(depth: usize) -> TestResult {
     compiles_at(depth, "struct initializer lists", |count| {
-        let mut initializer = String::from("{2}");
-        for _ in 1..count {
-            initializer = format!("{{{initializer}, 0}}");
-        }
+        let levels = count.saturating_sub(1);
+        let initializer = format!("{}{{2}}{}", "{".repeat(levels), ", 0}".repeat(levels));
         shader(
             &struct_chain(count),
             &format!("S{} s = {initializer}; b = s.b;", count - 1),
