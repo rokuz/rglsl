@@ -59,6 +59,13 @@ impl Block {
         self.body.drain(range);
     }
 
+    pub fn split_off(&mut self, at: usize) -> Self {
+        Self {
+            body: self.body.split_off(at),
+            span_info: self.span_info.split_off(at),
+        }
+    }
+
     pub fn splice<R: RangeBounds<usize> + Clone>(&mut self, range: R, mut other: Self) {
         self.span_info
             .splice(range.clone(), core::mem::take(&mut other.span_info));

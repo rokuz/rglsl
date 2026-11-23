@@ -55,14 +55,6 @@ struct Exits {
 }
 
 impl Exits {
-    fn of(list: &[Self]) -> Self {
-        Self {
-            breaks: list.iter().map(|exits| exits.breaks).sum(),
-            continues: list.iter().any(|exits| exits.continues),
-            ends: list.last().is_some_and(|exits| exits.ends),
-        }
-    }
-
     const fn leaves(self) -> bool {
         self.breaks > 0 || self.continues
     }
@@ -70,18 +62,96 @@ impl Exits {
 
 struct Pruned {
     block: Block,
-    exits: Vec<Exits>,
+    ends: Vec<bool>,
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
+    break_statements: Vec<usize>,
 }
 
 impl Pruned {
-    fn push(&mut self, statement: Statement, span: Span, exits: Exits) {
-        self.block.push(statement, span);
-        self.exits.push(exits);
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            block: Block::with_capacity(capacity),
+            ends: Vec::with_capacity(capacity),
+            breaks: Vec::with_capacity(capacity),
+            continues: Vec::with_capacity(capacity),
+            break_statements: Vec::new(),
+        }
     }
 
-    fn splice(&mut self, mut block: Block, mut exits: Vec<Exits>) {
-        self.block.append(&mut block);
-        self.exits.append(&mut exits);
+    const fn len(&self) -> usize {
+        self.block.len()
+    }
+
+    fn before(counts: &[usize], at: usize) -> usize {
+        at.checked_sub(1)
+            .and_then(|index| counts.get(index))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn push(&mut self, statement: Statement, span: Span, exits: Exits) {
+        let at = self.len();
+        if matches!(statement, Statement::Break) {
+            self.break_statements.push(at);
+        }
+        let breaks = Self::before(&self.breaks, at) + exits.breaks;
+        let continues = Self::before(&self.continues, at) + usize::from(exits.continues);
+        self.block.push(statement, span);
+        self.ends.push(exits.ends);
+        self.breaks.push(breaks);
+        self.continues.push(continues);
+    }
+
+    fn ends_after(&self, start: usize) -> bool {
+        self.len() > start && self.ends.last().copied().unwrap_or(false)
+    }
+
+    fn between(&self, start: usize, end: usize) -> Exits {
+        Exits {
+            breaks: Self::before(&self.breaks, end)
+                .saturating_sub(Self::before(&self.breaks, start)),
+            continues: Self::before(&self.continues, end) > Self::before(&self.continues, start),
+            ends: end > start
+                && end
+                    .checked_sub(1)
+                    .and_then(|last| self.ends.get(last))
+                    .copied()
+                    .unwrap_or(false),
+        }
+    }
+
+    fn summary(&self, start: usize) -> Exits {
+        self.between(start, self.len())
+    }
+
+    fn first_break(&self, start: usize) -> Option<usize> {
+        let index = self.break_statements.partition_point(|&at| at < start);
+        self.break_statements.get(index).copied()
+    }
+
+    fn truncate(&mut self, at: usize) {
+        self.block.cull(at..);
+        self.ends.truncate(at);
+        self.breaks.truncate(at);
+        self.continues.truncate(at);
+        let kept = self.break_statements.partition_point(|&index| index < at);
+        self.break_statements.truncate(kept);
+    }
+
+    fn split_off(&mut self, at: usize) -> Block {
+        let block = self.block.split_off(at);
+        self.truncate(at);
+        block
+    }
+
+    fn append(&mut self, other: Self) {
+        let exits: Vec<Exits> = (0..other.len())
+            .map(|index| other.between(index, index + 1))
+            .collect();
+        for ((statement, span), exits) in other.block.span_into_iter().zip(exits) {
+            self.push(statement, span, exits);
+        }
     }
 }
 
@@ -97,24 +167,31 @@ impl Prune<'_> {
         }
     }
 
-    fn block(&mut self, block: &mut Block) -> Vec<Exits> {
-        let old = core::mem::take(block);
-        let mut out = Pruned {
-            block: Block::with_capacity(old.len()),
-            exits: Vec::with_capacity(old.len()),
-        };
-        let mut statements = old.span_into_iter().peekable();
+    fn block(&mut self, block: &mut Block) -> Exits {
+        let pruned = self.pruned(core::mem::take(block));
+        let exits = pruned.summary(0);
+        *block = pruned.block;
+        exits
+    }
+
+    fn pruned(&mut self, block: Block) -> Pruned {
+        let mut out = Pruned::with_capacity(block.len());
+        self.prune_into(block, &mut out);
+        out
+    }
+
+    fn prune_into(&mut self, block: Block, out: &mut Pruned) {
+        let start = out.len();
+        let mut statements = block.span_into_iter().peekable();
         while let Some((statement, span)) = statements.next() {
-            self.statement(statement, span, &mut out);
-            if out.exits.last().is_some_and(|exits| exits.ends) {
+            self.statement(statement, span, out);
+            if out.ends_after(start) {
                 if statements.peek().is_some() {
                     self.changed = true;
                 }
                 break;
             }
         }
-        *block = out.block;
-        out.exits
     }
 
     fn prune_if(
@@ -127,13 +204,12 @@ impl Prune<'_> {
     ) {
         if let Some(value) = self.boolean(condition) {
             self.changed = true;
-            let mut taken = if value { accept } else { reject };
-            let exits = recurse(|| self.block(&mut taken));
-            out.splice(taken, exits);
+            let taken = if value { accept } else { reject };
+            recurse(|| self.prune_into(taken, out));
             return;
         }
-        let accepted = Exits::of(&recurse(|| self.block(&mut accept)));
-        let rejected = Exits::of(&recurse(|| self.block(&mut reject)));
+        let accepted = recurse(|| self.block(&mut accept));
+        let rejected = recurse(|| self.block(&mut reject));
         if accept.is_empty() && reject.is_empty() {
             self.changed = true;
             return;
@@ -157,32 +233,27 @@ impl Prune<'_> {
 
     fn prune_loop(
         &mut self,
-        [mut body, mut continuing]: [Block; 2],
+        [body, continuing]: [Block; 2],
         mut break_if: Option<Handle<Expression>>,
         control: LoopControl,
         span: Span,
         out: &mut Pruned,
     ) {
-        let mut body_exits = recurse(|| self.block(&mut body));
-        let summary = Exits::of(&body_exits);
+        let start = out.len();
+        recurse(|| self.prune_into(body, out));
+        let summary = out.summary(start);
         if summary.ends && !summary.continues {
             if summary.breaks == 0 {
                 self.changed = true;
-                out.splice(body, body_exits);
                 return;
             }
             if summary.breaks == 1
-                && let Some((at, condition, exit_on)) = header_check(&body)
+                && let Some((at, condition, exit_on)) =
+                    out.block.get(start..).and_then(header_check)
             {
                 self.changed = true;
-                let mut rest = Block::with_capacity(body.len().saturating_sub(at + 1));
-                for (index, (statement, span)) in body.span_into_iter().enumerate() {
-                    if index < at {
-                        out.push(statement, span, Exits::default());
-                    } else if index > at {
-                        rest.push(statement, span);
-                    }
-                }
+                let rest = out.split_off(start + at + 1);
+                out.truncate(start + at);
                 let (accept, reject) = if exit_on {
                     (Block::new(), rest)
                 } else {
@@ -201,36 +272,31 @@ impl Prune<'_> {
                 return;
             }
         }
-        let continuing_exits = recurse(|| self.block(&mut continuing));
+        let continuing = recurse(|| self.pruned(continuing));
         if let Some(condition) = break_if
             && let Some(value) = self.boolean(condition)
         {
-            let summary = Exits::of(&body_exits);
             if !value {
                 break_if = None;
                 self.changed = true;
             } else if !summary.leaves() && !summary.ends {
                 self.changed = true;
-                out.splice(body, body_exits);
-                out.splice(continuing, continuing_exits);
+                out.append(continuing);
                 return;
             }
         }
-        if let Some(exit) = body
-            .iter()
-            .position(|statement| matches!(*statement, Statement::Break))
-            && !Exits::of(body_exits.get(..exit).unwrap_or_default()).leaves()
+        if let Some(exit) = out.first_break(start)
+            && !out.between(start, exit).leaves()
         {
             self.changed = true;
-            body.cull(exit..);
-            body_exits.truncate(exit);
-            out.splice(body, body_exits);
+            out.truncate(exit);
             return;
         }
+        let body = out.split_off(start);
         out.push(
             Statement::Loop {
                 body,
-                continuing,
+                continuing: continuing.block,
                 break_if,
                 control,
             },
@@ -258,7 +324,7 @@ impl Prune<'_> {
                 }
                 let mut continues = false;
                 for case in &mut cases {
-                    continues |= Exits::of(&recurse(|| self.block(&mut case.body))).continues;
+                    continues |= recurse(|| self.block(&mut case.body)).continues;
                 }
                 out.push(
                     Statement::Switch {
@@ -280,7 +346,7 @@ impl Prune<'_> {
                 control,
             } => self.prune_loop([body, continuing], break_if, control, span, out),
             Statement::Block(mut inner) => {
-                let exits = Exits::of(&recurse(|| self.block(&mut inner)));
+                let exits = recurse(|| self.block(&mut inner));
                 if !inner.is_empty() {
                     out.push(Statement::Block(inner), span, exits);
                 }
@@ -338,15 +404,15 @@ impl Prune<'_> {
                 break;
             }
         }
-        let mut exits = recurse(|| self.block(&mut body));
-        if matches!(body.last(), Some(Statement::Break)) {
-            let last = body.len().saturating_sub(1);
-            body.cull(last..);
-            exits.truncate(last);
+        let first = out.len();
+        recurse(|| self.prune_into(body, out));
+        if out.len() > first && out.first_break(out.len() - 1).is_some() {
+            out.truncate(out.len() - 1);
         }
-        let summary = Exits::of(&exits);
+        let summary = out.summary(first);
         if summary.breaks > 0 {
             let single = cases.len() == 1;
+            let body = out.split_off(first);
             out.push(
                 Statement::Switch {
                     selector,
@@ -367,11 +433,10 @@ impl Prune<'_> {
             return;
         }
         self.changed = true;
-        out.splice(body, exits);
     }
 }
 
-fn header_check(body: &Block) -> Option<(usize, Handle<Expression>, bool)> {
+fn header_check(body: &[Statement]) -> Option<(usize, Handle<Expression>, bool)> {
     let at = body
         .iter()
         .position(|statement| !matches!(*statement, Statement::Emit(_)))?;
