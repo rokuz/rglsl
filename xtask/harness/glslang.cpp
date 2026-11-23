@@ -28,9 +28,7 @@ struct Job {
     EShLanguage stage = EShLangVertex;
     glslang::EShTargetClientVersion vulkan = glslang::EShTargetVulkan_1_0;
     glslang::EShTargetLanguageVersion spirv = glslang::EShTargetSpv_1_0;
-    bool automap = false;
     bool relax = false;
-    bool hlslOffsets = false;
     bool optimize = false;
     std::string debug;
     std::vector<std::string> includeDirs;
@@ -152,12 +150,8 @@ bool parseJob(const std::string& line, Job& job, std::string& error)
             ok = vulkanOf(value, job.vulkan);
         else if (key == "spirv")
             ok = spirvOf(value, job.spirv);
-        else if (key == "automap")
-            ok = flagOf(value, job.automap);
         else if (key == "relax")
             ok = flagOf(value, job.relax);
-        else if (key == "hlsl-offsets")
-            ok = flagOf(value, job.hlslOffsets);
         else if (key == "optimize")
             ok = flagOf(value, job.optimize);
         else if (key == "debug") {
@@ -242,8 +236,6 @@ void compile(const Job& job, const std::string& source, bool withOptimizer, Run&
         messages |= EShMsgDebugInfo;
     if (job.relax)
         messages |= EShMsgRelaxSetBindingLimits;
-    if (job.hlslOffsets)
-        messages |= EShMsgHlslOffsets;
     const char* text = source.c_str();
     const char* name = job.path.c_str();
 
@@ -251,10 +243,6 @@ void compile(const Job& job, const std::string& source, bool withOptimizer, Run&
     glslang::TShader shader(job.stage);
     shader.setStringsWithLengthsAndNames(&text, nullptr, &name, 1);
     shader.setPreamble(job.preamble.c_str());
-    if (job.automap) {
-        shader.setAutoMapBindings(true);
-        shader.setAutoMapLocations(true);
-    }
     if (job.debug == "gVS")
         shader.setDebugInfo(true);
     shader.setEnvInput(glslang::EShSourceGlsl, job.stage, glslang::EShClientVulkan, 100);

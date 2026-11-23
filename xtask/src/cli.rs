@@ -39,7 +39,6 @@ struct Case {
     ignore_stdout: Option<&'static str>,
     ignore_stderr: bool,
     exact_stdout: bool,
-    spirv_val: Vec<&'static str>,
     expect: Expect,
 }
 
@@ -54,7 +53,6 @@ impl Case {
             ignore_stdout: None,
             ignore_stderr: false,
             exact_stdout: false,
-            spirv_val: Vec::new(),
             expect: Expect::Same,
         }
     }
@@ -81,11 +79,6 @@ impl Case {
 
     fn exact_stdout(mut self) -> Self {
         self.exact_stdout = true;
-        self
-    }
-
-    fn spirv_val(mut self, flag: &'static str) -> Self {
-        self.spirv_val.push(flag);
         self
     }
 
@@ -128,15 +121,7 @@ const TARGET_SHADER: &str = "spv.targetVulkan.vert";
 fn enhanced(shader: &'static str) -> Case {
     Case::new(
         shader,
-        &[
-            "--enhanced-msgs",
-            "-V",
-            "--target-env",
-            "vulkan1.2",
-            "--amb",
-            "--aml",
-            shader,
-        ],
+        &["--enhanced-msgs", "-V", "--target-env", "vulkan1.2", shader],
         &[shader],
     )
 }
@@ -158,7 +143,6 @@ fn optimized(name: &'static str, options: &[&'static str]) -> Case {
 }
 
 const DEBUG_SHADER: &str = "spv.debuginfo.glsl.frag";
-const REGISTERS: &str = "spv.glsl.register.autoassign.frag";
 
 fn cases() -> Vec<Case> {
     vec![
@@ -290,9 +274,7 @@ fn cases() -> Vec<Case> {
             &[
                 "--spirv-dis",
                 "-V",
-                "--aml",
-                "--amb",
-                "link.vk.crossStageIO.1.vert",
+                        "link.vk.crossStageIO.1.vert",
                 "link.vk.crossStageIO.1.geom",
                 "link.vk.crossStageIO.1.frag",
             ],
@@ -402,8 +384,7 @@ fn cases() -> Vec<Case> {
             "D-U",
             &[
                 "-V",
-                "--aml",
-                "-DUNDEFED",
+                    "-DUNDEFED",
                 "-UIN_SHADER",
                 "-DFOO=200",
                 "--U",
@@ -466,13 +447,13 @@ fn cases() -> Vec<Case> {
         .exact_stdout(),
         Case::new(
             "include-system",
-            &["-V", "--aml", "-Iinc2", "include.system.vert"],
+            &["-V", "-Iinc2", "include.system.vert"],
             &["include.system.vert", "bar.h"],
         )
         .dir("inc2"),
         Case::new(
             "include",
-            &["-V", "--aml", "include.vert"],
+            &["-V", "include.vert"],
             &["include.vert"],
         )
         .dir("inc1")
@@ -483,8 +464,7 @@ fn cases() -> Vec<Case> {
             "depfile",
             &[
                 "-V",
-                "--aml",
-                "--depfile",
+                    "--depfile",
                 "deps.d",
                 "-Iinc2",
                 "include.system.vert",
@@ -564,8 +544,7 @@ fn cases() -> Vec<Case> {
             "g-include",
             &[
                 "-V",
-                "--aml",
-                "-g",
+                    "-g",
                 "-o",
                 "out.spv",
                 "-Iinc2",
@@ -587,132 +566,10 @@ fn cases() -> Vec<Case> {
             &[TARGET_SHADER],
         ),
         Case::new(
-            "auto-map",
-            &["-V", "--amb", "--aml", "-o", "out.spv", REGISTERS],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "shift-bindings",
-            &[
-                "-V", "--aml", "--amb", "--ssb", "5", "--stb", "10", "--sib", "0", "--sub", "20", "--sbb",
-                "30", "-o", "out.spv", REGISTERS,
-            ],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "shift-bindings-long",
-            &[
-                "-V",
-                "--auto-map-bindings",
-                "--aml",
-                "--shift-sampler-binding",
-                "frag",
-                "5",
-                "--shift-texture-binding",
-                "10",
-                "--shift-ubo-binding",
-                "20",
-                "--shift-ssbo-bindings",
-                "30",
-                "--shift-combined-sampler-binding",
-                "40",
-                "-o",
-                "out.spv",
-                REGISTERS,
-            ],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "shift-bindings-per-set",
-            &[
-                "-V", "--aml", "--amb", "--ssb", "5", "0", "--stb", "frag", "12", "0", "3", "1", "-o",
-                "out.spv", REGISTERS,
-            ],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "shift-bindings-no-auto-map",
-            &[
-                "-V",
-                "--aml",
-                "--ssb",
-                "5",
-                "--stb",
-                "10",
-                "--sub",
-                "20",
-                "-o",
-                "out.spv",
-                "spv.glsl.register.noautoassign.frag",
-            ],
-            &["spv.glsl.register.noautoassign.frag"],
-        ),
-        Case::new(
-            "shift-images",
-            &[
-                "-V",
-                "--aml",
-                "--sib",
-                "3",
-                "--scsb",
-                "8",
-                "-o",
-                "out.spv",
-                "spv.image.frag",
-            ],
-            &["spv.image.frag"],
-        ),
-        Case::new(
-            "resource-set-binding",
-            &["-V", "--aml", "--amb", "--rsb", "2", "-o", "out.spv", REGISTERS],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "resource-set-binding-stage",
-            &[
-                "-V", "--aml", "--amb", "--rsb", "frag", "3", "-o", "out.spv", REGISTERS,
-            ],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "resource-set-binding-other-stage",
-            &[
-                "-V", "--aml", "--amb", "--rsb", "vert", "3", "-o", "out.spv", REGISTERS,
-            ],
-            &[REGISTERS],
-        ),
-        Case::new(
-            "keep-uncalled",
-            &[
-                "-V",
-                "--aml",
-                "--target-env",
-                "vulkan1.2",
-                "--keep-uncalled",
-                "-o",
-                "out.spv",
-                "spv.ext.AnyHitShader.rahit",
-            ],
-            &["spv.ext.AnyHitShader.rahit"],
-        ),
-        Case::new(
-            "hlsl-offsets",
-            &[
-                "-V",
-                "--hlsl-offsets",
-                "-o",
-                "out.spv",
-                "spv.hlslOffsets.vert",
-            ],
-            &["spv.hlslOffsets.vert"],
-        )
-        .spirv_val("--relax-block-layout"),
-        Case::new(
             "link-matching",
             &[
                 "-V",
-                "--aml",
-                "link.vk.matchingPC.0.0.frag",
+                    "link.vk.matchingPC.0.0.frag",
                 "link.vk.matchingPC.0.1.frag",
                 "link.vk.matchingPC.0.2.frag",
             ],
@@ -727,8 +584,7 @@ fn cases() -> Vec<Case> {
             &[
                 "-l",
                 "-V",
-                "--aml",
-                "link.vk.pcNamingValid.0.0.vert",
+                    "link.vk.pcNamingValid.0.0.vert",
                 "link.vk.pcNamingValid.0.1.vert",
             ],
             &[
@@ -740,8 +596,7 @@ fn cases() -> Vec<Case> {
             "link-error",
             &[
                 "-V",
-                "--aml",
-                "link.vk.differentPC.0.0.frag",
+                    "link.vk.differentPC.0.0.frag",
                 "link.vk.differentPC.0.1.frag",
                 "link.vk.differentPC.0.2.frag",
             ],
@@ -755,9 +610,7 @@ fn cases() -> Vec<Case> {
             "link-stages",
             &[
                 "-V",
-                "--aml",
-                "--amb",
-                "link.vk.crossStageIO.1.vert",
+                        "link.vk.crossStageIO.1.vert",
                 "link.vk.crossStageIO.1.geom",
                 "link.vk.crossStageIO.1.frag",
             ],
@@ -771,8 +624,7 @@ fn cases() -> Vec<Case> {
             "link-stages-one-output",
             &[
                 "-V",
-                "--aml",
-                "-o",
+                    "-o",
                 "out.spv",
                 "link.vk.crossStageIO.0.vert",
                 "link.vk.crossStageIO.0.frag",
@@ -783,8 +635,7 @@ fn cases() -> Vec<Case> {
             "link-compile-error",
             &[
                 "-V",
-                "--aml",
-                TARGET_SHADER,
+                    TARGET_SHADER,
                 "samplerlessTextureFunctions.frag",
             ],
             &[TARGET_SHADER, "samplerlessTextureFunctions.frag"],
@@ -901,42 +752,6 @@ fn cases() -> Vec<Case> {
         )
         .exact_stdout(),
         Case::new(
-            "no-link-main",
-            &["-V", "--no-link", TARGET_SHADER],
-            &[TARGET_SHADER],
-        ),
-        Case::new(
-            "no-link",
-            &["-V", "--no-link", "spv.exportFunctions.comp"],
-            &["spv.exportFunctions.comp"],
-        ),
-        Case::new(
-            "no-link-H",
-            &["-H", "--no-link", "spv.exportFunctions.comp"],
-            &["spv.exportFunctions.comp"],
-        ),
-        Case::new(
-            "no-link-o",
-            &[
-                "-V",
-                "--no-link",
-                "-o",
-                "out.spv",
-                "spv.exportFunctions.comp",
-            ],
-            &["spv.exportFunctions.comp"],
-        ),
-        Case::new(
-            "no-link-l",
-            &["-l", "--no-link", "spv.exportFunctions.comp"],
-            &["spv.exportFunctions.comp"],
-        ),
-        Case::new(
-            "no-link-validate",
-            &["--no-link", "spv.exportFunctions.comp"],
-            &["spv.exportFunctions.comp"],
-        ),
-        Case::new(
             "invert-y",
             &["-H", "--invert-y", "enhanced.3.vert"],
             &["enhanced.3.vert"],
@@ -958,7 +773,7 @@ fn cases() -> Vec<Case> {
         ),
         Case::new(
             "nan-clamp",
-            &["--nan-clamp", "-H", "--ku", "--aml", "--amb", "spv.float32.frag"],
+            &["--nan-clamp", "-H", "spv.float32.frag"],
             &["spv.float32.frag"],
         ),
         Case::new(
@@ -1009,9 +824,7 @@ fn cases() -> Vec<Case> {
                 "-V",
                 "--target-env",
                 "vulkan1.2",
-                "--amb",
-                "--aml",
-                "enhanced.4.vert",
+                        "enhanced.4.vert",
                 "enhanced.4.frag",
             ],
             &["enhanced.4.vert", "enhanced.4.frag"],
@@ -1029,9 +842,7 @@ fn cases() -> Vec<Case> {
             "validate-io-missing",
             &[
                 "-V",
-                "--aml",
-                "--amb",
-                "--validate-io",
+                        "--validate-io",
                 "link.vk.missingCrossStageIO.0.vert",
                 "link.vk.missingCrossStageIO.0.frag",
             ],
@@ -1044,9 +855,7 @@ fn cases() -> Vec<Case> {
             "validate-io-matching",
             &[
                 "-V",
-                "--aml",
-                "--amb",
-                "--validate-io",
+                        "--validate-io",
                 "link.vk.crossStageIO.1.vert",
                 "link.vk.crossStageIO.1.geom",
                 "link.vk.crossStageIO.1.frag",
@@ -1061,51 +870,20 @@ fn cases() -> Vec<Case> {
             "validate-io-link-only",
             &[
                 "-l",
-                "--aml",
-                "--validate-io",
+                    "--validate-io",
                 "link.vk.crossStageIO.0.vert",
                 "link.vk.crossStageIO.0.frag",
             ],
             &["link.vk.crossStageIO.0.vert", "link.vk.crossStageIO.0.frag"],
+        )
+        .exits(
+            2,
+            "without -V glslang links with OpenGL rules; rglsl always checks Vulkan rules, which need a location on every stage input and output",
         ),
         Case::new(
             "validate-io-without-link",
             &["--validate-io", "link.vk.crossStageIO.0.vert"],
             &["link.vk.crossStageIO.0.vert"],
-        ),
-        Case::new(
-            "auto-sampled-textures",
-            &[
-                "--auto-sampled-textures",
-                "-H",
-                "-S",
-                "frag",
-                "glsl.autosampledtextures.frag",
-            ],
-            &["glsl.autosampledtextures.frag"],
-        ),
-        Case::new(
-            "auto-sampled-textures-V",
-            &[
-                "--auto-sampled-textures",
-                "-V",
-                "--aml",
-                "--amb",
-                "-o",
-                "out.spv",
-                "spv.sampledImageBlock.frag",
-            ],
-            &["spv.sampledImageBlock.frag"],
-        ),
-        Case::new(
-            "auto-sampled-textures-keep-uncalled",
-            &[
-                "--auto-sampled-textures",
-                "--ku",
-                "-H",
-                "spv.debuginfo.sampler_type.glsl.frag",
-            ],
-            &["spv.debuginfo.sampler_type.glsl.frag"],
         ),
         Case::new("link-option", &["--link", TARGET_SHADER], &[TARGET_SHADER]),
         optimized("O", &["-O"]),
@@ -1158,12 +936,12 @@ fn cases() -> Vec<Case> {
         removed(
             "shift-cbuffer-binding",
             &["--shift-cbuffer-binding", "7"],
-            "cbuffers are an HLSL concept; --sub shifts uniform buffers",
+            "cbuffers are an HLSL concept",
         ),
         removed(
             "scb",
             &["--scb", "7"],
-            "cbuffers are an HLSL concept; --sub shifts uniform buffers",
+            "cbuffers are an HLSL concept",
         ),
         Case::new(
             "hlsl-iomap",
@@ -1420,7 +1198,6 @@ fn spirv_words(path: &Path) -> Option<Vec<u32>> {
 fn validate(env: &Environment, case: &Case, module: &Path) -> Result<Option<String>> {
     let mut command = Command::new(&env.spirv_val.path);
     command.args(["--target-env", &case.target_env()]);
-    command.args(&case.spirv_val);
     command.arg(module);
     let output = process::run(command, env.timeout)?;
     Ok(match output.exit {

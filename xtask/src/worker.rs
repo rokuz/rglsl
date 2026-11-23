@@ -40,10 +40,8 @@ fn full_message(err: &dyn std::error::Error) -> String {
 pub struct OneOptions<'a> {
     pub stage: &'a str,
     pub spv_version: &'a str,
-    pub auto_map: bool,
     pub object: bool,
     pub via_object: bool,
-    pub hlsl_offsets: bool,
     pub include_dirs: &'a [String],
     pub preamble: Option<String>,
     pub debug: Option<&'a str>,
@@ -74,10 +72,8 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     let OneOptions {
         stage,
         spv_version,
-        auto_map,
         object,
         via_object,
-        hlsl_offsets,
         include_dirs,
         ref preamble,
         debug,
@@ -111,7 +107,7 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
     if let Some(unknown) = extra.iter().find(|option| {
         !matches!(
             option.as_str(),
-            "--invert-y" | "--nan-clamp" | "--discard-is-terminate" | "--auto-sampled-textures"
+            "--invert-y" | "--nan-clamp" | "--discard-is-terminate"
         )
     }) {
         diagnostic("options", None, &format!("unknown option `{unknown}`"));
@@ -121,28 +117,16 @@ pub fn compile_one(input: &Path, one: &OneOptions<'_>, out: &Path) -> i32 {
         invert_y: has("--invert-y"),
         nan_clamp: has("--nan-clamp"),
         discard_is_terminate: has("--discard-is-terminate"),
-        auto_sampled_textures: has("--auto-sampled-textures"),
-        auto_map_bindings: auto_map,
-        auto_map_locations: auto_map,
         spirv_version: Some(lang_version),
-        hlsl_offsets,
         debug_info: debug.is_some(),
         source_name: Some(input.to_string_lossy().into_owned()),
         preamble: preamble.clone(),
-        export_functions: object,
         ..glsl::Options::from(stage)
     };
     let mut includer = rglsl_pp::FileSystemIncluder::new(include_dirs);
     let root = includer.add_root(input);
     if object {
-        return compile_only(
-            &options,
-            &source,
-            root,
-            &mut includer,
-            (lang_version, debug),
-            out,
-        );
+        return compile_object_module(&options, &source, root, &mut includer, out);
     }
     if via_object {
         return compile_through_object(
@@ -280,8 +264,6 @@ fn write_words(
 pub struct GroupOptions<'a> {
     pub spv_version: &'a str,
     pub debug: Option<String>,
-    pub auto_map_locations: bool,
-    pub auto_map_bindings: bool,
     pub out_dir: &'a Path,
     pub optimize: Option<rglsl_link::OptLevel>,
 }
@@ -311,8 +293,6 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
             return EXIT_REJECTED;
         };
         let frontend_options = glsl::Options {
-            auto_map_bindings: options.auto_map_bindings,
-            auto_map_locations: options.auto_map_locations,
             spirv_version: Some(lang_version),
             library,
             debug_info: options.debug.is_some(),
@@ -337,11 +317,7 @@ pub fn compile_group(inputs: &[String], options: &GroupOptions) -> i32 {
     if rejected {
         return EXIT_REJECTED;
     }
-    let link_options = rglsl_link::Options {
-        auto_map_locations: options.auto_map_locations,
-        auto_map_bindings: options.auto_map_bindings,
-        ..rglsl_link::Options::default()
-    };
+    let link_options = rglsl_link::Options::default();
     let mut linked = match rglsl_link::link_program(
         rglsl_link::group_objects_by_stage(objects),
         &link_options,
@@ -388,25 +364,32 @@ fn parse_version(spv_version: &str) -> (u8, u8) {
     }
 }
 
-fn compile_only(
+fn compile_object_module(
     options: &glsl::Options,
     source: &str,
     root: rglsl_pp::FileId,
     includer: &mut rglsl_pp::FileSystemIncluder,
-    (lang_version, debug): ((u8, u8), Option<&str>),
     out: &Path,
 ) -> i32 {
-    let rglsl_link::CompiledObject { object, info } =
-        match rglsl_link::compile_object(options, source, root, includer) {
-            Ok(compiled) => compiled,
-            Err(error) => {
-                report(&error, source);
-                return EXIT_REJECTED;
-            }
-        };
-    let mut options = spirv_options(lang_version, debug);
-    options.flags |= spv::WriterFlags::EXPORT_FUNCTIONS;
-    write_words(&object.unit.module, &info, &options, out)
+    let object = match rglsl_link::compile_object(options, source, root, includer) {
+        Ok(compiled) => compiled.object,
+        Err(error) => {
+            report(&error, source);
+            return EXIT_REJECTED;
+        }
+    };
+    let text = match rglsl_link::encode(&object) {
+        Ok(text) => text,
+        Err(error) => {
+            diagnostic("object-file", None, &full_message(&error));
+            return EXIT_BACKEND_FAILED;
+        }
+    };
+    if let Err(err) = std::fs::write(out, text) {
+        diagnostic("io", None, &err.to_string());
+        return EXIT_BACKEND_FAILED;
+    }
+    EXIT_ACCEPTED
 }
 
 fn compile_through_object(
@@ -431,11 +414,7 @@ fn compile_through_object(
             return EXIT_REJECTED;
         }
     };
-    let link_options = rglsl_link::Options {
-        auto_map_locations: options.auto_map_locations,
-        auto_map_bindings: options.auto_map_bindings,
-        ..rglsl_link::Options::default()
-    };
+    let link_options = rglsl_link::Options::default();
     let linked = match rglsl_link::link_program(vec![vec![object]], &link_options) {
         Ok(linked) => linked,
         Err(errors) => {

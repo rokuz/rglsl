@@ -1164,7 +1164,7 @@ mod tests {
         let expected = Expected::load(&root)?;
         assert!(
             expected
-                .reason("spv.noLocation.vert", "Output location 3")
+                .reason("spv.layoutNested.vert", "Output location 10")
                 .is_some()
         );
         Ok(())

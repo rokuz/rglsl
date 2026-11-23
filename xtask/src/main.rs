@@ -613,10 +613,8 @@ fn run(args: Vec<String>) -> Result<i32> {
             let stage = args.value("--stage")?.context("--stage is required")?;
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out = args.value("--out")?.context("--out is required")?;
-            let auto_map = args.flag("--auto-map");
             let object = args.flag("--object");
             let via_object = args.flag("--via-object");
-            let hlsl_offsets = args.flag("--hlsl-offsets");
             let debug = args.value("--debug")?;
             let optimize = args
                 .value("--opt")?
@@ -642,10 +640,8 @@ fn run(args: Vec<String>) -> Result<i32> {
                 &worker::OneOptions {
                     stage: &stage,
                     spv_version: &spv,
-                    auto_map,
                     object,
                     via_object,
-                    hlsl_offsets,
                     include_dirs: &include_dirs,
                     preamble: (!preamble.is_empty()).then_some(preamble),
                     debug: debug.as_deref(),
@@ -673,8 +669,6 @@ fn run(args: Vec<String>) -> Result<i32> {
         "compile-group" => {
             let spv = args.value("--spv")?.context("--spv is required")?;
             let out_dir = args.value("--out-dir")?.context("--out-dir is required")?;
-            let auto_map_locations = args.flag("--auto-map-locations");
-            let auto_map_bindings = args.flag("--auto-map-bindings");
             let debug = args.value("--debug")?;
             let optimize = args
                 .value("--opt")?
@@ -690,8 +684,6 @@ fn run(args: Vec<String>) -> Result<i32> {
                 &worker::GroupOptions {
                     spv_version: &spv,
                     debug,
-                    auto_map_locations,
-                    auto_map_bindings,
                     out_dir: Path::new(&out_dir),
                     optimize,
                 },

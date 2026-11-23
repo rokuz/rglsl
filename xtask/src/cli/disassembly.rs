@@ -50,9 +50,6 @@ fn standard_one(env: &Environment, case: &corpus::Case, work: &Path) -> Result<S
     for line in runtests.preamble {
         command.args(["--preamble-text", line]);
     }
-    if runtests.hlsl_offsets {
-        command.arg("--hlsl-offsets");
-    }
     command.arg(&case.name);
     let output = process::run(command, env.timeout)?;
     if !matches!(output.exit, Exit::Code(0)) || spirv_words(&module).is_none() {
@@ -298,9 +295,6 @@ fn command(
     }
     for line in runtests.preamble {
         command.args(["--preamble-text", line]);
-    }
-    if runtests.hlsl_offsets {
-        command.arg("--hlsl-offsets");
     }
     command.arg(&case.name);
     command

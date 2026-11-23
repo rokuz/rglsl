@@ -496,11 +496,7 @@ fn collect(
         items.push(corpus_item(&case, &test_dir, debug_info));
     }
     for case in groups::load_groups(glslang_dir)? {
-        let Kind::Group {
-            ref files,
-            auto_map_bindings,
-        } = case.kind
-        else {
+        let Kind::Group { ref files } = case.kind else {
             continue;
         };
         let mut options: Vec<String> = [
@@ -509,13 +505,9 @@ fn collect(
             "vulkan1.0",
             "--target-env",
             "spirv1.0",
-            "--auto-map-locations",
         ]
         .map(String::from)
         .to_vec();
-        if auto_map_bindings {
-            options.push("--auto-map-bindings".into());
-        }
         options.extend(debug_flag.clone());
         items.push(Item {
             name: case.name.clone(),
@@ -598,9 +590,6 @@ pub fn corpus_item(case: &Case, test_dir: &Path, debug_info: Option<DebugInfo>) 
     for line in runtests.preamble {
         options.push("--preamble-text".into());
         options.push((*line).into());
-    }
-    if runtests.hlsl_offsets {
-        options.push("--hlsl-offsets".into());
     }
     Item {
         name: case.name.clone(),

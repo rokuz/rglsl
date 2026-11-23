@@ -40,11 +40,9 @@ pub struct Target {
     pub spirv: (u8, u8),
     /// glslang only builds the AST; no SPIR-V is generated.
     pub ast_only: bool,
-    /// Compiled without linking (`--no-link`), as an object module.
+    /// glslang compiles it without linking (`--no-link`); rglsl compiles it
+    /// to an object module.
     pub compile_only: bool,
-    /// Locations and bindings are assigned automatically. glslang's test
-    /// fixture does this unless a test passes `automap = false`.
-    pub automap: bool,
     /// `EShMsgRelaxSetBindingLimits`: larger `set`/`binding` values are allowed.
     pub relax_set_binding_limits: bool,
     pub debug: Option<&'static str>,
@@ -58,7 +56,6 @@ impl Target {
         spirv: (1, 0),
         ast_only: true,
         compile_only: false,
-        automap: false,
         relax_set_binding_limits: false,
         debug: None,
     };
@@ -70,7 +67,6 @@ impl Target {
         spirv: (1, 0),
         ast_only: false,
         compile_only: false,
-        automap: true,
         relax_set_binding_limits: false,
         debug: None,
     };
@@ -83,11 +79,14 @@ impl Target {
     }
 
     pub fn glslang_only_args(&self) -> Vec<String> {
-        if self.relax_set_binding_limits {
-            vec!["--relax-set-binding-limits".into()]
-        } else {
-            Vec::new()
+        let mut args = Vec::new();
+        if self.compile_only {
+            args.push("--no-link".into());
         }
+        if self.relax_set_binding_limits {
+            args.push("--relax-set-binding-limits".into());
+        }
+        args
     }
 
     pub fn rglsl_args(&self) -> Vec<String> {
@@ -101,13 +100,6 @@ impl Target {
                 format!("spirv{}.{}", self.spirv.0, self.spirv.1),
             ],
         };
-        if self.compile_only {
-            args.push("--no-link".into());
-        }
-        if self.automap {
-            args.push("--auto-map-locations".into());
-            args.push("--auto-map-bindings".into());
-        }
         if let Some(debug) = self.debug {
             args.push(format!("-{debug}"));
         }
@@ -163,7 +155,6 @@ pub enum Kind {
     File,
     Group {
         files: Vec<String>,
-        auto_map_bindings: bool,
     },
     Own {
         dir: PathBuf,
@@ -208,7 +199,6 @@ impl Corpus {
 pub struct RuntestsOptions {
     pub include_dirs: &'static [&'static str],
     pub preamble: &'static [&'static str],
-    pub hlsl_offsets: bool,
 }
 
 pub fn runtests_options(name: &str) -> RuntestsOptions {
@@ -220,7 +210,6 @@ pub fn runtests_options(name: &str) -> RuntestsOptions {
         "glsl.-P.include.frag" => RuntestsOptions {
             include_dirs: &["."],
             preamble: &["#extension GL_GOOGLE_include_directive : require"],
-            ..RuntestsOptions::default()
         },
         "glsl.-P.frag" => RuntestsOptions {
             preamble: &["#define TEST1", "#define TEST2", "#define TEST3"],
@@ -228,10 +217,6 @@ pub fn runtests_options(name: &str) -> RuntestsOptions {
         },
         "glsl.-P.function.frag" => RuntestsOptions {
             preamble: &["vec4 getColor() { return vec4(1.0); }"],
-            ..RuntestsOptions::default()
-        },
-        "spv.hlslOffsets.vert" => RuntestsOptions {
-            hlsl_offsets: true,
             ..RuntestsOptions::default()
         },
         _ => RuntestsOptions::default(),
@@ -379,8 +364,6 @@ fn parse_test_bodies(source: &str) -> BTreeMap<String, Target> {
             spirv: version_after(body, "EShTargetSpv_").unwrap_or((1, 0)),
             ast_only: body.contains("Target::AST"),
             compile_only: body.contains("compileOnly = true"),
-            // `loadFileCompileAndCheck(..., Target::X, /*automap=*/false)`
-            automap: !body.contains("Target::Spv, false") && !body.contains("Target::AST, false"),
             relax_set_binding_limits: body.contains("EShMsgRelaxSetBindingLimits"),
             debug: debug_mode(body),
         };
@@ -504,8 +487,6 @@ INSTANTIATE_TEST_SUITE_P(
         assert_eq!(spv14.spirv, (1, 4));
         assert!(!spv14.ast_only);
         assert!(!spv14.compile_only);
-        assert!(spv14.automap);
-        assert!(!targets["OpenGLSemantics"].automap);
         assert_eq!(spv14.spirv_val_env(), "vulkan1.1spv1.4");
         assert_eq!(targets["OpenGLSemantics"].semantics, Semantics::OpenGL);
 

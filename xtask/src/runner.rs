@@ -369,7 +369,7 @@ fn run_case(
     };
 
     let spirv_val = match ours {
-        OursResult::Accepted => {
+        OursResult::Accepted if !case.target.compile_only => {
             let failure = validate(env, case, &out, timeout)?;
             if let Some(message) = &failure {
                 note = format!("spirv-val: {message}");
@@ -487,9 +487,6 @@ pub fn ours_command(
         ])
         .arg("--out")
         .arg(out);
-    if case.target.automap {
-        command.arg("--auto-map");
-    }
     if case.target.compile_only {
         command.arg("--object");
     }
@@ -503,9 +500,6 @@ pub fn ours_command(
     }
     for line in runtests.preamble {
         command.args(["--preamble", line]);
-    }
-    if runtests.hlsl_offsets {
-        command.arg("--hlsl-offsets");
     }
     command.arg(source);
     command
@@ -545,9 +539,6 @@ fn twin_input(
     }
     for line in runtests.preamble {
         command.args(["--preamble-text", line]);
-    }
-    if runtests.hlsl_offsets {
-        command.arg("--hlsl-offsets");
     }
     command.arg(twin);
     let output = process::run(command, timeout)?;
@@ -644,9 +635,6 @@ pub fn validator_args(case: &Case, source: &Path) -> Vec<String> {
             args.push("--workgroup-scalar-block-layout".into());
         }
     }
-    if corpus::runtests_options(&case.name).hlsl_offsets {
-        args.push("--relax-block-layout".into());
-    }
     args
 }
 
@@ -725,9 +713,6 @@ fn run_glslang(
     for line in runtests.preamble {
         command.args(["--preamble-text", line]);
     }
-    if runtests.hlsl_offsets {
-        command.arg("--hlsl-offsets");
-    }
     command.arg(source);
     let output = process::run(command, timeout)?;
     Ok(match output.exit {
@@ -759,11 +744,8 @@ fn run_group(
     fs::create_dir_all(&ours_dir)?;
     fs::create_dir_all(&reference_dir)?;
     let mut program_script = None;
-    let (sources, auto_map_bindings, oracle, expected) = match case.kind {
-        Kind::Group {
-            ref files,
-            auto_map_bindings,
-        } => {
+    let (sources, oracle, expected) = match case.kind {
+        Kind::Group { ref files } => {
             let test_dir = env.glslang_dir.join("Test");
             for file in files {
                 fs::copy(test_dir.join(file), reference_dir.join(file))
@@ -775,15 +757,11 @@ fn run_group(
                 "vulkan1.0",
                 "--target-env",
                 "spirv1.0",
-                "--auto-map-locations",
             ]);
-            if auto_map_bindings {
-                command.arg("--auto-map-bindings");
-            }
             command.args(files);
             let oracle = oracle_result(process::run(command, timeout)?);
             let sources: Vec<PathBuf> = files.iter().map(|file| test_dir.join(file)).collect();
-            (sources, auto_map_bindings, oracle, None)
+            (sources, oracle, None)
         }
         Kind::Own {
             ref dir,
@@ -822,7 +800,7 @@ fn run_group(
                 OracleResult::Rejected { lines: Vec::new() }
             };
             let sources: Vec<PathBuf> = files.iter().map(|file| dir.join(file)).collect();
-            (sources, true, oracle, Some(expectation.clone()))
+            (sources, oracle, Some(expectation.clone()))
         }
         Kind::File | Kind::Script { .. } => bail!("`{}` is not a group", case.name),
     };
@@ -832,12 +810,9 @@ fn run_group(
         let mut command = Command::new(self_exe);
         command
             .arg("compile-group")
-            .args(["--spv", spirv.as_str(), "--auto-map-locations"])
+            .args(["--spv", spirv.as_str()])
             .arg("--out-dir")
             .arg(out_dir);
-        if auto_map_bindings {
-            command.arg("--auto-map-bindings");
-        }
         command.args(&sources);
         command
     };
@@ -891,7 +866,7 @@ fn run_group(
         .collect();
     produced.sort();
     let spirv_val = match ours {
-        OursResult::Accepted => {
+        OursResult::Accepted if !case.target.compile_only => {
             let mut valid = true;
             for module in &produced {
                 if let Some(message) = validate(env, case, module, timeout)? {
@@ -1181,7 +1156,7 @@ fn run_script(
         pairs.push((reference, module));
     }
     let spirv_val = match ours {
-        OursResult::Accepted => {
+        OursResult::Accepted if !case.target.compile_only => {
             let mut valid = true;
             for (_, module) in &pairs {
                 if let Some(message) = validate(env, case, module, timeout)? {

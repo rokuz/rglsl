@@ -26,9 +26,7 @@ struct Job {
     stage: String,
     vulkan: (u8, u8),
     spirv: (u8, u8),
-    automap: bool,
     relax: bool,
-    hlsl_offsets: bool,
     debug: Option<&'static str>,
     include_dirs: Vec<PathBuf>,
     preamble: String,
@@ -46,9 +44,7 @@ impl Job {
             path,
             vulkan: (1, 0),
             spirv: (1, 0),
-            automap: false,
             relax: false,
-            hlsl_offsets: false,
             debug: debug_info.map(DebugInfo::mode),
             include_dirs: Vec::new(),
             preamble: String::new(),
@@ -63,9 +59,7 @@ impl Job {
             ("stage", self.stage.clone()),
             ("vulkan", version(self.vulkan)),
             ("spirv", version(self.spirv)),
-            ("automap", flag(self.automap)),
             ("relax", flag(self.relax)),
-            ("hlsl-offsets", flag(self.hlsl_offsets)),
             ("debug", self.debug.unwrap_or_default().to_string()),
             ("preamble", self.preamble.clone()),
             ("runs", runs.to_string()),
@@ -90,15 +84,8 @@ impl Job {
             "--target-env".into(),
             format!("spirv{}.{}", self.spirv.0, self.spirv.1),
         ];
-        if self.automap {
-            words.push("--auto-map-locations".into());
-            words.push("--auto-map-bindings".into());
-        }
         if self.relax {
             words.push("--relax-set-binding-limits".into());
-        }
-        if self.hlsl_offsets {
-            words.push("--hlsl-offsets".into());
         }
         if let Some(debug) = self.debug {
             words.push(format!("-{debug}"));
@@ -622,9 +609,7 @@ fn collect(glslang_dir: &Path, debug_info: Option<DebugInfo>) -> Result<(Vec<Job
             stage: case.stage.to_string(),
             vulkan: case.target.vulkan,
             spirv: case.target.spirv,
-            automap: case.target.automap,
             relax: case.target.relax_set_binding_limits,
-            hlsl_offsets: runtests.hlsl_offsets,
             debug: debug_info.map(DebugInfo::mode).or(case.target.debug),
             include_dirs: runtests
                 .include_dirs
@@ -1014,7 +999,7 @@ fn markdown(environment: &Environment, outcome: &Outcome, options: &Options) -> 
     });
 
     out.push_str("\n## rglsl: built-in tables and the Compiler API\n\n");
-    out.push_str("*Fresh tables* is the median of compiles that build the built-in tables each time (`FreshTables`, as the command-line tool does). *Compiler* is `rglsl_link::Compiler::compile` and `link_spirv` (object module, link, SPIR-V) with one `Compiler` for the whole run; it has no preamble and no HLSL offsets, so shaders that need them are left out of its columns.\n\n");
+    out.push_str("*Fresh tables* is the median of compiles that build the built-in tables each time (`FreshTables`, as the command-line tool does). *Compiler* is `rglsl_link::Compiler::compile` and `link_spirv` (object module, link, SPIR-V) with one `Compiler` for the whole run; it has no preamble, so shaders that need one are left out of its columns.\n\n");
     variants_table(&mut out, measured);
 
     out.push_str("\n## Phases\n\n");
@@ -1207,9 +1192,7 @@ mod tests {
             stage: "frag".into(),
             vulkan: (1, 1),
             spirv: (1, 3),
-            automap: true,
             relax: false,
-            hlsl_offsets: false,
             debug: Some("gVS"),
             include_dirs: vec![PathBuf::from("/t/inc")],
             preamble: "#define A\tB\n".into(),
@@ -1233,7 +1216,7 @@ mod tests {
     #[test]
     fn job_line_has_every_option() {
         let line = job().line(7);
-        assert!(line.starts_with("path=/t/a.frag\tstage=frag\tvulkan=1.1\tspirv=1.3\tautomap=1\t"));
+        assert!(line.starts_with("path=/t/a.frag\tstage=frag\tvulkan=1.1\tspirv=1.3\trelax=0\t"));
         assert!(line.contains("\tdebug=gVS\t"));
         assert!(line.contains("\tpreamble=#define A\\tB\\n\t"));
         assert!(line.contains("\truns=7\t"));
@@ -1241,7 +1224,7 @@ mod tests {
         assert_eq!(line.lines().count(), 1);
         assert_eq!(
             job().command_line(),
-            "-V --target-env vulkan1.1 --target-env spirv1.3 --auto-map-locations --auto-map-bindings -gVS -I/t/inc --preamble-text '#define A\tB' a.frag"
+            "-V --target-env vulkan1.1 --target-env spirv1.3 -gVS -I/t/inc --preamble-text '#define A\tB' a.frag"
         );
     }
 

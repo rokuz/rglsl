@@ -429,8 +429,9 @@ const fn corpus_title(corpus: Corpus) -> (&'static str, &'static str) {
         Corpus::Vulkan => (
             "glslang Vulkan tests",
             "Shaders that glslang's own test suite (`gtests/*.FromFile.cpp`) compiles under Vulkan \
-             semantics. Each one is compiled the way its test does: target environment, automatic \
-             bindings and locations, linking. `object` compiles every shader we accept a second \
+             semantics. Each one is compiled the way its test does: target environment, linking; \
+             bindings and locations are never assigned automatically, so a shader that has \
+             none is rejected by both compilers. `object` compiles every shader we accept a second \
              time as an object module, writes and reads it as an object file, links it and checks \
              the result with spirv-val and against the direct path (capabilities, extensions, \
              instruction sets and the interface).",
@@ -438,7 +439,7 @@ const fn corpus_title(corpus: Corpus) -> (&'static str, &'static str) {
         Corpus::OpenGlAsVulkan => (
             "glslang OpenGL tests, compiled for Vulkan",
             "Shaders that glslang's own test suite compiles under OpenGL semantics. Here glslang \
-             compiles them for Vulkan 1.0 with automatic bindings and locations, so most of them \
+             compiles them for Vulkan 1.0, so most of them \
              test that OpenGL-only constructs are rejected, and on which lines. `object` is the \
              object-module path, as for the Vulkan tests.",
         ),

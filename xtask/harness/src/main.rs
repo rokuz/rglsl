@@ -27,8 +27,6 @@ struct Job {
     path: String,
     stage: ShaderStage,
     spirv: (u8, u8),
-    automap: bool,
-    hlsl_offsets: bool,
     debug: Option<Debug>,
     include_dirs: Vec<String>,
     preamble: String,
@@ -41,8 +39,6 @@ impl Job {
         let mut path = None;
         let mut stage = None;
         let mut spirv = (1, 0);
-        let mut automap = false;
-        let mut hlsl_offsets = false;
         let mut debug = None;
         let mut include_dirs = Vec::new();
         let mut preamble = String::new();
@@ -63,8 +59,6 @@ impl Job {
                 }
                 "spirv" => spirv = version(&value)?,
                 "vulkan" | "relax" => {}
-                "automap" => automap = flag(&value)?,
-                "hlsl-offsets" => hlsl_offsets = flag(&value)?,
                 "debug" => {
                     debug = match value.as_str() {
                         "" => None,
@@ -84,8 +78,6 @@ impl Job {
             path: path.context("job without a path")?,
             stage: stage.context("job without a stage")?,
             spirv,
-            automap,
-            hlsl_offsets,
             debug,
             include_dirs,
             preamble,
@@ -97,10 +89,7 @@ impl Job {
     fn frontend_options(&self, tables: Tables) -> glsl::Options {
         glsl::Options {
             preamble: Some(self.preamble.clone()),
-            auto_map_bindings: self.automap,
-            auto_map_locations: self.automap,
             spirv_version: Some(self.spirv),
-            hlsl_offsets: self.hlsl_offsets,
             debug_info: self.debug.is_some(),
             source_name: Some(self.path.clone()),
             builtin_tables: tables,
@@ -284,7 +273,8 @@ fn front_phases(job: &Job, source: &str, tables: &dyn BuiltinTables) -> Result<F
     let sema_options = rglsl_sema::Options {
         spirv_version: Some(job.spirv),
         end_of_input: u32::try_from(text.len()).ok(),
-        require_bindings: !job.automap,
+        require_bindings: true,
+        require_locations: true,
         ..rglsl_sema::Options::new(job.stage)
     };
     let started = Instant::now();
@@ -324,8 +314,8 @@ fn resolve_from_disk(job: &Job, request: &IncludeRequest<'_>) -> Option<Resolved
 }
 
 fn facade(compiler: &Compiler, job: &Job, source: &str) -> Result<f64> {
-    if !job.preamble.is_empty() || job.hlsl_offsets {
-        bail!("CompileOptions has no preamble and no HLSL offsets");
+    if !job.preamble.is_empty() {
+        bail!("CompileOptions has no preamble");
     }
     let debug_info = if job.debug.is_some() {
         DebugInfo::Lines
@@ -333,15 +323,11 @@ fn facade(compiler: &Compiler, job: &Job, source: &str) -> Result<f64> {
         DebugInfo::Names
     };
     let options = CompileOptions {
-        auto_map_bindings: job.automap,
-        auto_map_locations: job.automap,
         debug_info,
         spirv_version: job.spirv,
         ..CompileOptions::new(job.path.clone(), job.stage)
     };
     let program_options = ProgramOptions {
-        auto_map_bindings: job.automap,
-        auto_map_locations: job.automap,
         debug_info,
         spirv_version: job.spirv,
         ..ProgramOptions::default()

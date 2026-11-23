@@ -86,7 +86,6 @@ pub fn load_groups(glslang_dir: &Path) -> Result<Vec<Case>> {
                 corpus,
                 kind: Kind::Group {
                     files: files.clone(),
-                    auto_map_bindings: corpus == Corpus::OpenGlAsVulkan,
                 },
             });
         }

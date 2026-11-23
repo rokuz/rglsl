@@ -13,7 +13,7 @@ use crate::process;
 
 pub const OWN_DIR: &str = "tests/cli";
 
-const ALL_OPTIONS: [&str; 9] = [
+const ALL_OPTIONS: [&str; 7] = [
     "--reflect-strict-array-suffix",
     "--reflect-basic-array-suffix",
     "--reflect-intermediate-io",
@@ -21,8 +21,6 @@ const ALL_OPTIONS: [&str; 9] = [
     "--reflect-all-block-variables",
     "--reflect-unwrap-io-blocks",
     "--reflect-all-io-variables",
-    "--reflect-shared-std140-ubo",
-    "--reflect-shared-std140-ssbo",
 ];
 
 const SWEEP_EXPECTED: &[(&str, bool, &str)] = &[(
@@ -38,7 +36,6 @@ const LINK_VERT: &str = "reflection/link.vert";
 const LINK_FRAG: &str = "reflection/link.frag";
 const MAIN_COMP: &str = "reflection/main.comp";
 const HELPER_COMP: &str = "reflection/helper.comp";
-const UNBOUND: &str = "reflection/unbound.frag";
 const ERROR: &str = "reflection/error.frag";
 const GLOBALS: &str = "reflection/globals.comp";
 
@@ -105,24 +102,9 @@ pub fn own_cases() -> Vec<Case> {
             &with_options(&["-l", "-q"], &[LINK_VERT, LINK_FRAG]),
         ),
         own("reflect-units", &["-V", "-q", MAIN_COMP, HELPER_COMP]),
-        own(
-            "reflect-units-ku",
-            &["-V", "-q", "--ku", MAIN_COMP, HELPER_COMP],
-        ),
         own("reflect-units-l", &["-l", "-q", MAIN_COMP, HELPER_COMP]),
         own("reflect-missing-body", &["-V", "-q", MAIN_COMP]),
         own("reflect-globals", &["-V", "-q", GLOBALS]),
-        own("reflect-amb", &["-V", "-q", "--amb", UNBOUND]),
-        own(
-            "reflect-amb-shift",
-            &[
-                "-V", "-q", "--amb", "--sub", "10", "--sbb", "20", "--stb", "5", UNBOUND,
-            ],
-        ),
-        own(
-            "reflect-shift",
-            &["-V", "-q", "--sub", "10", "--sbb", "20", BLOCKS],
-        ),
         own("reflect-H", &["-H", "-q", BLOCKS]),
         own("reflect-compile-error", &["-V", "-q", ERROR]),
         own(
@@ -221,9 +203,6 @@ fn sweep_one(
     for line in runtests.preamble {
         args.push(String::from("--preamble-text"));
         args.push((*line).to_owned());
-    }
-    if runtests.hlsl_offsets {
-        args.push(String::from("--hlsl-offsets"));
     }
     args.push(case.path.to_string_lossy().into_owned());
     let mut outputs = Vec::new();
