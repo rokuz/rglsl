@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use rglsl_types::stack::recurse;
 
 use crate::arena::{Handle, UniqueArena};
-use crate::{Block, Expression, Function, LocalVariable, Statement, Type, TypeInner};
+use crate::{Block, Expression, FastHashSet, Function, LocalVariable, Statement, Type, TypeInner};
 
 pub(super) fn plain_types(types: &UniqueArena<Type>) -> Vec<bool> {
     let mut plain: Vec<bool> = Vec::with_capacity(types.len());
@@ -38,11 +38,19 @@ struct Scan<'f> {
     function: &'f Function,
     mode: Mode,
     read: Vec<bool>,
-    written: Vec<bool>,
-    trail: Vec<usize>,
-    stamps: Vec<u32>,
-    stamp: u32,
+    written: Vec<Option<usize>>,
+    scopes: Vec<Scope>,
+    current: usize,
 }
+
+#[derive(Default)]
+struct Scope {
+    merged_into: Option<usize>,
+    open: bool,
+    written: FastHashSet<usize>,
+}
+
+const ROOT: usize = 0;
 
 impl<'f> Scan<'f> {
     fn new(function: &'f Function, plain: &[bool], mode: Mode) -> Self {
@@ -55,13 +63,16 @@ impl<'f> Scan<'f> {
                 .local_variables
                 .iter()
                 .map(|(_, local)| {
-                    (local.init.is_some() && mode == Mode::AnyWrite)
-                        || !plain.get(local.ty.index()).copied().unwrap_or(false)
+                    ((local.init.is_some() && mode == Mode::AnyWrite)
+                        || !plain.get(local.ty.index()).copied().unwrap_or(false))
+                    .then_some(ROOT)
                 })
                 .collect(),
-            trail: Vec::new(),
-            stamps: vec![0; count],
-            stamp: 0,
+            scopes: Vec::from([Scope {
+                open: true,
+                ..Scope::default()
+            }]),
+            current: ROOT,
         }
     }
 
@@ -84,9 +95,34 @@ impl<'f> Scan<'f> {
         }
     }
 
+    fn representative(&mut self, scope: usize) -> usize {
+        let mut top = scope;
+        while let Some(next) = self.scopes.get(top).and_then(|scope| scope.merged_into) {
+            top = next;
+        }
+        let mut current = scope;
+        while let Some(entry) = self.scopes.get_mut(current)
+            && let Some(next) = entry.merged_into
+        {
+            if next != top {
+                entry.merged_into = Some(top);
+            }
+            current = next;
+        }
+        top
+    }
+
+    fn is_written(&mut self, index: usize) -> bool {
+        let Some(&Some(scope)) = self.written.get(index) else {
+            return false;
+        };
+        let top = self.representative(scope);
+        self.scopes.get(top).is_some_and(|scope| scope.open)
+    }
+
     fn use_pointer(&mut self, pointer: Handle<Expression>) {
         if let Some(local) = self.root(pointer)
-            && self.written.get(local.index()) == Some(&false)
+            && !self.is_written(local.index())
             && let Some(slot) = self.read.get_mut(local.index())
         {
             *slot = true;
@@ -94,28 +130,54 @@ impl<'f> Scan<'f> {
     }
 
     fn write(&mut self, index: usize) {
-        if let Some(slot) = self.written.get_mut(index)
-            && !*slot
-        {
-            *slot = true;
-            self.trail.push(index);
+        if self.is_written(index) {
+            return;
         }
-    }
-
-    fn undo(&mut self, start: usize) -> Vec<usize> {
-        let undone: Vec<usize> = self.trail.drain(start..).collect();
-        for &index in &undone {
-            if let Some(slot) = self.written.get_mut(index) {
-                *slot = false;
+        let current = self.current;
+        if let Some(slot) = self.written.get_mut(index) {
+            *slot = Some(current);
+            if self.mode == Mode::Strict
+                && let Some(scope) = self.scopes.get_mut(current)
+            {
+                scope.written.insert(index);
             }
         }
-        undone
     }
 
-    fn scoped(&mut self, block: &Block) -> Vec<usize> {
-        let start = self.trail.len();
+    fn scoped(&mut self, block: &Block) -> usize {
+        let outer = self.current;
+        let scope = self.scopes.len();
+        self.scopes.push(Scope {
+            open: true,
+            ..Scope::default()
+        });
+        self.current = scope;
         recurse(|| self.block(block));
-        self.undo(start)
+        self.current = outer;
+        if let Some(entry) = self.scopes.get_mut(scope) {
+            entry.open = false;
+        }
+        scope
+    }
+
+    fn merge(&mut self, scope: usize) {
+        let current = self.current;
+        if let Some(entry) = self.scopes.get_mut(scope) {
+            entry.merged_into = Some(current);
+        }
+    }
+
+    fn written_in(&mut self, scope: usize) -> FastHashSet<usize> {
+        self.scopes
+            .get_mut(scope)
+            .map(|entry| core::mem::take(&mut entry.written))
+            .unwrap_or_default()
+    }
+
+    fn forget(&mut self, scope: usize) {
+        if let Some(entry) = self.scopes.get_mut(scope) {
+            entry.written = FastHashSet::default();
+        }
     }
 
     fn block(&mut self, block: &Block) {
@@ -151,32 +213,35 @@ impl<'f> Scan<'f> {
                 let accepted = self.scoped(accept);
                 let rejected = self.scoped(reject);
                 if self.mode == Mode::AnyWrite {
-                    for index in accepted.into_iter().chain(rejected) {
-                        self.write(index);
-                    }
+                    self.merge(accepted);
+                    self.merge(rejected);
                     return;
                 }
-                self.stamp = self.stamp.wrapping_add(1);
-                let stamp = self.stamp;
-                for &index in &accepted {
-                    if let Some(slot) = self.stamps.get_mut(index) {
-                        *slot = stamp;
-                    }
-                }
-                for index in rejected {
-                    if self.stamps.get(index) == Some(&stamp) {
+                let accepted = self.written_in(accepted);
+                let rejected = self.written_in(rejected);
+                let (smaller, larger) = if accepted.len() <= rejected.len() {
+                    (accepted, rejected)
+                } else {
+                    (rejected, accepted)
+                };
+                for index in smaller {
+                    if larger.contains(&index) {
                         self.write(index);
                     }
                 }
             }
             Statement::Switch { ref cases, .. } => {
-                let mut written = Vec::new();
+                let mut scopes = Vec::with_capacity(cases.len());
                 for case in cases {
-                    written.extend(self.scoped(&case.body));
+                    scopes.push(self.scoped(&case.body));
                 }
                 if self.mode == Mode::AnyWrite {
-                    for index in written {
-                        self.write(index);
+                    for scope in scopes {
+                        self.merge(scope);
+                    }
+                } else {
+                    for scope in scopes {
+                        self.forget(scope);
                     }
                 }
             }
@@ -185,14 +250,14 @@ impl<'f> Scan<'f> {
                 ref continuing,
                 ..
             } => {
-                let start = self.trail.len();
-                recurse(|| self.block(body));
                 if self.mode == Mode::Strict {
-                    self.undo(start);
-                }
-                recurse(|| self.block(continuing));
-                if self.mode == Mode::Strict {
-                    self.undo(start);
+                    let body = self.scoped(body);
+                    self.forget(body);
+                    let continuing = self.scoped(continuing);
+                    self.forget(continuing);
+                } else {
+                    recurse(|| self.block(body));
+                    recurse(|| self.block(continuing));
                 }
             }
             Statement::Call { ref arguments, .. } => {
