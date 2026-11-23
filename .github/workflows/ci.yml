@@ -83,6 +83,9 @@ jobs:
       - run: cargo test -p rglsl --test rglsl extension_names
         env:
           RGLSL_REQUIRE_ORACLES: 1
+      - run: cargo test -p rglsl-link --test spirv_reflection
+        env:
+          RGLSL_REQUIRE_ORACLES: 1
       - run: cargo xtask test --no-exec
       - run: cargo xtask cli
       - run: cargo xtask builtins
