@@ -1,6 +1,6 @@
 rglsl @VERSION@: a Vulkan GLSL (`#version 450`/`460`) to SPIR-V compiler in safe Rust, a drop-in
 replacement for `glslangValidator` in Vulkan projects, with its own optimizer (`-O`, `-Os`), a
-linker of object modules, a Rust API and a C API.
+linker of object modules, reflection of the SPIR-V it produces, a Rust API and a C API.
 
 ## Files
 
@@ -39,6 +39,11 @@ for binary in &program.stages {
 }
 ```
 
+`binary.spirv_reflection()` reflects a stage: descriptor bindings with their Vulkan descriptor
+types and counts, push constants, inputs and outputs, specialization constants and the workgroup
+size; `spirv_reflection::PipelineLayout::new` merges the stages into descriptor set layouts and
+push-constant ranges.
+
 `rglsl-dis` turns SPIR-V into text: glslang's `-H` disassembly, SPIRV-Tools' `spirv-dis` form and
 hexadecimal text. [samples](https://github.com/rokuz/rglsl/tree/v@VERSION@/samples) has complete
 programs.
@@ -68,6 +73,8 @@ cargo install rglsl-cli                               # or bin/rglsl of a C arch
 rglsl -V shader.frag                                  # writes frag.spv
 rglsl -V main.frag lighting.glsl -o shader.spv        # compile and link
 rglsl -V -l -O main.vert main.frag                    # optimized
+rglsl -V --spirv-reflection-json layout.json main.vert main.frag
+                                                      # reflection of the SPIR-V as JSON
 ```
 
 Options, exit codes and messages are `glslangValidator`'s; rglsl has only its options for Vulkan
