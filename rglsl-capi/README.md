@@ -88,11 +88,9 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_compile_options_add_define`, `_add_undefine`, `_add_preamble_text` | the user preamble of `-D`, `-U` and `-P`, in order |
 | `rglsl_compile_options_add_include`, `_add_include_dir`, `_set_file_system_includes` | in-memory `#include` files, include directories over the in-memory files (or, with file system includes, on disk as `glslangValidator` searches them) |
 | `rglsl_compile_options_set_entry_point`, `_set_vulkan_version`, `_set_spirv_version`, `_set_debug_info` | `-e`, `--target-env` (Vulkan 1.0 to 1.4, SPIR-V 1.0 to 1.6), `-g*` (`RGLSL_DEBUG_INFO_*`) |
-| `rglsl_compile_options_set_auto_map_bindings`, `_set_auto_map_locations`, `_set_binding_shift`, `_set_binding_shift_for_set`, `_add_resource_set_binding` | `--amb`, `--aml`, `--shift-*-binding` (`RGLSL_RESOURCE_*`), `--rsb` |
-| `rglsl_compile_options_set_keep_uncalled`, `_set_hlsl_offsets`, `_set_export_functions`, `_set_suppress_warnings`, `_set_limits` | `--ku`, `--hlsl-offsets`, `--no-link`, `-w`, `.conf` |
+| `rglsl_compile_options_set_suppress_warnings`, `_set_limits` | `-w`, `.conf` |
 | `rglsl_compile_options_set_invert_y`, `_set_nan_clamp`, `_set_discard_is_terminate` | `--invert-y`, `--nan-clamp`, `--discard-is-terminate` |
 | `rglsl_compile_options_set_enhanced_messages` | `--enhanced-msgs`: only the first error of a compilation |
-| `rglsl_compile_options_set_auto_sampled_textures` | `--auto-sampled-textures`: textures become combined samplers, sampler variables are removed |
 | `rglsl_compile_options_set_includer(options, callback, user_data)` | the include callback, `NULL` to remove it |
 | `rglsl_include_result_set(result, name, source)` | called by the callback to resolve the include |
 | `rglsl_compile(source, options, &object, &diagnostics)` | GLSL text to an object |
@@ -100,9 +98,9 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
 | `rglsl_object_write(object, &blob, &diagnostics)`, `rglsl_blob_data`, `rglsl_blob_size`, `rglsl_blob_text` | object to `.rglo` bytes; every blob is followed by a NUL byte, so a text blob is also a C string |
 | `rglsl_object_file_count`, `rglsl_object_file` | the files the compilation included (`--depfile`) |
 | `rglsl_compiler_preprocess(compiler, source, options, &text, &diagnostics)` | `-E` |
-| `rglsl_compiler_build(compiler, sources, options, count, program_options, &program, &diagnostics)` | what `rglsl -V`/`-l` does with GLSL files: one source of a stage is compiled as a program, several are compiled and linked, or compiled on their own without linking; `rglsl_program_reflection`, `rglsl_program_file_count`, `rglsl_program_file` |
+| `rglsl_compiler_build(compiler, sources, options, count, program_options, &program, &diagnostics)` | what `rglsl -V`/`-l` does with GLSL files: one source of a stage is compiled as a program, several are compiled and linked; `rglsl_program_reflection`, `rglsl_program_file_count`, `rglsl_program_file` |
 | `rglsl_object_read(data, size, &object, &diagnostics)` | `.rglo` bytes to an object |
-| `rglsl_program_options_create` and its setters | options of the link and of SPIR-V generation: auto mapping, binding shifts per stage, keep uncalled, debug info, SPIR-V version, the command line and working directory recorded by `-gV`, limits, linking (`--no-link`), generating SPIR-V (`-l` without `-V`), reflection (`-q`, `RGLSL_REFLECT_*` for the `--reflect-*` options) |
+| `rglsl_program_options_create` and its setters | options of the link and of SPIR-V generation: debug info, SPIR-V version, the command line and working directory recorded by `-gV`, limits, generating SPIR-V (`-l` without `-V`), reflection (`-q`, `RGLSL_REFLECT_*` for the `--reflect-*` options) |
 | `rglsl_program_options_set_validate_io` | `--validate-io`: an input a stage reads needs an output of the stage before |
 | `rglsl_program_options_set_optimization`, `_set_target_gpu` | `-O`, `-Os`, `-Od` (`RGLSL_OPT_LEVEL_*`, disabled by default) and `--target-gpu` (`RGLSL_TARGET_GPU_*`, universal desktop by default): the optimizer runs on every linked stage before SPIR-V generation; the stages of one linked program are one pipeline, so outputs the next stage does not read, inputs no stage before writes and unread `gl_PerVertex` members are removed between stages (the inputs of the first stage and the outputs of the last stage stay); objects are never optimized |
 | `rglsl_program_options_set_optimizer_passes`, `_set_optimizer_validate_each` | `--opt-passes` (comma-separated pass names that replace the preset, `NULL` for the preset; an unknown name is `RGLSL_RESULT_INVALID_ARGUMENT`) and `--opt-validate-each` (validate the IR after every pass; on by default in debug builds) |
@@ -127,7 +125,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
   (a panic inside rglsl, caught at the boundary; it is a bug). Getters return `NULL` or `0` for
   a `NULL` handle or an index out of range.
 - **Enumerations** (`rglsl_result`, `rglsl_stage`, `rglsl_severity`, `rglsl_debug_info`,
-  `rglsl_resource`, `rglsl_disassembly`, `rglsl_opt_level`, `rglsl_target_gpu`) are `uint32_t` with
+  `rglsl_disassembly`, `rglsl_opt_level`, `rglsl_target_gpu`) are `uint32_t` with
   `#define`d values, so any value a caller passes is defined behavior and an unknown one is
   rejected with `RGLSL_RESULT_INVALID_ARGUMENT`. Stages are numbered like glslang's
   `EShLanguage`.
@@ -135,7 +133,7 @@ links the program, writes `vert.spv` and `frag.spv`, and shows a compile error a
   no length. Binary data (object file bytes, SPIR-V words) is a pointer and a length.
 - **Options are opaque handles with setters**, not a struct: a new option is a new function and
   never changes the layout or the size of anything the caller allocates, so the ABI only grows.
-  `RGLSL_ABI_VERSION` changes when a function changes its signature or meaning.
+  `RGLSL_ABI_VERSION` changes when a function changes its signature or meaning or is removed.
 - **Ownership.** A handle written to an output pointer belongs to the caller, who frees it with
   the matching `rglsl_*_destroy`. Output pointers are set to `NULL` on failure. The diagnostics
   output pointer may be `NULL` when the caller does not want them; on success it is set to

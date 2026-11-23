@@ -76,7 +76,11 @@ rglsl -V --specialize "3:16 4:true" shader.comp       # specialization constants
                                                       # these values while compiling
 ```
 
-Options, exit codes and messages are `glslangValidator`'s.
+Options, exit codes and messages are `glslangValidator`'s. Its options that exist for OpenGL or
+HLSL shaders or that write SPIR-V Vulkan does not load (automatic bindings and locations, binding
+shifts, HLSL offsets, sampler removal, `--no-link`) are not rglsl's: every resource
+needs a `binding`, every stage input and output a `location`, and separate compilation is
+`--object`.
 
 ### Optimizer
 
