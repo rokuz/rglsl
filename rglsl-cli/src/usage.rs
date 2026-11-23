@@ -125,6 +125,12 @@ rglsl's own options:
   --target-gpu {nvidia | amd | universal-desktop | universal-mobile}
                                     the GPU that -O and -Os optimize for;
                                     defaults to universal-desktop
+  --opt-passes <pass>[,<pass>...]   runs these optimizer passes, in this order,
+                                    instead of the preset of -O or -Os; the
+                                    names are those of rglsl-opt's pass table;
+                                    an unknown name is an error
+  --opt-validate-each               validates the IR after every optimizer
+                                    pass (on by default in debug builds)
   --specialize <id>:<value>[ <id>:<value>...]
                                     replaces the specialization constant
                                     <id> by <value> (true or false, a decimal
