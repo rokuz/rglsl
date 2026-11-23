@@ -42,7 +42,7 @@ impl Comparison {
 
 const EXPECTED: &[(&str, &str)] = &[(
     "spv.debuginfo.implicit_br.glsl.frag",
-    "rglsl drops the branches on constant conditions and their dead code, glslang keeps them and their lines (docs/design/dead-code.md)",
+    "rglsl drops the branches on constant conditions and their dead code, glslang keeps them and their lines",
 )];
 
 pub fn expected_difference(shader: &str) -> Option<&'static str> {

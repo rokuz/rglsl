@@ -2,7 +2,7 @@
 //!
 //! Each test pins down one behaviour where the compiler used to produce wrong
 //! code without reporting an error (or crashed). The expected behaviour is
-//! glslang's; see `docs/parity/README.md`.
+//! glslang's.
 
 use rglsl::{
     ShaderStage,

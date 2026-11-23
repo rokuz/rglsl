@@ -1,4 +1,4 @@
-//! Stage inputs and outputs as global variables (`docs/design/stage-io.md`).
+//! Stage inputs and outputs as global variables.
 //!
 //! The modules are built by hand: these tests cover the IR, the validator and
 //! the SPIR-V backend, independently of any front end.

@@ -406,8 +406,7 @@ times for each module: glslang's twin must give the same results on every run (o
 twin is broken and the shader fails), and ours must match it on every run. A shader that a
 driver cannot run because of a proven bug of that driver is listed, with the reason, in
 `xtask/exec-drivers/<driver>.toml` and skipped on that driver only. A target that is not
-run keeps the results of its last run. See
-`docs/PLAN.md` (Testing).
+run keeps the results of its last run.
 
 rglsl always reserves the keywords of extensions, also when the extension is not enabled. A
 glslang test that uses such a word as a name is listed in `xtask/corpus-renamed/renamed.toml`

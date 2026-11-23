@@ -54,7 +54,7 @@ categories = ["compilers", "graphics", "rendering::graphics-api"]
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rokuz/rglsl"
-# rglsl started as a hard fork of naga 30.0.0 (gfx-rs/wgpu v30.0.0). See UPSTREAM.md.
+# rglsl started as a hard fork of naga 30.0.0 (gfx-rs/wgpu v30.0.0).
 version = "0.1.0"
 authors = ["rglsl developers", "gfx-rs developers"]
 

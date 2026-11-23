@@ -131,8 +131,8 @@ commands:
       --jobs N            number of parallel jobs (default: number of CPUs)
       --timeout SECS      per-process timeout (default: 30)
   cli                 run glslangValidator command lines with glslang and with the rglsl
-                      command-line tool and compare exit codes, messages and outputs
-                      (docs/design/cli.md); report in target/xtask/cli/report.tsv
+                      command-line tool and compare exit codes, messages and outputs;
+                      report in target/xtask/cli/report.tsv
       --glslang-dir DIR   glslang checkout whose Test/ is used
       --filter TEXT       only run cases whose name contains TEXT
       --timeout SECS      per-process timeout (default: 30)

@@ -5,7 +5,7 @@
 # its known_good.json, so the validator matches the glslang we compare against.
 #
 # To move a pin: change the commit here, run `cargo xtask oracles` and
-# `cargo xtask test`, and commit the regenerated PROGRESS.md together with this file.
+# `cargo xtask test`.
 
 [glslang]
 repo = "https://github.com/KhronosGroup/glslang"

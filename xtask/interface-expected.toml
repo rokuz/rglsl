@@ -1,4 +1,4 @@
 [invariant-struct-members]
-why = "for an invariant output of a struct type glslang declares a copy of the struct and repeats Invariant on every member; rglsl decorates the variable only, which already makes the whole output invariant, and keeps one struct type (docs/design/stage-io.md)"
+why = "for an invariant output of a struct type glslang declares a copy of the struct and repeats Invariant on every member; rglsl decorates the variable only, which already makes the whole output invariant, and keeps one struct type"
 keys = ["Output location 10"]
 shaders = ["spv.layoutNested.vert"]
