@@ -47,7 +47,9 @@ impl Analyzer<'_> {
     pub(crate) fn expression(&mut self, expression: &Expression) -> Operand {
         recurse(|| {
             let uses = self.specialization_uses;
+            self.expression_uses.push(uses);
             let operand = self.expression_kind(expression);
+            self.expression_uses.pop();
             self.recorded(expression, uses, operand)
         })
     }
@@ -484,14 +486,22 @@ const fn compound_operator(operator: AssignmentOperator) -> Option<BinaryOperato
 }
 
 impl Analyzer<'_> {
+    pub(crate) fn constructor_arguments(expression: &Expression) -> Option<&[Expression]> {
+        match expression.kind {
+            ExpressionKind::FunctionCall(ref call)
+                if matches!(call.function.node, FunctionIdentifier::Constructor(_)) =>
+            {
+                Some(&call.arguments)
+            }
+            _ => None,
+        }
+    }
+
     fn forget_component_values(&mut self, expression: &Expression) {
-        let ExpressionKind::FunctionCall(ref call) = expression.kind else {
+        let Some(arguments) = Self::constructor_arguments(expression) else {
             return;
         };
-        if !matches!(call.function.node, FunctionIdentifier::Constructor(_)) {
-            return;
-        }
-        for argument in &call.arguments {
+        for argument in arguments {
             if let Some(info) = self.expressions.get_mut(&argument.id) {
                 info.value = None;
             }

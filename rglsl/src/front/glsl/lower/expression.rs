@@ -902,7 +902,7 @@ impl<'a> FunctionLowerer<'_, 'a> {
             return None;
         }
         let mut components = [0; N];
-        for (component, value) in components.iter_mut().zip(values) {
+        for (component, value) in components.iter_mut().zip(values.iter()) {
             *component = u32::try_from(value.as_i64()?).ok()?;
         }
         Some(components)

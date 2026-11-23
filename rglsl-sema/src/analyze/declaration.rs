@@ -17,7 +17,7 @@ use rglsl_ast::ast::{
 use super::heap::is_heap_storage;
 use super::{Analyzer, DerivativeGroup, FunctionContext, Operand, Place};
 use crate::builtins::variables::{self, Redeclaration};
-use crate::constant::{Constant, Value};
+use crate::constant::{Constant, ConstantValues, Value};
 use crate::diagnostic::DiagnosticKind;
 use crate::layout_id::LayoutId;
 use crate::scope::{
@@ -28,6 +28,7 @@ use crate::types::{
     ArraySize, BlockStorage, BlockType, Member, Opaque, OpaqueKind, Scalar, SpecializedSize, Type,
     TypeKind,
 };
+use alloc::sync::Arc;
 use rglsl_types::ShaderStage;
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +46,14 @@ struct List {
     values: Option<Vec<Value>>,
     failed: bool,
     uses: u32,
+}
+
+fn append(collected: &mut Vec<Value>, values: ConstantValues) {
+    if collected.is_empty() {
+        *collected = values.into_vec();
+    } else {
+        collected.extend_from_slice(&values);
+    }
 }
 
 struct Placement {
@@ -298,7 +307,7 @@ impl Analyzer<'_> {
             if let Some(slot) = variable
                 .value
                 .as_mut()
-                .and_then(|constant| constant.values.get_mut(index))
+                .and_then(|constant| Arc::make_mut(&mut constant.values).get_mut(index))
             {
                 *slot = Value::Uint(value);
             }
@@ -2236,9 +2245,9 @@ impl Analyzer<'_> {
         }
         match (&mut list.values, operand.value, element.base_scalar()) {
             (Some(collected), Some(value), Some(scalar)) => {
-                collected.extend(value.convert(scalar).values);
+                append(collected, value.convert(scalar).into_values());
             }
-            (Some(collected), Some(value), None) => collected.extend(value.values),
+            (Some(collected), Some(value), None) => append(collected, value.into_values()),
             _ => list.values = None,
         }
     }

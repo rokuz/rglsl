@@ -311,8 +311,8 @@ impl Analyzer<'_> {
             Some(ty) => ty,
             None => self.bare_type_specifier(specifier, span),
         };
-        let operands = self.operands(arguments);
-        self.constructor_with(expression, span, arguments, ty, &operands)
+        let mut operands = self.operands(arguments);
+        self.constructor_with(expression, span, arguments, ty, &mut operands)
     }
 
     fn candidate(&self, candidate: Candidate) -> Option<&Function> {
@@ -1521,13 +1521,51 @@ impl Analyzer<'_> {
         }
     }
 
+    fn combined(
+        &mut self,
+        expression: &Expression,
+        operands: &mut [Operand],
+        element_types: &[Type],
+        ty: &Type,
+    ) -> Option<Constant> {
+        if operands.iter().any(|operand| operand.value.is_none()) {
+            return None;
+        }
+        let forgotten = Self::constructor_arguments(expression)
+            .filter(|_| {
+                self.expression_uses.last() == Some(&self.specialization_uses)
+                    && !ty.contains_reference(&self.types)
+            })
+            .unwrap_or_default();
+        let mut combined = ConstantValues::new();
+        for (index, (operand, element)) in operands.iter_mut().zip(element_types).enumerate() {
+            let value = match forgotten.get(index) {
+                Some(argument) => {
+                    if let Some(info) = self.expressions.get_mut(&argument.id) {
+                        info.value = None;
+                    }
+                    operand.value.take()?
+                }
+                None => operand.value.clone()?,
+            };
+            match element.base_scalar() {
+                Some(scalar) => {
+                    combined.extend(value.values.iter().map(|item| item.convert(scalar)));
+                }
+                None if combined.is_empty() => combined = value.into_values(),
+                None => combined.extend_from_slice(&value.values),
+            }
+        }
+        Some(Constant::new(combined))
+    }
+
     pub(crate) fn constructor_with(
         &mut self,
         expression: &Expression,
         span: Span,
         arguments: &[Expression],
         mut ty: Type,
-        operands: &[Operand],
+        operands: &mut [Operand],
     ) -> Operand {
         if ty.is_error() || operands.iter().any(|operand| operand.ty.is_error()) {
             return Operand::error();
@@ -1719,7 +1757,7 @@ impl Analyzer<'_> {
         }
         if !element_types.is_empty() {
             if matches!(ty.kind, TypeKind::Struct(_)) {
-                for operand in operands {
+                for operand in operands.iter() {
                     self.require_small_arithmetic(
                         span,
                         &operand.ty,
@@ -1745,26 +1783,13 @@ impl Analyzer<'_> {
                     );
                 }
             }
-            for ((argument, operand), element) in arguments.iter().zip(operands).zip(&element_types)
+            for ((argument, operand), element) in
+                arguments.iter().zip(operands.iter()).zip(&element_types)
             {
                 self.record_conversion(argument, &operand.ty, element);
             }
             let value = if constant {
-                let mut combined = ConstantValues::new();
-                let mut all_present = true;
-                for (operand, element) in operands.iter().zip(&element_types) {
-                    let Some(value) = operand.value.as_ref() else {
-                        all_present = false;
-                        break;
-                    };
-                    match element.base_scalar() {
-                        Some(scalar) => {
-                            combined.extend(value.values.iter().map(|item| item.convert(scalar)));
-                        }
-                        None => combined.extend(value.values.iter().copied()),
-                    }
-                }
-                all_present.then(|| Constant::new(combined))
+                self.combined(expression, operands, &element_types, &ty)
             } else {
                 None
             };
@@ -1801,7 +1826,7 @@ impl Analyzer<'_> {
         let mut full = false;
         let mut over_full = false;
         let mut matrix_argument = false;
-        for operand in operands {
+        for operand in operands.iter() {
             if operand.ty.is_array() {
                 return fail(self, &ty, "an argument is an array");
             }
@@ -1855,7 +1880,7 @@ impl Analyzer<'_> {
         let needed = usize::try_from(needed).ok()?;
         let mut values = ConstantValues::new();
         for operand in operands {
-            for value in &operand.value.as_ref()?.convert(scalar).values {
+            for value in operand.value.as_ref()?.convert(scalar).values.iter() {
                 values.push(*value);
             }
         }

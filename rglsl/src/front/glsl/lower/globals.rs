@@ -674,7 +674,7 @@ impl<'a> Lowerer<'a> {
             };
             let converted = constant.and_then(|(from, value)| {
                 if from == *ty {
-                    return Some(value.values);
+                    return Some(value.into_values());
                 }
                 let target = ty.base_scalar()?;
                 (from.same_shape(ty) && from.base_scalar().is_some())

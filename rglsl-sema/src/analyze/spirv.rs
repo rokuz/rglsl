@@ -61,7 +61,7 @@ fn literal_words(expression: &Expression) -> Option<Vec<u32>> {
         ExpressionKind::Bool(value) => Some(alloc::vec![u32::from(value)]),
         ExpressionKind::Number(ref number) => {
             let operand = literal(number)?;
-            let value = operand.value?.values.into_iter().next()?;
+            let value = operand.value?.values.first().copied()?;
             Some(alloc::vec![value_word(&value)?])
         }
         _ => None,

@@ -259,7 +259,7 @@ impl<'a> Lowerer<'a> {
             .and_then(|(_, symbol)| self.variable(symbol))
             .and_then(|variable| variable.value.as_ref());
         if let Some(values) = values {
-            for (slot, value) in sizes.iter_mut().zip(&values.values) {
+            for (slot, value) in sizes.iter_mut().zip(values.values.iter()) {
                 if let rglsl_sema::constant::Value::Uint(value) = *value {
                     *slot = value;
                 }

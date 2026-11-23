@@ -1,3 +1,4 @@
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use rglsl_ast::ast::{BinaryOperator, UnaryOperator};
@@ -198,26 +199,26 @@ pub type ConstantValues = SmallVec<Value, 1>;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Constant {
-    pub values: ConstantValues,
+    pub values: Arc<ConstantValues>,
 }
 
 impl Constant {
     pub fn new(values: impl Into<ConstantValues>) -> Self {
         Self {
-            values: values.into(),
+            values: Arc::new(values.into()),
         }
     }
 
     pub fn single(value: Value) -> Self {
-        Self {
-            values: ConstantValues::from([value]),
-        }
+        Self::new([value])
     }
 
     pub fn splat(value: Value, count: usize) -> Self {
-        Self {
-            values: ConstantValues::from_elem(value, count),
-        }
+        Self::new(ConstantValues::from_elem(value, count))
+    }
+
+    pub fn into_values(self) -> ConstantValues {
+        Arc::try_unwrap(self.values).unwrap_or_else(|shared| shared.as_ref().clone())
     }
 
     pub fn first(&self) -> Option<Value> {
@@ -232,20 +233,19 @@ impl Constant {
     }
 
     pub fn convert(&self, target: Scalar) -> Self {
-        Self {
-            values: self
-                .values
+        Self::new(
+            self.values
                 .iter()
                 .map(|value| value.convert(target))
-                .collect(),
-        }
+                .collect::<ConstantValues>(),
+        )
     }
 
     pub fn slice(&self, start: usize, length: usize) -> Option<Self> {
         let end = start.checked_add(length)?;
-        self.values.get(start..end).map(|values| Self {
-            values: ConstantValues::from(values),
-        })
+        self.values
+            .get(start..end)
+            .map(|values| Self::new(ConstantValues::from(values)))
     }
 }
 
