@@ -3,7 +3,6 @@
 > A Vulkan GLSL (450/460) → SPIR-V compiler in safe Rust, replacing glslang. Hard fork of naga 30.0.0.
 > Out of scope: GLSL ES, other `#version`s, OpenGL semantics.
 
-If `AGENTS.local.md` exists, read it too: it has the maintainers' local workflow.
 Adding a GLSL extension: `EXTENSIONS.md`.
 
 ## Layout
